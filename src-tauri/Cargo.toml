@@ -1,14 +1,14 @@
 [package]
-name = "moku"
+name = "aethon"
 version = "0.6.7"
 edition = "2021"
 
 [lib]
-name = "moku_lib"
+name = "aethon_lib"
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]
-name = "moku"
+name = "aethon"
 path = "src/main.rs"
 
 [build-dependencies]

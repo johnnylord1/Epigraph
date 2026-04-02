@@ -43,7 +43,7 @@ export async function setReading(manga: Manga, chapter: Chapter): Promise<void> 
     .setLargeImage(resolveCoverImage(manga))
     .setLargeText(trunc(manga.title))
     .setSmallImage(FALLBACK_IMAGE)
-    .setSmallText("Moku");
+    .setSmallText("Aethon");
 
   const activity = new Activity()
     .setDetails(trunc(manga.title))
@@ -58,7 +58,7 @@ export async function setReading(manga: Manga, chapter: Chapter): Promise<void> 
 export async function setIdle(): Promise<void> {
   const assets = new Assets()
     .setLargeImage(FALLBACK_IMAGE)
-    .setLargeText("Moku");
+    .setLargeText("Aethon");
 
   const activity = new Activity()
     .setDetails("Browsing")

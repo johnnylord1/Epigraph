@@ -1,7 +1,7 @@
 # Status
 
 ## Current Phase
-Phase 3A: low-risk audit fixes
+Phase 3B: technical identity cleanup
 
 ## Completed Today
 - Cloned the upstream Moku repository into `Aethon`.
@@ -11,23 +11,25 @@ Phase 3A: low-risk audit fixes
 - Validated the frontend desktop baseline with `npm exec pnpm` and documented the exact local dev path.
 - Fixed the Settings modal so sidebar navigation closes it instead of leaving it over the next route.
 - Aligned the native runtime window title with `Aethon` after confirming config-level title sources were already correct.
+- Renamed the Rust package/bin runtime target from `moku` to `aethon`.
+- Replaced remaining safe `Moku` labels in Discord activity text with `Aethon`.
 
 ## Last Completed Step
-Apply the two low-risk audit fixes and verify them in the real desktop app.
+Clean up the remaining safe runtime identity surfaces and verify the rebuilt desktop runtime.
 
 ## Exact Next Prompt
-Implement Phase 3B only: prepare a first-run desktop onboarding plan for Aethon based on the audit findings, keep it strictly scoped to discovery and UX planning, preserve Apache-2.0 attribution, and do not change reader behavior, integrations, dependencies, or platform scope.
+Implement Phase 3C only: review the remaining risky identity surfaces for Aethon packaging and distribution metadata, keep it audit-only, preserve Apache-2.0 attribution, and do not change reader behavior, integrations, dependencies, or platform scope.
 
 ## Blockers
-- Fresh profiles still start without extension repositories seeded by default, which limits first-run source availability until repos are added.
-- Cookie/WebView-dependent extensions are still limited by unimplemented desktop-client auth flows.
-- FlareSolverr-dependent sources still require the external FlareSolverr service when those sources are used.
+- Platform identifiers and distribution metadata still use upstream `moku` values in places such as `identifier`, Flatpak metadata, Linux desktop metadata, updater endpoints, and app-data paths.
+- Discord may still identify the app as `Moku` because the current Discord application ID and asset key remain upstream-controlled.
+- Updater and packaging identity cleanup is still deferred because it carries higher risk of breaking distribution or update flows.
 
 ## Files/Directories That Must Not Be Touched Next
-- `src/components/reader/`
 - `src/components/pages/`
 - `src/lib/queries.ts`
-- `src-tauri/src/`
+- `src/components/reader/`
+- `src-tauri/src/lib.rs`
 - `src-tauri/tauri.windows.conf.json`
 - `dev.moku.app.yml`
 - `packaging/`
