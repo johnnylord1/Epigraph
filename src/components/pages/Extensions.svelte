@@ -5,6 +5,8 @@
   import { GET_EXTENSIONS, FETCH_EXTENSIONS, UPDATE_EXTENSION, INSTALL_EXTERNAL_EXTENSION, GET_SETTINGS, SET_EXTENSION_REPOS } from "../../lib/queries";
   import { store } from "../../store/state.svelte";
   import type { Extension } from "../../lib/types";
+  import SetupStatusCard from "../shared/SetupStatusCard.svelte";
+  import { detectSetupState, type SetupState } from "../../lib/setupState";
 
   type Filter = "installed" | "available" | "updates" | "all";
   type Panel  = null | "apk" | "repos";
@@ -28,29 +30,35 @@
   let newRepoUrl = $state("");
   let repoError: string|null  = $state(null);
   let savingRepos = $state(false);
+  let setupState: SetupState | null = $state(null);
+
+  async function refreshSetupState() {
+    setupState = await detectSetupState(store.settings);
+  }
 
   async function load() {
     return gql<{ extensions: { nodes: Extension[] } }>(GET_EXTENSIONS)
-      .then((d) => extensions = d.extensions.nodes).catch(console.error);
+      .then((d) => extensions = d.extensions.nodes).catch(console.error)
+      .finally(refreshSetupState);
   }
 
   async function fetchFromRepo() {
     refreshing = true;
     return gql<{ fetchExtensions: { extensions: Extension[] } }>(FETCH_EXTENSIONS)
       .then((d) => extensions = d.fetchExtensions.extensions).catch(console.error)
-      .finally(() => refreshing = false);
+      .finally(() => { refreshing = false; refreshSetupState(); });
   }
 
   async function loadRepos() {
     reposLoading = true;
     try { const d = await gql<{ settings: { extensionRepos: string[] } }>(GET_SETTINGS); repos = d.settings.extensionRepos ?? []; }
-    catch (e) { console.error(e); } finally { reposLoading = false; }
+    catch (e) { console.error(e); } finally { reposLoading = false; refreshSetupState(); }
   }
 
   async function saveRepos(updated: string[]) {
     savingRepos = true;
     try { const d = await gql<{ setSettings: { settings: { extensionRepos: string[] } } }>(SET_EXTENSION_REPOS, { repos: updated }); repos = d.setSettings.settings.extensionRepos; }
-    catch (e: any) { repoError = e instanceof Error ? e.message : "Failed to save"; } finally { savingRepos = false; }
+    catch (e: any) { repoError = e instanceof Error ? e.message : "Failed to save"; } finally { savingRepos = false; refreshSetupState(); }
   }
 
   function addRepo() {
@@ -93,7 +101,7 @@
     if (p === "repos") loadRepos();
   }
 
-  $effect(() => { untrack(() => fetchFromRepo().finally(() => { loading = false; })); });
+  $effect(() => { untrack(() => Promise.all([fetchFromRepo(), refreshSetupState()]).finally(() => { loading = false; })); });
 
   const filtered = $derived(extensions.filter((e) => {
     const q = search.toLowerCase();
@@ -154,6 +162,17 @@
     </div>
   </div>
 
+  {#if setupState && setupState.kind !== "ready"}
+    <div class="setup-banner">
+      <SetupStatusCard
+        state={setupState}
+        surface="extensions"
+        onOpenRepoManager={() => openPanel("repos")}
+        onRetry={refreshSetupState}
+      />
+    </div>
+  {/if}
+
   {#if panel === "apk"}
     <div class="ext-panel">
       <div class="panel-header">
@@ -185,7 +204,7 @@
         <div class="repo-loading"><CircleNotch size={14} weight="light" class="anim-spin" style="color:var(--text-faint)" /></div>
       {:else}
         {#if repos.length === 0}
-          <div class="repo-empty">No repos configured.</div>
+          <div class="repo-empty">No extension repositories are configured yet. Add a repository URL before extensions can appear here.</div>
         {:else}
           <div class="repo-list">
             {#each repos as url}
@@ -217,7 +236,19 @@
   {#if loading}
     <div class="empty"><CircleNotch size={16} weight="light" class="anim-spin" style="color:var(--text-faint)" /></div>
   {:else if groups.length === 0}
-    <div class="empty">No extensions found.</div>
+    <div class="empty">
+      {#if setupState?.kind === "server_offline"}
+        Suwayomi is offline, so extensions can’t load right now.
+      {:else if setupState?.kind === "no_extension_repos"}
+        Add an extension repository to start listing available extensions.
+      {:else if setupState?.kind === "no_installed_extensions" && filter === "installed"}
+        No extensions are installed yet. Switch to Available after adding a repo and install one to unlock sources.
+      {:else if setupState?.kind === "no_usable_sources"}
+        Extensions are present, but Aethon still has no usable sources.
+      {:else}
+        No extensions found.
+      {/if}
+    </div>
   {:else}
     <div class="list">
       {#each groups as { base, primary, variants }}
@@ -282,6 +313,7 @@
 <style>
   .root { display: flex; flex-direction: column; height: 100%; overflow: hidden; animation: fadeIn 0.14s ease both; }
   .header { display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-4) var(--sp-6); border-bottom: 1px solid var(--border-dim); flex-shrink: 0; }
+  .setup-banner { padding: var(--sp-3) var(--sp-6) 0; flex-shrink: 0; }
   .header-right { display: flex; align-items: center; gap: var(--sp-2); margin-left: auto; }
   .heading { font-family: var(--font-ui); font-size: var(--text-xs); font-weight: var(--weight-normal); color: var(--text-faint); letter-spacing: var(--tracking-wider); text-transform: uppercase; }
   .header-actions { display: flex; gap: var(--sp-1); }
@@ -346,6 +378,6 @@
   .empty { display: flex; align-items: center; justify-content: center; flex: 1; color: var(--text-faint); font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); }
 </style>
 
-<script module>
+<script module lang="ts">
   function focusOnMount(node: HTMLElement) { node.focus(); }
 </script>

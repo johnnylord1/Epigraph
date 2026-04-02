@@ -7,6 +7,8 @@
   import { store, openReader, setHeroSlot, setActiveManga, setPreviewManga, setNavPage, setGenreFilter, setLibraryFilter } from "../../store/state.svelte";
   import type { HistoryEntry } from "../../store/state.svelte";
   import type { Manga, Chapter, Category } from "../../lib/types";
+  import SetupStatusCard from "../shared/SetupStatusCard.svelte";
+  import { detectSetupState, type SetupState } from "../../lib/setupState";
 
   function timeAgo(ts: number): string {
     const diff = Date.now() - ts, m = Math.floor(diff / 60000);
@@ -34,10 +36,16 @@
   let extraManga:         Manga[]            = $state([]);
   let loadingLibrary:     boolean            = $state(true);
   let completedCategory:  Category | null    = $state(null);
+  let setupState:         SetupState | null  = $state(null);
 
   onMount(() => {
     loadLibrary();
+    refreshSetupState();
   });
+
+  async function refreshSetupState() {
+    setupState = await detectSetupState(store.settings);
+  }
 
   function loadLibrary() {
     const libraryP  = cache.get(CACHE_KEYS.LIBRARY, () =>
@@ -240,6 +248,16 @@
 
 <div class="root">
   <div class="body">
+    {#if setupState && setupState.kind !== "ready"}
+      <div class="setup-wrap">
+        <SetupStatusCard
+          state={setupState}
+          surface="home"
+          onOpenExtensions={() => setNavPage("extensions")}
+          onRetry={refreshSetupState}
+        />
+      </div>
+    {/if}
 
     <div class="hero-section">
       <div class="hero-stage" bind:clientHeight={heroStageH} style="--hero-h:{heroStageH}px">
@@ -503,6 +521,7 @@
 <style>
   .root { display: flex; flex-direction: column; height: 100%; overflow: hidden; animation: fadeIn 0.14s ease both; }
   .body { flex: 1; display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden; min-height: 0; }
+  .setup-wrap { padding: var(--sp-3) var(--sp-4) 0; flex-shrink: 0; }
   .hero-section { padding: var(--sp-3) var(--sp-4) var(--sp-2); flex-shrink: 0; display: flex; flex-direction: column; }
   .hero-stage { position: relative; display: flex; align-items: stretch; height: 374px; border-radius: var(--radius-xl); overflow: hidden; background: var(--bg-raised); border: 1px solid var(--border-dim); box-shadow: 0 6px 28px rgba(0,0,0,0.28); }
   .hero-backdrop { position: absolute; inset: -14px; background-size: cover; background-position: center 25%; filter: blur(20px) saturate(2.2) brightness(0.45); transform: scale(1.07); pointer-events: none; z-index: 0; }

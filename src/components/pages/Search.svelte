@@ -4,8 +4,10 @@
   import { GET_SOURCES, FETCH_SOURCE_MANGA } from "../../lib/queries";
   import { cache, CACHE_KEYS, getPageSet } from "../../lib/cache";
   import { dedupeSources, dedupeMangaById, dedupeMangaByTitle, shouldHideNsfw, shouldHideSource } from "../../lib/util";
-  import { store, setSearchPrefill, setPreviewManga } from "../../store/state.svelte";
+  import { store, setNavPage, setSearchPrefill, setPreviewManga } from "../../store/state.svelte";
   import type { Manga, Source } from "../../lib/types";
+  import SetupStatusCard from "../shared/SetupStatusCard.svelte";
+  import { detectSetupState, type SetupState } from "../../lib/setupState";
 
   type SearchTab = "keyword" | "tag" | "source";
   type TagMode   = "AND" | "OR";
@@ -66,10 +68,20 @@
   let tab: SearchTab = $state("keyword");
 
   let preferredLang = store.settings?.preferredExtensionLang ?? "";
+  let setupState: SetupState | null = $state(null);
+  let setupLoading = $state(true);
 
   let allSources:  Source[] = $state([]);
   let loadingSources         = $state(false);
   let pendingPrefill         = $state("");
+
+  refreshSetupState();
+
+  async function refreshSetupState() {
+    setupLoading = true;
+    setupState = await detectSetupState(store.settings);
+    setupLoading = false;
+  }
 
   $effect(() => {
     if (store.searchPrefill) {
@@ -127,6 +139,7 @@
   }
 
   async function kwDoSearch(q: string) {
+    if (setupState?.kind && setupState.kind !== "ready") return;
     const trimmed = q.trim();
     if (!trimmed) return;
     const visible = kwGetVisibleSources();
@@ -166,6 +179,7 @@
   const kw_visibleCount = $derived(kwGetVisibleSources().length);
   const kw_hasResults   = $derived(kw_results.some((r) => r.mangas.length > 0));
   const kw_allDone      = $derived(kw_results.length > 0 && kw_results.every((r) => !r.loading));
+  const setupReady      = $derived(setupState?.kind === "ready");
 
   let tag_activeTags:       string[] = $state([]);
   let tag_tagMode:          TagMode  = $state("AND");
@@ -488,7 +502,16 @@
     </div>
   </div>
 
-  
+  {#if setupState && setupState.kind !== "ready"}
+    <div class="setup-banner">
+      <SetupStatusCard
+        state={setupState}
+        surface="search"
+        onOpenExtensions={() => setNavPage("extensions")}
+        onRetry={refreshSetupState}
+      />
+    </div>
+  {/if}
 
   {#if tab === "keyword"}
     <div class="keywordBar">
@@ -528,7 +551,7 @@
         <button
           class="searchBtn"
           onclick={() => kwDoSearch(kw_query)}
-          disabled={!kw_query.trim() || loadingSources}
+          disabled={!kw_query.trim() || loadingSources || setupLoading || !setupReady}
         >
           {#if loadingSources}
             <svg width="13" height="13" viewBox="0 0 256 256" fill="currentColor" class="anim-spin" aria-hidden="true">
@@ -1023,6 +1046,10 @@
     padding: var(--sp-4) var(--sp-6);
     flex-shrink: 0;
     border-bottom: 1px solid var(--border-dim);
+  }
+  .setup-banner {
+    padding: var(--sp-3) var(--sp-4) 0;
+    flex-shrink: 0;
   }
   .heading {
     font-family: var(--font-ui);
@@ -1730,6 +1757,6 @@
   .splitItemGroupOpen { background: var(--bg-raised); }
 </style>
 
-<script module>
+<script module lang="ts">
   function focusOnMount(node: HTMLElement) { node.focus(); }
 </script>
