@@ -11,7 +11,7 @@
   import type { MenuEntry } from "../shared/ContextMenu.svelte";
   import SourceBrowse from "../shared/SourceBrowse.svelte";
 
-  let { embedded = false } = $props();
+  let { embedded = false, feedType = "POPULAR" } = $props();
 
   // ── Constants ─────────────────────────────────────────────────────────────
   const GENRE_TABS  = ["All", "Action", "Romance", "Fantasy", "Comedy", "Drama", "Horror", "Sci-Fi", "Adventure", "Thriller"];
@@ -104,7 +104,7 @@
     if (!srcs.length) return;
 
     const isAll    = genre === "All";
-    const type     = isAll ? "POPULAR" : "SEARCH";
+    const type     = isAll ? feedType : "SEARCH";
     const query    = isAll ? null : genre;
     const maxPages = isAll ? PAGES_INIT : PAGES_GENRE;
 

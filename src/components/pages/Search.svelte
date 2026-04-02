@@ -16,7 +16,7 @@
   type BrowseTab  = "featured" | "tag";
   type SourcePane = "browse" | "extensions";
   type TagMode    = "AND" | "OR";
-  type CatalogFeed = "all" | "popular" | "latest" | "trending" | "new" | "completed";
+  type CatalogFeed = "all" | "latest";
 
   interface SourceResult {
     source:  Source;
@@ -34,13 +34,9 @@
     "Shounen","Seinen","Josei","Shoujo","Isekai","Martial Arts",
     "Magic","Music","Cooking","Medical","Military","Harem","Ecchi",
   ];
-  const CATALOG_FEEDS: { id: CatalogFeed; label: string; supported: boolean }[] = [
-    { id: "all",       label: "All",       supported: true },
-    { id: "popular",   label: "Popular",   supported: false },
-    { id: "latest",    label: "Latest",    supported: false },
-    { id: "trending",  label: "Trending",  supported: false },
-    { id: "new",       label: "New",       supported: false },
-    { id: "completed", label: "Completed", supported: false },
+  const CATALOG_FEEDS: { id: CatalogFeed; label: string }[] = [
+    { id: "all",    label: "All" },
+    { id: "latest", label: "Latest" },
   ];
 
   async function runConcurrent<T>(items: T[], fn: (item: T) => Promise<void>, signal: AbortSignal): Promise<void> {
@@ -504,7 +500,6 @@
   }
 
   function selectCatalogFeed(feed: CatalogFeed) {
-    if (!CATALOG_FEEDS.find((entry) => entry.id === feed)?.supported) return;
     catalogFeed = feed;
     browseTab = "featured";
   }
@@ -896,13 +891,10 @@
                 <button
                   class="catalogOption"
                   class:catalogOptionActive={catalogFeed === feed.id}
-                  class:catalogOptionDisabled={!feed.supported}
-                  disabled={!feed.supported}
-                  title={feed.supported ? `Open ${feed.label}` : `${feed.label} is not wired in this fork yet`}
+                  title={`Open ${feed.label}`}
                   onclick={() => selectCatalogFeed(feed.id)}
                 >
                   <span>{feed.label}</span>
-                  {#if !feed.supported}<span class="catalogOptionMeta">Deferred</span>{/if}
                 </button>
               {/each}
             </div>
@@ -950,12 +942,9 @@
       
       <div class="splitContent">
         {#if !tag_hasActiveTags && catalogFeed === "all"}
-          <Discover embedded={true} />
-        {:else if !tag_hasActiveTags}
-          <div class="empty">
-            <p class="emptyText">Catalog feed unavailable</p>
-            <p class="emptyHint">Only All is wired in this fork right now. Choose a supported feed or add genre filters.</p>
-          </div>
+          <Discover embedded={true} feedType="POPULAR" />
+        {:else if !tag_hasActiveTags && catalogFeed === "latest"}
+          <Discover embedded={true} feedType="LATEST" />
         {:else}
           
           <div class="tagActiveBar">
@@ -1391,21 +1380,6 @@
   .catalogOptionActive:hover {
     background: var(--accent-muted);
     color: var(--accent-fg);
-  }
-  .catalogOptionDisabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-  .catalogOptionDisabled:hover {
-    background: none;
-    border-color: transparent;
-  }
-  .catalogOptionMeta {
-    font-family: var(--font-ui);
-    font-size: 10px;
-    letter-spacing: var(--tracking-wide);
-    text-transform: uppercase;
-    color: var(--text-faint);
   }
   .catalogHeaderCopy {
     display: flex;
