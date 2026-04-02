@@ -97,7 +97,11 @@ You can point Aethon at any Suwayomi instance — local or remote — via **Sett
 
 ## Development
 
-**Prerequisites:** [Rust](https://rustup.rs), [Node.js](https://nodejs.org), [pnpm](https://pnpm.io), and [Tauri v2 prerequisites](https://tauri.app/start/prerequisites/).
+**Prerequisites:** [Node.js](https://nodejs.org) 18.12+, `npm`, [pnpm](https://pnpm.io) or the `npm exec pnpm` fallback, [Rust via rustup](https://rustup.rs), [Microsoft Edge WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/), Visual Studio Build Tools with MSVC + Windows SDK on Windows, and [Tauri v2 prerequisites](https://tauri.app/start/prerequisites/).
+
+### Preferred dev path
+
+If `pnpm` is already installed:
 
 ```bash
 git clone https://github.com/Youwes09/Moku Aethon
@@ -105,6 +109,27 @@ cd Aethon
 pnpm install
 pnpm tauri:dev
 ```
+
+### Fallback dev path
+
+If `pnpm` is not installed globally but `npm` is available, use:
+
+```bash
+git clone https://github.com/Youwes09/Moku Aethon
+cd Aethon
+npm exec pnpm install --frozen-lockfile
+npm exec pnpm exec vite build
+npm exec pnpm tauri info
+npm exec pnpm tauri:dev
+```
+
+### Windows desktop notes
+
+- `npm exec pnpm exec vite build` is enough to validate the JS/frontend baseline.
+- `npm exec pnpm tauri:dev` additionally requires WebView2, `rustup`/`rustc`/`cargo`, and Visual Studio Build Tools with MSVC + Windows SDK.
+- In the current validation environment, the frontend build succeeded and `tauri info` confirmed WebView2 is installed, but Rust and Visual Studio Build Tools were missing, so native desktop boot could not be completed here.
+
+### Nix
 
 Or with Nix:
 
