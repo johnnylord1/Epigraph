@@ -11,7 +11,12 @@ export type SetupStateKind =
   | "ready";
 
 export type SetupSurface = "home" | "search" | "extensions";
-export type SetupActionKind = "open_extensions" | "open_repo_manager" | "retry_connection";
+export type SetupActionKind =
+  | "add_recommended_repo"
+  | "add_manually"
+  | "open_extensions"
+  | "open_repo_manager"
+  | "retry_connection";
 
 export interface SetupState {
   kind: SetupStateKind;
@@ -90,9 +95,10 @@ export function getSetupStatePresentation(state: SetupState, surface: SetupSurfa
       return {
         title: surface === "extensions" ? "Add an extension repository first" : "Extensions can't appear until a repository is added",
         body: "Suwayomi is connected, but the extension repository list is empty. Add at least one repository before looking for extensions or sources.",
-        actions: surface === "extensions"
-          ? [{ kind: "open_repo_manager", label: "Open Repo Manager" }]
-          : [{ kind: "open_extensions", label: "Open Extensions" }],
+        actions: [
+          { kind: "add_recommended_repo", label: "Add recommended repo" },
+          { kind: surface === "extensions" ? "open_repo_manager" : "add_manually", label: "Add manually" },
+        ],
       };
     case "no_installed_extensions":
       return {

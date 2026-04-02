@@ -445,6 +445,7 @@ class Store {
   pageNumber:        number           = $state(1);
   libraryTagFilter:  string[]         = $state([]);
   settingsOpen:      boolean          = $state(false);
+  extensionsPanelHint: "repos" | null = $state(null);
   activeDownloads:   ActiveDownload[] = $state([]);
   toasts:            Toast[]          = $state([]);
   activeChapter:     Chapter | null   = $state(null);
@@ -656,6 +657,7 @@ class Store {
   setPageNumber(next: number)                    { this.pageNumber       = next; }
   setLibraryTagFilter(next: string[])            { this.libraryTagFilter = next; }
   setSettingsOpen(next: boolean)                 { this.settingsOpen     = next; }
+  setExtensionsPanelHint(next: "repos" | null)   { this.extensionsPanelHint = next; }
   updateSettings(patch: Partial<Settings>)       { this.settings = { ...this.settings, ...patch }; }
   resetKeybinds()                                { this.settings = { ...this.settings, keybinds: DEFAULT_KEYBINDS }; }
 
@@ -746,6 +748,7 @@ export function setPageUrls(next: string[])                              { store
 export function setPageNumber(next: number)                              { store.setPageNumber(next); }
 export function setLibraryTagFilter(next: string[])                      { store.setLibraryTagFilter(next); }
 export function setSettingsOpen(next: boolean)                           { store.setSettingsOpen(next); }
+export function setExtensionsPanelHint(next: "repos" | null)             { store.setExtensionsPanelHint(next); }
 export function updateSettings(patch: Partial<Settings>)                 { store.updateSettings(patch); }
 export function resetKeybinds()                                          { store.resetKeybinds(); }
 export function clearDiscoverCache()                                       { store.clearDiscoverCache(); }

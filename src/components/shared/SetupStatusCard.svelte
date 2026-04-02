@@ -6,12 +6,18 @@
   let {
     state,
     surface,
+    actionBusy = false,
+    onAddRecommendedRepo = () => {},
+    onAddManually = () => {},
     onOpenExtensions = () => {},
     onOpenRepoManager = () => {},
     onRetry = () => {},
   }: {
     state: SetupState;
     surface: SetupSurface;
+    actionBusy?: boolean;
+    onAddRecommendedRepo?: () => void;
+    onAddManually?: () => void;
     onOpenExtensions?: () => void;
     onOpenRepoManager?: () => void;
     onRetry?: () => void;
@@ -20,6 +26,8 @@
   const content = $derived(getSetupStatePresentation(state, surface));
 
   function handleAction(kind: SetupActionKind) {
+    if (kind === "add_recommended_repo") onAddRecommendedRepo();
+    if (kind === "add_manually") onAddManually();
     if (kind === "open_extensions") onOpenExtensions();
     if (kind === "open_repo_manager") onOpenRepoManager();
     if (kind === "retry_connection") onRetry();
@@ -47,9 +55,17 @@
     {/if}
     <div class="setup-actions">
       {#each content.actions as action (action.kind)}
-        <button class:secondary={action.kind === "retry_connection"} onclick={() => handleAction(action.kind)}>
+        <button
+          class:secondary={action.kind === "retry_connection" || action.kind === "add_manually" || action.kind === "open_repo_manager"}
+          onclick={() => handleAction(action.kind)}
+          disabled={actionBusy}
+        >
           {#if action.kind === "retry_connection"}
             <ArrowsClockwise size={12} weight="bold" />
+          {:else if action.kind === "add_recommended_repo"}
+            <GitBranch size={12} weight="bold" />
+          {:else if action.kind === "add_manually"}
+            <GitBranch size={12} weight="bold" />
           {:else if action.kind === "open_repo_manager"}
             <GitBranch size={12} weight="bold" />
           {:else}
@@ -137,6 +153,11 @@
   }
   .setup-actions button:hover {
     filter: brightness(1.08);
+  }
+  .setup-actions button:disabled {
+    opacity: 0.55;
+    cursor: default;
+    filter: none;
   }
   .setup-actions button.secondary {
     background: var(--bg-overlay);

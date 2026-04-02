@@ -4,10 +4,11 @@
   import { GET_SOURCES, FETCH_SOURCE_MANGA } from "../../lib/queries";
   import { cache, CACHE_KEYS, getPageSet } from "../../lib/cache";
   import { dedupeSources, dedupeMangaById, dedupeMangaByTitle, shouldHideNsfw, shouldHideSource } from "../../lib/util";
-  import { store, setNavPage, setSearchPrefill, setPreviewManga } from "../../store/state.svelte";
+  import { store, setNavPage, setSearchPrefill, setPreviewManga, setExtensionsPanelHint, addToast } from "../../store/state.svelte";
   import type { Manga, Source } from "../../lib/types";
   import SetupStatusCard from "../shared/SetupStatusCard.svelte";
   import { detectSetupState, type SetupState } from "../../lib/setupState";
+  import { ensureExtensionRepo, RECOMMENDED_EXTENSION_REPO } from "../../lib/defaultRepos";
 
   type SearchTab = "keyword" | "tag" | "source";
   type TagMode   = "AND" | "OR";
@@ -70,6 +71,7 @@
   let preferredLang = store.settings?.preferredExtensionLang ?? "";
   let setupState: SetupState | null = $state(null);
   let setupLoading = $state(true);
+  let setupActionBusy = $state(false);
 
   let allSources:  Source[] = $state([]);
   let loadingSources         = $state(false);
@@ -81,6 +83,35 @@
     setupLoading = true;
     setupState = await detectSetupState(store.settings);
     setupLoading = false;
+  }
+
+  async function addRecommendedRepo() {
+    setupActionBusy = true;
+    try {
+      const result = await ensureExtensionRepo(RECOMMENDED_EXTENSION_REPO);
+      addToast({
+        kind: result.status === "added" ? "success" : "info",
+        title: result.status === "added" ? "Recommended repo added" : "Recommended repo already added",
+        body: result.status === "added"
+          ? `${result.repo.name} is ready. Next, install your first extension.`
+          : `${result.repo.name} is already configured. Next, install your first extension.`,
+      });
+      await refreshSetupState();
+      setNavPage("extensions");
+    } catch (error) {
+      addToast({
+        kind: "error",
+        title: "Could not add the recommended repo",
+        body: error instanceof Error ? error.message : "Aethon couldn't save the recommended repo.",
+      });
+    } finally {
+      setupActionBusy = false;
+    }
+  }
+
+  function openRepoManagerFlow() {
+    setExtensionsPanelHint("repos");
+    setNavPage("extensions");
   }
 
   $effect(() => {
@@ -507,6 +538,9 @@
       <SetupStatusCard
         state={setupState}
         surface="search"
+        actionBusy={setupActionBusy}
+        onAddRecommendedRepo={addRecommendedRepo}
+        onAddManually={openRepoManagerFlow}
         onOpenExtensions={() => setNavPage("extensions")}
         onRetry={refreshSetupState}
       />

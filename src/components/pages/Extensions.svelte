@@ -3,10 +3,11 @@
   import { MagnifyingGlass, ArrowsClockwise, Plus, CircleNotch, CaretRight, CaretDown, X, Check, GitBranch } from "phosphor-svelte";
   import { gql, thumbUrl } from "../../lib/client";
   import { GET_EXTENSIONS, FETCH_EXTENSIONS, UPDATE_EXTENSION, INSTALL_EXTERNAL_EXTENSION, GET_SETTINGS, SET_EXTENSION_REPOS } from "../../lib/queries";
-  import { store } from "../../store/state.svelte";
+  import { store, addToast, setExtensionsPanelHint } from "../../store/state.svelte";
   import type { Extension } from "../../lib/types";
   import SetupStatusCard from "../shared/SetupStatusCard.svelte";
   import { detectSetupState, type SetupState } from "../../lib/setupState";
+  import { ensureExtensionRepo, RECOMMENDED_EXTENSION_REPO } from "../../lib/defaultRepos";
 
   type Filter = "installed" | "available" | "updates" | "all";
   type Panel  = null | "apk" | "repos";
@@ -31,6 +32,7 @@
   let repoError: string|null  = $state(null);
   let savingRepos = $state(false);
   let setupState: SetupState | null = $state(null);
+  let setupActionBusy = $state(false);
 
   async function refreshSetupState() {
     setupState = await detectSetupState(store.settings);
@@ -59,6 +61,33 @@
     savingRepos = true;
     try { const d = await gql<{ setSettings: { settings: { extensionRepos: string[] } } }>(SET_EXTENSION_REPOS, { repos: updated }); repos = d.setSettings.settings.extensionRepos; }
     catch (e: any) { repoError = e instanceof Error ? e.message : "Failed to save"; } finally { savingRepos = false; refreshSetupState(); }
+  }
+
+  async function addRecommendedRepo() {
+    setupActionBusy = true;
+    try {
+      const result = await ensureExtensionRepo(RECOMMENDED_EXTENSION_REPO);
+      addToast({
+        kind: result.status === "added" ? "success" : "info",
+        title: result.status === "added" ? "Recommended repo added" : "Recommended repo already added",
+        body: result.status === "added"
+          ? `${result.repo.name} is ready. Browse Available and install your first extension.`
+          : `${result.repo.name} is already configured. Browse Available and install your first extension.`,
+      });
+      filter = "available";
+      panel = null;
+      await loadRepos();
+      await fetchFromRepo();
+      await refreshSetupState();
+    } catch (error) {
+      addToast({
+        kind: "error",
+        title: "Could not add the recommended repo",
+        body: error instanceof Error ? error.message : "Aethon couldn't save the recommended repo.",
+      });
+    } finally {
+      setupActionBusy = false;
+    }
   }
 
   function addRepo() {
@@ -100,6 +129,12 @@
     repoError = null; newRepoUrl = "";
     if (p === "repos") loadRepos();
   }
+
+  $effect(() => {
+    if (store.extensionsPanelHint !== "repos") return;
+    untrack(() => openPanel("repos"));
+    setExtensionsPanelHint(null);
+  });
 
   $effect(() => { untrack(() => Promise.all([fetchFromRepo(), refreshSetupState()]).finally(() => { loading = false; })); });
 
@@ -167,6 +202,9 @@
       <SetupStatusCard
         state={setupState}
         surface="extensions"
+        actionBusy={setupActionBusy || savingRepos || refreshing}
+        onAddRecommendedRepo={addRecommendedRepo}
+        onAddManually={() => openPanel("repos")}
         onOpenRepoManager={() => openPanel("repos")}
         onRetry={refreshSetupState}
       />

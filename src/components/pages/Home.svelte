@@ -4,11 +4,12 @@
   import { gql, thumbUrl } from "../../lib/client";
   import { GET_LIBRARY, GET_CHAPTERS, GET_MANGA, GET_CATEGORIES } from "../../lib/queries";
   import { cache, CACHE_KEYS } from "../../lib/cache";
-  import { store, openReader, setHeroSlot, setActiveManga, setPreviewManga, setNavPage, setGenreFilter, setLibraryFilter } from "../../store/state.svelte";
+  import { store, openReader, setHeroSlot, setActiveManga, setPreviewManga, setNavPage, setGenreFilter, setLibraryFilter, setExtensionsPanelHint, addToast } from "../../store/state.svelte";
   import type { HistoryEntry } from "../../store/state.svelte";
   import type { Manga, Chapter, Category } from "../../lib/types";
   import SetupStatusCard from "../shared/SetupStatusCard.svelte";
   import { detectSetupState, type SetupState } from "../../lib/setupState";
+  import { ensureExtensionRepo, RECOMMENDED_EXTENSION_REPO } from "../../lib/defaultRepos";
 
   function timeAgo(ts: number): string {
     const diff = Date.now() - ts, m = Math.floor(diff / 60000);
@@ -37,6 +38,7 @@
   let loadingLibrary:     boolean            = $state(true);
   let completedCategory:  Category | null    = $state(null);
   let setupState:         SetupState | null  = $state(null);
+  let setupActionBusy = $state(false);
 
   onMount(() => {
     loadLibrary();
@@ -45,6 +47,35 @@
 
   async function refreshSetupState() {
     setupState = await detectSetupState(store.settings);
+  }
+
+  async function addRecommendedRepo() {
+    setupActionBusy = true;
+    try {
+      const result = await ensureExtensionRepo(RECOMMENDED_EXTENSION_REPO);
+      addToast({
+        kind: result.status === "added" ? "success" : "info",
+        title: result.status === "added" ? "Recommended repo added" : "Recommended repo already added",
+        body: result.status === "added"
+          ? `${result.repo.name} is ready. Next, install your first extension.`
+          : `${result.repo.name} is already configured. Next, install your first extension.`,
+      });
+      await refreshSetupState();
+      setNavPage("extensions");
+    } catch (error) {
+      addToast({
+        kind: "error",
+        title: "Could not add the recommended repo",
+        body: error instanceof Error ? error.message : "Aethon couldn't save the recommended repo.",
+      });
+    } finally {
+      setupActionBusy = false;
+    }
+  }
+
+  function openRepoManagerFlow() {
+    setExtensionsPanelHint("repos");
+    setNavPage("extensions");
   }
 
   function loadLibrary() {
@@ -253,6 +284,9 @@
         <SetupStatusCard
           state={setupState}
           surface="home"
+          actionBusy={setupActionBusy}
+          onAddRecommendedRepo={addRecommendedRepo}
+          onAddManually={openRepoManagerFlow}
           onOpenExtensions={() => setNavPage("extensions")}
           onRetry={refreshSetupState}
         />
