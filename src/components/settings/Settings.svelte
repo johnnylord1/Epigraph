@@ -20,21 +20,56 @@
   }
   let { onOpenThemeEditor }: Props = $props();
   type Tab = "general" | "appearance" | "reader" | "library" | "performance" | "keybinds" | "storage" | "folders" | "tracking" | "security" | "content" | "about" | "devtools";
-  const TABS: { id: Tab; label: string; icon: any }[] = [
-    { id: "general",    label: "General",     icon: Gear       },
-    { id: "appearance", label: "Appearance",  icon: PaintBrush },
-    { id: "reader",     label: "Reader",      icon: Book       },
-    { id: "library",    label: "Library",     icon: Image      },
-    { id: "performance",label: "Performance", icon: Sliders    },
-    { id: "keybinds",   label: "Keybinds",    icon: Keyboard   },
-    { id: "storage",    label: "Storage",     icon: HardDrives },
-    { id: "folders",    label: "Folders",     icon: FolderSimple },
-    { id: "tracking",   label: "Tracking",    icon: ListChecks },
-    { id: "security",   label: "Security",    icon: Lock       },
-    { id: "content",    label: "Content",     icon: ShieldCheck },
-    { id: "about",      label: "About",       icon: Info       },
-    { id: "devtools",   label: "Dev Tools",   icon: Wrench     },
+  type SettingsNavItem = { id: Tab; label: string; icon: any };
+  type SettingsNavGroup = { label: string; items: SettingsNavItem[] };
+  const SETTINGS_GROUPS: SettingsNavGroup[] = [
+    {
+      label: "App",
+      items: [
+        { id: "general",    label: "General",    icon: Gear       },
+        { id: "appearance", label: "Appearance", icon: PaintBrush },
+        { id: "keybinds",   label: "Keybinds",   icon: Keyboard   },
+      ],
+    },
+    {
+      label: "Reading",
+      items: [
+        { id: "reader",     label: "Reader",     icon: Book       },
+      ],
+    },
+    {
+      label: "Library",
+      items: [
+        { id: "library",    label: "Library",    icon: Image        },
+        { id: "folders",    label: "Categories", icon: FolderSimple },
+      ],
+    },
+    {
+      label: "Content & Integrations",
+      items: [
+        { id: "content",    label: "Content",    icon: ShieldCheck },
+        { id: "tracking",   label: "Tracking",   icon: ListChecks  },
+      ],
+    },
+    {
+      label: "System",
+      items: [
+        { id: "storage",     label: "Storage",     icon: HardDrives },
+        { id: "performance", label: "Performance", icon: Sliders    },
+        { id: "security",    label: "Security",    icon: Lock       },
+      ],
+    },
+    {
+      label: "Advanced",
+      items: [
+        { id: "about",      label: "About",      icon: Info   },
+        { id: "devtools",   label: "Dev Tools",  icon: Wrench },
+      ],
+    },
   ];
+  const TAB_LABELS: Record<Tab, string> = Object.fromEntries(
+    SETTINGS_GROUPS.flatMap((group) => group.items.map((item) => [item.id, item.label] as const))
+  ) as Record<Tab, string>;
   const THEMES: { id: Theme; label: string; description: string; swatches: string[] }[] = [
     { id: "dark",           label: "Dark",           description: "Default near-black",            swatches: ["#101010","#151515","#a8c4a8","#f0efec"] },
     { id: "high-contrast",  label: "High Contrast",  description: "Darker base, sharper text",     swatches: ["#080808","#111111","#bcd8bc","#ffffff"] },
@@ -839,17 +874,22 @@
     <div class="sidebar">
       <p class="modal-title">Settings</p>
       <nav class="nav">
-        {#each TABS as t}
-          <button class="nav-item" class:active={tab === t.id} onclick={() => tab = t.id}>
-            <t.icon size={14} weight="light" />
-            <span>{t.label}</span>
-          </button>
+        {#each SETTINGS_GROUPS as group}
+          <div class="nav-group">
+            <p class="nav-group-label">{group.label}</p>
+            {#each group.items as t}
+              <button class="nav-item" class:active={tab === t.id} onclick={() => tab = t.id}>
+                <t.icon size={14} weight="light" />
+                <span>{t.label}</span>
+              </button>
+            {/each}
+          </div>
         {/each}
       </nav>
     </div>
     <div class="content">
       <div class="content-header">
-        <p class="content-title">{TABS.find((t) => t.id === tab)?.label}</p>
+        <p class="content-title">{TAB_LABELS[tab]}</p>
         <button class="close-btn" aria-label="Close settings" onclick={close}><X size={15} weight="light" /></button>
       </div>
       <div class="content-body" bind:this={contentBodyEl}>
@@ -1503,22 +1543,22 @@
         {:else if tab === "folders"}
           <div class="panel">
             <div class="section">
-              <p class="section-title">Manage Folders</p>
-              <p class="toggle-desc" style="padding:0 var(--sp-3) var(--sp-3);display:block">Folders are stored as Suwayomi categories. Changes sync across all clients.</p>
+              <p class="section-title">Manage Categories</p>
+              <p class="toggle-desc" style="padding:0 var(--sp-3) var(--sp-3);display:block">Categories are stored as Suwayomi categories. Changes sync across all clients.</p>
               {#if catsError}
                 <p class="toggle-desc" style="padding:0 var(--sp-3) var(--sp-2);color:var(--color-error);display:block">{catsError}</p>
               {/if}
               <div class="folder-create-row">
-                <input class="text-input" placeholder="New folder name…" bind:value={newFolderName}
+                <input class="text-input" placeholder="New category name…" bind:value={newFolderName}
                   onkeydown={(e) => e.key === "Enter" && createFolder()} style="flex:1;width:auto" />
                 <button class="folder-create-btn" onclick={createFolder} disabled={!newFolderName.trim()}>
                   <Plus size={13} weight="bold" /> Create
                 </button>
               </div>
               {#if catsLoading}
-                <p class="storage-loading">Loading folders…</p>
+                <p class="storage-loading">Loading categories…</p>
               {:else if store.categories.filter(c => c.id !== 0).length === 0}
-                <p class="storage-loading">No folders yet. Create one above.</p>
+                <p class="storage-loading">No categories yet. Create one above.</p>
               {:else}
                 {@const displayCats = store.categories
                     .filter(c => c.id !== 0)
@@ -1544,7 +1584,7 @@
                           class="kb-reset"
                           class:folder-default-active={(store.settings.defaultLibraryCategoryId ?? null) === cat.id}
                           onclick={() => updateSettings({ defaultLibraryCategoryId: (store.settings.defaultLibraryCategoryId ?? null) === cat.id ? null : cat.id })}
-                          title={(store.settings.defaultLibraryCategoryId ?? null) === cat.id ? "Remove as default folder" : "Set as default folder — opens first when you visit Library"}
+                          title={(store.settings.defaultLibraryCategoryId ?? null) === cat.id ? "Remove as default category" : "Set as default category — opens first when you visit Library"}
                         ><Star size={13} weight={(store.settings.defaultLibraryCategoryId ?? null) === cat.id ? "fill" : "light"} /></button>
                         <button
                           class="kb-reset"
@@ -2102,16 +2142,19 @@
     </div>
   </div>
 </div>
-<script module>
+<script module lang="ts">
   function focusInput(node: HTMLElement) { node.focus(); }
   function focusEl(node: HTMLElement) { setTimeout(() => node.focus(), 0); }
 </script>
 <style>
   .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: var(--z-settings); display: flex; align-items: center; justify-content: center; animation: fadeIn 0.1s ease both; backdrop-filter: blur(4px); }
   .modal { width: min(720px, calc(100vw - 48px)); height: min(600px, calc(100vh - 80px)); display: flex; background: var(--bg-surface); border: 1px solid var(--border-base); border-radius: var(--radius-xl); overflow: hidden; animation: scaleIn 0.15s ease both; box-shadow: 0 24px 64px rgba(0,0,0,0.6); }
-  .sidebar { width: 168px; flex-shrink: 0; background: var(--bg-base); border-right: 1px solid var(--border-dim); padding: var(--sp-5) var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-1); overflow-y: auto; }
+  .sidebar { width: 188px; flex-shrink: 0; background: var(--bg-base); border-right: 1px solid var(--border-dim); padding: var(--sp-5) var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-2); overflow-y: auto; }
   .modal-title { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-faint); letter-spacing: var(--tracking-wider); text-transform: uppercase; padding: 0 var(--sp-2) var(--sp-3); }
-  .nav { display: flex; flex-direction: column; gap: 1px; }
+  .nav { display: flex; flex-direction: column; gap: var(--sp-3); }
+  .nav-group { display: flex; flex-direction: column; gap: 1px; }
+  .nav-group + .nav-group { padding-top: var(--sp-2); border-top: 1px solid var(--border-dim); }
+  .nav-group-label { font-family: var(--font-ui); font-size: 10px; color: var(--text-faint); letter-spacing: var(--tracking-wider); text-transform: uppercase; padding: 0 var(--sp-2) var(--sp-1); }
   .nav-item { display: flex; align-items: center; gap: var(--sp-2); padding: 6px var(--sp-2); border-radius: var(--radius-md); font-size: var(--text-sm); color: var(--text-muted); background: none; border: none; cursor: pointer; text-align: left; transition: background var(--t-fast), color var(--t-fast); }
   .nav-item:hover { background: var(--bg-raised); color: var(--text-secondary); }
   .nav-item.active { background: var(--accent-muted); color: var(--accent-fg); }
