@@ -8,7 +8,6 @@
   import type { Manga, Source } from "../../lib/types";
   import SetupStatusCard from "../shared/SetupStatusCard.svelte";
   import Discover from "./Discover.svelte";
-  import GenreDrillPage from "./GenreDrillPage.svelte";
   import Extensions from "./Extensions.svelte";
   import { detectSetupState, type SetupState } from "../../lib/setupState";
   import { ensureExtensionRepo, RECOMMENDED_EXTENSION_REPO } from "../../lib/defaultRepos";
@@ -17,6 +16,7 @@
   type BrowseTab  = "featured" | "tag";
   type SourcePane = "browse" | "extensions";
   type TagMode    = "AND" | "OR";
+  type CatalogFeed = "all" | "popular" | "latest" | "trending" | "new" | "completed";
 
   interface SourceResult {
     source:  Source;
@@ -33,6 +33,14 @@
     "Supernatural","Mecha","Historical","Psychological","School Life",
     "Shounen","Seinen","Josei","Shoujo","Isekai","Martial Arts",
     "Magic","Music","Cooking","Medical","Military","Harem","Ecchi",
+  ];
+  const CATALOG_FEEDS: { id: CatalogFeed; label: string; supported: boolean }[] = [
+    { id: "all",       label: "All",       supported: true },
+    { id: "popular",   label: "Popular",   supported: false },
+    { id: "latest",    label: "Latest",    supported: false },
+    { id: "trending",  label: "Trending",  supported: false },
+    { id: "new",       label: "New",       supported: false },
+    { id: "completed", label: "Completed", supported: false },
   ];
 
   async function runConcurrent<T>(items: T[], fn: (item: T) => Promise<void>, signal: AbortSignal): Promise<void> {
@@ -74,6 +82,10 @@
   let tab: SearchTab = $state("keyword");
   let browseTab: BrowseTab = $state("featured");
   let sourcePane: SourcePane = $state("browse");
+  let catalogFeed: CatalogFeed = $state("all");
+  let catalogFeedOpen = $state(true);
+  let catalogGenresOpen = $state(true);
+  let consumedGenreHint = $state("");
 
   let preferredLang = store.settings?.preferredExtensionLang ?? "";
   let setupState: SetupState | null = $state(null);
@@ -130,12 +142,29 @@
     }
     if (store.searchBrowseHint) {
       browseTab = store.searchBrowseHint === "tags" ? "tag" : "featured";
+      catalogFeed = "all";
+      if (store.searchBrowseHint === "tags") catalogGenresOpen = true;
       setSearchBrowseHint(null);
     }
     if (store.searchSourcesPaneHint) {
       sourcePane = store.searchSourcesPaneHint;
       setSearchSourcesPaneHint(null);
     }
+  });
+
+  $effect(() => {
+    const hintedGenre = store.genreFilter?.trim() ?? "";
+    if (!hintedGenre || hintedGenre === consumedGenreHint) return;
+    if (!tag_activeTags.includes(hintedGenre)) {
+      tag_srcNextPage = new Map();
+      tag_sourceResults = [];
+      tag_activeTags = [hintedGenre];
+    }
+    tab = "browse";
+    browseTab = "tag";
+    catalogFeed = "all";
+    catalogGenresOpen = true;
+    consumedGenreHint = hintedGenre;
   });
 
   $effect(() => {
@@ -474,6 +503,18 @@
     }
   }
 
+  function selectCatalogFeed(feed: CatalogFeed) {
+    if (!CATALOG_FEEDS.find((entry) => entry.id === feed)?.supported) return;
+    catalogFeed = feed;
+    browseTab = "featured";
+  }
+
+  const catalogActiveSummary = $derived.by(() => {
+    if (!tag_activeTags.length) return "All";
+    if (tag_activeTags.length === 1) return tag_activeTags[0];
+    return `${tag_activeTags.length} tags (${tag_tagMode})`;
+  });
+
   let src_selectedLang  = $state(preferredLang || "all");
   let src_activeSource: Source | null = $state(null);
   let src_browseResults: Manga[]       = $state([]);
@@ -590,7 +631,7 @@
 <div class="root">
   
   <div class="header">
-    <h1 class="heading">Search</h1>
+    <h1 class="heading">Browse</h1>
     <div class="tabs">
       <button
         class="tab"
@@ -601,7 +642,7 @@
         <svg width="11" height="11" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
           <path d="M229.66,218.34l-50.07-50.07a88,88,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.31ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"/>
         </svg>
-        Keyword
+        Search
       </button>
       <button
         class="tab"
@@ -612,7 +653,7 @@
         <svg width="11" height="11" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
           <path d="M224,104H200l8-48a8,8,0,0,0-15.79-2.67L183.79,104H136l8-48a8,8,0,0,0-15.79-2.67L119.79,104H72a8,8,0,0,0,0,16h45.33L105.6,200H56a8,8,0,0,0,0,16H103l-8,48a8,8,0,0,0,15.79,2.67L119.21,216H168l-8,48a8,8,0,0,0,15.79,2.67L184.21,216H232a8,8,0,0,0,0-16H186.67l11.73-80H224a8,8,0,0,0,0-16Zm-69.33,96H101.6L113.33,120h53.07Z"/>
         </svg>
-        Browse
+        Catalog
       </button>
       <button
         class="tab"
@@ -840,25 +881,40 @@
 
   {:else if tab === "browse"}
     <div class="browseShell">
-      <div class="browseSubtabs">
-        <button class="tab" class:tabActive={browseTab === "featured"} onclick={() => (browseTab = "featured")}>
-          Featured
-        </button>
-        <button class="tab" class:tabActive={browseTab === "tag"} onclick={() => (browseTab = "tag")}>
-          Tags
-        </button>
-      </div>
+      <div class="catalogShell">
+    <div class="splitRoot catalogRoot">
 
-      {#if browseTab === "featured"}
-        {#if store.genreFilter}
-          <GenreDrillPage />
-        {:else}
-          <Discover />
-        {/if}
-      {:else}
-    <div class="splitRoot">
+      <div class="splitSidebar catalogSidebar">
+        <div class="catalogGroup">
+          <button class="catalogGroupToggle" onclick={() => (catalogFeedOpen = !catalogFeedOpen)}>
+            <span>Feed / Type</span>
+            <span class="catalogGroupState">{catalogFeedOpen ? "Hide" : "Show"}</span>
+          </button>
+          {#if catalogFeedOpen}
+            <div class="catalogFeedList">
+              {#each CATALOG_FEEDS as feed (feed.id)}
+                <button
+                  class="catalogOption"
+                  class:catalogOptionActive={catalogFeed === feed.id}
+                  class:catalogOptionDisabled={!feed.supported}
+                  disabled={!feed.supported}
+                  title={feed.supported ? `Open ${feed.label}` : `${feed.label} is not wired in this fork yet`}
+                  onclick={() => selectCatalogFeed(feed.id)}
+                >
+                  <span>{feed.label}</span>
+                  {#if !feed.supported}<span class="catalogOptionMeta">Deferred</span>{/if}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
 
-      <div class="splitSidebar">
+        <div class="catalogGroup">
+          <button class="catalogGroupToggle" onclick={() => (catalogGenresOpen = !catalogGenresOpen)}>
+            <span>Genres / Tags</span>
+            <span class="catalogGroupState">{catalogGenresOpen ? "Hide" : "Show"}</span>
+          </button>
+          {#if catalogGenresOpen}
         <div class="splitSearchWrap">
           <svg width="12" height="12" viewBox="0 0 256 256" fill="currentColor" class="splitSearchIcon" aria-hidden="true">
             <path d="M229.66,218.34l-50.07-50.07a88,88,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.31ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"/>
@@ -872,14 +928,14 @@
             <button class="splitSearchClear" title="Clear" onclick={() => (tag_tagFilter = "")}>×</button>
           {/if}
         </div>
-        <div class="splitList">
+        <div class="splitList catalogTagList">
           {#each tag_filteredGenres as tag (tag)}
             <button
-              class="splitItem"
-              class:splitItemActive={tag_activeTags.includes(tag)}
+              class="catalogOption"
+              class:catalogOptionActive={tag_activeTags.includes(tag)}
               onclick={() => tagToggleTag(tag)}
             >
-              <span class="splitItemLabel">{tag}</span>
+              <span>{tag}</span>
               {#if tag_activeTags.includes(tag)}<span class="tagCheckMark">✓</span>{/if}
             </button>
           {/each}
@@ -887,17 +943,18 @@
             <p class="splitEmpty">No matching tags</p>
           {/if}
         </div>
+          {/if}
+        </div>
       </div>
 
       
       <div class="splitContent">
-        {#if !tag_hasActiveTags}
+        {#if !tag_hasActiveTags && catalogFeed === "all"}
+          <Discover embedded={true} />
+        {:else if !tag_hasActiveTags}
           <div class="empty">
-            <svg width="32" height="32" viewBox="0 0 256 256" fill="currentColor" class="emptyIcon" aria-hidden="true">
-              <path d="M224,104H200l8-48a8,8,0,0,0-15.79-2.67L183.79,104H136l8-48a8,8,0,0,0-15.79-2.67L119.79,104H72a8,8,0,0,0,0,16h45.33L105.6,200H56a8,8,0,0,0,0,16H103l-8,48a8,8,0,0,0,15.79,2.67L119.21,216H168l-8,48a8,8,0,0,0,15.79,2.67L184.21,216H232a8,8,0,0,0,0-16H186.67l11.73-80H224a8,8,0,0,0,0-16Zm-69.33,96H101.6L113.33,120h53.07Z"/>
-            </svg>
-            <p class="emptyText">Browse by tag</p>
-            <p class="emptyHint">Select one or more genre tags to find matching manga.</p>
+            <p class="emptyText">Catalog feed unavailable</p>
+            <p class="emptyHint">Only All is wired in this fork right now. Choose a supported feed or add genre filters.</p>
           </div>
         {:else}
           
@@ -945,12 +1002,12 @@
           </div>
 
           <div class="splitContentHeader">
-            <span class="splitContentTitle">
-              {tag_activeTags.length === 1 ? tag_activeTags[0] : `${tag_activeTags.length} tags (${tag_tagMode})`}
-              {#if tag_searchSources}
-                <span style="margin-left:6px;font-weight:400;opacity:0.55;font-size:0.9em">+ sources</span>
-              {/if}
-            </span>
+            <div class="catalogHeaderCopy">
+              <span class="splitContentTitle">Catalog</span>
+              <p class="catalogSubtitle">
+                Showing {catalogActiveSummary}{#if tag_searchSources} with source matches enabled{/if}.
+              </p>
+            </div>
             {#if tag_loadingLocal || tag_loadingSourceSearch}
               <svg width="13" height="13" viewBox="0 0 256 256" fill="currentColor" class="anim-spin" style="color:var(--text-faint)" aria-hidden="true">
                 <path d="M232,128a104,104,0,0,1-208,0c0-41,23.81-78.36,60.66-95.27a8,8,0,0,1,6.68,14.54C60.15,61.59,40,93.27,40,128a88,88,0,0,0,176,0c0-34.73-20.15-66.41-51.34-80.73a8,8,0,0,1,6.68-14.54C208.19,49.64,232,87,232,128Z"/>
@@ -1035,7 +1092,7 @@
         {/if}
       </div>
     </div>
-      {/if}
+    </div>
     </div>
 
   {:else if tab === "source"}
@@ -1245,6 +1302,123 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+  }
+  .catalogShell {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .catalogRoot {
+    min-height: 0;
+  }
+  .catalogSidebar {
+    width: 220px;
+    gap: var(--sp-2);
+    padding: var(--sp-2);
+    overflow-y: auto;
+  }
+  .catalogGroup {
+    border: 1px solid var(--border-dim);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  .catalogGroupToggle {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-2);
+    padding: var(--sp-2) var(--sp-3);
+    border: none;
+    background: none;
+    color: var(--text-muted);
+    font-family: var(--font-ui);
+    font-size: var(--text-2xs);
+    letter-spacing: var(--tracking-wider);
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .catalogGroupState {
+    color: var(--text-faint);
+    font-size: 10px;
+  }
+  .catalogFeedList,
+  .catalogTagList {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: var(--sp-1);
+  }
+  .catalogTagTools {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+    padding: var(--sp-2);
+    border-top: 1px solid var(--border-dim);
+    border-bottom: 1px solid var(--border-dim);
+  }
+  .catalogTagActions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-1);
+  }
+  .catalogOption {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-2);
+    width: 100%;
+    padding: 7px var(--sp-3);
+    border-radius: var(--radius-md);
+    border: 1px solid transparent;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+    transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast), opacity var(--t-fast);
+  }
+  .catalogOption:hover { background: var(--bg-overlay); border-color: var(--border-dim); }
+  .catalogOptionActive {
+    background: var(--accent-muted);
+    border-color: var(--accent-dim);
+    color: var(--accent-fg);
+  }
+  .catalogOptionActive:hover {
+    background: var(--accent-muted);
+    color: var(--accent-fg);
+  }
+  .catalogOptionDisabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .catalogOptionDisabled:hover {
+    background: none;
+    border-color: transparent;
+  }
+  .catalogOptionMeta {
+    font-family: var(--font-ui);
+    font-size: 10px;
+    letter-spacing: var(--tracking-wide);
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+  .catalogHeaderCopy {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+  .catalogSubtitle {
+    font-family: var(--font-ui);
+    font-size: var(--text-xs);
+    letter-spacing: var(--tracking-wide);
+    color: var(--text-faint);
+    line-height: var(--leading-snug);
   }
   .browseSubtabs {
     display: flex;

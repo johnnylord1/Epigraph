@@ -11,6 +11,8 @@
   import type { MenuEntry } from "../shared/ContextMenu.svelte";
   import SourceBrowse from "../shared/SourceBrowse.svelte";
 
+  let { embedded = false } = $props();
+
   // ── Constants ─────────────────────────────────────────────────────────────
   const GENRE_TABS  = ["All", "Action", "Romance", "Fantasy", "Comedy", "Drama", "Horror", "Sci-Fi", "Adventure", "Thriller"];
   const GRID_LIMIT  = 200;
@@ -312,26 +314,28 @@
 {:else}
   <div class="root">
 
-    <div class="header">
-      <span class="heading">Featured</span>
-      <div class="tab-strip">
-        {#each GENRE_TABS as tab (tab)}
-          <button
-            class="genre-tab"
-            class:active={currentGenre === tab}
-            onclick={() => switchGenre(tab)}
-          >
-            {#if tab === "All"}<Sparkle size={10} weight="fill" />{/if}
-            {tab}
-          </button>
-        {/each}
+    {#if !embedded}
+      <div class="header">
+        <span class="heading">Featured</span>
+        <div class="tab-strip">
+          {#each GENRE_TABS as tab (tab)}
+            <button
+              class="genre-tab"
+              class:active={currentGenre === tab}
+              onclick={() => switchGenre(tab)}
+            >
+              {#if tab === "All"}<Sparkle size={10} weight="fill" />{/if}
+              {tab}
+            </button>
+          {/each}
+        </div>
+        <button class="refresh-btn" class:spinning={refreshing} onclick={refresh} title="Refresh results" disabled={refreshing}>
+          <ArrowsClockwise size={13} weight="bold" />
+        </button>
       </div>
-      <button class="refresh-btn" class:spinning={refreshing} onclick={refresh} title="Refresh results" disabled={refreshing}>
-        <ArrowsClockwise size={13} weight="bold" />
-      </button>
-    </div>
+    {/if}
 
-    <div class="body">
+    <div class="body" class:bodyEmbedded={embedded}>
       {#if isLoading && visibleGrid.length === 0}
         <div class="manga-grid">
           {#each Array(24) as _, i (i)}
@@ -390,6 +394,7 @@
   .refresh-btn { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: var(--radius-sm); background: none; border: none; color: var(--text-faint); cursor: pointer; flex-shrink: 0; margin-left: auto; transition: color var(--t-base), background var(--t-base); }
   .refresh-btn:hover { color: var(--text-muted); background: var(--bg-raised); }
   .body { flex: 1; overflow-y: auto; padding: var(--sp-4) var(--sp-5) var(--sp-6); will-change: scroll-position; -webkit-overflow-scrolling: touch; contain: layout style; }
+  .bodyEmbedded { padding: var(--sp-4); }
   .manga-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(clamp(90px, 11vw, 130px), 1fr)); gap: var(--sp-2); align-content: start; contain: layout style; }
   .manga-card { background: none; border: none; padding: 0; cursor: pointer; text-align: left; }
   .manga-card:hover .cover { filter: brightness(1.08) saturate(1.05); transform: scale(1.02); }

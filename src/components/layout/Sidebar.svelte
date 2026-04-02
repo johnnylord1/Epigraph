@@ -6,7 +6,7 @@
   const MAIN_TABS: { id: NavPage; label: string; icon: any }[] = [
     { id: "home",       label: "Home",       icon: House },
     { id: "library",    label: "Library",    icon: Books },
-    { id: "search",     label: "Search",     icon: MagnifyingGlass },
+    { id: "search",     label: "Browse",     icon: MagnifyingGlass },
   ];
 
   const UTILITY_TABS: { id: NavPage; label: string; icon: any }[] = [
