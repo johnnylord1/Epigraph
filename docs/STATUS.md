@@ -18,13 +18,14 @@ Phase 4F: Settings information-architecture cleanup
 - Moved tag discovery to `Search > Browse > Tags`.
 - Moved extensions and repository management under `Search > Sources`.
 - Removed History and Tracking from the first-level rail while preserving History in Home and Tracking in Settings.
-- Reorganized the Settings sidebar into grouped sections for App, Reading, Library, Content & Integrations, System, and Advanced.
+- Reworked Settings into a two-stage navigation model where App, Reading, Library, Content & Integrations, System, and Advanced are the primary left-side buttons.
+- Moved each group's sub-options into a compact in-content selector instead of a second full-height column so the settings hierarchy is clearer without crushing the actual panel content.
 - Relabeled `Folders` to `Categories` in the user-facing Settings UI and grouped it with Library.
 - Kept Tracking in Settings and regrouped it under Content & Integrations.
 - Validated the new Settings IA in the real Tauri window without changing any settings behavior.
 
 ## Last Completed Step
-Phase 4F Settings IA cleanup, focused on regrouping Settings navigation and relabeling `Folders` to `Categories` without changing behavior, storage, or backend integration.
+Phase 4F Settings IA cleanup, focused on turning Settings groups into first-level buttons, moving their sub-options into a compact in-content selector, and relabeling `Folders` to `Categories` without changing behavior, storage, or backend integration.
 
 ## Deferred Phase
 Phase 3D: risky identity audit for updater, platform identifiers, and app-data paths.
@@ -58,4 +59,4 @@ Implement a discovery-only phase after Phase 4F: audit the real Home, Search, an
 - Keep onboarding actions explicit and user-triggered; do not silently seed repos or install extensions.
 - Prefer evidence from the real Tauri window over assumptions from upstream Moku or generic onboarding patterns.
 - Treat the new Search hub as the single exposed discovery surface; do not reintroduce duplicate rail destinations for Discover, History, Extensions, or Tracking without a new audited phase.
-- Treat the new grouped Settings IA as the baseline; do not flatten it again or rename `Categories` back to `Folders` without a new product decision.
+- Treat the new two-stage Settings IA as the baseline; keep the secondary navigation compact inside the content area, and do not flatten it again or rename `Categories` back to `Folders` without a new product decision.

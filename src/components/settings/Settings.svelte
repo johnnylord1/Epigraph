@@ -20,11 +20,14 @@
   }
   let { onOpenThemeEditor }: Props = $props();
   type Tab = "general" | "appearance" | "reader" | "library" | "performance" | "keybinds" | "storage" | "folders" | "tracking" | "security" | "content" | "about" | "devtools";
+  type SettingsGroupId = "app" | "reading" | "library-group" | "content-integrations" | "system" | "advanced";
   type SettingsNavItem = { id: Tab; label: string; icon: any };
-  type SettingsNavGroup = { label: string; items: SettingsNavItem[] };
+  type SettingsNavGroup = { id: SettingsGroupId; label: string; icon: any; items: SettingsNavItem[] };
   const SETTINGS_GROUPS: SettingsNavGroup[] = [
     {
+      id: "app",
       label: "App",
+      icon: Gear,
       items: [
         { id: "general",    label: "General",    icon: Gear       },
         { id: "appearance", label: "Appearance", icon: PaintBrush },
@@ -32,27 +35,35 @@
       ],
     },
     {
+      id: "reading",
       label: "Reading",
+      icon: Book,
       items: [
         { id: "reader",     label: "Reader",     icon: Book       },
       ],
     },
     {
+      id: "library-group",
       label: "Library",
+      icon: FolderSimple,
       items: [
         { id: "library",    label: "Library",    icon: Image        },
         { id: "folders",    label: "Categories", icon: FolderSimple },
       ],
     },
     {
+      id: "content-integrations",
       label: "Content & Integrations",
+      icon: ShieldCheck,
       items: [
         { id: "content",    label: "Content",    icon: ShieldCheck },
         { id: "tracking",   label: "Tracking",   icon: ListChecks  },
       ],
     },
     {
+      id: "system",
       label: "System",
+      icon: HardDrives,
       items: [
         { id: "storage",     label: "Storage",     icon: HardDrives },
         { id: "performance", label: "Performance", icon: Sliders    },
@@ -60,7 +71,9 @@
       ],
     },
     {
+      id: "advanced",
       label: "Advanced",
+      icon: Wrench,
       items: [
         { id: "about",      label: "About",      icon: Info   },
         { id: "devtools",   label: "Dev Tools",  icon: Wrench },
@@ -70,6 +83,12 @@
   const TAB_LABELS: Record<Tab, string> = Object.fromEntries(
     SETTINGS_GROUPS.flatMap((group) => group.items.map((item) => [item.id, item.label] as const))
   ) as Record<Tab, string>;
+  const TAB_TO_GROUP: Record<Tab, SettingsGroupId> = Object.fromEntries(
+    SETTINGS_GROUPS.flatMap((group) => group.items.map((item) => [item.id, group.id] as const))
+  ) as Record<Tab, SettingsGroupId>;
+  const DEFAULT_TAB_BY_GROUP: Record<SettingsGroupId, Tab> = Object.fromEntries(
+    SETTINGS_GROUPS.map((group) => [group.id, group.items[0].id] as const)
+  ) as Record<SettingsGroupId, Tab>;
   const THEMES: { id: Theme; label: string; description: string; swatches: string[] }[] = [
     { id: "dark",           label: "Dark",           description: "Default near-black",            swatches: ["#101010","#151515","#a8c4a8","#f0efec"] },
     { id: "high-contrast",  label: "High Contrast",  description: "Darker base, sharper text",     swatches: ["#080808","#111111","#bcd8bc","#ffffff"] },
@@ -79,8 +98,17 @@
     { id: "warm",           label: "Warm",           description: "Amber and sepia tones",         swatches: ["#16130c","#1c1810","#e0b860","#f5f0e0"] },
   ];
   let tab: Tab          = $state("general");
+  let activeGroup: SettingsGroupId = $state("app");
   let contentBodyEl: HTMLDivElement;
+  const currentGroup = $derived.by(
+    () => SETTINGS_GROUPS.find((group) => group.id === activeGroup) ?? SETTINGS_GROUPS[0]
+  );
+  $effect(() => { activeGroup = TAB_TO_GROUP[tab]; });
   $effect(() => { tab; tick().then(() => contentBodyEl?.scrollTo({ top: 0 })); });
+  function openGroup(groupId: SettingsGroupId) {
+    activeGroup = groupId;
+    if (TAB_TO_GROUP[tab] !== groupId) tab = DEFAULT_TAB_BY_GROUP[groupId];
+  }
   function close() { setSettingsOpen(false); }
   function onKey(e: KeyboardEvent) { if (e.key === "Escape" && !listeningKey) close(); }
   $effect(() => {
@@ -875,15 +903,10 @@
       <p class="modal-title">Settings</p>
       <nav class="nav">
         {#each SETTINGS_GROUPS as group}
-          <div class="nav-group">
-            <p class="nav-group-label">{group.label}</p>
-            {#each group.items as t}
-              <button class="nav-item" class:active={tab === t.id} onclick={() => tab = t.id}>
-                <t.icon size={14} weight="light" />
-                <span>{t.label}</span>
-              </button>
-            {/each}
-          </div>
+          <button class="nav-item nav-group-button" class:active={activeGroup === group.id} onclick={() => openGroup(group.id)}>
+            <group.icon size={14} weight="light" />
+            <span>{group.label}</span>
+          </button>
         {/each}
       </nav>
     </div>
@@ -891,6 +914,17 @@
       <div class="content-header">
         <p class="content-title">{TAB_LABELS[tab]}</p>
         <button class="close-btn" aria-label="Close settings" onclick={close}><X size={15} weight="light" /></button>
+      </div>
+      <div class="content-subnav" aria-label={`${currentGroup.label} settings sections`}>
+        <p class="subnav-label">{currentGroup.label}</p>
+        <div class="subnav-list">
+          {#each currentGroup.items as t}
+            <button class="subnav-item" class:active={tab === t.id} onclick={() => tab = t.id}>
+              <t.icon size={14} weight="light" />
+              <span>{t.label}</span>
+            </button>
+          {/each}
+        </div>
       </div>
       <div class="content-body" bind:this={contentBodyEl}>
         {#if tab === "general"}
@@ -2148,22 +2182,54 @@
 </script>
 <style>
   .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: var(--z-settings); display: flex; align-items: center; justify-content: center; animation: fadeIn 0.1s ease both; backdrop-filter: blur(4px); }
-  .modal { width: min(720px, calc(100vw - 48px)); height: min(600px, calc(100vh - 80px)); display: flex; background: var(--bg-surface); border: 1px solid var(--border-base); border-radius: var(--radius-xl); overflow: hidden; animation: scaleIn 0.15s ease both; box-shadow: 0 24px 64px rgba(0,0,0,0.6); }
-  .sidebar { width: 188px; flex-shrink: 0; background: var(--bg-base); border-right: 1px solid var(--border-dim); padding: var(--sp-5) var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-2); overflow-y: auto; }
+  .modal { width: min(920px, calc(100vw - 48px)); height: min(640px, calc(100vh - 80px)); display: flex; background: var(--bg-surface); border: 1px solid var(--border-base); border-radius: var(--radius-xl); overflow: hidden; animation: scaleIn 0.15s ease both; box-shadow: 0 24px 64px rgba(0,0,0,0.6); }
+  .sidebar { width: 160px; flex-shrink: 0; background: var(--bg-base); border-right: 1px solid var(--border-dim); padding: var(--sp-5) var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-2); overflow-y: auto; }
   .modal-title { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-faint); letter-spacing: var(--tracking-wider); text-transform: uppercase; padding: 0 var(--sp-2) var(--sp-3); }
-  .nav { display: flex; flex-direction: column; gap: var(--sp-3); }
-  .nav-group { display: flex; flex-direction: column; gap: 1px; }
-  .nav-group + .nav-group { padding-top: var(--sp-2); border-top: 1px solid var(--border-dim); }
-  .nav-group-label { font-family: var(--font-ui); font-size: 10px; color: var(--text-faint); letter-spacing: var(--tracking-wider); text-transform: uppercase; padding: 0 var(--sp-2) var(--sp-1); }
-  .nav-item { display: flex; align-items: center; gap: var(--sp-2); padding: 6px var(--sp-2); border-radius: var(--radius-md); font-size: var(--text-sm); color: var(--text-muted); background: none; border: none; cursor: pointer; text-align: left; transition: background var(--t-fast), color var(--t-fast); }
+  .nav { display: flex; flex-direction: column; gap: 4px; }
+  .nav-item { display: flex; align-items: center; gap: var(--sp-2); padding: 8px 10px; border-radius: var(--radius-md); font-size: var(--text-sm); color: var(--text-muted); background: none; border: none; cursor: pointer; text-align: left; transition: background var(--t-fast), color var(--t-fast); width: 100%; }
   .nav-item:hover { background: var(--bg-raised); color: var(--text-secondary); }
   .nav-item.active { background: var(--accent-muted); color: var(--accent-fg); }
+  .nav-group-button { justify-content: flex-start; }
   .content { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
   .content-header { display: flex; align-items: center; justify-content: space-between; padding: var(--sp-5) var(--sp-6) var(--sp-4); border-bottom: 1px solid var(--border-dim); flex-shrink: 0; }
   .content-title { font-size: var(--text-base); font-weight: var(--weight-medium); color: var(--text-secondary); }
   .close-btn { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: var(--radius-sm); color: var(--text-faint); background: none; border: none; cursor: pointer; transition: color var(--t-base), background var(--t-base); }
   .close-btn:hover { color: var(--text-muted); background: var(--bg-raised); }
-  .content-body { flex: 1; overflow-y: auto; }
+  .content-subnav {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+    padding: var(--sp-4) var(--sp-6);
+    border-bottom: 1px solid var(--border-dim);
+    background: color-mix(in srgb, var(--bg-overlay) 35%, transparent);
+    flex-shrink: 0;
+  }
+  .subnav-label {
+    font-family: var(--font-ui);
+    font-size: 10px;
+    color: var(--text-faint);
+    letter-spacing: var(--tracking-wider);
+    text-transform: uppercase;
+    padding: 0 2px;
+  }
+  .subnav-list { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+  .subnav-item {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    padding: 7px 12px;
+    border-radius: var(--radius-full);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    background: var(--bg-base);
+    border: 1px solid var(--border-dim);
+    cursor: pointer;
+    text-align: left;
+    transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
+  }
+  .subnav-item:hover { background: var(--bg-raised); color: var(--text-secondary); border-color: var(--border-strong); }
+  .subnav-item.active { background: var(--accent-muted); color: var(--accent-fg); border-color: var(--accent-dim); }
+  .content-body { flex: 1; overflow-y: auto; min-width: 0; }
   .panel { display: flex; flex-direction: column; gap: var(--sp-1); padding: var(--sp-4) var(--sp-6); }
   .section { display: flex; flex-direction: column; gap: 1px; border-bottom: 1px solid var(--border-dim); padding-bottom: var(--sp-4); margin-bottom: var(--sp-2); }
   .section:last-child { border-bottom: none; }
