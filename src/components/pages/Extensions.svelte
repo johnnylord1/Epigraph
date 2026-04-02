@@ -34,6 +34,11 @@
   let setupState: SetupState | null = $state(null);
   let setupActionBusy = $state(false);
 
+  function browseAvailableExtensions() {
+    filter = "available";
+    panel = null;
+  }
+
   async function refreshSetupState() {
     setupState = await detectSetupState(store.settings);
   }
@@ -103,9 +108,31 @@
 
   async function mutate(fn: () => Promise<unknown>, pkgName: string) {
     working = new Set(working).add(pkgName);
-    await fn().catch(console.error);
+    let ok = true;
+    try {
+      await fn();
+    } catch (error) {
+      ok = false;
+      console.error(error);
+    }
     await load();
     working.delete(pkgName); working = new Set(working);
+    return ok;
+  }
+
+  async function installExtension(extension: Extension) {
+    const firstInstallFlow = setupState?.kind === "no_installed_extensions";
+    const didInstall = await mutate(() => gql(UPDATE_EXTENSION, { id: extension.pkgName, install: true }), extension.pkgName);
+    if (!didInstall || !firstInstallFlow) return;
+
+    filter = "installed";
+    addToast({
+      kind: "success",
+      title: "First extension installed",
+      body: setupState?.kind === "ready"
+        ? `${extension.name} is installed. You can head to Search or browse sources now.`
+        : `${extension.name} is installed. If search is still empty, try another content extension or review available sources.`,
+    });
   }
 
   async function installExternal() {
@@ -205,6 +232,7 @@
         actionBusy={setupActionBusy || savingRepos || refreshing}
         onAddRecommendedRepo={addRecommendedRepo}
         onAddManually={() => openPanel("repos")}
+        onBrowseAvailableExtensions={browseAvailableExtensions}
         onOpenRepoManager={() => openPanel("repos")}
         onRetry={refreshSetupState}
       />
@@ -280,7 +308,7 @@
       {:else if setupState?.kind === "no_extension_repos"}
         Add an extension repository to start listing available extensions.
       {:else if setupState?.kind === "no_installed_extensions" && filter === "installed"}
-        No extensions are installed yet. Switch to Available after adding a repo and install one to unlock sources.
+        The repository is configured, but no content extension is installed yet. Switch to Available and install one to unlock sources and search.
       {:else if setupState?.kind === "no_usable_sources"}
         Extensions are present, but Aethon still has no usable sources.
       {:else}
@@ -309,7 +337,7 @@
             {:else if primary.isInstalled}
               <button class="action-btn-dim" onclick={() => mutate(() => gql(UPDATE_EXTENSION, { id: primary.pkgName, uninstall: true }), primary.pkgName)}>Remove</button>
             {:else}
-              <button class="action-btn" onclick={() => mutate(() => gql(UPDATE_EXTENSION, { id: primary.pkgName, install: true }), primary.pkgName)}>Install</button>
+              <button class="action-btn" onclick={() => installExtension(primary)}>Install</button>
             {/if}
             {#if hasVariants}
               <button class="expand-btn" onclick={() => toggleExpand(base)} title="{variants.length + 1} languages">
@@ -334,7 +362,7 @@
                     {:else if v.isInstalled}
                       <button class="action-btn-dim" onclick={() => mutate(() => gql(UPDATE_EXTENSION, { id: v.pkgName, uninstall: true }), v.pkgName)}>Remove</button>
                     {:else}
-                      <button class="action-btn" onclick={() => mutate(() => gql(UPDATE_EXTENSION, { id: v.pkgName, install: true }), v.pkgName)}>Install</button>
+                      <button class="action-btn" onclick={() => installExtension(v)}>Install</button>
                     {/if}
                   </div>
                 </div>

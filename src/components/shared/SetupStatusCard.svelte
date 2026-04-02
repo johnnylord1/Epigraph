@@ -9,6 +9,7 @@
     actionBusy = false,
     onAddRecommendedRepo = () => {},
     onAddManually = () => {},
+    onBrowseAvailableExtensions = () => {},
     onOpenExtensions = () => {},
     onOpenRepoManager = () => {},
     onRetry = () => {},
@@ -18,6 +19,7 @@
     actionBusy?: boolean;
     onAddRecommendedRepo?: () => void;
     onAddManually?: () => void;
+    onBrowseAvailableExtensions?: () => void;
     onOpenExtensions?: () => void;
     onOpenRepoManager?: () => void;
     onRetry?: () => void;
@@ -28,6 +30,7 @@
   function handleAction(kind: SetupActionKind) {
     if (kind === "add_recommended_repo") onAddRecommendedRepo();
     if (kind === "add_manually") onAddManually();
+    if (kind === "browse_available_extensions") onBrowseAvailableExtensions();
     if (kind === "open_extensions") onOpenExtensions();
     if (kind === "open_repo_manager") onOpenRepoManager();
     if (kind === "retry_connection") onRetry();
@@ -68,6 +71,8 @@
             <GitBranch size={12} weight="bold" />
           {:else if action.kind === "open_repo_manager"}
             <GitBranch size={12} weight="bold" />
+          {:else if action.kind === "browse_available_extensions"}
+            <PuzzlePiece size={12} weight="bold" />
           {:else}
             <PuzzlePiece size={12} weight="bold" />
           {/if}

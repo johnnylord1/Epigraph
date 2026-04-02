@@ -1,7 +1,7 @@
 # Status
 
 ## Current Phase
-Phase 4B: actionable repo onboarding
+Phase 4C: extension onboarding after repo setup
 
 ## Completed Today
 - Cloned the upstream Moku repository into `Aethon`.
@@ -20,22 +20,26 @@ Phase 4B: actionable repo onboarding
 - Validated the new setup guidance in the real Tauri window for ready and no-repo scenarios, with offline behavior partially verified through the native desktop runtime.
 - Added an explicit recommended repo path and a manual repo-manager path for the `no_extension_repos` setup state.
 - Validated the recommended and manual repo onboarding flow in the real Tauri window without auto-installing any extension.
+- Clarified the setup gap between “repo configured” and “content extension installed” in the shared setup-state helper.
+- Updated Extensions onboarding so the no-installed-extension state points users to browse available extensions instead of repeating repo setup.
+- Updated Home/Search guidance to talk about installing a content extension once repositories already exist.
 
 ## Last Completed Step
-Phase 4B actionable repo onboarding, including native-window validation of the recommended and manual repo paths.
+Phase 4C extension onboarding after repo setup, focused on guiding users from repository configured to first content extension installed.
 
 ## Deferred Phase
 Phase 3D: risky identity audit for updater, platform identifiers, and app-data paths.
 
 ## Exact Next Prompt
-Implement Phase 4C only: extension onboarding after repo setup for Aethon, help the user install the first usable extension and clarify the difference between repo configured vs extension installed, keep the phase tightly constrained, preserve Apache-2.0 attribution, and do not change reader behavior, Suwayomi integration, dependencies, or platform scope.
+Implement Phase 4D only: source usability and first search flow polish for Aethon, help the user move from extension installed to actual content discovery and clarify source, filter, and language issues where needed, keep the phase tightly constrained, preserve Apache-2.0 attribution, and do not change reader behavior, Suwayomi integration, dependencies, or platform scope.
 
 ## Blockers
 - Discord may still identify the app as `Moku` because the current Discord application ID and asset key remain upstream-controlled outside the repo.
 - Platform identifiers and distribution wiring still use upstream `moku` values in places such as `identifier`, Flatpak app id/command, updater endpoints, and app-data paths.
 - Higher-risk identity cleanup is still deferred because it could break updater, packaging, install paths, or local data continuity.
 - Onboarding should not absorb updater, distribution identifier, or app-data migration work.
-- Phase 4B intentionally stops after repo setup; the first extension still needs an explicit user action and is not auto-installed.
+- Native reproduction of every setup state remains somewhat brittle because it requires temporary mutation of the live Suwayomi profile.
+- Phase 4C still stops before first-search/source polish; an installed extension does not guarantee a usable source or search result path by itself.
 
 ## Files/Directories That Must Not Be Touched Next
 - `src/components/reader/`
@@ -56,3 +60,4 @@ Implement Phase 4C only: extension onboarding after repo setup for Aethon, help 
 - Treat Phase 3D as documented and deferred, not as the next automatic implementation phase.
 - Keep onboarding actions explicit and user-triggered; do not silently seed repos or install extensions.
 - Use `npm exec pnpm` as the fallback local path when `pnpm` is not installed globally.
+- Treat helper extensions like the Suwayomi bridge as insufficient for “ready to browse” onboarding guidance unless a real content extension is also installed.

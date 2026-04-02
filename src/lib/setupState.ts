@@ -3,6 +3,10 @@ import { GET_EXTENSIONS, GET_SETTINGS, GET_SOURCES } from "./queries";
 import type { Extension, Source } from "./types";
 import { shouldHideSource } from "./util";
 
+const NON_CONTENT_EXTENSION_PKG_NAMES = new Set([
+  "eu.kanade.tachiyomi.extension.all.tachidesk",
+]);
+
 export type SetupStateKind =
   | "server_offline"
   | "no_extension_repos"
@@ -14,6 +18,7 @@ export type SetupSurface = "home" | "search" | "extensions";
 export type SetupActionKind =
   | "add_recommended_repo"
   | "add_manually"
+  | "browse_available_extensions"
   | "open_extensions"
   | "open_repo_manager"
   | "retry_connection";
@@ -22,6 +27,8 @@ export interface SetupState {
   kind: SetupStateKind;
   extensionRepoCount: number | null;
   installedExtensionCount: number | null;
+  installedContentExtensionCount: number | null;
+  installedHelperExtensionCount: number | null;
   totalSourceCount: number | null;
   usableSourceCount: number | null;
   hiddenSourceCount: number | null;
@@ -40,6 +47,10 @@ type SetupSettings = {
   nsfwBlockedSourceIds: string[];
 };
 
+function isContentExtension(extension: Pick<Extension, "pkgName">): boolean {
+  return !NON_CONTENT_EXTENSION_PKG_NAMES.has(extension.pkgName);
+}
+
 export async function detectSetupState(settings: SetupSettings): Promise<SetupState> {
   try {
     const [settingsData, extensionsData, sourcesData] = await Promise.all([
@@ -49,7 +60,12 @@ export async function detectSetupState(settings: SetupSettings): Promise<SetupSt
     ]);
 
     const extensionRepoCount = settingsData.settings.extensionRepos?.length ?? 0;
-    const installedExtensionCount = extensionsData.extensions.nodes.filter((ext) => ext.isInstalled).length;
+    const installedExtensions = extensionsData.extensions.nodes.filter((ext) => ext.isInstalled);
+    const installedContentExtensions = installedExtensions.filter(isContentExtension);
+    const installedHelperExtensions = installedExtensions.filter((ext) => !isContentExtension(ext));
+    const installedExtensionCount = installedExtensions.length;
+    const installedContentExtensionCount = installedContentExtensions.length;
+    const installedHelperExtensionCount = installedHelperExtensions.length;
     const allSources = sourcesData.sources.nodes.filter((src) => src.id !== "0");
     const usableSources = allSources.filter((src) => !shouldHideSource(src, settings));
     const totalSourceCount = allSources.length;
@@ -58,13 +74,15 @@ export async function detectSetupState(settings: SetupSettings): Promise<SetupSt
 
     let kind: SetupStateKind = "ready";
     if (extensionRepoCount === 0) kind = "no_extension_repos";
-    else if (installedExtensionCount === 0) kind = "no_installed_extensions";
+    else if (installedContentExtensionCount === 0) kind = "no_installed_extensions";
     else if (usableSourceCount === 0) kind = "no_usable_sources";
 
     return {
       kind,
       extensionRepoCount,
       installedExtensionCount,
+      installedContentExtensionCount,
+      installedHelperExtensionCount,
       totalSourceCount,
       usableSourceCount,
       hiddenSourceCount,
@@ -75,6 +93,8 @@ export async function detectSetupState(settings: SetupSettings): Promise<SetupSt
       kind: "server_offline",
       extensionRepoCount: null,
       installedExtensionCount: null,
+      installedContentExtensionCount: null,
+      installedHelperExtensionCount: null,
       totalSourceCount: null,
       usableSourceCount: null,
       hiddenSourceCount: null,
@@ -101,11 +121,18 @@ export function getSetupStatePresentation(state: SetupState, surface: SetupSurfa
         ],
       };
     case "no_installed_extensions":
+      {
+        const helperHint = state.installedHelperExtensionCount && state.installedHelperExtensionCount > 0
+          ? " Helper extensions like the Suwayomi bridge do not unlock content browsing on their own."
+          : "";
       return {
-        title: surface === "extensions" ? "Install your first extension" : "Aethon still needs an installed extension",
-        body: "Repositories are configured, but no extension is installed yet. Install one extension before search and browsing will feel useful.",
-        actions: surface === "extensions" ? [] : [{ kind: "open_extensions", label: "Open Extensions" }],
+        title: surface === "extensions" ? "Install your first content extension" : "Aethon still needs a content extension",
+        body: `A repository is configured, but there is still no installed content extension. Install one extension before search and browsing will feel useful.${helperHint}`,
+        actions: surface === "extensions"
+          ? [{ kind: "browse_available_extensions", label: "Browse available extensions" }]
+          : [{ kind: "open_extensions", label: "Browse extensions" }],
       };
+      }
     case "no_usable_sources": {
       const filterHint = state.hiddenSourceCount && state.hiddenSourceCount > 0
         ? " Current content filters may also be hiding all available sources."
@@ -113,7 +140,9 @@ export function getSetupStatePresentation(state: SetupState, surface: SetupSurfa
       return {
         title: surface === "search" ? "Search isn't ready to use yet" : "No usable sources are available yet",
         body: `Aethon can see installed extensions, but there are still no usable sources for browsing or search.${filterHint}`,
-        actions: surface === "extensions" ? [] : [{ kind: "open_extensions", label: "Open Extensions" }],
+        actions: surface === "extensions"
+          ? [{ kind: "browse_available_extensions", label: "Browse available extensions" }]
+          : [{ kind: "open_extensions", label: "Open Extensions" }],
       };
     }
     case "ready":
