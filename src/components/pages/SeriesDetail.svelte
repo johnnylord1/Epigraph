@@ -5,7 +5,7 @@
   import { GET_MANGA, GET_CHAPTERS, FETCH_CHAPTERS, ENQUEUE_DOWNLOAD, UPDATE_MANGA, MARK_CHAPTER_READ, MARK_CHAPTERS_READ, DELETE_DOWNLOADED_CHAPTERS, ENQUEUE_CHAPTERS_DOWNLOAD, GET_ALL_MANGA, GET_CATEGORIES, CREATE_CATEGORY, UPDATE_MANGA_CATEGORIES } from "../../lib/queries";
   import { cache, CACHE_KEYS, recordSourceAccess } from "../../lib/cache";
   import { dedupeMangaById, dedupeMangaByTitle } from "../../lib/util";
-  import { store, addToast, updateSettings, openReader, setActiveManga, setGenreFilter, setNavPage, linkManga, unlinkManga, checkAndMarkCompleted as storeCheckAndMarkCompleted } from "../../store/state.svelte";
+  import { store, addToast, updateSettings, openReader, setActiveManga, openSearchBrowseFeatured, linkManga, unlinkManga, checkAndMarkCompleted as storeCheckAndMarkCompleted } from "../../store/state.svelte";
   import type { Manga, Chapter, Category } from "../../lib/types";
   import ContextMenu, { type MenuEntry } from "../shared/ContextMenu.svelte";
   import MigrateModal from "./MigrateModal.svelte";
@@ -469,7 +469,7 @@
         {#if manga?.genre?.length}
           <div class="genres">
             {#each (genresExpanded ? manga.genre : manga.genre.slice(0, 3)) as g}
-              <button class="genre" onclick={() => { setGenreFilter(g); setNavPage("explore"); setActiveManga(null); }}>{g}</button>
+              <button class="genre" onclick={() => { openSearchBrowseFeatured(g); setActiveManga(null); }}>{g}</button>
             {/each}
             {#if manga.genre.length > 3}
               <button class="genre-toggle" onclick={() => genresExpanded = !genresExpanded}>
@@ -1082,6 +1082,6 @@
   @keyframes scaleIn { from { opacity: 0; transform: scale(0.97) } to { opacity: 1; transform: scale(1) } }
 </style>
 
-<script module>
+<script module lang="ts">
   function focusOnMount(node: HTMLElement) { node.focus(); }
 </script>

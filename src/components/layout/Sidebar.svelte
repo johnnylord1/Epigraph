@@ -1,28 +1,27 @@
 <script lang="ts">
-  import { House, Books, MagnifyingGlass, ClockCounterClockwise, Compass, DownloadSimple, PuzzlePiece, GearSix, ChartLineUp } from "phosphor-svelte";
-  import { store, setNavPage } from "../../store/state.svelte";
+  import { House, Books, MagnifyingGlass, DownloadSimple, GearSix } from "phosphor-svelte";
+  import { store, setNavPage, openHomeDashboard } from "../../store/state.svelte";
   import type { NavPage } from "../../store/state.svelte";
 
-  const TABS: { id: NavPage; label: string; icon: any }[] = [
+  const MAIN_TABS: { id: NavPage; label: string; icon: any }[] = [
     { id: "home",       label: "Home",       icon: House },
     { id: "library",    label: "Library",    icon: Books },
     { id: "search",     label: "Search",     icon: MagnifyingGlass },
-    { id: "history",    label: "History",    icon: ClockCounterClockwise },
-    { id: "explore",    label: "Discover",   icon: Compass },
+  ];
+
+  const UTILITY_TABS: { id: NavPage; label: string; icon: any }[] = [
     { id: "downloads",  label: "Downloads",  icon: DownloadSimple },
-    { id: "extensions", label: "Extensions", icon: PuzzlePiece },
-    { id: "tracking",   label: "Tracking",   icon: ChartLineUp },
   ];
 
   function navigate(id: NavPage) {
     setNavPage(id);
     store.activeManga = null;
     store.genreFilter = "";
-    if (id !== "explore") store.activeSource = null;
+    if (id !== "search") store.activeSource = null;
   }
 
   function goHome() {
-    setNavPage("home");
+    openHomeDashboard();
     store.activeSource  = null;
     store.activeManga   = null;
     store.libraryFilter = "library";
@@ -35,7 +34,7 @@
     <div class="logo-icon"></div>
   </button>
   <nav class="nav">
-    {#each TABS as tab}
+    {#each MAIN_TABS as tab}
       <button class="tab" class:active={store.navPage === tab.id}
         title={tab.label} onclick={() => navigate(tab.id)}>
         <tab.icon size={18} weight="light" />
@@ -43,7 +42,13 @@
     {/each}
   </nav>
   <div class="bottom">
-    <button class="settings-btn" onclick={() => store.settingsOpen = true} title="Settings">
+    {#each UTILITY_TABS as tab}
+      <button class="tab" class:active={store.navPage === tab.id}
+        title={tab.label} onclick={() => navigate(tab.id)}>
+        <tab.icon size={18} weight="light" />
+      </button>
+    {/each}
+    <button class="settings-btn" class:active={store.settingsOpen} onclick={() => store.settingsOpen = true} title="Settings">
       <GearSix size={18} weight="light" />
     </button>
   </div>
@@ -63,8 +68,9 @@
   .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .tab.active { color: var(--accent-fg); background: var(--accent-muted); }
   .tab.active:hover { color: var(--accent-fg); background: var(--accent-muted); }
-  .bottom { flex-shrink: 0; display: flex; flex-direction: column; align-items: center; width: 100%; padding: var(--sp-3) var(--sp-2) 0; border-top: 1px solid var(--border-dim); margin-top: var(--sp-3); }
+  .bottom { flex-shrink: 0; display: flex; flex-direction: column; align-items: center; gap: var(--sp-1); width: 100%; padding: var(--sp-3) var(--sp-2) 0; border-top: 1px solid var(--border-dim); margin-top: var(--sp-3); }
   .settings-btn { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-md); color: var(--text-faint); background: none; border: none; outline: none; cursor: pointer; padding: 0; appearance: none; -webkit-appearance: none; transition: color var(--t-base), background var(--t-base), transform var(--t-slow); }
   .settings-btn:hover { color: var(--text-muted); background: var(--bg-raised); transform: rotate(30deg); }
   .settings-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .settings-btn.active { color: var(--accent-fg); background: var(--accent-muted); transform: none; }
 </style>

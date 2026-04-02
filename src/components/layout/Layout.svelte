@@ -4,13 +4,8 @@
   import Home           from "../pages/Home.svelte";
   import Library        from "../pages/Library.svelte";
   import SeriesDetail   from "../pages/SeriesDetail.svelte";
-  import RecentActivity from "./RecentActivity.svelte";
   import Search         from "../pages/Search.svelte";
-  import Discover       from "../pages/Discover.svelte";
-  import GenreDrillPage from "../pages/GenreDrillPage.svelte";
   import Downloads      from "../pages/Downloads.svelte";
-  import Extensions     from "../pages/Extensions.svelte";
-  import Tracking       from "../pages/Tracking.svelte";
 </script>
 
 <div class="root">
@@ -24,18 +19,8 @@
       <Library />
     {:else if store.navPage === "search"}
       <Search />
-    {:else if store.navPage === "history"}
-      <RecentActivity />
-    {:else if (store.navPage === "explore" || store.navPage === "sources") && store.genreFilter}
-      <GenreDrillPage />
-    {:else if store.navPage === "explore" || store.navPage === "sources"}
-      <Discover />
     {:else if store.navPage === "downloads"}
       <Downloads />
-    {:else if store.navPage === "extensions"}
-      <Extensions />
-    {:else if store.navPage === "tracking"}
-      <Tracking />
     {:else}
       <Home />
     {/if}

@@ -5,7 +5,7 @@
   import { GET_MANGA, GET_CHAPTERS, FETCH_MANGA, FETCH_CHAPTERS, UPDATE_MANGA, ENQUEUE_CHAPTERS_DOWNLOAD, GET_CATEGORIES, CREATE_CATEGORY, UPDATE_MANGA_CATEGORIES } from "../../lib/queries";
   import { GET_ALL_MANGA } from "../../lib/queries";
   import { cache, CACHE_KEYS } from "../../lib/cache";
-  import { store, openReader, addToast, linkManga, unlinkManga, setPreviewManga, setActiveManga, setNavPage, setGenreFilter, checkAndMarkCompleted as storeCheckAndMarkCompleted } from "../../store/state.svelte";
+  import { store, openReader, addToast, linkManga, unlinkManga, setPreviewManga, setActiveManga, openSearchBrowseFeatured, checkAndMarkCompleted as storeCheckAndMarkCompleted } from "../../store/state.svelte";
   import type { Manga, Chapter, Category } from "../../lib/types";
 
   let manga: Manga | null      = $state(null);
@@ -386,7 +386,7 @@
         {#if !loadingDetail && displayManga?.genre?.length}
           <div class="genres">
             {#each displayManga.genre as g}
-              <button class="genre-tag" onclick={() => { setGenreFilter(g); setNavPage("explore"); close(); }}>{g}</button>
+              <button class="genre-tag" onclick={() => { openSearchBrowseFeatured(g); close(); }}>{g}</button>
             {/each}
           </div>
         {/if}
@@ -454,7 +454,7 @@
 
 {/if}
 
-<script module>
+<script module lang="ts">
   function focusAction(node: HTMLElement) { node.focus(); }
 </script>
 

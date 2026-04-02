@@ -4,14 +4,19 @@
   import { GET_SOURCES, FETCH_SOURCE_MANGA } from "../../lib/queries";
   import { cache, CACHE_KEYS, getPageSet } from "../../lib/cache";
   import { dedupeSources, dedupeMangaById, dedupeMangaByTitle, shouldHideNsfw, shouldHideSource } from "../../lib/util";
-  import { store, setNavPage, setSearchPrefill, setPreviewManga, setExtensionsPanelHint, addToast } from "../../store/state.svelte";
+  import { store, setSearchPrefill, setPreviewManga, setExtensionsPanelHint, addToast, setSearchTabHint, setSearchBrowseHint, setSearchSourcesPaneHint } from "../../store/state.svelte";
   import type { Manga, Source } from "../../lib/types";
   import SetupStatusCard from "../shared/SetupStatusCard.svelte";
+  import Discover from "./Discover.svelte";
+  import GenreDrillPage from "./GenreDrillPage.svelte";
+  import Extensions from "./Extensions.svelte";
   import { detectSetupState, type SetupState } from "../../lib/setupState";
   import { ensureExtensionRepo, RECOMMENDED_EXTENSION_REPO } from "../../lib/defaultRepos";
 
-  type SearchTab = "keyword" | "tag" | "source";
-  type TagMode   = "AND" | "OR";
+  type SearchTab  = "keyword" | "browse" | "source";
+  type BrowseTab  = "featured" | "tag";
+  type SourcePane = "browse" | "extensions";
+  type TagMode    = "AND" | "OR";
 
   interface SourceResult {
     source:  Source;
@@ -67,6 +72,8 @@
   `;
 
   let tab: SearchTab = $state("keyword");
+  let browseTab: BrowseTab = $state("featured");
+  let sourcePane: SourcePane = $state("browse");
 
   let preferredLang = store.settings?.preferredExtensionLang ?? "";
   let setupState: SetupState | null = $state(null);
@@ -97,7 +104,8 @@
           : `${result.repo.name} is already configured. Next, install your first extension.`,
       });
       await refreshSetupState();
-      setNavPage("extensions");
+      tab = "source";
+      sourcePane = "extensions";
     } catch (error) {
       addToast({
         kind: "error",
@@ -110,9 +118,25 @@
   }
 
   function openRepoManagerFlow() {
+    tab = "source";
+    sourcePane = "extensions";
     setExtensionsPanelHint("repos");
-    setNavPage("extensions");
   }
+
+  $effect(() => {
+    if (store.searchTabHint) {
+      tab = store.searchTabHint === "sources" ? "source" : store.searchTabHint;
+      setSearchTabHint(null);
+    }
+    if (store.searchBrowseHint) {
+      browseTab = store.searchBrowseHint === "tags" ? "tag" : "featured";
+      setSearchBrowseHint(null);
+    }
+    if (store.searchSourcesPaneHint) {
+      sourcePane = store.searchSourcesPaneHint;
+      setSearchSourcesPaneHint(null);
+    }
+  });
 
   $effect(() => {
     if (store.searchPrefill) {
@@ -581,14 +605,14 @@
       </button>
       <button
         class="tab"
-        class:tabActive={tab === "tag"}
-        onclick={() => (tab = "tag")}
+        class:tabActive={tab === "browse"}
+        onclick={() => (tab = "browse")}
       >
         
         <svg width="11" height="11" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
           <path d="M224,104H200l8-48a8,8,0,0,0-15.79-2.67L183.79,104H136l8-48a8,8,0,0,0-15.79-2.67L119.79,104H72a8,8,0,0,0,0,16h45.33L105.6,200H56a8,8,0,0,0,0,16H103l-8,48a8,8,0,0,0,15.79,2.67L119.21,216H168l-8,48a8,8,0,0,0,15.79,2.67L184.21,216H232a8,8,0,0,0,0-16H186.67l11.73-80H224a8,8,0,0,0,0-16Zm-69.33,96H101.6L113.33,120h53.07Z"/>
         </svg>
-        Tags
+        Browse
       </button>
       <button
         class="tab"
@@ -612,7 +636,7 @@
         actionBusy={setupActionBusy}
         onAddRecommendedRepo={addRecommendedRepo}
         onAddManually={openRepoManagerFlow}
-        onOpenExtensions={() => setNavPage("extensions")}
+        onOpenExtensions={() => { tab = "source"; sourcePane = "extensions"; }}
         onRetry={refreshSetupState}
       />
     </div>
@@ -814,9 +838,26 @@
 
   
 
-  {:else if tab === "tag"}
+  {:else if tab === "browse"}
+    <div class="browseShell">
+      <div class="browseSubtabs">
+        <button class="tab" class:tabActive={browseTab === "featured"} onclick={() => (browseTab = "featured")}>
+          Featured
+        </button>
+        <button class="tab" class:tabActive={browseTab === "tag"} onclick={() => (browseTab = "tag")}>
+          Tags
+        </button>
+      </div>
+
+      {#if browseTab === "featured"}
+        {#if store.genreFilter}
+          <GenreDrillPage />
+        {:else}
+          <Discover />
+        {/if}
+      {:else}
     <div class="splitRoot">
-      
+
       <div class="splitSidebar">
         <div class="splitSearchWrap">
           <svg width="12" height="12" viewBox="0 0 256 256" fill="currentColor" class="splitSearchIcon" aria-hidden="true">
@@ -994,12 +1035,25 @@
         {/if}
       </div>
     </div>
-
-  
+      {/if}
+    </div>
 
   {:else if tab === "source"}
+    <div class="browseShell">
+      <div class="browseSubtabs">
+        <button class="tab" class:tabActive={sourcePane === "browse"} onclick={() => (sourcePane = "browse")}>
+          Browse Sources
+        </button>
+        <button class="tab" class:tabActive={sourcePane === "extensions"} onclick={() => (sourcePane = "extensions")}>
+          Extensions & Repos
+        </button>
+      </div>
+
+      {#if sourcePane === "extensions"}
+        <Extensions />
+      {:else}
     <div class="splitRoot">
-      
+
       <div class="splitSidebar">
         <div class="srcLangRow">
           <span class="langPocketLabel">Language</span>
@@ -1160,6 +1214,8 @@
         {/if}
       </div>
     </div>
+      {/if}
+    </div>
   {/if}
 </div>
 
@@ -1181,6 +1237,20 @@
   }
   .setup-banner {
     padding: var(--sp-3) var(--sp-4) 0;
+    flex-shrink: 0;
+  }
+  .browseShell {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .browseSubtabs {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: var(--sp-2) var(--sp-4) 0;
     flex-shrink: 0;
   }
   .visibilityCard {

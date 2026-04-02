@@ -1,7 +1,7 @@
 # Status
 
 ## Current Phase
-Phase 4D: source visibility clarity in Search
+Phase 4E: navigation and discovery-hub refactor
 
 ## Completed Today
 - Repo foundation, safe visible rebrand, desktop validation, and low-risk audit fixes remain complete.
@@ -13,22 +13,27 @@ Phase 4D: source visibility clarity in Search
 - Added Search guidance that explains why installed content extensions can outnumber currently visible sources.
 - Added next-step CTAs that point users to review visibility constraints or open the Sources tab without changing repo or extension setup.
 - Validated the new visibility guidance in the real Tauri window while keeping a working source browse flow intact.
+- Consolidated first-level discovery navigation under Search in the real desktop app.
+- Moved the old Discover/catalog surface to `Search > Browse > Featured`.
+- Moved tag discovery to `Search > Browse > Tags`.
+- Moved extensions and repository management under `Search > Sources`.
+- Removed History and Tracking from the first-level rail while preserving History in Home and Tracking in Settings.
 
 ## Last Completed Step
-Phase 4D source visibility clarity in Search, focused on explaining filter-driven mismatches between installed extensions and visible sources.
+Phase 4E navigation/discovery refactor, focused on making Search the single discovery hub without rewriting working search, browse, source, history, tracking, or extension behavior.
 
 ## Deferred Phase
 Phase 3D: risky identity audit for updater, platform identifiers, and app-data paths.
 
 ## Exact Next Prompt
-Implement the next small product phase only after a real-window audit confirms the next blocker in Aethon, prefer HUD/navigation cleanup or a smaller follow-up Search polish only if the issue is reproduced concretely, preserve Apache-2.0 attribution, and do not change reader behavior, Suwayomi integration, dependencies, or platform scope.
+Implement a discovery-only phase after Phase 4E: audit the real post-refactor navigation, Home, and Search flows in Aethon to confirm the next UX issue before any visual cleanup, use the real Tauri window as the primary target, preserve Apache-2.0 attribution, and do not change reader behavior, Suwayomi integration, dependencies, or platform scope.
 
 ## Blockers
 - Discord may still identify the app as `Moku` because the current Discord application ID and asset key remain upstream-controlled outside the repo.
 - Platform identifiers and distribution wiring still use upstream `moku` values in places such as `identifier`, Flatpak app id/command, updater endpoints, and app-data paths.
 - Higher-risk identity cleanup is still deferred because it could break updater, packaging, install paths, or local data continuity.
-- The current configured profile shows fewer usable sources than installed content extensions because current content filters hide part of the installed source set.
-- Keyword-search automation in the native harness was inconclusive, so the team should not assume keyword search is broken without a tighter reproduction.
+- The current configured profile still shows fewer visible sources than installed content extensions because current content visibility and language constraints hide part of the installed source set.
+- The packaged Tauri validation path required a fresh `tauri build --debug` artifact because an older debug runtime was stale; future native validation should prefer a fresh built artifact when shell changes do not appear in the window.
 
 ## Files/Directories That Must Not Be Touched Next
 - `src/components/reader/`
@@ -48,4 +53,4 @@ Implement the next small product phase only after a real-window audit confirms t
 - Treat Phase 3D as documented and deferred, not as the next automatic implementation phase.
 - Keep onboarding actions explicit and user-triggered; do not silently seed repos or install extensions.
 - Prefer evidence from the real Tauri window over assumptions from upstream Moku or generic onboarding patterns.
-- Treat Search visibility guidance as explanatory only; do not broaden it into a generic search rewrite without a new audited prompt.
+- Treat the new Search hub as the single exposed discovery surface; do not reintroduce duplicate rail destinations for Discover, History, Extensions, or Tracking without a new audited phase.

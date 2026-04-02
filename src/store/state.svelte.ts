@@ -4,7 +4,10 @@ import { DEFAULT_KEYBINDS, type Keybinds } from "../lib/keybinds";
 export type PageStyle        = "single" | "double" | "longstrip";
 export type FitMode          = "width" | "height" | "screen" | "original";
 export type LibraryFilter    = "all" | "library" | "downloaded" | string;
-export type NavPage          = "home" | "library" | "sources" | "explore" | "downloads" | "extensions" | "history" | "search" | "tracking";
+export type NavPage          = "home" | "library" | "search" | "downloads";
+export type SearchHubTab     = "keyword" | "browse" | "sources";
+export type SearchBrowseTab  = "featured" | "tags";
+export type SearchSourcesPane = "browse" | "extensions";
 export type ReadingDirection = "ltr" | "rtl";
 export type ChapterSortDir   = "desc" | "asc";
 export type ChapterSortMode  = "source" | "chapterNumber" | "uploadDate";
@@ -410,10 +413,16 @@ function todayStr(): string {
 
 const genId = () => Math.random().toString(36).slice(2, 10);
 
+function normalizeNavPage(savedNavPage: unknown): NavPage {
+  if (savedNavPage === "library" || savedNavPage === "search" || savedNavPage === "downloads") return savedNavPage;
+  if (savedNavPage === "explore" || savedNavPage === "extensions" || savedNavPage === "sources") return "search";
+  return "home";
+}
+
 // ── Store ─────────────────────────────────────────────────────────────────────
 
 class Store {
-  navPage:           NavPage          = $state(saved?.navPage       ?? "home");
+  navPage:           NavPage          = $state(normalizeNavPage(saved?.navPage));
   libraryFilter:     LibraryFilter    = $state("library");
   history:           HistoryEntry[]   = $state(saved?.history       ?? []);
   /**
@@ -445,6 +454,10 @@ class Store {
   pageNumber:        number           = $state(1);
   libraryTagFilter:  string[]         = $state([]);
   settingsOpen:      boolean          = $state(false);
+  homePanelHint:     "history" | null = $state(null);
+  searchTabHint:     SearchHubTab | null = $state(null);
+  searchBrowseHint:  SearchBrowseTab | null = $state(null);
+  searchSourcesPaneHint: SearchSourcesPane | null = $state(null);
   extensionsPanelHint: "repos" | null = $state(null);
   activeDownloads:   ActiveDownload[] = $state([]);
   toasts:            Toast[]          = $state([]);
@@ -647,6 +660,10 @@ class Store {
   setCategories(cats: Category[])              { this.categories       = cats; }
   setActiveDownloads(next: ActiveDownload[])     { this.activeDownloads  = next; }
   setNavPage(next: NavPage)                      { this.navPage          = next; this.settingsOpen = false; }
+  setHomePanelHint(next: "history" | null)      { this.homePanelHint    = next; }
+  setSearchTabHint(next: SearchHubTab | null)   { this.searchTabHint    = next; }
+  setSearchBrowseHint(next: SearchBrowseTab | null) { this.searchBrowseHint = next; }
+  setSearchSourcesPaneHint(next: SearchSourcesPane | null) { this.searchSourcesPaneHint = next; }
   setLibraryFilter(next: LibraryFilter)          { this.libraryFilter    = next; }
   setGenreFilter(next: string)                   { this.genreFilter      = next; }
   setSearchPrefill(next: string)                 { this.searchPrefill    = next; }
@@ -717,6 +734,58 @@ class Store {
     this.discoverLibraryIds = new Set();
     this.discoverSrcOffset++;
   }
+
+  openSearchKeyword() {
+    this.navPage = "search";
+    this.settingsOpen = false;
+    this.searchTabHint = "keyword";
+    this.searchBrowseHint = null;
+    this.searchSourcesPaneHint = null;
+    this.homePanelHint = null;
+  }
+
+  openSearchBrowseFeatured(genre?: string | null) {
+    this.navPage = "search";
+    this.settingsOpen = false;
+    this.searchTabHint = "browse";
+    this.searchBrowseHint = "featured";
+    this.searchSourcesPaneHint = null;
+    this.homePanelHint = null;
+    this.activeSource = null;
+    if (genre) this.genreFilter = genre;
+  }
+
+  openSearchBrowseTags() {
+    this.navPage = "search";
+    this.settingsOpen = false;
+    this.searchTabHint = "browse";
+    this.searchBrowseHint = "tags";
+    this.searchSourcesPaneHint = null;
+    this.homePanelHint = null;
+    this.activeSource = null;
+  }
+
+  openSearchSources(panel: SearchSourcesPane = "browse", repoPanel: "repos" | null = null) {
+    this.navPage = "search";
+    this.settingsOpen = false;
+    this.searchTabHint = "sources";
+    this.searchBrowseHint = null;
+    this.searchSourcesPaneHint = panel;
+    this.extensionsPanelHint = repoPanel;
+    this.homePanelHint = null;
+  }
+
+  openHomeDashboard() {
+    this.navPage = "home";
+    this.settingsOpen = false;
+    this.homePanelHint = null;
+  }
+
+  openHomeHistory() {
+    this.navPage = "home";
+    this.settingsOpen = false;
+    this.homePanelHint = "history";
+  }
 }
 
 export const store = new Store();
@@ -748,6 +817,10 @@ export function setPageUrls(next: string[])                              { store
 export function setPageNumber(next: number)                              { store.setPageNumber(next); }
 export function setLibraryTagFilter(next: string[])                      { store.setLibraryTagFilter(next); }
 export function setSettingsOpen(next: boolean)                           { store.setSettingsOpen(next); }
+export function setHomePanelHint(next: "history" | null)                 { store.setHomePanelHint(next); }
+export function setSearchTabHint(next: SearchHubTab | null)              { store.setSearchTabHint(next); }
+export function setSearchBrowseHint(next: SearchBrowseTab | null)        { store.setSearchBrowseHint(next); }
+export function setSearchSourcesPaneHint(next: SearchSourcesPane | null) { store.setSearchSourcesPaneHint(next); }
 export function setExtensionsPanelHint(next: "repos" | null)             { store.setExtensionsPanelHint(next); }
 export function updateSettings(patch: Partial<Settings>)                 { store.updateSettings(patch); }
 export function resetKeybinds()                                          { store.resetKeybinds(); }
@@ -759,6 +832,12 @@ export function getBookmark(chapterId: number)                               { r
 export function toggleHiddenCategory(id: number)                           { store.toggleHiddenCategory(id); }
 export function saveCustomTheme(theme: CustomTheme)                        { store.saveCustomTheme(theme); }
 export function deleteCustomTheme(id: string)                              { store.deleteCustomTheme(id); }
+export function openSearchKeyword()                                      { store.openSearchKeyword(); }
+export function openSearchBrowseFeatured(genre?: string | null)          { store.openSearchBrowseFeatured(genre); }
+export function openSearchBrowseTags()                                   { store.openSearchBrowseTags(); }
+export function openSearchSources(panel?: SearchSourcesPane, repoPanel?: "repos" | null) { store.openSearchSources(panel, repoPanel); }
+export function openHomeDashboard()                                      { store.openHomeDashboard(); }
+export function openHomeHistory()                                        { store.openHomeHistory(); }
 export async function checkAndMarkCompleted(
   mangaId:    number,
   chaps:      Chapter[],

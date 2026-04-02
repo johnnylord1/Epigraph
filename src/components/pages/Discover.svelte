@@ -313,7 +313,7 @@
   <div class="root">
 
     <div class="header">
-      <span class="heading">Discover</span>
+      <span class="heading">Featured</span>
       <div class="tab-strip">
         {#each GENRE_TABS as tab (tab)}
           <button

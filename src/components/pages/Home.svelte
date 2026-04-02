@@ -4,10 +4,11 @@
   import { gql, thumbUrl } from "../../lib/client";
   import { GET_LIBRARY, GET_CHAPTERS, GET_MANGA, GET_CATEGORIES } from "../../lib/queries";
   import { cache, CACHE_KEYS } from "../../lib/cache";
-  import { store, openReader, setHeroSlot, setActiveManga, setPreviewManga, setNavPage, setGenreFilter, setLibraryFilter, setExtensionsPanelHint, addToast } from "../../store/state.svelte";
+  import { store, openReader, setHeroSlot, setActiveManga, setPreviewManga, setNavPage, setLibraryFilter, addToast, openSearchBrowseFeatured, openSearchSources, openHomeDashboard, openHomeHistory } from "../../store/state.svelte";
   import type { HistoryEntry } from "../../store/state.svelte";
   import type { Manga, Chapter, Category } from "../../lib/types";
   import SetupStatusCard from "../shared/SetupStatusCard.svelte";
+  import RecentActivity from "../layout/RecentActivity.svelte";
   import { detectSetupState, type SetupState } from "../../lib/setupState";
   import { ensureExtensionRepo, RECOMMENDED_EXTENSION_REPO } from "../../lib/defaultRepos";
 
@@ -61,7 +62,7 @@
           : `${result.repo.name} is already configured. Next, install your first extension.`,
       });
       await refreshSetupState();
-      setNavPage("extensions");
+      openSearchSources("extensions");
     } catch (error) {
       addToast({
         kind: "error",
@@ -74,8 +75,7 @@
   }
 
   function openRepoManagerFlow() {
-    setExtensionsPanelHint("repos");
-    setNavPage("extensions");
+    openSearchSources("extensions", "repos");
   }
 
   function loadLibrary() {
@@ -279,6 +279,16 @@
 
 <div class="root">
   <div class="body">
+    {#if store.homePanelHint === "history"}
+      <div class="history-view">
+        <div class="history-view-header">
+          <button class="history-back" onclick={openHomeDashboard}>
+            <ArrowLeft size={11} weight="bold" /> Back to Home
+          </button>
+        </div>
+        <RecentActivity />
+      </div>
+    {:else}
     {#if setupState && setupState.kind !== "ready"}
       <div class="setup-wrap">
         <SetupStatusCard
@@ -287,7 +297,7 @@
           actionBusy={setupActionBusy}
           onAddRecommendedRepo={addRecommendedRepo}
           onAddManually={openRepoManagerFlow}
-          onOpenExtensions={() => setNavPage("extensions")}
+          onOpenExtensions={() => openSearchSources("extensions")}
           onRetry={refreshSetupState}
         />
       </div>
@@ -331,7 +341,7 @@
                 <span class="hero-tag hero-tag-pinned"><PushPin size={8} weight="fill" /> Pinned</span>
               {/if}
               {#each (heroManga?.genre ?? []).slice(0, 3) as g}
-                <button class="hero-tag hero-tag-genre" onclick={() => { setGenreFilter(g); setNavPage("explore"); }}>{g}</button>
+                <button class="hero-tag hero-tag-genre" onclick={() => openSearchBrowseFeatured(g)}>{g}</button>
               {/each}
             </div>
 
@@ -432,7 +442,7 @@
       <div class="section-header">
         <span class="section-title"><Clock size={10} weight="bold" /> Recent Activity</span>
         {#if recentHistory.length > 0}
-          <button class="see-all" onclick={() => setNavPage("history")}>Full History <ArrowRight size={9} weight="bold" /></button>
+          <button class="see-all" onclick={openHomeHistory}>Full History <ArrowRight size={9} weight="bold" /></button>
         {/if}
       </div>
       <div class="activity-list">
@@ -514,7 +524,7 @@
         </div>
       </div>
     </div>
-
+    {/if}
   </div>
 </div>
 
@@ -556,6 +566,10 @@
   .root { display: flex; flex-direction: column; height: 100%; overflow: hidden; animation: fadeIn 0.14s ease both; }
   .body { flex: 1; display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden; min-height: 0; }
   .setup-wrap { padding: var(--sp-3) var(--sp-4) 0; flex-shrink: 0; }
+  .history-view { display: flex; flex-direction: column; min-height: 100%; }
+  .history-view-header { padding: var(--sp-3) var(--sp-4) 0; flex-shrink: 0; }
+  .history-back { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); color: var(--text-faint); background: none; border: 1px solid var(--border-dim); border-radius: var(--radius-full); padding: 6px 12px; cursor: pointer; transition: color var(--t-base), border-color var(--t-base), background var(--t-base); }
+  .history-back:hover { color: var(--text-secondary); border-color: var(--border-strong); background: var(--bg-raised); }
   .hero-section { padding: var(--sp-3) var(--sp-4) var(--sp-2); flex-shrink: 0; display: flex; flex-direction: column; }
   .hero-stage { position: relative; display: flex; align-items: stretch; height: 374px; border-radius: var(--radius-xl); overflow: hidden; background: var(--bg-raised); border: 1px solid var(--border-dim); box-shadow: 0 6px 28px rgba(0,0,0,0.28); }
   .hero-backdrop { position: absolute; inset: -14px; background-size: cover; background-position: center 25%; filter: blur(20px) saturate(2.2) brightness(0.45); transform: scale(1.07); pointer-events: none; z-index: 0; }
