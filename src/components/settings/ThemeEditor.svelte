@@ -233,7 +233,7 @@
               <div class="prv-win-dots">
                 <span></span><span></span><span></span>
               </div>
-              <div class="prv-win-title">Moku</div>
+              <div class="prv-win-title">Aethon</div>
             </div>
             <div class="prv-content">
               <div class="prv-row">

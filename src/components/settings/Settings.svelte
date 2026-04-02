@@ -892,14 +892,14 @@
                 <input class="text-input" value={store.settings.serverUrl ?? "http://localhost:4567"} oninput={(e) => updateSettings({ serverUrl: e.currentTarget.value })} placeholder="http://localhost:4567" spellcheck="false" />
               </div>
               <label class="toggle-row">
-                <div class="toggle-info"><span class="toggle-label">Auto-start server</span><span class="toggle-desc">Launch tachidesk-server when Moku opens</span></div>
+                <div class="toggle-info"><span class="toggle-label">Auto-start server</span><span class="toggle-desc">Launch tachidesk-server when Aethon opens</span></div>
                 <button role="switch" aria-checked={store.settings.autoStartServer} aria-label="Auto-start server" class="toggle" class:on={store.settings.autoStartServer} onclick={() => updateSettings({ autoStartServer: !store.settings.autoStartServer })}><span class="toggle-thumb"></span></button>
               </label>
             </div>
             <div class="section">
               <p class="section-title">Inactivity</p>
               <div class="step-row">
-                <div class="toggle-info"><span class="toggle-label">Idle screen timeout</span><span class="toggle-desc">Show the Moku idle splash after this much inactivity.</span></div>
+                <div class="toggle-info"><span class="toggle-label">Idle screen timeout</span><span class="toggle-desc">Show the Aethon idle splash after this much inactivity.</span></div>
                 <div class="select-wrap" id="idle-timeout">
                   <button class="select-btn" onclick={() => toggleSelect("idle-timeout")}>
                     <span>{{ "0":"Never","1":"1 minute","2":"2 minutes","5":"5 minutes","10":"10 minutes","15":"15 minutes","30":"30 minutes" }[String(store.settings.idleTimeoutMin ?? 5)] ?? `${store.settings.idleTimeoutMin} min`}</span>
@@ -1957,7 +1957,7 @@
         {:else if tab === "about"}
           <div class="panel">
             <div class="section">
-              <p class="section-title">Moku</p>
+              <p class="section-title">Aethon</p>
               <div class="about-block">
                 <p class="about-line">A manga reader frontend for Suwayomi / Tachidesk.</p>
                 <p class="about-line" style="color:var(--text-faint);margin-top:var(--sp-2)">Built with Tauri + Svelte.</p>

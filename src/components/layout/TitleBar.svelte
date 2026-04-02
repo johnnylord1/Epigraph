@@ -22,7 +22,7 @@
 {#if !isFullscreen}
   <div class="bar" data-tauri-drag-region>
     {#if isMac}<div class="mac-spacer"></div>{/if}
-    <span class="title" data-tauri-drag-region>Moku</span>
+    <span class="title" data-tauri-drag-region>Aethon</span>
     {#if !isMac}
       <div class="controls">
         <button onclick={() => win.minimize()} title="Minimize" aria-label="Minimize">

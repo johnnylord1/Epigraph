@@ -341,7 +341,7 @@
     <div style="z-index:1;display:flex;flex-direction:column;align-items:center;gap:var(--sp-6)">
       <div style="position:relative;width:96px;height:96px">
         <div class="logo-glow"></div>
-        <img src={logoUrl} alt="Moku" class="logo-breathe" style="width:96px;height:96px;border-radius:22px;display:block;position:relative" />
+        <img src={logoUrl} alt="Aethon" class="logo-breathe" style="width:96px;height:96px;border-radius:22px;display:block;position:relative" />
       </div>
       <div class="pin-block">
         <div class="pin-dots" class:pin-shake={pinShake}>
@@ -357,7 +357,7 @@
     <div style="z-index:1;display:flex;flex-direction:column;align-items:center">
       <div style="position:relative;width:128px;height:128px;margin-bottom:32px">
         <div class="logo-glow"></div>
-        <img src={logoUrl} alt="Moku" class="logo-breathe" style="width:128px;height:128px;border-radius:28px;display:block;position:relative" />
+        <img src={logoUrl} alt="Aethon" class="logo-breathe" style="width:128px;height:128px;border-radius:28px;display:block;position:relative" />
       </div>
       <p class="hint">press any key to continue</p>
     </div>
@@ -377,9 +377,9 @@
             style="transition: stroke-dasharray 0.4s cubic-bezier(0.4,0,0.2,1)" />
         </svg>
       {/if}
-      <img src={logoUrl} alt="Moku" style="width:140px;height:140px;border-radius:32px;display:block" />
+      <img src={logoUrl} alt="Aethon" style="width:140px;height:140px;border-radius:32px;display:block" />
     </div>
-    <p class="title-label">moku</p>
+    <p class="title-label">aethon</p>
 
     <div class="bottom-area" style="z-index:1">
       <div class="status-slot" class:status-slot-hide={lockEnabled && pinVisible}>

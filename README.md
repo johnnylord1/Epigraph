@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/banner.svg" width="100%" alt="Moku" />
+  <img src="docs/banner.svg" width="100%" alt="Aethon" />
 </div>
 
 <div align="center">
@@ -13,7 +13,7 @@
 
 <br/>
 
-Moku is a fast, minimal manga reader frontend for [Suwayomi-Server](https://github.com/Suwayomi/Suwayomi-Server). It wraps Suwayomi's GraphQL API in a lightweight Tauri app — no Electron overhead.
+Aethon is a fast, minimal manga reader frontend built from the upstream [Moku](https://github.com/Youwes09/Moku) codebase for [Suwayomi-Server](https://github.com/Suwayomi/Suwayomi-Server). It keeps the same lightweight Tauri approach with no Electron overhead.
 
 ---
 
@@ -82,16 +82,16 @@ Download the `.dmg` from the [releases page](https://github.com/Youwes09/Moku/re
 
 > **Note:** Builds are ad-hoc signed. On first launch you may need to run:
 > ```bash
-> xattr -rd com.apple.quarantine /Applications/Moku.app
+> xattr -rd com.apple.quarantine /Applications/Aethon.app
 > ```
 
 ---
 
 ## Requirements
 
-If you're not using the bundled Flatpak or Windows installer, [Suwayomi-Server](https://github.com/Suwayomi/Suwayomi-Server) must be running separately. By default Moku connects to `http://127.0.0.1:4567`.
+If you're not using the bundled Flatpak or Windows installer, [Suwayomi-Server](https://github.com/Suwayomi/Suwayomi-Server) must be running separately. By default Aethon connects to `http://127.0.0.1:4567`.
 
-You can point Moku at any Suwayomi instance — local or remote — via **Settings → General → Server URL**.
+You can point Aethon at any Suwayomi instance — local or remote — via **Settings → General → Server URL**.
 
 ---
 
@@ -100,8 +100,8 @@ You can point Moku at any Suwayomi instance — local or remote — via **Settin
 **Prerequisites:** [Rust](https://rustup.rs), [Node.js](https://nodejs.org), [pnpm](https://pnpm.io), and [Tauri v2 prerequisites](https://tauri.app/start/prerequisites/).
 
 ```bash
-git clone https://github.com/Youwes09/Moku
-cd Moku
+git clone https://github.com/Youwes09/Moku Aethon
+cd Aethon
 pnpm install
 pnpm tauri:dev
 ```
@@ -143,4 +143,4 @@ Distributed under the [Apache 2.0 License](./LICENSE).
 
 ## Disclaimer
 
-Moku does not host or distribute any content. The developers have no affiliation with any content providers accessible through connected sources.
+Aethon does not host or distribute any content. The developers have no affiliation with any content providers accessible through connected sources.
