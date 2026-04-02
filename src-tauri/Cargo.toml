@@ -26,6 +26,9 @@ walkdir = "2"
 sysinfo = "0.32"
 dirs = "5"
 tauri-plugin-os = "2.3.2"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
 tauri-plugin-drpc = "0.1.6"
 
 [profile.release]

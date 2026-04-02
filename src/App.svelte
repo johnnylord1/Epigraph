@@ -5,6 +5,7 @@
   import { getVersion } from "@tauri-apps/api/app";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { gql } from "./lib/client";
+  import { getEffectiveServerUrl, isAndroid } from "./lib/platform";
   import { GET_DOWNLOAD_STATUS } from "./lib/queries";
   import { store, addToast, setActiveDownloads, setSettingsOpen } from "./store/state.svelte";
   import { initRpc, setIdle, clearReading, destroyRpc } from "./lib/discord";
@@ -154,6 +155,7 @@
   });
 
   async function checkForUpdateSilently() {
+    if (isAndroid) return;
     try {
       const [currentVersion, releases] = await Promise.all([
         getVersion(),
@@ -201,10 +203,7 @@
       if (cancelProbe) return;
       tries++;
       try {
-        const rawUrl = store.settings.serverUrl;
-        const base   = typeof rawUrl === "string" && rawUrl.trim()
-          ? rawUrl.replace(/\/$/, "")
-          : "http://127.0.0.1:4567";
+        const base = getEffectiveServerUrl(store.settings.serverUrl);
         const s      = store.settings;
         const auth: Record<string, string> = s.serverAuthEnabled && s.serverAuthUser && s.serverAuthPass
           ? { Authorization: `Basic ${btoa(`${s.serverAuthUser.trim()}:${s.serverAuthPass.trim()}`)}` }
@@ -227,24 +226,30 @@
   onMount(async () => {
     document.addEventListener("contextmenu", e => e.preventDefault());
     document.title = "Aethon";
-    await win.setTitle("Aethon").catch(() => {});
+    if (!isAndroid) await win.setTitle("Aethon").catch(() => {});
     (window as any).__mokuShowSplash = () => devSplash = true;
 
     platformScale = await invoke<number>("get_platform_ui_scale").catch(() => 1.0);
     applyZoom();
 
-    store.isFullscreen = await win.isFullscreen();
-
-    const unlistenResize = await win.onResized(async () => {
+    if (!isAndroid) {
       store.isFullscreen = await win.isFullscreen();
-    });
+    }
 
-    const unlistenScale = await win.onScaleChanged(async (event) => {
-      platformScale = event.payload.scaleFactor;
-      applyZoom();
-    });
+    const unlistenResize = !isAndroid
+      ? await win.onResized(async () => {
+        store.isFullscreen = await win.isFullscreen();
+      })
+      : () => {};
 
-    if (store.settings.autoStartServer) {
+    const unlistenScale = !isAndroid
+      ? await win.onScaleChanged(async (event) => {
+        platformScale = event.payload.scaleFactor;
+        applyZoom();
+      })
+      : () => {};
+
+    if (!isAndroid && store.settings.autoStartServer) {
       invoke<void>("spawn_server", { binary: store.settings.serverBinary }).catch((err: any) => {
         if (err?.kind === "NotConfigured") {
           notConfigured = true;
@@ -264,7 +269,7 @@
       unlistenResize();
       unlistenScale();
       destroyRpc();
-      if (store.settings.autoStartServer) invoke("kill_server").catch(() => {});
+      if (!isAndroid && store.settings.autoStartServer) invoke("kill_server").catch(() => {});
       if (idleTimer) clearTimeout(idleTimer);
       if (pollInterval) clearInterval(pollInterval);
       unlistenDownload?.();
@@ -279,6 +284,7 @@
   });
 
   $effect(() => {
+    if (isAndroid) return;
     if (store.settings.discordRpc) {
       initRpc();
     } else {
@@ -288,6 +294,7 @@
   });
 
   $effect(() => {
+    if (isAndroid) return;
     if (!store.activeChapter) {
       if (store.settings.discordRpc) setIdle();
     }
@@ -341,7 +348,7 @@
       <SplashScreen mode="idle" showCards={store.settings.splashCards ?? true}
         onDismiss={() => { idle = false; resetIdle(); }} />
     {/if}
-    {#if !store.activeChapter}<TitleBar />{/if}
+    {#if !store.activeChapter && !isAndroid}<TitleBar />{/if}
     <div class="content">
       {#if store.activeChapter}<Reader />{:else}<Layout />{/if}
     </div>

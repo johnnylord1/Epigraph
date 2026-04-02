@@ -504,7 +504,7 @@
   </div>
 </div>
 
-<script module>
+<script module lang="ts">
   function autoFocus(node: HTMLElement) { setTimeout(() => node.focus(), 50); }
 </script>
 

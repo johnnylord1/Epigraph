@@ -634,6 +634,13 @@ fn kill_server(app: tauri::AppHandle) -> Result<(), String> {
 /// Uses tauri-plugin-http so it goes through Tauri's permission system.
 #[tauri::command]
 async fn list_releases() -> Result<Vec<ReleaseInfo>, String> {
+    #[cfg(target_os = "android")]
+    {
+        return Err("Release checks are disabled on Android during the bootstrap spike.".into());
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
     use tauri_plugin_http::reqwest;
 
     let client = reqwest::Client::builder()
@@ -673,6 +680,7 @@ async fn list_releases() -> Result<Vec<ReleaseInfo>, String> {
             html_url:     r.html_url,
         })
         .collect())
+    }
 }
 
 /// Download and install the latest update using tauri-plugin-updater.
@@ -721,8 +729,10 @@ fn restart_app(app: tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_drpc::init())
+    #[cfg(target_os = "android")]
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_http::init())
@@ -747,7 +757,12 @@ pub fn run() {
             if let WindowEvent::Destroyed = event {
                 kill_tachidesk(window.app_handle());
             }
-        })
+        });
+
+    #[cfg(not(target_os = "android"))]
+    let builder = builder.plugin(tauri_plugin_drpc::init());
+
+    builder
         .run(tauri::generate_context!())
         .expect("error while running moku");
 }

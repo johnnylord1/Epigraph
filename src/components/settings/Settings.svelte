@@ -6,6 +6,7 @@
   import { getVersion } from "@tauri-apps/api/app";
   import { open as openUrl } from "@tauri-apps/plugin-shell";
   import { gql, thumbUrl } from "../../lib/client";
+  import { isAndroid } from "../../lib/platform";
   import { GET_CATEGORIES, CREATE_CATEGORY, UPDATE_CATEGORY, DELETE_CATEGORY, UPDATE_CATEGORY_ORDER, GET_SOURCES } from "../../lib/queries";
   import { GET_DOWNLOADS_PATH, SET_DOWNLOADS_PATH, SET_LOCAL_SOURCE_PATH, GET_TRACKERS, LOGIN_TRACKER_OAUTH, LOGIN_TRACKER_CREDENTIALS, LOGOUT_TRACKER, GET_TRACKER_RECORDS, GET_SERVER_SECURITY, SET_SERVER_AUTH, SET_SOCKS_PROXY, SET_FLARESOLVERR } from "../../lib/queries";
   import type { Category, Source } from "../../lib/types";
@@ -729,7 +730,7 @@
   $effect(() => {
     if (tab !== "about") return;
     getVersion().then(v => appVersion = v).catch(() => appVersion = "unknown");
-    if (!releasesLoaded) { releasesLoaded = true; loadReleases(); }
+    if (!isAndroid && !releasesLoaded) { releasesLoaded = true; loadReleases(); }
   });
   async function loadReleases() {
     releasesLoading = true; releasesError = null;
@@ -911,12 +912,11 @@
       </nav>
     </div>
     <div class="content">
-      <div class="content-header">
-        <p class="content-title">{TAB_LABELS[tab]}</p>
-        <button class="close-btn" aria-label="Close settings" onclick={close}><X size={15} weight="light" /></button>
-      </div>
       <div class="content-subnav" aria-label={`${currentGroup.label} settings sections`}>
-        <p class="subnav-label">{currentGroup.label}</p>
+        <button class="close-btn close-btn-corner" aria-label="Close settings" onclick={close}><X size={15} weight="light" /></button>
+        <div class="content-subnav-top">
+          <p class="subnav-label">{currentGroup.label}</p>
+        </div>
         <div class="subnav-list">
           {#each currentGroup.items as t}
             <button class="subnav-item" class:active={tab === t.id} onclick={() => tab = t.id}>
@@ -2045,8 +2045,8 @@
                   <span class="toggle-desc">v{appVersion}</span>
                 </div>
                 <button class="step-btn" style="width:auto;padding:0 var(--sp-3);font-size:var(--text-xs);letter-spacing:var(--tracking-wide)"
-                  onclick={() => { releasesError = null; loadReleases(); }} disabled={releasesLoading}>
-                  {releasesLoading ? "Loading…" : "Refresh"}
+                  onclick={() => { releasesError = null; if (!isAndroid) void loadReleases(); }} disabled={releasesLoading || isAndroid}>
+                  {isAndroid ? "Unavailable" : releasesLoading ? "Loading…" : "Refresh"}
                 </button>
               </div>
               {#if onLatestVersion}
@@ -2084,7 +2084,9 @@
             </div>
             <div class="section">
               <p class="section-title">Releases</p>
-              {#if releasesError}
+              {#if isAndroid}
+                <p class="storage-loading">Release checks are disabled on Android during the bootstrap spike.</p>
+              {:else if releasesError}
                 <p class="storage-loading" style="color:var(--color-error)">{releasesError}</p>
               {:else if releasesLoading}
                 <p class="storage-loading">Fetching releases…</p>
@@ -2183,28 +2185,40 @@
 <style>
   .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: var(--z-settings); display: flex; align-items: center; justify-content: center; animation: fadeIn 0.1s ease both; backdrop-filter: blur(4px); }
   .modal { width: min(920px, calc(100vw - 48px)); height: min(640px, calc(100vh - 80px)); display: flex; background: var(--bg-surface); border: 1px solid var(--border-base); border-radius: var(--radius-xl); overflow: hidden; animation: scaleIn 0.15s ease both; box-shadow: 0 24px 64px rgba(0,0,0,0.6); }
-  .sidebar { width: 160px; flex-shrink: 0; background: var(--bg-base); border-right: 1px solid var(--border-dim); padding: var(--sp-5) var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-2); overflow-y: auto; }
-  .modal-title { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-faint); letter-spacing: var(--tracking-wider); text-transform: uppercase; padding: 0 var(--sp-2) var(--sp-3); }
+  .sidebar { width: 160px; flex-shrink: 0; background: var(--bg-base); border-right: 1px solid var(--border-dim); padding: 14px var(--sp-3) var(--sp-5); display: flex; flex-direction: column; gap: var(--sp-2); overflow-y: auto; }
+  .modal-title { margin: 0 0 8px; min-height: 28px; display: flex; align-items: center; font-family: var(--font-ui); font-size: 10px; line-height: 16px; font-weight: var(--weight-normal); color: var(--text-faint); letter-spacing: var(--tracking-wider); text-transform: uppercase; padding: 0 2px; }
   .nav { display: flex; flex-direction: column; gap: 4px; }
   .nav-item { display: flex; align-items: center; gap: var(--sp-2); padding: 8px 10px; border-radius: var(--radius-md); font-size: var(--text-sm); color: var(--text-muted); background: none; border: none; cursor: pointer; text-align: left; transition: background var(--t-fast), color var(--t-fast); width: 100%; }
   .nav-item:hover { background: var(--bg-raised); color: var(--text-secondary); }
   .nav-item.active { background: var(--accent-muted); color: var(--accent-fg); }
   .nav-group-button { justify-content: flex-start; }
   .content { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
-  .content-header { display: flex; align-items: center; justify-content: space-between; padding: var(--sp-5) var(--sp-6) var(--sp-4); border-bottom: 1px solid var(--border-dim); flex-shrink: 0; }
-  .content-title { font-size: var(--text-base); font-weight: var(--weight-medium); color: var(--text-secondary); }
   .close-btn { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: var(--radius-sm); color: var(--text-faint); background: none; border: none; cursor: pointer; transition: color var(--t-base), background var(--t-base); }
   .close-btn:hover { color: var(--text-muted); background: var(--bg-raised); }
   .content-subnav {
+    position: relative;
     display: flex;
     flex-direction: column;
-    gap: var(--sp-3);
-    padding: var(--sp-4) var(--sp-6);
+    gap: var(--sp-2);
+    padding: 14px var(--sp-6) var(--sp-4);
     border-bottom: 1px solid var(--border-dim);
     background: color-mix(in srgb, var(--bg-overlay) 35%, transparent);
     flex-shrink: 0;
   }
+  .content-subnav-top {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: var(--sp-3);
+    padding-right: 44px;
+    min-height: 28px;
+  }
+  .close-btn-corner { position: absolute; top: 14px; right: var(--sp-4); }
   .subnav-label {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    min-height: 28px;
     font-family: var(--font-ui);
     font-size: 10px;
     color: var(--text-faint);

@@ -623,6 +623,6 @@
   @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
 </style>
 
-<script module>
+<script module lang="ts">
   function focusEl(node: HTMLElement) { setTimeout(() => node.focus(), 0); }
 </script>

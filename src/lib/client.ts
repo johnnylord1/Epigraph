@@ -1,10 +1,12 @@
 import { store } from "../store/state.svelte";
+import { getEffectiveServerUrl } from "./platform";
 
 const DEFAULT_URL = "http://127.0.0.1:4567";
 
 function getServerUrl(): string {
   const url = store.settings.serverUrl;
-  return typeof url === "string" && url.trim() ? url.replace(/\/$/, "") : DEFAULT_URL;
+  const configured = typeof url === "string" && url.trim() ? url.replace(/\/$/, "") : DEFAULT_URL;
+  return getEffectiveServerUrl(configured);
 }
 
 function getAuthHeader(): Record<string, string> {

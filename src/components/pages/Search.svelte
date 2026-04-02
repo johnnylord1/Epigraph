@@ -4,7 +4,7 @@
   import { GET_SOURCES, FETCH_SOURCE_MANGA } from "../../lib/queries";
   import { cache, CACHE_KEYS, getPageSet } from "../../lib/cache";
   import { dedupeSources, dedupeMangaById, dedupeMangaByTitle, shouldHideNsfw, shouldHideSource } from "../../lib/util";
-  import { store, setSearchPrefill, setPreviewManga, setExtensionsPanelHint, addToast, setSearchTabHint, setSearchBrowseHint, setSearchSourcesPaneHint } from "../../store/state.svelte";
+  import { store, setSearchPrefill, setPreviewManga, setExtensionsPanelHint, addToast, setSearchTabHint, setSearchBrowseHint, setSearchSourcesPaneHint, setSearchVisibilityDismissed } from "../../store/state.svelte";
   import type { Manga, Source } from "../../lib/types";
   import SetupStatusCard from "../shared/SetupStatusCard.svelte";
   import Discover from "./Discover.svelte";
@@ -35,7 +35,7 @@
     "Magic","Music","Cooking","Medical","Military","Harem","Ecchi",
   ];
   const CATALOG_FEEDS: { id: CatalogFeed; label: string }[] = [
-    { id: "all",    label: "All" },
+    { id: "all",    label: "Popular" },
     { id: "latest", label: "Latest" },
   ];
 
@@ -505,7 +505,7 @@
   }
 
   const catalogActiveSummary = $derived.by(() => {
-    if (!tag_activeTags.length) return "All";
+    if (!tag_activeTags.length) return "Popular";
     if (tag_activeTags.length === 1) return tag_activeTags[0];
     return `${tag_activeTags.length} tags (${tag_tagMode})`;
   });
@@ -545,39 +545,6 @@
     }
     return Array.from(map.values());
   });
-  const src_hiddenByLanguageCount = $derived(
-    src_selectedLang === "all"
-      ? 0
-      : kw_contentVisibleSources.filter((source) => source.lang !== src_selectedLang).length,
-  );
-  const src_hasVisibilityMismatch = $derived(
-    setupReady
-    && installedContentExtensionCount > 0
-    && (kw_hiddenByContentCount > 0 || src_hiddenByLanguageCount > 0 || src_visibleSources.length < installedContentExtensionCount),
-  );
-  const src_visibilitySummary = $derived.by(() => {
-    if (!src_hasVisibilityMismatch) return null;
-
-    const likelyCause = kw_hiddenByContentCount > 0 && src_hiddenByLanguageCount > 0
-      ? "Current source visibility rules are hiding part of the installed source set."
-      : kw_hiddenByContentCount > 0
-        ? "Current content visibility rules are hiding part of the installed source set."
-        : src_hiddenByLanguageCount > 0
-          ? "The current source-language selection is hiding part of the installed source set."
-          : "Some installed extensions may not currently appear as visible sources here.";
-
-    return {
-      detail: kw_hiddenByContentCount > 0 && src_hiddenByLanguageCount > 0
-        ? `${kw_hiddenByContentCount} source${kw_hiddenByContentCount !== 1 ? "s are" : " is"} hidden by current content visibility, and ${src_hiddenByLanguageCount} more ${src_hiddenByLanguageCount !== 1 ? "are" : "is"} outside the selected source language.`
-        : kw_hiddenByContentCount > 0
-          ? `${kw_hiddenByContentCount} source${kw_hiddenByContentCount !== 1 ? "s are" : " is"} hidden by current content visibility.`
-          : src_hiddenByLanguageCount > 0
-            ? `${src_hiddenByLanguageCount} source${src_hiddenByLanguageCount !== 1 ? "s are" : " is"} outside the selected source language.`
-            : "One extension can expose zero, one, or many sources, so these counts will not always match exactly.",
-      body: `You have ${installedContentExtensionCount} installed content extension${installedContentExtensionCount !== 1 ? "s" : ""}, but only ${src_visibleSources.length} source${src_visibleSources.length !== 1 ? "s are" : " is"} visible in the Sources tab. ${likelyCause}`,
-    };
-  });
-
   async function srcFetchBrowse(src: Source, type: "POPULAR" | "SEARCH", q?: string, page = 1) {
     src_abortCtrl?.abort();
     const ctrl = new AbortController();
@@ -755,7 +722,7 @@
         </div>
       {/if}
 
-      {#if kw_visibilitySummary}
+      {#if kw_visibilitySummary && !store.searchVisibilityDismissed}
         <section class="visibilityCard">
           <div class="visibilityCopy">
             <p class="visibilityLabel">Source visibility</p>
@@ -769,6 +736,9 @@
             </button>
             <button class="visibilityBtn visibilityBtnSecondary" onclick={() => (tab = "source")}>
               Open Sources tab
+            </button>
+            <button class="visibilityBtn visibilityBtnSecondary" onclick={() => setSearchVisibilityDismissed(true)}>
+              Dismiss
             </button>
           </div>
         </section>
@@ -1113,14 +1083,6 @@
             {/each}
           </select>
         </div>
-
-        {#if src_visibilitySummary}
-          <div class="sourceVisibilityNote">
-            <p class="sourceVisibilityTitle">Visible sources are filtered</p>
-            <p class="sourceVisibilityBody">{src_visibilitySummary.body}</p>
-            <p class="sourceVisibilityBody">{src_visibilitySummary.detail}</p>
-          </div>
-        {/if}
 
         {#if loadingSources}
           <div class="splitLoading">
@@ -2126,30 +2088,6 @@
     border-bottom: 1px solid var(--border-dim);
     flex-shrink: 0;
     gap: var(--sp-2);
-  }
-  .sourceVisibilityNote {
-    margin: var(--sp-2) var(--sp-2) 0;
-    padding: var(--sp-2) var(--sp-3);
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border-dim);
-    background: var(--bg-raised);
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-  .sourceVisibilityTitle {
-    font-family: var(--font-ui);
-    font-size: var(--text-2xs);
-    color: var(--text-muted);
-    letter-spacing: var(--tracking-wider);
-    text-transform: uppercase;
-  }
-  .sourceVisibilityBody {
-    font-family: var(--font-ui);
-    font-size: var(--text-xs);
-    color: var(--text-faint);
-    letter-spacing: var(--tracking-wide);
-    line-height: var(--leading-snug);
   }
   .langPocketLabel {
     font-family: var(--font-ui);
