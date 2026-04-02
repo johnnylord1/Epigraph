@@ -1,6 +1,6 @@
 <script lang="ts">
   import { House, Books, MagnifyingGlass, ClockCounterClockwise, Compass, DownloadSimple, PuzzlePiece, GearSix, ChartLineUp } from "phosphor-svelte";
-  import { store, setNavPage, setActiveManga, setActiveSource, setLibraryFilter, setGenreFilter, setSettingsOpen } from "../../store/state.svelte";
+  import { store, setNavPage } from "../../store/state.svelte";
   import type { NavPage } from "../../store/state.svelte";
 
   const TABS: { id: NavPage; label: string; icon: any }[] = [
@@ -15,14 +15,14 @@
   ];
 
   function navigate(id: NavPage) {
-    store.navPage     = id;
+    setNavPage(id);
     store.activeManga = null;
     store.genreFilter = "";
     if (id !== "explore") store.activeSource = null;
   }
 
   function goHome() {
-    store.navPage       = "home";
+    setNavPage("home");
     store.activeSource  = null;
     store.activeManga   = null;
     store.libraryFilter = "library";

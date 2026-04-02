@@ -226,6 +226,8 @@
 
   onMount(async () => {
     document.addEventListener("contextmenu", e => e.preventDefault());
+    document.title = "Aethon";
+    await win.setTitle("Aethon").catch(() => {});
     (window as any).__mokuShowSplash = () => devSplash = true;
 
     platformScale = await invoke<number>("get_platform_ui_scale").catch(() => 1.0);

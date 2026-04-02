@@ -1,7 +1,7 @@
 # Status
 
 ## Current Phase
-Phase 2: desktop validation baseline
+Phase 3A: low-risk audit fixes
 
 ## Completed Today
 - Cloned the upstream Moku repository into `Aethon`.
@@ -9,28 +9,30 @@ Phase 2: desktop validation baseline
 - Created the initial project documentation scaffold.
 - Applied a first-pass safe rebrand in approved visible surfaces only.
 - Validated the frontend desktop baseline with `npm exec pnpm` and documented the exact local dev path.
+- Fixed the Settings modal so sidebar navigation closes it instead of leaving it over the next route.
+- Aligned the native runtime window title with `Aethon` after confirming config-level title sources were already correct.
 
 ## Last Completed Step
-Validate the desktop baseline, document the exact commands, and record the remaining native prerequisites.
+Apply the two low-risk audit fixes and verify them in the real desktop app.
 
-## Exact Next Prompt For Phase 3
-Implement Phase 3 only: investigate and bootstrap the minimum viable Android foundation for Aethon, keep it strictly exploratory and reversible, preserve Apache-2.0 attribution, and do not change desktop reader behavior, integrations, dependencies, or product scope.
+## Exact Next Prompt
+Implement Phase 3B only: prepare a first-run desktop onboarding plan for Aethon based on the audit findings, keep it strictly scoped to discovery and UX planning, preserve Apache-2.0 attribution, and do not change reader behavior, integrations, dependencies, or platform scope.
 
 ## Blockers
-- Native desktop boot is still blocked in this environment because `rustup`/`rustc`/`cargo` are not installed.
-- Native desktop boot is still blocked in this environment because Visual Studio Build Tools with MSVC + Windows SDK are not installed.
-- Microsoft Edge WebView2 is an explicit Windows prerequisite; it is present in this environment, but must still be verified on any other machine before running `tauri:dev`.
+- Fresh profiles still start without extension repositories seeded by default, which limits first-run source availability until repos are added.
+- Cookie/WebView-dependent extensions are still limited by unimplemented desktop-client auth flows.
+- FlareSolverr-dependent sources still require the external FlareSolverr service when those sources are used.
 
 ## Files/Directories That Must Not Be Touched Next
+- `src/components/reader/`
 - `src/components/pages/`
 - `src/lib/queries.ts`
-- `src/store/`
 - `src-tauri/src/`
-- `src/components/reader/`
 - `src-tauri/tauri.windows.conf.json`
 - `dev.moku.app.yml`
 - `packaging/`
 - `src-tauri/binaries/`
+- `src/store/`
 
 ## Notes For Future Codex Sessions
 - Preserve upstream license obligations and attribution.

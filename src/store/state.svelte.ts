@@ -645,7 +645,7 @@ class Store {
   dismissToast(id: string)                      { this.toasts = this.toasts.filter(x => x.id !== id); }
   setCategories(cats: Category[])              { this.categories       = cats; }
   setActiveDownloads(next: ActiveDownload[])     { this.activeDownloads  = next; }
-  setNavPage(next: NavPage)                      { this.navPage          = next; }
+  setNavPage(next: NavPage)                      { this.navPage          = next; this.settingsOpen = false; }
   setLibraryFilter(next: LibraryFilter)          { this.libraryFilter    = next; }
   setGenreFilter(next: string)                   { this.genreFilter      = next; }
   setSearchPrefill(next: string)                 { this.searchPrefill    = next; }
