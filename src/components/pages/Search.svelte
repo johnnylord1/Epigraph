@@ -211,6 +211,45 @@
   const kw_hasResults   = $derived(kw_results.some((r) => r.mangas.length > 0));
   const kw_allDone      = $derived(kw_results.length > 0 && kw_results.every((r) => !r.loading));
   const setupReady      = $derived(setupState?.kind === "ready");
+  const installedContentExtensionCount = $derived(setupState?.installedContentExtensionCount ?? 0);
+  const kw_contentVisibleSources = $derived(allSources.filter((source) => !shouldHideSource(source, store.settings)));
+  const kw_hiddenByContentCount = $derived(Math.max(0, allSources.length - kw_contentVisibleSources.length));
+  const kw_hiddenByLanguageCount = $derived(kw_contentVisibleSources.filter((source) => !kw_selectedLangs.has(source.lang)).length);
+  const kw_hasVisibilityMismatch = $derived(
+    setupReady
+    && installedContentExtensionCount > 0
+    && (kw_hiddenByContentCount > 0 || kw_hiddenByLanguageCount > 0 || kw_visibleCount < installedContentExtensionCount),
+  );
+  const kw_visibilitySummary = $derived.by(() => {
+    if (!kw_hasVisibilityMismatch) return null;
+
+    const languageCount = kw_selectedLangs.size;
+    const likelyCause = kw_hiddenByContentCount > 0 && kw_hiddenByLanguageCount > 0
+      ? "Current language and content visibility rules are hiding part of the installed source set."
+      : kw_hiddenByContentCount > 0
+        ? "Current content visibility rules are hiding part of the installed source set."
+        : kw_hiddenByLanguageCount > 0
+          ? "Current language selection is hiding part of the installed source set."
+          : "Some installed extensions may not currently appear as visible sources here.";
+
+    return {
+      title: "Installed extensions and visible sources are different counts",
+      body: `You have ${installedContentExtensionCount} installed content extension${installedContentExtensionCount !== 1 ? "s" : ""}, but only ${kw_visibleCount} source${kw_visibleCount !== 1 ? "s are" : " is"} visible for this search view. ${likelyCause}`,
+      detail: kw_hiddenByContentCount > 0 && kw_hiddenByLanguageCount > 0
+        ? `${kw_hiddenByContentCount} source${kw_hiddenByContentCount !== 1 ? "s are" : " is"} hidden by current content visibility, and ${kw_hiddenByLanguageCount} more ${kw_hiddenByLanguageCount !== 1 ? "are" : "is"} outside the ${languageCount} selected language${languageCount !== 1 ? "s" : ""}.`
+        : kw_hiddenByContentCount > 0
+          ? `${kw_hiddenByContentCount} source${kw_hiddenByContentCount !== 1 ? "s are" : " is"} hidden by current content visibility.`
+          : kw_hiddenByLanguageCount > 0
+            ? `${kw_hiddenByLanguageCount} source${kw_hiddenByLanguageCount !== 1 ? "s are" : " is"} outside the ${languageCount} selected language${languageCount !== 1 ? "s" : ""}.`
+            : "One extension can expose zero, one, or many sources, so these counts will not always match exactly.",
+    };
+  });
+
+  function openSearchVisibilityFilters() {
+    tab = "keyword";
+    kw_showAdvanced = true;
+    kw_inputEl?.focus();
+  }
 
   let tag_activeTags:       string[] = $state([]);
   let tag_tagMode:          TagMode  = $state("AND");
@@ -446,6 +485,38 @@
     }
     return Array.from(map.values());
   });
+  const src_hiddenByLanguageCount = $derived(
+    src_selectedLang === "all"
+      ? 0
+      : kw_contentVisibleSources.filter((source) => source.lang !== src_selectedLang).length,
+  );
+  const src_hasVisibilityMismatch = $derived(
+    setupReady
+    && installedContentExtensionCount > 0
+    && (kw_hiddenByContentCount > 0 || src_hiddenByLanguageCount > 0 || src_visibleSources.length < installedContentExtensionCount),
+  );
+  const src_visibilitySummary = $derived.by(() => {
+    if (!src_hasVisibilityMismatch) return null;
+
+    const likelyCause = kw_hiddenByContentCount > 0 && src_hiddenByLanguageCount > 0
+      ? "Current source visibility rules are hiding part of the installed source set."
+      : kw_hiddenByContentCount > 0
+        ? "Current content visibility rules are hiding part of the installed source set."
+        : src_hiddenByLanguageCount > 0
+          ? "The current source-language selection is hiding part of the installed source set."
+          : "Some installed extensions may not currently appear as visible sources here.";
+
+    return {
+      detail: kw_hiddenByContentCount > 0 && src_hiddenByLanguageCount > 0
+        ? `${kw_hiddenByContentCount} source${kw_hiddenByContentCount !== 1 ? "s are" : " is"} hidden by current content visibility, and ${src_hiddenByLanguageCount} more ${src_hiddenByLanguageCount !== 1 ? "are" : "is"} outside the selected source language.`
+        : kw_hiddenByContentCount > 0
+          ? `${kw_hiddenByContentCount} source${kw_hiddenByContentCount !== 1 ? "s are" : " is"} hidden by current content visibility.`
+          : src_hiddenByLanguageCount > 0
+            ? `${src_hiddenByLanguageCount} source${src_hiddenByLanguageCount !== 1 ? "s are" : " is"} outside the selected source language.`
+            : "One extension can expose zero, one, or many sources, so these counts will not always match exactly.",
+      body: `You have ${installedContentExtensionCount} installed content extension${installedContentExtensionCount !== 1 ? "s" : ""}, but only ${src_visibleSources.length} source${src_visibleSources.length !== 1 ? "s are" : " is"} visible in the Sources tab. ${likelyCause}`,
+    };
+  });
 
   async function srcFetchBrowse(src: Source, type: "POPULAR" | "SEARCH", q?: string, page = 1) {
     src_abortCtrl?.abort();
@@ -622,6 +693,25 @@
             Searching <strong>{kw_visibleCount}</strong> source{kw_visibleCount !== 1 ? "s" : ""}
           </div>
         </div>
+      {/if}
+
+      {#if kw_visibilitySummary}
+        <section class="visibilityCard">
+          <div class="visibilityCopy">
+            <p class="visibilityLabel">Source visibility</p>
+            <h2 class="visibilityTitle">{kw_visibilitySummary.title}</h2>
+            <p class="visibilityBody">{kw_visibilitySummary.body}</p>
+            <p class="visibilityNote">{kw_visibilitySummary.detail}</p>
+          </div>
+          <div class="visibilityActions">
+            <button class="visibilityBtn" onclick={openSearchVisibilityFilters}>
+              Review language filters
+            </button>
+            <button class="visibilityBtn visibilityBtnSecondary" onclick={() => (tab = "source")}>
+              Open Sources tab
+            </button>
+          </div>
+        </section>
       {/if}
     </div>
 
@@ -924,6 +1014,14 @@
           </select>
         </div>
 
+        {#if src_visibilitySummary}
+          <div class="sourceVisibilityNote">
+            <p class="sourceVisibilityTitle">Visible sources are filtered</p>
+            <p class="sourceVisibilityBody">{src_visibilitySummary.body}</p>
+            <p class="sourceVisibilityBody">{src_visibilitySummary.detail}</p>
+          </div>
+        {/if}
+
         {#if loadingSources}
           <div class="splitLoading">
             <svg width="16" height="16" viewBox="0 0 256 256" fill="currentColor" class="anim-spin" style="color:var(--text-faint)" aria-hidden="true">
@@ -1084,6 +1182,81 @@
   .setup-banner {
     padding: var(--sp-3) var(--sp-4) 0;
     flex-shrink: 0;
+  }
+  .visibilityCard {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--sp-3);
+    padding: var(--sp-3);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-dim);
+    background: color-mix(in srgb, var(--color-info-bg) 68%, var(--bg-raised));
+  }
+  .visibilityCopy {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+  .visibilityLabel {
+    font-family: var(--font-ui);
+    font-size: var(--text-2xs);
+    letter-spacing: var(--tracking-wider);
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+  .visibilityTitle {
+    font-size: var(--text-base);
+    font-weight: var(--weight-medium);
+    color: var(--text-secondary);
+    line-height: var(--leading-tight);
+  }
+  .visibilityBody {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    line-height: var(--leading-snug);
+    max-width: 72ch;
+  }
+  .visibilityNote {
+    font-family: var(--font-ui);
+    font-size: var(--text-xs);
+    color: var(--text-faint);
+    letter-spacing: var(--tracking-wide);
+    line-height: var(--leading-snug);
+  }
+  .visibilityActions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+    flex-shrink: 0;
+  }
+  .visibilityBtn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-ui);
+    font-size: var(--text-xs);
+    letter-spacing: var(--tracking-wide);
+    padding: 7px 12px;
+    border-radius: var(--radius-md);
+    background: var(--accent-muted);
+    color: var(--accent-fg);
+    border: 1px solid var(--accent-dim);
+    cursor: pointer;
+    transition: filter var(--t-base), background var(--t-base), color var(--t-base);
+    white-space: nowrap;
+  }
+  .visibilityBtn:hover { filter: brightness(1.08); }
+  .visibilityBtnSecondary {
+    background: var(--bg-overlay);
+    color: var(--text-muted);
+    border-color: var(--border-dim);
+  }
+  .visibilityBtnSecondary:hover {
+    color: var(--text-secondary);
+    background: var(--bg-subtle);
+    filter: none;
   }
   .heading {
     font-family: var(--font-ui);
@@ -1735,6 +1908,30 @@
     border-bottom: 1px solid var(--border-dim);
     flex-shrink: 0;
     gap: var(--sp-2);
+  }
+  .sourceVisibilityNote {
+    margin: var(--sp-2) var(--sp-2) 0;
+    padding: var(--sp-2) var(--sp-3);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-dim);
+    background: var(--bg-raised);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .sourceVisibilityTitle {
+    font-family: var(--font-ui);
+    font-size: var(--text-2xs);
+    color: var(--text-muted);
+    letter-spacing: var(--tracking-wider);
+    text-transform: uppercase;
+  }
+  .sourceVisibilityBody {
+    font-family: var(--font-ui);
+    font-size: var(--text-xs);
+    color: var(--text-faint);
+    letter-spacing: var(--tracking-wide);
+    line-height: var(--leading-snug);
   }
   .langPocketLabel {
     font-family: var(--font-ui);
