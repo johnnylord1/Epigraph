@@ -4,12 +4,12 @@
   <metadata_license>MIT</metadata_license>
   <project_license>MIT</project_license>
 
-  <name>Moku</name>
-  <summary>Manga reader powered by Suwayomi</summary>
+  <name>Aethon</name>
+  <summary>Aethon manga reader powered by Suwayomi</summary>
 
   <description>
     <p>
-      Moku is a desktop manga reader built on top of Suwayomi-Server (Tachidesk),
+      Aethon is a desktop manga reader built on top of Suwayomi-Server (Tachidesk),
       providing a clean native interface for browsing, reading, and managing your
       manga library across hundreds of sources.
     </p>

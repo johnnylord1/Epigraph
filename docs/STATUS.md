@@ -1,7 +1,7 @@
 # Status
 
 ## Current Phase
-Phase 3B: technical identity cleanup
+Phase 3C: Discord and distribution identity cleanup
 
 ## Completed Today
 - Cloned the upstream Moku repository into `Aethon`.
@@ -13,23 +13,27 @@ Phase 3B: technical identity cleanup
 - Aligned the native runtime window title with `Aethon` after confirming config-level title sources were already correct.
 - Renamed the Rust package/bin runtime target from `moku` to `aethon`.
 - Replaced remaining safe `Moku` labels in Discord activity text with `Aethon`.
+- Updated safe Linux/AppStream packaging metadata text from `Moku` to `Aethon`.
+- Confirmed Discord application identity still depends on the upstream external app ID and asset registration.
 
 ## Last Completed Step
-Clean up the remaining safe runtime identity surfaces and verify the rebuilt desktop runtime.
+Clean up the remaining safe Discord and distribution identity surfaces and verify the desktop runtime still launches as `aethon.exe`.
 
 ## Exact Next Prompt
-Implement Phase 3C only: review the remaining risky identity surfaces for Aethon packaging and distribution metadata, keep it audit-only, preserve Apache-2.0 attribution, and do not change reader behavior, integrations, dependencies, or platform scope.
+Implement Phase 3D only: audit the remaining risky identity surfaces for Aethon updater, platform identifiers, and app-data paths, keep it strictly analysis-only, preserve Apache-2.0 attribution, and do not change reader behavior, integrations, dependencies, or platform scope.
 
 ## Blockers
-- Platform identifiers and distribution metadata still use upstream `moku` values in places such as `identifier`, Flatpak metadata, Linux desktop metadata, updater endpoints, and app-data paths.
-- Discord may still identify the app as `Moku` because the current Discord application ID and asset key remain upstream-controlled.
-- Updater and packaging identity cleanup is still deferred because it carries higher risk of breaking distribution or update flows.
+- Discord may still identify the app as `Moku` because the current Discord application ID and asset key remain upstream-controlled outside the repo.
+- Platform identifiers and distribution wiring still use upstream `moku` values in places such as `identifier`, Flatpak app id/command, updater endpoints, and app-data paths.
+- Higher-risk identity cleanup is still deferred because it could break updater, packaging, install paths, or local data continuity.
 
 ## Files/Directories That Must Not Be Touched Next
 - `src/components/pages/`
 - `src/lib/queries.ts`
 - `src/components/reader/`
 - `src-tauri/src/lib.rs`
+- `src/lib/discord.ts`
+- `src-tauri/tauri.conf.json`
 - `src-tauri/tauri.windows.conf.json`
 - `dev.moku.app.yml`
 - `packaging/`
@@ -40,5 +44,5 @@ Implement Phase 3C only: review the remaining risky identity surfaces for Aethon
 - Preserve upstream license obligations and attribution.
 - Keep milestones small and update `docs/STATUS.md` and `docs/DECISIONS.md` after each milestone.
 - Do not start feature work until an explicit phase prompt approves it.
-- Leave risky identifier renames and packaging behavior changes for a separate, explicit phase.
+- Leave risky identifier renames, Discord app registration, and packaging behavior changes for a separate, explicit phase.
 - Use `npm exec pnpm` as the fallback local path when `pnpm` is not installed globally.
