@@ -458,6 +458,7 @@ class Store {
   searchTabHint:     SearchHubTab | null = $state(null);
   searchBrowseHint:  SearchBrowseTab | null = $state(null);
   searchSourcesPaneHint: SearchSourcesPane | null = $state(null);
+  searchVisibilityDismissed: boolean  = $state(false);
   extensionsPanelHint: "repos" | null = $state(null);
   activeDownloads:   ActiveDownload[] = $state([]);
   toasts:            Toast[]          = $state([]);
@@ -664,6 +665,7 @@ class Store {
   setSearchTabHint(next: SearchHubTab | null)   { this.searchTabHint    = next; }
   setSearchBrowseHint(next: SearchBrowseTab | null) { this.searchBrowseHint = next; }
   setSearchSourcesPaneHint(next: SearchSourcesPane | null) { this.searchSourcesPaneHint = next; }
+  setSearchVisibilityDismissed(next: boolean)   { this.searchVisibilityDismissed = next; }
   setLibraryFilter(next: LibraryFilter)          { this.libraryFilter    = next; }
   setGenreFilter(next: string)                   { this.genreFilter      = next; }
   setSearchPrefill(next: string)                 { this.searchPrefill    = next; }
@@ -821,6 +823,7 @@ export function setHomePanelHint(next: "history" | null)                 { store
 export function setSearchTabHint(next: SearchHubTab | null)              { store.setSearchTabHint(next); }
 export function setSearchBrowseHint(next: SearchBrowseTab | null)        { store.setSearchBrowseHint(next); }
 export function setSearchSourcesPaneHint(next: SearchSourcesPane | null) { store.setSearchSourcesPaneHint(next); }
+export function setSearchVisibilityDismissed(next: boolean)              { store.setSearchVisibilityDismissed(next); }
 export function setExtensionsPanelHint(next: "repos" | null)             { store.setExtensionsPanelHint(next); }
 export function updateSettings(patch: Partial<Settings>)                 { store.updateSettings(patch); }
 export function resetKeybinds()                                          { store.resetKeybinds(); }

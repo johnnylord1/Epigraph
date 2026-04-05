@@ -75,7 +75,9 @@ export async function detectSetupState(settings: SetupSettings): Promise<SetupSt
     let kind: SetupStateKind = "ready";
     if (extensionRepoCount === 0) kind = "no_extension_repos";
     else if (installedContentExtensionCount === 0) kind = "no_installed_extensions";
-    else if (usableSourceCount === 0) kind = "no_usable_sources";
+    // If sources exist but are currently hidden by content filters, the app is
+    // configured; that is a visibility issue, not an onboarding/setup failure.
+    else if (totalSourceCount === 0) kind = "no_usable_sources";
 
     return {
       kind,

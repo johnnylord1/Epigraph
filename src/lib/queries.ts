@@ -208,6 +208,51 @@ export const SET_LOCAL_SOURCE_PATH = `
   }
 `;
 
+export const CREATE_BACKUP = `
+  mutation CreateBackup($includeCategories: Boolean, $includeChapters: Boolean) {
+    createBackup(input: { includeCategories: $includeCategories, includeChapters: $includeChapters }) {
+      url
+    }
+  }
+`;
+
+export const VALIDATE_BACKUP = `
+  query ValidateBackup($backup: Upload!) {
+    validateBackup(input: { backup: $backup }) {
+      missingSources {
+        id
+        name
+      }
+      missingTrackers {
+        name
+      }
+    }
+  }
+`;
+
+export const RESTORE_BACKUP = `
+  mutation RestoreBackup($backup: Upload!) {
+    restoreBackup(input: { backup: $backup }) {
+      id
+      status {
+        mangaProgress
+        state
+        totalManga
+      }
+    }
+  }
+`;
+
+export const GET_RESTORE_STATUS = `
+  query RestoreStatus($id: String!) {
+    restoreStatus(id: $id) {
+      mangaProgress
+      state
+      totalManga
+    }
+  }
+`;
+
 // ── Categories ────────────────────────────────────────────────────────────────
 
 export const GET_CATEGORIES = `

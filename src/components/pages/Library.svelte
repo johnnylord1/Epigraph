@@ -13,12 +13,14 @@
   const CARD_MIN_W     = 130;
   const CARD_GAP       = 16;
   const COMPLETED_NAME = "Completed";
+  const COMPLETED_KEY  = COMPLETED_NAME.trim().toLowerCase();
 
   // Drag type discriminators (tab reorder only — manga cards no longer use drag).
   const DT_TAB = "application/x-moku-tab";
 
   let activeDragKind: "tab" | null = $state(null);
   let dragInsertIdx:  number       = $state(-1);
+  let ensureCompletedInFlight: Promise<Category[]> | null = null;
 
   // ── Sort / filter panel ───────────────────────────────────────────────────
 
@@ -207,12 +209,58 @@
 
   // ── Completed category auto-create ────────────────────────────────────────
 
+  function normalizeCategoryName(name: string | null | undefined): string {
+    return (name ?? "").trim().toLowerCase();
+  }
+
+  function isCompletedCategory(category: Pick<Category, "name">): boolean {
+    return normalizeCategoryName(category.name) === COMPLETED_KEY;
+  }
+
+  function normalizeCategories(cats: Category[]): Category[] {
+    const seenIds = new Set<number>();
+    let sawCompleted = false;
+
+    return cats.filter((cat) => {
+      if (seenIds.has(cat.id)) return false;
+      seenIds.add(cat.id);
+
+      if (!isCompletedCategory(cat)) return true;
+      if (sawCompleted) return false;
+      sawCompleted = true;
+      return true;
+    });
+  }
+
+  function normalizeCategoryNodes(nodes: Manga[] | undefined): Manga[] {
+    return dedupeMangaById((nodes ?? []).filter((m) => m.inLibrary));
+  }
+
   async function ensureCompletedCategory(cats: Category[]): Promise<Category[]> {
-    if (cats.some(c => c.name === COMPLETED_NAME)) return cats;
+    const normalized = normalizeCategories(cats);
+    if (normalized.some(isCompletedCategory)) return normalized;
+    if (ensureCompletedInFlight) return await ensureCompletedInFlight;
+
+    ensureCompletedInFlight = (async () => {
+      try {
+        const fresh = normalizeCategories((await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES)).categories.nodes);
+        if (fresh.some(isCompletedCategory)) return fresh;
+
+        try {
+          await gql(CREATE_CATEGORY, { name: COMPLETED_NAME });
+        } catch {}
+
+        return normalizeCategories((await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES)).categories.nodes);
+      } finally {
+        ensureCompletedInFlight = null;
+      }
+    })();
+
     try {
-      const res = await gql<{ createCategory: { category: Category } }>(CREATE_CATEGORY, { name: COMPLETED_NAME });
-      return [...cats, res.createCategory.category];
-    } catch { return cats; }
+      return await ensureCompletedInFlight;
+    } catch {
+      return normalized;
+    }
   }
 
   // ── Data loading ──────────────────────────────────────────────────────────
@@ -285,7 +333,7 @@
 
   const visibleCategories = $derived((() => {
     const defaultId = store.settings.defaultLibraryCategoryId ?? null;
-    return store.categories
+    return normalizeCategories(store.categories)
       .filter(c => c.id !== 0 && !(store.settings.hiddenCategoryIds ?? []).includes(c.id))
       .sort((a, b) => {
         if (a.id === defaultId) return -1;
@@ -296,8 +344,8 @@
 
   const categoryMangaMap = $derived((() => {
     const map = new Map<number, Manga[]>();
-    for (const cat of store.categories) {
-      const nodes = cat.mangas?.nodes ?? [];
+    for (const cat of normalizeCategories(store.categories)) {
+      const nodes = normalizeCategoryNodes(cat.mangas?.nodes);
       map.set(cat.id, nodes);
     }
     return map;

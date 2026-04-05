@@ -269,6 +269,19 @@
   const completedManga = $derived(completedIds.length > 0 ? completedPool.filter(m => completedIds.includes(m.id)).slice(0, 7) : []);
   const recentHistory  = $derived(store.history.slice(0, 6));
   const stats          = $derived(store.readingStats);
+  const showFirstTouchGuide = $derived(
+    (!setupState || setupState.kind === "ready") && recentHistory.length === 0,
+  );
+  const firstTouchTitle = $derived(
+    libraryManga.length > 0
+      ? "Your Home is ready for your first reading session"
+      : "Start with Browse to find your first series",
+  );
+  const firstTouchBody = $derived(
+    libraryManga.length > 0
+      ? "You already have library content available, but Home is still quiet because there is no recent reading activity yet. Pick something from Browse or jump straight into your library."
+      : "Aethon is set up, but Home stays light until you start reading. Browse popular titles, inspect your sources, or open your library when you're ready.",
+  );
 
   function handleRowWheel(e: WheelEvent) {
     if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
@@ -301,6 +314,27 @@
           onRetry={refreshSetupState}
         />
       </div>
+    {/if}
+
+    {#if showFirstTouchGuide}
+      <section class="starterCard">
+        <div class="starterCopy">
+          <p class="starterLabel">Start here</p>
+          <h2 class="starterTitle">{firstTouchTitle}</h2>
+          <p class="starterBody">{firstTouchBody}</p>
+        </div>
+        <div class="starterActions">
+          <button class="starterBtn" onclick={() => openSearchBrowseFeatured()}>
+            <MagnifyingGlass size={12} weight="bold" /> Browse popular
+          </button>
+          <button class="starterBtn starterBtnSecondary" onclick={() => openSearchSources("browse")}>
+            <ListBullets size={12} weight="bold" /> Browse sources
+          </button>
+          <button class="starterBtn starterBtnGhost" onclick={() => setNavPage("library")}>
+            <BookOpen size={12} weight="light" /> Open library
+          </button>
+        </div>
+      </section>
     {/if}
 
     <div class="hero-section">
@@ -471,8 +505,8 @@
               </div>
             {/each}
             <div class="activity-placeholder-overlay">
-              <button class="activity-placeholder-cta" onclick={() => setNavPage("library")}>
-                <BookOpen size={12} weight="light" /> Start reading
+              <button class="activity-placeholder-cta" onclick={() => openSearchBrowseFeatured()}>
+                <MagnifyingGlass size={12} weight="light" /> Browse popular
               </button>
             </div>
           </div>
@@ -566,6 +600,95 @@
   .root { display: flex; flex-direction: column; height: 100%; overflow: hidden; animation: fadeIn 0.14s ease both; }
   .body { flex: 1; display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden; min-height: 0; }
   .setup-wrap { padding: var(--sp-3) var(--sp-4) 0; flex-shrink: 0; }
+  .starterCard {
+    margin: var(--sp-3) var(--sp-4) 0;
+    padding: var(--sp-4);
+    border-radius: var(--radius-xl);
+    border: 1px solid var(--border-dim);
+    background:
+      linear-gradient(135deg, color-mix(in srgb, var(--accent-muted) 72%, transparent) 0%, transparent 100%),
+      var(--bg-raised);
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--sp-4);
+    flex-shrink: 0;
+  }
+  .starterCopy {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+    min-width: 0;
+  }
+  .starterLabel {
+    font-family: var(--font-ui);
+    font-size: var(--text-2xs);
+    color: var(--text-faint);
+    letter-spacing: var(--tracking-wider);
+    text-transform: uppercase;
+  }
+  .starterTitle {
+    margin: 0;
+    font-size: var(--text-lg);
+    font-weight: var(--weight-medium);
+    color: var(--text-secondary);
+    line-height: var(--leading-tight);
+  }
+  .starterBody {
+    margin: 0;
+    max-width: 64ch;
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    line-height: 1.6;
+    letter-spacing: var(--tracking-wide);
+  }
+  .starterActions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--sp-2);
+    flex-shrink: 0;
+  }
+  .starterBtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 34px;
+    font-family: var(--font-ui);
+    font-size: var(--text-xs);
+    letter-spacing: var(--tracking-wide);
+    padding: 7px 14px;
+    border-radius: var(--radius-full);
+    background: var(--accent-muted);
+    border: 1px solid var(--accent-dim);
+    color: var(--accent-fg);
+    cursor: pointer;
+    transition: filter var(--t-base), background var(--t-base), color var(--t-base), border-color var(--t-base);
+    white-space: nowrap;
+  }
+  .starterBtn:hover { filter: brightness(1.08); }
+  .starterBtnSecondary {
+    background: var(--bg-overlay);
+    border-color: var(--border-dim);
+    color: var(--text-secondary);
+  }
+  .starterBtnSecondary:hover {
+    background: var(--bg-subtle);
+    border-color: var(--border-strong);
+    filter: none;
+  }
+  .starterBtnGhost {
+    background: transparent;
+    border-color: var(--border-dim);
+    color: var(--text-faint);
+  }
+  .starterBtnGhost:hover {
+    background: var(--bg-overlay);
+    color: var(--text-secondary);
+    border-color: var(--border-strong);
+    filter: none;
+  }
   .history-view { display: flex; flex-direction: column; min-height: 100%; }
   .history-view-header { padding: var(--sp-3) var(--sp-4) 0; flex-shrink: 0; }
   .history-back { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); color: var(--text-faint); background: none; border: 1px solid var(--border-dim); border-radius: var(--radius-full); padding: 6px 12px; cursor: pointer; transition: color var(--t-base), border-color var(--t-base), background var(--t-base); }

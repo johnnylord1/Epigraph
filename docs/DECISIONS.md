@@ -1,5 +1,76 @@
 # Decisions
 
+## 2026-04-05 - Reconciliation-first restore is the v1 backup recovery path
+
+Decision:
+- Mihon/J2K source recovery in Aethon Desktop now follows a reconciliation-first restore path
+
+Why:
+- many Mihon-compatible backups contain orphaned historical source ids
+- exact source-id validation alone leaves too much recovery value on the table
+- restoring the raw backup first and trying to patch later is too ambiguous and harder to reason about safely
+
+Locked v1 rules:
+- parse only the fields needed for reconciliation
+- keep parsing in TypeScript
+- keep the overlay app-local
+- keep inference bounded with strict limits, caching, and timeouts
+- only auto-select remaps when confidence is clearly high
+- ambiguous leftovers require explicit user choice or explicit skip
+- the original backup is never mutated
+- the only restore payload sent to Suwayomi is the client-generated reconciled payload
+- v1 is read / reconcile / review / restore only
+- v1 is not a generic backup editor
+- v1 does not export reconciled backup files
+
+Overlay decision:
+- accepted mappings are stored in `%APPDATA%\\aethon\\backup-reconciliation-overlay.json`
+- overlay entries are keyed by backup fingerprint plus source-inventory fingerprint
+- the overlay is desktop-local and does not depend on Suwayomi schema/storage changes
+
+Language derivation decision:
+- backup source `lang` is only derived when the mapping is deterministic and unambiguous
+- otherwise `lang = null`
+- normalized source-name matching without lang is only allowed when no language ambiguity remains
+
+Inference decision:
+- representative manga sampling must prefer distinctive titles with richer metadata
+- do not sample by first-in-cluster order
+- auto-remap thresholds are intentionally strict to favor safe recovery over aggressive guessing
+
+## 2026-04-05 - Reconciliation v1 is validated, but exact repo-backed mappings still depend on extension installation on clean targets
+
+Decision:
+- treat the current v1 reconciliation engine as validated for:
+  - local Mihon/J2K parsing
+  - exact reconciliation
+  - bounded/cached inference
+  - overlay persistence/reuse
+  - client-side reconciled payload generation
+  - real restore into a disposable Suwayomi instance
+
+What the disposable restore proved:
+- the reconciled payload path is real and accepted by Suwayomi
+- the original backup remains unchanged
+- overlay reuse works when fingerprints match
+- ambiguous leftovers are not silently forced
+
+What the disposable restore also proved:
+- `repo-source-id` exact matches are not the same thing as live installed sources on a clean Suwayomi profile
+- if the target server does not have the corresponding extensions installed, restored manga can land successfully with stable source ids while still reporting missing sources and exposing no linked `source` object in GraphQL
+
+Decision for v1 semantics:
+- keep `repo-source-id` exact matches as valid reconciliation results
+- surface `requiresInstall` clearly in the UI and overlay
+- do not claim that an exact repo-backed mapping guarantees an immediately linked/usable source on a clean restore target
+- treat extension installation on the target server as a separate requirement for full post-restore source usability
+
+Near-term follow-up posture:
+- do not broaden v1 into a generic backup editor
+- if we improve this next, the evidence-based follow-up is extension-aware restore hardening:
+  - either require/install selected extensions before restore
+  - or make the restore UI explicitly gate "fully usable restore" on extension availability
+
 ## Template
 | Date | Decision | Rationale | Status |
 | --- | --- | --- | --- |
@@ -38,3 +109,145 @@
 | 2026-04-02 | `android-spike-blocked` and `C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon-android-spike` are the isolated continuation point for Android | The spike needed to be preserved exactly as it existed, including local WIP and generated Android artifacts, before restoring desktop stability. A dedicated branch plus linked worktree isolates the blocked Android investigation without discarding any local progress or contaminating the stable desktop branch. | Active |
 | 2026-04-02 | `85059d5` is the authoritative rollback baseline for the desktop cleanup | `85059d5` was the confirmed clean checkpoint created immediately before Android bootstrap work began. Using that exact commit avoids guessing rollback scope and gives the desktop line a known-good pre-Android baseline. | Active |
 | 2026-04-02 | Android work may return to `main` only after the isolated spike fully loads the shell and completes real navigation validation | The Android spike is only worth merging back once it can do more than build/install/launch partially. The minimum return criteria are: the app shell loads correctly on emulator or device, it connects to the intended Suwayomi server, and Home, Library, Browse, Sources, Reader, and Settings can all be validated in the real Android runtime. | Active |
+## 2026-04-02 - Post-rollback desktop validation stays on desktop and prioritizes Home first-touch
+
+After isolating the blocked Android spike into a separate branch/worktree, the next pass on `main` was a discovery-only validation run in the real Tauri desktop window. The goal was to confirm whether the restored desktop line still behaved like the intended post-4H product before choosing any new implementation work.
+
+The restored desktop line is viable:
+- `Home` opens correctly
+- `Browse` still exposes `Search / Catalog / Sources`
+- `Catalog` still loads real card results
+- `Sources` still loads working sources and still exposes `Extensions & Repos`
+- `Settings` still uses the grouped two-level navigation model
+
+The strongest evidence-based desktop UX problem is now `Home`, not Browse architecture. On a low-activity profile, Home is technically correct but too weak as a first-touch surface: it opens to mostly empty sections (`Nothing here yet`, `No chapters to show`, zeroed stats) and does not give enough useful forward motion compared with the stronger Browse experience.
+
+Two smaller follow-up issues were also confirmed, but they are not the next primary phase:
+- `Browse > Sources` still shows the source-visibility explanation that should live in `Browse > Search`
+- the visible catalog feed label is back to `All` on the restored baseline
+
+Decision:
+- do not resume Android work on `main`
+- treat the next implementation phase as a desktop-only `Home first-touch / empty-state guidance` phase
+- keep Browse/Catalog/Sources follow-up polish as later, smaller cleanup work unless a new audit proves otherwise
+
+Strict non-goals for the next phase:
+- no Android work
+- no Suwayomi/backend changes
+- no reader behavior changes
+- no source-browse rewrite
+- no broad visual redesign
+
+## 2026-04-02 - Home first-touch stays lightweight and Browse visibility guidance belongs only in Search
+
+The next desktop-only implementation pass stayed intentionally small. The goal was not to redesign Home or Browse, but to make the restored desktop line feel less passive for low-activity profiles and to clean up two confirmed Browse regressions.
+
+Decision:
+- Home should provide lightweight first-touch direction when there is little or no recent reading activity, instead of leaving the dashboard as a mostly empty passive surface
+- the guidance should point users toward useful next actions that already exist in the product, especially `Browse > Catalog`, `Browse > Sources`, and `Library`
+- the source-visibility explanation belongs only in `Browse > Search`, where the mismatch is being explained in direct search context
+- the duplicate visibility note should not appear in `Browse > Sources`
+- the default Catalog feed keeps the same behavior, but its user-facing label should be `Popular` rather than `All`
+
+Implementation policy for this pass:
+- session-scoped dismiss state is enough for the Search visibility card; no backend, storage, or schema work is needed
+- Home guidance remains additive and lightweight rather than becoming a new onboarding system
+- no Android work returns to `main`
+
+Active follow-up posture:
+- treat this as a low-risk desktop polish pass, not a product architecture change
+- choose the next phase from fresh desktop evidence rather than automatically expanding scope
+
+## 2026-04-05 - Backup and restore should be thin Aethon controls over Suwayomi, not a parallel client backup system
+
+The current Suwayomi server used by Aethon already exposes native GraphQL operations for backup and restore:
+- `createBackup`
+- `validateBackup`
+- `restoreBackup`
+- `restoreStatus`
+
+Decision:
+- Aethon should expose backup and restore as thin desktop controls over those existing server operations
+- Aethon must not invent its own backup format or maintain a second backup pipeline in client state
+- export should create a server backup and save the resulting file locally
+- import should validate the selected backup first, then restore it through Suwayomi and surface server-side progress/status
+
+Implementation policy for this phase:
+- place the controls in `Settings > System > Storage` because they operate on the current server/data environment
+- keep export and import scoped to the current connected Suwayomi server
+- use GraphQL multipart upload for restore/validate instead of adding backend rewrites
+- keep the result honest: if Desktop and Mobile point to the same server, both clients reflect the restored state because the server is canonical
+
+Non-goals:
+- no custom Aethon backup format
+- no reader changes
+- no Suwayomi backend rewrite
+- no desktop/mobile state unification layer
+
+## 2026-04-05 - Backup validation should offer extension installs when the server can identify a real match
+
+Once backup validation reports `missingSources`, Aethon should do more than list the names and leave the user stranded. The desktop client already knows how to fetch available extensions and install them through Suwayomi, so the restore flow should reuse that capability when it can do so honestly.
+
+Decision:
+- backup validation now attempts to match each missing source against real extensions exposed by the current server/repos
+- install suggestions are only shown when Aethon finds a concrete extension candidate; it must not fabricate a match
+- when no reliable match is found, the UI should point the user to `Browse > Sources > Extensions & Repos` instead of pretending the app can resolve the source automatically
+
+Implementation policy:
+- reuse the existing extension install mutation rather than adding a second install path
+- use the configured extension repo indexes as the source-id mapping layer whenever possible, because those indexes expose `sources[].id` and `sources[].name` for each installable extension
+- fall back to conservative source-name matching only when an exact source-id match is unavailable
+- keep restore and extension installation loosely coupled: suggested installs help close the gap before restore, but they do not rewrite Suwayomi backup semantics
+
+## 2026-04-05 - Restore readiness must distinguish `ready_now` from `requiresInstall`
+
+The disposable restore validation proved that exact reconciliation alone is not enough to guarantee a usable restored library on a clean target server. A backup can reconcile cleanly against repo-backed source ids and still restore into a server where the required extensions are not installed yet. In that case the restore succeeds, but the restored manga still do not link to usable live sources.
+
+Decision:
+- Aethon Desktop now treats restore readiness as a first-class preflight concern
+- every selected reconciliation result is classified as one of:
+  - `ready_now`
+  - `requires_install`
+  - `unavailable`
+  - `unresolved`
+- final restore must not be presented as fully usable when selected mappings still require extension installation on the target server
+- the reconciled restore architecture stays intact:
+  - parse
+  - reconcile
+  - overlay
+  - readiness gate
+  - final restore
+
+Implementation policy:
+- `requiresInstall` is surfaced directly in the desktop restore UI, not hidden in warnings
+- a clean target with missing extensions is gated until the user installs the missing pieces or explicitly follows the install-first path
+- a prepared target with the required extensions already installed is allowed through the same reconciled restore path without special-case branching
+- unresolved leftovers remain unresolved by design; readiness hardening must not silently force ambiguous mappings
+
+Consequence:
+- the restore flow is now honest about the difference between `source id is known` and `source is actually usable on this server right now`
+- the next restore-related work can stay narrow: it does not need a new backup format or a generic backup editor
+
+## 2026-04-05 - Profile-scoped local runtime safety is enforced by lock plus live-process ownership checks
+
+The local corruption investigation confirmed that the real risk was not only duplicate desktop windows; it was multiple Aethon instances attempting to spawn Suwayomi/Java against the same `rootDir`. The current hardening added a profile-scoped `server.lock`, but the validation also showed that stale lock files can happen after abnormal termination.
+
+Decision:
+- the durable rule is `one profile -> one Java/Suwayomi process`
+- `server.lock` remains part of the protection path and must not be weakened
+- the app also treats `existing Java process already owns this profile` as authoritative safety evidence when the lock file is stale
+- shutdown only kills the child spawned by the current instance; it must not broad-kill unrelated Java processes
+
+Implementation policy:
+- spawn decisions must log explicit reasons:
+  - lock acquired
+  - stale lock detected
+  - lock denied
+  - spawn skipped because another process already owns the profile
+- stale/damaged database handling stays quarantine-safe; old data is not silently deleted
+- desktop single-instance shell work is optional later, but it is secondary to the profile-level runtime rule
+
+Current posture after validation:
+- the single-spawn protection is effective and merge-safe for this phase
+- a remaining follow-up is that `server.lock` metadata can stay stale and point to a dead Aethon PID while runtime safety is actually being enforced by the live-process ownership check
+- that stale-lock metadata issue is a smaller auditability follow-up, not a reason to reopen the broad corruption fix

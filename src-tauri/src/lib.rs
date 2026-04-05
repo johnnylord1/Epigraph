@@ -1,7 +1,7 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::io::Write;
-use sysinfo::Disks;
+use sysinfo::{Disks, Pid, System};
 use serde::Serialize;
 use tauri::{Manager, WindowEvent};
 #[cfg(target_os = "windows")]
@@ -9,7 +9,12 @@ use tauri::Emitter;
 use tauri_plugin_shell::{ShellExt, process::CommandChild};
 use walkdir::WalkDir;
 
-struct ServerState(Mutex<Option<CommandChild>>);
+struct RunningServer {
+    child: CommandChild,
+    lock_path: PathBuf,
+}
+
+struct ServerState(Mutex<Option<RunningServer>>);
 
 #[derive(Serialize)]
 pub struct StorageInfo {
@@ -127,6 +132,99 @@ fn create_directory(path: String) -> Result<(), String> {
     std::fs::create_dir_all(path.trim()).map_err(|e| e.to_string())
 }
 
+fn acquire_server_lock(lock_path: &Path, data_dir: &Path) -> std::io::Result<bool> {
+    match std::fs::OpenOptions::new().write(true).create_new(true).open(lock_path) {
+        Ok(mut file) => {
+            let _ = writeln!(file, "pid={}", std::process::id());
+            let _ = writeln!(file, "rootDir={}", data_dir.to_string_lossy());
+            let _ = writeln!(file, "timestamp={:?}", std::time::SystemTime::now());
+            Ok(true)
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        Err(err) => Err(err),
+    }
+}
+
+fn read_server_lock_pid(lock_path: &Path) -> Option<u32> {
+    let text = std::fs::read_to_string(lock_path).ok()?;
+    text.lines()
+        .find_map(|line| line.trim().strip_prefix("pid=")?.trim().parse::<u32>().ok())
+}
+
+fn process_is_alive(pid: u32) -> bool {
+    let system = System::new_all();
+    system.process(Pid::from_u32(pid)).is_some()
+}
+
+fn java_process_uses_rootdir(process: &sysinfo::Process, rootdir_flag: &str) -> bool {
+    let name = process.name().to_string_lossy().to_ascii_lowercase();
+    if !name.contains("java") {
+        return false;
+    }
+
+    process.cmd().iter().any(|arg| arg.to_string_lossy().contains(rootdir_flag))
+}
+
+fn existing_server_for_profile(data_dir: &Path) -> bool {
+    let rootdir_flag = format!(
+        "-Dsuwayomi.tachidesk.config.server.rootDir={}",
+        data_dir.to_string_lossy()
+    );
+    let system = System::new_all();
+    system
+        .processes()
+        .values()
+        .any(|process| java_process_uses_rootdir(process, &rootdir_flag))
+}
+
+#[tauri::command]
+async fn download_server_file_to_downloads(
+    url: String,
+    filename: Option<String>,
+    auth_header: Option<String>,
+) -> Result<String, String> {
+    use tauri_plugin_http::reqwest;
+
+    let client = reqwest::Client::builder()
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let mut request = client.get(url.trim());
+    if let Some(header) = auth_header.as_ref().filter(|h| !h.trim().is_empty()) {
+        request = request.header("Authorization", header.trim());
+    }
+
+    let response = request.send().await.map_err(|e| e.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("Download failed with HTTP {}", response.status()));
+    }
+
+    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
+    let downloads_dir = dirs::download_dir()
+        .or_else(dirs::home_dir)
+        .ok_or_else(|| "Could not resolve Downloads directory".to_string())?;
+
+    std::fs::create_dir_all(&downloads_dir).map_err(|e| e.to_string())?;
+
+    let raw_name = filename
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("aethon-backup.tachibk");
+    let safe_name: String = raw_name
+        .chars()
+        .map(|c| match c {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            _ => c,
+        })
+        .collect();
+
+    let target = downloads_dir.join(safe_name);
+    std::fs::write(&target, &bytes).map_err(|e| e.to_string())?;
+
+    Ok(target.to_string_lossy().into_owned())
+}
+
 /// Moves all content from `src` into `dst`, then removes `src`.
 /// Emits `migrate_progress` events: `{ done, total, current }`.
 /// Only deletes the source tree after every file is confirmed copied.
@@ -194,43 +292,40 @@ fn get_platform_ui_scale(window: tauri::Window) -> f64 {
     window.scale_factor().unwrap_or(1.0)
 }
 
+fn reconciliation_overlay_path() -> Result<PathBuf, String> {
+    let dir = suwayomi_data_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.join("backup-reconciliation-overlay.json"))
+}
+
+#[tauri::command]
+fn read_reconciliation_overlay() -> Result<Option<String>, String> {
+    let path = reconciliation_overlay_path()?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    Ok(Some(text))
+}
+
+#[tauri::command]
+fn write_reconciliation_overlay(contents: String) -> Result<(), String> {
+    let path = reconciliation_overlay_path()?;
+    std::fs::write(path, contents).map_err(|e| e.to_string())
+}
+
 fn kill_tachidesk(app: &tauri::AppHandle) {
-    let state = app.state::<ServerState>();
-    if let Some(child) = state.0.lock().unwrap().take() {
-        let _ = child.kill();
+    let running = {
+        let state = app.state::<ServerState>();
+        let mut guard = state.0.lock().unwrap();
+        guard.take()
+    };
+
+    if let Some(running) = running {
+        let _ = running.child.kill();
+        let _ = std::fs::remove_file(running.lock_path);
+        return;
     }
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-        let _ = std::process::Command::new("taskkill")
-            .args(["/F", "/FI", "IMAGENAME eq java.exe"])
-            .creation_flags(CREATE_NO_WINDOW)
-            .status();
-
-        // Poll until no java.exe remains (up to ~3 s) so the installer can
-        // overwrite the JRE DLLs without hitting a sharing-violation error.
-        for _ in 0..30 {
-            let still_running = std::process::Command::new("tasklist")
-                .args(["/FI", "IMAGENAME eq java.exe", "/NH"])
-                .creation_flags(CREATE_NO_WINDOW)
-                .output()
-                .map(|o| String::from_utf8_lossy(&o.stdout).contains("java.exe"))
-                .unwrap_or(false);
-
-            if !still_running {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    let _ = std::process::Command::new("pkill")
-        .args(["-f", "tachidesk"])
-        .status();
 }
 
 
@@ -305,21 +400,81 @@ fn suwayomi_data_dir() -> PathBuf {
     {
         dirs::data_dir()
             .unwrap_or_else(|| PathBuf::from("C:\\ProgramData"))
-            .join("moku\\tachidesk")
+            .join("aethon")
     }
     #[cfg(target_os = "macos")]
     {
         dirs::data_dir()
             .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from("~")))
-            .join("dev.moku.app/tachidesk")
+            .join("aethon")
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let base = std::env::var("XDG_DATA_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|_| dirs::data_dir().unwrap_or_else(|| PathBuf::from("/tmp")));
-        base.join("moku/tachidesk")
+        base.join("aethon")
     }
+}
+
+fn legacy_suwayomi_data_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+
+    #[cfg(target_os = "windows")]
+    {
+        dirs.push(
+            dirs::data_dir()
+                .unwrap_or_else(|| PathBuf::from("C:\\ProgramData"))
+                .join("moku\\tachidesk"),
+        );
+
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            dirs.push(PathBuf::from(local).join("Tachidesk"));
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        dirs.push(
+            dirs::data_dir()
+                .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from("~")))
+                .join("dev.moku.app/tachidesk"),
+        );
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let base = std::env::var("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| dirs::data_dir().unwrap_or_else(|| PathBuf::from("/tmp")));
+        dirs.push(base.join("moku/tachidesk"));
+    }
+
+    dirs
+}
+
+fn ensure_suwayomi_data_dir() -> PathBuf {
+    let canonical = suwayomi_data_dir();
+
+    if canonical.exists() {
+        return canonical;
+    }
+
+    for legacy in legacy_suwayomi_data_dirs() {
+        if !legacy.exists() || legacy == canonical {
+            continue;
+        }
+
+        if let Some(parent) = canonical.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        if std::fs::rename(&legacy, &canonical).is_ok() {
+            return canonical;
+        }
+    }
+
+    canonical
 }
 
 struct ServerInvocation {
@@ -554,9 +709,10 @@ fn spawn_server(binary: String, app: tauri::AppHandle) -> Result<(), SpawnError>
         }
     }
 
-    let data_dir = suwayomi_data_dir();
+    let data_dir = ensure_suwayomi_data_dir();
+    let lock_path = data_dir.join("server.lock");
 
-    let log_path = data_dir.join("moku-spawn.log");
+    let log_path = data_dir.join("aethon-spawn.log");
     let _ = std::fs::create_dir_all(&data_dir);
     let mut log = std::fs::OpenOptions::new()
         .create(true)
@@ -574,12 +730,62 @@ fn spawn_server(binary: String, app: tauri::AppHandle) -> Result<(), SpawnError>
     do_log(&mut log, &format!("[spawn_server] LOCALAPPDATA = {:?}", std::env::var("LOCALAPPDATA")));
     do_log(&mut log, &format!("[spawn_server] current_dir = {:?}", std::env::current_dir()));
 
+    let existing_server = existing_server_for_profile(&data_dir);
+    let lock_owner_pid = read_server_lock_pid(&lock_path);
+
+    if lock_path.exists() {
+        match lock_owner_pid {
+            Some(pid) if process_is_alive(pid) => {
+                do_log(&mut log, &format!(
+                    "[spawn_server] lock denied: server.lock is owned by live Aethon pid {}",
+                    pid
+                ));
+                return Ok(());
+            }
+            Some(pid) => {
+                do_log(&mut log, &format!(
+                    "[spawn_server] found stale server.lock from dead pid {}",
+                    pid
+                ));
+            }
+            None => {
+                do_log(&mut log, "[spawn_server] found invalid or unreadable server.lock metadata");
+            }
+        }
+
+        if existing_server {
+            do_log(&mut log, "[spawn_server] spawn skipped because a Java/Suwayomi process already owns this profile");
+            return Ok(());
+        }
+
+        let _ = std::fs::remove_file(&lock_path);
+        do_log(&mut log, &format!("[spawn_server] removed stale lock {:?}", lock_path));
+    } else if existing_server {
+        do_log(&mut log, "[spawn_server] reusing existing server because a Java/Suwayomi process is already running for this profile");
+        return Ok(());
+    }
+
+    match acquire_server_lock(&lock_path, &data_dir) {
+        Ok(true) => {
+            do_log(&mut log, &format!("[spawn_server] acquired lock {:?}", lock_path));
+        }
+        Ok(false) => {
+            do_log(&mut log, "[spawn_server] lock denied during acquisition race; spawn skipped");
+            return Ok(());
+        }
+        Err(err) => {
+            do_log(&mut log, &format!("[spawn_server] lock FAILED: {}", err));
+            return Err(SpawnError::SpawnFailed(err.to_string()));
+        }
+    }
+
     seed_server_conf(&data_dir);
     do_log(&mut log, "[spawn_server] server.conf seeded");
 
     let mut invocation = match resolve_server_binary(&binary, &app, &mut log) {
         Ok(i) => i,
         Err(e) => {
+            let _ = std::fs::remove_file(&lock_path);
             do_log(&mut log, &format!("[spawn_server] resolve FAILED: {:?}", e));
             return Err(e);
         }
@@ -611,10 +817,11 @@ fn spawn_server(binary: String, app: tauri::AppHandle) -> Result<(), SpawnError>
     match cmd.spawn() {
         Ok((_rx, child)) => {
             do_log(&mut log, &format!("[spawn_server] SUCCESS — spawned: {}", bin_display));
-            *app.state::<ServerState>().0.lock().unwrap() = Some(child);
+            *app.state::<ServerState>().0.lock().unwrap() = Some(RunningServer { child, lock_path });
             Ok(())
         }
         Err(e) => {
+            let _ = std::fs::remove_file(&lock_path);
             do_log(&mut log, &format!("[spawn_server] SPAWN FAILED: {}", e));
             do_log(&mut log, &format!("[spawn_server] error kind: {:?}", e));
             Err(SpawnError::SpawnFailed(e.to_string()))
@@ -734,7 +941,10 @@ pub fn run() {
             get_default_downloads_path,
             check_path_exists,
             create_directory,
+            download_server_file_to_downloads,
             migrate_downloads,
+            read_reconciliation_overlay,
+            write_reconciliation_overlay,
             spawn_server,
             kill_server,
             get_platform_ui_scale,

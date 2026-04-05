@@ -1,0 +1,435 @@
+import pako from "pako";
+import Long from "long";
+import protobuf from "protobufjs";
+import { MIHON_BACKUP_PROTO } from "./mihonProto";
+import type { ParsedBackup, ParsedBackupManga, ParsedBackupSource, SourceInventoryEntry } from "../reconciliation/types";
+
+protobuf.util.Long = Long;
+protobuf.configure();
+
+const root = protobuf.parse(MIHON_BACKUP_PROTO).root;
+const BackupMangaType = root.lookupType("BackupManga");
+const BackupSourceType = root.lookupType("BackupSource");
+
+const GZIP_MAGIC_1 = 0x1f;
+const GZIP_MAGIC_2 = 0x8b;
+
+export const BACKUP_TOP_LEVEL_MANGA_FIELD = 1;
+export const BACKUP_TOP_LEVEL_SOURCES_FIELD = 101;
+
+function toUint8Array(input: ArrayBuffer | Uint8Array): Uint8Array {
+  return input instanceof Uint8Array ? input : new Uint8Array(input);
+}
+
+function decodeUtf8(bytes: Uint8Array): string {
+  return new TextDecoder().decode(bytes);
+}
+
+function int64ToString(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? Math.trunc(value).toString() : "";
+  if (typeof value === "bigint") return value.toString();
+  if (Long.isLong(value)) return value.toString();
+  if (typeof value === "object" && "toString" in (value as object)) {
+    const text = String(value);
+    return text === "[object Object]" ? "" : text;
+  }
+  return "";
+}
+
+function encodeInt64(value: string): Long {
+  return Long.fromString(value || "0", false);
+}
+
+function toLong(value: unknown): Long {
+  return Long.fromString(int64ToString(value) || "0", false);
+}
+
+function maxLong(a: unknown, b: unknown): Long {
+  const left = toLong(a);
+  const right = toLong(b);
+  return left.greaterThan(right) ? left : right;
+}
+
+function minPositiveLong(a: unknown, b: unknown): Long {
+  const left = toLong(a);
+  const right = toLong(b);
+  const zero = Long.fromInt(0, false);
+  if (left.lessThanOrEqual(zero)) return right;
+  if (right.lessThanOrEqual(zero)) return left;
+  return left.lessThan(right) ? left : right;
+}
+
+function preferTruthy<T>(left: T | null | undefined, right: T | null | undefined): T | null | undefined {
+  return left || right;
+}
+
+function preferLongerString(left: unknown, right: unknown): string {
+  const a = typeof left === "string" ? left : "";
+  const b = typeof right === "string" ? right : "";
+  if (!a) return b;
+  if (!b) return a;
+  return b.length > a.length ? b : a;
+}
+
+function uniqueStrings(values: unknown[]): string[] {
+  return [...new Set(values.filter((value): value is string => typeof value === "string" && value.length > 0))];
+}
+
+function uniqueInt64(values: unknown[]): Long[] {
+  return [...new Set(values.map((value) => int64ToString(value)).filter(Boolean))].map((value) => encodeInt64(value));
+}
+
+function chapterKey(chapter: any): string {
+  return [
+    chapter?.url ?? "",
+    chapter?.name ?? "",
+    String(chapter?.chapterNumber ?? ""),
+    int64ToString(chapter?.sourceOrder),
+  ].join("|");
+}
+
+function trackingKey(tracking: any): string {
+  return [
+    String(tracking?.syncId ?? ""),
+    int64ToString(tracking?.mediaId),
+    tracking?.trackingUrl ?? "",
+  ].join("|");
+}
+
+function historyKey(history: any): string {
+  return history?.url ?? "";
+}
+
+function mergeChapter(left: any, right: any): any {
+  return {
+    ...left,
+    ...right,
+    url: preferLongerString(left?.url, right?.url),
+    name: preferLongerString(left?.name, right?.name),
+    scanlator: preferLongerString(left?.scanlator, right?.scanlator),
+    read: Boolean(left?.read || right?.read),
+    bookmark: Boolean(left?.bookmark || right?.bookmark),
+    lastPageRead: maxLong(left?.lastPageRead, right?.lastPageRead),
+    dateFetch: maxLong(left?.dateFetch, right?.dateFetch),
+    dateUpload: maxLong(left?.dateUpload, right?.dateUpload),
+    chapterNumber: Math.max(Number(left?.chapterNumber ?? 0), Number(right?.chapterNumber ?? 0)),
+    sourceOrder: maxLong(left?.sourceOrder, right?.sourceOrder),
+    lastModifiedAt: maxLong(left?.lastModifiedAt, right?.lastModifiedAt),
+    version: maxLong(left?.version, right?.version),
+  };
+}
+
+function mergeTracking(left: any, right: any): any {
+  return {
+    ...left,
+    ...right,
+    syncId: Number(preferTruthy(left?.syncId, right?.syncId) ?? 0),
+    libraryId: maxLong(left?.libraryId, right?.libraryId),
+    mediaIdInt: Number(preferTruthy(left?.mediaIdInt, right?.mediaIdInt) ?? 0),
+    trackingUrl: preferLongerString(left?.trackingUrl, right?.trackingUrl),
+    title: preferLongerString(left?.title, right?.title),
+    lastChapterRead: Math.max(Number(left?.lastChapterRead ?? 0), Number(right?.lastChapterRead ?? 0)),
+    totalChapters: Math.max(Number(left?.totalChapters ?? 0), Number(right?.totalChapters ?? 0)),
+    score: Math.max(Number(left?.score ?? 0), Number(right?.score ?? 0)),
+    status: Math.max(Number(left?.status ?? 0), Number(right?.status ?? 0)),
+    startedReadingDate: minPositiveLong(left?.startedReadingDate, right?.startedReadingDate),
+    finishedReadingDate: maxLong(left?.finishedReadingDate, right?.finishedReadingDate),
+    private: Boolean(left?.private || right?.private),
+    mediaId: maxLong(left?.mediaId, right?.mediaId),
+  };
+}
+
+function mergeHistory(left: any, right: any): any {
+  return {
+    ...left,
+    ...right,
+    url: preferLongerString(left?.url, right?.url),
+    lastRead: maxLong(left?.lastRead, right?.lastRead),
+    readDuration: maxLong(left?.readDuration, right?.readDuration),
+  };
+}
+
+function mergeRepeatedObjects(items: any[], keyFn: (value: any) => string, mergeFn: (left: any, right: any) => any): any[] {
+  const merged = new Map<string, any>();
+  for (const item of items) {
+    const key = keyFn(item);
+    if (!key) continue;
+    merged.set(key, merged.has(key) ? mergeFn(merged.get(key), item) : item);
+  }
+  return [...merged.values()];
+}
+
+function mergeDuplicateMangaMessages(messages: any[]): any[] {
+  const merged = new Map<string, any>();
+
+  for (const message of messages) {
+    const key = [
+      int64ToString(message?.source),
+      message?.url ?? "",
+      message?.title ?? "",
+    ].join("|");
+
+    if (!merged.has(key)) {
+      merged.set(key, {
+        ...message,
+        genre: Array.isArray(message?.genre) ? [...message.genre] : [],
+        categories: Array.isArray(message?.categories) ? [...message.categories] : [],
+        chapters: Array.isArray(message?.chapters) ? [...message.chapters] : [],
+        tracking: Array.isArray(message?.tracking) ? [...message.tracking] : [],
+        history: Array.isArray(message?.history) ? [...message.history] : [],
+        excludedScanlators: Array.isArray(message?.excludedScanlators) ? [...message.excludedScanlators] : [],
+      });
+      continue;
+    }
+
+    const current = merged.get(key);
+    merged.set(key, {
+      ...current,
+      ...message,
+      source: current.source,
+      url: preferLongerString(current.url, message?.url),
+      title: preferLongerString(current.title, message?.title),
+      artist: preferLongerString(current.artist, message?.artist),
+      author: preferLongerString(current.author, message?.author),
+      description: preferLongerString(current.description, message?.description),
+      thumbnailUrl: preferLongerString(current.thumbnailUrl, message?.thumbnailUrl),
+      genre: uniqueStrings([...(current.genre ?? []), ...(message?.genre ?? [])]),
+      status: Math.max(Number(current.status ?? 0), Number(message?.status ?? 0)),
+      dateAdded: minPositiveLong(current.dateAdded, message?.dateAdded),
+      viewer: Number(preferTruthy(current.viewer, message?.viewer) ?? 0),
+      chapters: mergeRepeatedObjects([...(current.chapters ?? []), ...(message?.chapters ?? [])], chapterKey, mergeChapter),
+      categories: uniqueInt64([...(current.categories ?? []), ...(message?.categories ?? [])]),
+      tracking: mergeRepeatedObjects([...(current.tracking ?? []), ...(message?.tracking ?? [])], trackingKey, mergeTracking),
+      favorite: Boolean(current.favorite || message?.favorite),
+      chapterFlags: Number(preferTruthy(current.chapterFlags, message?.chapterFlags) ?? 0),
+      viewer_flags: Number(preferTruthy(current.viewer_flags, message?.viewer_flags) ?? 0),
+      history: mergeRepeatedObjects([...(current.history ?? []), ...(message?.history ?? [])], historyKey, mergeHistory),
+      updateStrategy: Number(preferTruthy(current.updateStrategy, message?.updateStrategy) ?? 0),
+      lastModifiedAt: maxLong(current.lastModifiedAt, message?.lastModifiedAt),
+      favoriteModifiedAt: maxLong(current.favoriteModifiedAt, message?.favoriteModifiedAt),
+      excludedScanlators: uniqueStrings([...(current.excludedScanlators ?? []), ...(message?.excludedScanlators ?? [])]),
+      version: maxLong(current.version, message?.version),
+      notes: preferLongerString(current.notes, message?.notes),
+      initialized: Boolean(current.initialized || message?.initialized),
+    });
+  }
+
+  return [...merged.values()];
+}
+
+function normalizeName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function maybeJsonBackup(bytes: Uint8Array): boolean {
+  const first = bytes[0];
+  return first === 0x7b;
+}
+
+function deriveLangForSource(
+  sourceId: string,
+  name: string,
+  inventory: SourceInventoryEntry[],
+): string | null {
+  const exactIdMatches = inventory.filter((entry) => entry.sourceId === sourceId);
+  if (exactIdMatches.length === 1) return exactIdMatches[0].lang;
+
+  const normalized = normalizeName(name);
+  if (!normalized || /^\d+$/.test(normalized)) return null;
+
+  const nameMatches = inventory.filter((entry) => normalizeName(entry.name) === normalized);
+  const langs = [...new Set(nameMatches.map((entry) => entry.lang))];
+  return langs.length === 1 ? langs[0] : null;
+}
+
+function extractDelimitedMessage(reader: protobuf.Reader): Uint8Array {
+  const length = reader.uint32();
+  const start = reader.pos;
+  const end = start + length;
+  const bytes = reader.buf.subarray(start, end);
+  reader.pos = end;
+  return bytes;
+}
+
+function parseTopLevelChunks(bytes: Uint8Array): {
+  mangaMessages: unknown[];
+  sourceMessages: unknown[];
+  preservedTopLevelChunks: Uint8Array[];
+} {
+  const reader = protobuf.Reader.create(bytes);
+  const mangaMessages: unknown[] = [];
+  const sourceMessages: unknown[] = [];
+  const preservedTopLevelChunks: Uint8Array[] = [];
+
+  while (reader.pos < reader.len) {
+    const start = reader.pos;
+    const tag = reader.uint32();
+    const fieldNo = tag >>> 3;
+    const wireType = tag & 7;
+
+    if (wireType === 2 && fieldNo === BACKUP_TOP_LEVEL_MANGA_FIELD) {
+      const chunk = extractDelimitedMessage(reader);
+      mangaMessages.push(BackupMangaType.decode(chunk));
+      continue;
+    }
+
+    if (wireType === 2 && fieldNo === BACKUP_TOP_LEVEL_SOURCES_FIELD) {
+      const chunk = extractDelimitedMessage(reader);
+      sourceMessages.push(BackupSourceType.decode(chunk));
+      continue;
+    }
+
+    reader.skipType(wireType);
+    preservedTopLevelChunks.push(bytes.subarray(start, reader.pos));
+  }
+
+  return { mangaMessages, sourceMessages, preservedTopLevelChunks };
+}
+
+function toParsedBackupManga(message: any): ParsedBackupManga {
+  return {
+    sourceId: int64ToString(message.source),
+    url: message.url ?? "",
+    title: message.title ?? "",
+    author: message.author || null,
+    artist: message.artist || null,
+    chapterCount: Array.isArray(message.chapters) ? message.chapters.length : null,
+    thumbnailUrl: message.thumbnailUrl || null,
+  };
+}
+
+function toParsedBackupSources(messages: any[], inventory: SourceInventoryEntry[]): ParsedBackupSource[] {
+  return messages.map((message) => {
+    const sourceId = int64ToString(message.sourceId);
+    const name = message.name ?? "";
+    return {
+      sourceId,
+      name,
+      lang: deriveLangForSource(sourceId, name, inventory),
+    };
+  });
+}
+
+function encodeFieldChunk(fieldNo: number, messageBytes: Uint8Array): Uint8Array {
+  return protobuf.Writer.create()
+    .uint32((fieldNo << 3) | 2)
+    .bytes(messageBytes)
+    .finish();
+}
+
+function concatChunks(chunks: Uint8Array[]): Uint8Array {
+  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const out = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}
+
+export async function fingerprintBytes(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+export async function fingerprintText(input: string): Promise<string> {
+  return fingerprintBytes(new TextEncoder().encode(input));
+}
+
+export async function parseMihonBackup(
+  fileBytes: ArrayBuffer | Uint8Array,
+  inventory: SourceInventoryEntry[],
+): Promise<ParsedBackup> {
+  const originalBytes = toUint8Array(fileBytes);
+  if (maybeJsonBackup(originalBytes)) {
+    throw new Error("JSON backups are not supported by this restore flow");
+  }
+
+  const wasGzipped = originalBytes[0] === GZIP_MAGIC_1 && originalBytes[1] === GZIP_MAGIC_2;
+  const decodedBytes = wasGzipped ? pako.ungzip(originalBytes) : originalBytes;
+  const { mangaMessages, sourceMessages, preservedTopLevelChunks } = parseTopLevelChunks(decodedBytes);
+
+  const backupManga = mangaMessages.map((message) => toParsedBackupManga(message));
+  const backupSources = toParsedBackupSources(sourceMessages as any[], inventory);
+  const trackerIds = [
+    ...new Set(
+      mangaMessages
+        .flatMap((message: any) => Array.isArray(message.tracking) ? message.tracking : [])
+        .map((tracking: any) => Number(tracking?.syncId))
+        .filter((syncId) => Number.isFinite(syncId) && syncId > 0),
+    ),
+  ];
+
+  return {
+    bytes: decodedBytes,
+    wasGzipped,
+    backupSources,
+    backupManga,
+    trackerIds,
+    mangaMessages,
+    sourceMessages,
+    preservedTopLevelChunks,
+  };
+}
+
+export function createReconciledBackupPayload(
+  parsedBackup: ParsedBackup,
+  sourceMapping: Record<string, { sourceId: string; name: string; lang?: string | null }>,
+  excludedSourceIds: string[] = [],
+): Uint8Array {
+  const excluded = new Set(excludedSourceIds);
+  const patchedMangaMessages = mergeDuplicateMangaMessages(
+    parsedBackup.mangaMessages
+      .filter((message: any) => !excluded.has(int64ToString(message.source)))
+      .map((message: any) => {
+      const currentSourceId = int64ToString(message.source);
+      const replacement = sourceMapping[currentSourceId];
+      if (!replacement) return message;
+      return {
+        ...message,
+        source: encodeInt64(replacement.sourceId),
+      };
+      }),
+  );
+
+  const patchedSourceMessages = parsedBackup.sourceMessages
+    .filter((message: any) => !excluded.has(int64ToString(message.sourceId)))
+    .map((message: any) => {
+      const currentSourceId = int64ToString(message.sourceId);
+      const replacement = sourceMapping[currentSourceId];
+      if (!replacement) return message;
+      return {
+        ...message,
+        sourceId: encodeInt64(replacement.sourceId),
+        name: replacement.name,
+      };
+    })
+    .reduce<any[]>((deduped, message: any) => {
+      const key = `${int64ToString(message.sourceId)}:${message.name ?? ""}`;
+      if (deduped.some((existing) => `${int64ToString(existing.sourceId)}:${existing.name ?? ""}` === key)) {
+        return deduped;
+      }
+      deduped.push(message);
+      return deduped;
+    }, []);
+
+  const encodedChunks = [
+    ...patchedMangaMessages.map((message) =>
+      encodeFieldChunk(BACKUP_TOP_LEVEL_MANGA_FIELD, BackupMangaType.encode(message).finish()),
+    ),
+    ...parsedBackup.preservedTopLevelChunks,
+    ...patchedSourceMessages.map((message) =>
+      encodeFieldChunk(BACKUP_TOP_LEVEL_SOURCES_FIELD, BackupSourceType.encode(message).finish()),
+    ),
+  ];
+
+  const payload = concatChunks(encodedChunks);
+  return parsedBackup.wasGzipped ? pako.gzip(payload) : payload;
+}
+
+export function decodedBackupDebugString(parsedBackup: ParsedBackup): string {
+  return decodeUtf8(parsedBackup.bytes);
+}

@@ -5,16 +5,24 @@
   import { listen } from "@tauri-apps/api/event";
   import { getVersion } from "@tauri-apps/api/app";
   import { open as openUrl } from "@tauri-apps/plugin-shell";
-  import { gql, thumbUrl } from "../../lib/client";
+  import { gql, gqlUpload, thumbUrl, getServerAuthHeader, serverFileUrl } from "../../lib/client";
+  import { parseMihonBackup } from "../../lib/backup/mihonBackup";
+  import { findMissingSourceExtensionSuggestions, type MissingSourceExtensionSuggestion } from "../../lib/extensionSourceMap";
   import { GET_CATEGORIES, CREATE_CATEGORY, UPDATE_CATEGORY, DELETE_CATEGORY, UPDATE_CATEGORY_ORDER, GET_SOURCES } from "../../lib/queries";
-  import { GET_DOWNLOADS_PATH, SET_DOWNLOADS_PATH, SET_LOCAL_SOURCE_PATH, GET_TRACKERS, LOGIN_TRACKER_OAUTH, LOGIN_TRACKER_CREDENTIALS, LOGOUT_TRACKER, GET_TRACKER_RECORDS, GET_SERVER_SECURITY, SET_SERVER_AUTH, SET_SOCKS_PROXY, SET_FLARESOLVERR } from "../../lib/queries";
-  import type { Category, Source } from "../../lib/types";
-  import { store, updateSettings, resetKeybinds, clearHistory, wipeAllData, setSettingsOpen, deleteCustomTheme, toggleHiddenCategory, setCategories } from "../../store/state.svelte";
+  import { GET_DOWNLOADS_PATH, SET_DOWNLOADS_PATH, SET_LOCAL_SOURCE_PATH, GET_TRACKERS, LOGIN_TRACKER_OAUTH, LOGIN_TRACKER_CREDENTIALS, LOGOUT_TRACKER, GET_TRACKER_RECORDS, GET_SERVER_SECURITY, SET_SERVER_AUTH, SET_SOCKS_PROXY, SET_FLARESOLVERR, CREATE_BACKUP, RESTORE_BACKUP, GET_RESTORE_STATUS, UPDATE_EXTENSION } from "../../lib/queries";
+  import { analyzeBackupReconciliation, overlayEntryFromAnalysis } from "../../lib/reconciliation/analyze";
+  import { readOverlayFile, upsertOverlayEntry } from "../../lib/reconciliation/overlay";
+  import { buildRestoreReadiness } from "../../lib/reconciliation/readiness";
+  import { loadSourceInventory } from "../../lib/reconciliation/sourceInventory";
+  import { buildReconciledBackupFile } from "../../lib/reconciliation/restore";
+  import type { Category, Source, Extension } from "../../lib/types";
+  import { store, updateSettings, resetKeybinds, clearHistory, wipeAllData, setSettingsOpen, deleteCustomTheme, toggleHiddenCategory, setCategories, addToast, openSearchSources } from "../../store/state.svelte";
   import { cache } from "../../lib/cache";
   import { KEYBIND_LABELS, DEFAULT_KEYBINDS, eventToKeybind } from "../../lib/keybinds";
   import type { Settings, FitMode, Theme } from "../../store/state.svelte";
   import type { Keybinds } from "../../lib/keybinds";
   import type { Tracker } from "../../lib/types";
+  import type { AvailableExtensionEntry, OverlayEntry, ParsedBackup, ReconciliationAnalysis, ReconciliationClusterResult, RestoreReadinessSummary, SourceInventoryEntry } from "../../lib/reconciliation/types";
   interface Props {
     onOpenThemeEditor?: (id?: string | null) => void;
   }
@@ -140,8 +148,8 @@
   let clearing = $state(false);
   let cleared  = $state(false);
 
-  // ── External server detection ─────────────────────────────────────────────────
-  // A server is "external" if its URL doesn't point to localhost — in that case we
+  // â”€â”€ External server detection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // A server is "external" if its URL doesn't point to localhost â€” in that case we
   // cannot invoke Tauri commands against its filesystem (path validation, disk usage,
   // migration). We can still read the server's paths via GraphQL, but we must never
   // overwrite the server's download directory config without the user explicitly asking.
@@ -153,7 +161,7 @@
     } catch { return false; }
   });
 
-  // ── Download path editing ────────────────────────────────────────────────────
+  // â”€â”€ Download path editing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   let downloadsPathInput    = $state(store.settings.serverDownloadsPath ?? "");
   let localSourcePathInput  = $state(store.settings.serverLocalSourcePath ?? "");
   let pathsSaving           = $state(false);
@@ -161,8 +169,8 @@
   let pathsFieldError: { dl?: string; loc?: string } = $state({});
   let pathsSaved            = $state(false);
 
-  // The actual resolved default path from Rust — shown as placeholder + scanned when dl path is empty.
-  // Only meaningful for local servers — Tauri can't stat a remote filesystem.
+  // The actual resolved default path from Rust â€” shown as placeholder + scanned when dl path is empty.
+  // Only meaningful for local servers â€” Tauri can't stat a remote filesystem.
   // Re-fetches reactively when the server URL changes (e.g. user switches to local).
   let defaultDownloadsPath  = $state("");
   $effect(() => {
@@ -173,11 +181,11 @@
     }
   });
 
-  // The last confirmed server paths — used to detect a change requiring migration
+  // The last confirmed server paths â€” used to detect a change requiring migration
   let confirmedDownloadsPath   = $state(store.settings.serverDownloadsPath ?? "");
   let confirmedLocalSourcePath = $state(store.settings.serverLocalSourcePath ?? "");
 
-  // ── Migration state ──────────────────────────────────────────────────────────
+  // â”€â”€ Migration state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   let migrateFrom: string | null   = $state(null); // old path that has content
   let migrateTo:   string | null   = $state(null); // new path
   let migrating                    = $state(false);
@@ -185,7 +193,7 @@
   let migrateError: string | null  = $state(null);
   let migrateUnlisten: (() => void) | null = null;
 
-  // ── Extra scan directories (local-only, stored in app settings) ──────────────
+  // â”€â”€ Extra scan directories (local-only, stored in app settings) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   let extraScanDirs: string[]   = $state([...(store.settings.extraScanDirs ?? [])]);
   let newScanDir                = $state("");
   let multiStorageInfos: (StorageInfo & { label: string })[] = $state([]);
@@ -194,7 +202,7 @@
   async function fetchStorage() {
     storageLoading = true; storageError = null;
     try {
-      // Always pull the current paths from the server via GQL — works for local and external.
+      // Always pull the current paths from the server via GQL â€” works for local and external.
       const pathData = await gql<{ settings: { downloadsPath: string; localSourcePath: string } }>(GET_DOWNLOADS_PATH);
       const dl  = pathData.settings.downloadsPath  ?? "";
       const loc = pathData.settings.localSourcePath ?? "";
@@ -205,13 +213,13 @@
       confirmedLocalSourcePath = loc;
       updateSettings({ serverDownloadsPath: dl, serverLocalSourcePath: loc });
 
-      // Disk usage scanning uses Tauri invoke — only possible when the server is local.
+      // Disk usage scanning uses Tauri invoke â€” only possible when the server is local.
       // For external servers we display the paths pulled above but skip the filesystem scan.
       if (isExternalServer) {
         multiStorageInfos = []; storageInfo = null; return;
       }
 
-      // When dl is empty the server uses the default path — scan that instead
+      // When dl is empty the server uses the default path â€” scan that instead
       const effectiveDl = dl || defaultDownloadsPath;
 
       const dirsToScan: { path: string; label: string }[] = [];
@@ -244,7 +252,7 @@
   }
 
   /** Validate a path exists on disk. Returns error string or null.
-   *  Only runs for local servers — we can't stat a remote filesystem via Tauri. */
+   *  Only runs for local servers â€” we can't stat a remote filesystem via Tauri. */
   async function validatePath(path: string): Promise<string | null> {
     if (!path.trim()) return null; // empty = use default, always valid
     if (isExternalServer) return null; // can't check remote paths locally
@@ -268,7 +276,7 @@
     pathsError = null; pathsFieldError = {};
 
     // Validate paths exist before touching the server (empty = use default = always valid).
-    // Skipped for external servers — we can't stat their filesystem.
+    // Skipped for external servers â€” we can't stat their filesystem.
     const [dlErr, locErr] = await Promise.all([validatePath(dl), validatePath(loc)]);
     if (dlErr || locErr) {
       pathsFieldError = { ...(dlErr ? { dl: dlErr } : {}), ...(locErr ? { loc: locErr } : {}) };
@@ -277,13 +285,13 @@
 
     pathsSaving = true;
     try {
-      // Send each mutation independently — localSourcePath rejects empty string server-side
+      // Send each mutation independently â€” localSourcePath rejects empty string server-side
       await gql(SET_DOWNLOADS_PATH, { path: dl });
       if (loc) await gql(SET_LOCAL_SOURCE_PATH, { path: loc });
 
       updateSettings({ serverDownloadsPath: dl, serverLocalSourcePath: loc });
 
-      // Migration requires local filesystem access — skip for external servers.
+      // Migration requires local filesystem access â€” skip for external servers.
       if (!isExternalServer) {
         const oldDl = confirmedDownloadsPath || defaultDownloadsPath;
         const newDl = dl || defaultDownloadsPath;
@@ -352,6 +360,311 @@
     caches.keys().then((names) => Promise.all(names.map((n) => caches.delete(n)))).catch(() => {})
       .finally(() => { clearing = false; cleared = true; setTimeout(() => cleared = false, 2500); fetchStorage(); });
   }
+  type BackupRestoreProgress = {
+    mangaProgress: number;
+    state: string;
+    totalManga: number;
+  };
+  let backupFileInput = $state<HTMLInputElement | undefined>(undefined);
+  let backupExporting = $state(false);
+  let backupValidating = $state(false);
+  let backupRestoring = $state(false);
+  let backupError: string | null = $state(null);
+  let backupSavedPath: string | null = $state(null);
+  let backupSelectedFile: File | null = $state(null);
+  let backupParsed: ParsedBackup | null = $state(null);
+  let backupAnalysis: ReconciliationAnalysis | null = $state(null);
+  let backupRestoreId: string | null = $state(null);
+  let backupRestoreStatus: BackupRestoreProgress | null = $state(null);
+  let backupSuggestedExtensions = $state<MissingSourceExtensionSuggestion[]>([]);
+  let backupAvailableExtensions = $state<AvailableExtensionEntry[]>([]);
+  let backupInventory = $state<SourceInventoryEntry[]>([]);
+  let backupExtensionLookupError: string | null = $state(null);
+  let backupExtensionLookupLoading = $state(false);
+  let backupInstalling = $state(new Set<string>());
+  let backupReviewSelections = $state<Record<string, string | "skip">>({});
+  let backupMissingTrackers = $state<{ name: string }[]>([]);
+
+  const backupNeedsReviewComplete = $derived(
+    !backupAnalysis
+      || backupAnalysis.needsReview.every((cluster) => backupReviewSelections[cluster.orphanSourceId]),
+  );
+  const backupReadiness = $derived.by<RestoreReadinessSummary | null>(() =>
+    backupAnalysis
+      ? buildRestoreReadiness(backupAnalysis, backupReviewSelections, backupInventory, backupAvailableExtensions)
+      : null,
+  );
+  const backupRestoreBlocked = $derived(
+    !backupSelectedFile
+      || !backupParsed
+      || !backupAnalysis
+      || !backupNeedsReviewComplete
+      || !!backupReadiness?.blocksRestore
+      || backupValidating
+      || backupRestoring,
+  );
+
+  function backupFilenameFromUrl(path: string): string {
+    const cleaned = path.split("?")[0];
+    const file = cleaned.split("/").pop()?.trim();
+    return file || `aethon-backup-${new Date().toISOString().slice(0, 10)}.tachibk`;
+  }
+
+  async function loadMissingSourceSuggestions(missingSources: { id: string; name: string }[]) {
+    backupSuggestedExtensions = [];
+    backupExtensionLookupError = null;
+    if (missingSources.length === 0) return;
+
+    backupExtensionLookupLoading = true;
+    try {
+      const inventory = await loadSourceInventory();
+      backupAvailableExtensions = inventory.availableExtensions;
+      const result = await findMissingSourceExtensionSuggestions(
+        missingSources,
+        inventory.repoUrls,
+        inventory.availableExtensions,
+        store.settings.preferredExtensionLang ?? "en",
+      );
+      backupSuggestedExtensions = result.suggestions;
+      if (result.failedRepos.length > 0) {
+        backupExtensionLookupError = `Some extension repos could not be checked: ${result.failedRepos.join(", ")}`;
+      }
+    } catch (error) {
+      backupExtensionLookupError = error instanceof Error ? error.message : "Could not load extensions";
+    } finally {
+      backupExtensionLookupLoading = false;
+    }
+  }
+
+  function triggerBackupImport() {
+    backupError = null;
+    if (!backupFileInput) return;
+    backupFileInput.value = "";
+    backupFileInput.click();
+  }
+
+  async function exportBackup() {
+    backupExporting = true;
+    backupError = null;
+    backupSavedPath = null;
+    try {
+      const res = await gql<{ createBackup: { url: string } }>(CREATE_BACKUP, {
+        includeCategories: true,
+        includeChapters: true,
+      });
+      const url = serverFileUrl(res.createBackup.url);
+      const filename = backupFilenameFromUrl(res.createBackup.url);
+      const savedPath = await invoke<string>("download_server_file_to_downloads", {
+        url,
+        filename,
+        authHeader: getServerAuthHeader(),
+      });
+      backupSavedPath = savedPath;
+      addToast({ kind: "success", message: `Backup saved to ${savedPath}` });
+    } catch (e: any) {
+      backupError = e?.message ?? "Failed to export backup";
+    } finally {
+      backupExporting = false;
+    }
+  }
+
+  async function onBackupFileSelected(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0] ?? null;
+    backupSelectedFile = file;
+    backupParsed = null;
+    backupAnalysis = null;
+    backupInventory = [];
+    backupReviewSelections = {};
+    backupMissingTrackers = [];
+    backupRestoreId = null;
+    backupRestoreStatus = null;
+    backupError = null;
+    backupSuggestedExtensions = [];
+    backupAvailableExtensions = [];
+    backupExtensionLookupError = null;
+    if (!file) return;
+
+    await analyzeSelectedBackupFile(file);
+  }
+
+  async function analyzeSelectedBackupFile(file: File) {
+    backupValidating = true;
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const [inventory, trackersData, overlay] = await Promise.all([
+        loadSourceInventory(),
+        gql<{ trackers: { nodes: Tracker[] } }>(GET_TRACKERS),
+        readOverlayFile(),
+      ]);
+      const parsed = await parseMihonBackup(bytes, inventory.inventory);
+      const { analysis } = await analyzeBackupReconciliation(bytes, inventory.inventory, trackersData.trackers.nodes ?? [], overlay);
+      backupParsed = parsed;
+      backupInventory = inventory.inventory;
+      backupAnalysis = {
+        ...analysis,
+        warnings: [...inventory.warnings, ...analysis.warnings],
+      };
+      backupAvailableExtensions = inventory.availableExtensions;
+      backupMissingTrackers = parsed.trackerIds
+        .filter((trackerId) => !(trackersData.trackers.nodes ?? []).some((tracker) => tracker.id === trackerId))
+        .map((trackerId) => ({ name: `Tracker #${trackerId}` }));
+      await loadMissingSourceSuggestions(
+        [...analysis.needsReview, ...analysis.unresolved].map((cluster) => ({
+          id: cluster.orphanSourceId,
+          name: cluster.sourceName,
+        })),
+      );
+    } catch (e: any) {
+      backupError = e?.message ?? "Failed to validate backup";
+    } finally {
+      backupValidating = false;
+    }
+  }
+
+  async function refreshBackupReadiness() {
+    if (!backupSelectedFile) return;
+    backupError = null;
+    await analyzeSelectedBackupFile(backupSelectedFile);
+  }
+
+  async function installMissingSourceExtension(extension: Extension, refreshAfter = true) {
+    const nextWorking = new Set(backupInstalling);
+    nextWorking.add(extension.pkgName);
+    backupInstalling = nextWorking;
+    backupError = null;
+    try {
+      await gql(UPDATE_EXTENSION, { id: extension.pkgName, install: true });
+      addToast({
+        kind: "success",
+        title: "Extension installed",
+        body: `${extension.name} was sent to Suwayomi. Aethon will refresh restore readiness once the source inventory catches up.`,
+      });
+      if (refreshAfter && backupSelectedFile) {
+        await refreshBackupReadiness();
+      }
+    } catch (error) {
+      backupError = error instanceof Error ? error.message : `Could not install ${extension.name}`;
+    } finally {
+      const doneWorking = new Set(backupInstalling);
+      doneWorking.delete(extension.pkgName);
+      backupInstalling = doneWorking;
+    }
+  }
+
+  async function installRequiredRestoreExtensions() {
+    const required = backupReadiness?.installableExtensions ?? [];
+    if (required.length === 0) return;
+
+    for (const extension of required) {
+      if (backupInstalling.has(extension.pkgName)) continue;
+      await installMissingSourceExtension(extension, false);
+    }
+    await refreshBackupReadiness();
+  }
+
+  async function pollRestoreStatus(id: string) {
+    while (true) {
+      const res = await gql<{ restoreStatus: BackupRestoreProgress }>(GET_RESTORE_STATUS, { id });
+      backupRestoreStatus = res.restoreStatus;
+      const state = (res.restoreStatus?.state ?? "").toUpperCase();
+      if (["SUCCESS", "COMPLETED", "FAILED", "ERROR", "CANCELLED"].includes(state)) break;
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+    }
+  }
+
+  async function restoreBackup() {
+    if (!backupSelectedFile || !backupParsed || !backupAnalysis) return;
+    if (backupReadiness?.blocksRestore) {
+      backupError = backupReadiness.requiresInstallCount > 0
+        ? "Install the required extensions first so this restore lands on usable sources."
+        : "Some reconciled sources are unavailable on this server right now. Resolve them before restoring.";
+      return;
+    }
+    backupRestoring = true;
+    backupError = null;
+    backupRestoreId = null;
+    backupRestoreStatus = null;
+    try {
+      const reconciledFile = buildReconciledBackupFile(
+        backupParsed,
+        backupAnalysis,
+        backupReviewSelections,
+        backupSelectedFile.name,
+      );
+      const overlayEntry: OverlayEntry = overlayEntryFromAnalysis({
+        ...backupAnalysis,
+        needsReview: backupAnalysis.needsReview.map((cluster) => {
+          const selected = backupReviewSelections[cluster.orphanSourceId];
+          if (!selected || selected === "skip") return cluster;
+          const chosen = cluster.candidates.find((candidate) => candidate.sourceId === selected) ?? null;
+          return {
+            ...cluster,
+            status: chosen ? "auto_reconciled" : cluster.status,
+            selectedCandidate: chosen,
+          };
+        }),
+      });
+      await upsertOverlayEntry(overlayEntry);
+      const res = await gqlUpload<{ restoreBackup: { id: string; status: BackupRestoreProgress | null } }>(
+        RESTORE_BACKUP,
+        { backup: null },
+        { "variables.backup": reconciledFile },
+      );
+      backupRestoreId = res.restoreBackup.id;
+      backupRestoreStatus = res.restoreBackup.status;
+      await pollRestoreStatus(res.restoreBackup.id);
+      const finalState = (backupRestoreStatus?.state ?? "").toUpperCase();
+      if (["SUCCESS", "COMPLETED"].includes(finalState)) {
+        addToast({ kind: "success", message: "Backup restored. Restart or refresh views to pick up restored library state." });
+      } else {
+        backupError = `Restore finished with state: ${backupRestoreStatus?.state ?? "unknown"}`;
+      }
+    } catch (e: any) {
+      backupError = e?.message ?? "Failed to restore backup";
+    } finally {
+      backupRestoring = false;
+    }
+  }
+
+  function setBackupClusterSelection(clusterId: string, value: string | "skip") {
+    backupReviewSelections = { ...backupReviewSelections, [clusterId]: value };
+  }
+
+  function clusterConfidenceLabel(cluster: ReconciliationClusterResult): string {
+    const confidence = cluster.selectedCandidate?.confidence ?? cluster.candidates[0]?.confidence ?? 0;
+    return `${Math.round(confidence * 100)}%`;
+  }
+
+  function clusterReasonLabel(cluster: ReconciliationClusterResult): string {
+    return cluster.selectedCandidate?.evidenceSummary
+      ?? cluster.candidates[0]?.evidenceSummary
+      ?? "No confident replacement was found automatically.";
+  }
+
+  function clusterReadinessLabel(cluster: ReconciliationClusterResult): string {
+    const item = backupReadiness?.items.find((entry) => entry.orphanSourceId === cluster.orphanSourceId);
+    switch (item?.status) {
+      case "ready_now":
+        return "Ready now";
+      case "requires_install":
+        return "Requires install";
+      case "unavailable":
+        return "Unavailable";
+      default:
+        return "Needs review";
+    }
+  }
+
+  function clusterReadinessDetail(cluster: ReconciliationClusterResult): string | null {
+    return backupReadiness?.items.find((entry) => entry.orphanSourceId === cluster.orphanSourceId)?.detail ?? null;
+  }
+
+  function extensionForPkg(pkgName: string | null): AvailableExtensionEntry | null {
+    if (!pkgName) return null;
+    return backupAvailableExtensions.find((extension) => extension.pkgName === pkgName) ?? null;
+  }
+
   function fmtBytes(bytes: number): string {
     if (bytes === 0) return "0 B";
     const units = ["B","KB","MB","GB","TB"];
@@ -389,7 +702,7 @@
   }
   $effect(() => { if (tab === "performance") refreshPerfMetrics(); });
   function fmtAge(ts: number | null): string {
-    if (ts === null) return "—";
+    if (ts === null) return "â€”";
     const secs = Math.floor((Date.now() - ts) / 1000);
     if (secs < 60) return `${secs}s ago`;
     const mins = Math.floor(secs / 60);
@@ -715,7 +1028,7 @@
     | "ready"      // downloaded, awaiting restart
     | "error";
   const IS_WINDOWS = navigator.userAgent.includes("Windows");
-  let appVersion      = $state("…");
+  let appVersion      = $state("â€¦");
   let releases        = $state<ReleaseInfo[]>([]);
   let releasesLoading = $state(false);
   let releasesError   = $state<string | null>(null);
@@ -725,7 +1038,7 @@
   let dlBytes         = $state(0);
   let dlTotal         = $state<number | null>(null);
   let targetTag       = $state<string | null>(null); // tag being installed
-  let releasesLoaded = false; // plain var — not $state, so effect doesn't re-run on change
+  let releasesLoaded = false; // plain var â€” not $state, so effect doesn't re-run on change
   $effect(() => {
     if (tab !== "about") return;
     getVersion().then(v => appVersion = v).catch(() => appVersion = "unknown");
@@ -761,7 +1074,7 @@
     return 0;
   }
   let onLatestVersion = $derived((() => {
-    if (releasesLoading || releases.length === 0 || !appVersion || appVersion === "…") return false;
+    if (releasesLoading || releases.length === 0 || !appVersion || appVersion === "â€¦") return false;
     const sorted = releases.slice().sort((a, b) => compareSemver(a.tag_name, b.tag_name));
     return compareSemver(appVersion, sorted[0].tag_name) >= 0;
   })());
@@ -951,7 +1264,7 @@
                   }}
                 />
                 <span class="scale-pct">%</span>
-                <button class="step-btn" onclick={() => updateSettings({ uiZoom: 1.0 })} disabled={(store.settings.uiZoom ?? 1.0) === 1.0} title="Reset to 100%">↺</button>
+                <button class="step-btn" onclick={() => updateSettings({ uiZoom: 1.0 })} disabled={(store.settings.uiZoom ?? 1.0) === 1.0} title="Reset to 100%">â†º</button>
               </div>
               <p class="scale-hint">
                 {#each [50,60,70,80,90,100,110,125,150,175,200] as v}
@@ -1036,7 +1349,7 @@
                       <span class="theme-card-label">{theme.label}</span>
                       <span class="theme-card-desc">{theme.description}</span>
                     </div>
-                    {#if active}<span class="theme-card-check">✓</span>{/if}
+                    {#if active}<span class="theme-card-check">âœ“</span>{/if}
                   </button>
                 {/each}
                 {#each store.settings.customThemes ?? [] as custom}
@@ -1080,7 +1393,7 @@
                         <Trash size={10} />
                       </button>
                     </div>
-                    {#if active}<span class="theme-card-check">✓</span>{/if}
+                    {#if active}<span class="theme-card-check">âœ“</span>{/if}
                   </div>
                 {/each}
                 <button
@@ -1187,7 +1500,7 @@
                     }}
                   />
                   <span class="scale-pct">%</span>
-                  <button class="step-btn" onclick={() => updateSettings({ readerZoom: 0.5 })} disabled={(store.settings.readerZoom ?? 0.5) === 0.5} title="Reset to 100%">↺</button>
+                  <button class="step-btn" onclick={() => updateSettings({ readerZoom: 0.5 })} disabled={(store.settings.readerZoom ?? 0.5) === 0.5} title="Reset to 100%">â†º</button>
                 </div>
               </div>
               <p class="scale-hint">
@@ -1227,7 +1540,7 @@
               <div class="step-row">
                 <div class="toggle-info"><span class="toggle-label">Pages to preload</span></div>
                 <div class="step-controls">
-                  <button class="step-btn" onclick={() => updateSettings({ preloadPages: Math.max(0, store.settings.preloadPages - 1) })} disabled={store.settings.preloadPages <= 0}>−</button>
+                  <button class="step-btn" onclick={() => updateSettings({ preloadPages: Math.max(0, store.settings.preloadPages - 1) })} disabled={store.settings.preloadPages <= 0}>âˆ’</button>
                   <span class="step-val">{store.settings.preloadPages}</span>
                   <button class="step-btn" onclick={() => updateSettings({ preloadPages: Math.min(10, store.settings.preloadPages + 1) })} disabled={store.settings.preloadPages >= 10}>+</button>
                 </div>
@@ -1287,7 +1600,7 @@
                   <span class="toggle-desc">Lower = faster on large libraries</span>
                 </div>
                 <div class="step-controls">
-                  <button class="step-btn" onclick={() => updateSettings({ renderLimit: Math.max(12, (store.settings.renderLimit ?? 48) - 12) })} disabled={(store.settings.renderLimit ?? 48) <= 12}>−</button>
+                  <button class="step-btn" onclick={() => updateSettings({ renderLimit: Math.max(12, (store.settings.renderLimit ?? 48) - 12) })} disabled={(store.settings.renderLimit ?? 48) <= 12}>âˆ’</button>
                   <span class="step-val">{store.settings.renderLimit ?? 48}</span>
                   <button class="step-btn" onclick={() => updateSettings({ renderLimit: Math.min(200, (store.settings.renderLimit ?? 48) + 12) })} disabled={(store.settings.renderLimit ?? 48) >= 200}>+</button>
                 </div>
@@ -1328,7 +1641,7 @@
                 </div>
                 <div class="perf-stat-group">
                   <span class="perf-stat">{perfSnapshot?.cacheEntries ?? 0} entries</span>
-                  <button class="kb-reset" onclick={refreshPerfMetrics} title="Refresh">↺</button>
+                  <button class="kb-reset" onclick={refreshPerfMetrics} title="Refresh">â†º</button>
                 </div>
               </div>
               {#if perfSnapshot && perfSnapshot.cacheEntries > 0}
@@ -1366,9 +1679,9 @@
                     <span class="kb-label">{KEYBIND_LABELS[k]}</span>
                     <div class="kb-right">
                       <button class="kb-bind" class:listening={isListening} onclick={() => startListen(k)}>
-                        {isListening ? "Press key…" : store.settings.keybinds[k]}
+                        {isListening ? "Press keyâ€¦" : store.settings.keybinds[k]}
                       </button>
-                      <button class="kb-reset" onclick={() => updateSettings({ keybinds: { ...store.settings.keybinds, [k]: DEFAULT_KEYBINDS[k] } })} disabled={isDefault} title="Reset">↺</button>
+                      <button class="kb-reset" onclick={() => updateSettings({ keybinds: { ...store.settings.keybinds, [k]: DEFAULT_KEYBINDS[k] } })} disabled={isDefault} title="Reset">â†º</button>
                     </div>
                   </div>
                 {/each}
@@ -1378,12 +1691,12 @@
         {:else if tab === "storage"}
           <div class="panel">
 
-            <!-- ── Migration banner ──────────────────────────────────────── -->
+            <!-- â”€â”€ Migration banner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
             {#if migrateFrom && !isExternalServer}
               <div class="migrate-banner">
                 <div class="migrate-banner-body">
-                  <span class="migrate-title">Manga found at previous path — move to new location?</span>
-                  <span class="migrate-paths">{migrateFrom} → {migrateTo}</span>
+                  <span class="migrate-title">Manga found at previous path â€” move to new location?</span>
+                  <span class="migrate-paths">{migrateFrom} â†’ {migrateTo}</span>
                   {#if migrateProgress && migrateProgress.total > 0}
                     <div class="migrate-progress">
                       <div class="migrate-progress-labels">
@@ -1397,22 +1710,22 @@
                 </div>
                 <div class="migrate-banner-actions">
                   <button class="sec-action-btn sec-action-primary" onclick={startMigration} disabled={migrating}>
-                    {migrating ? (migrateProgress ? `Moving… ${migrateProgress.done}/${migrateProgress.total}` : "Starting…") : "Move files"}
+                    {migrating ? (migrateProgress ? `Movingâ€¦ ${migrateProgress.done}/${migrateProgress.total}` : "Startingâ€¦") : "Move files"}
                   </button>
                   <button class="sec-action-btn" onclick={dismissMigration} disabled={migrating}>Skip</button>
                 </div>
               </div>
             {/if}
 
-            <!-- ── Disk Usage ─────────────────────────────────────────────── -->
+            <!-- â”€â”€ Disk Usage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
             <div class="section">
-              <div class="section-title-row"><p class="section-title">Disk Usage</p><button class="sec-action-btn" onclick={fetchStorage} disabled={storageLoading}>{storageLoading ? "…" : "↻"}</button></div>
+              <div class="section-title-row"><p class="section-title">Disk Usage</p><button class="sec-action-btn" onclick={fetchStorage} disabled={storageLoading}>{storageLoading ? "â€¦" : "â†»"}</button></div>
               {#if storageLoading}
-                <p class="storage-loading">Reading filesystem…</p>
+                <p class="storage-loading">Reading filesystemâ€¦</p>
               {:else if storageError}
                 <p class="storage-loading" style="color:var(--color-error)">{storageError}</p>
               {:else if isExternalServer}
-                <p class="storage-loading">Disk usage is unavailable for external servers — filesystem access requires a local connection.</p>
+                <p class="storage-loading">Disk usage is unavailable for external servers â€” filesystem access requires a local connection.</p>
               {:else if multiStorageInfos.length > 0}
                 {#each multiStorageInfos as info}
                   {@const limitGb    = store.settings.storageLimitGb ?? null}
@@ -1439,12 +1752,12 @@
               {/if}
             </div>
 
-            <!-- ── Downloads path ─────────────────────────────────────────── -->
+            <!-- â”€â”€ Downloads path â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
             <div class="section">
               <p class="section-title">Downloads Path</p>
               {#if isExternalServer}
                 <p class="toggle-desc" style="display:block;padding:0 var(--sp-3) var(--sp-2)">
-                  Connected to an external server. The path below is read from the server — changes here will update the server's config directly. Make sure the path is valid on the server's filesystem.
+                  Connected to an external server. The path below is read from the server â€” changes here will update the server's config directly. Make sure the path is valid on the server's filesystem.
                 </p>
               {/if}
               <div class="path-row">
@@ -1469,13 +1782,13 @@
                   {/if}
                   {#if pathsError}<span class="path-field-error">{pathsError}</span>{/if}
                   <button class="sec-action-btn sec-action-primary" onclick={savePaths} disabled={pathsSaving}>
-                    {pathsSaved ? "Saved ✓" : pathsSaving ? "Saving…" : "Save"}
+                    {pathsSaved ? "Saved âœ“" : pathsSaving ? "Savingâ€¦" : "Save"}
                   </button>
                 </div>
               </div>
             </div>
 
-            <!-- ── Storage Limit ───────────────────────────────────────────── -->
+            <!-- â”€â”€ Storage Limit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
             <div class="section">
               <p class="section-title">Storage Limit</p>
               <div class="step-row">
@@ -1488,29 +1801,302 @@
                     onclick={() => updateSettings({ storageLimitGb: 10 })}>Set limit</button>
                 {:else}
                   <div class="step-controls">
-                    <button class="step-btn" onclick={() => updateSettings({ storageLimitGb: Math.max(1, (store.settings.storageLimitGb ?? 10) - 1) })} disabled={(store.settings.storageLimitGb ?? 10) <= 1}>−</button>
+                    <button class="step-btn" onclick={() => updateSettings({ storageLimitGb: Math.max(1, (store.settings.storageLimitGb ?? 10) - 1) })} disabled={(store.settings.storageLimitGb ?? 10) <= 1}>âˆ’</button>
                     <input type="number" min="1" step="1" class="storage-limit-input" value={store.settings.storageLimitGb}
                       oninput={(e) => { const n = parseFloat(e.currentTarget.value); if (!isNaN(n) && n > 0) updateSettings({ storageLimitGb: n }); }} />
                     <span class="storage-limit-unit">GB</span>
                     <button class="step-btn" onclick={() => updateSettings({ storageLimitGb: (store.settings.storageLimitGb ?? 10) + 1 })}>+</button>
-                    <button class="kb-reset" title="Remove limit" onclick={() => updateSettings({ storageLimitGb: null })}>↺</button>
+                    <button class="kb-reset" title="Remove limit" onclick={() => updateSettings({ storageLimitGb: null })}>â†º</button>
                   </div>
                 {/if}
               </div>
             </div>
 
-            <!-- ── Cache ──────────────────────────────────────────────────── -->
+            <!-- â”€â”€ Cache â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
             <div class="section">
               <p class="section-title">Cache</p>
               <div class="step-row">
                 <div class="toggle-info"><span class="toggle-label">Image cache</span><span class="toggle-desc">Webview page image cache</span></div>
                 <button class="danger-btn" onclick={handleClearCache} disabled={clearing}>
-                  {cleared ? "Cleared" : clearing ? "Clearing…" : "Clear"}
+                  {cleared ? "Cleared" : clearing ? "Clearingâ€¦" : "Clear"}
                 </button>
               </div>
             </div>
 
-            <!-- ── Advanced (collapsible) ──────────────────────────────────── -->
+            <!-- â”€â”€ Advanced (collapsible) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+            <div class="section">
+              <p class="section-title">Backup & Restore</p>
+              <p class="toggle-desc" style="padding:0 var(--sp-3) var(--sp-3);display:block">
+                These actions operate on the current Suwayomi server. If Aethon Desktop and Aethon Mobile point to the same server, both clients will reflect the restored library state.
+              </p>
+              <input bind:this={backupFileInput} type="file" accept=".tachibk,.proto.gz,.proto,*/*" style="display:none" onchange={onBackupFileSelected} />
+              <div class="step-row" style="align-items:flex-start">
+                <div class="toggle-info">
+                  <span class="toggle-label">Export backup</span>
+                  <span class="toggle-desc">Create a Suwayomi backup and save it to your Downloads folder.</span>
+                  {#if backupSavedPath}
+                    <span class="toggle-desc" style="display:block;margin-top:4px;color:var(--accent-fg)">{backupSavedPath}</span>
+                  {/if}
+                </div>
+                <button class="sec-action-btn sec-action-primary" onclick={exportBackup} disabled={backupExporting || backupValidating || backupRestoring}>
+                  {backupExporting ? "ExportingÃ¢â‚¬Â¦" : "Export backup"}
+                </button>
+              </div>
+              <div class="step-row" style="align-items:flex-start">
+                <div class="toggle-info">
+                  <span class="toggle-label">Import backup</span>
+                  <span class="toggle-desc">Choose a Tachiyomi or Suwayomi backup, reconcile orphaned sources locally, then restore the reconciled payload into the current server.</span>
+                  {#if backupSelectedFile}
+                    <span class="toggle-desc" style="display:block;margin-top:4px;color:var(--text-secondary)">{backupSelectedFile.name}</span>
+                  {/if}
+                </div>
+                <div style="display:flex;flex-direction:column;align-items:flex-end;gap:var(--sp-2);flex-shrink:0">
+                  <div style="display:flex;gap:var(--sp-2)">
+                    <button class="sec-action-btn" onclick={triggerBackupImport} disabled={backupExporting || backupValidating || backupRestoring}>
+                      {backupValidating ? "Validating..." : "Choose file"}
+                    </button>
+                    <button class="sec-action-btn" onclick={refreshBackupReadiness} disabled={!backupSelectedFile || backupValidating || backupRestoring}>
+                      Refresh readiness
+                    </button>
+                    <button class="sec-action-btn sec-action-primary" onclick={restoreBackup} disabled={backupRestoreBlocked}>
+                      {backupRestoring ? "Restoring..." : "Restore backup"}
+                    </button>
+                  </div>
+                  {#if backupReadiness?.blocksRestore}
+                    <span class="toggle-desc" style="text-align:right;max-width:420px">
+                      {#if backupReadiness.requiresInstallCount > 0}
+                        Restore is gated until {backupReadiness.requiresInstallCount} reconciled source mapping{backupReadiness.requiresInstallCount === 1 ? "" : "s"} become usable on this server.
+                      {:else}
+                        Restore is gated because some reconciled targets are not available on this server yet.
+                      {/if}
+                    </span>
+                  {/if}
+                  {#if backupRestoreStatus}
+                    <span class="toggle-desc" style="text-align:right">
+                      {backupRestoreStatus.state} • {backupRestoreStatus.mangaProgress}/{backupRestoreStatus.totalManga || 0} manga
+                    </span>
+                  {/if}
+                </div>
+              </div>
+              {#if backupAnalysis}
+                <div class="backup-validate">
+                  <div class="backup-validate-row">
+                    <span class="toggle-label">Reconciliation Summary</span>
+                    <span class="toggle-desc">
+                      {#if backupAnalysis.exactMatches.length === 0 && backupAnalysis.autoReconciled.length === 0 && backupAnalysis.needsReview.length === 0 && backupAnalysis.unresolved.length === 0}
+                        No source reconciliation work was needed.
+                      {:else}
+                        Aethon parsed this backup locally, resolved exact matches first, and then ran bounded source inference on the leftovers.
+                      {/if}
+                    </span>
+                  </div>
+                  {#if backupReadiness}
+                    <div class="backup-warning-block">
+                      <span class="toggle-label">Restore readiness</span>
+                      <span class="toggle-desc">
+                        Ready now: {backupReadiness.readyNowCount} • Requires install: {backupReadiness.requiresInstallCount} • Unavailable: {backupReadiness.unavailableCount} • Unresolved: {backupReadiness.unresolvedCount}
+                      </span>
+                      {#if backupReadiness.requiresInstallCount > 0}
+                        <span class="toggle-desc">
+                          Restore is intentionally blocked until the required extensions are usable on this server.
+                        </span>
+                        {#if backupReadiness.installableExtensions.length > 0}
+                          <div style="display:flex;gap:var(--sp-2);flex-wrap:wrap;margin-top:var(--sp-2)">
+                            <button
+                              class="sec-action-btn sec-action-primary"
+                              onclick={installRequiredRestoreExtensions}
+                              disabled={backupRestoring || backupValidating || backupReadiness.installableExtensions.every((extension) => backupInstalling.has(extension.pkgName))}
+                            >
+                              Install required extensions
+                            </button>
+                            <button class="sec-action-btn" onclick={() => openSearchSources("extensions", "repos")}>
+                              Open Extensions & Repos
+                            </button>
+                          </div>
+                        {/if}
+                      {/if}
+                      {#if backupReadiness.unavailableCount > 0}
+                        <span class="toggle-desc">
+                          Some reconciled targets still have no installable extension candidate on this server. Restore stays blocked until those targets become available.
+                        </span>
+                      {/if}
+                    </div>
+                  {/if}
+                  {#if backupAnalysis.exactMatches.length > 0}
+                    <div class="backup-warning-block">
+                      <span class="toggle-label">Exact matches</span>
+                      <div class="backup-suggestions">
+                        {#each backupAnalysis.exactMatches as cluster}
+                          <div class="backup-suggestion-row">
+                            <div class="backup-suggestion-info">
+                              <span class="toggle-label">{cluster.sourceName}</span>
+                              <span class="toggle-desc">{cluster.selectedCandidate?.displayName} • {clusterConfidenceLabel(cluster)} • {clusterReasonLabel(cluster)}</span>
+                              {#if clusterReadinessDetail(cluster)}
+                                <span class="toggle-desc">{clusterReadinessLabel(cluster)} • {clusterReadinessDetail(cluster)}</span>
+                              {/if}
+                            </div>
+                            {#if cluster.selectedCandidate?.requiresInstall && extensionForPkg(cluster.selectedCandidate.extensionPkgName)}
+                              <button
+                                class="sec-action-btn sec-action-primary"
+                                onclick={() => installMissingSourceExtension(extensionForPkg(cluster.selectedCandidate?.extensionPkgName)!)}
+                                disabled={backupRestoring || backupValidating || backupInstalling.has(cluster.selectedCandidate.extensionPkgName!)}
+                              >
+                                {backupInstalling.has(cluster.selectedCandidate.extensionPkgName!) ? "Installing..." : "Install"}
+                              </button>
+                            {/if}
+                          </div>
+                        {/each}
+                      </div>
+                    </div>
+                  {/if}
+                  {#if backupAnalysis.autoReconciled.length > 0}
+                    <div class="backup-warning-block">
+                      <span class="toggle-label">Auto-reconciled</span>
+                      <div class="backup-suggestions">
+                        {#each backupAnalysis.autoReconciled as cluster}
+                          <div class="backup-suggestion-row">
+                            <div class="backup-suggestion-info">
+                              <span class="toggle-label">{cluster.sourceName}</span>
+                              <span class="toggle-desc">{cluster.selectedCandidate?.displayName} • {clusterConfidenceLabel(cluster)} • {clusterReasonLabel(cluster)}</span>
+                              {#if clusterReadinessDetail(cluster)}
+                                <span class="toggle-desc">{clusterReadinessLabel(cluster)} • {clusterReadinessDetail(cluster)}</span>
+                              {/if}
+                            </div>
+                            {#if cluster.selectedCandidate?.requiresInstall && extensionForPkg(cluster.selectedCandidate.extensionPkgName)}
+                              <button
+                                class="sec-action-btn sec-action-primary"
+                                onclick={() => installMissingSourceExtension(extensionForPkg(cluster.selectedCandidate?.extensionPkgName)!)}
+                                disabled={backupRestoring || backupValidating || backupInstalling.has(cluster.selectedCandidate.extensionPkgName!)}
+                              >
+                                {backupInstalling.has(cluster.selectedCandidate.extensionPkgName!) ? "Installing..." : "Install"}
+                              </button>
+                            {/if}
+                          </div>
+                        {/each}
+                      </div>
+                    </div>
+                  {/if}
+                  {#if backupAnalysis.needsReview.length > 0}
+                    <div class="backup-warning-block">
+                      <span class="toggle-label">Needs review</span>
+                      <span class="toggle-desc">Only these ambiguous leftovers need your approval. Choose a candidate or explicitly skip the remap.</span>
+                      <div class="backup-suggestions">
+                        {#each backupAnalysis.needsReview as cluster}
+                          <div class="backup-suggestion-row" style="align-items:flex-start;flex-direction:column">
+                            <div class="backup-suggestion-info">
+                              <span class="toggle-label">{cluster.sourceName}</span>
+                              <span class="toggle-desc">Backup source ID {cluster.orphanSourceId}</span>
+                              {#if cluster.sampleManga.length > 0}
+                                <span class="toggle-desc">Sample titles: {cluster.sampleManga.map((manga) => manga.title).join(", ")}</span>
+                              {/if}
+                            </div>
+                            <div class="backup-suggestions" style="width:100%">
+                              {#each cluster.candidates as candidate}
+                                <label class="backup-suggestion-row" style="width:100%;cursor:pointer">
+                                  <div class="backup-suggestion-info">
+                                    <span class="toggle-label">{candidate.displayName}</span>
+                                    <span class="toggle-desc">{Math.round(candidate.confidence * 100)}% • {candidate.evidenceSummary}</span>
+                                  </div>
+                                  <input
+                                    type="radio"
+                                    name={`backup-cluster-${cluster.orphanSourceId}`}
+                                    checked={backupReviewSelections[cluster.orphanSourceId] === candidate.sourceId}
+                                    onchange={() => setBackupClusterSelection(cluster.orphanSourceId, candidate.sourceId)}
+                                  />
+                                </label>
+                              {/each}
+                              <label class="backup-suggestion-row" style="width:100%;cursor:pointer">
+                                <div class="backup-suggestion-info">
+                                  <span class="toggle-label">Skip remap</span>
+                                  <span class="toggle-desc">Keep this orphan source untouched in the reconciled restore payload.</span>
+                                </div>
+                                <input
+                                  type="radio"
+                                  name={`backup-cluster-${cluster.orphanSourceId}`}
+                                  checked={backupReviewSelections[cluster.orphanSourceId] === "skip"}
+                                  onchange={() => setBackupClusterSelection(cluster.orphanSourceId, "skip")}
+                                />
+                              </label>
+                            </div>
+                          </div>
+                        {/each}
+                      </div>
+                    </div>
+                  {/if}
+                  {#if backupAnalysis.unresolved.length > 0}
+                    <div class="backup-warning-block">
+                      <span class="toggle-label">Unresolved</span>
+                      <span class="toggle-desc">These sources still could not be reconciled automatically. Restore can continue, but their original backup source IDs will stay untouched.</span>
+                      <span class="toggle-desc">{backupAnalysis.unresolved.map((cluster) => cluster.sourceName).join(", ")}</span>
+                    </div>
+                  {/if}
+                  {#if backupMissingTrackers.length > 0}
+                    <div class="backup-warning-block">
+                      <span class="toggle-label">Missing trackers</span>
+                      <span class="toggle-desc">{backupMissingTrackers.map((tracker) => tracker.name).join(", ")}</span>
+                    </div>
+                  {/if}
+                  {#if backupSuggestedExtensions.length > 0 || backupExtensionLookupLoading || backupExtensionLookupError}
+                    <div class="backup-warning-block">
+                      <span class="toggle-label">Extension recovery</span>
+                      {#if backupExtensionLookupLoading}
+                        <span class="toggle-desc" style="display:block;margin-top:6px">Checking available extensions...</span>
+                      {:else if backupSuggestedExtensions.length > 0}
+                        <div class="backup-suggestions">
+                          <span class="toggle-desc">Aethon found matching extensions for leftovers that still depend on source installs.</span>
+                          {#each backupSuggestedExtensions as suggestion}
+                            <div class="backup-suggestion-row">
+                              <div class="backup-suggestion-info">
+                                <span class="toggle-label">{suggestion.extension.name}</span>
+                                <span class="toggle-desc">Matches backup source: {suggestion.missingSource.name} ({suggestion.matchedBy === "source-id" ? "matched by source id" : "matched by source name"})</span>
+                              </div>
+                              <button
+                                class="sec-action-btn sec-action-primary"
+                                onclick={() => installMissingSourceExtension(suggestion.extension)}
+                                disabled={backupRestoring || backupValidating || backupInstalling.has(suggestion.extension.pkgName)}
+                              >
+                                {backupInstalling.has(suggestion.extension.pkgName) ? "Installing..." : "Install"}
+                              </button>
+                            </div>
+                          {/each}
+                        </div>
+                      {:else}
+                        <div class="backup-suggestions">
+                          <span class="toggle-desc">No confident installable matches were found for the remaining leftovers.</span>
+                          <button class="sec-action-btn" onclick={() => openSearchSources("extensions", "repos")}>
+                            Open Extensions & Repos
+                          </button>
+                        </div>
+                      {/if}
+                      {#if backupExtensionLookupError}
+                        <span class="toggle-desc" style="display:block;margin-top:6px;color:var(--color-error)">{backupExtensionLookupError}</span>
+                      {/if}
+                    </div>
+                  {/if}
+                  {#if backupAnalysis.warnings.length > 0}
+                    <div class="backup-warning-block">
+                      <span class="toggle-label">Warnings</span>
+                      <div class="backup-suggestions">
+                        {#each backupAnalysis.warnings as warning}
+                          <div class="backup-suggestion-row">
+                            <div class="backup-suggestion-info">
+                              <span class="toggle-label">{warning.message}</span>
+                              {#if warning.details}
+                                <span class="toggle-desc">{warning.details}</span>
+                              {/if}
+                            </div>
+                          </div>
+                        {/each}
+                      </div>
+                    </div>
+                  {/if}
+                </div>
+              {/if}
+              {#if backupError}
+                <p class="storage-loading" style="color:var(--color-error)">{backupError}</p>
+              {/if}
+            </div>
+
             <div class="section adv-section">
               <button class="adv-toggle" onclick={() => advStorageOpen = !advStorageOpen}>
                 <span class="section-title" style="padding:0">Advanced</span>
@@ -1567,7 +2153,7 @@
                   <div class="step-row" style="padding-top:0">
                     <div class="toggle-info"></div>
                     <button class="sec-action-btn sec-action-primary" onclick={savePaths} disabled={pathsSaving}>
-                      {pathsSaved ? "Saved ✓" : pathsSaving ? "Saving…" : "Save"}
+                      {pathsSaved ? "Saved âœ“" : pathsSaving ? "Savingâ€¦" : "Save"}
                     </button>
                   </div>
                 </div>
@@ -1583,14 +2169,14 @@
                 <p class="toggle-desc" style="padding:0 var(--sp-3) var(--sp-2);color:var(--color-error);display:block">{catsError}</p>
               {/if}
               <div class="folder-create-row">
-                <input class="text-input" placeholder="New category name…" bind:value={newFolderName}
+                <input class="text-input" placeholder="New category nameâ€¦" bind:value={newFolderName}
                   onkeydown={(e) => e.key === "Enter" && createFolder()} style="flex:1;width:auto" />
                 <button class="folder-create-btn" onclick={createFolder} disabled={!newFolderName.trim()}>
                   <Plus size={13} weight="bold" /> Create
                 </button>
               </div>
               {#if catsLoading}
-                <p class="storage-loading">Loading categories…</p>
+                <p class="storage-loading">Loading categoriesâ€¦</p>
               {:else if store.categories.filter(c => c.id !== 0).length === 0}
                 <p class="storage-loading">No categories yet. Create one above.</p>
               {:else}
@@ -1609,7 +2195,7 @@
                         <input class="text-input" bind:value={editingName}
                           onkeydown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") editingId = null; }}
                           onblur={commitEdit} style="flex:1;width:auto" use:focusInput />
-                        <button class="kb-reset" onclick={commitEdit} title="Save">✓</button>
+                        <button class="kb-reset" onclick={commitEdit} title="Save">âœ“</button>
                       {:else}
                         <FolderSimple size={14} weight="light" style="color:var(--text-faint);flex-shrink:0" />
                         <span class="folder-row-name">{cat.name}</span>
@@ -1618,7 +2204,7 @@
                           class="kb-reset"
                           class:folder-default-active={(store.settings.defaultLibraryCategoryId ?? null) === cat.id}
                           onclick={() => updateSettings({ defaultLibraryCategoryId: (store.settings.defaultLibraryCategoryId ?? null) === cat.id ? null : cat.id })}
-                          title={(store.settings.defaultLibraryCategoryId ?? null) === cat.id ? "Remove as default category" : "Set as default category — opens first when you visit Library"}
+                          title={(store.settings.defaultLibraryCategoryId ?? null) === cat.id ? "Remove as default category" : "Set as default category â€” opens first when you visit Library"}
                         ><Star size={13} weight={(store.settings.defaultLibraryCategoryId ?? null) === cat.id ? "fill" : "light"} /></button>
                         <button
                           class="kb-reset"
@@ -1626,8 +2212,8 @@
                           onclick={() => toggleHiddenCategory(cat.id)}
                           title={(store.settings.hiddenCategoryIds ?? []).includes(cat.id) ? "Show in Saved tab" : "Hide from Saved tab"}
                         >{#if (store.settings.hiddenCategoryIds ?? []).includes(cat.id)}<EyeSlash size={13} weight="light" />{:else}<Eye size={13} weight="light" />{/if}</button>
-                        <button class="kb-reset" onclick={() => moveCategory(cat.id, -1)} disabled={i === 0} title="Move up">↑</button>
-                        <button class="kb-reset" onclick={() => moveCategory(cat.id, 1)} disabled={i === displayCats.length - 1} title="Move down">↓</button>
+                        <button class="kb-reset" onclick={() => moveCategory(cat.id, -1)} disabled={i === 0} title="Move up">â†‘</button>
+                        <button class="kb-reset" onclick={() => moveCategory(cat.id, 1)} disabled={i === displayCats.length - 1} title="Move down">â†“</button>
                         <button class="kb-reset" onclick={() => startEdit(cat.id, cat.name)} title="Rename"><Pencil size={12} weight="light" /></button>
                         <button class="kb-reset folder-delete" onclick={() => deleteFolder(cat.id)} title="Delete"><Trash size={12} weight="light" /></button>
                       {/if}
@@ -1645,7 +2231,7 @@
                 <div class="tracker-error">{trackersError}</div>
               {/if}
               {#if trackersLoading}
-                <p class="storage-loading">Loading trackers…</p>
+                <p class="storage-loading">Loading trackersâ€¦</p>
               {:else}
                 <div class="tracker-list">
                   {#each trackers as tracker}
@@ -1667,24 +2253,24 @@
                               onclick={() => logoutTracker(tracker.id)}
                               disabled={loggingOut === tracker.id}
                             >
-                              {loggingOut === tracker.id ? "Disconnecting…" : "Disconnect"}
+                              {loggingOut === tracker.id ? "Disconnectingâ€¦" : "Disconnect"}
                             </button>
                           </div>
                         {:else if oauthTrackerId === tracker.id}
                           <div class="oauth-flow">
                             <p class="oauth-hint">
-                              Browser opened {tracker.name} login — after authorising, copy the full callback URL and paste it below.
+                              Browser opened {tracker.name} login â€” after authorising, copy the full callback URL and paste it below.
                             </p>
                             <input
                               class="oauth-input"
-                              placeholder="https://suwayomi.org/tracker-oauth#access_token=…"
+                              placeholder="https://suwayomi.org/tracker-oauth#access_token=â€¦"
                               bind:value={oauthCallbackInput}
                               onkeydown={(e) => { if (e.key === "Enter") submitOAuth(); if (e.key === "Escape") cancelOAuth(); }}
                               use:focusEl
                             />
                             <div class="oauth-btns">
                               <button class="step-btn" onclick={submitOAuth} disabled={oauthSubmitting || !oauthCallbackInput.trim()}>
-                                {oauthSubmitting ? "Connecting…" : "Connect"}
+                                {oauthSubmitting ? "Connectingâ€¦" : "Connect"}
                               </button>
                               <button class="kb-reset" onclick={cancelOAuth}>Cancel</button>
                             </div>
@@ -1707,7 +2293,7 @@
                             />
                             <div class="oauth-btns">
                               <button class="step-btn" onclick={submitCredentials} disabled={credsSubmitting || !credsUsername.trim() || !credsPassword.trim()}>
-                                {credsSubmitting ? "Connecting…" : "Connect"}
+                                {credsSubmitting ? "Connectingâ€¦" : "Connect"}
                               </button>
                               <button class="kb-reset" onclick={cancelCredentials}>Cancel</button>
                             </div>
@@ -1718,7 +2304,7 @@
                             style="width:auto;padding:0 var(--sp-4)"
                             onclick={() => usesOAuth(tracker) ? startOAuth(tracker) : startCredentials(tracker)}
                           >
-                            {usesOAuth(tracker) ? "Connect via browser →" : "Connect"}
+                            {usesOAuth(tracker) ? "Connect via browser â†’" : "Connect"}
                           </button>
                         {/if}
                       </div>
@@ -1766,11 +2352,11 @@
                 <div class="sec-btn-row">
                   {#if store.settings.serverAuthEnabled}
                     <button class="sec-action-btn sec-action-danger" onclick={disableAuth} disabled={secLoading}>
-                      {secLoading ? "Saving…" : "Disable"}
+                      {secLoading ? "Savingâ€¦" : "Disable"}
                     </button>
                   {/if}
                   <button class="sec-action-btn sec-action-primary" onclick={enableAuth} disabled={secLoading || !authUsername.trim() || !authPassword.trim()}>
-                    {secLoading ? "Saving…" : secSaved === "auth" ? "Saved ✓" : store.settings.serverAuthEnabled ? "Update" : "Enable"}
+                    {secLoading ? "Savingâ€¦" : secSaved === "auth" ? "Saved âœ“" : store.settings.serverAuthEnabled ? "Update" : "Enable"}
                   </button>
                 </div>
               </div>
@@ -1790,17 +2376,17 @@
                 <div class="step-row">
                   <div class="toggle-info">
                     <span class="toggle-label">PIN</span>
-                    <span class="toggle-desc">4–8 digits</span>
+                    <span class="toggle-desc">4â€“8 digits</span>
                   </div>
                   <div class="sec-pin-wrap">
                     <div class="sec-pin-row">
                       <input class="text-input sec-pin-input" type="password" inputmode="numeric" maxlength={8} value={pinInput}
                         oninput={(e) => { pinInput = e.currentTarget.value.replace(/\D/g, "").slice(0, 8); pinError = ""; }}
-                        onkeydown={(e) => e.key === "Enter" && commitPin()} placeholder="••••" autocomplete="off" />
+                        onkeydown={(e) => e.key === "Enter" && commitPin()} placeholder="â€¢â€¢â€¢â€¢" autocomplete="off" />
                       <button class="sec-action-btn sec-action-primary"
                         onclick={commitPin}
                         disabled={pinInput.length > 0 && pinInput.length < 4}>
-                        {store.settings.appLockPin && pinInput === store.settings.appLockPin ? "Saved ✓" : "Save"}
+                        {store.settings.appLockPin && pinInput === store.settings.appLockPin ? "Saved âœ“" : "Save"}
                       </button>
                     </div>
                     {#if pinError}<span class="sec-pin-error">{pinError}</span>{/if}
@@ -1876,7 +2462,7 @@
                 <div class="step-row">
                   <div class="toggle-info"></div>
                   <button class="sec-action-btn sec-action-primary" onclick={saveSocksProxy} disabled={secLoading}>
-                    {secLoading ? "Saving…" : secSaved === "socks" ? "Saved ✓" : "Save"}
+                    {secLoading ? "Savingâ€¦" : secSaved === "socks" ? "Saved âœ“" : "Save"}
                   </button>
                 </div>
               {/if}
@@ -1906,7 +2492,7 @@
                     <span class="toggle-desc">Max wait per request, in seconds</span>
                   </div>
                   <div class="step-controls">
-                    <button class="step-btn" onclick={() => flareTimeout = Math.max(10, flareTimeout - 10)}>−</button>
+                    <button class="step-btn" onclick={() => flareTimeout = Math.max(10, flareTimeout - 10)}>âˆ’</button>
                     <span class="step-val">{flareTimeout}s</span>
                     <button class="step-btn" onclick={() => flareTimeout = Math.min(300, flareTimeout + 10)}>+</button>
                   </div>
@@ -1924,7 +2510,7 @@
                     <span class="toggle-desc">Minutes before session is refreshed</span>
                   </div>
                   <div class="step-controls">
-                    <button class="step-btn" onclick={() => flareTtl = Math.max(1, flareTtl - 1)}>−</button>
+                    <button class="step-btn" onclick={() => flareTtl = Math.max(1, flareTtl - 1)}>âˆ’</button>
                     <span class="step-val">{flareTtl}m</span>
                     <button class="step-btn" onclick={() => flareTtl = Math.min(60, flareTtl + 1)}>+</button>
                   </div>
@@ -1939,7 +2525,7 @@
                 <div class="step-row">
                   <div class="toggle-info"></div>
                   <button class="sec-action-btn sec-action-primary" onclick={saveFlareSolverr} disabled={secLoading}>
-                    {secLoading ? "Saving…" : secSaved === "flare" ? "Saved ✓" : "Save"}
+                    {secLoading ? "Savingâ€¦" : secSaved === "flare" ? "Saved âœ“" : "Save"}
                   </button>
                 </div>
               {/if}
@@ -1964,14 +2550,14 @@
                   <span class="content-tag">
                     <Tag size={10} weight="light" />
                     {tag}
-                    <button class="content-tag-remove" onclick={() => removeTag(tag)} title="Remove tag">×</button>
+                    <button class="content-tag-remove" onclick={() => removeTag(tag)} title="Remove tag">Ã—</button>
                   </span>
                 {/each}
               </div>
               <div class="content-tag-add">
                 <input
                   class="text-input"
-                  placeholder="Add tag substring…"
+                  placeholder="Add tag substringâ€¦"
                   bind:value={newTagInput}
                   onkeydown={(e) => { if (e.key === "Enter") addTag(); }}
                   style="flex:1;width:auto"
@@ -1988,12 +2574,12 @@
                 Allow lets a source through even if flagged NSFW. Block always hides it.
               </p>
               <div class="content-source-search-wrap">
-                <input class="text-input" placeholder="Filter sources…" bind:value={sourceSearch} style="width:100%" />
+                <input class="text-input" placeholder="Filter sourcesâ€¦" bind:value={sourceSearch} style="width:100%" />
               </div>
               {#if contentSourcesLoading}
-                <p class="storage-loading">Loading sources…</p>
+                <p class="storage-loading">Loading sourcesâ€¦</p>
               {:else if contentSources.length === 0}
-                <p class="storage-loading">No sources found — check your server connection.</p>
+                <p class="storage-loading">No sources found â€” check your server connection.</p>
               {:else}
                 <div class="content-source-list">
                   {#each contentSourcesFiltered as group (group.name)}
@@ -2006,7 +2592,7 @@
                       <img src={thumbUrl(group.iconUrl)} alt="" class="content-source-icon" loading="lazy" decoding="async" />
                       <div class="content-source-info">
                         <span class="content-source-name">{group.name}</span>
-                        <span class="content-source-lang">{group.sources[0].isNsfw ? "NSFW · " : ""}{group.sources.length > 1 ? `${group.sources.length} languages` : group.sources[0].lang.toUpperCase()}</span>
+                        <span class="content-source-lang">{group.sources[0].isNsfw ? "NSFW Â· " : ""}{group.sources.length > 1 ? `${group.sources.length} languages` : group.sources[0].lang.toUpperCase()}</span>
                       </div>
                       <div class="content-source-actions">
                         <button
@@ -2046,12 +2632,12 @@
                 </div>
                 <button class="step-btn" style="width:auto;padding:0 var(--sp-3);font-size:var(--text-xs);letter-spacing:var(--tracking-wide)"
                   onclick={() => { releasesError = null; loadReleases(); }} disabled={releasesLoading}>
-                  {releasesLoading ? "Loading…" : "Refresh"}
+                  {releasesLoading ? "Loadingâ€¦" : "Refresh"}
                 </button>
               </div>
               {#if onLatestVersion}
                 <div class="step-row">
-                  <span class="toggle-desc" style="padding:0 var(--sp-3);color:var(--accent-fg)">✓ You're on the latest version.</span>
+                  <span class="toggle-desc" style="padding:0 var(--sp-3);color:var(--accent-fg)">âœ“ You're on the latest version.</span>
                 </div>
               {/if}
               {#if updatePhase === "downloading" && IS_WINDOWS}
@@ -2061,7 +2647,7 @@
                       style="width:{dlTotal ? Math.round((dlBytes / dlTotal) * 100) : 0}%"></div>
                   </div>
                   <div class="update-progress-row">
-                    <span class="update-progress-label">Downloading {targetTag ?? "update"}…</span>
+                    <span class="update-progress-label">Downloading {targetTag ?? "update"}â€¦</span>
                     <span class="update-progress-val">{fmtProgress()}</span>
                   </div>
                 </div>
@@ -2069,10 +2655,10 @@
               {#if updatePhase === "ready"}
                 <div class="update-ready-row">
                   <span class="update-ready-label">
-                    {targetTag} downloaded — restart to finish installing.
+                    {targetTag} downloaded â€” restart to finish installing.
                   </span>
                   <button class="update-action-btn primary" onclick={restartNow}>Restart now</button>
-                  <button class="kb-reset" onclick={cancelUpdate} title="Dismiss">✕</button>
+                  <button class="kb-reset" onclick={cancelUpdate} title="Dismiss">âœ•</button>
                 </div>
               {/if}
               {#if updatePhase === "error"}
@@ -2087,7 +2673,7 @@
               {#if releasesError}
                 <p class="storage-loading" style="color:var(--color-error)">{releasesError}</p>
               {:else if releasesLoading}
-                <p class="storage-loading">Fetching releases…</p>
+                <p class="storage-loading">Fetching releasesâ€¦</p>
               {:else if releases.length === 0}
                 <p class="storage-loading">No releases found.</p>
               {:else}
@@ -2122,7 +2708,7 @@
                                 class:primary={!isInstalling}
                                 disabled={updatePhase === "downloading"}
                                 onclick={() => installUpdate(release)}>
-                                {isInstalling ? "Downloading…" : "Install"}
+                                {isInstalling ? "Downloadingâ€¦" : "Install"}
                               </button>
                             {:else}
                               <button class="update-action-btn"
@@ -2147,8 +2733,8 @@
             <div class="section">
               <p class="section-title">Links</p>
               <div class="about-block">
-                <a href="https://github.com/Youwes09/Moku" target="_blank" class="about-line" style="color:var(--accent-fg);text-decoration:none">GitHub →</a>
-                <a href="https://discord.gg/Jq3pwuNqPp" target="_blank" class="about-line" style="color:var(--accent-fg);text-decoration:none;margin-top:var(--sp-1)">Discord →</a>
+                <a href="https://github.com/Youwes09/Moku" target="_blank" class="about-line" style="color:var(--accent-fg);text-decoration:none">GitHub â†’</a>
+                <a href="https://discord.gg/Jq3pwuNqPp" target="_blank" class="about-line" style="color:var(--accent-fg);text-decoration:none;margin-top:var(--sp-1)">Discord â†’</a>
               </div>
             </div>
           </div>
@@ -2157,7 +2743,7 @@
             <div class="section">
               <p class="section-title">Splash Screen</p>
               <div class="step-row">
-                <div class="toggle-info"><span class="toggle-label">Preview idle screen</span><span class="toggle-desc">Show the idle splash — dismiss with any click or key</span></div>
+                <div class="toggle-info"><span class="toggle-label">Preview idle screen</span><span class="toggle-desc">Show the idle splash â€” dismiss with any click or key</span></div>
                 <button class="danger-btn" onclick={triggerSplash}
                   style={splashTriggered ? "background:var(--accent-fg);color:var(--bg-base);border-color:var(--accent-fg);transition:all 0.15s ease" : ""}>
                   Show idle
@@ -2329,7 +2915,7 @@
   .storage-legend-val   { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-secondary); }
   .storage-path-note { font-family: var(--font-ui); font-size: var(--text-2xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); padding: var(--sp-2) var(--sp-3) 0; word-break: break-all; }
 
-  /* ── Migration banner ───────────────────────────────────────── */
+  /* â”€â”€ Migration banner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   .migrate-banner { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-4); margin: 0 0 var(--sp-2); padding: var(--sp-3) var(--sp-4); background: color-mix(in srgb, var(--color-info) 7%, transparent); border: 1px solid color-mix(in srgb, var(--color-info) 22%, transparent); border-radius: var(--radius-md); }
   .migrate-banner-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
   .migrate-title { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--color-info); letter-spacing: var(--tracking-wide); }
@@ -2343,14 +2929,14 @@
   .migrate-bar-fill { height: 100%; background: var(--color-info); border-radius: 2px; transition: width 0.15s; }
   .migrate-banner-actions { display: flex; flex-direction: column; gap: var(--sp-1); flex-shrink: 0; align-items: flex-end; }
 
-  /* ── Downloads path row ─────────────────────────────────────── */
+  /* â”€â”€ Downloads path row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   .path-row { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3) var(--sp-3); }
   .path-input { flex: 1; width: 0 !important; min-width: 0; font-family: monospace !important; font-size: var(--text-xs) !important; }
   .path-input-error { border-color: var(--color-error) !important; }
   .path-field-error { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--color-error); letter-spacing: var(--tracking-wide); white-space: nowrap; }
   .path-actions { display: flex; align-items: center; gap: var(--sp-2); flex-shrink: 0; }
 
-  /* ── Advanced collapsible ───────────────────────────────────── */
+  /* â”€â”€ Advanced collapsible â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   .adv-section { padding-bottom: var(--sp-1); }
   .adv-toggle { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: var(--sp-2) var(--sp-3); background: none; border: none; cursor: pointer; border-radius: var(--radius-md); transition: background var(--t-fast); }
   .adv-toggle:hover { background: var(--bg-raised); }
@@ -2358,7 +2944,7 @@
   .adv-caret.open { transform: rotate(180deg); }
   .adv-body { display: flex; flex-direction: column; gap: 1px; padding-top: var(--sp-1); }
 
-  /* ── Releases scroll ────────────────────────────────────────── */
+  /* â”€â”€ Releases scroll â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   .release-list-scroll { max-height: 336px; overflow-y: auto; padding: 0 var(--sp-1); scrollbar-width: thin; scrollbar-color: var(--border-base) transparent; }
   .release-list-scroll::-webkit-scrollbar { width: 4px; }
   .release-list-scroll::-webkit-scrollbar-track { background: transparent; }
@@ -2570,4 +3156,9 @@
   .content-action-btn:hover { color: var(--text-muted); border-color: var(--border-strong); background: var(--bg-overlay); }
   .content-action-active-allow { color: var(--color-success) !important; border-color: color-mix(in srgb, var(--color-success) 40%, transparent) !important; background: color-mix(in srgb, var(--color-success) 10%, transparent) !important; }
   .content-action-active-block  { color: var(--color-error)   !important; border-color: color-mix(in srgb, var(--color-error)   40%, transparent) !important; background: color-mix(in srgb, var(--color-error)   10%, transparent) !important; }
+  .backup-validate { display: flex; flex-direction: column; gap: var(--sp-2); margin: 0 var(--sp-3) var(--sp-1); padding: var(--sp-3); border: 1px solid var(--border-dim); border-radius: var(--radius-md); background: var(--bg-overlay); }
+  .backup-validate-row, .backup-warning-block { display: flex; flex-direction: column; gap: 4px; }
+  .backup-suggestions { display: flex; flex-direction: column; gap: var(--sp-2); margin-top: var(--sp-2); }
+  .backup-suggestion-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border-dim); border-radius: var(--radius-md); background: var(--bg-raised); }
+  .backup-suggestion-info { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 </style>
