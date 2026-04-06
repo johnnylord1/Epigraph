@@ -10,14 +10,10 @@ export const GET_LIBRARY = `
         inLibrary
         downloadCount
         unreadCount
-        description
         status
-        author
-        artist
         genre
         source {
           id
-          name
           displayName
         }
         chapters {
@@ -856,6 +852,31 @@ export const GET_ALL_TRACKER_RECORDS = `
               id
               title
               thumbnailUrl
+              inLibrary
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+export const GET_LIBRARY_TRACKING_SUMMARY = `
+  query GetLibraryTrackingSummary {
+    trackers {
+      nodes {
+        id
+        isLoggedIn
+        statuses {
+          value
+          name
+        }
+        trackRecords {
+          nodes {
+            status
+            totalChapters
+            manga {
+              id
               inLibrary
             }
           }

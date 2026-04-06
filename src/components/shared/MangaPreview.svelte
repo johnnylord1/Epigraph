@@ -5,6 +5,7 @@
   import { GET_MANGA, GET_CHAPTERS, FETCH_MANGA, FETCH_CHAPTERS, UPDATE_MANGA, ENQUEUE_CHAPTERS_DOWNLOAD, GET_CATEGORIES, CREATE_CATEGORY, UPDATE_MANGA_CATEGORIES } from "../../lib/queries";
   import { GET_ALL_MANGA } from "../../lib/queries";
   import { cache, CACHE_KEYS } from "../../lib/cache";
+  import { getCategoryDisplayName, isCompletedCategory, normalizeCategories } from "../../lib/library/categories";
   import { store, openReader, addToast, linkManga, unlinkManga, setPreviewManga, setActiveManga, openSearchBrowseFeatured, checkAndMarkCompleted as storeCheckAndMarkCompleted } from "../../store/state.svelte";
   import type { Manga, Chapter, Category } from "../../lib/types";
 
@@ -82,7 +83,7 @@
   const firstUpload     = $derived(uploadDates.length ? new Date(Math.min(...uploadDates)) : null);
   const lastUpload      = $derived(uploadDates.length ? new Date(Math.max(...uploadDates)) : null);
   const statusLabel     = $derived(displayManga?.status ? displayManga.status.charAt(0) + displayManga.status.slice(1).toLowerCase() : null);
-  const assignedFolders = $derived(mangaCategories.filter(c => c.id !== 0));
+  const assignedFolders = $derived(normalizeCategories(mangaCategories).filter(c => c.id !== 0));
 
   const continueChapter = $derived.by(() => {
     if (!chapters.length) return null;
@@ -178,8 +179,8 @@
     catsLoading = true;
     gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES)
       .then(d => {
-        allCategories   = d.categories.nodes.filter(c => c.id !== 0);
-        mangaCategories = allCategories.filter(c => c.mangas?.nodes.some(m => m.id === mangaId));
+        allCategories   = normalizeCategories(d.categories.nodes.filter(c => c.id !== 0));
+        mangaCategories = normalizeCategories(allCategories.filter(c => c.mangas?.nodes.some(m => m.id === mangaId)));
       })
       .catch(console.error)
       .finally(() => { catsLoading = false; });
@@ -190,10 +191,10 @@
     // Sync local mangaCategories state after the mutation
     if (chaps.length) {
       const allRead   = chaps.every(c => c.isRead);
-      const completed = allCategories.find(c => c.name === "Completed");
+      const completed = allCategories.find(isCompletedCategory);
       if (completed) {
         const inCompleted = mangaCategories.some(c => c.id === completed.id);
-        if (allRead && !inCompleted)  mangaCategories = [...mangaCategories, completed];
+        if (allRead && !inCompleted)  mangaCategories = normalizeCategories([...mangaCategories, completed]);
         else if (!allRead && inCompleted) mangaCategories = mangaCategories.filter(c => c.id !== completed.id);
       }
     }
@@ -208,9 +209,11 @@
       addTo:      inCat ? [] : [cat.id],
       removeFrom: inCat ? [cat.id] : [],
     }).catch(console.error);
-    mangaCategories = inCat
-      ? mangaCategories.filter(c => c.id !== cat.id)
-      : [...mangaCategories, cat];
+    mangaCategories = normalizeCategories(
+      inCat
+        ? mangaCategories.filter(c => c.id !== cat.id)
+        : [...mangaCategories, cat]
+    );
   }
 
   async function handleFolderCreate() {
@@ -219,9 +222,9 @@
     try {
       const res = await gql<{ createCategory: { category: Category } }>(CREATE_CATEGORY, { name });
       const cat = res.createCategory.category;
-      allCategories = [...allCategories, cat];
+      allCategories = normalizeCategories([...allCategories, cat]);
       await gql(UPDATE_MANGA_CATEGORIES, { mangaId: store.previewManga.id, addTo: [cat.id], removeFrom: [] });
-      mangaCategories = [...mangaCategories, cat];
+      mangaCategories = normalizeCategories([...mangaCategories, cat]);
     } catch (e) { console.error(e); }
     newFolderName = ""; creatingFolder = false;
   }
@@ -268,7 +271,7 @@
         <div class="folder-wrap" bind:this={folderRef}>
           <button class="action-btn" class:active={assignedFolders.length > 0} onclick={() => folderOpen = !folderOpen}>
             <span class="action-icon"><FolderSimplePlus size={13} weight={assignedFolders.length > 0 ? "fill" : "light"} /></span>
-            <span class="action-label">{assignedFolders.length > 0 ? assignedFolders.map((f) => f.name).join(", ") : "Add to folder"}</span>
+            <span class="action-label">{assignedFolders.length > 0 ? assignedFolders.map((f) => getCategoryDisplayName(f)).join(", ") : "Add to folder"}</span>
           </button>
           {#if folderOpen}
             <div class="folder-menu">
@@ -280,7 +283,7 @@
               {#each allCategories as cat}
                 {@const isIn = mangaCategories.some(c => c.id === cat.id)}
                 <button class="folder-item" class:folder-item-on={isIn} onclick={() => toggleCategory(cat)}>
-                  <Folder size={12} weight={isIn ? "fill" : "light"} />{isIn ? "✓ " : ""}{cat.name}
+                  <Folder size={12} weight={isIn ? "fill" : "light"} />{isIn ? "✓ " : ""}{getCategoryDisplayName(cat)}
                 </button>
               {/each}
               <div class="folder-divider"></div>

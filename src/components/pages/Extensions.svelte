@@ -3,7 +3,7 @@
   import { MagnifyingGlass, ArrowsClockwise, Plus, CircleNotch, CaretRight, CaretDown, X, Check, GitBranch } from "phosphor-svelte";
   import { gql, thumbUrl } from "../../lib/client";
   import { GET_EXTENSIONS, FETCH_EXTENSIONS, UPDATE_EXTENSION, INSTALL_EXTERNAL_EXTENSION, GET_SETTINGS, SET_EXTENSION_REPOS } from "../../lib/queries";
-  import { store, addToast, setExtensionsPanelHint } from "../../store/state.svelte";
+  import { store, addToast, bumpContentSetupVersion, setExtensionsPanelHint } from "../../store/state.svelte";
   import type { Extension } from "../../lib/types";
   import SetupStatusCard from "../shared/SetupStatusCard.svelte";
   import { detectSetupState, type SetupState } from "../../lib/setupState";
@@ -64,7 +64,11 @@
 
   async function saveRepos(updated: string[]) {
     savingRepos = true;
-    try { const d = await gql<{ setSettings: { settings: { extensionRepos: string[] } } }>(SET_EXTENSION_REPOS, { repos: updated }); repos = d.setSettings.settings.extensionRepos; }
+    try {
+      const d = await gql<{ setSettings: { settings: { extensionRepos: string[] } } }>(SET_EXTENSION_REPOS, { repos: updated });
+      repos = d.setSettings.settings.extensionRepos;
+      bumpContentSetupVersion();
+    }
     catch (e: any) { repoError = e instanceof Error ? e.message : "Failed to save"; } finally { savingRepos = false; refreshSetupState(); }
   }
 
@@ -111,6 +115,7 @@
     let ok = true;
     try {
       await fn();
+      bumpContentSetupVersion();
     } catch (error) {
       ok = false;
       console.error(error);
@@ -144,6 +149,7 @@
     try {
       await gql(INSTALL_EXTERNAL_EXTENSION, { url });
       installSuccess = true; externalUrl = "";
+      bumpContentSetupVersion();
       await load();
       setTimeout(() => { panel = null; installSuccess = false; }, 1500);
     } catch (e: any) { installError = e instanceof Error ? e.message : "Install failed"; }

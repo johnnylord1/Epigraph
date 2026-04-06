@@ -1,19 +1,18 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
-  import { MagnifyingGlass, Books, DownloadSimple, Folder, FolderSimplePlus, Trash, Star, CheckSquare, X, ArrowSquareOut, SortAscending, Funnel, CaretUp, CaretDown } from "phosphor-svelte";
+  import { MagnifyingGlass, Books, DownloadSimple, Folder, FolderSimplePlus, Trash, Star, CheckSquare, X, SortAscending, Funnel, CaretUp, CaretDown, BookOpen, Stack, FileText } from "phosphor-svelte";
   import { gql, thumbUrl } from "../../lib/client";
-  import { GET_CATEGORIES, GET_LIBRARY, UPDATE_MANGA, GET_CHAPTERS, DELETE_DOWNLOADED_CHAPTERS, DEQUEUE_DOWNLOAD, CREATE_CATEGORY, UPDATE_MANGA_CATEGORIES, UPDATE_CATEGORY_ORDER } from "../../lib/queries";
+  import { GET_CATEGORIES, GET_LIBRARY, GET_LIBRARY_TRACKING_SUMMARY, UPDATE_MANGA, GET_CHAPTERS, DELETE_DOWNLOADED_CHAPTERS, DEQUEUE_DOWNLOAD, CREATE_CATEGORY, DELETE_CATEGORY, UPDATE_MANGA_CATEGORIES, UPDATE_CATEGORY_ORDER } from "../../lib/queries";
   import { cache, CACHE_KEYS, CACHE_GROUPS, DEFAULT_TTL_MS } from "../../lib/cache";
-  import { dedupeMangaById, dedupeMangaByTitle, shouldHideNsfw } from "../../lib/util";
-  import { store, setLibraryFilter, checkAndMarkCompleted as storeCheckAndMarkCompleted, updateSettings, setCategories } from "../../store/state.svelte";
-  import type { LibrarySortMode, LibrarySortDir, LibraryStatusFilter } from "../../store/state.svelte";
+  import { buildCompletedLibraryIds, collectTrackedChapterTotalsByMangaId, collectTrackedCompletedMangaIds, isMangaPublicationCompleted } from "../../lib/library/completion";
+  import { COMPLETED_CATEGORY_NAME, getCategoryDisplayName, isCompletedCategory, normalizeCategories } from "../../lib/library/categories";
+  import { dedupeMangaById, shouldHideNsfw } from "../../lib/util";
+  import { store, setLibraryFilter, setLibrarySection, setLibraryScrollTop, setLibraryVisibleCount, setLibraryReturnToMangaId, checkAndMarkCompleted as storeCheckAndMarkCompleted, updateSettings, setCategories, setLibraryMangaSnapshot } from "../../store/state.svelte";
+  import type { LibrarySortMode, LibrarySortDir, LibraryStatusFilter, LibrarySection } from "../../store/state.svelte";
   import type { Manga, Category, Chapter } from "../../lib/types";
+  import { getBookSectionCount } from "../../lib/books/summary";
   import ContextMenu, { type MenuEntry } from "../shared/ContextMenu.svelte";
-
-  const CARD_MIN_W     = 130;
-  const CARD_GAP       = 16;
-  const COMPLETED_NAME = "Completed";
-  const COMPLETED_KEY  = COMPLETED_NAME.trim().toLowerCase();
+  import BookShelf from "../books/BookShelf.svelte";
 
   // Drag type discriminators (tab reorder only — manga cards no longer use drag).
   const DT_TAB = "application/x-moku-tab";
@@ -65,6 +64,40 @@
     "ALL", "ONGOING", "COMPLETED", "CANCELLED", "HIATUS", "UNKNOWN",
   ];
 
+  type BookCollection = "all" | "epub" | "pdf";
+  type BookSortMode = "az" | "author" | "recentlyAdded" | "recentlyRead" | "sectionCount";
+  type BookReadFilter = "ALL" | "UNOPENED" | "IN_PROGRESS" | "FINISHED";
+
+  const BOOK_SORT_LABELS: Record<BookSortMode, string> = {
+    az: "A-Z",
+    author: "Author",
+    recentlyAdded: "Recently added",
+    recentlyRead: "Recently read",
+    sectionCount: "Book contents",
+  };
+
+  const BOOK_READ_LABELS: Record<BookReadFilter, string> = {
+    ALL: "All books",
+    UNOPENED: "Unopened",
+    IN_PROGRESS: "In progress",
+    FINISHED: "Finished",
+  };
+
+  const ALL_BOOK_SORT_MODES: BookSortMode[] = [
+    "az",
+    "author",
+    "recentlyAdded",
+    "recentlyRead",
+    "sectionCount",
+  ];
+
+  const ALL_BOOK_READ_FILTERS: BookReadFilter[] = [
+    "ALL",
+    "UNOPENED",
+    "IN_PROGRESS",
+    "FINISHED",
+  ];
+
   // Per-tab reactive state — $derived so Svelte tracks changes to libraryFilter and settings
   const tabSortMode = $derived(
     store.settings.libraryTabSort[store.libraryFilter]?.mode ?? "az" as LibrarySortMode
@@ -101,17 +134,42 @@
     filterPanelOpen = false;
   }
 
-  let allManga:       Manga[]      = $state([]);
+  function setBookSort(mode: BookSortMode, dir?: LibrarySortDir) {
+    bookSortMode = mode;
+    if (dir) bookSortDir = dir;
+  }
+
+  function toggleBookSortDir() {
+    bookSortDir = bookSortDir === "asc" ? "desc" : "asc";
+  }
+
+  function setBookReadFilterValue(next: BookReadFilter) {
+    bookReadFilter = next;
+    filterPanelOpen = false;
+  }
+
+  let trackedCompletedIds: Set<number> = $state(new Set());
+  let trackedChapterTotalsByMangaId: Map<number, number> = $state(new Map());
   let loading:        boolean      = $state(true);
   let error:          string|null  = $state(null);
   let retryCount:     number       = $state(0);
-  let search:         string       = $state("");
+  let comicsSearch:   string       = $state("");
+  let booksSearch:    string       = $state("");
   let renderVisible:  number       = $state(0);
-  let scrollEl:       HTMLDivElement;
-  let containerWidth: number       = $state(800);
+  let contentEl:      HTMLDivElement | null = $state(null);
   let ctx:     { x: number; y: number; manga: Manga } | null = $state(null);
   let emptyCtx:{ x: number; y: number } | null               = $state(null);
+  let failedCoverIds: Set<number>  = $state(new Set());
+  let coverRetryCounts: Map<number, number> = $state(new Map());
+  const coverSessionSeed = Math.random().toString(36).slice(2);
 
+  let scrollStateReady = false;
+  let pendingScrollRestore = false;
+  let pendingCardRestore = false;
+  let renderWindowReady = false;
+  let prevActiveMangaId: number | null = null;
+  const coverRetryTimers = new Map<number, ReturnType<typeof setTimeout>>();
+  const coverRecoveryTimers = new Map<number, ReturnType<typeof setTimeout>>();
   // ── Multi-select ──────────────────────────────────────────────────────────
 
   let selectedIds:   Set<number> = $state(new Set());
@@ -119,6 +177,12 @@
   let bulkWorking:   boolean     = $state(false);
   // Which folder-move popup is open (shows inline folder list)
   let bulkMoveOpen:  boolean     = $state(false);
+
+  let bookCollection: BookCollection = $state("all");
+  let bookSortMode: BookSortMode = $state("recentlyAdded");
+  let bookSortDir: LibrarySortDir = $state("desc");
+  let bookReadFilter: BookReadFilter = $state("ALL");
+  const allManga = $derived(store.libraryMangaSnapshot);
 
   function enterSelectMode(id?: number) {
     selectMode = true;
@@ -209,48 +273,53 @@
 
   // ── Completed category auto-create ────────────────────────────────────────
 
-  function normalizeCategoryName(name: string | null | undefined): string {
-    return (name ?? "").trim().toLowerCase();
-  }
-
-  function isCompletedCategory(category: Pick<Category, "name">): boolean {
-    return normalizeCategoryName(category.name) === COMPLETED_KEY;
-  }
-
-  function normalizeCategories(cats: Category[]): Category[] {
-    const seenIds = new Set<number>();
-    let sawCompleted = false;
-
-    return cats.filter((cat) => {
-      if (seenIds.has(cat.id)) return false;
-      seenIds.add(cat.id);
-
-      if (!isCompletedCategory(cat)) return true;
-      if (sawCompleted) return false;
-      sawCompleted = true;
-      return true;
-    });
-  }
-
   function normalizeCategoryNodes(nodes: Manga[] | undefined): Manga[] {
     return dedupeMangaById((nodes ?? []).filter((m) => m.inLibrary));
   }
 
+  async function cleanupCompletedDuplicates(cats: Category[]): Promise<Category[]> {
+    const completed = cats.filter(isCompletedCategory);
+    if (completed.length <= 1) return normalizeCategories(cats);
+
+    const [keep, ...duplicates] = [...completed].sort((a, b) => {
+      if (a.default !== b.default) return a.default ? -1 : 1;
+      if (a.order !== b.order) return a.order - b.order;
+      return a.id - b.id;
+    });
+
+    await Promise.all(
+      duplicates.map((cat) =>
+        gql(DELETE_CATEGORY, { id: cat.id }).catch(console.error)
+      )
+    );
+
+    const refreshed = await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES)
+      .then((d) => d.categories.nodes)
+      .catch(() => cats.filter((cat) => cat.id === keep.id || !isCompletedCategory(cat)));
+
+    return normalizeCategories(refreshed);
+  }
+
   async function ensureCompletedCategory(cats: Category[]): Promise<Category[]> {
     const normalized = normalizeCategories(cats);
-    if (normalized.some(isCompletedCategory)) return normalized;
+    const cleaned = await cleanupCompletedDuplicates(normalized);
+    if (cleaned.some(isCompletedCategory)) return cleaned;
     if (ensureCompletedInFlight) return await ensureCompletedInFlight;
 
     ensureCompletedInFlight = (async () => {
       try {
-        const fresh = normalizeCategories((await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES)).categories.nodes);
+        const fresh = await cleanupCompletedDuplicates(
+          normalizeCategories((await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES)).categories.nodes)
+        );
         if (fresh.some(isCompletedCategory)) return fresh;
 
         try {
-          await gql(CREATE_CATEGORY, { name: COMPLETED_NAME });
+          await gql(CREATE_CATEGORY, { name: COMPLETED_CATEGORY_NAME });
         } catch {}
 
-        return normalizeCategories((await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES)).categories.nodes);
+        return await cleanupCompletedDuplicates(
+          normalizeCategories((await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES)).categories.nodes)
+        );
       } finally {
         ensureCompletedInFlight = null;
       }
@@ -259,18 +328,31 @@
     try {
       return await ensureCompletedInFlight;
     } catch {
-      return normalized;
+      return cleaned;
     }
   }
 
   // ── Data loading ──────────────────────────────────────────────────────────
 
-  async function reloadCategories() {
+  function loadCategoriesSnapshot() {
+    return cache.get(
+      CACHE_KEYS.CATEGORIES,
+      async () => ensureCompletedCategory((await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES)).categories.nodes),
+      DEFAULT_TTL_MS,
+      CACHE_GROUPS.LIBRARY,
+    );
+  }
+
+  async function reloadCategories(force = true) {
     try {
-      const d = await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES);
-      const cats = await ensureCompletedCategory(d.categories.nodes);
+      if (force) cache.clear(CACHE_KEYS.CATEGORIES);
+      const cats = await loadCategoriesSnapshot();
       setCategories(cats);
-    } catch (e) { console.error(e); }
+      return cats;
+    } catch (e) {
+      console.error(e);
+      return store.categories;
+    }
   }
 
   function loadLibrary() {
@@ -282,16 +364,46 @@
     );
   }
 
+  function loadLibraryTrackingSummary() {
+    return cache.get(
+      CACHE_KEYS.LIBRARY_TRACKING_SUMMARY,
+      () => gql(GET_LIBRARY_TRACKING_SUMMARY).then((d: any) => d.trackers.nodes),
+      DEFAULT_TTL_MS,
+      CACHE_GROUPS.LIBRARY,
+    );
+  }
+
   async function loadData() {
     try {
-      const [nodes] = await Promise.all([loadLibrary(), reloadCategories()]);
+      const [nodes, trackingSummary, categories] = await Promise.all([
+        loadLibrary(),
+        loadLibraryTrackingSummary().catch((trackingError) => {
+          console.error(trackingError);
+          return null;
+        }),
+        loadCategoriesSnapshot().catch((categoryError) => {
+          console.error(categoryError);
+          return store.categories;
+        }),
+      ]);
       const mapped = nodes.map((m: any) => ({
         ...m,
         chapterCount: m.chapters?.totalCount ?? m.chapterCount ?? 0,
       }));
-      allManga = dedupeMangaByTitle(dedupeMangaById(mapped), store.settings.mangaLinks);
+      for (const timer of coverRetryTimers.values()) clearTimeout(timer);
+      coverRetryTimers.clear();
+      for (const timer of coverRecoveryTimers.values()) clearTimeout(timer);
+      coverRecoveryTimers.clear();
+      failedCoverIds = new Set();
+      coverRetryCounts = new Map();
+      setLibraryMangaSnapshot(dedupeMangaById(mapped));
+      trackedCompletedIds = collectTrackedCompletedMangaIds(trackingSummary);
+      trackedChapterTotalsByMangaId = collectTrackedChapterTotalsByMangaId(trackingSummary);
+      setCategories(normalizeCategories(categories));
       error    = null;
     } catch (e: any) {
+      trackedCompletedIds = new Set();
+      trackedChapterTotalsByMangaId = new Map();
       error = e.message;
     } finally {
       loading = false;
@@ -301,14 +413,38 @@
   $effect(() => {
     retryCount;
     loading = true; error = null;
-    if (retryCount > 0) cache.clear(CACHE_KEYS.LIBRARY);
+    if (retryCount > 0) cache.clearGroup(CACHE_GROUPS.LIBRARY);
     untrack(() => loadData());
   });
 
-  $effect(() => { if (scrollEl) scrollEl.scrollTo({ top: 0 }); });
+  $effect(() => {
+    const deps = [
+      store.librarySection,
+      store.libraryFilter,
+      comicsSearch,
+      booksSearch,
+      tabSortMode,
+      tabSortDir,
+      tabStatus,
+      bookCollection,
+      bookSortMode,
+      bookSortDir,
+      bookReadFilter,
+    ];
+
+    deps;
+    if (!scrollStateReady) {
+      scrollStateReady = true;
+      return;
+    }
+
+    setLibraryScrollTop(0);
+    if (contentEl) contentEl.scrollTo({ top: 0 });
+  });
 
   $effect(() => {
     const f = store.libraryFilter;
+    if (store.librarySection !== "comics") return;
     if (f === "library" || f === "downloaded") return;
     const id = Number(f);
     if (!store.categories.some(c => c.id === id)) {
@@ -318,15 +454,13 @@
 
   // Exit select mode when the filter changes
   $effect(() => { store.libraryFilter; untrack(() => exitSelectMode()); });
+  $effect(() => { store.librarySection; untrack(() => exitSelectMode()); });
 
   let prevChapterId: number | null = null;
   $effect(() => {
     const wasOpen = prevChapterId !== null;
     prevChapterId = store.activeChapter?.id ?? null;
-    if (wasOpen && !store.activeChapter) {
-      cache.clear(CACHE_KEYS.LIBRARY);
-      untrack(() => loadData());
-    }
+    if (wasOpen && !store.activeChapter) return;
   });
 
   // ── Derived ───────────────────────────────────────────────────────────────
@@ -342,7 +476,7 @@
       });
   })());
 
-  const categoryMangaMap = $derived((() => {
+  const rawCategoryMangaMap = $derived((() => {
     const map = new Map<number, Manga[]>();
     for (const cat of normalizeCategories(store.categories)) {
       const nodes = normalizeCategoryNodes(cat.mangas?.nodes);
@@ -351,8 +485,50 @@
     return map;
   })());
 
+  const completedCategory = $derived(
+    normalizeCategories(store.categories).find(isCompletedCategory) ?? null
+  );
+
+  const completedLibraryIds = $derived((() => {
+    const completedCategoryMembers = completedCategory
+      ? rawCategoryMangaMap.get(completedCategory.id) ?? []
+      : [];
+    return buildCompletedLibraryIds(
+      allManga,
+      completedCategoryMembers,
+      trackedCompletedIds,
+      trackedChapterTotalsByMangaId,
+    );
+  })());
+
+  const canonicalLibraryMangaById = $derived((() => {
+    const map = new Map<number, Manga>();
+    for (const manga of allManga) map.set(manga.id, manga);
+    return map;
+  })());
+
+  const categoryMangaMap = $derived((() => {
+    const map = new Map<number, Manga[]>();
+
+    for (const [categoryId, nodes] of rawCategoryMangaMap) {
+      const canonicalNodes = dedupeMangaById(
+        nodes.map((manga) => canonicalLibraryMangaById.get(manga.id) ?? manga),
+      );
+      map.set(categoryId, canonicalNodes);
+    }
+
+    if (completedCategory) {
+      const completedManga = dedupeMangaById([
+        ...allManga.filter((manga) => completedLibraryIds.has(manga.id)),
+        ...(map.get(completedCategory.id) ?? []),
+      ]);
+      map.set(completedCategory.id, completedManga);
+    }
+    return map;
+  })());
+
   const filtered = $derived((() => {
-    const q      = search.trim().toLowerCase();
+    const q      = comicsSearch.trim().toLowerCase();
     const mode   = tabSortMode;
     const dir    = tabSortDir;
     const status = tabStatus;
@@ -376,6 +552,9 @@
     // 4. Status filter
     if (status !== "ALL") {
       items = items.filter(m => {
+        if (status === "COMPLETED") {
+          return isMangaPublicationCompleted(m, trackedCompletedIds);
+        }
         const s = m.status?.toUpperCase().replace(/\s+/g, "_") ?? "UNKNOWN";
         return s === status;
       });
@@ -390,6 +569,16 @@
     }
 
     const sorted = [...items].sort((a, b) => {
+      if (mode === "unreadCount") {
+        const aUnread = a.unreadCount ?? 0;
+        const bUnread = b.unreadCount ?? 0;
+        const aHasUnread = aUnread > 0;
+        const bHasUnread = bUnread > 0;
+
+        // Always isolate fully-read entries at the end, regardless of sort direction.
+        if (aHasUnread !== bHasUnread) return aHasUnread ? -1 : 1;
+      }
+
       let cmp = 0;
       switch (mode) {
         case "az":
@@ -424,12 +613,103 @@
     return sorted;
   })());
 
-  const cols           = $derived(Math.max(1, Math.floor((containerWidth + CARD_GAP) / (CARD_MIN_W + CARD_GAP))));
-  const visibleManga   = $derived(filtered.slice(0, renderVisible));
-  const hasMore        = $derived(filtered.length > renderVisible);
-  const remainingCount = $derived(filtered.length - renderVisible);
+  const effectiveVisibleCount = $derived(Math.max(renderVisible, store.libraryVisibleCount || 0));
+  const visibleManga   = $derived(filtered.slice(0, effectiveVisibleCount));
+  const hasMore        = $derived(filtered.length > effectiveVisibleCount);
+  const remainingCount = $derived(filtered.length - effectiveVisibleCount);
 
-  $effect(() => { filtered; untrack(() => { renderVisible = store.settings.renderLimit ?? 48; }); });
+  $effect(() => {
+    const deps = [
+      store.librarySection,
+      store.libraryFilter,
+      comicsSearch,
+      booksSearch,
+      tabSortMode,
+      tabSortDir,
+      tabStatus,
+      bookCollection,
+      bookSortMode,
+      bookSortDir,
+      bookReadFilter,
+    ];
+
+    deps;
+
+    const baseCount = store.settings.renderLimit ?? 48;
+    if (!renderWindowReady) {
+      renderWindowReady = true;
+      renderVisible = Math.max(baseCount, store.libraryVisibleCount || 0);
+      return;
+    }
+
+    renderVisible = baseCount;
+    setLibraryVisibleCount(baseCount);
+  });
+
+  $effect(() => {
+    renderVisible;
+    setLibraryVisibleCount(renderVisible);
+  });
+
+  $effect(() => {
+    const activeMangaId = store.activeManga?.id ?? null;
+
+    if (activeMangaId !== null && contentEl) {
+      setLibraryScrollTop(contentEl.scrollTop);
+      setLibraryVisibleCount(renderVisible);
+      setLibraryReturnToMangaId(activeMangaId);
+    }
+
+    if (prevActiveMangaId !== null && activeMangaId === null) {
+      if (store.libraryVisibleCount > renderVisible) {
+        renderVisible = store.libraryVisibleCount;
+      }
+      pendingScrollRestore = store.libraryScrollTop > 0;
+      pendingCardRestore = !pendingScrollRestore && store.libraryReturnToMangaId !== null;
+    }
+
+    prevActiveMangaId = activeMangaId;
+  });
+
+  $effect(() => {
+    if (!pendingScrollRestore || loading || !contentEl || store.activeManga) return;
+
+    const targetTop = store.libraryScrollTop;
+    if (targetTop <= 0) {
+      pendingScrollRestore = false;
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (!contentEl) return;
+        contentEl.scrollTo({ top: targetTop });
+        pendingScrollRestore = false;
+        pendingCardRestore = false;
+      });
+    });
+  });
+
+  $effect(() => {
+    if (!pendingCardRestore || loading || !contentEl || store.activeManga) return;
+
+    const targetId = store.libraryReturnToMangaId;
+    if (targetId === null) {
+      pendingCardRestore = false;
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (!contentEl) return;
+        const card = contentEl.querySelector<HTMLElement>(`[data-manga-id="${targetId}"]`);
+        if (card) {
+          card.scrollIntoView({ block: "center", inline: "nearest" });
+          pendingCardRestore = false;
+        }
+      });
+    });
+  });
 
   const counts = $derived((() => {
     const m: Record<string, number> = {
@@ -442,7 +722,167 @@
     return m;
   })());
 
+  const bookCounts = $derived((() => ({
+    all: store.books.length,
+    epub: store.books.filter((book) => book.subtype === "epub").length,
+    pdf: store.books.filter((book) => book.subtype === "pdf").length,
+  }))());
+
+  const filteredBooks = $derived((() => {
+    const q = booksSearch.trim().toLowerCase();
+    const progressByBook = new Map(
+      store.bookProgress.map((progress) => [progress.bookId, progress]),
+    );
+    let items = [...store.books];
+
+    if (bookCollection !== "all") {
+      items = items.filter((book) => book.subtype === bookCollection);
+    }
+
+    if (q) {
+      items = items.filter((book) => {
+        const author = book.author?.toLowerCase() ?? "";
+        const title = book.title.toLowerCase();
+        return title.includes(q) || author.includes(q);
+      });
+    }
+
+    if (bookReadFilter !== "ALL") {
+      items = items.filter((book) => {
+        const progress = progressByBook.get(book.id);
+        const pct = progress?.progressPercent ?? 0;
+        switch (bookReadFilter) {
+          case "UNOPENED":
+            return pct <= 0.001;
+          case "IN_PROGRESS":
+            return pct > 0.001 && pct < 0.98;
+          case "FINISHED":
+            return pct >= 0.98;
+          default:
+            return true;
+        }
+      });
+    }
+
+    return items.sort((a, b) => {
+      const progressA = progressByBook.get(a.id);
+      const progressB = progressByBook.get(b.id);
+
+      let cmp = 0;
+      switch (bookSortMode) {
+        case "az":
+          cmp = a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
+          break;
+        case "author":
+          cmp = (a.author ?? "").localeCompare(b.author ?? "", undefined, { sensitivity: "base" });
+          if (cmp === 0) {
+            cmp = a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
+          }
+          break;
+        case "recentlyAdded":
+          cmp = a.updatedAt - b.updatedAt;
+          break;
+        case "recentlyRead":
+          cmp = (progressA?.lastReadAt ?? 0) - (progressB?.lastReadAt ?? 0);
+          break;
+        case "sectionCount":
+          cmp = getBookSectionCount(a) - getBookSectionCount(b);
+          break;
+      }
+
+      return bookSortDir === "asc" ? cmp : -cmp;
+    });
+  })());
+
   function loadMore() { renderVisible += store.settings.renderLimit ?? 48; }
+
+  function handleCoverError(mangaId: number) {
+    if (failedCoverIds.has(mangaId)) return;
+
+    const attempts = coverRetryCounts.get(mangaId) ?? 0;
+    if (attempts < 2) {
+      if (coverRetryTimers.has(mangaId)) return;
+
+      const timer = setTimeout(() => {
+        coverRetryTimers.delete(mangaId);
+        const nextRetries = new Map(coverRetryCounts);
+        nextRetries.set(mangaId, attempts + 1);
+        coverRetryCounts = nextRetries;
+      }, 900 * (attempts + 1));
+
+      coverRetryTimers.set(mangaId, timer);
+      return;
+    }
+
+    const nextFailed = new Set(failedCoverIds);
+    nextFailed.add(mangaId);
+    failedCoverIds = nextFailed;
+
+    if (coverRecoveryTimers.has(mangaId)) return;
+
+    const recoveryTimer = setTimeout(() => {
+      coverRecoveryTimers.delete(mangaId);
+
+      const nextFailures = new Set(failedCoverIds);
+      nextFailures.delete(mangaId);
+      failedCoverIds = nextFailures;
+
+      const nextRetries = new Map(coverRetryCounts);
+      nextRetries.set(mangaId, (nextRetries.get(mangaId) ?? 0) + 1);
+      coverRetryCounts = nextRetries;
+    }, 15000);
+
+    coverRecoveryTimers.set(mangaId, recoveryTimer);
+  }
+
+  function handleCoverLoad(mangaId: number) {
+    if (coverRetryTimers.has(mangaId)) {
+      clearTimeout(coverRetryTimers.get(mangaId)!);
+      coverRetryTimers.delete(mangaId);
+    }
+
+    if (failedCoverIds.has(mangaId)) {
+      const nextFailed = new Set(failedCoverIds);
+      nextFailed.delete(mangaId);
+      failedCoverIds = nextFailed;
+    }
+
+    if (coverRecoveryTimers.has(mangaId)) {
+      clearTimeout(coverRecoveryTimers.get(mangaId)!);
+      coverRecoveryTimers.delete(mangaId);
+    }
+
+    if (coverRetryCounts.has(mangaId)) {
+      const nextRetries = new Map(coverRetryCounts);
+      nextRetries.delete(mangaId);
+      coverRetryCounts = nextRetries;
+    }
+  }
+
+  function hasUsableCover(m: Manga): boolean {
+    return !!m.thumbnailUrl && !failedCoverIds.has(m.id);
+  }
+
+  function getCoverSignature(m: Manga): string {
+    const sourceId = typeof m.source?.id === "string" ? m.source.id : "";
+    const title = typeof m.title === "string" ? m.title.trim().toLowerCase() : "";
+    return encodeURIComponent(`${m.id}:${sourceId}:${title}`);
+  }
+
+  function getCoverSrc(m: Manga): string {
+    if (!m.thumbnailUrl) return "";
+    const base = thumbUrl(m.thumbnailUrl);
+    const sig = getCoverSignature(m);
+    const retry = coverRetryCounts.get(m.id) ?? 0;
+    const params = [`aethon_cover_sig=${sig}`, `aethon_cover_session=${coverSessionSeed}`];
+    if (retry > 0) params.push(`aethon_cover_retry=${retry}`);
+    return `${base}${base.includes("?") ? "&" : "?"}${params.join("&")}`;
+  }
+
+  function handleContentScroll() {
+    if (!contentEl) return;
+    setLibraryScrollTop(contentEl.scrollTop);
+  }
 
   // ── Drag: tab reorder ─────────────────────────────────────────────────────
 
@@ -520,7 +960,7 @@
 
   async function removeFromLibrary(manga: Manga) {
     await gql(UPDATE_MANGA, { id: manga.id, inLibrary: false }).catch(console.error);
-    allManga = allManga.filter(m => m.id !== manga.id);
+    setLibraryMangaSnapshot(allManga.filter(m => m.id !== manga.id));
     cache.clearGroup(CACHE_GROUPS.LIBRARY);
     await reloadCategories();
   }
@@ -532,7 +972,7 @@
       if (!ids.length) return;
       await gql(DELETE_DOWNLOADED_CHAPTERS, { ids });
       await Promise.allSettled(ids.map(id => gql(DEQUEUE_DOWNLOAD, { chapterId: id })));
-      allManga = allManga.map(m => m.id === manga.id ? { ...m, downloadCount: 0 } : m);
+      setLibraryMangaSnapshot(allManga.map(m => m.id === manga.id ? { ...m, downloadCount: 0 } : m));
     } catch (e) { console.error(e); }
   }
 
@@ -581,13 +1021,13 @@
     const catEntries: MenuEntry[] = visibleCategories.map(cat => {
       const inCat = (categoryMangaMap.get(cat.id) ?? []).some(x => x.id === m.id);
       return {
-        label: inCat ? `Remove from ${cat.name}` : `Add to ${cat.name}`,
+        label: inCat ? `Remove from ${getCategoryDisplayName(cat)}` : `Add to ${getCategoryDisplayName(cat)}`,
         icon:  Folder,
         onClick: () => toggleMangaCategory(m, cat),
       };
     });
     return [
-      { label: m.inLibrary ? "Remove from library" : "Add to library", icon: Books, onClick: () => m.inLibrary ? removeFromLibrary(m) : gql(UPDATE_MANGA, { id: m.id, inLibrary: true }).then(() => { allManga = allManga.map(x => x.id === m.id ? { ...x, inLibrary: true } : x); cache.clear(CACHE_KEYS.LIBRARY); }).catch(console.error) },
+      { label: m.inLibrary ? "Remove from library" : "Add to library", icon: Books, onClick: () => m.inLibrary ? removeFromLibrary(m) : gql(UPDATE_MANGA, { id: m.id, inLibrary: true }).then(() => { setLibraryMangaSnapshot(allManga.map(x => x.id === m.id ? { ...x, inLibrary: true } : x)); cache.clear(CACHE_KEYS.LIBRARY); }).catch(console.error) },
       { label: "Delete all downloads", icon: Trash, danger: true, disabled: !(m.downloadCount && m.downloadCount > 0), onClick: () => deleteAllDownloads(m) },
       { separator: true },
       { label: "Select this manga", icon: CheckSquare, onClick: () => enterSelectMode(m.id) },
@@ -620,12 +1060,10 @@
   }
 
   onMount(() => {
-    const ro = new ResizeObserver(([e]) => containerWidth = e.contentRect.width);
-    ro.observe(scrollEl);
     const unsub = cache.subscribe(CACHE_KEYS.LIBRARY, () => loadData());
 
     const defaultId = store.settings.defaultLibraryCategoryId;
-    if (defaultId && store.libraryFilter === "library") {
+    if (store.librarySection === "comics" && defaultId && store.libraryFilter === "library") {
       store.libraryFilter = String(defaultId);
     }
 
@@ -650,8 +1088,23 @@
     window.addEventListener("keydown", onKeyDown);
     document.addEventListener("mousedown", onDocMouseDown, true);
 
+    queueMicrotask(() => {
+      if (store.libraryVisibleCount > renderVisible) {
+        renderVisible = store.libraryVisibleCount;
+      }
+      if (store.libraryScrollTop > 0) {
+        pendingScrollRestore = true;
+      }
+      if (store.libraryScrollTop <= 0 && store.libraryReturnToMangaId !== null) {
+        pendingCardRestore = true;
+      }
+    });
+
     return () => {
-      ro.disconnect();
+      for (const timer of coverRetryTimers.values()) clearTimeout(timer);
+      coverRetryTimers.clear();
+      for (const timer of coverRecoveryTimers.values()) clearTimeout(timer);
+      coverRecoveryTimers.clear();
       unsub();
       window.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("mousedown", onDocMouseDown, true);
@@ -662,7 +1115,6 @@
 <div
   class="root"
   role="presentation"
-  bind:this={scrollEl}
   oncontextmenu={(e) => {
     if ((e.target as HTMLElement).closest("button")) return;
     e.preventDefault();
@@ -700,59 +1152,107 @@
     <div class="header">
       <div class="header-left">
         <span class="heading">Library</span>
-        <div class="tabs">
-          {#each [["library","Saved"], ["downloaded","Downloaded"]] as [f, label]}
-            <button class="tab" class:active={store.libraryFilter === f} onclick={() => store.libraryFilter = f}>
-              {#if f === "library"}<Books size={11} weight="bold" />
-              {:else if f === "downloaded"}<DownloadSimple size={11} weight="bold" />{/if}
-              {label}
-              <span class="tab-count">{counts[f] ?? 0}</span>
-            </button>
-          {/each}
-          {#each visibleCategories as cat, idx}
-            {@const isDefault = (store.settings.defaultLibraryCategoryId ?? null) === cat.id}
-            {#if dragInsertIdx === idx && activeDragKind === "tab"}
-              <div class="tab-insert-bar" aria-hidden="true"></div>
-            {/if}
+        <div class="tabs section-tabs">
+          {#each [["comics", "Comics"], ["books", "Books"]] as [section, label]}
             <button
-              class="tab"
-              class:active={store.libraryFilter === String(cat.id)}
-              class:tab-dragging={dragTabId === cat.id}
-              class:tab-drop-target={dropTargetTabId === cat.id}
-              class:tab-default={isDefault}
-              draggable="true"
-              onclick={() => store.libraryFilter = String(cat.id)}
-              ondragstart={(e) => onTabDragStart(e, cat)}
-              ondragover={(e) => onTabDragOver(e, cat, idx)}
-              ondragleave={onTabDragLeave}
-              ondrop={(e) => onTabDrop(e, cat)}
-              ondragend={onTabDragEnd}
+              class="tab section-tab"
+              class:active={store.librarySection === section}
+              onclick={() => setLibrarySection(section as LibrarySection)}
             >
-              {#if isDefault}
-                <Star size={11} weight="fill" style="color:var(--accent-fg)" />
+              {#if section === "comics"}
+                <Stack size={11} weight="bold" />
               {:else}
-                <Folder size={11} weight="bold" />
+                <BookOpen size={11} weight="bold" />
               {/if}
-              {cat.name}
-              <span class="tab-count">{counts[String(cat.id)] ?? 0}</span>
+              {label}
             </button>
-            {#if dragInsertIdx === idx + 1 && activeDragKind === "tab" && idx === visibleCategories.length - 1}
-              <div class="tab-insert-bar" aria-hidden="true"></div>
-            {/if}
           {/each}
         </div>
+        {#if store.librarySection === "comics"}
+          <div class="tabs">
+            {#each [["library","Saved"], ["downloaded","Downloaded"]] as [f, label]}
+              <button class="tab" class:active={store.libraryFilter === f} onclick={() => store.libraryFilter = f}>
+                {#if f === "library"}<Books size={11} weight="bold" />
+                {:else if f === "downloaded"}<DownloadSimple size={11} weight="bold" />{/if}
+                {label}
+                <span class="tab-count">{counts[f] ?? 0}</span>
+              </button>
+            {/each}
+            {#each visibleCategories as cat, idx}
+              {@const isDefault = (store.settings.defaultLibraryCategoryId ?? null) === cat.id}
+              {#if dragInsertIdx === idx && activeDragKind === "tab"}
+                <div class="tab-insert-bar" aria-hidden="true"></div>
+              {/if}
+              <button
+                class="tab"
+                class:active={store.libraryFilter === String(cat.id)}
+                class:tab-dragging={dragTabId === cat.id}
+                class:tab-drop-target={dropTargetTabId === cat.id}
+                class:tab-default={isDefault}
+                draggable="true"
+                onclick={() => store.libraryFilter = String(cat.id)}
+                ondragstart={(e) => onTabDragStart(e, cat)}
+                ondragover={(e) => onTabDragOver(e, cat, idx)}
+                ondragleave={onTabDragLeave}
+                ondrop={(e) => onTabDrop(e, cat)}
+                ondragend={onTabDragEnd}
+              >
+                {#if isDefault}
+                  <Star size={11} weight="fill" style="color:var(--accent-fg)" />
+                {:else}
+                  <Folder size={11} weight="bold" />
+                {/if}
+                {getCategoryDisplayName(cat)}
+                <span class="tab-count">{counts[String(cat.id)] ?? 0}</span>
+              </button>
+              {#if dragInsertIdx === idx + 1 && activeDragKind === "tab" && idx === visibleCategories.length - 1}
+                <div class="tab-insert-bar" aria-hidden="true"></div>
+              {/if}
+            {/each}
+          </div>
+        {:else}
+          <div class="tabs">
+            {#each [
+              ["all", "All"],
+              ["epub", "EPUB"],
+              ["pdf", "PDF"],
+            ] as [collection, label]}
+              <button
+                class="tab"
+                class:active={bookCollection === collection}
+                onclick={() => bookCollection = collection as BookCollection}
+              >
+                {#if collection === "all"}
+                  <Stack size={11} weight="bold" />
+                {:else if collection === "epub"}
+                  <BookOpen size={11} weight="bold" />
+                {:else}
+                  <FileText size={11} weight="bold" />
+                {/if}
+                {label}
+                <span class="tab-count">{bookCounts[collection as BookCollection]}</span>
+              </button>
+            {/each}
+          </div>
+        {/if}
       </div>
       <div class="header-right">
         <div class="search-wrap">
           <MagnifyingGlass size={13} class="search-icon" weight="light" />
-          <input class="search" placeholder="Search" bind:value={search} />
+          {#if store.librarySection === "comics"}
+            <input class="search" placeholder="Search" bind:value={comicsSearch} />
+          {:else}
+            <input class="search" placeholder="Search books" bind:value={booksSearch} />
+          {/if}
         </div>
 
         <!-- Sort panel -->
         <div class="sort-panel-wrap">
           <button
             class="icon-btn"
-            class:icon-btn-active={tabSortMode !== "az" || tabSortDir !== "asc"}
+            class:icon-btn-active={store.librarySection === "comics"
+              ? tabSortMode !== "az" || tabSortDir !== "asc"
+              : bookSortMode !== "recentlyAdded" || bookSortDir !== "desc"}
             title="Sort"
             onclick={openSortPanel}
           >
@@ -761,30 +1261,50 @@
           {#if sortPanelOpen}
             <div class="dropdown-panel sort-panel" role="menu">
               <p class="panel-label">Sort by</p>
-              {#each ALL_SORT_MODES as m}
-                <button
-                  class="panel-item"
-                  class:panel-item-active={tabSortMode === m}
-                  role="menuitem"
-                  onclick={() => { setTabSort(m); sortPanelOpen = false; }}
-                >
-                  {SORT_LABELS[m]}
-                  {#if tabSortMode === m}
-                    {#if tabSortDir === "asc"}
-                      <CaretUp size={11} weight="bold" class="sort-caret" />
-                    {:else}
-                      <CaretDown size={11} weight="bold" class="sort-caret" />
+              {#if store.librarySection === "comics"}
+                {#each ALL_SORT_MODES as m}
+                  <button
+                    class="panel-item"
+                    class:panel-item-active={tabSortMode === m}
+                    role="menuitem"
+                    onclick={() => { setTabSort(m); sortPanelOpen = false; }}
+                  >
+                    {SORT_LABELS[m]}
+                    {#if tabSortMode === m}
+                      {#if tabSortDir === "asc"}
+                        <CaretUp size={11} weight="bold" class="sort-caret" />
+                      {:else}
+                        <CaretDown size={11} weight="bold" class="sort-caret" />
+                      {/if}
                     {/if}
-                  {/if}
-                </button>
-              {/each}
+                  </button>
+                {/each}
+              {:else}
+                {#each ALL_BOOK_SORT_MODES as m}
+                  <button
+                    class="panel-item"
+                    class:panel-item-active={bookSortMode === m}
+                    role="menuitem"
+                    onclick={() => { setBookSort(m); sortPanelOpen = false; }}
+                  >
+                    {BOOK_SORT_LABELS[m]}
+                    {#if bookSortMode === m}
+                      {#if bookSortDir === "asc"}
+                        <CaretUp size={11} weight="bold" class="sort-caret" />
+                      {:else}
+                        <CaretDown size={11} weight="bold" class="sort-caret" />
+                      {/if}
+                    {/if}
+                  </button>
+                {/each}
+              {/if}
               <button
                 class="panel-item dir-toggle"
                 role="menuitem"
-                onclick={toggleTabSortDir}
+                onclick={store.librarySection === "comics" ? toggleTabSortDir : toggleBookSortDir}
               >
-                {tabSortDir === "asc" ? "Ascending" : "Descending"}
-                {#if tabSortDir === "asc"}
+                {(store.librarySection === "comics" ? tabSortDir : bookSortDir) === "asc" ? "Ascending" : "Descending"}
+                {#if (store.librarySection === "comics" ? tabSortDir : bookSortDir) === "asc"}
                   <CaretUp size={11} weight="bold" />
                 {:else}
                   <CaretDown size={11} weight="bold" />
@@ -798,25 +1318,38 @@
         <div class="filter-panel-wrap">
           <button
             class="icon-btn"
-            class:icon-btn-active={tabStatus !== "ALL"}
-            title="Filter by status"
+            class:icon-btn-active={store.librarySection === "comics" ? tabStatus !== "ALL" : bookReadFilter !== "ALL"}
+            title={store.librarySection === "comics" ? "Filter by status" : "Filter books"}
             onclick={openFilterPanel}
           >
-            <Funnel size={15} weight={tabStatus !== "ALL" ? "fill" : "bold"} />
+            <Funnel size={15} weight={(store.librarySection === "comics" ? tabStatus !== "ALL" : bookReadFilter !== "ALL") ? "fill" : "bold"} />
           </button>
           {#if filterPanelOpen}
             <div class="dropdown-panel filter-panel" role="menu">
-              <p class="panel-label">Filter by status</p>
-              {#each ALL_STATUS_FILTERS as s}
-                <button
-                  class="panel-item"
-                  class:panel-item-active={tabStatus === s}
-                  role="menuitem"
-                  onclick={() => setTabStatus(s)}
-                >
-                  {STATUS_LABELS[s]}
-                </button>
-              {/each}
+              <p class="panel-label">{store.librarySection === "comics" ? "Filter by status" : "Filter books"}</p>
+              {#if store.librarySection === "comics"}
+                {#each ALL_STATUS_FILTERS as s}
+                  <button
+                    class="panel-item"
+                    class:panel-item-active={tabStatus === s}
+                    role="menuitem"
+                    onclick={() => setTabStatus(s)}
+                  >
+                    {STATUS_LABELS[s]}
+                  </button>
+                {/each}
+              {:else}
+                {#each ALL_BOOK_READ_FILTERS as s}
+                  <button
+                    class="panel-item"
+                    class:panel-item-active={bookReadFilter === s}
+                    role="menuitem"
+                    onclick={() => setBookReadFilterValue(s)}
+                  >
+                    {BOOK_READ_LABELS[s]}
+                  </button>
+                {/each}
+              {/if}
             </div>
           {/if}
         </div>
@@ -824,7 +1357,7 @@
     </div>
 
     <!-- ── Selection toolbar ───────────────────────────────────────────────── -->
-    {#if selectMode}
+    {#if store.librarySection === "comics" && selectMode}
       <div class="select-bar">
         <div class="select-bar-left">
           <button class="sel-btn sel-cancel" onclick={exitSelectMode} title="Cancel (Esc)">
@@ -851,7 +1384,7 @@
                   {#each visibleCategories as cat}
                     <button class="bulk-folder-item" onclick={() => bulkMoveToCategory(cat)}>
                       <Folder size={11} weight="bold" />
-                      {cat.name}
+                      {getCategoryDisplayName(cat)}
                     </button>
                   {/each}
                 </div>
@@ -870,8 +1403,10 @@
       </div>
     {/if}
 
-    <div class="content">
-    {#if loading}
+    <div class="content" bind:this={contentEl} onscroll={handleContentScroll}>
+    {#if store.librarySection === "books"}
+      <BookShelf books={filteredBooks} totalBooks={store.books.length} />
+    {:else if loading}
       <div class="grid">
         {#each Array(12) as _}
           <div class="card-skeleton">
@@ -887,11 +1422,12 @@
           : "No manga in this folder yet. Right-click manga anywhere to assign them."}
       </div>
     {:else}
-      <div class="grid" style="--cols:{cols}">
+      <div class="grid">
         {#each visibleManga as m (m.id)}
           {@const isSelected = selectedIds.has(m.id)}
           <button
             class="card"
+            data-manga-id={m.id}
             class:card-selected={isSelected}
             class:select-mode={selectMode}
             onclick={(e) => onCardClick(e, m)}
@@ -901,7 +1437,23 @@
             onpointerleave={onCardPointerLeave}
           >
             <div class="cover-wrap">
-              <img src={thumbUrl(m.thumbnailUrl)} alt={m.title} class="cover" style="object-fit:{store.settings.libraryCropCovers ? 'cover' : 'contain'}" loading="lazy" decoding="async" draggable="false" />
+              {#if hasUsableCover(m)}
+                  <img
+                  src={getCoverSrc(m)}
+                  alt={m.title}
+                  class="cover"
+                  style="object-fit:{store.settings.libraryCropCovers ? 'cover' : 'contain'}"
+                  loading="eager"
+                  decoding="async"
+                  draggable="false"
+                  onerror={() => handleCoverError(m.id)}
+                  onload={() => handleCoverLoad(m.id)}
+                />
+              {:else}
+                <div class="cover-fallback" aria-hidden="true">
+                  <Books size={28} weight="duotone" />
+                </div>
+              {/if}
               {#if m.downloadCount}<span class="badge-dl">{m.downloadCount}</span>{/if}
               {#if m.unreadCount}<span class="badge-unread">{m.unreadCount}</span>{/if}
               {#if selectMode}
@@ -946,10 +1498,13 @@
   .branches { position: absolute; top: 0; right: 0; width: 400px; height: 600px; pointer-events: none; z-index: 0; }
   .branches :global(.anim-branch) { stroke-dasharray: 60; stroke-dashoffset: 60; animation: branchGrow 2.4s ease forwards; }
   @keyframes branchGrow { to { stroke-dashoffset: 0; } }
-  .header { position: relative; z-index: 100; display: flex; align-items: center; justify-content: space-between; padding: var(--sp-4) var(--sp-6); border-bottom: 1px solid var(--border-dim); gap: var(--sp-4); flex-wrap: wrap; flex-shrink: 0; }
+  .header { position: relative; z-index: 4; display: flex; align-items: center; justify-content: space-between; padding: var(--sp-4) var(--sp-6); border-bottom: 1px solid var(--border-dim); gap: var(--sp-4); flex-wrap: wrap; flex-shrink: 0; }
   .header-left { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
   .heading { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-faint); letter-spacing: var(--tracking-wider); text-transform: uppercase; flex-shrink: 0; }
   .tabs { display: flex; gap: 2px; background: var(--bg-raised); border: 1px solid var(--border-dim); border-radius: var(--radius-md); padding: 2px; }
+  .section-tabs { background: var(--bg-overlay); border-color: var(--border-base); }
+  .section-tab { cursor: pointer; }
+  .tab.section-tab { cursor: pointer; }
   .tab { display: flex; align-items: center; gap: 5px; font-family: var(--font-ui); font-size: var(--text-2xs); letter-spacing: var(--tracking-wide); text-transform: uppercase; padding: 4px 10px; border-radius: var(--radius-sm); color: var(--text-faint); white-space: nowrap; transition: background var(--t-base), color var(--t-base); cursor: grab; }
   .tab:hover { color: var(--text-muted); }
   .tab.active { background: var(--accent-muted); color: var(--accent-fg); border: 1px solid var(--accent-dim); }
@@ -975,7 +1530,7 @@
   /* ── Dropdown panels (shared) ───────────────────────────────────────────── */
   .sort-panel-wrap,
   .filter-panel-wrap { position: relative; }
-  .dropdown-panel { position: absolute; top: calc(100% + 6px); right: 0; z-index: 9999; min-width: 220px; background: var(--bg-overlay, #1a1a1a); border: 1px solid var(--border-base); border-radius: var(--radius-md); padding: 6px; box-shadow: 0 12px 36px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.3); animation: fadeIn 0.1s ease both; }
+  .dropdown-panel { position: absolute; top: calc(100% + 6px); right: 0; z-index: 10; min-width: 220px; background: var(--bg-overlay, #1a1a1a); border: 1px solid var(--border-base); border-radius: var(--radius-md); padding: 6px; box-shadow: 0 12px 36px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.3); animation: fadeIn 0.1s ease both; }
   .panel-label { font-family: var(--font-ui); font-size: var(--text-2xs); letter-spacing: var(--tracking-wider); text-transform: uppercase; color: var(--text-faint); padding: 4px 8px 8px; }
   .panel-item { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 7px 10px; border-radius: var(--radius-sm); border: none; background: transparent; color: var(--text-muted); font-family: var(--font-ui); font-size: var(--text-xs); cursor: pointer; text-align: left; transition: background var(--t-base), color var(--t-base); gap: var(--sp-2); }
   .panel-item:hover { background: var(--bg-subtle, #202020); color: var(--text-primary); }
@@ -986,7 +1541,7 @@
   .sort-caret { flex-shrink: 0; }
 
   /* ── Selection toolbar ──────────────────────────────────────────────────── */
-  .select-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); padding: var(--sp-2) var(--sp-6); background: var(--bg-raised); border-bottom: 1px solid var(--accent-dim); flex-shrink: 0; animation: fadeIn 0.1s ease both; }
+  .select-bar { position: relative; z-index: 4; display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); padding: var(--sp-2) var(--sp-6); background: var(--bg-raised); border-bottom: 1px solid var(--accent-dim); flex-shrink: 0; animation: fadeIn 0.1s ease both; }
   .select-bar-left { display: flex; align-items: center; gap: var(--sp-3); }
   .select-bar-right { display: flex; align-items: center; gap: var(--sp-2); position: relative; }
   .sel-count { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--accent-fg); letter-spacing: var(--tracking-wide); }
@@ -1003,20 +1558,21 @@
 
   /* Bulk folder dropdown */
   .bulk-move-wrap { position: relative; }
-  .bulk-folder-list { position: absolute; top: calc(100% + 4px); right: 0; z-index: 200; background: var(--bg-raised); border: 1px solid var(--border-dim); border-radius: var(--radius-md); padding: 4px; min-width: 160px; box-shadow: 0 8px 24px rgba(0,0,0,0.35); animation: fadeIn 0.1s ease both; }
+  .bulk-folder-list { position: absolute; top: calc(100% + 4px); right: 0; z-index: 10; background: var(--bg-raised); border: 1px solid var(--border-dim); border-radius: var(--radius-md); padding: 4px; min-width: 160px; box-shadow: 0 8px 24px rgba(0,0,0,0.35); animation: fadeIn 0.1s ease both; }
   .bulk-folder-item { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 10px; border-radius: var(--radius-sm); border: none; background: transparent; color: var(--text-muted); font-family: var(--font-ui); font-size: var(--text-xs); cursor: pointer; text-align: left; transition: background var(--t-base), color var(--t-base); }
   .bulk-folder-item:hover { background: var(--bg-hover, var(--bg-base)); color: var(--text-primary); }
 
   /* ── Grid & cards ───────────────────────────────────────────────────────── */
-  .grid { position: relative; z-index: 1; isolation: isolate; display: grid; grid-template-columns: repeat(var(--cols, auto-fill), minmax(130px, 1fr)); gap: var(--sp-4); }
-  .card { background: none; border: none; padding: 0; cursor: pointer; text-align: left; }
+  .grid { position: relative; z-index: 1; isolation: isolate; display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: var(--sp-4); align-items: start; }
+  .card { background: none; border: none; padding: 0; cursor: pointer; text-align: left; display: flex; flex-direction: column; min-width: 0; }
   .card:hover .cover { filter: brightness(1.07); }
   .card:hover .title { color: var(--text-primary); }
   .card.select-mode { cursor: default; }
   .card.card-selected .cover-wrap { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-md); }
   .card.card-selected .title { color: var(--accent-fg); }
-  .cover-wrap { position: relative; aspect-ratio: 2/3; overflow: hidden; border-radius: var(--radius-md); background: var(--bg-raised); border: 1px solid var(--border-dim); }
-  .cover { width: 100%; height: 100%; transition: filter var(--t-base); will-change: filter; }
+  .cover-wrap { position: relative; aspect-ratio: 2/3; overflow: hidden; border-radius: var(--radius-md); background: var(--bg-raised); border: 1px solid var(--border-dim); display: flex; align-items: center; justify-content: center; }
+  .cover { width: 100%; height: 100%; transition: filter var(--t-base); will-change: filter; display: block; background: var(--bg-raised); }
+  .cover-fallback { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--text-faint); background: linear-gradient(180deg, color-mix(in srgb, var(--bg-raised) 88%, white 12%), var(--bg-base)); }
   .badge-dl { position: absolute; bottom: var(--sp-1); right: var(--sp-1); min-width: 18px; height: 18px; padding: 0 3px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; background: var(--accent-dim); color: var(--accent-fg); border-radius: var(--radius-sm); border: 1px solid var(--accent-muted); }
   .badge-unread { position: absolute; top: var(--sp-1); left: var(--sp-1); min-width: 18px; height: 18px; padding: 0 4px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; background: var(--bg-void); color: var(--text-primary); border-radius: var(--radius-sm); border: 1px solid var(--border-strong); }
 
@@ -1026,7 +1582,7 @@
   .select-check.checked { color: var(--accent-fg); opacity: 1; }
   .select-check-empty { width: 20px; height: 20px; border-radius: 4px; border: 2px solid var(--text-faint); background: rgba(0,0,0,0.3); }
 
-  .title { margin-top: var(--sp-2); font-size: var(--text-sm); color: var(--text-secondary); line-height: var(--leading-snug); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; transition: color var(--t-base); }
+  .title { margin-top: var(--sp-2); min-height: calc(var(--leading-snug) * 2em); font-size: var(--text-sm); color: var(--text-secondary); line-height: var(--leading-snug); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; transition: color var(--t-base); }
   .card-skeleton { padding: 0; }
   .cover-skeleton { aspect-ratio: 2/3; border-radius: var(--radius-md); }
   .title-skeleton { height: 12px; margin-top: var(--sp-2); width: 80%; border-radius: var(--radius-sm); }

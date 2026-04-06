@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { platform } from "@tauri-apps/plugin-os";
+  import { getServerTargetInfo } from "../../lib/serverTarget";
 
   const win      = getCurrentWindow();
   const os       = platform();
@@ -9,6 +10,7 @@
   const isWindows = os === "windows";
 
   let isFullscreen = $state(false);
+  const serverTarget = $derived(getServerTargetInfo());
 
   onMount(async () => {
     isFullscreen = await win.isFullscreen();
@@ -22,7 +24,10 @@
 {#if !isFullscreen}
   <div class="bar" data-tauri-drag-region>
     {#if isMac}<div class="mac-spacer"></div>{/if}
-    <span class="title" data-tauri-drag-region>Aethon</span>
+    <div class="title-wrap" data-tauri-drag-region>
+      <span class="title" data-tauri-drag-region>Aethon</span>
+      <span class="target-pill target-{serverTarget.mode}" data-tauri-drag-region>{serverTarget.title}</span>
+    </div>
     {#if !isMac}
       <div class="controls">
         <button onclick={() => win.minimize()} title="Minimize" aria-label="Minimize">
@@ -105,6 +110,44 @@
     letter-spacing: var(--tracking-wider);
     text-transform: uppercase;
     -webkit-app-region: drag;
+  }
+  .title-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    -webkit-app-region: drag;
+  }
+  .target-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    padding: 3px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border-base);
+    font-family: var(--font-ui);
+    font-size: 10px;
+    letter-spacing: var(--tracking-wide);
+    text-transform: uppercase;
+    color: var(--text-muted);
+    background: var(--bg-raised);
+    -webkit-app-region: drag;
+  }
+  .target-main {
+    border-color: var(--border-base);
+    color: var(--text-secondary);
+    background: var(--bg-raised);
+  }
+  .target-test {
+    border-color: var(--accent-dim);
+    color: var(--accent-fg);
+    background: var(--accent-muted);
+  }
+  .target-custom {
+    border-color: var(--color-info);
+    color: var(--color-info);
+    background: var(--color-info-bg);
   }
   .controls {
     display: flex;

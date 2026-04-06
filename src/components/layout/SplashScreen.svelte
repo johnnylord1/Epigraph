@@ -28,6 +28,9 @@
   let pinShake    = $state(false);
   let pinUnlocked = $state(false);
   let pinVisible  = $state(false);
+  let splashRoot  = $state<HTMLDivElement | null>(null);
+
+  const canDismissIdle = $derived(mode === "idle" && !!onDismiss && !lockEnabled);
 
   function submitPin() {
     if (pinEntry === store.settings.appLockPin) {
@@ -52,6 +55,15 @@
 
   function handleRetry()  { onRetry?.();  }
   function handleBypass() { onBypass?.(); }
+  function dismissIdle() {
+    if (!canDismissIdle) return;
+    triggerExit(onDismiss);
+  }
+  function handleIdleKeydown(event: KeyboardEvent) {
+    if (!canDismissIdle) return;
+    if (["Shift", "Control", "Alt", "Meta", "CapsLock", "Tab"].includes(event.key)) return;
+    dismissIdle();
+  }
 
   const EXIT_MS = 320;
   const PHASE1_TARGET = 0.85;
@@ -120,21 +132,20 @@
   }, 420);
 
   onMount(() => {
-    if (mode === "idle" && onDismiss) {
-      if (lockEnabled) {
-        return () => clearInterval(dotsInterval);
-      }
-      const handler = () => triggerExit(onDismiss);
+    if (canDismissIdle) {
+      const handler = () => dismissIdle();
+      const keyHandler = (event: KeyboardEvent) => handleIdleKeydown(event);
       const t = setTimeout(() => {
-        window.addEventListener("keydown",    handler, { once: true });
-        window.addEventListener("mousedown",  handler, { once: true });
-        window.addEventListener("touchstart", handler, { once: true });
-      }, 200);
+        splashRoot?.focus();
+        window.addEventListener("keydown", keyHandler);
+        window.addEventListener("mousedown", handler);
+        window.addEventListener("touchstart", handler);
+      }, 50);
       return () => {
         clearTimeout(t);
         clearInterval(dotsInterval);
-        window.removeEventListener("keydown",    handler);
-        window.removeEventListener("mousedown",  handler);
+        window.removeEventListener("keydown", keyHandler);
+        window.removeEventListener("mousedown", handler);
         window.removeEventListener("touchstart", handler);
       };
     }
@@ -329,7 +340,17 @@
   const ringLeft = $derived(-((ringSize - 140) / 2));
 </script>
 
-<div class="splash" class:exiting style="cursor: {mode === 'idle' && !lockEnabled ? 'pointer' : 'default'}">
+<div
+  class="splash"
+  class:exiting
+  bind:this={splashRoot}
+  style="cursor: {canDismissIdle ? 'pointer' : 'default'}"
+  role={canDismissIdle ? "button" : undefined}
+  tabindex={canDismissIdle ? 0 : undefined}
+  onclick={dismissIdle}
+  onpointerdown={dismissIdle}
+  onkeydown={handleIdleKeydown}
+>
   {#if showCards}
     <canvas style="position:absolute;inset:0;pointer-events:none;width:100%;height:100%" use:mountCanvas></canvas>
     {#if showFps}
@@ -359,7 +380,7 @@
         <div class="logo-glow"></div>
         <img src={logoUrl} alt="Aethon" class="logo-breathe" style="width:128px;height:128px;border-radius:28px;display:block;position:relative" />
       </div>
-      <p class="hint">press any key to continue</p>
+      <p class="hint">click or press any key to continue</p>
     </div>
 
   {:else}

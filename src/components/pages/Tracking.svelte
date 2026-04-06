@@ -1,6 +1,7 @@
 <script lang="ts">
   import { CircleNotch, ArrowSquareOut, ArrowsClockwise, X, Lock, MagnifyingGlass, Funnel } from "phosphor-svelte";
   import { gql, thumbUrl } from "../../lib/client";
+  import { cache, CACHE_GROUPS } from "../../lib/cache";
   import {
     GET_ALL_TRACKER_RECORDS,
     UPDATE_TRACK,
@@ -166,6 +167,7 @@
           trackRecords: { nodes: t.trackRecords.nodes.filter(r => r.id !== record.id) }
         }
       );
+      cache.clearGroup(CACHE_GROUPS.LIBRARY);
       addToast({ kind: "info", title: "Unlinked from " + record.tracker.name });
     } catch (e: any) {
       addToast({ kind: "error", title: "Unbind failed", body: e?.message });
@@ -183,6 +185,7 @@
         }
       }
     );
+    cache.clearGroup(CACHE_GROUPS.LIBRARY);
   }
 
   function openManga(record: FlatRecord) {

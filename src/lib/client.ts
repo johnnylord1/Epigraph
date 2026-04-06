@@ -3,7 +3,7 @@ import { store } from "../store/state.svelte";
 const DEFAULT_URL = "http://127.0.0.1:4567";
 
 export function getServerUrl(): string {
-  const url = store.settings.serverUrl;
+  const url = store.runtimeServerUrl ?? store.settings.serverUrl;
   return typeof url === "string" && url.trim() ? url.replace(/\/$/, "") : DEFAULT_URL;
 }
 
@@ -31,7 +31,7 @@ export function serverFileUrl(path: string): string {
 export function thumbUrl(path: string): string {
   if (!path) return "";
   if (path.startsWith("http")) return path;
-  return `${getServerUrl()}${path}`;
+  return `${getServerUrl()}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
 interface GQLResponse<T> {

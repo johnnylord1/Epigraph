@@ -153,6 +153,7 @@ export const CACHE_GROUPS = {
 
 export const CACHE_KEYS = {
   LIBRARY:             "library",
+  LIBRARY_TRACKING_SUMMARY: "library_tracking_summary",
   ALL_MANGA:           "all_manga_unfiltered",
   CATEGORIES:          "categories",
   DISCOVER:            "discover_all_manga",  // Discover's unfiltered fetch — separate from library

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { CircleNotch, X, MagnifyingGlass, ArrowSquareOut, Lock, LockOpen, ArrowsClockwise } from "phosphor-svelte";
   import { gql, thumbUrl } from "../../lib/client";
+  import { cache, CACHE_GROUPS } from "../../lib/cache";
   import {
     GET_TRACKERS,
     GET_MANGA_TRACK_RECORDS,
@@ -115,6 +116,7 @@
         BIND_TRACK, { mangaId, trackerId: activeTab, remoteId: result.remoteId }
       );
       records = [...records.filter(r => r.trackerId !== activeTab), res.bindTrack.trackRecord];
+      cache.clearGroup(CACHE_GROUPS.LIBRARY);
       addToast({ kind: "success", title: "Now tracking", body: result.title });
       activeTab = "records";
     } catch (e: any) {
@@ -129,6 +131,7 @@
     try {
       await gql(UNBIND_TRACK, { recordId: record.id });
       records = records.filter(r => r.id !== record.id);
+      cache.clearGroup(CACHE_GROUPS.LIBRARY);
       addToast({ kind: "info", title: "Unlinked from " + trackerFor(record.trackerId)?.name });
     } catch (e: any) {
       addToast({ kind: "error", title: "Failed to unlink", body: e?.message });
@@ -188,6 +191,7 @@
         FETCH_TRACK, { recordId: record.id }
       );
       patchRecord(res.fetchTrack.trackRecord);
+      cache.clearGroup(CACHE_GROUPS.LIBRARY);
       addToast({ kind: "success", title: "Synced from tracker" });
     } catch (e: any) {
       addToast({ kind: "error", title: "Sync failed", body: e?.message });
@@ -198,6 +202,7 @@
 
   function patchRecord(updated: Partial<TrackRecord> & { id: number }) {
     records = records.map(r => r.id === updated.id ? { ...r, ...updated } : r);
+    cache.clearGroup(CACHE_GROUPS.LIBRARY);
   }
 
   function openChapterEditor(record: TrackRecord) {

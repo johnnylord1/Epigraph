@@ -1,9 +1,15 @@
 import type { Manga, Chapter, Category, Source } from "../lib/types";
+import { cache, CACHE_GROUPS, CACHE_KEYS } from "../lib/cache";
 import { DEFAULT_KEYBINDS, type Keybinds } from "../lib/keybinds";
+import type { BookEntry, BookProgress } from "../lib/books/types";
+import { BookAssetResolver } from "../lib/books/assets";
+import { reconcileBookIdentityState } from "../lib/books/identity";
+import { isCompletedCategory } from "../lib/library/categories";
 
 export type PageStyle        = "single" | "double" | "longstrip";
 export type FitMode          = "width" | "height" | "screen" | "original";
 export type LibraryFilter    = "all" | "library" | "downloaded" | string;
+export type LibrarySection   = "comics" | "books";
 export type NavPage          = "home" | "library" | "search" | "downloads";
 export type SearchHubTab     = "keyword" | "browse" | "sources";
 export type SearchBrowseTab  = "featured" | "tags";
@@ -290,7 +296,7 @@ export const DEFAULT_SETTINGS: Settings = {
   uiZoom:                 1.0,
   compactSidebar:         false,
   gpuAcceleration:        true,
-  serverUrl:              "http://localhost:4567",
+  serverUrl:              "http://127.0.0.1:4667",
   serverBinary:           "",
   autoStartServer:        true,
   preferredExtensionLang: "en",
@@ -338,7 +344,7 @@ export const DEFAULT_SETTINGS: Settings = {
 
 // ── Persistence ───────────────────────────────────────────────────────────────
 
-const STORE_VERSION = 3;
+const STORE_VERSION = 6;
 
 // Fields reset to their DEFAULT_SETTINGS value on each version bump.
 // Add a key here whenever its default changes meaning between releases.
@@ -346,6 +352,7 @@ const RESET_ON_UPGRADE: (keyof Settings)[] = [
   "serverBinary",
   "readerZoom",
   "uiZoom",
+  "serverUrl",
 ];
 
 function loadPersisted(): any {
@@ -419,12 +426,57 @@ function normalizeNavPage(savedNavPage: unknown): NavPage {
   return "home";
 }
 
+function normalizeLibrarySection(savedLibrarySection: unknown): LibrarySection {
+  return savedLibrarySection === "books" ? "books" : "comics";
+}
+
+function normalizeLoadedBook(book: any): BookEntry {
+  return {
+    id: String(book?.id ?? ""),
+    assetFingerprint: typeof book?.assetFingerprint === "string" ? book.assetFingerprint : undefined,
+    title: String(book?.title ?? "Imported book"),
+    author: typeof book?.author === "string" ? book.author : null,
+    description: typeof book?.description === "string" ? book.description : null,
+    coverPath: typeof book?.coverPath === "string" ? book.coverPath : null,
+    coverUrl: typeof book?.coverUrl === "string" ? book.coverUrl : undefined,
+    subtype: book?.subtype === "pdf" ? "pdf" : "epub",
+    createdAt: typeof book?.createdAt === "number" ? book.createdAt : 0,
+    updatedAt: typeof book?.updatedAt === "number" ? book.updatedAt : 0,
+    importPath: typeof book?.importPath === "string" ? book.importPath : "",
+    assetPath: typeof book?.assetPath === "string" ? book.assetPath : "",
+    toc: Array.isArray(book?.toc) ? book.toc : undefined,
+    spine: Array.isArray(book?.spine) ? book.spine : undefined,
+    tocCount: typeof book?.tocCount === "number" ? book.tocCount : undefined,
+    spineCount: typeof book?.spineCount === "number" ? book.spineCount : undefined,
+    sectionsSummary: Array.isArray(book?.sectionsSummary) ? book.sectionsSummary : undefined,
+    sectionCount: typeof book?.sectionCount === "number" ? book.sectionCount : undefined,
+  };
+}
+
+function normalizeLoadedBookProgress(progress: any): BookProgress {
+  return {
+    bookId: String(progress?.bookId ?? ""),
+    location: typeof progress?.location === "string" ? progress.location : null,
+    href: typeof progress?.href === "string" ? progress.href : null,
+    progressPercent: typeof progress?.progressPercent === "number" ? progress.progressPercent : 0,
+    lastReadAt: typeof progress?.lastReadAt === "number" ? progress.lastReadAt : 0,
+  };
+}
+
+const reconciledSavedBooks = reconcileBookIdentityState(
+  (saved?.books ?? []).map(normalizeLoadedBook),
+  (saved?.bookProgress ?? []).map(normalizeLoadedBookProgress),
+);
+
 // ── Store ─────────────────────────────────────────────────────────────────────
 
 class Store {
   navPage:           NavPage          = $state(normalizeNavPage(saved?.navPage));
+  librarySection:    LibrarySection   = $state(normalizeLibrarySection(saved?.librarySection));
   libraryFilter:     LibraryFilter    = $state("library");
   history:           HistoryEntry[]   = $state(saved?.history       ?? []);
+  books:             BookEntry[]      = $state(reconciledSavedBooks.books);
+  bookProgress:      BookProgress[]   = $state(reconciledSavedBooks.bookProgress);
   /**
    * readLog — append-only, never deduped. Every chapter completion/progress
    * event lands here. This is the authoritative source for all reading stats.
@@ -448,6 +500,7 @@ class Store {
   genreFilter:       string           = $state("");
   searchPrefill:     string           = $state("");
   activeManga:       Manga | null     = $state(null);
+  activeBookId:      string | null    = $state(null);
   previewManga:      Manga | null     = $state(null);
   activeSource:      Source | null    = $state(null);
   pageUrls:          string[]         = $state([]);
@@ -460,18 +513,27 @@ class Store {
   searchSourcesPaneHint: SearchSourcesPane | null = $state(null);
   searchVisibilityDismissed: boolean  = $state(false);
   extensionsPanelHint: "repos" | null = $state(null);
+  contentSetupVersion: number         = $state(0);
+  libraryScrollTop:  number           = $state(0);
+  libraryVisibleCount: number         = $state(0);
+  libraryReturnToMangaId: number | null = $state(null);
   activeDownloads:   ActiveDownload[] = $state([]);
   toasts:            Toast[]          = $state([]);
   activeChapter:     Chapter | null   = $state(null);
   activeChapterList: Chapter[]        = $state([]);
   // UI-only: synced from Tauri window events in App.svelte. Not persisted.
   isFullscreen:      boolean          = $state(false);
+  runtimeServerUrl:  string | null    = $state(null);
+  runtimeServerLabel:string | null    = $state(null);
+  private bookCanonicalMigrationTask: Promise<number> | null = null;
+  private bookCanonicalMigrationQueued = false;
 
   // ── Shared category list ──────────────────────────────────────────────────
   // Single source of truth for the category list, shared between Library and
   // Settings. Library owns fetching; Settings reads and mutates in-place.
   // No pub/sub or guard flags needed — both components share this $state ref.
   categories: Category[] = $state([]);
+  libraryMangaSnapshot: Manga[] = $state([]);
 
   // ── Discover session cache ────────────────────────────────────────────────
   // Survives navigation within a session but is never persisted to localStorage.
@@ -483,14 +545,64 @@ class Store {
   constructor() {
     $effect.root(() => {
       $effect(() => { persist({ storeVersion:  STORE_VERSION            }); });
-      $effect(() => { persist({ navPage:       this.navPage       }); });
-      $effect(() => { persist({ libraryFilter: this.libraryFilter }); });
-      $effect(() => { persist({ history:       this.history       }); });
-      $effect(() => { persist({ readLog:       this.readLog       }); });
+        $effect(() => { persist({ navPage:       this.navPage       }); });
+        $effect(() => { persist({ librarySection: this.librarySection }); });
+        $effect(() => { persist({ libraryFilter: this.libraryFilter }); });
+        $effect(() => { persist({ history:       this.history       }); });
+        $effect(() => { persist({ books:         this.books.map(BookAssetResolver.toPersistedBookEntry) }); });
+        $effect(() => { persist({ bookProgress:  this.bookProgress  }); });
+        $effect(() => { persist({ readLog:       this.readLog       }); });
       $effect(() => { persist({ bookmarks:     this.bookmarks     }); });
       $effect(() => { persist({ readingStats:  this.readingStats  }); });
       $effect(() => { persist({ settings:      this.settings      }); });
     });
+
+    this.queueCanonicalBookMigration();
+  }
+
+  queueCanonicalBookMigration() {
+    if (this.bookCanonicalMigrationQueued) return;
+    this.bookCanonicalMigrationQueued = true;
+
+    queueMicrotask(() => {
+      this.bookCanonicalMigrationQueued = false;
+      void this.migrateBooksToCanonical();
+    });
+  }
+
+  async migrateBooksToCanonical(): Promise<number> {
+    if (this.bookCanonicalMigrationTask) return this.bookCanonicalMigrationTask;
+
+    const task = (async () => {
+      const pendingIds = this.books
+        .filter((book) => BookAssetResolver.needsCanonicalBookMigration(book))
+        .map((book) => book.id);
+
+      if (!pendingIds.length) return 0;
+
+      let migratedCount = 0;
+
+      for (const bookId of pendingIds) {
+        const current = this.books.find((book) => book.id === bookId);
+        if (!current) continue;
+
+        try {
+          const patch = await BookAssetResolver.ensureCanonicalBookEntry(current);
+          if (!patch) continue;
+          this.upsertBook({ ...current, ...patch } satisfies BookEntry);
+          migratedCount += 1;
+        } catch (error) {
+          console.error("Failed to canonicalize imported book", current.id, error);
+        }
+      }
+
+      return migratedCount;
+    })().finally(() => {
+      this.bookCanonicalMigrationTask = null;
+    });
+
+    this.bookCanonicalMigrationTask = task;
+    return task;
   }
 
   openReader(chapter: Chapter, chapterList: Chapter[], manga?: Manga | null) {
@@ -620,8 +732,41 @@ class Store {
     };
   }
 
+  upsertBook(entry: BookEntry) {
+    const currentBooks = this.books.filter(book => book.id !== entry.id);
+    const reconciled = reconcileBookIdentityState([entry, ...currentBooks], this.bookProgress);
+    this.books = reconciled.books;
+    this.bookProgress = reconciled.bookProgress;
+    if (this.activeBookId) {
+      this.activeBookId = reconciled.idRemap.get(this.activeBookId) ?? this.activeBookId;
+    }
+    this.queueCanonicalBookMigration();
+  }
+
+  removeBook(bookId: string) {
+    this.books = this.books.filter(book => book.id !== bookId);
+    this.bookProgress = this.bookProgress.filter(progress => progress.bookId !== bookId);
+  }
+
+  setBookProgress(next: BookProgress) {
+    const idx = this.bookProgress.findIndex(progress => progress.bookId === next.bookId);
+    if (idx >= 0) {
+      const progress = [...this.bookProgress];
+      progress[idx] = next;
+      this.bookProgress = progress;
+      return;
+    }
+    this.bookProgress = [...this.bookProgress, next];
+  }
+
+  getBookProgress(bookId: string): BookProgress | undefined {
+    return this.bookProgress.find(progress => progress.bookId === bookId);
+  }
+
   wipeAllData() {
     this.history      = [];
+    this.books        = [];
+    this.bookProgress = [];
     this.readLog      = [];
     this.readingStats = { ...DEFAULT_READING_STATS };
     this.settings     = { ...this.settings, heroSlots: [null, null, null, null], mangaLinks: {} };
@@ -658,18 +803,35 @@ class Store {
   }
 
   dismissToast(id: string)                      { this.toasts = this.toasts.filter(x => x.id !== id); }
-  setCategories(cats: Category[])              { this.categories       = cats; }
+  setCategories(cats: Category[])              {
+    this.categories = cats;
+    cache.set(CACHE_KEYS.CATEGORIES, cats, CACHE_GROUPS.LIBRARY);
+  }
+  setLibraryMangaSnapshot(next: Manga[])       { this.libraryMangaSnapshot = next; }
   setActiveDownloads(next: ActiveDownload[])     { this.activeDownloads  = next; }
-  setNavPage(next: NavPage)                      { this.navPage          = next; this.settingsOpen = false; }
+  setNavPage(next: NavPage)                      { this.navPage          = next; this.settingsOpen = false; if (next !== "library") this.activeBookId = null; }
   setHomePanelHint(next: "history" | null)      { this.homePanelHint    = next; }
   setSearchTabHint(next: SearchHubTab | null)   { this.searchTabHint    = next; }
   setSearchBrowseHint(next: SearchBrowseTab | null) { this.searchBrowseHint = next; }
   setSearchSourcesPaneHint(next: SearchSourcesPane | null) { this.searchSourcesPaneHint = next; }
   setSearchVisibilityDismissed(next: boolean)   { this.searchVisibilityDismissed = next; }
+  bumpContentSetupVersion()                     { this.contentSetupVersion += 1; }
+  setLibraryScrollTop(next: number)            { this.libraryScrollTop = next; }
+  setLibraryVisibleCount(next: number)         { this.libraryVisibleCount = next; }
+  setLibraryReturnToMangaId(next: number | null) { this.libraryReturnToMangaId = next; }
+  setLibrarySection(next: LibrarySection)      {
+    this.librarySection = next;
+    if (next === "books") this.activeManga = null;
+    else this.activeBookId = null;
+  }
   setLibraryFilter(next: LibraryFilter)          { this.libraryFilter    = next; }
   setGenreFilter(next: string)                   { this.genreFilter      = next; }
   setSearchPrefill(next: string)                 { this.searchPrefill    = next; }
-  setActiveManga(next: Manga | null)             { this.activeManga      = next; }
+  setActiveManga(next: Manga | null)             { this.activeManga      = next; if (next) this.activeBookId = null; }
+  setActiveBookId(next: string | null)           {
+    this.activeBookId = next;
+    if (next) this.activeManga = null;
+  }
   setPreviewManga(next: Manga | null)            { this.previewManga     = next; }
   setActiveSource(next: Source | null)           { this.activeSource     = next; }
   setPageUrls(next: string[])                    { this.pageUrls         = next; }
@@ -712,17 +874,121 @@ class Store {
   ): Promise<void> {
     if (!chaps.length) return;
     const allRead   = chaps.every(c => c.isRead);
-    const completed = categories.find(c => c.name === "Completed");
-    if (!completed) return;
-    if (allRead) {
-      await gqlFn(UPDATE_MANGA_CATEGORIES, { mangaId, addTo: [completed.id], removeFrom: [] }).catch(console.error);
-      // Ensure the manga is in the library so it shows up in the Saved tab
-      if (UPDATE_MANGA) {
-        await gqlFn(UPDATE_MANGA, { id: mangaId, inLibrary: true }).catch(console.error);
+    const unreadCount = chaps.reduce((count, chapter) => count + (chapter.isRead ? 0 : 1), 0);
+    const chapterCount = chaps.length;
+    const completed = categories.find(isCompletedCategory) ?? null;
+    const currentSnapshot =
+      this.activeManga?.id === mangaId
+        ? this.activeManga
+        : this.libraryMangaSnapshot.find((manga) => manga.id === mangaId)
+          ?? null;
+    const currentCompletedCategory =
+      completed
+        ? this.categories.find((category) => category.id === completed.id) ?? null
+        : null;
+    const currentlyInCompleted = Boolean(
+      currentCompletedCategory?.mangas?.nodes?.some((manga) => manga.id === mangaId)
+    );
+    const snapshotNeedsUpdate = Boolean(
+      !currentSnapshot
+      || currentSnapshot.unreadCount !== unreadCount
+      || currentSnapshot.chapterCount !== chapterCount
+      || (allRead && !currentSnapshot.inLibrary)
+    );
+    const completedNeedsUpdate = Boolean(completed && currentlyInCompleted !== allRead);
+
+    if (!snapshotNeedsUpdate && !completedNeedsUpdate) return;
+
+    if (completed) {
+      if (allRead) {
+        await gqlFn(UPDATE_MANGA_CATEGORIES, { mangaId, addTo: [completed.id], removeFrom: [] }).catch(console.error);
+        // Ensure the manga is in the library so it shows up in the Saved tab
+        if (UPDATE_MANGA) {
+          await gqlFn(UPDATE_MANGA, { id: mangaId, inLibrary: true }).catch(console.error);
+        }
+      } else {
+        await gqlFn(UPDATE_MANGA_CATEGORIES, { mangaId, addTo: [], removeFrom: [completed.id] }).catch(console.error);
       }
-    } else {
-      await gqlFn(UPDATE_MANGA_CATEGORIES, { mangaId, addTo: [], removeFrom: [completed.id] }).catch(console.error);
     }
+
+    const patchMangaSnapshot = <T extends Manga>(manga: T): T => ({
+      ...manga,
+      unreadCount,
+      chapterCount,
+      inLibrary: allRead ? true : manga.inLibrary,
+    });
+
+    cache.update<Manga[]>(CACHE_KEYS.LIBRARY, (prev) =>
+      prev.map((manga) =>
+        manga.id === mangaId ? patchMangaSnapshot(manga) : manga
+      )
+    );
+    this.libraryMangaSnapshot = this.libraryMangaSnapshot.map((manga) =>
+      manga.id === mangaId ? patchMangaSnapshot(manga) : manga
+    );
+
+    const currentManga =
+      this.activeManga?.id === mangaId
+        ? patchMangaSnapshot(this.activeManga)
+        : null;
+
+    if (currentManga) this.activeManga = currentManga;
+
+    const nextCategories = this.categories.map((category) => {
+      const existingNodes = category.mangas?.nodes ?? [];
+      const hasManga = existingNodes.some((manga) => manga.id === mangaId);
+
+      if (!hasManga && category.id !== completed?.id) {
+        return {
+          ...category,
+          mangas: { nodes: existingNodes },
+        };
+      }
+
+      if (category.id !== completed?.id) {
+        return {
+          ...category,
+          mangas: {
+            nodes: existingNodes.map((manga) =>
+              manga.id === mangaId ? patchMangaSnapshot(manga) : manga,
+            ),
+          },
+        };
+      }
+
+      const withoutManga = existingNodes.filter((manga) => manga.id !== mangaId);
+
+      if (!allRead) {
+        return {
+          ...category,
+          mangas: { nodes: withoutManga },
+        };
+      }
+
+      const sourceManga =
+        currentManga
+        ?? existingNodes.find((manga) => manga.id === mangaId)
+        ?? null;
+
+      if (!sourceManga) {
+        return {
+          ...category,
+          mangas: { nodes: withoutManga },
+        };
+      }
+
+      return {
+        ...category,
+        mangas: {
+          nodes: [
+            ...withoutManga,
+            patchMangaSnapshot({ ...sourceManga, inLibrary: true }),
+          ],
+        },
+      };
+    });
+    this.categories = nextCategories;
+    cache.set(CACHE_KEYS.CATEGORIES, nextCategories, CACHE_GROUPS.LIBRARY);
   }
 
   toggleHiddenCategory(id: number) {
@@ -799,6 +1065,10 @@ export function closeReader()                                            { store
 export function addHistory(entry: HistoryEntry, completed?: boolean, minutes?: number) { store.addHistory(entry, completed, minutes); }
 export function clearHistory()                                           { store.clearHistory(); }
 export function clearHistoryForManga(mangaId: number)                    { store.clearHistoryForManga(mangaId); }
+export function upsertBook(entry: BookEntry)                             { store.upsertBook(entry); }
+export function removeBook(bookId: string)                              { store.removeBook(bookId); }
+export function setBookProgress(next: BookProgress)                     { store.setBookProgress(next); }
+export function getBookProgress(bookId: string)                         { return store.getBookProgress(bookId); }
 export function wipeAllData()                                            { store.wipeAllData(); }
 export function linkManga(idA: number, idB: number)                      { store.linkManga(idA, idB); }
 export function unlinkManga(idA: number, idB: number)                    { store.unlinkManga(idA, idB); }
@@ -807,12 +1077,15 @@ export function setHeroSlot(i: 1|2|3, mangaId: number | null)            { store
 export function addToast(toast: Omit<Toast, "id">)                       { store.addToast(toast); }
 export function dismissToast(id: string)                                 { store.dismissToast(id); }
 export function setCategories(cats: Category[])                           { store.setCategories(cats); }
+export function setLibraryMangaSnapshot(next: Manga[])                    { store.setLibraryMangaSnapshot(next); }
 export function setActiveDownloads(next: ActiveDownload[])               { store.setActiveDownloads(next); }
 export function setNavPage(next: NavPage)                                { store.setNavPage(next); }
+export function setLibrarySection(next: LibrarySection)                  { store.setLibrarySection(next); }
 export function setLibraryFilter(next: LibraryFilter)                    { store.setLibraryFilter(next); }
 export function setGenreFilter(next: string)                             { store.setGenreFilter(next); }
 export function setSearchPrefill(next: string)                           { store.setSearchPrefill(next); }
 export function setActiveManga(next: Manga | null)                       { store.setActiveManga(next); }
+export function setActiveBookId(next: string | null)                     { store.setActiveBookId(next); }
 export function setPreviewManga(next: Manga | null)                      { store.setPreviewManga(next); }
 export function setActiveSource(next: Source | null)                     { store.setActiveSource(next); }
 export function setPageUrls(next: string[])                              { store.setPageUrls(next); }
@@ -824,6 +1097,10 @@ export function setSearchTabHint(next: SearchHubTab | null)              { store
 export function setSearchBrowseHint(next: SearchBrowseTab | null)        { store.setSearchBrowseHint(next); }
 export function setSearchSourcesPaneHint(next: SearchSourcesPane | null) { store.setSearchSourcesPaneHint(next); }
 export function setSearchVisibilityDismissed(next: boolean)              { store.setSearchVisibilityDismissed(next); }
+export function bumpContentSetupVersion()                                { store.bumpContentSetupVersion(); }
+export function setLibraryScrollTop(next: number)                        { store.setLibraryScrollTop(next); }
+export function setLibraryVisibleCount(next: number)                     { store.setLibraryVisibleCount(next); }
+export function setLibraryReturnToMangaId(next: number | null)           { store.setLibraryReturnToMangaId(next); }
 export function setExtensionsPanelHint(next: "repos" | null)             { store.setExtensionsPanelHint(next); }
 export function updateSettings(patch: Partial<Settings>)                 { store.updateSettings(patch); }
 export function resetKeybinds()                                          { store.resetKeybinds(); }
@@ -844,10 +1121,20 @@ export function openHomeHistory()                                        { store
 export async function checkAndMarkCompleted(
   mangaId:    number,
   chaps:      Chapter[],
-  categories: Category[],
-  gqlFn:      (query: string, vars: Record<string, unknown>) => Promise<unknown>,
-  UPDATE_MANGA_CATEGORIES: string,
+  categories: Category[] = store.categories,
+  gqlFn?:      (query: string, vars: Record<string, unknown>) => Promise<unknown>,
+  UPDATE_MANGA_CATEGORIES?: string,
   UPDATE_MANGA?: string,
 ): Promise<void> {
+  if (!gqlFn || !UPDATE_MANGA_CATEGORIES) {
+    const [{ gql }, queries] = await Promise.all([
+      import("../lib/client"),
+      import("../lib/queries"),
+    ]);
+    gqlFn = gql;
+    UPDATE_MANGA_CATEGORIES = queries.UPDATE_MANGA_CATEGORIES;
+    UPDATE_MANGA ??= queries.UPDATE_MANGA;
+  }
+
   return store.checkAndMarkCompleted(mangaId, chaps, categories, gqlFn, UPDATE_MANGA_CATEGORIES, UPDATE_MANGA);
 }

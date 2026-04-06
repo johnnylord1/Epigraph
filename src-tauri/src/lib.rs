@@ -1,13 +1,132 @@
-use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::borrow::Cow;
+use std::fs;
 use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, mpsc};
+use base64::Engine;
+use percent_encoding::percent_decode;
+use tauri::http::{header::CONTENT_TYPE, Request, Response, StatusCode};
 use sysinfo::{Disks, Pid, System};
 use serde::Serialize;
-use tauri::{Manager, WindowEvent};
-#[cfg(target_os = "windows")]
-use tauri::Emitter;
+use tauri::{Emitter, Manager, WindowEvent};
 use tauri_plugin_shell::{ShellExt, process::CommandChild};
 use walkdir::WalkDir;
+
+const READER_WEBVIEW_INIT_SCRIPT: &str = r#"
+(() => {
+  const SAME_ORIGIN = location.origin;
+  const SAME_HOST = location.hostname;
+  const AD_HOST_RE = /doubleclick|googlesyndication|googleadservices|adsystem|adnxs|taboola|outbrain|exoclick|popads|propellerads|adsterra|trafficjunky|juicyads|hilltopads|clickadu|onesignal|histats|analytics/i;
+  const AD_ATTR_RE = /(ad-|ads-|_ad|banner|popup|popunder|sticky-ad|advert|sponsor|promo)/i;
+  const AD_STYLE_ID = "aethon-reader-webview-cleanup";
+  const SELECTORS = [
+    "iframe[src*='doubleclick']",
+    "iframe[src*='googlesyndication']",
+    "iframe[src*='googleadservices']",
+    "iframe[src*='adnxs']",
+    "iframe[src*='taboola']",
+    "iframe[src*='outbrain']",
+    "iframe[id*='google_ads']",
+    "iframe[class*='ads']",
+    ".adsbygoogle",
+    "[id*='banner']",
+    "[class*='banner']",
+    "[id*='popup']",
+    "[class*='popup']",
+    "[id*='advert']",
+    "[class*='advert']",
+    "[id*='sponsor']",
+    "[class*='sponsor']"
+  ];
+
+  function installCss() {
+    if (document.getElementById(AD_STYLE_ID)) return;
+    const style = document.createElement("style");
+    style.id = AD_STYLE_ID;
+    style.textContent = `
+      ${SELECTORS.join(",\n")} {
+        display: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+      }
+    `;
+    document.documentElement.appendChild(style);
+  }
+
+  function isAdLikeElement(el) {
+    if (!(el instanceof HTMLElement)) return false;
+    const attrs = `${el.id} ${el.className} ${el.getAttribute("role") ?? ""} ${el.getAttribute("aria-label") ?? ""}`;
+    if (AD_ATTR_RE.test(attrs)) return true;
+    const iframe = el.querySelector("iframe");
+    if (iframe instanceof HTMLIFrameElement && AD_HOST_RE.test(iframe.src || "")) return true;
+    const style = window.getComputedStyle(el);
+    const z = Number.parseInt(style.zIndex || "0", 10);
+    if (style.position === "fixed" && z >= 1000 && (AD_ATTR_RE.test(attrs) || iframe)) return true;
+    return false;
+  }
+
+  function clean(root = document) {
+    if (!(root instanceof Document || root instanceof HTMLElement || root instanceof DocumentFragment)) return;
+    root.querySelectorAll?.("*").forEach((node) => {
+      if (!(node instanceof HTMLElement)) return;
+      if (isAdLikeElement(node)) node.remove();
+      if (node instanceof HTMLIFrameElement && AD_HOST_RE.test(node.src || "")) node.remove();
+    });
+  }
+
+  function clampLinks(root = document) {
+    root.querySelectorAll?.("a[target='_blank']").forEach((node) => {
+      if (!(node instanceof HTMLAnchorElement)) return;
+      try {
+        const url = new URL(node.href, location.href);
+        if (url.hostname === SAME_HOST) {
+          node.target = "_self";
+          return;
+        }
+        if (AD_HOST_RE.test(url.hostname)) {
+          node.removeAttribute("href");
+          node.style.pointerEvents = "none";
+        }
+      } catch {}
+    });
+  }
+
+  const originalOpen = window.open;
+  window.open = function(url, target, features) {
+    try {
+      const next = new URL(String(url || ""), location.href);
+      if (next.hostname === SAME_HOST) {
+        location.assign(next.toString());
+        return null;
+      }
+      if (AD_HOST_RE.test(next.hostname)) {
+        return null;
+      }
+    } catch {}
+    return null;
+  };
+
+  installCss();
+  clean();
+  clampLinks();
+  document.addEventListener("DOMContentLoaded", () => {
+    installCss();
+    clean();
+    clampLinks();
+  }, { once: true });
+  new MutationObserver((records) => {
+    for (const record of records) {
+      record.addedNodes.forEach((node) => {
+        if (node instanceof HTMLElement || node instanceof DocumentFragment) {
+          clean(node);
+          clampLinks(node);
+        }
+      });
+    }
+  }).observe(document.documentElement, { childList: true, subtree: true });
+})();
+"#;
 
 struct RunningServer {
     child: CommandChild,
@@ -15,6 +134,15 @@ struct RunningServer {
 }
 
 struct ServerState(Mutex<Option<RunningServer>>);
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LaunchTargetInfo {
+  server_url_override: Option<String>,
+  profile_label_override: Option<String>,
+}
+
+struct LaunchTarget(LaunchTargetInfo);
 
 #[derive(Serialize)]
 pub struct StorageInfo {
@@ -29,6 +157,275 @@ pub struct StorageInfo {
 pub enum SpawnError {
     NotConfigured(String),
     SpawnFailed(String),
+}
+
+#[tauri::command]
+async fn open_reader_webview(app: tauri::AppHandle, url: String, title: Option<String>) -> Result<(), String> {
+    let parsed = url::Url::parse(url.trim()).map_err(|e| e.to_string())?;
+    let window_title = title.unwrap_or_else(|| "Chapter Web View".to_string());
+    let reader_host = parsed.host_str().map(str::to_owned);
+    let handle = app.clone();
+    let (tx, rx) = mpsc::channel::<Result<(), String>>();
+
+    app.run_on_main_thread(move || {
+        let result = (|| -> Result<(), String> {
+            let label = "reader-webview";
+
+            if let Some(window) = handle.get_webview_window(label) {
+                let _ = window.destroy();
+            }
+
+            let window = tauri::WebviewWindowBuilder::new(
+                &handle,
+                label,
+                tauri::WebviewUrl::External(parsed),
+            )
+            .title(window_title)
+            .initialization_script(READER_WEBVIEW_INIT_SCRIPT)
+            .on_navigation({
+                let reader_host = reader_host.clone();
+                move |next_url| is_allowed_reader_navigation(reader_host.as_deref(), next_url)
+            })
+            .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+            .inner_size(1280.0, 900.0)
+            .min_inner_size(960.0, 700.0)
+            .resizable(true)
+            .focused(true)
+            .build()
+            .map_err(|e| e.to_string())?;
+
+            let app_handle = handle.clone();
+            window.on_window_event(move |event| {
+                if matches!(event, WindowEvent::Destroyed) {
+                    let _ = app_handle.emit("reader-webview-state", false);
+                }
+            });
+
+            handle
+                .emit("reader-webview-state", true)
+                .map_err(|e| e.to_string())
+        })();
+
+        let _ = tx.send(result);
+    }).map_err(|e| e.to_string())?;
+
+    rx.recv().map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn close_reader_webview(app: tauri::AppHandle) -> Result<(), String> {
+    let handle = app.clone();
+    let (tx, rx) = mpsc::channel::<Result<(), String>>();
+
+    app.run_on_main_thread(move || {
+        let result = if let Some(window) = handle.get_webview_window("reader-webview") {
+            window.destroy().map_err(|e| e.to_string())
+        } else {
+            Ok(())
+        };
+        let _ = tx.send(result);
+    }).map_err(|e| e.to_string())?;
+
+    rx.recv().map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn reader_webview_is_open(app: tauri::AppHandle) -> Result<bool, String> {
+    let handle = app.clone();
+    let (tx, rx) = mpsc::channel::<bool>();
+
+    app.run_on_main_thread(move || {
+        let _ = tx.send(handle.get_webview_window("reader-webview").is_some());
+    }).map_err(|e| e.to_string())?;
+
+    rx.recv().map_err(|e| e.to_string())
+}
+
+fn books_data_dir() -> PathBuf {
+    suwayomi_data_dir().join("books")
+}
+
+fn book_asset_content_type(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("png") => "image/png",
+        Some("webp") => "image/webp",
+        Some("gif") => "image/gif",
+        Some("svg") => "image/svg+xml",
+        Some("pdf") => "application/pdf",
+        Some("epub") => "application/epub+zip",
+        _ => "application/octet-stream",
+    }
+}
+
+fn book_asset_error(status: StatusCode, message: &str) -> Response<Cow<'static, [u8]>> {
+    Response::builder()
+        .status(status)
+        .header(CONTENT_TYPE, "text/plain; charset=utf-8")
+        .body(Cow::Owned(message.as_bytes().to_vec()))
+        .unwrap()
+}
+
+fn resolve_book_asset_path(request: &Request<Vec<u8>>) -> Result<PathBuf, Response<Cow<'static, [u8]>>> {
+    let encoded_path = request.uri().path();
+    if encoded_path.len() <= 1 {
+        return Err(book_asset_error(StatusCode::BAD_REQUEST, "Missing book asset path."));
+    }
+
+    let decoded_path = percent_decode(&encoded_path.as_bytes()[1..])
+        .decode_utf8_lossy()
+        .to_string();
+    if decoded_path.is_empty() {
+        return Err(book_asset_error(StatusCode::BAD_REQUEST, "Missing book asset path."));
+    }
+
+    let candidate = PathBuf::from(decoded_path);
+    let root = books_data_dir();
+
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|_| book_asset_error(StatusCode::INTERNAL_SERVER_ERROR, "Books storage root is unavailable."))?;
+    let canonical_candidate = candidate
+        .canonicalize()
+        .map_err(|_| book_asset_error(StatusCode::NOT_FOUND, "Book asset was not found."))?;
+
+    if !canonical_candidate.starts_with(&canonical_root) {
+        return Err(book_asset_error(StatusCode::FORBIDDEN, "Book asset is outside the allowed scope."));
+    }
+
+    Ok(canonical_candidate)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decodes_percent_encoded_windows_book_asset_paths() {
+        let request = Request::builder()
+            .uri("http://book.localhost/C%3A%5CUsers%5Cjhow-%5CAppData%5CRoaming%5Caethon%5Cbooks%5Ccovers%5Ccover.jpg")
+            .body(Vec::new())
+            .unwrap();
+
+        let decoded_path = percent_decode(&request.uri().path().as_bytes()[1..])
+            .decode_utf8_lossy()
+            .to_string();
+
+        assert_eq!(
+            decoded_path,
+            r"C:\Users\jhow-\AppData\Roaming\aethon\books\covers\cover.jpg"
+        );
+    }
+}
+
+fn serve_book_asset(request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
+    let path = match resolve_book_asset_path(&request) {
+        Ok(path) => path,
+        Err(response) => return response,
+    };
+
+    match fs::read(&path) {
+        Ok(bytes) => Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_TYPE, book_asset_content_type(&path))
+            .header("Cache-Control", "public, max-age=31536000, immutable")
+            .body(Cow::Owned(bytes))
+            .unwrap(),
+        Err(_) => book_asset_error(StatusCode::NOT_FOUND, "Book asset could not be read."),
+    }
+}
+
+fn is_allowed_reader_navigation(reader_host: Option<&str>, next_url: &url::Url) -> bool {
+    let Some(host) = next_url.host_str() else {
+        return matches!(next_url.scheme(), "about" | "data" | "blob");
+    };
+
+    if let Some(reader_host) = reader_host {
+        if host == reader_host {
+            return true;
+        }
+    }
+
+    let blocked = [
+        "doubleclick.net",
+        "googlesyndication.com",
+        "googleadservices.com",
+        "adnxs.com",
+        "taboola.com",
+        "outbrain.com",
+        "exoclick.com",
+        "popads.net",
+        "propellerads.com",
+        "adsterra.com",
+        "clickadu.com",
+        "hilltopads.net",
+        "trafficjunky.net",
+        "juicyads.com",
+    ];
+
+    !blocked.iter().any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
+}
+
+#[tauri::command]
+fn read_file_base64(path: String) -> Result<String, String> {
+    let bytes = std::fs::read(PathBuf::from(path)).map_err(|e| e.to_string())?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+#[tauri::command]
+fn copy_book_import(source_path: String, book_id: String) -> Result<String, String> {
+    let source = PathBuf::from(source_path);
+    if !source.exists() {
+        return Err("Selected book file no longer exists.".to_string());
+    }
+
+    let ext = source
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.trim_matches('.').to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "bin".to_string());
+
+    let folder = match ext.as_str() {
+        "epub" => "epubs",
+        "pdf" => "pdfs",
+        _ => "imports",
+    };
+
+    let dest_dir = books_data_dir().join(folder);
+    std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
+    let dest_path = dest_dir.join(format!("{book_id}.{ext}"));
+    std::fs::copy(&source, &dest_path).map_err(|e| e.to_string())?;
+    Ok(dest_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn write_book_cover(book_id: String, bytes_base64: String, ext: String) -> Result<String, String> {
+    let dest_dir = books_data_dir().join("covers");
+    std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
+    let dest_path = dest_dir.join(format!("{book_id}.{}", ext.trim_matches('.')));
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(bytes_base64)
+        .map_err(|e| e.to_string())?;
+    std::fs::write(&dest_path, bytes).map_err(|e| e.to_string())?;
+    Ok(dest_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn remove_book_assets(asset_path: Option<String>, cover_path: Option<String>) -> Result<(), String> {
+    for path in [asset_path, cover_path].into_iter().flatten() {
+        let candidate = PathBuf::from(path);
+        if !candidate.exists() {
+            continue;
+        }
+        std::fs::remove_file(&candidate).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 // ── Update types ──────────────────────────────────────────────────────────────
@@ -924,29 +1321,85 @@ fn restart_app(app: tauri::AppHandle) {
     tauri::process::restart(&app.env());
 }
 
+fn parse_launch_target() -> LaunchTargetInfo {
+    let mut server_url_override = None;
+    let mut profile_label_override = None;
+
+    for arg in std::env::args().skip(1) {
+        if let Some(value) = arg.strip_prefix("--server-url=") {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                server_url_override = Some(trimmed.trim_end_matches('/').to_string());
+            }
+            continue;
+        }
+
+        if let Some(value) = arg.strip_prefix("--profile-label=") {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                profile_label_override = Some(trimmed.to_uppercase());
+            }
+            continue;
+        }
+
+        match arg.as_str() {
+            "--main" => {
+                server_url_override = Some("http://127.0.0.1:4567".to_string());
+                profile_label_override = Some("MAIN".to_string());
+            }
+            "--test" => {
+                server_url_override = Some("http://127.0.0.1:4667".to_string());
+                profile_label_override = Some("TEST".to_string());
+            }
+            _ => {}
+        }
+    }
+
+    LaunchTargetInfo {
+        server_url_override,
+        profile_label_override,
+    }
+}
+
+#[tauri::command]
+fn get_launch_target(state: tauri::State<'_, LaunchTarget>) -> LaunchTargetInfo {
+    state.0.clone()
+}
+
 // ── App entry point ───────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .register_uri_scheme_protocol("book", |_ctx, request| serve_book_asset(request))
         .plugin(tauri_plugin_drpc::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(LaunchTarget(parse_launch_target()))
         .manage(ServerState(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
+            get_launch_target,
             get_storage_info,
             get_default_downloads_path,
             check_path_exists,
             create_directory,
             download_server_file_to_downloads,
-            migrate_downloads,
-            read_reconciliation_overlay,
-            write_reconciliation_overlay,
-            spawn_server,
-            kill_server,
+              migrate_downloads,
+              read_reconciliation_overlay,
+              write_reconciliation_overlay,
+                open_reader_webview,
+                close_reader_webview,
+                reader_webview_is_open,
+                read_file_base64,
+                copy_book_import,
+                write_book_cover,
+                remove_book_assets,
+                spawn_server,
+              kill_server,
             get_platform_ui_scale,
             list_releases,
             download_and_install_update,
@@ -954,7 +1407,7 @@ pub fn run() {
         ])
         .setup(|_app| Ok(()))
         .on_window_event(|window, event| {
-            if let WindowEvent::Destroyed = event {
+            if matches!(event, WindowEvent::Destroyed) && window.label() == "main" {
                 kill_tachidesk(window.app_handle());
             }
         })

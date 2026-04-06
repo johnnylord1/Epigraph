@@ -5,6 +5,7 @@
   import { getVersion } from "@tauri-apps/api/app";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { gql } from "./lib/client";
+  import { getServerTargetInfo } from "./lib/serverTarget";
   import { GET_DOWNLOAD_STATUS } from "./lib/queries";
   import { store, addToast, setActiveDownloads, setSettingsOpen } from "./store/state.svelte";
   import { initRpc, setIdle, clearReading, destroyRpc } from "./lib/discord";
@@ -67,6 +68,7 @@
   }
 
   const MAX_ATTEMPTS = 10;
+  const LOCAL_SERVER_FALLBACK = "http://127.0.0.1:4567";
   const win = getCurrentWindow();
 
   let serverProbeOk = $state(false);
@@ -192,6 +194,61 @@
 
   let cancelProbe = false;
 
+  interface LaunchTargetInfo {
+    serverUrlOverride?: string | null;
+    profileLabelOverride?: string | null;
+  }
+
+  function normalizeServerUrl(raw: string | null | undefined): string | null {
+    if (typeof raw !== "string") return null;
+    const trimmed = raw.trim();
+    return trimmed ? trimmed.replace(/\/$/, "") : null;
+  }
+
+  function applyLaunchTarget(launchTarget: LaunchTargetInfo | null) {
+    const overrideUrl = normalizeServerUrl(launchTarget?.serverUrlOverride);
+    if (overrideUrl) {
+      store.runtimeServerUrl = overrideUrl;
+      if (store.settings.serverUrl !== overrideUrl) {
+        store.settings = { ...store.settings, serverUrl: overrideUrl };
+      }
+    }
+
+    const overrideLabel = typeof launchTarget?.profileLabelOverride === "string"
+      ? launchTarget.profileLabelOverride.trim().toUpperCase()
+      : "";
+    if (overrideLabel) {
+      store.runtimeServerLabel = overrideLabel;
+    }
+  }
+
+  function getProbeBases(): string[] {
+    const rawUrl = store.runtimeServerUrl ?? store.settings.serverUrl;
+    const primary = typeof rawUrl === "string" && rawUrl.trim()
+      ? rawUrl.replace(/\/$/, "")
+      : LOCAL_SERVER_FALLBACK;
+
+    const bases = [primary];
+
+    if (!store.runtimeServerUrl && store.settings.autoStartServer) {
+      try {
+        const parsed = new URL(primary);
+        const host = parsed.hostname.toLowerCase();
+        const isLoopback = host === "127.0.0.1" || host === "localhost";
+        const normalizedPrimary = `${parsed.protocol}//${parsed.hostname}${parsed.port ? `:${parsed.port}` : ""}`;
+        if (isLoopback && normalizedPrimary !== LOCAL_SERVER_FALLBACK) {
+          bases.push(LOCAL_SERVER_FALLBACK);
+        }
+      } catch {
+        if (primary !== LOCAL_SERVER_FALLBACK) {
+          bases.push(LOCAL_SERVER_FALLBACK);
+        }
+      }
+    }
+
+    return [...new Set(bases)];
+  }
+
   function startProbe() {
     cancelProbe = false;
     failed      = false;
@@ -200,24 +257,35 @@
     async function probe() {
       if (cancelProbe) return;
       tries++;
-      try {
-        const rawUrl = store.settings.serverUrl;
-        const base   = typeof rawUrl === "string" && rawUrl.trim()
-          ? rawUrl.replace(/\/$/, "")
-          : "http://127.0.0.1:4567";
-        const s      = store.settings;
-        const auth: Record<string, string> = s.serverAuthEnabled && s.serverAuthUser && s.serverAuthPass
-          ? { Authorization: `Basic ${btoa(`${s.serverAuthUser.trim()}:${s.serverAuthPass.trim()}`)}` }
-          : {};
-        const res = await fetch(`${base}/api/graphql`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...auth },
-          body: JSON.stringify({ query: "{ __typename }" }),
-          signal: AbortSignal.timeout(2000),
-        });
-        if (res.ok && !cancelProbe) { serverProbeOk = true; return; }
-      } catch {}
-      if (tries >= MAX_ATTEMPTS && !cancelProbe) { failed = true; return; }
+      const s = store.settings;
+      const auth: Record<string, string> = s.serverAuthEnabled && s.serverAuthUser && s.serverAuthPass
+        ? { Authorization: `Basic ${btoa(`${s.serverAuthUser.trim()}:${s.serverAuthPass.trim()}`)}` }
+        : {};
+
+      for (const base of getProbeBases()) {
+        try {
+          const res = await fetch(`${base}/api/graphql`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...auth },
+            body: JSON.stringify({ query: "{ __typename }" }),
+            signal: AbortSignal.timeout(2000),
+          });
+          if (res.ok && !cancelProbe) {
+            if (!store.runtimeServerUrl && store.settings.serverUrl !== base) {
+              store.settings.serverUrl = base;
+            }
+            failed = false;
+            serverProbeOk = true;
+            return;
+          }
+        } catch {}
+      }
+
+      if (tries >= MAX_ATTEMPTS && !cancelProbe) {
+        failed = true;
+        setTimeout(probe, 2000);
+        return;
+      }
       if (!cancelProbe) setTimeout(probe, 750);
     }
 
@@ -226,8 +294,12 @@
 
   onMount(async () => {
     document.addEventListener("contextmenu", e => e.preventDefault());
-    document.title = "Aethon";
-    await win.setTitle("Aethon").catch(() => {});
+    const launchTarget = await invoke<LaunchTargetInfo>("get_launch_target").catch(() => null);
+    applyLaunchTarget(launchTarget);
+
+    const initialTarget = getServerTargetInfo();
+    document.title = `Aethon [${initialTarget.title}]`;
+    await win.setTitle(`Aethon [${initialTarget.title}]`).catch(() => {});
     (window as any).__mokuShowSplash = () => devSplash = true;
 
     platformScale = await invoke<number>("get_platform_ui_scale").catch(() => 1.0);
@@ -244,7 +316,10 @@
       applyZoom();
     });
 
-    if (store.settings.autoStartServer) {
+    const shouldAutoStartServer = store.settings.autoStartServer
+      && (!store.runtimeServerUrl || store.runtimeServerUrl === LOCAL_SERVER_FALLBACK);
+
+    if (shouldAutoStartServer) {
       invoke<void>("spawn_server", { binary: store.settings.serverBinary }).catch((err: any) => {
         if (err?.kind === "NotConfigured") {
           notConfigured = true;
@@ -264,12 +339,19 @@
       unlistenResize();
       unlistenScale();
       destroyRpc();
-      if (store.settings.autoStartServer) invoke("kill_server").catch(() => {});
+      if (shouldAutoStartServer) invoke("kill_server").catch(() => {});
       if (idleTimer) clearTimeout(idleTimer);
       if (pollInterval) clearInterval(pollInterval);
       unlistenDownload?.();
       delete (window as any).__mokuShowSplash;
     };
+  });
+
+  $effect(() => {
+    const target = getServerTargetInfo();
+    const title = `Aethon [${target.title}]`;
+    document.title = title;
+    void win.setTitle(title).catch(() => {});
   });
 
   $effect(() => {

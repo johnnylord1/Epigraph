@@ -2,9 +2,11 @@
   import { onMount, untrack } from "svelte";
   import { Play, ArrowRight, ArrowLeft, BookOpen, Clock, Fire, TrendUp, CalendarBlank, CheckCircle, PushPin, X as XIcon, MagnifyingGlass, ListBullets } from "phosphor-svelte";
   import { gql, thumbUrl } from "../../lib/client";
-  import { GET_LIBRARY, GET_CHAPTERS, GET_MANGA, GET_CATEGORIES } from "../../lib/queries";
-  import { cache, CACHE_KEYS } from "../../lib/cache";
-  import { store, openReader, setHeroSlot, setActiveManga, setPreviewManga, setNavPage, setLibraryFilter, addToast, openSearchBrowseFeatured, openSearchSources, openHomeDashboard, openHomeHistory } from "../../store/state.svelte";
+  import { GET_LIBRARY, GET_CHAPTERS, GET_CATEGORIES, GET_LIBRARY_TRACKING_SUMMARY } from "../../lib/queries";
+  import { cache, CACHE_GROUPS, CACHE_KEYS, DEFAULT_TTL_MS } from "../../lib/cache";
+  import { buildCompletedLibraryIds, collectTrackedChapterTotalsByMangaId, collectTrackedCompletedMangaIds, type TrackerCompletionTracker } from "../../lib/library/completion";
+  import { COMPLETED_CATEGORY_LABEL, isCompletedCategory, normalizeCategories } from "../../lib/library/categories";
+  import { store, openReader, setHeroSlot, setActiveManga, setPreviewManga, setNavPage, setLibraryFilter, addToast, openSearchBrowseFeatured, openSearchSources, openHomeDashboard, openHomeHistory, setCategories, setLibraryMangaSnapshot } from "../../store/state.svelte";
   import type { HistoryEntry } from "../../store/state.svelte";
   import type { Manga, Chapter, Category } from "../../lib/types";
   import SetupStatusCard from "../shared/SetupStatusCard.svelte";
@@ -34,16 +36,20 @@
 
   function focusEl(node: HTMLElement) { node.focus(); }
 
-  let libraryManga:       Manga[]            = $state([]);
-  let extraManga:         Manga[]            = $state([]);
+  let trackedCompletedIds: Set<number>       = $state(new Set());
+  let trackedChapterTotalsByMangaId: Map<number, number> = $state(new Map());
   let loadingLibrary:     boolean            = $state(true);
-  let completedCategory:  Category | null    = $state(null);
   let setupState:         SetupState | null  = $state(null);
   let setupActionBusy = $state(false);
+  const libraryManga = $derived(store.libraryMangaSnapshot);
 
   onMount(() => {
     loadLibrary();
     refreshSetupState();
+    const unsubLibrary = cache.subscribe(CACHE_KEYS.LIBRARY, () => loadLibrary());
+    return () => {
+      unsubLibrary();
+    };
   });
 
   async function refreshSetupState() {
@@ -78,19 +84,51 @@
     openSearchSources("extensions", "repos");
   }
 
-  function loadLibrary() {
-    const libraryP  = cache.get(CACHE_KEYS.LIBRARY, () =>
-      gql<{ mangas: { nodes: Manga[] } }>(GET_LIBRARY).then(d => d.mangas.nodes)
+  function loadCategoriesSnapshot() {
+    return cache.get(
+      CACHE_KEYS.CATEGORIES,
+      () => gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES).then((d) => normalizeCategories(d.categories.nodes)),
+      DEFAULT_TTL_MS,
+      CACHE_GROUPS.LIBRARY,
     );
-    const categoriesP = gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES)
-      .then(d => d.categories.nodes.find(c => c.name === "Completed") ?? null)
-      .catch(() => null);
+  }
 
-    Promise.all([libraryP, categoriesP])
-      .then(([m, completed]) => {
-        libraryManga      = m;
-        completedCategory = completed;
-        fetchExtraCompleted(m, completed);
+  function loadLibraryTrackingSummary() {
+    return cache.get(
+      CACHE_KEYS.LIBRARY_TRACKING_SUMMARY,
+      () => gql<{ trackers: { nodes: TrackerCompletionTracker[] } }>(GET_LIBRARY_TRACKING_SUMMARY).then((d) => d.trackers.nodes),
+      DEFAULT_TTL_MS,
+      CACHE_GROUPS.LIBRARY,
+    );
+  }
+
+  function loadLibrary() {
+    const libraryP = cache.get(
+      CACHE_KEYS.LIBRARY,
+      () => gql<{ mangas: { nodes: Manga[] } }>(GET_LIBRARY).then((d) => d.mangas.nodes),
+      DEFAULT_TTL_MS,
+      CACHE_GROUPS.LIBRARY,
+    );
+
+    Promise.all([
+      libraryP,
+      loadCategoriesSnapshot().catch((error) => {
+        console.error(error);
+        return store.categories;
+      }),
+      loadLibraryTrackingSummary().catch((error) => {
+        console.error(error);
+        return [];
+      }),
+    ])
+      .then(([mangas, categories, trackingSummary]) => {
+        setLibraryMangaSnapshot(mangas.map((manga: any) => ({
+          ...manga,
+          chapterCount: manga.chapters?.totalCount ?? manga.chapterCount ?? 0,
+        })));
+        setCategories(normalizeCategories(categories));
+        trackedCompletedIds = collectTrackedCompletedMangaIds(trackingSummary);
+        trackedChapterTotalsByMangaId = collectTrackedChapterTotalsByMangaId(trackingSummary);
       })
       .catch(console.error)
       .finally(() => loadingLibrary = false);
@@ -108,15 +146,6 @@
     heroChaptersFor = null;
     loadLibrary();
   });
-
-  async function fetchExtraCompleted(library: Manga[], completed: Category | null) {
-    const completedIds = completed?.mangas?.nodes.map(m => m.id) ?? [];
-    const missingIds = completedIds.filter(id => !library.some(m => m.id === id));
-    if (!missingIds.length) return;
-    const results = await Promise.allSettled(missingIds.map(id => gql<{ manga: Manga }>(GET_MANGA, { id }).then(d => d.manga)));
-    const valid = results.flatMap(r => r.status === "fulfilled" && r.value ? [r.value] : []);
-    if (valid.length) extraManga = valid;
-  }
 
   const continueReading = $derived((() => {
     const seen = new Set<number>();
@@ -264,9 +293,16 @@
   function pinManga(m: Manga) { if (pickerSlotIndex !== null) { setHeroSlot(pickerSlotIndex, m.id); closePicker(); } }
   function unpinSlot(i: 1|2|3) { setHeroSlot(i, null); }
 
-  const completedIds   = $derived(completedCategory?.mangas?.nodes.map(m => m.id) ?? []);
-  const completedPool  = $derived([...libraryManga, ...extraManga.filter(m => !libraryManga.some(l => l.id === m.id))]);
-  const completedManga = $derived(completedIds.length > 0 ? completedPool.filter(m => completedIds.includes(m.id)).slice(0, 7) : []);
+  const completedCategory = $derived(normalizeCategories(store.categories).find(isCompletedCategory) ?? null);
+  const finishedIds = $derived(
+    buildCompletedLibraryIds(
+      libraryManga,
+      completedCategory?.mangas?.nodes ?? [],
+      trackedCompletedIds,
+      trackedChapterTotalsByMangaId,
+    )
+  );
+  const completedManga = $derived(libraryManga.filter(m => finishedIds.has(m.id)).slice(0, 7));
   const recentHistory  = $derived(store.history.slice(0, 6));
   const stats          = $derived(store.readingStats);
   const showFirstTouchGuide = $derived(
@@ -517,7 +553,7 @@
     <div class="bottom-row">
       <div class="bottom-col">
         <div class="bottom-section-hd">
-          <span class="section-title"><CheckCircle size={10} weight="bold" /> Completed</span>
+          <span class="section-title"><CheckCircle size={10} weight="bold" /> {COMPLETED_CATEGORY_LABEL}</span>
           {#if completedManga.length > 0}
             <button class="see-all" onclick={() => { if (completedCategory) setLibraryFilter(String(completedCategory.id)); store.navPage = "library"; }}>View all <ArrowRight size={9} weight="bold" /></button>
           {/if}
@@ -553,7 +589,7 @@
           <div class="stat-card"><div class="stat-icon-wrap stat-accent"><BookOpen size={16} weight="light" /></div><div class="stat-body"><span class="stat-val">{stats.totalChaptersRead}</span><span class="stat-label">Chapters read</span></div></div>
           <div class="stat-card"><div class="stat-icon-wrap stat-neutral"><Clock size={16} weight="light" /></div><div class="stat-body"><span class="stat-val">{formatReadTime(stats.totalMinutesRead)}</span><span class="stat-label">Read time</span></div></div>
           <div class="stat-card"><div class="stat-icon-wrap stat-neutral"><TrendUp size={16} weight="light" /></div><div class="stat-body"><span class="stat-val">{stats.totalMangaRead}</span><span class="stat-label">Series started</span></div></div>
-          <div class="stat-card"><div class="stat-icon-wrap stat-green"><CheckCircle size={16} weight="light" /></div><div class="stat-body"><span class="stat-val">{completedIds.length}</span><span class="stat-label">Completed</span></div></div>
+          <div class="stat-card"><div class="stat-icon-wrap stat-green"><CheckCircle size={16} weight="light" /></div><div class="stat-body"><span class="stat-val">{finishedIds.size}</span><span class="stat-label">{COMPLETED_CATEGORY_LABEL}</span></div></div>
           <div class="stat-card"><div class="stat-icon-wrap stat-neutral"><CalendarBlank size={16} weight="light" /></div><div class="stat-body"><span class="stat-val">{stats.longestStreakDays}d</span><span class="stat-label">Best streak</span></div></div>
         </div>
       </div>

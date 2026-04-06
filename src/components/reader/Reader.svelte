@@ -1,11 +1,14 @@
 <script lang="ts">
-  import { onMount, untrack, tick } from "svelte";
+  import { onMount, onDestroy, untrack, tick } from "svelte";
   import {
     X, CaretLeft, CaretRight, ArrowLeft, ArrowRight,
     Square, Rows, Download, ArrowsLeftRight, ArrowsIn, ArrowsOut, ArrowsVertical,
     CircleNotch, MagnifyingGlassMinus, MagnifyingGlassPlus,
-    Bookmark, BookOpen, MonitorPlay,
+    Bookmark, BookOpen, MonitorPlay, GlobeHemisphereWest, ArrowSquareOut,
   } from "phosphor-svelte";
+  import { invoke } from "@tauri-apps/api/core";
+  import { listen } from "@tauri-apps/api/event";
+  import { open } from "@tauri-apps/plugin-shell";
   import { gql, thumbUrl } from "../../lib/client";
   import { FETCH_CHAPTER_PAGES, MARK_CHAPTER_READ, ENQUEUE_DOWNLOAD, ENQUEUE_CHAPTERS_DOWNLOAD } from "../../lib/queries";
   import { store, closeReader, openReader, addHistory, updateSettings, checkAndMarkCompleted, setSettingsOpen, addBookmark, removeBookmark } from "../../store/state.svelte";
@@ -118,6 +121,7 @@
   let resumeFadeTimer:  ReturnType<typeof setTimeout> | null = null;
   let resumeFading      = $state(false);
   let resumeVisible     = $state(false);
+  let webViewWindowOpen = $state(false);
 
   function scheduleResumeDismiss() {
     if (resumeTimer)     clearTimeout(resumeTimer);
@@ -183,6 +187,8 @@
   ].filter(Boolean).join(" "));
 
   const fitLabel = $derived({ width: "Fit W", height: "Fit H", screen: "Fit Screen", original: "1:1" }[fit]);
+  const webViewUrl = $derived(displayChapter?.realUrl ?? store.activeChapter?.realUrl ?? null);
+  const canOpenWebView = $derived(!!webViewUrl);
 
   const stripToRender = $derived(
     style === "longstrip"
@@ -239,6 +245,7 @@
     visibleChapterId = null;
     store.pageUrls   = [];
     fadingOut        = false;
+    closeReaderWebView().catch(() => {});
 
     const bookmark  = store.bookmarks.find(b => b.chapterId === id);
     const resumeTo  = bookmark ? bookmark.pageNumber : 0;
@@ -332,6 +339,48 @@
 
   let stripChaptersRef: StripChapter[] = [];
   $effect(() => { stripChaptersRef = stripChapters; });
+
+  async function openExternalWebView() {
+    if (!webViewUrl) return;
+    await open(webViewUrl).catch((err) => {
+      error = err instanceof Error ? err.message : String(err);
+    });
+  }
+
+  async function closeReaderWebView() {
+    await invoke("close_reader_webview").catch(() => {});
+    webViewWindowOpen = false;
+  }
+
+  async function refreshReaderWebViewState() {
+    webViewWindowOpen = await invoke<boolean>("reader_webview_is_open").catch(() => false);
+  }
+
+  async function openReaderWebView() {
+    if (!webViewUrl) return;
+    const windowTitle = [store.activeManga?.title, displayChapter?.name].filter(Boolean).join(" - ") || "Chapter Web View";
+    try {
+      await invoke("open_reader_webview", { url: webViewUrl, title: windowTitle });
+      webViewWindowOpen = true;
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+      webViewWindowOpen = false;
+    }
+  }
+
+  async function toggleReaderWebView() {
+    await refreshReaderWebViewState();
+    if (webViewWindowOpen) {
+      await closeReaderWebView();
+      return;
+    }
+    await openReaderWebView();
+  }
+
+  async function exitReader() {
+    await closeReaderWebView();
+    closeReader();
+  }
 
   function setupScrollTracking(): () => void {
     if (!containerEl || style !== "longstrip") return () => {};
@@ -468,10 +517,10 @@
       );
     }
     gql(MARK_CHAPTER_READ, { id, isRead: true })
-      .then(() => {
+      .then(async () => {
         if (store.activeManga) {
           const updated = store.activeChapterList.map(c => c.id === id ? { ...c, isRead: true } : c);
-          checkAndMarkCompleted(store.activeManga.id, updated);
+          await checkAndMarkCompleted(store.activeManga.id, updated);
         }
       })
       .catch(e => { markedRead.delete(id); console.error(e); });
@@ -488,7 +537,7 @@
     if (forward) {
       if (gi < pageGroups.length - 1) store.pageNumber = pageGroups[gi + 1][0];
       else if (adjacent.next) { store.pageNumber = 1; openReader(adjacent.next, store.activeChapterList); }
-      else closeReader();
+        else exitReader();
     } else {
       if (gi > 0) store.pageNumber = pageGroups[gi - 1][0];
       else if (adjacent.prev) openReader(adjacent.prev, store.activeChapterList);
@@ -517,7 +566,7 @@
       maybeMarkCurrentRead();
       store.pageNumber = 1;
       openReader(adjacent.next, store.activeChapterList);
-    } else { closeReader(); }
+    } else { exitReader(); }
   }
 
   function goBack() {
@@ -614,12 +663,12 @@
       e.preventDefault();
       if (zoomOpen) { zoomOpen = false; return; }
       if (dlOpen)   { dlOpen   = false; return; }
-      closeReader(); return;
+      exitReader(); return;
     }
     if (e.ctrlKey && (e.key === "=" || e.key === "+")) { e.preventDefault(); adjustZoom(ZOOM_STEP * 2); return; }
     if (e.ctrlKey && e.key === "-")                    { e.preventDefault(); adjustZoom(-ZOOM_STEP * 2); return; }
     if (e.ctrlKey && e.key === "0")                    { e.preventDefault(); resetZoom(); return; }
-    if      (matchesKeybind(e, kb.exitReader))             { e.preventDefault(); closeReader(); }
+    if      (matchesKeybind(e, kb.exitReader))             { e.preventDefault(); exitReader(); }
     else if (matchesKeybind(e, kb.pageRight))              { e.preventDefault(); goForward(); }
     else if (matchesKeybind(e, kb.pageLeft))               { e.preventDefault(); goBack(); }
     else if (matchesKeybind(e, kb.firstPage))              { e.preventDefault(); store.pageNumber = 1; }
@@ -663,11 +712,26 @@
     window.addEventListener("keydown", onKey);
     window.addEventListener("wheel", onWheel, { passive: false });
     containerEl?.focus({ preventScroll: true });
+    refreshReaderWebViewState().catch(() => {});
+
+    let readerWebViewUnlisten: (() => void) | null = null;
+    let cleanedUp = false;
+    listen<boolean>("reader-webview-state", (event) => {
+      webViewWindowOpen = !!event.payload;
+    }).then((unlisten) => {
+      if (cleanedUp) {
+        unlisten();
+        return;
+      }
+      readerWebViewUnlisten = unlisten;
+    });
 
     const ro = new ResizeObserver(entries => { containerWidth = entries[0].contentRect.width; });
     ro.observe(containerEl);
 
     return () => {
+      cleanedUp = true;
+      readerWebViewUnlisten?.();
       abortCtrl?.abort();
       if (hideTimer) clearTimeout(hideTimer);
       window.removeEventListener("keydown", onKey);
@@ -676,6 +740,10 @@
       ro.disconnect();
     };
   });
+
+  onDestroy(() => {
+    closeReaderWebView().catch(() => {});
+  });
 </script>
 
 <div class="root" class:overlay-bars={overlayBars} role="presentation" onmousemove={(e) => { if (e.clientY < 60 || window.innerHeight - e.clientY < 60) showUi(); }}>
@@ -683,7 +751,7 @@
   <div class="topbar" class:hidden={!uiVisible}>
 
     <div class="topbar-left">
-      <button class="icon-btn" onclick={closeReader} title="Close reader"><X size={15} weight="light" /></button>
+        <button class="icon-btn" onclick={exitReader} title="Close reader"><X size={15} weight="light" /></button>
       <button class="icon-btn" onclick={() => { if (adjacent.prev) { maybeMarkCurrentRead(); openReader(adjacent.prev, store.activeChapterList); } }} disabled={!adjacent.prev}>
         <CaretLeft size={14} weight="light" />
       </button>
@@ -769,6 +837,13 @@
         <Download size={14} weight="light" />
       </button>
 
+        {#if canOpenWebView}
+          <button class="mode-btn" class:active={webViewWindowOpen} onclick={toggleReaderWebView} title={webViewWindowOpen ? "Close chapter web view" : "Open chapter web view"}>
+            <GlobeHemisphereWest size={14} weight="light" />
+            <span class="mode-label">Web</span>
+          </button>
+        {/if}
+
       <button class="icon-btn" class:active={isBookmarked} onclick={toggleBookmark} title={isBookmarked ? "Remove bookmark" : "Bookmark this page"}>
           <Bookmark size={15} weight={isBookmarked ? "fill" : "regular"} />
         </button>
@@ -798,13 +873,27 @@
       <div class="center-overlay"><CircleNotch size={20} weight="light" class="anim-spin" style="color:var(--text-faint)" /></div>
     {/if}
     {#if error}
-      <div class="center-overlay"><p class="error-msg">{error}</p></div>
+      <div class="center-overlay error-stack">
+          <p class="error-msg">{error}</p>
+          {#if canOpenWebView}
+            <div class="reader-error-actions">
+              <button class="reader-error-btn" onclick={toggleReaderWebView}>
+                <GlobeHemisphereWest size={14} weight="light" />
+                {webViewWindowOpen ? "Close web view" : "Try web view"}
+              </button>
+            <button class="reader-error-btn subtle" onclick={openExternalWebView}>
+              <ArrowSquareOut size={14} weight="light" />
+              Open in browser
+            </button>
+          </div>
+        {/if}
+      </div>
     {/if}
 
     {#if style === "longstrip"}
-      {#each stripToRender as chunk}
-        {#each chunk.urls as url, i}
-          <img
+        {#each stripToRender as chunk}
+          {#each chunk.urls as url, i}
+            <img
             src={url}
             alt="{chunk.chapterName} – Page {i + 1}"
             data-local-page={i + 1}
@@ -938,6 +1027,12 @@
   .overlay-bars .topbar    { position: absolute; top: 0; left: 0; right: 0; z-index: 10; }
   .overlay-bars .bottombar { position: absolute; bottom: 0; left: 0; right: 0; z-index: 10; }
   .overlay-bars .viewer    { height: 100%; }
+  .error-stack { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .reader-error-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  .reader-error-btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: var(--radius-md); border: 1px solid var(--accent-dim); background: var(--accent-muted); color: var(--accent-fg); font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); cursor: pointer; transition: background var(--t-base), border-color var(--t-base), color var(--t-base); }
+  .reader-error-btn:hover { background: var(--accent-dim); }
+  .reader-error-btn.subtle { border-color: var(--border-strong); background: var(--bg-raised); color: var(--text-secondary); }
+  .reader-error-btn.subtle:hover { border-color: var(--border-focus); color: var(--text-primary); }
 
   .topbar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-1); padding: 0 var(--sp-3); height: 40px; background: var(--bg-void); border-bottom: 1px solid var(--border-dim); flex-shrink: 0; position: relative; z-index: 2; transition: opacity 0.25s ease; }
   .topbar.hidden, .bottombar.hidden { opacity: 0; pointer-events: none; }

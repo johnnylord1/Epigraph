@@ -15,6 +15,7 @@
   import { buildRestoreReadiness } from "../../lib/reconciliation/readiness";
   import { loadSourceInventory } from "../../lib/reconciliation/sourceInventory";
   import { buildReconciledBackupFile } from "../../lib/reconciliation/restore";
+  import { normalizeTrackerOAuthInput, trackerOAuthParamName } from "../../lib/trackerOAuth";
   import type { Category, Source, Extension } from "../../lib/types";
   import { store, updateSettings, resetKeybinds, clearHistory, wipeAllData, setSettingsOpen, deleteCustomTheme, toggleHiddenCategory, setCategories, addToast, openSearchSources } from "../../store/state.svelte";
   import { cache } from "../../lib/cache";
@@ -956,6 +957,7 @@
   $effect(() => { if (tab === "tracking" && trackers.length === 0 && !trackersLoading) loadTrackers(); });
   async function startOAuth(tracker: Tracker) {
     if (!tracker.authUrl) return;
+    trackersError = null;
     oauthTrackerId     = tracker.id;
     oauthCallbackInput = "";
     await openUrl(tracker.authUrl);
@@ -964,9 +966,15 @@
     if (!oauthTrackerId || !oauthCallbackInput.trim()) return;
     oauthSubmitting = true;
     try {
+      const tracker = trackers.find((candidate) => candidate.id === oauthTrackerId) ?? null;
+      const callbackUrl = normalizeTrackerOAuthInput(tracker, oauthCallbackInput);
+      if (!callbackUrl) {
+        trackersError = `Paste the ${trackerOAuthParamName(tracker)} value or the redirected URL first.`;
+        return;
+      }
       await gql(LOGIN_TRACKER_OAUTH, {
         trackerId:   oauthTrackerId,
-        callbackUrl: oauthCallbackInput.trim(),
+        callbackUrl,
       });
       await loadTrackers();
       oauthTrackerId     = null;

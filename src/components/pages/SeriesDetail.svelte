@@ -4,6 +4,7 @@
   import { gql, thumbUrl } from "../../lib/client";
   import { GET_MANGA, GET_CHAPTERS, FETCH_CHAPTERS, ENQUEUE_DOWNLOAD, UPDATE_MANGA, MARK_CHAPTER_READ, MARK_CHAPTERS_READ, DELETE_DOWNLOADED_CHAPTERS, ENQUEUE_CHAPTERS_DOWNLOAD, GET_ALL_MANGA, GET_CATEGORIES, CREATE_CATEGORY, UPDATE_MANGA_CATEGORIES } from "../../lib/queries";
   import { cache, CACHE_KEYS, recordSourceAccess } from "../../lib/cache";
+  import { getCategoryDisplayName, isCompletedCategory, normalizeCategories } from "../../lib/library/categories";
   import { dedupeMangaById, dedupeMangaByTitle } from "../../lib/util";
   import { store, addToast, updateSettings, openReader, setActiveManga, openSearchBrowseFeatured, linkManga, unlinkManga, checkAndMarkCompleted as storeCheckAndMarkCompleted } from "../../store/state.svelte";
   import type { Manga, Chapter, Category } from "../../lib/types";
@@ -93,6 +94,7 @@
   let mangaAbort:  AbortController | null = null;
   let chapterAbort: AbortController | null = null;
   let loadingFor:  number | null = null;
+  let loadedMangaId: number | null = $state(null);
 
   function formatDate(ts: string | null | undefined): string {
     if (!ts) return "";
@@ -149,15 +151,15 @@
   })());
 
   const statusLabel     = $derived(manga?.status ? manga.status.charAt(0) + manga.status.slice(1).toLowerCase() : null);
-  const assignedFolders = $derived(mangaCategories.filter(c => c.id !== 0));
+  const assignedFolders = $derived(normalizeCategories(mangaCategories).filter(c => c.id !== 0));
   const hasFolders      = $derived(assignedFolders.length > 0);
 
   function loadCategories(mangaId: number) {
     catsLoading = true;
     gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES)
       .then(d => {
-        allCategories   = d.categories.nodes.filter(c => c.id !== 0);
-        mangaCategories = allCategories.filter(c => c.mangas?.nodes.some(m => m.id === mangaId));
+        allCategories   = normalizeCategories(d.categories.nodes.filter(c => c.id !== 0));
+        mangaCategories = normalizeCategories(allCategories.filter(c => c.mangas?.nodes.some(m => m.id === mangaId)));
       })
       .catch(console.error)
       .finally(() => { catsLoading = false; });
@@ -168,10 +170,10 @@
     // Sync local mangaCategories state after the mutation
     if (chaps.length) {
       const allRead   = chaps.every(c => c.isRead);
-      const completed = allCategories.find(c => c.name === "Completed");
+      const completed = allCategories.find(isCompletedCategory);
       if (completed) {
         const inCompleted = mangaCategories.some(c => c.id === completed.id);
-        if (allRead && !inCompleted)  mangaCategories = [...mangaCategories, completed];
+        if (allRead && !inCompleted)  mangaCategories = normalizeCategories([...mangaCategories, completed]);
         else if (!allRead && inCompleted) mangaCategories = mangaCategories.filter(c => c.id !== completed.id);
       }
     }
@@ -234,9 +236,20 @@
     }).catch(() => { if (!ctrl.signal.aborted) loadingChapters = false; });
   }
 
+  const activeMangaId = $derived(store.activeManga?.id ?? null);
+
   $effect(() => {
-    const m = store.activeManga;
-    if (m) untrack(() => { loadManga(m.id); loadChapters(m.id); loadCategories(m.id); });
+    const id = activeMangaId;
+    if (!id) {
+      loadedMangaId = null;
+      return;
+    }
+    if (loadedMangaId === id) return;
+    loadedMangaId = id;
+    chapterPage = 1;
+    clearSelection();
+    ctx = null;
+    untrack(() => { loadManga(id); loadChapters(id); loadCategories(id); });
   });
 
   let prevChapterId: number | null = null;
@@ -245,7 +258,7 @@
     prevChapterId = store.activeChapter?.id ?? null;
     if (wasOpen && !store.activeChapter && store.activeManga) {
       const id = store.activeManga.id;
-      untrack(() => { loadChapters(id); cache.clear(CACHE_KEYS.LIBRARY); });
+      untrack(() => { loadChapters(id); });
     }
   });
 
@@ -285,7 +298,10 @@
   async function markRead(chapterId: number, isRead: boolean) {
     await gql(MARK_CHAPTER_READ, { id: chapterId, isRead }).catch(console.error);
     chapters = chapters.map(c => c.id === chapterId ? { ...c, isRead } : c);
-    if (store.activeManga) { chapterStore.set(store.activeManga.id, { data: chapters, fetchedAt: Date.now() }); checkAndMarkCompleted(store.activeManga.id, chapters); }
+    if (store.activeManga) {
+      chapterStore.set(store.activeManga.id, { data: chapters, fetchedAt: Date.now() });
+      await checkAndMarkCompleted(store.activeManga.id, chapters);
+    }
   }
 
   async function markBulk(ids: number[], isRead: boolean) {
@@ -293,7 +309,10 @@
     await gql(MARK_CHAPTERS_READ, { ids, isRead }).catch(console.error);
     const idSet = new Set(ids);
     chapters = chapters.map(c => idSet.has(c.id) ? { ...c, isRead } : c);
-    if (store.activeManga) { chapterStore.set(store.activeManga.id, { data: chapters, fetchedAt: Date.now() }); checkAndMarkCompleted(store.activeManga.id, chapters); }
+    if (store.activeManga) {
+      chapterStore.set(store.activeManga.id, { data: chapters, fetchedAt: Date.now() });
+      await checkAndMarkCompleted(store.activeManga.id, chapters);
+    }
   }
 
   const markAboveRead   = (i: number) => markBulk(sortedChapters.slice(0, i + 1).filter(c => !c.isRead).map(c => c.id), true);
@@ -379,8 +398,8 @@
       const res = await gql<{ createCategory: { category: Category } }>(CREATE_CATEGORY, { name });
       const cat = res.createCategory.category;
       await gql(UPDATE_MANGA_CATEGORIES, { mangaId: store.activeManga.id, addTo: [cat.id], removeFrom: [] });
-      allCategories   = [...allCategories, cat];
-      mangaCategories = [...mangaCategories, cat];
+      allCategories   = normalizeCategories([...allCategories, cat]);
+      mangaCategories = normalizeCategories([...mangaCategories, cat]);
     } catch (e) { console.error(e); }
     folderNewName = ""; folderCreating = false;
   }
@@ -394,9 +413,11 @@
         addTo:      inCat ? [] : [cat.id],
         removeFrom: inCat ? [cat.id] : [],
       });
-      mangaCategories = inCat
-        ? mangaCategories.filter(c => c.id !== cat.id)
-        : [...mangaCategories, cat];
+      mangaCategories = normalizeCategories(
+        inCat
+          ? mangaCategories.filter(c => c.id !== cat.id)
+          : [...mangaCategories, cat]
+      );
     } catch (e) { console.error(e); }
   }
 
@@ -631,7 +652,7 @@
               {#each allCategories as cat}
                 {@const isIn = mangaCategories.some(c => c.id === cat.id)}
                 <button class="fp-item" class:fp-item-active={isIn} onclick={() => toggleCategory(cat)}>
-                  <span class="fp-check">{isIn ? "✓" : ""}</span>{cat.name}
+                  <span class="fp-check">{isIn ? "✓" : ""}</span>{getCategoryDisplayName(cat)}
                 </button>
               {/each}
               <div class="fp-div"></div>
@@ -887,14 +908,14 @@
 
   /* Zone 3: CTA */
   .cta-section { display: flex; flex-direction: column; gap: var(--sp-2); }
-  .read-btn { display: flex; align-items: center; justify-content: center; gap: var(--sp-2); width: 100%; padding: 9px var(--sp-3); border-radius: var(--radius-md); background: var(--accent); border: 1px solid var(--accent); color: var(--accent-contrast, #fff); font-size: var(--text-xs); font-family: var(--font-ui); letter-spacing: var(--tracking-wide); cursor: pointer; transition: opacity var(--t-base); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .read-btn { display: flex; align-items: center; justify-content: center; gap: var(--sp-2); width: 100%; min-height: 34px; padding: 0 var(--sp-3); border-radius: var(--radius-md); background: var(--accent); border: 1px solid var(--accent); color: var(--accent-contrast, #fff); font-size: var(--text-xs); font-family: var(--font-ui); letter-spacing: var(--tracking-wide); cursor: pointer; transition: opacity var(--t-base); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-sizing: border-box; }
   .read-btn:hover { opacity: 0.88; }
-  .actions { display: flex; align-items: center; gap: var(--sp-2); }
-  .library-btn { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--text-xs); font-family: var(--font-ui); letter-spacing: var(--tracking-wide); padding: 5px 10px; border-radius: var(--radius-md); border: 1px solid var(--border-strong); color: var(--text-muted); background: var(--bg-raised); transition: border-color var(--t-base), color var(--t-base), background var(--t-base); flex: 1; }
+  .actions { display: flex; align-items: stretch; gap: var(--sp-2); }
+  .library-btn { display: flex; align-items: center; justify-content: center; gap: var(--sp-2); min-height: 32px; font-size: var(--text-xs); font-family: var(--font-ui); letter-spacing: var(--tracking-wide); padding: 0 10px; border-radius: var(--radius-md); border: 1px solid var(--border-strong); color: var(--text-muted); background: var(--bg-raised); transition: border-color var(--t-base), color var(--t-base), background var(--t-base); flex: 1; box-sizing: border-box; }
   .library-btn:hover { border-color: var(--accent); color: var(--accent-fg); }
   .library-btn.active { background: var(--accent-muted); border-color: var(--accent-dim); color: var(--accent-fg); }
   .library-btn:disabled { opacity: 0.4; cursor: default; }
-  .external-link { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: var(--radius-md); border: 1px solid var(--border-dim); color: var(--text-faint); flex-shrink: 0; transition: color var(--t-base), border-color var(--t-base), background var(--t-base); }
+  .external-link { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: var(--radius-md); border: 1px solid var(--border-dim); color: var(--text-faint); flex-shrink: 0; transition: color var(--t-base), border-color var(--t-base), background var(--t-base); box-sizing: border-box; }
   .external-link:hover { color: var(--text-muted); border-color: var(--border-strong); }
 
   /* Zone 4: Progress */
@@ -914,7 +935,7 @@
   .detail-key { font-family: var(--font-ui); font-size: var(--text-2xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); }
   .detail-val { font-family: var(--font-ui); font-size: var(--text-2xs); color: var(--text-secondary); letter-spacing: var(--tracking-wide); text-align: right; }
   .detail-actions { display: flex; flex-direction: column; gap: var(--sp-1); padding-top: var(--sp-1); }
-  .detail-action-btn { display: flex; align-items: center; gap: var(--sp-2); width: 100%; padding: 6px var(--sp-2); border-radius: var(--radius-md); font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); color: var(--text-faint); background: none; border: 1px solid var(--border-dim); cursor: pointer; transition: color var(--t-base), border-color var(--t-base), background var(--t-base); }
+  .detail-action-btn { display: flex; align-items: center; gap: var(--sp-2); width: 100%; min-height: 32px; padding: 0 var(--sp-2); border-radius: var(--radius-md); font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); color: var(--text-faint); background: none; border: 1px solid var(--border-dim); cursor: pointer; transition: color var(--t-base), border-color var(--t-base), background var(--t-base); box-sizing: border-box; }
   .detail-action-btn:hover { color: var(--text-muted); border-color: var(--border-strong); background: var(--bg-raised); }
   .detail-action-active { color: var(--accent-fg); border-color: var(--accent-dim); background: var(--accent-muted); }
   .detail-action-active:hover { color: var(--accent-fg); border-color: var(--accent); }
@@ -949,16 +970,16 @@
   /* ── Chapter list ────────────────────────────────────────────────────────── */
   .list-wrap { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
   .list-header { display: flex; align-items: center; justify-content: space-between; padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--border-dim); flex-shrink: 0; gap: var(--sp-2); flex-wrap: wrap; }
-  .list-header-left, .list-header-right { display: flex; align-items: center; gap: var(--sp-1); }
-  .sort-btn { display: flex; align-items: center; gap: 5px; font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); padding: 4px var(--sp-2); border-radius: var(--radius-sm); color: var(--text-muted); transition: color var(--t-base), background var(--t-base); }
-  .sort-btn:hover { color: var(--text-secondary); background: var(--bg-raised); }
+  .list-header-left, .list-header-right { display: flex; align-items: stretch; gap: var(--sp-2); }
+  .sort-btn { display: flex; align-items: center; justify-content: center; gap: 5px; min-height: 32px; font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); padding: 0 var(--sp-2); border-radius: var(--radius-md); border: 1px solid var(--border-dim); color: var(--text-muted); background: var(--bg-raised); transition: color var(--t-base), border-color var(--t-base), background var(--t-base); box-sizing: border-box; }
+  .sort-btn:hover { color: var(--text-secondary); border-color: var(--border-strong); background: var(--bg-raised); }
   .sort-wrap { position: relative; }
   .sort-menu { position: absolute; top: calc(100% + 4px); left: 0; min-width: 160px; background: var(--bg-raised); border: 1px solid var(--border-base); border-radius: var(--radius-md); padding: var(--sp-1); z-index: 200; box-shadow: 0 8px 24px rgba(0,0,0,0.5); animation: scaleIn 0.1s ease both; transform-origin: top left; }
   .sort-option { display: block; width: 100%; padding: 6px var(--sp-3); border-radius: var(--radius-sm); font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-secondary); background: none; border: none; cursor: pointer; text-align: left; transition: background var(--t-fast), color var(--t-fast); }
   .sort-option:hover { background: var(--bg-overlay); color: var(--text-primary); }
   .sort-option.active { color: var(--accent-fg); }
   .sort-divider { height: 1px; background: var(--border-dim); margin: var(--sp-1) var(--sp-2); }
-  .icon-btn { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: var(--radius-md); border: 1px solid var(--border-dim); color: var(--text-muted); background: none; cursor: pointer; transition: color var(--t-base), border-color var(--t-base), background var(--t-base); }
+  .icon-btn { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: var(--radius-md); border: 1px solid var(--border-dim); color: var(--text-muted); background: none; cursor: pointer; transition: color var(--t-base), border-color var(--t-base), background var(--t-base); box-sizing: border-box; }
   .icon-btn:hover:not(:disabled) { color: var(--text-secondary); border-color: var(--border-strong); background: var(--bg-raised); }
   .icon-btn.active { color: var(--accent-fg); border-color: var(--accent-dim); background: var(--accent-muted); }
   .icon-btn:disabled { opacity: 0.3; cursor: default; }

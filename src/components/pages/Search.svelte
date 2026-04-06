@@ -174,11 +174,25 @@
     }
   });
 
-  loadingSources = true;
-  gql<{ sources: { nodes: Source[] } }>(GET_SOURCES)
-    .then((d) => { allSources = d.sources.nodes.filter((src: Source) => src.id !== "0"); })
-    .catch(console.error)
-    .finally(() => { loadingSources = false; });
+  async function refreshSources() {
+    loadingSources = true;
+    try {
+      const d = await gql<{ sources: { nodes: Source[] } }>(GET_SOURCES);
+      allSources = d.sources.nodes.filter((src: Source) => src.id !== "0");
+    } catch (error) {
+      console.error(error);
+    } finally {
+      loadingSources = false;
+    }
+  }
+
+  $effect(() => {
+    store.contentSetupVersion;
+    untrack(() => {
+      refreshSetupState();
+      refreshSources();
+    });
+  });
 
   const availableLangs   = $derived(Array.from(new Set<string>(allSources.map((s) => s.lang))).sort());
   const hasMultipleLangs = $derived(availableLangs.length > 1);

@@ -1,5 +1,96 @@
 # Decisions
 
+## 2026-04-05 - Phase 4B Books stays local-EPUB only and separate from the comics pipeline
+
+Decision:
+- the first real Books implementation in Aethon Desktop is limited to local EPUB ingest and local shelf persistence
+
+Why:
+- Books already existed structurally in Library, but mixing EPUB ingest, webnovel adapters, and final reader work in one pass would make the phase too broad and too risky
+- EPUB.js is a practical browser-side stack for a Tauri/Svelte proof path without dragging Suwayomi manga assumptions into Books
+
+Implementation posture:
+- keep Books records separate from manga/comics state
+- import local `.epub` files only in this phase
+- persist imported EPUB asset copies and extracted covers under the Aethon desktop data directory
+- show Books in its own shelf UI
+- keep the first open path intentionally minimal
+- do not turn this phase into a generic ebook manager or a source-platform phase
+
+## 2026-04-05 - Library continuity should preserve the underlying page instance while Series Detail is open
+
+Decision:
+- opening a manga from Library should no longer replace the entire Library route subtree
+- `SeriesDetail` should render as an overlay layer above the current page so Library can keep its live DOM/state when the user returns
+
+Why:
+- remounting Library made exact scroll/context restoration fragile
+- the library/detail transition behaves more like an in-place drill-down than a true route change
+- preserving the underlying page instance is simpler and more reliable than rebuilding the library state after every detail close
+
+Implementation posture:
+- Layout keeps the current page mounted
+- `SeriesDetail` renders in an absolute overlay layer while `store.activeManga` is set
+- Library still keeps store-backed fallback state for render-window and return-target recovery
+
+## 2026-04-05 - Library return should prefer exact scroll restoration and use card targeting only as fallback
+
+Decision:
+- when returning from a manga detail view, Library restoration should prefer the stored `scrollTop`
+- card-centered restore remains a fallback only when an exact scroll offset is not available
+
+Why:
+- running `scrollTo(top)` and `scrollIntoView(card)` together creates conflicting restore behavior
+- restoring the exact scroll position best preserves the user's original context
+
+Implementation posture:
+- store `libraryScrollTop`, `libraryVisibleCount`, and `libraryReturnToMangaId`
+- restore the render window first
+- run exact scroll restore first
+- only fall back to card targeting when there is no usable saved scroll offset
+
+## 2026-04-05 - Tracker OAuth input should accept the real callback URL or the raw token/code
+
+Decision:
+- tracker login should normalize user-pasted OAuth input instead of requiring one exact callback shape
+
+Why:
+- tracker providers do not all return the same parameter style
+- some flows return `?code=...`, others `#access_token=...`, and users often paste the entire redirected URL
+
+Implementation posture:
+- accept full callback URLs, direct query/hash fragments, or raw credential values
+- infer whether the tracker expects `code` or `access_token` from the tracker auth URL
+- normalize the final payload before calling the tracker login mutation
+
+## 2026-04-05 - Reader web view is an explicit fallback, not a replacement reader mode
+
+Decision:
+- the desktop reader may open the chapter's real web page in a dedicated web view window as an escape hatch
+
+Why:
+- some chapters/source pages can fail or degrade in the built-in reader
+- giving the user a source-native fallback is safer than trapping them in a broken chapter state
+
+Implementation posture:
+- expose a dedicated reader web view toggle from the reader chrome
+- close the auxiliary web view when the chapter changes or the reader exits
+- keep the built-in reader as the primary path
+- keep a plain browser-open fallback available when the embedded web view is not enough
+
+## 2026-04-05 - The default local server target moves to `127.0.0.1:4667`
+
+Decision:
+- the app-local default server URL is now `http://127.0.0.1:4667`
+
+Why:
+- the current desktop local runtime is targeting a profile-local server on port `4667`
+- persisting the old `localhost:4567` default would keep dragging upgraded clients toward the stale endpoint
+
+Implementation posture:
+- bump persisted store version
+- explicitly reset `serverUrl` on upgrade so existing local state picks up the new default
+
 ## 2026-04-05 - Reconciliation-first restore is the v1 backup recovery path
 
 Decision:
