@@ -17,6 +17,7 @@ dependencies = [
  "percent-encoding",
  "serde",
  "serde_json",
+ "sha2",
  "sysinfo",
  "tauri",
  "tauri-build",
@@ -29,6 +30,7 @@ dependencies = [
  "tauri-plugin-updater",
  "url",
  "walkdir",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

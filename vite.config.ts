@@ -5,10 +5,6 @@ import path from "path";
 export default defineConfig({
   plugins: [svelte()],
   clearScreen: false,
-  test: {
-    environment: "node",
-    include: ["src/**/*.test.ts"],
-  },
   resolve: {
     alias: {
       $store:      path.resolve("./src/store"),

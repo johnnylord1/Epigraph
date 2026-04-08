@@ -219,3 +219,47 @@ export function getBookSectionCount(
   }
   return getBookSectionsSummary(book).length;
 }
+
+export function findBookSectionIndex(
+  sections: BookSectionSummaryItem[],
+  href: string | null | undefined,
+): number {
+  if (!href || !sections.length) return -1;
+  const target = normalizeBookHrefKey(href);
+  const targetBase = basenameKey(href);
+  if (!target) return -1;
+  return sections.findIndex((item) => {
+    const sectionHref = normalizeBookHrefKey(item.href);
+    if (sectionHref === target) return true;
+    return !!targetBase && basenameKey(item.href) === targetBase;
+  });
+}
+
+export function resolveBookSectionLabel(
+  sections: BookSectionSummaryItem[],
+  href: string | null | undefined,
+): string | null {
+  const index = findBookSectionIndex(sections, href);
+  return index >= 0 ? sections[index]?.label ?? null : href ?? null;
+}
+
+export function resolveBookSectionProgress(
+  sections: BookSectionSummaryItem[],
+  href: string | null | undefined,
+): number {
+  const index = findBookSectionIndex(sections, href);
+  if (index < 0 || sections.length <= 1) return 0;
+  return index / (sections.length - 1);
+}
+
+export function resolveBookSectionHrefFromProgress(
+  sections: BookSectionSummaryItem[],
+  progressPercent: number,
+): string | null {
+  if (!sections.length) return null;
+  const index = Math.max(
+    0,
+    Math.min(sections.length - 1, Math.round(progressPercent * (sections.length - 1))),
+  );
+  return sections[index]?.href ?? null;
+}

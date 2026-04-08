@@ -11,6 +11,7 @@
   import {
     addToast,
     getBookProgress,
+    openBookReader,
     removeBook,
     setActiveBookId,
     setBookProgress,
@@ -19,10 +20,23 @@
   import {
     getBookSectionCount,
     getBookSectionsSummary,
+    resolveBookSectionLabel,
+    resolveBookSectionProgress,
   } from "../../lib/books/summary";
   import type { BookProgress } from "../../lib/books/types";
   import { BookAssetResolver } from "../../lib/books/assets";
+  import { getBookProgressPrecision, resolveBookResumeTarget } from "../../lib/books/progress";
+  import {
+    classifyBookRuntimeFailure,
+    probeBookRuntimeSource,
+    resolveBookRuntimeSource,
+    type BookRuntimeProbeEvidence,
+    type BookRuntimeRequestKind,
+    type BookRuntimeStage,
+  } from "../../lib/books/runtime";
+  import { hasBookLocalAsset, MISSING_BOOK_ASSET_MESSAGE } from "../../lib/books/availability";
   import { presentBook } from "../../lib/books/presentation";
+  import { mediaAuditEnabled, traceMediaAudit } from "../../lib/mediaAudit";
   import {
     removeBookAssets,
   } from "../../lib/books/storage";
@@ -36,6 +50,9 @@
   let currentBookRef: any = null;
   let currentRendition: any = null;
   let currentPreviewObjectUrl: string | null = null;
+  let currentPreviewStage = $state<BookRuntimeStage>("idle");
+  let currentPreviewSourceUrl = $state<string | null>(null);
+  let currentPreviewProbe = $state<BookRuntimeProbeEvidence | null>(null);
   let sectionPage = $state(1);
   let detailsOpen = $state(false);
   let coverBroken = $state(false);
@@ -56,10 +73,71 @@
   const showProgress = $derived(activePresentation?.showProgress ?? (totalSectionCount > 0 || !!activeProgress));
   const previewHeading = $derived(previewing ? "Preview" : "Book contents");
   const coverSrc = $derived(activePresentation?.coverSrc ?? (activeBook ? BookAssetResolver.resolveCoverSrc(activeBook) : null));
+  const bookFileAvailable = $derived(activeBook ? hasBookLocalAsset(activeBook) : false);
 
   function revokeObjectUrl(url: string | null | undefined) {
     if (!url?.startsWith("blob:")) return;
     URL.revokeObjectURL(url);
+  }
+
+  function tracePreview(event: string, payload: Record<string, unknown> = {}) {
+    if (!activeBook) return;
+    traceMediaAudit({
+      event,
+      bookId: activeBook.id,
+      title: activeBook.title,
+      subtype: activeBook.subtype,
+      stage: currentPreviewStage,
+      sourceUrl: currentPreviewSourceUrl,
+      ...payload,
+    });
+  }
+
+  function setPreviewStage(stage: BookRuntimeStage) {
+    currentPreviewStage = stage;
+  }
+
+  function logPreviewFetchProbeEvent(
+    phase: "started" | "succeeded" | "failed",
+    requestKind: BookRuntimeRequestKind,
+    payload: Record<string, unknown>,
+  ) {
+    tracePreview(`books.preview.fetch.${phase}`, {
+      requestKind,
+      ...payload,
+    });
+    setPreviewStage(phase === "failed" ? "fetch.failed" : phase === "succeeded" ? "fetch.succeeded" : "fetch.started");
+  }
+
+  let lastDetailAuditSignature = $state("");
+
+  function auditDetailState(reason: string) {
+    if (!activeBook || !activePresentation) return;
+    const precision = getBookProgressPrecision(activeProgress);
+    const signature = JSON.stringify({
+      reason,
+      bookId: activeBook.id,
+      location: activeProgress?.location ?? null,
+      href: activeProgress?.href ?? null,
+      progressPercent: activeProgress?.progressPercent ?? 0,
+      sectionLabel: activeProgress?.sectionLabel ?? null,
+      precision,
+      progressSummary: activePresentation.progressSummary,
+      readPercentLabel: activePresentation.readPercentLabel,
+    });
+    if (signature === lastDetailAuditSignature) return;
+    lastDetailAuditSignature = signature;
+    tracePreview("books.detail.state", {
+      reason,
+      precision,
+      location: activeProgress?.location ?? null,
+      href: activeProgress?.href ?? null,
+      progressPercent: activeProgress?.progressPercent ?? 0,
+      sectionLabel: activeProgress?.sectionLabel ?? null,
+      progressSummary: activePresentation.progressSummary,
+      readPercentLabel: activePresentation.readPercentLabel,
+      showProgress,
+    });
   }
 
   function closeDetail() {
@@ -105,29 +183,61 @@
     previewing = true;
     previewLoading = true;
     previewError = null;
+    currentPreviewStage = "idle";
+    currentPreviewSourceUrl = null;
+    currentPreviewProbe = null;
     disposePreview();
 
     try {
       const host = await waitForPreviewHost();
-      const previewAsset = await BookAssetResolver.resolvePreviewAsset(activeBook);
+      const source = resolveBookRuntimeSource(activeBook);
+      currentPreviewSourceUrl = source.sourceUrl;
+      setPreviewStage("source.resolved");
+      tracePreview("books.preview.source.resolved", {
+        origin: source.origin,
+      });
 
-      if (previewAsset.subtype === "pdf") {
-        currentPreviewObjectUrl = URL.createObjectURL(
-          new Blob([previewAsset.bytes], { type: previewAsset.mimeType }),
-        );
+      if (mediaAuditEnabled()) {
+        currentPreviewProbe = await probeBookRuntimeSource(source, {
+          expectRange: activeBook.subtype === "pdf",
+          onEvent: ({ phase, requestKind, payload }) => {
+            logPreviewFetchProbeEvent(phase, requestKind, {
+              origin: source.origin,
+              status: payload.status,
+              headers: payload.headers,
+              finalUrl: payload.finalUrl,
+              error: payload.error,
+            });
+          },
+        });
+      }
 
+      if (activeBook.subtype === "pdf") {
+        setPreviewStage("pdf.open.started");
+        tracePreview("books.preview.pdf.open.started", {
+          origin: source.origin,
+          classification: currentPreviewProbe?.classification ?? null,
+        });
         const frame = document.createElement("iframe");
-        frame.src = `${currentPreviewObjectUrl}#toolbar=0&navpanes=0`;
-        frame.title = previewAsset.title;
+        frame.src = `${source.sourceUrl}#toolbar=0&navpanes=0`;
+        frame.title = activeBook.title;
         frame.style.width = "100%";
         frame.style.height = "100%";
         frame.style.border = "0";
         host.innerHTML = "";
         host.appendChild(frame);
+        tracePreview("books.preview.loaded", {
+          renderer: "iframe",
+        });
         return;
       }
 
-      const book = ePub(previewAsset.bytes);
+      setPreviewStage("epub.open.started");
+      tracePreview("books.preview.epub.open.started", {
+        origin: source.origin,
+        classification: currentPreviewProbe?.classification ?? null,
+      });
+      const book = ePub(source.sourceUrl);
       const rendition = book.renderTo(host, {
         width: "100%",
         height: "100%",
@@ -141,6 +251,12 @@
       rendition.on("relocated", (location: any) => {
         if (!activeBook) return;
         const start = location?.start ?? {};
+        const precisePercent =
+          typeof currentBookRef?.locations?.length === "function" &&
+          typeof currentBookRef?.locations?.percentageFromCfi === "function" &&
+          start.cfi
+            ? currentBookRef.locations.percentageFromCfi(start.cfi)
+            : null;
         const progress: BookProgress = {
           bookId: activeBook.id,
           location: start.cfi ?? null,
@@ -148,21 +264,64 @@
           progressPercent:
             typeof location?.percentage === "number"
               ? Math.max(0, Math.min(1, location.percentage))
-              : 0,
+              : typeof precisePercent === "number" && Number.isFinite(precisePercent)
+                ? Math.max(0, Math.min(1, precisePercent))
+                : resolveBookSectionProgress(detailSections, start.href ?? null),
           lastReadAt: Date.now(),
+          sectionLabel: resolveBookSectionLabel(detailSections, start.href ?? null),
+          renderer: "epub",
         };
         setBookProgress(progress);
       });
 
       await book.ready;
-      const targetLocation = activeProgress?.location ?? activeProgress?.href ?? undefined;
+      setPreviewStage("epub.ready");
+      tracePreview("books.preview.epub.ready");
+      const targetLocation = resolveBookResumeTarget(activeProgress) ?? undefined;
       await rendition.display(targetLocation);
+      setPreviewStage("epub.displayed");
+      tracePreview("books.preview.epub.displayed", {
+        restoredLocation: targetLocation ?? null,
+      });
+      void (async () => {
+        try {
+          setPreviewStage("epub.locations.started");
+          tracePreview("books.preview.epub.locations.started");
+          if (typeof book.locations?.pause === "number") {
+            book.locations.pause = 0;
+          }
+          await book.locations.generate(1000);
+          setPreviewStage("epub.locations.ready");
+          tracePreview("books.preview.epub.locations.ready", {
+            totalLocations: typeof book.locations?.length === "function" ? book.locations.length() : null,
+          });
+        } catch (locationError) {
+          tracePreview("books.preview.error", {
+            message: locationError instanceof Error ? locationError.message : "Could not generate EPUB locations.",
+            classification: classifyBookRuntimeFailure(currentPreviewProbe, "epub.locations.ready", locationError),
+          });
+        }
+      })();
+      tracePreview("books.preview.loaded", {
+        renderer: "epubjs",
+        restoredLocation: targetLocation ?? null,
+      });
     } catch (error) {
       disposePreview();
       previewError = error instanceof Error ? error.message : "Could not open this book.";
+      tracePreview("books.preview.error", {
+        message: previewError,
+        classification: classifyBookRuntimeFailure(currentPreviewProbe, currentPreviewStage, error),
+      });
     } finally {
       previewLoading = false;
     }
+  }
+
+  function openFullscreenReader() {
+    if (!activeBook || !bookFileAvailable) return;
+    closePreview();
+    openBookReader(activeBook.id);
   }
 
   function closePreview() {
@@ -214,6 +373,21 @@
     }
   });
 
+  $effect(() => {
+    if (!activeBook || !activePresentation) return;
+    activeBook.id;
+    activeProgress?.location;
+    activeProgress?.href;
+    activeProgress?.progressPercent;
+    activeProgress?.sectionLabel;
+    activePresentation.progressSummary;
+    activePresentation.readPercentLabel;
+    showProgress;
+    untrack(() => {
+      auditDetailState("state.changed");
+    });
+  });
+
   onDestroy(() => {
     disposePreview();
   });
@@ -259,9 +433,13 @@
       </div>
 
       <div class="cta-section">
-        <button class="read-btn" onclick={openPreview} disabled={previewLoading}>
+        <button class="read-btn" onclick={openFullscreenReader} disabled={previewLoading || !bookFileAvailable}>
           <ArrowsOutCardinal size={12} weight="bold" />
-          {previewLoading ? "Opening..." : previewing ? "Reopen preview" : "Open book"}
+          {#if !bookFileAvailable}
+            File missing
+          {:else}
+            {previewLoading ? "Opening..." : "Open book"}
+          {/if}
         </button>
         <div class="actions">
           <button class="library-btn danger" onclick={handleRemove}>
@@ -269,6 +447,9 @@
             Remove
           </button>
         </div>
+        {#if !bookFileAvailable}
+          <p class="missing-file-note">{MISSING_BOOK_ASSET_MESSAGE}</p>
+        {/if}
       </div>
 
       {#if showProgress}
@@ -299,9 +480,15 @@
               <span class="detail-val">{activePresentation?.subtypeLabel ?? activeBook.subtype.toUpperCase()}</span>
             </div>
             <div class="detail-row">
-              <span class="detail-key">Reading sections</span>
+              <span class="detail-key">{activeBook.subtype === "pdf" ? "Outline items" : "Reading sections"}</span>
               <span class="detail-val">{activePresentation?.sectionCount ?? totalSectionCount}</span>
             </div>
+            {#if activeBook.subtype === "pdf"}
+              <div class="detail-row">
+                <span class="detail-key">Pages</span>
+                <span class="detail-val">{activePresentation?.pageCountLabel ?? `${activeBook.pageCount ?? 0} pages`}</span>
+              </div>
+            {/if}
             {#if activeBook.subtype === "epub"}
               <div class="detail-row">
                 <span class="detail-key">Spine items</span>
@@ -320,7 +507,7 @@
             {/if}
             <div class="detail-file">
               <span class="detail-key">Source file</span>
-              <p class="detail-path">{activeBook.importPath}</p>
+              <p class="detail-path">{activeBook.importPath || "Metadata-only restore (original file unavailable)"}</p>
             </div>
           </div>
         {/if}
@@ -569,6 +756,11 @@
     opacity: 0.88;
   }
 
+  .read-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+
   .actions {
     display: flex;
     align-items: stretch;
@@ -607,6 +799,17 @@
     background: var(--color-error-bg);
     border-color: var(--color-error);
     color: var(--color-error);
+  }
+
+  .missing-file-note {
+    margin: 0;
+    padding: var(--sp-2) var(--sp-3);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-strong);
+    background: color-mix(in srgb, var(--bg-raised) 88%, transparent);
+    color: var(--text-muted);
+    font-size: var(--text-2xs);
+    line-height: var(--leading-base);
   }
 
   .progress-section {

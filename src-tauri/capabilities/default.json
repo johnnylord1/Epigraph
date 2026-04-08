@@ -34,7 +34,13 @@
     "updater:allow-download-and-install",
     "process:default",
     "process:allow-restart",
-    "http:default",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "http://*:*/*" },
+        { "url": "https://*:*/*" }
+      ]
+    },
     "http:allow-fetch",
     "drpc:default",
     "drpc:allow-is-running",

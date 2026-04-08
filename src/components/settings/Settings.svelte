@@ -1,14 +1,67 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import { X, Book, Image, Sliders, Info, Keyboard, Gear, HardDrives, FolderSimple, Plus, Pencil, Trash, Wrench, PaintBrush, ListChecks, Lock, Eye, EyeSlash, Star, ShieldCheck, Tag } from "phosphor-svelte";
+  import { slide } from "svelte/transition";
+  import { X, Book, Image, Sliders, Info, Keyboard, Gear, HardDrives, FolderSimple, Plus, Pencil, Trash, Wrench, PaintBrush, ListChecks, Lock, Eye, EyeSlash, Star, ShieldCheck, Tag, CaretDown } from "phosphor-svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { getVersion } from "@tauri-apps/api/app";
+  import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+  import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
   import { open as openUrl } from "@tauri-apps/plugin-shell";
   import { gql, gqlUpload, thumbUrl, getServerAuthHeader, serverFileUrl } from "../../lib/client";
+  import {
+    BUILTIN_LOCAL_PROFILES,
+    DEFAULT_LOCAL_PROFILE_ID,
+    getLocalProfileMeta,
+    normalizeLocalProfileId,
+    type LocalProfileId,
+  } from "../../lib/localProfiles";
+  import { getEffectiveServerUrl } from "../../lib/serverTarget";
   import { parseMihonBackup } from "../../lib/backup/mihonBackup";
+  import {
+    AETHON_BACKUP_EXTENSION,
+    buildAethonBackupContainer,
+    type AethonBackupPayloadBuildInput,
+  } from "../../lib/backup/aethonBackup";
+  import {
+    buildAethonRestorePlan,
+    type AethonPayloadRestorePlan,
+    type AethonRestorePlan,
+    type AethonRestorePlannerRuntime,
+  } from "../../lib/backup/aethonRestorePlanner";
+  import { buildAethonAppPayload } from "../../lib/backup/appBackup";
+  import {
+    buildRestoreRelaunchArgs,
+    currentProfileSupportsOtherLocalTarget,
+    defaultExecutionSelection,
+    describeRestoreTarget,
+    detectBackupImportKind,
+    executionBlockedReasonForProfile,
+    hasAnyExecutableSelection,
+    isPayloadExecutable,
+    normalizeBackupSavePath,
+    resolveOtherLocalProfileId,
+    selectedExecutablePayloadKinds,
+    type BackupExecutionSelection,
+    type BackupExportMode,
+    type BackupImportKind,
+    type BackupLaunchIntent,
+    type RestoreTargetMode,
+  } from "../../lib/backup/backupRollout";
+  import { buildAethonBooksPayload, restoreAethonBooksPayload } from "../../lib/backup/booksBackup";
+  import { extractAethonMangaPayloadFile, buildAethonMangaPayload } from "../../lib/backup/mangaBackup";
+  import {
+    buildAethonNovelsPayload,
+    restoreAethonNovelsPayload,
+    type AethonNovelRuntimeState,
+  } from "../../lib/backup/novelsBackup";
+  import {
+    applyRestoredNovelsProfileSnapshot,
+    loadNovelsProfileSnapshot,
+    resolveNovelsProfileScope,
+  } from "../../lib/backup/novelsProfileState";
   import { findMissingSourceExtensionSuggestions, type MissingSourceExtensionSuggestion } from "../../lib/extensionSourceMap";
-  import { GET_CATEGORIES, CREATE_CATEGORY, UPDATE_CATEGORY, DELETE_CATEGORY, UPDATE_CATEGORY_ORDER, GET_SOURCES } from "../../lib/queries";
+  import { GET_CATEGORIES, CREATE_CATEGORY, UPDATE_CATEGORY, DELETE_CATEGORY, UPDATE_CATEGORY_ORDER, GET_SOURCES, GET_EXTENSIONS, GET_SETTINGS } from "../../lib/queries";
   import { GET_DOWNLOADS_PATH, SET_DOWNLOADS_PATH, SET_LOCAL_SOURCE_PATH, GET_TRACKERS, LOGIN_TRACKER_OAUTH, LOGIN_TRACKER_CREDENTIALS, LOGOUT_TRACKER, GET_TRACKER_RECORDS, GET_SERVER_SECURITY, SET_SERVER_AUTH, SET_SOCKS_PROXY, SET_FLARESOLVERR, CREATE_BACKUP, RESTORE_BACKUP, GET_RESTORE_STATUS, UPDATE_EXTENSION } from "../../lib/queries";
   import { analyzeBackupReconciliation, overlayEntryFromAnalysis } from "../../lib/reconciliation/analyze";
   import { readOverlayFile, upsertOverlayEntry } from "../../lib/reconciliation/overlay";
@@ -17,21 +70,49 @@
   import { buildReconciledBackupFile } from "../../lib/reconciliation/restore";
   import { normalizeTrackerOAuthInput, trackerOAuthParamName } from "../../lib/trackerOAuth";
   import type { Category, Source, Extension } from "../../lib/types";
-  import { store, updateSettings, resetKeybinds, clearHistory, wipeAllData, setSettingsOpen, deleteCustomTheme, toggleHiddenCategory, setCategories, addToast, openSearchSources } from "../../store/state.svelte";
+  import { BOOKS_FILTER_OPTIONS } from "../../lib/library/booksSection";
+  import { readFileAsArrayBuffer } from "../../lib/books/storage";
+  import {
+    countBooksForCategory,
+    createBooksCategory,
+    deleteBooksCategory,
+    moveBooksCategory,
+    normalizeBooksCategoryAssignments,
+    renameBooksCategory,
+    sortBooksCategories,
+  } from "../../lib/library/domainCategories";
+  import LibraryDensityRail from "../library/LibraryDensityRail.svelte";
+  import { store, updateSettings, resetKeybinds, clearHistory, wipeAllData, setSettingsOpen, setRuntimeSettingsTab, deleteCustomTheme, toggleHiddenCategory, setCategories, addToast, openSearchSources, replaceBooksState } from "../../store/state.svelte";
   import { cache } from "../../lib/cache";
   import { KEYBIND_LABELS, DEFAULT_KEYBINDS, eventToKeybind } from "../../lib/keybinds";
-  import type { Settings, FitMode, Theme } from "../../store/state.svelte";
+  import type { Settings, FitMode, Theme, BooksCategory, BooksLibraryStatusFilter, BooksLibraryTypeFilter, RuntimeSettingsTab } from "../../store/state.svelte";
   import type { Keybinds } from "../../lib/keybinds";
   import type { Tracker } from "../../lib/types";
   import type { AvailableExtensionEntry, OverlayEntry, ParsedBackup, ReconciliationAnalysis, ReconciliationClusterResult, RestoreReadinessSummary, SourceInventoryEntry } from "../../lib/reconciliation/types";
   interface Props {
     onOpenThemeEditor?: (id?: string | null) => void;
+    backupAuditPlan?: AethonRestorePlan | null;
+    backupRestoreLaunchIntent?: BackupLaunchIntent | null;
   }
-  let { onOpenThemeEditor }: Props = $props();
+  let { onOpenThemeEditor, backupAuditPlan = null, backupRestoreLaunchIntent = null }: Props = $props();
   type Tab = "general" | "appearance" | "reader" | "library" | "performance" | "keybinds" | "storage" | "folders" | "tracking" | "security" | "content" | "about" | "devtools";
   type SettingsGroupId = "app" | "reading" | "library-group" | "content-integrations" | "system" | "advanced";
   type SettingsNavItem = { id: Tab; label: string; icon: any };
   type SettingsNavGroup = { id: SettingsGroupId; label: string; icon: any; items: SettingsNavItem[] };
+  type FlareTestState = "idle" | "testing" | "ready" | "not-reachable" | "check-url";
+  type DockerFlareSolverrStatus = {
+    installed: boolean;
+    daemon: boolean;
+    running: boolean;
+    version: string | null;
+    message: string | null;
+  };
+  type LocalFlareSolverrStatus = {
+    installed: boolean;
+    running: boolean;
+    path: string | null;
+    message: string | null;
+  };
   const SETTINGS_GROUPS: SettingsNavGroup[] = [
     {
       id: "app",
@@ -98,25 +179,82 @@
   const DEFAULT_TAB_BY_GROUP: Record<SettingsGroupId, Tab> = Object.fromEntries(
     SETTINGS_GROUPS.map((group) => [group.id, group.items[0].id] as const)
   ) as Record<SettingsGroupId, Tab>;
+  const IDLE_TIMEOUT_LABELS: Record<string, string> = {
+    "0": "Never",
+    "1": "1 minute",
+    "2": "2 minutes",
+    "5": "5 minutes",
+    "10": "10 minutes",
+    "15": "15 minutes",
+    "30": "30 minutes",
+  };
+  const PAGE_STYLE_LABELS: Record<string, string> = {
+    single: "Single page",
+    longstrip: "Long strip",
+    fade: "Fade",
+  };
+  const READING_DIRECTION_LABELS: Record<string, string> = {
+    ltr: "Left to right",
+    rtl: "Right to left",
+  };
+  const FIT_MODE_LABELS: Record<string, string> = {
+    width: "Fit width",
+    height: "Fit height",
+    screen: "Fit screen",
+    original: "Original (1:1)",
+  };
+
+  function idleTimeoutLabel(value: number | null | undefined): string {
+    const key = String(value ?? 5);
+    return IDLE_TIMEOUT_LABELS[key] ?? `${value ?? 5} min`;
+  }
+
+  function pageStyleLabel(value: Settings["pageStyle"]): string {
+    const normalized = value === "double" ? "single" : value;
+    return PAGE_STYLE_LABELS[normalized] ?? PAGE_STYLE_LABELS.single;
+  }
+
+  function readingDirectionLabel(value: Settings["readingDirection"]): string {
+    return READING_DIRECTION_LABELS[value] ?? READING_DIRECTION_LABELS.ltr;
+  }
+
+  function fitModeLabel(value: FitMode | null | undefined): string {
+    const normalized = value ?? "width";
+    return FIT_MODE_LABELS[normalized] ?? FIT_MODE_LABELS.width;
+  }
   const THEMES: { id: Theme; label: string; description: string; swatches: string[] }[] = [
     { id: "dark",           label: "Dark",           description: "Default near-black",            swatches: ["#101010","#151515","#a8c4a8","#f0efec"] },
     { id: "high-contrast",  label: "High Contrast",  description: "Darker base, sharper text",     swatches: ["#080808","#111111","#bcd8bc","#ffffff"] },
     { id: "light",          label: "Light",          description: "Warm off-white",                swatches: ["#f4f2ee","#faf8f4","#2a5a2a","#1a1916"] },
     { id: "light-contrast", label: "Light Contrast", description: "Light with maximum contrast",   swatches: ["#ece8e2","#f5f2ec","#183818","#080806"] },
     { id: "midnight",       label: "Midnight",       description: "Deep blue-black tint",          swatches: ["#0c1020","#101428","#a8b4e8","#eeeef8"] },
+    { id: "nocturne",       label: "Nocturne",       description: "Lunar graphite HUD",           swatches: ["#080813","#0d0d1b","#8f82e6","#f1eefc"] },
     { id: "warm",           label: "Warm",           description: "Amber and sepia tones",         swatches: ["#16130c","#1c1810","#e0b860","#f5f0e0"] },
   ];
   let tab: Tab          = $state("general");
   let activeGroup: SettingsGroupId = $state("app");
   let contentBodyEl: HTMLDivElement;
+  let backupSectionEl: HTMLDivElement | undefined = $state();
+  let backupSectionScrollKey = $state<string | null>(null);
   const currentGroup = $derived.by(
     () => SETTINGS_GROUPS.find((group) => group.id === activeGroup) ?? SETTINGS_GROUPS[0]
   );
   $effect(() => { activeGroup = TAB_TO_GROUP[tab]; });
+  $effect(() => {
+    const requestedTab = store.runtimeSettingsTab as RuntimeSettingsTab | null;
+    if (requestedTab && requestedTab !== tab) {
+      tab = requestedTab as Tab;
+      activeGroup = TAB_TO_GROUP[tab];
+      setRuntimeSettingsTab(null);
+    }
+  });
   $effect(() => { tab; tick().then(() => contentBodyEl?.scrollTo({ top: 0 })); });
   function openGroup(groupId: SettingsGroupId) {
     activeGroup = groupId;
     if (TAB_TO_GROUP[tab] !== groupId) tab = DEFAULT_TAB_BY_GROUP[groupId];
+  }
+  function setDefaultLocalProfile(profileId: LocalProfileId) {
+    updateSettings({ defaultLocalProfileId: profileId });
   }
   function close() { setSettingsOpen(false); }
   function onKey(e: KeyboardEvent) { if (e.key === "Escape" && !listeningKey) close(); }
@@ -154,13 +292,50 @@
   // cannot invoke Tauri commands against its filesystem (path validation, disk usage,
   // migration). We can still read the server's paths via GraphQL, but we must never
   // overwrite the server's download directory config without the user explicitly asking.
+  const currentRuntimeServerUrl = $derived.by(() => getEffectiveServerUrl());
+  const currentRuntimeProfileId = $derived.by(
+    () => normalizeLocalProfileId(store.runtimeResolvedLocalProfileId)
+  );
+  const persistedDefaultProfileId = $derived.by(
+    () => normalizeLocalProfileId(store.settings.defaultLocalProfileId) ?? DEFAULT_LOCAL_PROFILE_ID
+  );
+  const currentProfileMeta = $derived.by(() => store.runtimeResolvedLocalProfileMeta);
+  const nextLaunchProfileMeta = $derived.by(() => getLocalProfileMeta(persistedDefaultProfileId));
+  const currentSessionProfileLabel = $derived.by(() => {
+    const label = currentProfileMeta?.label ?? store.runtimeServerLabel?.trim().toUpperCase();
+    return label && label.length ? label : "CUSTOM";
+  });
+  const currentSessionProfileSummary = $derived.by(
+    () => store.runtimeIsOverrideSession
+      ? `${currentSessionProfileLabel} (launch override)`
+      : currentSessionProfileLabel
+  );
+  const nextLaunchProfileSummary = $derived.by(
+    () => nextLaunchProfileMeta?.label ?? currentSessionProfileLabel
+  );
+  const otherLocalProfileId = $derived.by(
+    () => resolveOtherLocalProfileId(currentRuntimeProfileId)
+  );
+  const otherLocalProfileMeta = $derived.by(
+    () => getLocalProfileMeta(otherLocalProfileId)
+  );
+  const novelsProfileScope = $derived.by(
+    () => resolveNovelsProfileScope({
+      profileId: currentRuntimeProfileId,
+      serverUrl: currentRuntimeServerUrl,
+    })
+  );
+  const backupExecutionBlockedReason = $derived.by(
+    () => executionBlockedReasonForProfile(currentRuntimeProfileId)
+  );
   const isExternalServer = $derived.by(() => {
-    const url = (store.settings.serverUrl ?? "http://localhost:4567").toLowerCase().trim();
+    const url = currentRuntimeServerUrl.toLowerCase().trim();
     try {
       const host = new URL(url).hostname;
       return host !== "localhost" && host !== "127.0.0.1" && host !== "::1";
     } catch { return false; }
   });
+  const serverUrlManagedByProfile = $derived.by(() => Boolean(currentProfileMeta));
 
   // â”€â”€ Download path editing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   let downloadsPathInput    = $state(store.settings.serverDownloadsPath ?? "");
@@ -385,6 +560,23 @@
   let backupInstalling = $state(new Set<string>());
   let backupReviewSelections = $state<Record<string, string | "skip">>({});
   let backupMissingTrackers = $state<{ name: string }[]>([]);
+  let backupSelectedFilePath: string | null = $state(null);
+  let backupImportKind = $state<BackupImportKind | null>(null);
+  let backupExportMode = $state<BackupExportMode>("unified");
+  let backupUnifiedIncludeManga = $state(true);
+  let backupUnifiedIncludeBooks = $state(true);
+  let backupUnifiedIncludeNovels = $state(true);
+  let backupUnifiedIncludeApp = $state(false);
+  let backupBooksOnlyMetadataOnly = $state(false);
+  let backupUnifiedPlan = $state<AethonRestorePlan | null>(null);
+  let backupUnifiedSelection = $state<BackupExecutionSelection>({});
+  let backupRestoreTargetMode = $state<RestoreTargetMode>("other-local-profile");
+  let backupRestoreCurrentProfileConfirmed = $state(false);
+  let backupRestoreHandoffSession = $state(false);
+  let backupRestoreSourceProfileId = $state<LocalProfileId | null>(null);
+  let backupRestoreResults = $state<Array<{ kind: string; status: "success" | "warning" | "failed" | "skipped"; summary: string; detail?: string | null }> | null>(null);
+  let backupLaunchIntentKey = $state<string | null>(null);
+  let backupLastLegacyAnalysisPath: string | null = $state(null);
 
   const backupNeedsReviewComplete = $derived(
     !backupAnalysis
@@ -404,12 +596,486 @@
       || backupValidating
       || backupRestoring,
   );
+  const backupCanUseOtherProfileTarget = $derived.by(
+    () => currentProfileSupportsOtherLocalTarget(currentRuntimeProfileId) && !backupRestoreHandoffSession
+  );
+  const backupExecutablePayloadKinds = $derived.by(
+    () => backupUnifiedPlan ? selectedExecutablePayloadKinds(backupUnifiedPlan, backupUnifiedSelection) : []
+  );
+  const backupHasExecutableSelection = $derived.by(
+    () => backupUnifiedPlan ? hasAnyExecutableSelection(backupUnifiedPlan, backupUnifiedSelection) : false
+  );
+  const backupCurrentTargetSummary = $derived.by(
+    () => describeRestoreTarget(currentRuntimeProfileId, backupRestoreTargetMode, backupRestoreHandoffSession)
+  );
+  const backupCurrentProfileGateRequired = $derived.by(
+    () => backupRestoreTargetMode === "current-profile" && !backupRestoreHandoffSession
+  );
+  const backupSelectedFileLabel = $derived.by(
+    () => backupSelectedFile?.name ?? backupPathLabel(backupSelectedFilePath)
+  );
+  const backupUnifiedBlockedCount = $derived.by(
+    () => backupUnifiedPlan?.payloads.filter((payload) => payload.status === "blocked").length ?? 0
+  );
+  const backupUnifiedUnsupportedCount = $derived.by(
+    () => backupUnifiedPlan?.payloads.filter((payload) => payload.status === "unsupported").length ?? 0
+  );
+  const backupUnifiedWarningCount = $derived.by(
+    () => backupUnifiedPlan?.payloads.filter((payload) => payload.status === "warning-only").length ?? 0
+  );
+  const backupResolvedExecutionBlockedReason = $derived.by(
+    () => backupUnifiedPlan?.executionBlockedReason ?? backupExecutionBlockedReason
+  );
+  const backupExecuteDisabled = $derived.by(() => {
+    if (backupResolvedExecutionBlockedReason) return true;
+    if (backupCurrentProfileGateRequired && !backupRestoreCurrentProfileConfirmed) return true;
+    if (backupRestoreTargetMode === "other-local-profile") {
+      return !backupSelectedFilePath || !backupCanUseOtherProfileTarget || backupRestoring || backupValidating;
+    }
+    if (backupImportKind === "aethon") {
+      return !backupUnifiedPlan || !backupHasExecutableSelection || backupRestoring || backupValidating;
+    }
+    return backupRestoreBlocked;
+  });
+
+  function backupPathLabel(path: string | null | undefined): string | null {
+    const trimmed = typeof path === "string" ? path.trim() : "";
+    if (!trimmed) return null;
+    return trimmed.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? trimmed;
+  }
+
+  function bytesToBase64(bytes: Uint8Array | ArrayBuffer): string {
+    const normalized = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    if (typeof Buffer !== "undefined") {
+      return Buffer.from(normalized).toString("base64");
+    }
+    let binary = "";
+    for (const byte of normalized) binary += String.fromCharCode(byte);
+    return btoa(binary);
+  }
+
+  function browserPlatform(): string | null {
+    const maybeData = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform;
+    return maybeData ?? navigator.platform ?? null;
+  }
+
+  function backupPayloadKindLabel(kind: string): string {
+    switch (kind) {
+      case "manga":
+        return "Manga";
+      case "books":
+        return "Books";
+      case "novels":
+        return "Novels";
+      case "app":
+        return "App metadata";
+      default:
+        return kind;
+    }
+  }
+
+  function backupPayloadStatusLabel(status: AethonPayloadRestorePlan["status"] | "success" | "warning" | "failed"): string {
+    switch (status) {
+      case "restorable":
+        return "Restorable";
+      case "warning-only":
+        return "Warning only";
+      case "blocked":
+        return "Blocked";
+      case "unsupported":
+        return "Unsupported";
+      case "skipped":
+        return "Skipped";
+      case "success":
+        return "Success";
+      case "warning":
+        return "Completed with warnings";
+      case "failed":
+        return "Failed";
+      default:
+        return status;
+    }
+  }
+
+  function backupRestoreButtonLabel(): string {
+    if (backupRestoreTargetMode === "other-local-profile") {
+      return otherLocalProfileMeta
+        ? `Continue in ${otherLocalProfileMeta.label}`
+        : "Continue in other profile";
+    }
+    if (backupRestoring) {
+      return backupImportKind === "aethon" ? "Restoring..." : "Restoring manga...";
+    }
+    return backupImportKind === "aethon" ? "Restore selected payloads" : "Restore manga backup";
+  }
+
+  function resetLegacyBackupState() {
+    backupSelectedFile = null;
+    backupSelectedFilePath = null;
+    backupLastLegacyAnalysisPath = null;
+    backupParsed = null;
+    backupAnalysis = null;
+    backupInventory = [];
+    backupReviewSelections = {};
+    backupMissingTrackers = [];
+    backupRestoreId = null;
+    backupRestoreStatus = null;
+    backupSuggestedExtensions = [];
+    backupAvailableExtensions = [];
+    backupExtensionLookupError = null;
+  }
+
+  function resetUnifiedBackupState() {
+    backupUnifiedPlan = null;
+    backupUnifiedSelection = {};
+    backupRestoreResults = null;
+  }
+
+  function resetBackupImportState() {
+    backupError = null;
+    backupImportKind = null;
+    backupRestoreCurrentProfileConfirmed = false;
+    backupRestoreHandoffSession = false;
+    backupRestoreSourceProfileId = null;
+    backupRestoreTargetMode = currentProfileSupportsOtherLocalTarget(currentRuntimeProfileId)
+      ? "other-local-profile"
+      : "current-profile";
+    resetLegacyBackupState();
+    resetUnifiedBackupState();
+  }
+
+  async function loadNovelRuntimeState(): Promise<AethonNovelRuntimeState> {
+    const [settingsData, extensionsData, sourcesData] = await Promise.all([
+      gql<{ settings: { extensionRepos: string[] } }>(GET_SETTINGS),
+      gql<{ extensions: { nodes: Extension[] } }>(GET_EXTENSIONS),
+      gql<{ sources: { nodes: Source[] } }>(GET_SOURCES),
+    ]);
+
+    return {
+      repositoryUrls: settingsData.settings.extensionRepos ?? [],
+      installedPluginIds: (extensionsData.extensions.nodes ?? [])
+        .filter((extension) => extension.isInstalled)
+        .map((extension) => extension.pkgName),
+      availableSourceIds: (sourcesData.sources.nodes ?? [])
+        .map((source) => source.id)
+        .filter((sourceId) => sourceId !== "0"),
+    };
+  }
+
+  async function loadAethonRestoreRuntime(): Promise<AethonRestorePlannerRuntime> {
+    const [inventory, trackersData, novelsRuntime, overlay] = await Promise.all([
+      loadSourceInventory(),
+      gql<{ trackers: { nodes: Tracker[] } }>(GET_TRACKERS),
+      loadNovelRuntimeState(),
+      readOverlayFile(),
+    ]);
+
+    return {
+      activeProfileId: currentRuntimeProfileId,
+      manga: {
+        supported: true,
+        inventory: inventory.inventory,
+        availableExtensions: inventory.availableExtensions,
+        trackers: trackersData.trackers.nodes ?? [],
+        overlay,
+      },
+      books: {
+        supported: true,
+      },
+      novels: {
+        ...novelsRuntime,
+        supported: true,
+      },
+      app: {
+        supported: true,
+      },
+    };
+  }
 
   function backupFilenameFromUrl(path: string): string {
     const cleaned = path.split("?")[0];
     const file = cleaned.split("/").pop()?.trim();
     return file || `aethon-backup-${new Date().toISOString().slice(0, 10)}.tachibk`;
   }
+
+  function defaultExportFilename(): string {
+    const stamp = new Date().toISOString().slice(0, 10);
+    switch (backupExportMode) {
+      case "manga":
+        return `aethon-manga-${stamp}.tachibk`;
+      case "books":
+        return `aethon-books-${stamp}${AETHON_BACKUP_EXTENSION}`;
+      case "novels":
+        return `aethon-novels-${stamp}${AETHON_BACKUP_EXTENSION}`;
+      case "app":
+        return `aethon-profile-${stamp}${AETHON_BACKUP_EXTENSION}`;
+      default:
+        return `aethon-unified-${stamp}${AETHON_BACKUP_EXTENSION}`;
+    }
+  }
+
+  async function saveBytesToPath(path: string, bytes: Uint8Array | ArrayBuffer): Promise<string> {
+    return invoke<string>("write_file_base64", {
+      path,
+      bytesBase64: bytesToBase64(bytes),
+    });
+  }
+
+  async function fetchCurrentMangaBackup(): Promise<{ bytes: Uint8Array; sourceFilename: string }> {
+    const res = await gql<{ createBackup: { url: string } }>(CREATE_BACKUP, {
+      includeCategories: true,
+      includeChapters: true,
+    });
+    const url = serverFileUrl(res.createBackup.url);
+    const response = await fetch(url, {
+      headers: getServerAuthHeader()
+        ? { Authorization: getServerAuthHeader()! }
+        : undefined,
+    });
+    if (!response.ok) {
+      throw new Error(`Manga backup export failed with HTTP ${response.status}.`);
+    }
+    return {
+      bytes: new Uint8Array(await response.arrayBuffer()),
+      sourceFilename: backupFilenameFromUrl(res.createBackup.url),
+    };
+  }
+
+  async function buildSelectedExportBytes(): Promise<{ bytes: Uint8Array; defaultPath: string }> {
+    const appVersion = await getVersion().catch(() => null);
+    const sourceProfileId = currentRuntimeProfileId ?? null;
+
+    if (backupExportMode === "manga") {
+      const manga = await fetchCurrentMangaBackup();
+      return {
+        bytes: manga.bytes,
+        defaultPath: defaultExportFilename(),
+      };
+    }
+
+    if (backupExportMode === "books") {
+      const built = await buildAethonBackupContainer({
+        appVersion,
+        platform: browserPlatform(),
+        sourceSurface: "desktop",
+        sourceProfileId,
+        payloads: [
+          await buildAethonBooksPayload({
+            books: store.books,
+            bookProgress: store.bookProgress,
+            bookBookmarks: store.bookBookmarks,
+            booksCategories: store.settings.booksCategories,
+            booksCategoryAssignments: store.settings.booksCategoryAssignments,
+          }, {
+            exportMode: backupBooksOnlyMetadataOnly ? "metadata-only" : "full",
+          }),
+        ],
+      });
+      return {
+        bytes: built.bytes,
+        defaultPath: defaultExportFilename(),
+      };
+    }
+
+    if (backupExportMode === "novels") {
+      const built = await buildAethonBackupContainer({
+        appVersion,
+        platform: browserPlatform(),
+        sourceSurface: "desktop",
+        sourceProfileId,
+        payloads: [
+          await buildAethonNovelsPayload(loadNovelsProfileSnapshot(novelsProfileScope)),
+        ],
+      });
+      return {
+        bytes: built.bytes,
+        defaultPath: defaultExportFilename(),
+      };
+    }
+
+    if (backupExportMode === "app") {
+      const built = await buildAethonBackupContainer({
+        appVersion,
+        platform: browserPlatform(),
+        sourceSurface: "desktop",
+        sourceProfileId,
+        payloads: [
+          buildAethonAppPayload({
+            defaultLocalProfileId: persistedDefaultProfileId,
+          }),
+        ],
+      });
+      return {
+        bytes: built.bytes,
+        defaultPath: defaultExportFilename(),
+      };
+    }
+
+    const payloads: AethonBackupPayloadBuildInput[] = [];
+    if (backupUnifiedIncludeManga) {
+      const manga = await fetchCurrentMangaBackup();
+      payloads.push(await buildAethonMangaPayload(manga.bytes, {
+        sourceFilename: manga.sourceFilename,
+      }));
+    }
+    if (backupUnifiedIncludeBooks) {
+      payloads.push(await buildAethonBooksPayload({
+        books: store.books,
+        bookProgress: store.bookProgress,
+        bookBookmarks: store.bookBookmarks,
+        booksCategories: store.settings.booksCategories,
+        booksCategoryAssignments: store.settings.booksCategoryAssignments,
+      }, {
+        exportMode: "full",
+      }));
+    }
+    if (backupUnifiedIncludeNovels) {
+      payloads.push(await buildAethonNovelsPayload(loadNovelsProfileSnapshot(novelsProfileScope)));
+    }
+    if (backupUnifiedIncludeApp) {
+      payloads.push(buildAethonAppPayload({
+        defaultLocalProfileId: persistedDefaultProfileId,
+      }));
+    }
+
+    if (payloads.length === 0) {
+      throw new Error("Select at least one payload to export.");
+    }
+
+    const built = await buildAethonBackupContainer({
+      appVersion,
+      platform: browserPlatform(),
+      sourceSurface: "desktop",
+      sourceProfileId,
+      payloads,
+    });
+    return {
+      bytes: built.bytes,
+      defaultPath: defaultExportFilename(),
+    };
+  }
+
+  async function triggerBackupImport() {
+    backupError = null;
+    const selected = await openDialog({
+      multiple: false,
+      directory: false,
+      filters: [
+        { name: "Aethon backups", extensions: ["aethonbk"] },
+        { name: "Manga backups", extensions: ["tachibk", "proto", "gz"] },
+      ],
+    });
+    if (typeof selected !== "string" || !selected.trim()) return;
+    await loadSelectedBackupPath(selected);
+  }
+
+  async function fileFromPath(path: string): Promise<File> {
+    const buffer = await readFileAsArrayBuffer(path);
+    return new File([buffer], backupPathLabel(path) ?? "backup.tachibk", {
+      type: "application/octet-stream",
+    });
+  }
+
+  async function loadUnifiedBackupPlan(path: string) {
+    const bytes = await readFileAsArrayBuffer(path);
+    const runtime = await loadAethonRestoreRuntime();
+    const plan = await buildAethonRestorePlan(bytes, runtime);
+    backupUnifiedPlan = plan;
+    backupUnifiedSelection = defaultExecutionSelection(plan);
+  }
+
+  async function loadLegacyBackupPath(path: string) {
+    backupLastLegacyAnalysisPath = path;
+    const file = await fileFromPath(path);
+    backupSelectedFile = file;
+    backupSelectedFilePath = path;
+    await analyzeSelectedBackupFile(file);
+  }
+
+  async function loadSelectedBackupPath(
+    path: string,
+    forcedKind: BackupImportKind | null = null,
+    options: {
+      handoff?: boolean;
+      sourceProfileId?: LocalProfileId | null;
+    } = {},
+  ) {
+    resetBackupImportState();
+    backupSelectedFilePath = path;
+    backupImportKind = forcedKind ?? detectBackupImportKind(path);
+    backupRestoreHandoffSession = Boolean(options.handoff);
+    backupRestoreSourceProfileId = options.sourceProfileId ?? null;
+    backupRestoreTargetMode = options.handoff
+      ? "current-profile"
+      : currentProfileSupportsOtherLocalTarget(currentRuntimeProfileId)
+        ? "other-local-profile"
+        : "current-profile";
+
+    if (!backupImportKind) {
+      backupError = "Choose an Aethon (.aethonbk) or manga (.tachibk/.proto.gz) backup file.";
+      return;
+    }
+
+    if (backupImportKind === "aethon") {
+      await loadUnifiedBackupPlan(path);
+      return;
+    }
+
+    if (backupRestoreTargetMode === "current-profile") {
+      await loadLegacyBackupPath(path);
+    } else {
+      backupSelectedFile = await fileFromPath(path);
+    }
+  }
+
+  $effect(() => {
+    const intent = backupRestoreLaunchIntent;
+    const key = intent ? `${intent.kind}:${intent.path}:${intent.handoff ? "handoff" : "direct"}` : null;
+    if (!intent || !key || key === backupLaunchIntentKey) return;
+    backupLaunchIntentKey = key;
+    void loadSelectedBackupPath(intent.path, intent.kind, {
+      handoff: intent.handoff,
+      sourceProfileId: intent.sourceProfileId ?? null,
+    }).catch((error) => {
+      backupError = error instanceof Error ? error.message : "Could not load restore handoff.";
+    });
+  });
+
+  $effect(() => {
+    if (tab !== "storage") {
+      backupSectionScrollKey = null;
+      return;
+    }
+    const focusBackupSection = Boolean(backupRestoreLaunchIntent || backupSelectedFilePath || backupUnifiedPlan);
+    if (!focusBackupSection) {
+      backupSectionScrollKey = null;
+      return;
+    }
+    const nextKey = [
+      backupRestoreLaunchIntent ? `${backupRestoreLaunchIntent.kind}:${backupRestoreLaunchIntent.path}:${backupRestoreLaunchIntent.handoff ? "handoff" : "direct"}` : "no-intent",
+      backupSelectedFilePath ?? "no-path",
+      backupImportKind ?? "no-import-kind",
+      backupUnifiedPlan ? String(backupUnifiedPlan.payloads.length) : "no-plan",
+    ].join("|");
+    if (nextKey === backupSectionScrollKey) return;
+    backupSectionScrollKey = nextKey;
+    void tick().then(() => {
+      backupSectionEl?.scrollIntoView({ block: "start" });
+    });
+  });
+
+  $effect(() => {
+    const shouldAnalyze = backupImportKind === "manga"
+      && backupRestoreTargetMode === "current-profile"
+      && !!backupSelectedFilePath
+      && backupSelectedFilePath !== backupLastLegacyAnalysisPath
+      && !backupValidating
+      && !backupRestoring;
+    if (!shouldAnalyze) return;
+    void loadLegacyBackupPath(backupSelectedFilePath!).catch((error) => {
+      backupError = error instanceof Error ? error.message : "Could not prepare manga restore.";
+    });
+  });
 
   async function loadMissingSourceSuggestions(missingSources: { id: string; name: string }[]) {
     backupSuggestedExtensions = [];
@@ -437,29 +1103,24 @@
     }
   }
 
-  function triggerBackupImport() {
-    backupError = null;
-    if (!backupFileInput) return;
-    backupFileInput.value = "";
-    backupFileInput.click();
-  }
-
   async function exportBackup() {
     backupExporting = true;
     backupError = null;
     backupSavedPath = null;
     try {
-      const res = await gql<{ createBackup: { url: string } }>(CREATE_BACKUP, {
-        includeCategories: true,
-        includeChapters: true,
+      const built = await buildSelectedExportBytes();
+      const savePath = await saveDialog({
+        defaultPath: defaultExportFilename(),
+        filters: backupExportMode === "manga"
+          ? [{ name: "Manga backups", extensions: ["tachibk"] }]
+          : [{ name: "Aethon backups", extensions: ["aethonbk"] }],
       });
-      const url = serverFileUrl(res.createBackup.url);
-      const filename = backupFilenameFromUrl(res.createBackup.url);
-      const savedPath = await invoke<string>("download_server_file_to_downloads", {
-        url,
-        filename,
-        authHeader: getServerAuthHeader(),
-      });
+      if (typeof savePath !== "string" || !savePath.trim()) return;
+      const normalizedPath = normalizeBackupSavePath(
+        savePath,
+        backupExportMode === "manga" ? ".tachibk" : AETHON_BACKUP_EXTENSION,
+      );
+      const savedPath = await saveBytesToPath(normalizedPath, built.bytes);
       backupSavedPath = savedPath;
       addToast({ kind: "success", message: `Backup saved to ${savedPath}` });
     } catch (e: any) {
@@ -472,21 +1133,14 @@
   async function onBackupFileSelected(event: Event) {
     const input = event.currentTarget as HTMLInputElement;
     const file = input.files?.[0] ?? null;
-    backupSelectedFile = file;
-    backupParsed = null;
-    backupAnalysis = null;
-    backupInventory = [];
-    backupReviewSelections = {};
-    backupMissingTrackers = [];
-    backupRestoreId = null;
-    backupRestoreStatus = null;
-    backupError = null;
-    backupSuggestedExtensions = [];
-    backupAvailableExtensions = [];
-    backupExtensionLookupError = null;
     if (!file) return;
-
-    await analyzeSelectedBackupFile(file);
+    resetBackupImportState();
+    backupImportKind = "manga";
+    backupSelectedFile = file;
+    backupSelectedFilePath = null;
+    if (backupRestoreTargetMode === "current-profile") {
+      await analyzeSelectedBackupFile(file);
+    }
   }
 
   async function analyzeSelectedBackupFile(file: File) {
@@ -574,13 +1228,15 @@
     }
   }
 
-  async function restoreBackup() {
-    if (!backupSelectedFile || !backupParsed || !backupAnalysis) return;
+  async function restoreBackup(): Promise<{ ok: boolean; finalState: string | null }> {
+    if (!backupSelectedFile || !backupParsed || !backupAnalysis) {
+      return { ok: false, finalState: null };
+    }
     if (backupReadiness?.blocksRestore) {
       backupError = backupReadiness.requiresInstallCount > 0
         ? "Install the required extensions first so this restore lands on usable sources."
         : "Some reconciled sources are unavailable on this server right now. Resolve them before restoring.";
-      return;
+      return { ok: false, finalState: null };
     }
     backupRestoring = true;
     backupError = null;
@@ -618,14 +1274,170 @@
       const finalState = (backupRestoreStatus?.state ?? "").toUpperCase();
       if (["SUCCESS", "COMPLETED"].includes(finalState)) {
         addToast({ kind: "success", message: "Backup restored. Restart or refresh views to pick up restored library state." });
+        return { ok: true, finalState };
       } else {
         backupError = `Restore finished with state: ${backupRestoreStatus?.state ?? "unknown"}`;
+        return { ok: false, finalState: backupRestoreStatus?.state ?? null };
       }
     } catch (e: any) {
       backupError = e?.message ?? "Failed to restore backup";
+      return { ok: false, finalState: null };
     } finally {
       backupRestoring = false;
     }
+  }
+
+  async function relaunchRestoreIntoOtherProfile() {
+    if (!backupImportKind || !backupSelectedFilePath) {
+      throw new Error("Select a backup file before continuing to the other local profile.");
+    }
+    if (!otherLocalProfileId) {
+      throw new Error("Sandbox restore is only available when the current session is already running on TEST or MAIN.");
+    }
+
+    const args = buildRestoreRelaunchArgs({
+      targetProfileId: otherLocalProfileId,
+      intent: {
+        kind: backupImportKind,
+        path: backupSelectedFilePath,
+        handoff: true,
+        sourceProfileId: currentRuntimeProfileId ?? null,
+      },
+    });
+    await invoke("relaunch_with_args", { args });
+  }
+
+  async function applyCurrentProfileNovelsRestore(bytes: ArrayBuffer) {
+    const runtime = await loadNovelRuntimeState();
+    const restored = await restoreAethonNovelsPayload(bytes, runtime);
+    applyRestoredNovelsProfileSnapshot(novelsProfileScope, restored);
+    return restored;
+  }
+
+  async function applyUnifiedRestore() {
+    if (!backupUnifiedPlan || !backupSelectedFilePath) {
+      throw new Error("Choose an Aethon backup before restoring.");
+    }
+    const selectedKinds = selectedExecutablePayloadKinds(backupUnifiedPlan, backupUnifiedSelection);
+    if (selectedKinds.length === 0) {
+      throw new Error("Select at least one executable payload to restore.");
+    }
+
+    const bytes = await readFileAsArrayBuffer(backupSelectedFilePath);
+    const results: Array<{ kind: string; status: "success" | "warning" | "failed" | "skipped"; summary: string; detail?: string | null }> = [];
+
+    for (const kind of ["manga", "books", "novels", "app"] as const) {
+      if (!selectedKinds.includes(kind)) continue;
+      try {
+        if (kind === "manga") {
+          const extracted = await extractAethonMangaPayloadFile(bytes);
+          backupSelectedFile = extracted;
+          await analyzeSelectedBackupFile(extracted);
+          const outcome = await restoreBackup();
+          results.push({
+            kind,
+            status: outcome.ok ? "success" : "failed",
+            summary: outcome.ok
+              ? "Manga restored into the current profile."
+              : backupError ?? "Manga restore did not finish successfully.",
+            detail: outcome.finalState,
+          });
+          continue;
+        }
+
+        if (kind === "books") {
+          const restored = await restoreAethonBooksPayload(bytes);
+          replaceBooksState({
+            books: restored.books,
+            bookProgress: restored.bookProgress,
+            bookBookmarks: restored.bookBookmarks,
+            booksCategories: restored.booksCategories,
+            booksCategoryAssignments: restored.booksCategoryAssignments,
+          });
+          results.push({
+            kind,
+            status: restored.issues.length > 0 ? "warning" : "success",
+            summary: restored.issues.length > 0
+              ? `Books restored with ${restored.issues.length} warning${restored.issues.length === 1 ? "" : "s"}.`
+              : "Books restored into managed storage.",
+            detail: restored.exportMode,
+          });
+          continue;
+        }
+
+        if (kind === "novels") {
+          const restored = await applyCurrentProfileNovelsRestore(bytes);
+          results.push({
+            kind,
+            status: restored.summary.restoredMetadataOnlyCount > 0 ? "warning" : "success",
+            summary: restored.summary.restoredMetadataOnlyCount > 0
+              ? `${restored.summary.totalEntries} novel entries restored with metadata-only warnings.`
+              : `${restored.summary.totalEntries} novel entries restored for this profile scope.`,
+            detail: `${restored.summary.restoredUsableCount} usable • ${restored.summary.restoredMetadataOnlyCount} metadata-only`,
+          });
+          continue;
+        }
+
+        results.push({
+          kind,
+          status: "skipped",
+          summary: "App payload is preview-only in this rollout.",
+        });
+      } catch (error) {
+        results.push({
+          kind,
+          status: "failed",
+          summary: error instanceof Error ? error.message : `Could not restore ${kind}.`,
+        });
+      }
+    }
+
+    backupRestoreResults = results;
+    const failed = results.filter((entry) => entry.status === "failed").length;
+    addToast({
+      kind: failed > 0 ? "warning" : "success",
+      title: failed > 0 ? "Restore finished with issues" : "Restore finished",
+      body: results.map((entry) => `${entry.kind.toUpperCase()}: ${entry.status}`).join(" • "),
+      duration: 16000,
+    });
+  }
+
+  async function executeSelectedRestore() {
+    backupError = null;
+    backupRestoreResults = null;
+
+    if (backupResolvedExecutionBlockedReason) {
+      backupError = backupResolvedExecutionBlockedReason;
+      return;
+    }
+
+    if (backupRestoreTargetMode === "other-local-profile") {
+      await relaunchRestoreIntoOtherProfile();
+      return;
+    }
+
+    if (!backupRestoreHandoffSession && !backupRestoreCurrentProfileConfirmed) {
+      backupError = "Confirm the advanced current-profile restore before continuing.";
+      return;
+    }
+
+    if (backupImportKind === "aethon") {
+      await applyUnifiedRestore();
+      return;
+    }
+
+    if (!backupSelectedFile && backupSelectedFilePath) {
+      await loadLegacyBackupPath(backupSelectedFilePath);
+    }
+    const result = await restoreBackup();
+    backupRestoreResults = [{
+      kind: "manga",
+      status: result.ok ? "success" : "failed",
+      summary: result.ok
+        ? "Manga backup restored into the current profile."
+        : backupError ?? "Manga backup did not finish successfully.",
+      detail: result.finalState,
+    }];
   }
 
   function setBackupClusterSelection(clusterId: string, value: string | "skip") {
@@ -717,11 +1529,32 @@
     const n = parseFloat(v);
     if (!isNaN(n) && n > 0) updateSettings({ storageLimitGb: n });
   }
+  const BOOKS_TYPE_OPTIONS: { id: BooksLibraryTypeFilter; label: string }[] = [
+    { id: "all", label: "All" },
+    { id: "epub", label: "EPUB" },
+    { id: "pdf", label: "PDF" },
+    { id: "sources", label: "Sources" },
+  ];
+  const LIBRARY_START_OPTIONS: { id: Settings["defaultLibrarySection"]; label: string }[] = [
+    { id: "last-used", label: "Last used" },
+    { id: "comics", label: "Comics" },
+    { id: "books", label: "Books" },
+  ];
   let catsLoading:    boolean      = $state(false);
   let catsError:      string|null  = $state(null);
+  let categoryDomain: "comics" | "books" = $state("comics");
   let newFolderName   = $state("");
-  let editingId: number | null     = $state(null);
+  let editingId: string | number | null = $state(null);
   let editingName     = $state("");
+  const sortedBooksCategories = $derived(sortBooksCategories(store.settings.booksCategories));
+  const booksCategoryCounts = $derived(
+    Object.fromEntries(
+      sortedBooksCategories.map((category) => [
+        category.id,
+        countBooksForCategory(category.id, store.settings.booksCategoryAssignments),
+      ]),
+    ),
+  );
   async function loadCategories() {
     catsLoading = true; catsError = null;
     try {
@@ -740,15 +1573,34 @@
   async function createFolder() {
     const name = newFolderName.trim();
     if (!name) return;
+    if (categoryDomain === "books") {
+      const nextCategory = createBooksCategory(store.settings.booksCategories, name);
+      updateSettings({
+        booksCategories: sortBooksCategories([...store.settings.booksCategories, nextCategory]),
+      });
+      newFolderName = "";
+      return;
+    }
     try {
       const res = await gql<{ createCategory: { category: Category } }>(CREATE_CATEGORY, { name });
       setCategories([...store.categories, res.createCategory.category]);
       newFolderName = "";
     } catch (e: any) { catsError = e?.message ?? "Failed to create folder"; }
   }
-  function startEdit(id: number, name: string) { editingId = id; editingName = name; }
+  function startEdit(id: string | number, name: string) { editingId = id; editingName = name; }
   async function commitEdit() {
     if (editingId !== null && editingName.trim()) {
+      if (categoryDomain === "books") {
+        updateSettings({
+          booksCategories: renameBooksCategory(
+            store.settings.booksCategories,
+            String(editingId),
+            editingName.trim(),
+          ),
+        });
+        editingId = null; editingName = "";
+        return;
+      }
       try {
         await gql(UPDATE_CATEGORY, { id: editingId, name: editingName.trim() });
         setCategories(store.categories.map(c => c.id === editingId ? { ...c, name: editingName.trim() } : c));
@@ -756,13 +1608,41 @@
     }
     editingId = null; editingName = "";
   }
-  async function deleteFolder(id: number) {
+  async function deleteFolder(id: string | number) {
+    if (categoryDomain === "books") {
+      const result = deleteBooksCategory(
+        store.settings.booksCategories,
+        store.settings.booksCategoryAssignments,
+        String(id),
+      );
+      updateSettings({
+        booksCategories: result.categories,
+        booksCategoryAssignments: normalizeBooksCategoryAssignments(
+          result.assignments,
+          result.categories.map((category) => category.id),
+        ),
+        booksLibraryUi: {
+          ...store.settings.booksLibraryUi,
+          activeCategoryId:
+            store.settings.booksLibraryUi.activeCategoryId === id
+              ? null
+              : store.settings.booksLibraryUi.activeCategoryId,
+        },
+      });
+      return;
+    }
     try {
       await gql(DELETE_CATEGORY, { id });
       setCategories(store.categories.filter(c => c.id !== id));
     } catch (e: any) { catsError = e?.message ?? "Failed to delete folder"; }
   }
-  async function moveCategory(id: number, direction: -1 | 1) {
+  async function moveCategory(id: string | number, direction: -1 | 1) {
+    if (categoryDomain === "books") {
+      updateSettings({
+        booksCategories: moveBooksCategory(store.settings.booksCategories, String(id), direction),
+      });
+      return;
+    }
     const zeroCat  = store.categories.filter(c => c.id === 0);
     const sortable = store.categories
       .filter(c => c.id !== 0)
@@ -792,7 +1672,9 @@
       await loadCategories();
     }
   }
-  $effect(() => { if (tab === "folders" && !store.categories.length && !catsLoading) loadCategories(); });
+  $effect(() => {
+    if (tab === "folders" && categoryDomain === "comics" && !store.categories.length && !catsLoading) loadCategories();
+  });
   let selectOpen: string | null = $state(null);
   function toggleSelect(id: string) { selectOpen = selectOpen === id ? null : id; }
   function onSelectOutside(e: MouseEvent) {
@@ -824,6 +1706,16 @@
   let flareSession     = $state(store.settings.flareSolverrSessionName ?? "moku");
   let flareTtl         = $state(store.settings.flareSolverrSessionTtl ?? 15);
   let flareFallback    = $state(store.settings.flareSolverrFallback ?? false);
+  let flareLocalAutoStart = $state(store.settings.flareSolverrLocalAutoStart ?? false);
+  let flareTestState   = $state<FlareTestState>("idle");
+  let flareLocalStatus = $state<LocalFlareSolverrStatus | null>(null);
+  let flareLocalBusy   = $state(false);
+  let flareDockerStatus = $state<DockerFlareSolverrStatus | null>(null);
+  let flareDockerBusy  = $state(false);
+  let flareAdvancedOpen = $state(false);
+  let flareLocalOpen = $state(false);
+  let flareDockerOpen = $state(false);
+  let flareAutoChecked = $state(false);
   function showSaved(key: string) {
     secSaved = key; secError = null;
     setTimeout(() => { if (secSaved === key) secSaved = null; }, 2000);
@@ -860,6 +1752,23 @@
     } catch {}
   }
   $effect(() => { if (tab === "security" && !secLoaded) loadServerSecurity(); });
+  $effect(() => {
+    if (tab === "security" && flareLocalStatus === null && !flareLocalBusy) {
+      refreshFlareLocalStatus();
+    }
+    if (tab === "security" && flareDockerStatus === null && !flareDockerBusy) {
+      refreshFlareDockerStatus();
+    }
+  });
+  $effect(() => {
+    if (tab !== "security") {
+      flareAutoChecked = false;
+      return;
+    }
+    if (!flareEnabled || flareAutoChecked || flareTestState !== "idle") return;
+    flareAutoChecked = true;
+    void testFlareSolverr();
+  });
   async function enableAuth() {
     if (!authUsername.trim() || !authPassword.trim()) {
       secError = "Username and password are required"; return;
@@ -915,11 +1824,154 @@
         flareSolverrEnabled: flareEnabled, flareSolverrUrl: flareUrl,
         flareSolverrTimeout: flareTimeout, flareSolverrSessionName: flareSession,
         flareSolverrSessionTtl: flareTtl, flareSolverrFallback: flareFallback,
+        flareSolverrLocalAutoStart: flareLocalAutoStart,
       });
       showSaved("flare");
     } catch (e: any) {
       secError = e?.message ?? "Failed to save FlareSolverr";
     } finally { secLoading = false; }
+  }
+  function flareStatusLabel(state = flareTestState) {
+    if (state === "testing") return "Testing";
+    if (state === "ready") return "Ready";
+    if (state === "not-reachable") return "Not reachable";
+    if (state === "check-url") return "Check URL";
+    return "";
+  }
+  function flareLocalStateLabel() {
+    if (flareLocalBusy) return "Checking";
+    if (!flareLocalStatus?.installed) return "Not installed";
+    return flareLocalStatus.running ? "Running" : "Installed";
+  }
+  function flareDockerStateLabel() {
+    if (flareDockerBusy) return "Checking";
+    if (!flareDockerStatus?.installed) return "Docker not found";
+    if (!flareDockerStatus.daemon) return "Docker unavailable";
+    return flareDockerStatus.running ? "Running" : "Available";
+  }
+  function setFlareLocalAutoStart(next: boolean) {
+    flareLocalAutoStart = next;
+    updateSettings({ flareSolverrLocalAutoStart: next });
+  }
+  function normalizedFlareUrl() {
+    const raw = flareUrl.trim() || "http://localhost:8191";
+    const url = new URL(raw);
+    return `${url.origin}/v1`;
+  }
+  async function testFlareSolverr({ saveOnReady = false } = {}) {
+    flareTestState = "testing";
+    let endpoint: string;
+    try {
+      endpoint = normalizedFlareUrl();
+    } catch {
+      flareTestState = "check-url";
+      return false;
+    }
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 6000);
+    try {
+      const response = await tauriFetch(endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cmd: "sessions.list" }),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        flareTestState = "check-url";
+        return false;
+      }
+      const body = await response.json().catch(() => null) as { status?: string } | null;
+      flareTestState = body?.status === "ok" ? "ready" : "check-url";
+      if (flareTestState === "ready" && saveOnReady) {
+        flareEnabled = true;
+        await saveFlareSolverr();
+      }
+      return flareTestState === "ready";
+    } catch {
+      flareTestState = "not-reachable";
+      return false;
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+  async function refreshFlareLocalStatus() {
+    flareLocalBusy = true;
+    try {
+      flareLocalStatus = await invoke<LocalFlareSolverrStatus>("get_flaresolverr_local_status");
+    } catch {
+      flareLocalStatus = { installed: false, running: false, path: null, message: "Not installed" };
+    } finally {
+      flareLocalBusy = false;
+    }
+  }
+  async function startFlareLocal() {
+    flareLocalBusy = true;
+    try {
+      flareLocalStatus = await invoke<LocalFlareSolverrStatus>("start_flaresolverr_local");
+      flareUrl = "http://localhost:8191";
+      await new Promise((resolve) => window.setTimeout(resolve, 2500));
+      await testFlareSolverr({ saveOnReady: true });
+    } catch {
+      flareTestState = "not-reachable";
+    } finally {
+      flareLocalBusy = false;
+    }
+  }
+  async function stopFlareLocal() {
+    flareLocalBusy = true;
+    try {
+      flareLocalStatus = await invoke<LocalFlareSolverrStatus>("stop_flaresolverr_local");
+    } catch {
+      flareTestState = "check-url";
+    } finally {
+      flareLocalBusy = false;
+    }
+  }
+  async function openFlareLocalFolder() {
+    try {
+      await invoke("open_flaresolverr_local_folder");
+    } catch {
+      addToast("Folder unavailable");
+    }
+  }
+  async function openFlareLocalLogs() {
+    try {
+      await invoke("open_flaresolverr_local_logs");
+    } catch {
+      addToast("Logs unavailable");
+    }
+  }
+  async function refreshFlareDockerStatus() {
+    flareDockerBusy = true;
+    try {
+      flareDockerStatus = await invoke<DockerFlareSolverrStatus>("get_flaresolverr_docker_status");
+    } catch {
+      flareDockerStatus = { installed: false, daemon: false, running: false, version: null, message: "Docker not found" };
+    } finally {
+      flareDockerBusy = false;
+    }
+  }
+  async function startFlareDocker() {
+    flareDockerBusy = true;
+    try {
+      flareDockerStatus = await invoke<DockerFlareSolverrStatus>("start_flaresolverr_docker");
+      flareUrl = "http://localhost:8191";
+      await testFlareSolverr({ saveOnReady: true });
+    } catch {
+      flareTestState = "not-reachable";
+    } finally {
+      flareDockerBusy = false;
+    }
+  }
+  async function stopFlareDocker() {
+    flareDockerBusy = true;
+    try {
+      flareDockerStatus = await invoke<DockerFlareSolverrStatus>("stop_flaresolverr_docker");
+    } catch {
+      flareTestState = "check-url";
+    } finally {
+      flareDockerBusy = false;
+    }
   }
   function commitPin() {
     const cleaned = pinInput.replace(/\D/g, "").slice(0, 8);
@@ -1108,7 +2160,7 @@
     dlTotal     = null;
     try {
       if (IS_WINDOWS) {
-        try { await invoke("kill_server"); } catch {}
+        try { await invoke("kill_server", { serverUrl: currentRuntimeServerUrl }); } catch {}
         await invoke("download_and_install_update");
         updatePhase = "ready";
       } else {
@@ -1283,8 +2335,61 @@
             <div class="section">
               <p class="section-title">Server</p>
               <div class="step-row">
-                <div class="toggle-info"><span class="toggle-label">Server URL</span><span class="toggle-desc">Base URL of your Suwayomi instance</span></div>
-                <input class="text-input" value={store.settings.serverUrl ?? "http://localhost:4567"} oninput={(e) => updateSettings({ serverUrl: e.currentTarget.value })} placeholder="http://localhost:4567" spellcheck="false" />
+                <div class="toggle-info">
+                  <span class="toggle-label">Profile</span>
+                  <span class="toggle-desc">Pick which local profile should boot on the next app start.</span>
+                </div>
+                <div class="profile-picker">
+                  {#each BUILTIN_LOCAL_PROFILES as profile}
+                    <button
+                      class="profile-option"
+                      class:active={persistedDefaultProfileId === profile.id}
+                      onclick={() => setDefaultLocalProfile(profile.id)}
+                    >
+                      <span class="profile-option-label">{profile.label}</span>
+                      <span class="profile-option-meta">:{profile.port}</span>
+                    </button>
+                  {/each}
+                </div>
+              </div>
+              <div class="profile-status-grid">
+                <div class="profile-status-card">
+                  <span class="profile-status-label">Current session</span>
+                  <span class="profile-status-value">{currentSessionProfileSummary}</span>
+                  <span class="profile-status-meta">{currentRuntimeServerUrl}</span>
+                </div>
+                <div class="profile-status-card">
+                  <span class="profile-status-label">Next launch default</span>
+                  <span class="profile-status-value">{nextLaunchProfileSummary}</span>
+                  <span class="profile-status-meta">{nextLaunchProfileMeta?.serverUrl ?? currentRuntimeServerUrl}</span>
+                </div>
+              </div>
+              <div class="profile-note">
+                {#if store.runtimeIsOverrideSession}
+                  This session is running under a launch override. Changing the default profile here will only affect the next normal app launch.
+                {:else}
+                  Changes here apply on the next app start. The current session stays on its active profile.
+                {/if}
+              </div>
+              <div class="step-row">
+                <div class="toggle-info">
+                  <span class="toggle-label">Server URL</span>
+                  <span class="toggle-desc">
+                    {serverUrlManagedByProfile
+                      ? "Managed by the current Profile for this session."
+                      : "Base URL of your Suwayomi instance."}
+                  </span>
+                </div>
+                <input
+                  class="text-input"
+                  value={currentRuntimeServerUrl}
+                  oninput={(e) => {
+                    if (!serverUrlManagedByProfile) updateSettings({ serverUrl: e.currentTarget.value });
+                  }}
+                  placeholder="http://localhost:4567"
+                  spellcheck="false"
+                  readonly={serverUrlManagedByProfile}
+                />
               </div>
               <label class="toggle-row">
                 <div class="toggle-info"><span class="toggle-label">Auto-start server</span><span class="toggle-desc">Launch tachidesk-server when Aethon opens</span></div>
@@ -1297,7 +2402,7 @@
                 <div class="toggle-info"><span class="toggle-label">Idle screen timeout</span><span class="toggle-desc">Show the Aethon idle splash after this much inactivity.</span></div>
                 <div class="select-wrap" id="idle-timeout">
                   <button class="select-btn" onclick={() => toggleSelect("idle-timeout")}>
-                    <span>{{ "0":"Never","1":"1 minute","2":"2 minutes","5":"5 minutes","10":"10 minutes","15":"15 minutes","30":"30 minutes" }[String(store.settings.idleTimeoutMin ?? 5)] ?? `${store.settings.idleTimeoutMin} min`}</span>
+                    <span>{idleTimeoutLabel(store.settings.idleTimeoutMin)}</span>
                     <svg class="select-caret" class:open={selectOpen === "idle-timeout"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
                   </button>
                   {#if selectOpen === "idle-timeout"}
@@ -1428,7 +2533,7 @@
                 <div class="toggle-info"><span class="toggle-label">Default layout</span><span class="toggle-desc">How chapters open by default</span></div>
                 <div class="select-wrap" id="page-style">
                   <button class="select-btn" onclick={() => toggleSelect("page-style")}>
-                    <span>{{ "single":"Single page","longstrip":"Long strip" }[store.settings.pageStyle === "double" ? "single" : store.settings.pageStyle]}</span>
+                    <span>{pageStyleLabel(store.settings.pageStyle)}</span>
                     <svg class="select-caret" class:open={selectOpen === "page-style"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
                   </button>
                   {#if selectOpen === "page-style"}
@@ -1444,7 +2549,7 @@
                 <div class="toggle-info"><span class="toggle-label">Reading direction</span><span class="toggle-desc">Left-to-right for most manga, right-to-left for Japanese</span></div>
                 <div class="select-wrap" id="reading-dir">
                   <button class="select-btn" onclick={() => toggleSelect("reading-dir")}>
-                    <span>{{ "ltr":"Left to right","rtl":"Right to left" }[store.settings.readingDirection]}</span>
+                    <span>{readingDirectionLabel(store.settings.readingDirection)}</span>
                     <svg class="select-caret" class:open={selectOpen === "reading-dir"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
                   </button>
                   {#if selectOpen === "reading-dir"}
@@ -1471,7 +2576,7 @@
                 <div class="toggle-info"><span class="toggle-label">Default fit mode</span></div>
                 <div class="select-wrap" id="fit-mode">
                   <button class="select-btn" onclick={() => toggleSelect("fit-mode")}>
-                    <span>{{ "width":"Fit width","height":"Fit height","screen":"Fit screen","original":"Original (1:1)" }[store.settings.fitMode ?? "width"]}</span>
+                    <span>{fitModeLabel(store.settings.fitMode)}</span>
                     <svg class="select-caret" class:open={selectOpen === "fit-mode"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
                   </button>
                   {#if selectOpen === "fit-mode"}
@@ -1558,30 +2663,129 @@
         {:else if tab === "library"}
           <div class="panel">
             <div class="section">
-              <p class="section-title">Display</p>
+              <p class="section-title">Shared display</p>
+              <div class="toggle-info" style="padding:0 var(--sp-3) var(--sp-3);">
+                <span class="toggle-desc">These controls apply to both Comics and Books in Library.</span>
+              </div>
+              <div class="setting-stack">
+                <div class="toggle-info">
+                  <span class="toggle-label">Layout</span>
+                </div>
+                <div class="library-segmented">
+                  {#each [["grid", "Grid"], ["compact_grid", "Compact grid"], ["list", "List"]] as [mode, label]}
+                    <button
+                      class="library-segment-btn"
+                      class:active={store.settings.libraryViewMode === mode}
+                      onclick={() => updateSettings({ libraryViewMode: mode as Settings["libraryViewMode"] })}
+                    >
+                      {label}
+                    </button>
+                  {/each}
+                </div>
+              </div>
+              <div class="setting-stack">
+                <div class="step-row">
+                  <div class="toggle-info">
+                    <span class="toggle-label">Items per row</span>
+                    <span class="toggle-desc">
+                      {store.settings.libraryPreferredGridColumns === "auto" ? "Auto" : store.settings.libraryPreferredGridColumns}
+                    </span>
+                  </div>
+                </div>
+                <div style="padding:0 var(--sp-3);">
+                  <LibraryDensityRail
+                    value={store.settings.libraryPreferredGridColumns}
+                    disabled={store.settings.libraryViewMode === "list"}
+                    onSelect={(value) => updateSettings({ libraryPreferredGridColumns: value })}
+                  />
+                </div>
+              </div>
               <label class="toggle-row">
-                <div class="toggle-info"><span class="toggle-label">Crop cover images</span></div>
-                <button role="switch" aria-checked={store.settings.libraryCropCovers} aria-label="Crop cover images" class="toggle" class:on={store.settings.libraryCropCovers} onclick={() => updateSettings({ libraryCropCovers: !store.settings.libraryCropCovers })}><span class="toggle-thumb"></span></button>
+                <div class="toggle-info">
+                  <span class="toggle-label">Show progress</span>
+                  <span class="toggle-desc">Hide progress gracefully when an item has none.</span>
+                </div>
+                <button role="switch" aria-checked={store.settings.libraryShowProgress} aria-label="Show progress" class="toggle" class:on={store.settings.libraryShowProgress} onclick={() => updateSettings({ libraryShowProgress: !store.settings.libraryShowProgress })}><span class="toggle-thumb"></span></button>
+              </label>
+              <label class="toggle-row">
+                <div class="toggle-info">
+                  <span class="toggle-label">Show outlines</span>
+                  <span class="toggle-desc">Focus, hover, and selection cues stay visible either way.</span>
+                </div>
+                <button role="switch" aria-checked={store.settings.libraryShowCardOutline} aria-label="Show outlines" class="toggle" class:on={store.settings.libraryShowCardOutline} onclick={() => updateSettings({ libraryShowCardOutline: !store.settings.libraryShowCardOutline })}><span class="toggle-thumb"></span></button>
               </label>
             </div>
             <div class="section">
-              <p class="section-title">Chapters</p>
+              <p class="section-title">Books</p>
+              <div class="setting-stack">
+                <div class="toggle-info">
+                  <span class="toggle-label">Default Books type filter</span>
+                </div>
+                <div class="library-segmented">
+                  {#each BOOKS_TYPE_OPTIONS as option}
+                    <button
+                      class="library-segment-btn"
+                      class:active={store.settings.booksLibraryUi.typeFilter === option.id}
+                      onclick={() => updateSettings({
+                        booksLibraryUi: { ...store.settings.booksLibraryUi, typeFilter: option.id },
+                      })}
+                    >
+                      {option.label}
+                    </button>
+                  {/each}
+                </div>
+              </div>
               <div class="step-row">
-                <div class="toggle-info"><span class="toggle-label">Default sort direction</span></div>
-                <div class="select-wrap" id="sort-dir">
-                  <button class="select-btn" onclick={() => toggleSelect("sort-dir")}>
-                    <span>{{ "desc":"Newest first","asc":"Oldest first" }[store.settings.chapterSortDir]}</span>
-                    <svg class="select-caret" class:open={selectOpen === "sort-dir"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
+                <div class="toggle-info"><span class="toggle-label">Default Books reading status</span></div>
+                <div class="select-wrap" id="books-status-filter">
+                  <button class="select-btn" onclick={() => toggleSelect("books-status-filter")}>
+                    <span>{BOOKS_FILTER_OPTIONS.find((option) => option.id === store.settings.booksLibraryUi.statusFilter)?.label ?? "All books"}</span>
+                    <svg class="select-caret" class:open={selectOpen === "books-status-filter"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
                   </button>
-                  {#if selectOpen === "sort-dir"}
+                  {#if selectOpen === "books-status-filter"}
                     <div class="select-menu">
-                      {#each [["desc","Newest first"],["asc","Oldest first"]] as [v, l]}
-                        <button class="select-option" class:active={store.settings.chapterSortDir === v} onclick={() => { updateSettings({ chapterSortDir: v as Settings["chapterSortDir"] }); selectOpen = null; }}>{l}</button>
+                      {#each BOOKS_FILTER_OPTIONS as option}
+                        <button
+                          class="select-option"
+                          class:active={store.settings.booksLibraryUi.statusFilter === option.id}
+                          onclick={() => {
+                            updateSettings({
+                              booksLibraryUi: { ...store.settings.booksLibraryUi, statusFilter: option.id as BooksLibraryStatusFilter },
+                            });
+                            selectOpen = null;
+                          }}
+                        >
+                          {option.label}
+                        </button>
                       {/each}
                     </div>
                   {/if}
                 </div>
               </div>
+            </div>
+            <div class="section">
+              <p class="section-title">Library start</p>
+              <div class="library-segmented">
+                {#each LIBRARY_START_OPTIONS as option}
+                  <button
+                    class="library-segment-btn"
+                    class:active={store.settings.defaultLibrarySection === option.id}
+                    onclick={() => updateSettings({ defaultLibrarySection: option.id })}
+                  >
+                    {option.label}
+                  </button>
+                {/each}
+              </div>
+            </div>
+            <div class="section">
+              <p class="section-title">Comics</p>
+              <label class="toggle-row">
+                <div class="toggle-info">
+                  <span class="toggle-label">Crop cover images</span>
+                  <span class="toggle-desc">Keeps Comics covers in cover mode while Books stays independent.</span>
+                </div>
+                <button role="switch" aria-checked={store.settings.libraryCropCovers} aria-label="Crop cover images" class="toggle" class:on={store.settings.libraryCropCovers} onclick={() => updateSettings({ libraryCropCovers: !store.settings.libraryCropCovers })}><span class="toggle-thumb"></span></button>
+              </label>
             </div>
             <div class="section">
               <p class="section-title">History</p>
@@ -1832,11 +3036,344 @@
             </div>
 
             <!-- â”€â”€ Advanced (collapsible) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
-            <div class="section">
+            <div class="section" bind:this={backupSectionEl}>
               <p class="section-title">Backup & Restore</p>
               <p class="toggle-desc" style="padding:0 var(--sp-3) var(--sp-3);display:block">
-                These actions operate on the current Suwayomi server. If Aethon Desktop and Aethon Mobile point to the same server, both clients will reflect the restored library state.
+                Unified Aethon backups now live here, while subsystem-only manga, novels, and Books flows remain available. Restore stays sandbox-first by default.
               </p>
+              <div class="backup-warning-block" style="margin:0 var(--sp-3) var(--sp-3)">
+                <span class="toggle-label">Export</span>
+                <span class="toggle-desc">Choose a unified backup or keep one subsystem isolated when that is safer.</span>
+                <div class="library-segmented" style="margin-top:var(--sp-2);flex-wrap:wrap">
+                  {#each [
+                    ["unified", "Unified Aethon"],
+                    ["manga", "Manga only"],
+                    ["books", "Books only"],
+                    ["novels", "Novels only"],
+                    ["app", "App metadata"],
+                  ] as [mode, label]}
+                    <button
+                      class="library-segment-btn"
+                      class:active={backupExportMode === mode}
+                      onclick={() => {
+                        backupExportMode = mode as BackupExportMode;
+                        backupSavedPath = null;
+                      }}
+                    >
+                      {label}
+                    </button>
+                  {/each}
+                </div>
+                {#if backupExportMode === "unified"}
+                  <div class="backup-suggestions" style="margin-top:var(--sp-3)">
+                    <label class="toggle-row">
+                      <div class="toggle-info">
+                        <span class="toggle-label">Include Manga</span>
+                        <span class="toggle-desc">Embeds the native .tachibk payload inside the unified .aethonbk file.</span>
+                      </div>
+                      <button role="switch" aria-checked={backupUnifiedIncludeManga} aria-label="Include Manga" class="toggle" class:on={backupUnifiedIncludeManga} onclick={() => backupUnifiedIncludeManga = !backupUnifiedIncludeManga}><span class="toggle-thumb"></span></button>
+                    </label>
+                    <label class="toggle-row">
+                      <div class="toggle-info">
+                        <span class="toggle-label">Include Books</span>
+                        <span class="toggle-desc">Default is full EPUB/PDF files plus metadata, progress, bookmarks, and covers.</span>
+                      </div>
+                      <button role="switch" aria-checked={backupUnifiedIncludeBooks} aria-label="Include Books" class="toggle" class:on={backupUnifiedIncludeBooks} onclick={() => backupUnifiedIncludeBooks = !backupUnifiedIncludeBooks}><span class="toggle-thumb"></span></button>
+                    </label>
+                    <label class="toggle-row">
+                      <div class="toggle-info">
+                        <span class="toggle-label">Include Novels</span>
+                        <span class="toggle-desc">Exports repository-aware novel state without bundling plugin binaries.</span>
+                      </div>
+                      <button role="switch" aria-checked={backupUnifiedIncludeNovels} aria-label="Include Novels" class="toggle" class:on={backupUnifiedIncludeNovels} onclick={() => backupUnifiedIncludeNovels = !backupUnifiedIncludeNovels}><span class="toggle-thumb"></span></button>
+                    </label>
+                    <label class="toggle-row">
+                      <div class="toggle-info">
+                        <span class="toggle-label">Include app/profile metadata</span>
+                        <span class="toggle-desc">Optional and minimal. Carries only portable next-launch profile metadata.</span>
+                      </div>
+                      <button role="switch" aria-checked={backupUnifiedIncludeApp} aria-label="Include app metadata" class="toggle" class:on={backupUnifiedIncludeApp} onclick={() => backupUnifiedIncludeApp = !backupUnifiedIncludeApp}><span class="toggle-thumb"></span></button>
+                    </label>
+                  </div>
+                {:else if backupExportMode === "books"}
+                  <label class="toggle-row" style="margin-top:var(--sp-3)">
+                    <div class="toggle-info">
+                      <span class="toggle-label">Metadata-only mode</span>
+                      <span class="toggle-desc">Exports Books metadata without packaging EPUB/PDF files.</span>
+                    </div>
+                    <button role="switch" aria-checked={backupBooksOnlyMetadataOnly} aria-label="Books metadata only" class="toggle" class:on={backupBooksOnlyMetadataOnly} onclick={() => backupBooksOnlyMetadataOnly = !backupBooksOnlyMetadataOnly}><span class="toggle-thumb"></span></button>
+                  </label>
+                {:else if backupExportMode === "manga"}
+                  <span class="toggle-desc" style="display:block;margin-top:var(--sp-3)">Uses the native manga export flow and saves a .tachibk file.</span>
+                {:else if backupExportMode === "novels"}
+                  <span class="toggle-desc" style="display:block;margin-top:var(--sp-3)">Creates a single-payload .aethonbk with repository-aware novel metadata and progress.</span>
+                {:else if backupExportMode === "app"}
+                  <span class="toggle-desc" style="display:block;margin-top:var(--sp-3)">Exports portable profile metadata only. Machine-local settings are intentionally excluded.</span>
+                {/if}
+                <div class="step-row" style="align-items:flex-start;margin-top:var(--sp-3)">
+                  <div class="toggle-info">
+                    <span class="toggle-label">Save backup</span>
+                    <span class="toggle-desc">
+                      {#if backupExportMode === "unified"}
+                        Produces one .aethonbk container with separated payloads.
+                      {:else if backupExportMode === "manga"}
+                        Produces a native .tachibk manga backup.
+                      {:else}
+                        Produces a single-payload .aethonbk backup for {backupPayloadKindLabel(backupExportMode)}.
+                      {/if}
+                    </span>
+                    {#if backupSavedPath}
+                      <span class="toggle-desc" style="display:block;margin-top:4px;color:var(--accent-fg)">{backupSavedPath}</span>
+                    {/if}
+                  </div>
+                  <button class="sec-action-btn sec-action-primary" onclick={exportBackup} disabled={backupExporting || backupValidating || backupRestoring}>
+                    {backupExporting ? "Exporting..." : "Export backup"}
+                  </button>
+                </div>
+              </div>
+              <div class="backup-warning-block" style="margin:0 var(--sp-3)">
+                <span class="toggle-label">Import / Restore</span>
+                <span class="toggle-desc">Pick a backup file, inspect the summary, then choose where restore should run.</span>
+                <div class="step-row" style="align-items:flex-start;margin-top:var(--sp-2)">
+                  <div class="toggle-info">
+                    <span class="toggle-label">Selected file</span>
+                    <span class="toggle-desc">{backupSelectedFileLabel ?? "No backup selected yet."}</span>
+                    {#if backupImportKind}
+                      <span class="toggle-desc" style="display:block;margin-top:4px">
+                        Detected format: {backupImportKind === "aethon" ? ".aethonbk" : "native manga backup"}
+                      </span>
+                    {/if}
+                    {#if backupRestoreHandoffSession}
+                      <span class="toggle-desc" style="display:block;margin-top:4px;color:var(--accent-fg)">
+                        Restore handoff active. Review the plan here and confirm it in this target profile session.
+                      </span>
+                    {:else if backupRestoreSourceProfileId}
+                      <span class="toggle-desc" style="display:block;margin-top:4px;color:var(--text-secondary)">
+                        Origin session: {getLocalProfileMeta(backupRestoreSourceProfileId)?.label ?? backupRestoreSourceProfileId.toUpperCase()}
+                      </span>
+                    {/if}
+                  </div>
+                  <button class="sec-action-btn" onclick={triggerBackupImport} disabled={backupExporting || backupValidating || backupRestoring}>
+                    {backupValidating ? "Inspecting..." : "Choose file"}
+                  </button>
+                </div>
+                {#if backupImportKind === "aethon" && backupUnifiedPlan}
+                  <div class="backup-warning-block" style="margin:var(--sp-3) 0 0">
+                    <span class="toggle-label">Restore summary</span>
+                    <span class="toggle-desc">{backupUnifiedPlan.summary.summaryLabel}</span>
+                    <span class="toggle-desc">{backupUnifiedPlan.summary.summaryBody}</span>
+                    <span class="toggle-desc">Recommended default target: other local profile</span>
+                    <span class="toggle-desc">Blocked: {backupUnifiedBlockedCount} - Unsupported: {backupUnifiedUnsupportedCount} - Warning only: {backupUnifiedWarningCount}</span>
+                    {#if backupUnifiedPlan.executionBlockedReason}
+                      <span class="toggle-desc" style="display:block;margin-top:var(--sp-2);color:var(--color-warning)">{backupUnifiedPlan.executionBlockedReason}</span>
+                    {/if}
+                    {#if backupUnifiedPlan.containerIssues.length > 0}
+                      <div class="backup-suggestions" style="margin-top:var(--sp-2)">
+                        {#each backupUnifiedPlan.containerIssues as issue}
+                          <div class="backup-suggestion-row">
+                            <div class="backup-suggestion-info">
+                              <span class="toggle-label">Container issue</span>
+                              <span class="toggle-desc">{issue.code} - {issue.message}</span>
+                            </div>
+                          </div>
+                        {/each}
+                      </div>
+                    {/if}
+                    <div class="backup-suggestions" style="margin-top:var(--sp-2)">
+                      {#each backupUnifiedPlan.payloads as payload}
+                        <div class="backup-suggestion-row" style="align-items:flex-start;gap:var(--sp-3)">
+                          {#if isPayloadExecutable(payload)}
+                            <input
+                              type="checkbox"
+                              checked={Boolean(backupUnifiedSelection[payload.kind])}
+                              onchange={(event) => {
+                                backupUnifiedSelection = {
+                                  ...backupUnifiedSelection,
+                                  [payload.kind]: event.currentTarget.checked,
+                                };
+                              }}
+                              disabled={!payload.canExecuteRestore || !payload.canRestoreNow || backupRestoring}
+                              style="margin-top:2px" />
+                          {:else}
+                            <span class="toggle-desc" style="min-width:66px;margin-top:2px">{payload.canExecuteRestore ? "Info" : "Preview"}</span>
+                          {/if}
+                          <div class="backup-suggestion-info">
+                            <span class="toggle-label">{backupPayloadKindLabel(payload.kind)} - {backupPayloadStatusLabel(payload.status)}</span>
+                            <span class="toggle-desc">{payload.summaryLabel}</span>
+                            <span class="toggle-desc">canRestoreNow: {payload.canRestoreNow ? "true" : "false"} - needsUserAction: {payload.needsUserAction ? "true" : "false"} - canExecuteRestore: {payload.canExecuteRestore ? "true" : "false"} - selectedByDefault: {payload.selectedByDefault ? "true" : "false"}</span>
+                            {#if payload.availableRestoreModes.length > 0}
+                              <span class="toggle-desc">Restore modes: {payload.availableRestoreModes.join(", ")}{payload.defaultRestoreMode ? ` - default: ${payload.defaultRestoreMode}` : ""}</span>
+                            {/if}
+                            {#if payload.reasons.length > 0}
+                              {#each payload.reasons as reason}
+                                <span class="toggle-desc" style="display:block">Reason: {reason.code} - {reason.message}</span>
+                              {/each}
+                            {/if}
+                            {#if payload.warnings.length > 0}
+                              {#each payload.warnings as warning}
+                                <span class="toggle-desc" style="display:block">Warning: {warning.code} - {warning.message}</span>
+                              {/each}
+                            {/if}
+                          </div>
+                        </div>
+                      {/each}
+                    </div>
+                    {#if backupUnifiedPlan.topLevelSkipped.length > 0}
+                      <div class="backup-suggestions" style="margin-top:var(--sp-2)">
+                        {#each backupUnifiedPlan.topLevelSkipped as skipped}
+                          <div class="backup-suggestion-row">
+                            <div class="backup-suggestion-info">
+                              <span class="toggle-label">{backupPayloadKindLabel(skipped.kind)} - {backupPayloadStatusLabel(skipped.status)}</span>
+                              <span class="toggle-desc">{skipped.summaryLabel}</span>
+                              <span class="toggle-desc">{skipped.reason}</span>
+                            </div>
+                          </div>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
+                {:else if backupImportKind === "manga"}
+                  <div class="backup-warning-block" style="margin:var(--sp-3) 0 0">
+                    <span class="toggle-label">Manga restore path</span>
+                    <span class="toggle-desc">Native manga backups stay on the current Mihon-style restore flow. You can keep the restore sandboxed by handing it off to the other local profile first.</span>
+                    {#if backupRestoreTargetMode === "other-local-profile" && otherLocalProfileMeta}
+                      <span class="toggle-desc" style="display:block;margin-top:6px">Aethon will relaunch into {otherLocalProfileMeta.label}, reopen this backup in Settings > Storage, and wait for confirmation there.</span>
+                    {:else if backupRestoreTargetMode === "current-profile"}
+                      <span class="toggle-desc" style="display:block;margin-top:6px">Source reconciliation and restore readiness run in the current profile before restore is allowed.</span>
+                    {/if}
+                  </div>
+                {/if}
+                {#if backupImportKind}
+                  <div class="backup-warning-block" style="margin:var(--sp-3) 0 0">
+                    <span class="toggle-label">Restore target</span>
+                    <span class="toggle-desc">{backupCurrentTargetSummary}</span>
+                    {#if backupCanUseOtherProfileTarget}
+                      <div class="library-segmented" style="margin-top:var(--sp-2);flex-wrap:wrap">
+                        <button class="library-segment-btn" class:active={backupRestoreTargetMode === "other-local-profile"} onclick={() => { backupRestoreTargetMode = "other-local-profile"; backupRestoreCurrentProfileConfirmed = false; }}>
+                          {otherLocalProfileMeta ? `Restore into ${otherLocalProfileMeta.label} (Recommended)` : "Other local profile (Recommended)"}
+                        </button>
+                        <button class="library-segment-btn" class:active={backupRestoreTargetMode === "current-profile"} onclick={() => backupRestoreTargetMode = "current-profile"}>
+                          Current profile (Advanced)
+                        </button>
+                      </div>
+                    {:else if backupRestoreHandoffSession}
+                      <span class="toggle-desc" style="display:block;margin-top:var(--sp-2)">This handoff is now scoped to the current profile session. Review the summary here and confirm to continue.</span>
+                    {:else}
+                      <span class="toggle-desc" style="display:block;margin-top:var(--sp-2)">Restore execution is only available when the current session is already running on TEST or MAIN.</span>
+                    {/if}
+                    {#if backupCurrentProfileGateRequired}
+                      <label class="toggle-row" style="margin-top:var(--sp-3)">
+                        <div class="toggle-info">
+                          <span class="toggle-label">Confirm current-profile restore</span>
+                          <span class="toggle-desc">This advanced path restores directly into {currentProfileMeta?.label ?? currentSessionProfileLabel} instead of the recommended sandbox target.</span>
+                        </div>
+                        <button role="switch" aria-checked={backupRestoreCurrentProfileConfirmed} aria-label="Confirm current profile restore" class="toggle" class:on={backupRestoreCurrentProfileConfirmed} onclick={() => backupRestoreCurrentProfileConfirmed = !backupRestoreCurrentProfileConfirmed}><span class="toggle-thumb"></span></button>
+                      </label>
+                    {/if}
+                    {#if backupResolvedExecutionBlockedReason}
+                      <span class="toggle-desc" style="display:block;margin-top:var(--sp-2);color:var(--color-warning)">{backupResolvedExecutionBlockedReason}</span>
+                    {/if}
+                    <div class="step-row" style="align-items:flex-start;margin-top:var(--sp-3)">
+                      <div class="toggle-info">
+                        <span class="toggle-label">Restore action</span>
+                        <span class="toggle-desc">
+                          {#if backupRestoreTargetMode === "other-local-profile"}
+                            The selected backup will be handed off to the inactive local profile and confirmed there before restore starts.
+                          {:else if backupImportKind === "aethon"}
+                            Will restore: {backupExecutablePayloadKinds.length > 0 ? backupExecutablePayloadKinds.map((kind) => backupPayloadKindLabel(kind)).join(", ") : "nothing yet"}.
+                          {:else}
+                            Runs the proven manga restore path in the current profile after the current confirmation gate is satisfied.
+                          {/if}
+                        </span>
+                        {#if backupRestoreStatus}
+                          <span class="toggle-desc" style="display:block;margin-top:4px">{backupRestoreStatus.state} - {backupRestoreStatus.mangaProgress}/{backupRestoreStatus.totalManga || 0} manga</span>
+                        {/if}
+                      </div>
+                      <div style="display:flex;gap:var(--sp-2);flex-wrap:wrap;justify-content:flex-end">
+                        {#if backupImportKind === "manga" && backupRestoreTargetMode === "current-profile"}
+                          <button class="sec-action-btn" onclick={refreshBackupReadiness} disabled={!backupSelectedFile || backupValidating || backupRestoring}>
+                            Refresh readiness
+                          </button>
+                        {/if}
+                        <button class="sec-action-btn sec-action-primary" onclick={executeSelectedRestore} disabled={backupExecuteDisabled}>
+                          {backupRestoreButtonLabel()}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                {/if}
+              </div>
+              {#if false}
+              {#if backupAuditPlan}
+                <div class="backup-warning-block" style="margin:0 var(--sp-3) var(--sp-3)">
+                  <span class="toggle-label">Unified backup audit (internal)</span>
+                  <span class="toggle-desc">{backupAuditPlan.summary.summaryLabel}</span>
+                  <span class="toggle-desc">{backupAuditPlan.summary.summaryBody}</span>
+                  <span class="toggle-desc">Default target: sandbox profile</span>
+                  {#if backupAuditPlan.recommendedSelection.length > 0}
+                    <span class="toggle-desc">Recommended selection: {backupAuditPlan.recommendedSelection.join(", ")}</span>
+                  {/if}
+                  {#if backupAuditPlan.containerIssues.length > 0}
+                    <div class="backup-suggestions">
+                      {#each backupAuditPlan.containerIssues as issue}
+                        <div class="backup-suggestion-row">
+                          <div class="backup-suggestion-info">
+                            <span class="toggle-label">Container issue</span>
+                            <span class="toggle-desc">{issue.code} • {issue.message}</span>
+                          </div>
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
+                  <div class="backup-suggestions">
+                    {#each backupAuditPlan.payloads as payload}
+                      <div class="backup-suggestion-row" style="align-items:flex-start;flex-direction:column">
+                        <div class="backup-suggestion-info">
+                          <span class="toggle-label">{payload.kind.toUpperCase()} • {payload.status}</span>
+                          <span class="toggle-desc">{payload.summaryLabel}</span>
+                          <span class="toggle-desc">canRestoreNow: {payload.canRestoreNow ? "true" : "false"} • needsUserAction: {payload.needsUserAction ? "true" : "false"} • selectedByDefault: {payload.selectedByDefault ? "true" : "false"}</span>
+                          {#if payload.availableRestoreModes.length > 0}
+                            <span class="toggle-desc">Restore modes: {payload.availableRestoreModes.join(", ")}{payload.defaultRestoreMode ? ` • default: ${payload.defaultRestoreMode}` : ""}</span>
+                          {/if}
+                        </div>
+                        {#if payload.reasons.length > 0}
+                          <div class="backup-suggestions" style="width:100%">
+                            {#each payload.reasons as reason}
+                              <div class="backup-suggestion-row">
+                                <div class="backup-suggestion-info">
+                                  <span class="toggle-label">Reason</span>
+                                  <span class="toggle-desc">{reason.code} • {reason.message}</span>
+                                </div>
+                              </div>
+                            {/each}
+                          </div>
+                        {/if}
+                        {#if payload.warnings.length > 0}
+                          <div class="backup-suggestions" style="width:100%">
+                            {#each payload.warnings as warning}
+                              <div class="backup-suggestion-row">
+                                <div class="backup-suggestion-info">
+                                  <span class="toggle-label">Warning</span>
+                                  <span class="toggle-desc">{warning.code} • {warning.message}</span>
+                                </div>
+                              </div>
+                            {/each}
+                          </div>
+                        {/if}
+                      </div>
+                    {/each}
+                    {#each backupAuditPlan.topLevelSkipped as skipped}
+                      <div class="backup-suggestion-row">
+                        <div class="backup-suggestion-info">
+                          <span class="toggle-label">{skipped.kind.toUpperCase()} • {skipped.status}</span>
+                          <span class="toggle-desc">{skipped.summaryLabel}</span>
+                          <span class="toggle-desc">{skipped.reason} • canRestoreNow: false • needsUserAction: false</span>
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
               <input bind:this={backupFileInput} type="file" accept=".tachibk,.proto.gz,.proto,*/*" style="display:none" onchange={onBackupFileSelected} />
               <div class="step-row" style="align-items:flex-start">
                 <div class="toggle-info">
@@ -1886,7 +3423,8 @@
                   {/if}
                 </div>
               </div>
-              {#if backupAnalysis}
+              {/if}
+              {#if backupImportKind === "manga" && backupAnalysis && backupRestoreTargetMode === "current-profile"}
                 <div class="backup-validate">
                   <div class="backup-validate-row">
                     <span class="toggle-label">Reconciliation Summary</span>
@@ -2100,6 +3638,24 @@
                   {/if}
                 </div>
               {/if}
+              {#if backupRestoreResults}
+                <div class="backup-warning-block" style="margin:var(--sp-3) var(--sp-3) 0">
+                  <span class="toggle-label">Restore results</span>
+                  <div class="backup-suggestions" style="margin-top:var(--sp-2)">
+                    {#each backupRestoreResults as result}
+                      <div class="backup-suggestion-row">
+                        <div class="backup-suggestion-info">
+                          <span class="toggle-label">{backupPayloadKindLabel(result.kind)} - {backupPayloadStatusLabel(result.status)}</span>
+                          <span class="toggle-desc">{result.summary}</span>
+                          {#if result.detail}
+                            <span class="toggle-desc">{result.detail}</span>
+                          {/if}
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
               {#if backupError}
                 <p class="storage-loading" style="color:var(--color-error)">{backupError}</p>
               {/if}
@@ -2172,61 +3728,313 @@
           <div class="panel">
             <div class="section">
               <p class="section-title">Manage Categories</p>
-              <p class="toggle-desc" style="padding:0 var(--sp-3) var(--sp-3);display:block">Categories are stored as Suwayomi categories. Changes sync across all clients.</p>
-              {#if catsError}
-                <p class="toggle-desc" style="padding:0 var(--sp-3) var(--sp-2);color:var(--color-error);display:block">{catsError}</p>
+              <div class="setting-stack">
+                <div class="toggle-info">
+                  <span class="toggle-label">Category domain</span>
+                  <span class="toggle-desc">
+                    {categoryDomain === "comics"
+                      ? "Comics categories stay synced with Suwayomi and other clients."
+                      : "Books categories are stored locally in Aethon and stay separate from Comics."}
+                  </span>
+                </div>
+                <div class="library-segmented">
+                  {#each [
+                    { id: "comics", label: "Comics" },
+                    { id: "books", label: "Books" },
+                  ] as option}
+                    <button
+                      class="library-segment-btn"
+                      class:active={categoryDomain === option.id}
+                      onclick={() => {
+                        categoryDomain = option.id as "comics" | "books";
+                        editingId = null;
+                        editingName = "";
+                        newFolderName = "";
+                      }}
+                    >
+                      {option.label}
+                    </button>
+                  {/each}
+                </div>
+              </div>
+              {#if categoryDomain === "comics"}
+                <p class="toggle-desc" style="padding:0 var(--sp-3) var(--sp-3);display:block">
+                  Categories are stored as Suwayomi categories. Changes sync across all clients.
+                </p>
+                {#if catsError}
+                  <p class="toggle-desc" style="padding:0 var(--sp-3) var(--sp-2);color:var(--color-error);display:block">{catsError}</p>
+                {/if}
+              {:else}
+                <p class="toggle-desc" style="padding:0 var(--sp-3) var(--sp-3);display:block">
+                  Books categories are local to Aethon. They organize your library without changing Comics data.
+                </p>
               {/if}
               <div class="folder-create-row">
-                <input class="text-input" placeholder="New category nameâ€¦" bind:value={newFolderName}
-                  onkeydown={(e) => e.key === "Enter" && createFolder()} style="flex:1;width:auto" />
+                <input
+                  class="text-input"
+                  placeholder="New category name..."
+                  bind:value={newFolderName}
+                  onkeydown={(e) => e.key === "Enter" && createFolder()}
+                  style="flex:1;width:auto"
+                />
                 <button class="folder-create-btn" onclick={createFolder} disabled={!newFolderName.trim()}>
                   <Plus size={13} weight="bold" /> Create
                 </button>
               </div>
-              {#if catsLoading}
-                <p class="storage-loading">Loading categoriesâ€¦</p>
-              {:else if store.categories.filter(c => c.id !== 0).length === 0}
-                <p class="storage-loading">No categories yet. Create one above.</p>
-              {:else}
-                {@const displayCats = store.categories
-                    .filter(c => c.id !== 0)
+              {#if categoryDomain === "comics"}
+                {#if catsLoading}
+                  <p class="storage-loading">Loading categories...</p>
+                {:else if store.categories.filter((c) => c.id !== 0).length === 0}
+                  <p class="storage-loading">No categories yet. Create one above.</p>
+                {:else}
+                  {@const displayCats = store.categories
+                    .filter((c) => c.id !== 0)
                     .sort((a, b) => {
                       const defaultId = store.settings.defaultLibraryCategoryId ?? null;
                       if (a.id === defaultId) return -1;
-                      if (b.id === defaultId) return  1;
+                      if (b.id === defaultId) return 1;
                       return a.order - b.order;
                     })}
+                  <div class="folder-list">
+                    {#each displayCats as cat, i}
+                      <div class="folder-row">
+                        {#if editingId === cat.id}
+                          <input
+                            class="text-input"
+                            bind:value={editingName}
+                            onkeydown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") editingId = null; }}
+                            onblur={commitEdit}
+                            style="flex:1;width:auto"
+                            use:focusInput
+                          />
+                          <button class="kb-reset" onclick={commitEdit} title="Save">Save</button>
+                        {:else}
+                          <FolderSimple size={14} weight="light" style="color:var(--text-faint);flex-shrink:0" />
+                          <span class="folder-row-name">{cat.name}</span>
+                          <span class="folder-row-count">{cat.mangas?.nodes.length ?? 0} manga</span>
+                          <div class="folder-row-actions">
+                            <button
+                              class="kb-reset"
+                              class:folder-default-active={(store.settings.defaultLibraryCategoryId ?? null) === cat.id}
+                              onclick={() => updateSettings({ defaultLibraryCategoryId: (store.settings.defaultLibraryCategoryId ?? null) === cat.id ? null : cat.id })}
+                              title={(store.settings.defaultLibraryCategoryId ?? null) === cat.id ? "Remove as default category" : "Set as default category"}
+                            ><Star size={13} weight={(store.settings.defaultLibraryCategoryId ?? null) === cat.id ? "fill" : "light"} /></button>
+                            <button
+                              class="kb-reset"
+                              class:folder-hidden={(store.settings.hiddenCategoryIds ?? []).includes(cat.id)}
+                              onclick={() => toggleHiddenCategory(cat.id)}
+                              title={(store.settings.hiddenCategoryIds ?? []).includes(cat.id) ? "Show in Saved tab" : "Hide from Saved tab"}
+                            >{#if (store.settings.hiddenCategoryIds ?? []).includes(cat.id)}<EyeSlash size={13} weight="light" />{:else}<Eye size={13} weight="light" />{/if}</button>
+                            <button class="kb-reset" onclick={() => moveCategory(cat.id, -1)} disabled={i === 0} title="Move up">Up</button>
+                            <button class="kb-reset" onclick={() => moveCategory(cat.id, 1)} disabled={i === displayCats.length - 1} title="Move down">Down</button>
+                            <button class="kb-reset" onclick={() => startEdit(cat.id, cat.name)} title="Rename"><Pencil size={12} weight="light" /></button>
+                            <button class="kb-reset folder-delete" onclick={() => deleteFolder(cat.id)} title="Delete"><Trash size={12} weight="light" /></button>
+                          </div>
+                        {/if}
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+              {:else if sortedBooksCategories.length === 0}
+                <p class="storage-loading">No Books categories yet. Create one above.</p>
+              {:else}
                 <div class="folder-list">
-                  {#each displayCats as cat, i}
+                  {#each sortedBooksCategories as cat, i}
                     <div class="folder-row">
                       {#if editingId === cat.id}
-                        <input class="text-input" bind:value={editingName}
+                        <input
+                          class="text-input"
+                          bind:value={editingName}
                           onkeydown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") editingId = null; }}
-                          onblur={commitEdit} style="flex:1;width:auto" use:focusInput />
-                        <button class="kb-reset" onclick={commitEdit} title="Save">âœ“</button>
+                          onblur={commitEdit}
+                          style="flex:1;width:auto"
+                          use:focusInput
+                        />
+                        <button class="kb-reset" onclick={commitEdit} title="Save">Save</button>
                       {:else}
                         <FolderSimple size={14} weight="light" style="color:var(--text-faint);flex-shrink:0" />
                         <span class="folder-row-name">{cat.name}</span>
-                        <span class="folder-row-count">{cat.mangas?.nodes.length ?? 0} manga</span>
-                        <button
-                          class="kb-reset"
-                          class:folder-default-active={(store.settings.defaultLibraryCategoryId ?? null) === cat.id}
-                          onclick={() => updateSettings({ defaultLibraryCategoryId: (store.settings.defaultLibraryCategoryId ?? null) === cat.id ? null : cat.id })}
-                          title={(store.settings.defaultLibraryCategoryId ?? null) === cat.id ? "Remove as default category" : "Set as default category â€” opens first when you visit Library"}
-                        ><Star size={13} weight={(store.settings.defaultLibraryCategoryId ?? null) === cat.id ? "fill" : "light"} /></button>
-                        <button
-                          class="kb-reset"
-                          class:folder-hidden={(store.settings.hiddenCategoryIds ?? []).includes(cat.id)}
-                          onclick={() => toggleHiddenCategory(cat.id)}
-                          title={(store.settings.hiddenCategoryIds ?? []).includes(cat.id) ? "Show in Saved tab" : "Hide from Saved tab"}
-                        >{#if (store.settings.hiddenCategoryIds ?? []).includes(cat.id)}<EyeSlash size={13} weight="light" />{:else}<Eye size={13} weight="light" />{/if}</button>
-                        <button class="kb-reset" onclick={() => moveCategory(cat.id, -1)} disabled={i === 0} title="Move up">â†‘</button>
-                        <button class="kb-reset" onclick={() => moveCategory(cat.id, 1)} disabled={i === displayCats.length - 1} title="Move down">â†“</button>
-                        <button class="kb-reset" onclick={() => startEdit(cat.id, cat.name)} title="Rename"><Pencil size={12} weight="light" /></button>
-                        <button class="kb-reset folder-delete" onclick={() => deleteFolder(cat.id)} title="Delete"><Trash size={12} weight="light" /></button>
+                        <span class="folder-row-count">{booksCategoryCounts[cat.id] ?? 0} book</span>
+                        <div class="folder-row-actions">
+                          <button class="kb-reset" onclick={() => moveCategory(cat.id, -1)} disabled={i === 0} title="Move up">Up</button>
+                          <button class="kb-reset" onclick={() => moveCategory(cat.id, 1)} disabled={i === sortedBooksCategories.length - 1} title="Move down">Down</button>
+                          <button class="kb-reset" onclick={() => startEdit(cat.id, cat.name)} title="Rename"><Pencil size={12} weight="light" /></button>
+                          <button class="kb-reset folder-delete" onclick={() => deleteFolder(cat.id)} title="Delete"><Trash size={12} weight="light" /></button>
+                        </div>
                       {/if}
                     </div>
                   {/each}
+                </div>
+              {/if}
+              {#if flareEnabled}
+                <div class="step-row">
+                  <div class="toggle-info">
+                    <span class="toggle-label">URL</span>
+                    <span class="toggle-desc">Instance address</span>
+                  </div>
+                  <input class="text-input" bind:value={flareUrl} oninput={() => flareTestState = "idle"} placeholder="http://localhost:8191" autocomplete="off" spellcheck="false" />
+                </div>
+                <div class="step-row">
+                  <div class="toggle-info">
+                    <span class="toggle-label">Connection</span>
+                    <span class="toggle-desc">{flareStatusLabel() || "Check instance"}</span>
+                  </div>
+                  <div class="flare-inline-actions">
+                    <span class="sec-status-pill" class:sec-pill-on={flareTestState === "ready"}>{flareStatusLabel() || "Idle"}</span>
+                    <button class="sec-action-btn flare-action-compact" onclick={() => testFlareSolverr()} disabled={flareTestState === "testing" || secLoading}>
+                      {flareTestState === "testing" ? "Testing" : "Test"}
+                    </button>
+                    <button class="sec-action-btn sec-action-primary flare-action-compact" onclick={saveFlareSolverr} disabled={secLoading}>
+                      {secLoading ? "Saving" : secSaved === "flare" ? "Saved" : "Save"}
+                    </button>
+                  </div>
+                </div>
+                <div class="flare-card">
+                  <div class="flare-card-head">
+                    <button class="flare-card-toggle" aria-expanded={flareLocalOpen} onclick={() => (flareLocalOpen = !flareLocalOpen)}>
+                      <div class="flare-card-copy">
+                        <span class="toggle-label">Local</span>
+                        <span class="toggle-desc">{flareLocalStateLabel()}</span>
+                      </div>
+                      <div class="flare-card-meta">
+                        <span class="sec-status-pill" class:sec-pill-on={flareLocalStatus?.running}>{flareLocalStateLabel()}</span>
+                        <span class="flare-caret-wrap" class:flare-caret-open={flareLocalOpen}>
+                          <CaretDown size={14} weight="bold" />
+                        </span>
+                      </div>
+                    </button>
+                    <div class="flare-card-head-actions">
+                      {#if flareLocalStatus?.installed}
+                        {#if flareLocalStatus.running}
+                          <button class="sec-action-btn flare-action-compact" onclick={(event) => { event.stopPropagation(); stopFlareLocal(); }} disabled={flareLocalBusy}>Stop</button>
+                        {:else}
+                          <button class="sec-action-btn sec-action-primary flare-action-compact" onclick={(event) => { event.stopPropagation(); startFlareLocal(); }} disabled={flareLocalBusy}>Start</button>
+                        {/if}
+                      {/if}
+                    </div>
+                  </div>
+                  {#if flareLocalOpen}
+                    <div class="flare-card-body" transition:slide={{ duration: 180 }}>
+                      <div class="step-row flare-card-row">
+                        <div class="toggle-info">
+                          <span class="toggle-label">Start on app launch</span>
+                          <span class="toggle-desc">Open local FlareSolverr with Aethon</span>
+                        </div>
+                        <button
+                          role="switch"
+                          aria-checked={flareLocalAutoStart}
+                          aria-label="Start FlareSolverr on app launch"
+                          class="toggle"
+                          class:on={flareLocalAutoStart}
+                          onclick={() => setFlareLocalAutoStart(!flareLocalAutoStart)}
+                          disabled={!flareLocalStatus?.installed}
+                        ><span class="toggle-thumb"></span></button>
+                      </div>
+                      <div class="step-row flare-card-row">
+                        <div class="toggle-info">
+                          <span class="toggle-label">Install</span>
+                          <span class="toggle-desc">{flareLocalStatus?.path ?? "Not installed"}</span>
+                        </div>
+                        <div class="flare-inline-actions">
+                          <button class="sec-action-btn flare-action-compact" onclick={refreshFlareLocalStatus} disabled={flareLocalBusy}>Check</button>
+                          <button class="sec-action-btn flare-action-compact" onclick={openFlareLocalFolder} disabled={!flareLocalStatus?.installed}>Open folder</button>
+                          <button class="sec-action-btn flare-action-compact" onclick={openFlareLocalLogs} disabled={!flareLocalStatus?.installed}>View logs</button>
+                        </div>
+                      </div>
+                    </div>
+                  {/if}
+                </div>
+                <div class="flare-card">
+                  <div class="flare-card-head">
+                    <button class="flare-card-toggle" aria-expanded={flareDockerOpen} onclick={() => (flareDockerOpen = !flareDockerOpen)}>
+                      <div class="flare-card-copy">
+                        <span class="toggle-label">Docker</span>
+                        <span class="toggle-desc">{flareDockerStateLabel()}</span>
+                      </div>
+                      <div class="flare-card-meta">
+                        <span class="sec-status-pill" class:sec-pill-on={flareDockerStatus?.running}>{flareDockerStateLabel()}</span>
+                        <span class="flare-caret-wrap" class:flare-caret-open={flareDockerOpen}>
+                          <CaretDown size={14} weight="bold" />
+                        </span>
+                      </div>
+                    </button>
+                    <div class="flare-card-head-actions">
+                      {#if flareDockerStatus?.installed && flareDockerStatus?.daemon}
+                        {#if flareDockerStatus.running}
+                          <button class="sec-action-btn flare-action-compact" onclick={(event) => { event.stopPropagation(); stopFlareDocker(); }} disabled={flareDockerBusy}>Stop</button>
+                        {:else}
+                          <button class="sec-action-btn sec-action-primary flare-action-compact" onclick={(event) => { event.stopPropagation(); startFlareDocker(); }} disabled={flareDockerBusy}>Start</button>
+                        {/if}
+                      {/if}
+                    </div>
+                  </div>
+                  {#if flareDockerOpen}
+                    <div class="flare-card-body" transition:slide={{ duration: 180 }}>
+                      <div class="step-row flare-card-row">
+                        <div class="toggle-info">
+                          <span class="toggle-label">Status</span>
+                          <span class="toggle-desc">{flareDockerStatus?.message ?? flareDockerStateLabel()}</span>
+                        </div>
+                        <button class="sec-action-btn flare-action-compact" onclick={refreshFlareDockerStatus} disabled={flareDockerBusy}>Check</button>
+                      </div>
+                    </div>
+                  {/if}
+                </div>
+                <div class="flare-card">
+                  <div class="flare-card-head">
+                    <button class="flare-card-toggle" aria-expanded={flareAdvancedOpen} onclick={() => (flareAdvancedOpen = !flareAdvancedOpen)}>
+                      <div class="flare-card-copy">
+                        <span class="toggle-label">Advanced</span>
+                        <span class="toggle-desc">Timeout, session and fallback</span>
+                      </div>
+                      <div class="flare-card-meta">
+                        <span class="sec-status-pill">{flareTimeout}s • {flareTtl}m</span>
+                        <span class="flare-caret-wrap" class:flare-caret-open={flareAdvancedOpen}>
+                          <CaretDown size={14} weight="bold" />
+                        </span>
+                      </div>
+                    </button>
+                  </div>
+                  {#if flareAdvancedOpen}
+                    <div class="flare-card-body" transition:slide={{ duration: 180 }}>
+                      <div class="step-row flare-card-row">
+                        <div class="toggle-info">
+                          <span class="toggle-label">Timeout</span>
+                          <span class="toggle-desc">Max wait per request</span>
+                        </div>
+                        <div class="step-controls">
+                          <button class="step-btn" onclick={() => flareTimeout = Math.max(10, flareTimeout - 10)}>Ã¢Ë†â€™</button>
+                          <span class="step-val">{flareTimeout}s</span>
+                          <button class="step-btn" onclick={() => flareTimeout = Math.min(300, flareTimeout + 10)}>+</button>
+                        </div>
+                      </div>
+                      <div class="step-row flare-card-row">
+                        <div class="toggle-info">
+                          <span class="toggle-label">Session name</span>
+                          <span class="toggle-desc">Reuse browser session</span>
+                        </div>
+                        <input class="text-input flare-inline-input" bind:value={flareSession} placeholder="moku" autocomplete="off" spellcheck="false" />
+                      </div>
+                      <div class="step-row flare-card-row">
+                        <div class="toggle-info">
+                          <span class="toggle-label">Session TTL</span>
+                          <span class="toggle-desc">Refresh window</span>
+                        </div>
+                        <div class="step-controls">
+                          <button class="step-btn" onclick={() => flareTtl = Math.max(1, flareTtl - 1)}>Ã¢Ë†â€™</button>
+                          <span class="step-val">{flareTtl}m</span>
+                          <button class="step-btn" onclick={() => flareTtl = Math.min(60, flareTtl + 1)}>+</button>
+                        </div>
+                      </div>
+                      <label class="toggle-row flare-card-row">
+                        <div class="toggle-info">
+                          <span class="toggle-label">Response fallback</span>
+                          <span class="toggle-desc">Use solver response on failure</span>
+                        </div>
+                        <button role="switch" aria-checked={flareFallback} aria-label="Use as response fallback" class="toggle" class:on={flareFallback} onclick={() => flareFallback = !flareFallback}><span class="toggle-thumb"></span></button>
+                      </label>
+                    </div>
+                  {/if}
                 </div>
               {/if}
             </div>
@@ -2368,6 +4176,11 @@
                   </button>
                 </div>
               </div>
+              {#if store.settings.serverAuthEnabled}
+                <div class="sec-banner sec-banner-info">
+                  Images are proxied through Tauri when Basic Auth is active, which may reduce loading speed.
+                </div>
+              {/if}
             </div>
             <div class="section">
               <div class="section-title-row">
@@ -2486,13 +4299,22 @@
                 </div>
                 <button role="switch" aria-checked={flareEnabled} aria-label="Enable FlareSolverr" class="toggle" class:on={flareEnabled} onclick={() => { flareEnabled = !flareEnabled; saveFlareSolverr(); }}><span class="toggle-thumb"></span></button>
               </label>
-              {#if flareEnabled}
+              {#if false && flareEnabled}
                 <div class="step-row">
                   <div class="toggle-info">
                     <span class="toggle-label">URL</span>
                     <span class="toggle-desc">FlareSolverr instance address</span>
                   </div>
-                  <input class="text-input" bind:value={flareUrl} placeholder="http://localhost:8191" autocomplete="off" spellcheck="false" />
+                  <input class="text-input" bind:value={flareUrl} oninput={() => flareTestState = "idle"} placeholder="http://localhost:8191" autocomplete="off" spellcheck="false" />
+                </div>
+                <div class="step-row">
+                  <div class="toggle-info">
+                    <span class="toggle-label">Connection</span>
+                    <span class="toggle-desc">{flareStatusLabel() || "Check the instance"}</span>
+                  </div>
+                  <button class="sec-action-btn" onclick={() => testFlareSolverr()} disabled={flareTestState === "testing" || secLoading}>
+                    {flareTestState === "testing" ? "Testing" : flareTestState === "ready" ? "Ready" : "Test"}
+                  </button>
                 </div>
                 <div class="step-row">
                   <div class="toggle-info">
@@ -2535,6 +4357,227 @@
                   <button class="sec-action-btn sec-action-primary" onclick={saveFlareSolverr} disabled={secLoading}>
                     {secLoading ? "Savingâ€¦" : secSaved === "flare" ? "Saved âœ“" : "Save"}
                   </button>
+                </div>
+                <div class="step-row">
+                  <div class="toggle-info">
+                    <span class="toggle-label">Local</span>
+                    <span class="toggle-desc">
+                      {#if flareLocalBusy}
+                        Checking
+                      {:else if !flareLocalStatus?.installed}
+                        Not installed
+                      {:else if flareLocalStatus.running}
+                        Running
+                      {:else}
+                        Installed
+                      {/if}
+                    </span>
+                  </div>
+                  <div class="step-controls">
+                    <button class="sec-action-btn" onclick={refreshFlareLocalStatus} disabled={flareLocalBusy}>Check</button>
+                    {#if flareLocalStatus?.installed}
+                      {#if flareLocalStatus.running}
+                        <button class="sec-action-btn" onclick={stopFlareLocal} disabled={flareLocalBusy}>Stop</button>
+                      {:else}
+                        <button class="sec-action-btn sec-action-primary" onclick={startFlareLocal} disabled={flareLocalBusy}>Start</button>
+                      {/if}
+                    {/if}
+                  </div>
+                </div>
+                <div class="step-row">
+                  <div class="toggle-info">
+                    <span class="toggle-label">Docker</span>
+                    <span class="toggle-desc">
+                      {#if flareDockerBusy}
+                        Checking
+                      {:else if !flareDockerStatus?.installed}
+                        Docker not found
+                      {:else if !flareDockerStatus?.daemon}
+                        Docker unavailable
+                      {:else if flareDockerStatus.running}
+                        Running
+                      {:else}
+                        Available
+                      {/if}
+                    </span>
+                  </div>
+                  <div class="step-controls">
+                    <button class="sec-action-btn" onclick={refreshFlareDockerStatus} disabled={flareDockerBusy}>Check</button>
+                    {#if flareDockerStatus?.installed && flareDockerStatus?.daemon}
+                      {#if flareDockerStatus.running}
+                        <button class="sec-action-btn" onclick={stopFlareDocker} disabled={flareDockerBusy}>Stop</button>
+                      {:else}
+                        <button class="sec-action-btn sec-action-primary" onclick={startFlareDocker} disabled={flareDockerBusy}>Start</button>
+                      {/if}
+                    {/if}
+                  </div>
+                </div>
+              {/if}
+              {#if flareEnabled}
+                <div class="step-row">
+                  <div class="toggle-info">
+                    <span class="toggle-label">URL</span>
+                    <span class="toggle-desc">Instance address</span>
+                  </div>
+                  <input class="text-input" bind:value={flareUrl} oninput={() => flareTestState = "idle"} placeholder="http://localhost:8191" autocomplete="off" spellcheck="false" />
+                </div>
+                <div class="step-row">
+                  <div class="toggle-info">
+                    <span class="toggle-label">Connection</span>
+                    <span class="toggle-desc">{flareStatusLabel() || "Check instance"}</span>
+                  </div>
+                  <div class="flare-inline-actions">
+                    <span class="sec-status-pill" class:sec-pill-on={flareTestState === "ready"}>{flareStatusLabel() || "Idle"}</span>
+                    <button class="sec-action-btn flare-action-compact" onclick={() => testFlareSolverr()} disabled={flareTestState === "testing" || secLoading}>
+                      {flareTestState === "testing" ? "Testing" : "Test"}
+                    </button>
+                    <button class="sec-action-btn sec-action-primary flare-action-compact" onclick={saveFlareSolverr} disabled={secLoading}>
+                      {secLoading ? "Saving" : secSaved === "flare" ? "Saved" : "Save"}
+                    </button>
+                  </div>
+                </div>
+                <div class="flare-card">
+                  <div class="flare-card-head">
+                    <button class="flare-card-toggle" aria-expanded={flareLocalOpen} onclick={() => (flareLocalOpen = !flareLocalOpen)}>
+                      <div class="flare-card-copy">
+                        <span class="toggle-label">Local</span>
+                        <span class="toggle-desc">{flareLocalStateLabel()}</span>
+                      </div>
+                      <div class="flare-card-meta">
+                        <span class="sec-status-pill" class:sec-pill-on={flareLocalStatus?.running}>{flareLocalStateLabel()}</span>
+                        <span class="flare-caret-wrap" class:flare-caret-open={flareLocalOpen}>
+                          <CaretDown size={14} weight="bold" />
+                        </span>
+                      </div>
+                    </button>
+                    <div class="flare-card-head-actions">
+                      {#if flareLocalStatus?.installed}
+                        {#if flareLocalStatus.running}
+                          <button class="sec-action-btn flare-action-compact" onclick={(event) => { event.stopPropagation(); stopFlareLocal(); }} disabled={flareLocalBusy}>Stop</button>
+                        {:else}
+                          <button class="sec-action-btn sec-action-primary flare-action-compact" onclick={(event) => { event.stopPropagation(); startFlareLocal(); }} disabled={flareLocalBusy}>Start</button>
+                        {/if}
+                      {/if}
+                    </div>
+                  </div>
+                  {#if flareLocalOpen}
+                    <div class="flare-card-body" transition:slide={{ duration: 180 }}>
+                      <div class="step-row flare-card-row">
+                        <div class="toggle-info">
+                          <span class="toggle-label">Start on app launch</span>
+                          <span class="toggle-desc">Open local FlareSolverr with Aethon</span>
+                        </div>
+                        <button
+                          role="switch"
+                          aria-checked={flareLocalAutoStart}
+                          aria-label="Start FlareSolverr on app launch"
+                          class="toggle"
+                          class:on={flareLocalAutoStart}
+                          onclick={() => setFlareLocalAutoStart(!flareLocalAutoStart)}
+                          disabled={!flareLocalStatus?.installed}
+                        ><span class="toggle-thumb"></span></button>
+                      </div>
+                      <div class="step-row flare-card-row">
+                        <div class="toggle-info">
+                          <span class="toggle-label">Install</span>
+                          <span class="toggle-desc">{flareLocalStatus?.path ?? "Not installed"}</span>
+                        </div>
+                        <button class="sec-action-btn flare-action-compact" onclick={refreshFlareLocalStatus} disabled={flareLocalBusy}>Check</button>
+                      </div>
+                    </div>
+                  {/if}
+                </div>
+                <div class="flare-card">
+                  <div class="flare-card-head">
+                    <button class="flare-card-toggle" aria-expanded={flareDockerOpen} onclick={() => (flareDockerOpen = !flareDockerOpen)}>
+                      <div class="flare-card-copy">
+                        <span class="toggle-label">Docker</span>
+                        <span class="toggle-desc">{flareDockerStateLabel()}</span>
+                      </div>
+                      <div class="flare-card-meta">
+                        <span class="sec-status-pill" class:sec-pill-on={flareDockerStatus?.running}>{flareDockerStateLabel()}</span>
+                        <span class="flare-caret-wrap" class:flare-caret-open={flareDockerOpen}>
+                          <CaretDown size={14} weight="bold" />
+                        </span>
+                      </div>
+                    </button>
+                    <div class="flare-card-head-actions">
+                      {#if flareDockerStatus?.installed && flareDockerStatus?.daemon}
+                        {#if flareDockerStatus.running}
+                          <button class="sec-action-btn flare-action-compact" onclick={(event) => { event.stopPropagation(); stopFlareDocker(); }} disabled={flareDockerBusy}>Stop</button>
+                        {:else}
+                          <button class="sec-action-btn sec-action-primary flare-action-compact" onclick={(event) => { event.stopPropagation(); startFlareDocker(); }} disabled={flareDockerBusy}>Start</button>
+                        {/if}
+                      {/if}
+                    </div>
+                  </div>
+                  {#if flareDockerOpen}
+                    <div class="flare-card-body" transition:slide={{ duration: 180 }}>
+                      <div class="step-row flare-card-row">
+                        <div class="toggle-info">
+                          <span class="toggle-label">Status</span>
+                          <span class="toggle-desc">{flareDockerStatus?.message ?? flareDockerStateLabel()}</span>
+                        </div>
+                        <button class="sec-action-btn flare-action-compact" onclick={refreshFlareDockerStatus} disabled={flareDockerBusy}>Check</button>
+                      </div>
+                    </div>
+                  {/if}
+                </div>
+                <div class="flare-card">
+                  <div class="flare-card-head">
+                    <button class="flare-card-toggle" aria-expanded={flareAdvancedOpen} onclick={() => (flareAdvancedOpen = !flareAdvancedOpen)}>
+                      <div class="flare-card-copy">
+                        <span class="toggle-label">Advanced</span>
+                        <span class="toggle-desc">Timeout, session and fallback</span>
+                      </div>
+                      <div class="flare-card-meta">
+                        <span class="sec-status-pill">{flareTimeout}s • {flareTtl}m</span>
+                        <span class="flare-caret-wrap" class:flare-caret-open={flareAdvancedOpen}>
+                          <CaretDown size={14} weight="bold" />
+                        </span>
+                      </div>
+                    </button>
+                  </div>
+                  {#if flareAdvancedOpen}
+                    <div class="flare-card-body" transition:slide={{ duration: 180 }}>
+                      <div class="step-row flare-card-row">
+                        <div class="toggle-info">
+                          <span class="toggle-label">Timeout</span>
+                          <span class="toggle-desc">Max wait per request</span>
+                        </div>
+                        <div class="step-controls">
+                          <button class="step-btn" onclick={() => flareTimeout = Math.max(10, flareTimeout - 10)}>Ã¢Ë†â€™</button>
+                          <span class="step-val">{flareTimeout}s</span>
+                          <button class="step-btn" onclick={() => flareTimeout = Math.min(300, flareTimeout + 10)}>+</button>
+                        </div>
+                      </div>
+                      <div class="step-row flare-card-row">
+                        <div class="toggle-info">
+                          <span class="toggle-label">Session name</span>
+                          <span class="toggle-desc">Reuse browser session</span>
+                        </div>
+                        <input class="text-input flare-inline-input" bind:value={flareSession} placeholder="moku" autocomplete="off" spellcheck="false" />
+                      </div>
+                      <div class="step-row flare-card-row">
+                        <div class="toggle-info">
+                          <span class="toggle-label">Session TTL</span>
+                          <span class="toggle-desc">Refresh window</span>
+                        </div>
+                        <div class="step-controls">
+                          <button class="step-btn" onclick={() => flareTtl = Math.max(1, flareTtl - 1)}>Ã¢Ë†â€™</button>
+                          <span class="step-val">{flareTtl}m</span>
+                          <button class="step-btn" onclick={() => flareTtl = Math.min(60, flareTtl + 1)}>+</button>
+                        </div>
+                      </div>
+                      <label class="toggle-row flare-card-row">
+                        <div class="toggle-info">
+                          <span class="toggle-label">Response fallback</span>
+                          <span class="toggle-desc">Use solver response on failure</span>
+                        </div>
+                        <button role="switch" aria-checked={flareFallback} aria-label="Use as response fallback" class="toggle" class:on={flareFallback} onclick={() => flareFallback = !flareFallback}><span class="toggle-thumb"></span></button>
+                      </label>
+                    </div>
+                  {/if}
                 </div>
               {/if}
             </div>
@@ -2751,7 +4794,7 @@
             <div class="section">
               <p class="section-title">Splash Screen</p>
               <div class="step-row">
-                <div class="toggle-info"><span class="toggle-label">Preview idle screen</span><span class="toggle-desc">Show the idle splash â€” dismiss with any click or key</span></div>
+                <div class="toggle-info"><span class="toggle-label">Preview idle screen</span><span class="toggle-desc">Show the idle splash. Shortcut: Ctrl+Alt+Shift+S toggles it without mouse coordinates.</span></div>
                 <button class="danger-btn" onclick={triggerSplash}
                   style={splashTriggered ? "background:var(--accent-fg);color:var(--bg-base);border-color:var(--accent-fg);transition:all 0.15s ease" : ""}>
                   Show idle
@@ -2957,6 +5000,22 @@
   .release-list-scroll::-webkit-scrollbar { width: 4px; }
   .release-list-scroll::-webkit-scrollbar-track { background: transparent; }
   .release-list-scroll::-webkit-scrollbar-thumb { background: var(--border-base); border-radius: 2px; }
+  .setting-stack { display: flex; flex-direction: column; gap: var(--sp-2); padding: 0 var(--sp-3) var(--sp-3); }
+  .library-segmented { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+  .library-segment-btn {
+    font-family: var(--font-ui);
+    font-size: var(--text-xs);
+    letter-spacing: var(--tracking-wide);
+    padding: 7px 12px;
+    border-radius: var(--radius-full);
+    border: 1px solid var(--border-dim);
+    background: var(--bg-raised);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: border-color var(--t-base), color var(--t-base), background var(--t-base);
+  }
+  .library-segment-btn:hover { color: var(--text-secondary); border-color: var(--border-strong); }
+  .library-segment-btn.active { color: var(--accent-fg); background: var(--accent-muted); border-color: var(--accent-dim); }
   .folder-create-row { display: flex; gap: var(--sp-2); padding: 0 var(--sp-3) var(--sp-3); }
   .folder-create-btn { display: flex; align-items: center; gap: var(--sp-1); font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); padding: 5px 12px; border-radius: var(--radius-md); background: var(--accent-muted); color: var(--accent-fg); border: 1px solid var(--accent-dim); cursor: pointer; flex-shrink: 0; transition: filter var(--t-base); }
   .folder-create-btn:hover:not(:disabled) { filter: brightness(1.1); }
@@ -2966,6 +5025,7 @@
   .folder-row:hover { background: var(--bg-raised); }
   .folder-row-name { flex: 1; font-size: var(--text-sm); color: var(--text-secondary); }
   .folder-row-count { font-family: var(--font-ui); font-size: var(--text-2xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); flex-shrink: 0; }
+  .folder-row-actions { display: flex; align-items: center; gap: var(--sp-1); margin-left: auto; }
   .folder-tab-toggle { font-family: var(--font-ui); font-size: var(--text-2xs); letter-spacing: var(--tracking-wide); padding: 2px 7px; border-radius: var(--radius-sm); border: 1px solid var(--border-dim); background: none; color: var(--text-faint); cursor: pointer; flex-shrink: 0; transition: color var(--t-base), border-color var(--t-base), background var(--t-base); }
   .folder-tab-toggle.on { background: var(--accent-muted); border-color: var(--accent-dim); color: var(--accent-fg); }
   .folder-tab-toggle:hover { color: var(--text-muted); border-color: var(--border-strong); }
@@ -3070,6 +5130,7 @@
   .oauth-btns { display: flex; align-items: center; gap: var(--sp-2); }
   .sec-banner { font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); padding: var(--sp-2) var(--sp-3); margin: 0 0 var(--sp-2); border-radius: var(--radius-sm); }
   .sec-banner-error { color: var(--color-error); background: var(--color-error-bg); border: 1px solid var(--color-error); }
+  .sec-banner-info { color: var(--color-info); background: var(--color-info-bg); border: 1px solid color-mix(in srgb, var(--color-info) 55%, transparent); }
   .section-title-row { display: flex; align-items: center; justify-content: space-between; padding: var(--sp-3) var(--sp-3) var(--sp-2); }
   .section-title-row .section-title { padding: 0; }
   .sec-status-pill { font-family: var(--font-ui); font-size: var(--text-2xs); letter-spacing: var(--tracking-wider); text-transform: uppercase; padding: 2px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border-dim); color: var(--text-faint); background: var(--bg-overlay); flex-shrink: 0; cursor: default; }
@@ -3086,6 +5147,57 @@
   .sec-action-primary:hover:not(:disabled) { filter: brightness(1.1); }
   .sec-action-danger { border-color: var(--color-error); color: var(--color-error); }
   .sec-action-danger:hover:not(:disabled) { background: var(--color-error-bg); }
+  .flare-inline-actions { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; justify-content: flex-end; }
+  .flare-action-compact { min-width: 64px; padding: 4px 10px; border-radius: 999px; }
+  .flare-card {
+    margin: 0 var(--sp-3) var(--sp-2);
+    border: 1px solid var(--border-dim);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--bg-raised) 82%, transparent);
+    overflow: hidden;
+    transition: border-color var(--t-base), background var(--t-base), transform var(--t-base);
+  }
+  .flare-card:hover { border-color: var(--border-strong); background: var(--bg-raised); }
+  .flare-card-head {
+    display: flex;
+    align-items: stretch;
+    gap: var(--sp-2);
+    padding: var(--sp-2);
+  }
+  .flare-card-toggle {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-3);
+    padding: 8px 10px;
+    border: none;
+    border-radius: 10px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    transition: background var(--t-base), color var(--t-base);
+  }
+  .flare-card-toggle:hover { background: var(--bg-overlay); }
+  .flare-card-copy { min-width: 0; display: flex; flex-direction: column; gap: 3px; text-align: left; }
+  .flare-card-meta { display: flex; align-items: center; gap: var(--sp-2); flex-shrink: 0; color: var(--text-faint); }
+  .flare-card-head-actions { display: flex; align-items: center; gap: var(--sp-2); flex-shrink: 0; }
+  .flare-caret-wrap { display: inline-flex; transition: transform var(--t-base), color var(--t-base); }
+  .flare-caret-open { transform: rotate(180deg); }
+  .flare-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 0 var(--sp-2) var(--sp-2);
+  }
+  .flare-card-row {
+    margin: 0;
+    padding: 10px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--bg-overlay) 78%, transparent);
+  }
+  .flare-inline-input { width: 180px; max-width: 100%; }
   .sec-pin-wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
   .sec-pin-wrap .sec-pin-row { display: flex; align-items: center; gap: var(--sp-2); }
   .sec-pin-input { width: 96px; text-align: center; letter-spacing: 0.25em; }
@@ -3132,7 +5244,7 @@
     border-style: dashed !important;
     border-color: var(--border-base) !important;
     background: transparent !important;
-    transition: border-color var(--t-base) !important, background var(--t-base) !important;
+    transition: border-color var(--t-base), background var(--t-base) !important;
   }
   .new-theme-card:hover {
     border-color: var(--accent-dim) !important;
@@ -3164,6 +5276,73 @@
   .content-action-btn:hover { color: var(--text-muted); border-color: var(--border-strong); background: var(--bg-overlay); }
   .content-action-active-allow { color: var(--color-success) !important; border-color: color-mix(in srgb, var(--color-success) 40%, transparent) !important; background: color-mix(in srgb, var(--color-success) 10%, transparent) !important; }
   .content-action-active-block  { color: var(--color-error)   !important; border-color: color-mix(in srgb, var(--color-error)   40%, transparent) !important; background: color-mix(in srgb, var(--color-error)   10%, transparent) !important; }
+  .profile-picker { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .profile-option {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--border-base);
+    background: var(--bg-raised);
+    color: var(--text-faint);
+    font-family: var(--font-ui);
+    font-size: var(--text-2xs);
+    letter-spacing: var(--tracking-wide);
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: color var(--t-base), border-color var(--t-base), background var(--t-base);
+  }
+  .profile-option:hover { color: var(--text-secondary); border-color: var(--border-strong); }
+  .profile-option.active {
+    color: var(--accent-fg);
+    border-color: var(--accent-dim);
+    background: var(--accent-muted);
+  }
+  .profile-option-label { font-weight: 600; }
+  .profile-option-meta { color: var(--text-faint); }
+  .profile-status-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: var(--sp-3);
+    padding: 0 var(--sp-3) var(--sp-3);
+  }
+  .profile-status-card {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-dim);
+    background: var(--bg-overlay);
+  }
+  .profile-status-label {
+    font-family: var(--font-ui);
+    font-size: var(--text-2xs);
+    letter-spacing: var(--tracking-wide);
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+  .profile-status-value { font-size: var(--text-sm); color: var(--text-secondary); }
+  .profile-status-meta {
+    font-family: var(--font-ui);
+    font-size: var(--text-2xs);
+    letter-spacing: var(--tracking-wide);
+    color: var(--text-faint);
+    word-break: break-all;
+  }
+  .profile-note {
+    margin: 0 var(--sp-3) var(--sp-3);
+    padding: 10px 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-dim);
+    background: color-mix(in srgb, var(--bg-overlay) 88%, transparent);
+    font-family: var(--font-ui);
+    font-size: var(--text-2xs);
+    line-height: 1.6;
+    letter-spacing: var(--tracking-wide);
+    color: var(--text-faint);
+  }
   .backup-validate { display: flex; flex-direction: column; gap: var(--sp-2); margin: 0 var(--sp-3) var(--sp-1); padding: var(--sp-3); border: 1px solid var(--border-dim); border-radius: var(--radius-md); background: var(--bg-overlay); }
   .backup-validate-row, .backup-warning-block { display: flex; flex-direction: column; gap: 4px; }
   .backup-suggestions { display: flex; flex-direction: column; gap: var(--sp-2); margin-top: var(--sp-2); }

@@ -2,12 +2,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   mockedReadFileAsArrayBuffer,
+  mockedComputeFileSha256,
   mockedWriteBookCover,
   mockedCanRenderEmbeddedImage,
   mockedCanRenderBookCoverPath,
   mockedParseEpubArchive,
+  mockedExtractPdfBookData,
 } = vi.hoisted(() => ({
   mockedReadFileAsArrayBuffer: vi.fn(async () => Uint8Array.from([1, 2, 3]).buffer),
+  mockedComputeFileSha256: vi.fn(async () => "native-file-hash"),
   mockedWriteBookCover: vi.fn(async (bookId: string, _bytesBase64: string, ext: string) =>
     `C:\\books\\${bookId}.${ext}`,
   ),
@@ -25,6 +28,17 @@ const {
     toc: [],
     spine: [],
   })),
+  mockedExtractPdfBookData: vi.fn(async (_assetPath: string, _bookId: string, fallbackTitle: string) => ({
+    title: fallbackTitle,
+    author: "PDF Author",
+    description: "PDF Description",
+    pageCount: 8,
+    coverPath: "C:\\books\\pdf-cover.jpg",
+    sectionsSummary: [{ id: "pdf-outline:1:1", label: "Intro", href: "page:1", depth: 0 }],
+    sectionCount: 1,
+    tocCount: 1,
+    spineCount: 0,
+  })),
 }));
 
 vi.mock("./storage", () => ({
@@ -34,6 +48,7 @@ vi.mock("./storage", () => ({
   isUsableBookCoverUrl: (coverUrl: string | null | undefined) =>
     typeof coverUrl === "string" && coverUrl.startsWith("data:image/") && coverUrl.length > 64,
   readFileAsArrayBuffer: mockedReadFileAsArrayBuffer,
+  computeFileSha256: mockedComputeFileSha256,
   writeBookCover: mockedWriteBookCover,
   canRenderEmbeddedImage: mockedCanRenderEmbeddedImage,
   canRenderBookCoverPath: mockedCanRenderBookCoverPath,
@@ -41,6 +56,10 @@ vi.mock("./storage", () => ({
 
 vi.mock("./epub", () => ({
   parseEpubArchive: mockedParseEpubArchive,
+}));
+
+vi.mock("./pdf", () => ({
+  extractPdfBookData: mockedExtractPdfBookData,
 }));
 
 import {
@@ -53,6 +72,7 @@ import type { BookEntry } from "./types";
 
 beforeEach(() => {
   mockedReadFileAsArrayBuffer.mockClear();
+  mockedComputeFileSha256.mockClear();
   mockedWriteBookCover.mockClear();
   mockedCanRenderEmbeddedImage.mockClear();
   mockedCanRenderEmbeddedImage.mockImplementation(async () => true);
@@ -70,6 +90,18 @@ beforeEach(() => {
     },
     toc: [],
     spine: [],
+  }));
+  mockedExtractPdfBookData.mockClear();
+  mockedExtractPdfBookData.mockImplementation(async (_assetPath: string, _bookId: string, fallbackTitle: string) => ({
+    title: fallbackTitle,
+    author: "PDF Author",
+    description: "PDF Description",
+    pageCount: 8,
+    coverPath: "C:\\books\\pdf-cover.jpg",
+    sectionsSummary: [{ id: "pdf-outline:1:1", label: "Intro", href: "page:1", depth: 0 }],
+    sectionCount: 1,
+    tocCount: 1,
+    spineCount: 0,
   }));
 });
 
@@ -108,6 +140,34 @@ describe("BookAssetResolver.resolveCoverSrc", () => {
     );
 
     expect(src).toBe("http://book.localhost/C%3A%5Cbooks%5Ccover.jpg?v=42");
+  });
+});
+
+describe("BookAssetResolver.resolvePdfSourceUrl", () => {
+  it("uses the canonical book protocol URL for reader loading", () => {
+    const src = BookAssetResolver.resolvePdfSourceUrl(
+      makeBook({
+        subtype: "pdf",
+        updatedAt: 99,
+        assetPath: "C:\\books\\example.pdf",
+      }),
+    );
+
+    expect(src).toBe("http://book.localhost/C%3A%5Cbooks%5Cexample.pdf?v=99");
+  });
+});
+
+describe("BookAssetResolver.resolveEpubSourceUrl", () => {
+  it("uses the canonical book protocol URL for epub reader loading", () => {
+    const src = BookAssetResolver.resolveEpubSourceUrl(
+      makeBook({
+        subtype: "epub",
+        updatedAt: 99,
+        assetPath: "C:\\books\\example.epub",
+      }),
+    );
+
+    expect(src).toBe("http://book.localhost/C%3A%5Cbooks%5Cexample.epub?v=99");
   });
 });
 
@@ -174,6 +234,25 @@ describe("needsCanonicalBookMigration", () => {
       ),
     ).toBe(false);
   });
+
+  it("requires migration for PDFs that still lack stored page metadata", () => {
+    expect(
+      needsCanonicalBookMigration(
+        makeBook({
+          subtype: "pdf",
+          coverPath: null,
+          coverUrl: undefined,
+          toc: undefined,
+          spine: undefined,
+          sectionsSummary: [],
+          sectionCount: 0,
+          tocCount: 0,
+          spineCount: 0,
+          pageCount: undefined,
+        }),
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("toPersistedBookEntry", () => {
@@ -204,6 +283,25 @@ describe("toPersistedBookEntry", () => {
     expect(persisted.coverUrl).toContain("data:image/jpeg;base64,");
     expect(persisted.toc).toBeUndefined();
     expect(persisted.spine).toBeUndefined();
+  });
+
+  it("persists pdf pageCount alongside canonical book data", () => {
+    const persisted = toPersistedBookEntry(
+      makeBook({
+        subtype: "pdf",
+        coverPath: "C:\\books\\cover.jpg",
+        coverUrl: undefined,
+        toc: undefined,
+        spine: undefined,
+        sectionsSummary: [],
+        sectionCount: 0,
+        tocCount: 0,
+        spineCount: 0,
+        pageCount: 22,
+      }),
+    );
+
+    expect(persisted.pageCount).toBe(22);
   });
 });
 
@@ -237,7 +335,7 @@ describe("BookAssetResolver.ensureCanonicalBookEntry", () => {
       }),
     );
 
-    expect(mockedReadFileAsArrayBuffer).toHaveBeenCalled();
+    expect(mockedReadFileAsArrayBuffer).not.toHaveBeenCalled();
     expect(mockedWriteBookCover).toHaveBeenCalledWith(
       "book-1",
       "Zm9vYmFyYmF6cXV4cXV1eA==Zm9vYmFyYmF6cXV4cXV1eA==",
@@ -252,7 +350,42 @@ describe("BookAssetResolver.ensureCanonicalBookEntry", () => {
       tocCount: 1,
       spineCount: 1,
     });
-    expect(patch?.assetFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(mockedComputeFileSha256).toHaveBeenCalledWith("C:\\books\\example.epub");
+    expect(patch?.assetFingerprint).toBe("native-file-hash");
     expect(patch?.sectionsSummary).toHaveLength(1);
+  });
+
+  it("backfills canonical pdf metadata, cover, pages, and outline", async () => {
+    const patch = await BookAssetResolver.ensureCanonicalBookEntry(
+      makeBook({
+        subtype: "pdf",
+        title: "Plain PDF",
+        coverPath: null,
+        coverUrl: undefined,
+        toc: undefined,
+        spine: undefined,
+        sectionsSummary: [],
+        sectionCount: 0,
+        tocCount: 0,
+        spineCount: 0,
+        pageCount: undefined,
+        assetPath: "C:\\books\\plain.pdf",
+      }),
+    );
+
+    expect(mockedExtractPdfBookData).toHaveBeenCalledWith(
+      "C:\\books\\plain.pdf",
+      "book-1",
+      "Plain PDF",
+    );
+    expect(patch).toMatchObject({
+      author: "PDF Author",
+      description: "PDF Description",
+      coverPath: "C:\\books\\pdf-cover.jpg",
+      pageCount: 8,
+      sectionCount: 1,
+      tocCount: 1,
+      spineCount: 0,
+    });
   });
 });

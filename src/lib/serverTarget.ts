@@ -9,6 +9,7 @@ export interface ServerTargetInfo {
   mode: ServerTargetMode;
   label: string;
   title: string;
+  isOverrideSession: boolean;
 }
 
 const DEFAULT_URL = "http://127.0.0.1:4567";
@@ -20,7 +21,11 @@ function normalizeUrl(raw: string | null | undefined): string {
 }
 
 export function getEffectiveServerUrl(): string {
-  return normalizeUrl(store.runtimeServerUrl ?? store.settings.serverUrl);
+  return normalizeUrl(
+    store.runtimeResolvedLocalProfileMeta?.serverUrl
+      ?? store.runtimeServerUrl
+      ?? store.settings.serverUrl
+  );
 }
 
 export function getServerTargetInfo(): ServerTargetInfo {
@@ -34,6 +39,7 @@ export function getServerTargetInfo(): ServerTargetInfo {
     port = parsed.port || (parsed.protocol === "https:" ? "443" : "80");
   } catch {}
 
+  const resolvedProfile = store.runtimeResolvedLocalProfileMeta;
   const overrideLabel = typeof store.runtimeServerLabel === "string" && store.runtimeServerLabel.trim()
     ? store.runtimeServerLabel.trim().toUpperCase()
     : null;
@@ -41,10 +47,10 @@ export function getServerTargetInfo(): ServerTargetInfo {
   let mode: ServerTargetMode;
   let label: string;
 
-  if (overrideLabel === "MAIN") {
+  if (resolvedProfile?.id === "main" || overrideLabel === "MAIN") {
     mode = "main";
     label = "MAIN";
-  } else if (overrideLabel === "TEST") {
+  } else if (resolvedProfile?.id === "test" || overrideLabel === "TEST") {
     mode = "test";
     label = "TEST";
   } else if (port === "4567") {
@@ -65,5 +71,6 @@ export function getServerTargetInfo(): ServerTargetInfo {
     mode,
     label,
     title: `${label} :${port}`,
+    isOverrideSession: Boolean(store.runtimeIsOverrideSession),
   };
 }

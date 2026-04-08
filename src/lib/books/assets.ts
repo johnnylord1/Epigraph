@@ -1,12 +1,14 @@
 import {
   canRenderBookCoverPath,
   canRenderEmbeddedImage,
+  computeFileSha256,
   filePathAsStableUrl,
   dropCachedFileStableUrl,
   isUsableBookCoverUrl,
   readFileAsArrayBuffer,
   writeBookCover,
 } from "./storage";
+import { extractPdfBookData } from "./pdf";
 import { createBookSectionSnapshot, needsBookSectionBackfill } from "./summary";
 import type { BookEntry, BookSubtype } from "./types";
 import { parseEpubArchive } from "./epub";
@@ -71,11 +73,12 @@ export function isCanonicalBookVisualState(book: Pick<BookEntry, "coverPath" | "
 export function needsCanonicalBookMigration(
   book: Pick<
     BookEntry,
-    "assetFingerprint" | "tocCount" | "spineCount" | "sectionsSummary" | "sectionCount" | "coverPath" | "coverUrl" | "toc" | "spine" | "subtype"
+    "assetFingerprint" | "tocCount" | "spineCount" | "sectionsSummary" | "sectionCount" | "coverPath" | "coverUrl" | "toc" | "spine" | "subtype" | "pageCount"
   >,
 ): boolean {
   return !(
     book.assetFingerprint &&
+    (book.subtype !== "pdf" || typeof book.pageCount === "number") &&
     typeof book.tocCount === "number" &&
     typeof book.spineCount === "number" &&
     !needsBookSectionBackfill(book) &&
@@ -105,6 +108,7 @@ export function toPersistedBookEntry(book: BookEntry): BookEntry {
   return {
     ...book,
     ...snapshot,
+    pageCount: typeof book.pageCount === "number" ? book.pageCount : null,
     coverUrl: keepLegacyCoverUrl ? book.coverUrl : undefined,
     toc: undefined,
     spine: undefined,
@@ -122,7 +126,7 @@ async function buildCanonicalPatch(book: BookEntry): Promise<CanonicalBookPatch 
   };
 
   if (!book.assetFingerprint) {
-    patch.assetFingerprint = await computeBookAssetFingerprint(await getAssetBuffer());
+    patch.assetFingerprint = await computeFileSha256(book.assetPath);
   }
 
   let effectiveCoverPath = book.coverPath;
@@ -173,11 +177,26 @@ async function buildCanonicalPatch(book: BookEntry): Promise<CanonicalBookPatch 
     }
   }
 
+  if (book.subtype === "pdf") {
+    const parsed = await extractPdfBookData(book.assetPath, book.id, book.title);
+    patch.title = parsed.title;
+    patch.author = parsed.author;
+    patch.description = parsed.description;
+    patch.pageCount = parsed.pageCount;
+    patch.sectionsSummary = parsed.sectionsSummary;
+    patch.sectionCount = parsed.sectionCount;
+    patch.tocCount = parsed.tocCount;
+    patch.spineCount = parsed.spineCount;
+    if (!effectiveCoverPath && parsed.coverPath) {
+      patch.coverPath = parsed.coverPath;
+    }
+  }
+
   if (needsBookSectionBackfill(book) && (rawToc.length || rawSpine.length)) {
     Object.assign(patch, createBookSectionSnapshot(rawToc, rawSpine));
   } else {
-    if (typeof book.tocCount !== "number") patch.tocCount = rawToc.length;
-    if (typeof book.spineCount !== "number") patch.spineCount = rawSpine.length;
+    if (typeof book.tocCount !== "number" && typeof patch.tocCount !== "number") patch.tocCount = rawToc.length;
+    if (typeof book.spineCount !== "number" && typeof patch.spineCount !== "number") patch.spineCount = rawSpine.length;
   }
 
   if (book.coverUrl !== undefined) patch.coverUrl = undefined;
@@ -209,6 +228,18 @@ function resolveCoverSrc(book: Pick<BookEntry, "coverPath" | "updatedAt">): stri
   return `${baseUrl}?v=${version}`;
 }
 
+function resolvePdfSourceUrl(book: Pick<BookEntry, "assetPath" | "updatedAt">): string {
+  const baseUrl = filePathAsStableUrl(book.assetPath, "book");
+  const version = typeof book.updatedAt === "number" ? book.updatedAt : 0;
+  return `${baseUrl}?v=${version}`;
+}
+
+function resolveEpubSourceUrl(book: Pick<BookEntry, "assetPath" | "updatedAt">): string {
+  const baseUrl = filePathAsStableUrl(book.assetPath, "book");
+  const version = typeof book.updatedAt === "number" ? book.updatedAt : 0;
+  return `${baseUrl}?v=${version}`;
+}
+
 async function readAsset(book: Pick<BookEntry, "assetPath">): Promise<ArrayBuffer> {
   return readFileAsArrayBuffer(book.assetPath);
 }
@@ -235,6 +266,8 @@ function dropCoverSrc(path: string | null | undefined) {
 
 export const BookAssetResolver = {
   resolveCoverSrc,
+  resolveEpubSourceUrl,
+  resolvePdfSourceUrl,
   ensureCoverSrc,
   dropCoverSrc,
   readAsset,

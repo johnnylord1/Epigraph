@@ -43,6 +43,18 @@
           <p class="title">{t.title}</p>
           {#if t.body}<p class="sub">{t.body}</p>{/if}
         </div>
+        {#if t.action}
+          <button
+            class="toast-action"
+            onclick={(event) => {
+              event.stopPropagation();
+              t.action?.run();
+              dismissToast(t.id);
+            }}
+          >
+            {t.action.label}
+          </button>
+        {/if}
       </div>
     {/each}
   </div>
@@ -136,5 +148,22 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .toast-action {
+    flex-shrink: 0;
+    font-family: var(--font-ui);
+    font-size: var(--text-2xs);
+    letter-spacing: var(--tracking-wide);
+    color: var(--accent-fg);
+    background: var(--accent-muted);
+    border: 1px solid var(--accent-dim);
+    border-radius: var(--radius-sm);
+    padding: 4px 7px;
+    cursor: pointer;
+  }
+
+  .toast-action:hover {
+    filter: brightness(1.08);
   }
 </style>

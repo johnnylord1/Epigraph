@@ -18,6 +18,7 @@
       chapterId: item.chapter.id,
       mangaId:   item.chapter.mangaId,
       progress:  item.progress,
+      state:     item.state,
     })));
   }
 

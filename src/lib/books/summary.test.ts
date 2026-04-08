@@ -2,10 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   buildBookSectionSummary,
   createBookSectionSnapshot,
+  findBookSectionIndex,
   getBookSectionCount,
   getBookSectionsSummary,
   needsBookSectionBackfill,
   normalizeBookHrefKey,
+  resolveBookSectionHrefFromProgress,
+  resolveBookSectionLabel,
+  resolveBookSectionProgress,
 } from "./summary";
 import type { BookEntry, BookSpineItem, BookTocItem } from "./types";
 
@@ -101,5 +105,18 @@ describe("buildBookSectionSummary", () => {
     expect(needsBookSectionBackfill(book)).toBe(false);
     expect(getBookSectionCount(book)).toBe(1);
     expect(getBookSectionsSummary(book).map((item) => item.label)).toEqual(["Chapter 1"]);
+  });
+
+  it("matches sections by normalized href for labels and fallback progress", () => {
+    const sections = [
+      { id: "s1", label: "Chapter 1", href: "OPS/Text/ch1.xhtml", depth: 0 },
+      { id: "s2", label: "Chapter 2", href: "OPS/Text/ch2.xhtml", depth: 0 },
+      { id: "s3", label: "Chapter 3", href: "OPS/Text/ch3.xhtml", depth: 0 },
+    ];
+
+    expect(findBookSectionIndex(sections, "./Text/ch2.xhtml#frag")).toBe(1);
+    expect(resolveBookSectionLabel(sections, "./Text/ch2.xhtml#frag")).toBe("Chapter 2");
+    expect(resolveBookSectionProgress(sections, "./Text/ch2.xhtml#frag")).toBe(0.5);
+    expect(resolveBookSectionHrefFromProgress(sections, 0.49)).toBe("OPS/Text/ch2.xhtml");
   });
 });

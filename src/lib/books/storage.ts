@@ -42,6 +42,10 @@ export async function readFileAsArrayBuffer(path: string): Promise<ArrayBuffer> 
   return bytes.buffer;
 }
 
+export async function computeFileSha256(path: string): Promise<string> {
+  return invoke<string>("compute_file_sha256", { path });
+}
+
 export async function readFileAsDataUrl(path: string): Promise<string> {
   const cached = dataUrlCache.get(path);
   if (cached) return cached;
@@ -128,6 +132,10 @@ export function dropCachedFileStableUrl(path: string | null | undefined, protoco
 
 export async function copyImportedBook(sourcePath: string, bookId: string): Promise<string> {
   return invoke<string>("copy_book_import", { sourcePath, bookId });
+}
+
+export async function writeBookAsset(bookId: string, bytesBase64: string, ext: string): Promise<string> {
+  return invoke<string>("write_book_asset", { bookId, bytesBase64, ext });
 }
 
 export async function writeBookCover(bookId: string, bytesBase64: string, ext: string): Promise<string> {

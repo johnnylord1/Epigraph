@@ -1,80 +1,66 @@
-import { describe, expect, it, vi } from "vitest";
-
-vi.mock("./assets", () => ({
-  BookAssetResolver: {
-    resolveCoverSrc: (book: { coverPath?: string | null; updatedAt?: number }) =>
-      book.coverPath ? `book://${book.coverPath}?v=${book.updatedAt ?? 0}` : null,
-  },
-}));
-
-import { presentBook } from "./presentation";
+import { describe, expect, it } from "vitest";
+import { presentBookWithCoverSrc } from "./presentation";
 import type { BookEntry, BookProgress } from "./types";
 
-function makeBook(overrides: Partial<BookEntry> = {}): BookEntry {
-  return {
-    id: "book-1",
-    title: "Example",
-    author: null,
-    description: null,
-    coverPath: "C:\\books\\cover.jpg",
-    subtype: "epub",
-    createdAt: 0,
-    updatedAt: 42,
-    importPath: "C:\\books\\example.epub",
-    assetPath: "C:\\books\\example.epub",
-    sectionsSummary: [{ id: "s1", label: "Chapter 1", href: "OPS/ch1.xhtml", depth: 0 }],
-    sectionCount: 1,
-    tocCount: 1,
-    spineCount: 1,
-    ...overrides,
-  };
-}
+const book: BookEntry = {
+  id: "epub-demo",
+  title: "Demo Book",
+  author: "Author",
+  description: "Desc",
+  coverPath: "C:\\cover.png",
+  subtype: "epub",
+  createdAt: 1,
+  updatedAt: 2,
+  importPath: "C:\\demo.epub",
+  assetPath: "C:\\demo.epub",
+  sectionCount: 10,
+  tocCount: 10,
+  spineCount: 10,
+  sectionsSummary: Array.from({ length: 10 }, (_, index) => ({
+    id: `section-${index}`,
+    label: `Section ${index + 1}`,
+    href: `chapter-${index + 1}.xhtml`,
+    depth: 0,
+    order: index,
+  })),
+};
 
-function makeProgress(overrides: Partial<BookProgress> = {}): BookProgress {
-  return {
-    bookId: "book-1",
-    location: null,
-    href: null,
-    progressPercent: 0.5,
-    lastReadAt: 1,
-    ...overrides,
-  };
-}
+const progress: BookProgress = {
+  bookId: "epub-demo",
+  location: "loc",
+  href: "chapter-3.xhtml",
+  progressPercent: 0.3,
+  lastReadAt: 123,
+};
 
-describe("presentBook", () => {
-  it("normalizes the same canonical presentation fields for shelf and detail", () => {
-    const sections = Array.from({ length: 12 }, (_, index) => ({
-      id: `s${index + 1}`,
-      label: `Chapter ${index + 1}`,
-      href: `OPS/ch${index + 1}.xhtml`,
-      depth: 0,
-    }));
-    const presented = presentBook(
-      makeBook({ author: "RinoZ", sectionsSummary: sections, sectionCount: sections.length, tocCount: sections.length, spineCount: sections.length }),
-      makeProgress({ progressPercent: 0.25 }),
-    );
+describe("presentBookWithCoverSrc", () => {
+  it("derives presentation from explicit inputs without resolving assets itself", () => {
+    const presented = presentBookWithCoverSrc(book, progress, "book://cover");
 
-    expect(presented.title).toBe("Example");
-    expect(presented.authorLabel).toBe("RinoZ");
-    expect(presented.subtypeLabel).toBe("EPUB");
-    expect(presented.coverSrc).toBe("book://C:\\books\\cover.jpg?v=42");
-    expect(presented.sectionCount).toBe(12);
-    expect(presented.sectionCountLabel).toBe("12 sections");
-    expect(presented.readSectionCount).toBe(3);
-    expect(presented.progressSummary).toBe("3 / 12 read");
-    expect(presented.readPercentLabel).toBe("25%");
+    expect(presented.id).toBe("epub-demo");
+    expect(presented.coverSrc).toBe("book://cover");
+    expect(presented.authorLabel).toBe("Author");
+    expect(presented.sectionCount).toBe(10);
+    expect(presented.progressSummary).toBe("3 / 10 read");
   });
 
-  it("uses graceful fallbacks for missing author and missing outline", () => {
-    const presented = presentBook(
-      makeBook({ author: null, subtype: "pdf", sectionCount: 0, sectionsSummary: [], coverPath: null }),
-      null,
-    );
+  it("prefers page count labels for PDFs without outline sections", () => {
+    const presented = presentBookWithCoverSrc({
+      ...book,
+      id: "pdf-demo",
+      subtype: "pdf",
+      pageCount: 42,
+      sectionCount: 0,
+      sectionsSummary: [],
+      tocCount: 0,
+      spineCount: 0,
+    }, {
+      ...progress,
+      bookId: "pdf-demo",
+    }, "book://pdf-cover");
 
-    expect(presented.authorLabel).toBe("Unknown author");
-    expect(presented.coverSrc).toBeNull();
-    expect(presented.sectionCountLabel).toBe("No outline");
-    expect(presented.progressSummary).toBe("Unread");
-    expect(presented.showProgress).toBe(false);
+    expect(presented.pageCount).toBe(42);
+    expect(presented.pageCountLabel).toBe("42 pages");
+    expect(presented.sectionCountLabel).toBe("42 pages");
   });
 });

@@ -9,24 +9,46 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { open } from "@tauri-apps/plugin-shell";
-  import { gql, thumbUrl } from "../../lib/client";
+  import { getServerUrl, gql, thumbUrl } from "../../lib/client";
+  import { acquireResolvedMediaUrl, preloadBlobUrls, resetImageCache, resolvedImage, warmResolvedMediaUrl } from "../../lib/imageCache";
   import { FETCH_CHAPTER_PAGES, MARK_CHAPTER_READ, ENQUEUE_DOWNLOAD, ENQUEUE_CHAPTERS_DOWNLOAD } from "../../lib/queries";
+  import { toSuwayomiWebViewUrl } from "../../lib/suwayomiWebView";
   import { store, closeReader, openReader, addHistory, updateSettings, checkAndMarkCompleted, setSettingsOpen, addBookmark, removeBookmark } from "../../store/state.svelte";
   import { matchesKeybind, toggleFullscreen, DEFAULT_KEYBINDS } from "../../lib/keybinds";
   import { setReading } from "../../lib/discord";
   import type { FitMode } from "../../store/state.svelte";
+  import ReaderHud from "./ReaderHud.svelte";
 
   const AVG_MIN_PER_PAGE = 0.33;
   const READ_LINE_PCT    = 0.20;
   const ZOOM_STEP        = 0.05;
   const ZOOM_MIN         = 0.1;
   const ZOOM_MAX         = 1.0;
+  const STRIP_WINDOW_RADIUS = 1;
+  const MAX_ASPECT_CACHE_ENTRIES = 500;
+  const PRELOAD_FORWARD_PAGES = 2;
+  const PRELOAD_BACKWARD_PAGES = 1;
 
   const PAGE_STYLES = ["single", "fade", "double", "longstrip"] as const;
   type PageStyle = typeof PAGE_STYLES[number];
 
   const pageCache = new Map<number, string[]>();
   const inflight  = new Map<number, Promise<string[]>>();
+
+  function isCloudflareLikeError(message: string | null): boolean {
+    if (!message) return false;
+    const normalized = message.toLowerCase();
+    return normalized.includes("cloudflare")
+      || normalized.includes("captcha")
+      || normalized.includes("challenge")
+      || normalized.includes("just a moment")
+      || normalized.includes("bypass");
+  }
+
+  function clearChapterPageCache(chapterId: number) {
+    pageCache.delete(chapterId);
+    inflight.delete(chapterId);
+  }
 
   function fetchPages(chapterId: number, signal?: AbortSignal): Promise<string[]> {
     const cached = pageCache.get(chapterId);
@@ -36,6 +58,7 @@
       const p = gql<{ fetchChapterPages: { pages: string[] } }>(FETCH_CHAPTER_PAGES, { chapterId })
         .then(d => {
           const urls = d.fetchChapterPages.pages.map(thumbUrl);
+          void preloadBlobUrls(urls.slice(0, 2), 0).catch(() => {});
           pageCache.set(chapterId, urls);
           return urls;
         })
@@ -51,19 +74,49 @@
   }
 
   const aspectCache = new Map<string, number>();
-  function preloadImage(url: string) { new Image().src = url; }
+  function rememberAspect(url: string, aspect: number) {
+    if (aspectCache.has(url)) aspectCache.delete(url);
+    aspectCache.set(url, aspect);
+    while (aspectCache.size > MAX_ASPECT_CACHE_ENTRIES) {
+      const oldest = aspectCache.keys().next().value;
+      if (!oldest) break;
+      aspectCache.delete(oldest);
+    }
+  }
+
+  function preloadImage(url: string) {
+    if (!url) return;
+    if (store.settings.serverAuthEnabled) {
+      void warmResolvedMediaUrl(url).catch(() => {});
+      return;
+    }
+    new Image().src = url;
+  }
 
   function measureAspect(url: string): Promise<number> {
     if (aspectCache.has(url)) return Promise.resolve(aspectCache.get(url)!);
     return new Promise(res => {
       const img = new Image();
+      let release: (() => void) | null = null;
+      const finish = (value: number) => {
+        release?.();
+        release = null;
+        res(value);
+      };
       img.onload  = () => {
         const r = img.naturalHeight > 0 ? img.naturalWidth / img.naturalHeight : 0.67;
-        aspectCache.set(url, r);
-        res(r);
+        rememberAspect(url, r);
+        finish(r);
       };
-      img.onerror = () => res(0.67);
-      img.src = url;
+      img.onerror = () => finish(0.67);
+      acquireResolvedMediaUrl(url)
+        .then((lease) => {
+          release = lease.release;
+          img.src = lease.resolvedUrl;
+        })
+        .catch(() => {
+          img.src = url;
+        });
     });
   }
 
@@ -122,6 +175,7 @@
   let resumeFading      = $state(false);
   let resumeVisible     = $state(false);
   let webViewWindowOpen = $state(false);
+  let retryingAfterWebViewClose = false;
 
   function scheduleResumeDismiss() {
     if (resumeTimer)     clearTimeout(resumeTimer);
@@ -188,6 +242,14 @@
 
   const fitLabel = $derived({ width: "Fit W", height: "Fit H", screen: "Fit Screen", original: "1:1" }[fit]);
   const webViewUrl = $derived(displayChapter?.realUrl ?? store.activeChapter?.realUrl ?? null);
+  const suwayomiWebViewUrl = $derived.by(() => {
+    if (!webViewUrl) return null;
+    try {
+      return toSuwayomiWebViewUrl(getServerUrl(), webViewUrl);
+    } catch {
+      return webViewUrl;
+    }
+  });
   const canOpenWebView = $derived(!!webViewUrl);
 
   const stripToRender = $derived(
@@ -241,8 +303,7 @@
     error            = null;
     pageGroups       = [];
     pageReady        = false;
-    stripChapters    = [];
-    visibleChapterId = null;
+    resetReaderSessionCaches();
     store.pageUrls   = [];
     fadingOut        = false;
     closeReaderWebView().catch(() => {});
@@ -298,6 +359,36 @@
     }
   });
 
+  function pruneStripWindow(anchorChapterId: number | null) {
+    if (style !== "longstrip" || !anchorChapterId || stripChapters.length <= (STRIP_WINDOW_RADIUS * 2 + 1)) return;
+    const list = store.activeChapterList;
+    const anchorIndex = list.findIndex((chapter) => chapter.id === anchorChapterId);
+    if (anchorIndex < 0) return;
+
+    const keepIds = new Set(
+      list
+        .slice(Math.max(0, anchorIndex - STRIP_WINDOW_RADIUS), anchorIndex + STRIP_WINDOW_RADIUS + 1)
+        .map((chapter) => chapter.id),
+    );
+
+    const removed = stripChapters.filter((chunk) => !keepIds.has(chunk.chapterId));
+    if (!removed.length) return;
+
+    stripChapters = stripChapters.filter((chunk) => keepIds.has(chunk.chapterId));
+    for (const chunk of removed) {
+      clearChapterPageCache(chunk.chapterId);
+    }
+  }
+
+  function resetReaderSessionCaches() {
+    pageCache.clear();
+    inflight.clear();
+    aspectCache.clear();
+    stripChapters = [];
+    visibleChapterId = null;
+    resetImageCache();
+  }
+
   $effect(() => { if (style !== "longstrip" && containerEl) containerEl.scrollTop = 0; });
 
   $effect(() => {
@@ -328,10 +419,14 @@
     if (!next || stripChapters.some(c => c.chapterId === next.id)) return;
     appending = true;
     fetchPages(next.id)
-      .then(urls => { urls.forEach(url => measureAspect(url).catch(() => {})); urls.slice(0, 6).forEach(preloadImage); return urls; })
+      .then(urls => {
+        urls.slice(0, PRELOAD_FORWARD_PAGES).forEach(preloadImage);
+        return urls;
+      })
       .then(urls => {
         if (stripChapters.some(c => c.chapterId === next.id)) { appending = false; return; }
         stripChapters = [...stripChapters, { chapterId: next.id, chapterName: next.name, urls }];
+        pruneStripWindow(visibleChapterId ?? next.id);
         appending = false;
       })
       .catch(() => { appending = false; });
@@ -347,9 +442,24 @@
     });
   }
 
-  async function closeReaderWebView() {
+  async function closeReaderWebView(options: { retryAfterClose?: boolean } = {}) {
     await invoke("close_reader_webview").catch(() => {});
     webViewWindowOpen = false;
+    if (options.retryAfterClose) {
+      await retryAfterSuwayomiWebViewClose();
+    }
+  }
+
+  async function retryAfterSuwayomiWebViewClose() {
+    const chapter = store.activeChapter;
+    if (!chapter || !isCloudflareLikeError(error) || retryingAfterWebViewClose) return;
+    retryingAfterWebViewClose = true;
+    try {
+      clearChapterPageCache(chapter.id);
+      await loadChapter(chapter.id);
+    } finally {
+      retryingAfterWebViewClose = false;
+    }
   }
 
   async function refreshReaderWebViewState() {
@@ -357,10 +467,10 @@
   }
 
   async function openReaderWebView() {
-    if (!webViewUrl) return;
+    if (!webViewUrl || !suwayomiWebViewUrl) return;
     const windowTitle = [store.activeManga?.title, displayChapter?.name].filter(Boolean).join(" - ") || "Chapter Web View";
     try {
-      await invoke("open_reader_webview", { url: webViewUrl, title: windowTitle });
+      await invoke("open_reader_webview", { url: suwayomiWebViewUrl, title: windowTitle });
       webViewWindowOpen = true;
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
@@ -371,7 +481,7 @@
   async function toggleReaderWebView() {
     await refreshReaderWebViewState();
     if (webViewWindowOpen) {
-      await closeReaderWebView();
+      await closeReaderWebView({ retryAfterClose: true });
       return;
     }
     await openReaderWebView();
@@ -437,22 +547,6 @@
   });
 
   $effect(() => {
-    if (store.activeChapter && store.activeChapterList.length) {
-      const idx = store.activeChapterList.findIndex(c => c.id === store.activeChapter!.id);
-      if (idx >= 0) {
-        for (let i = 1; i <= 3; i++) {
-          const entry = store.activeChapterList[idx + i];
-          if (!entry) break;
-          fetchPages(entry.id)
-            .then(urls => { const n = i === 1 ? 8 : i === 2 ? 4 : 2; urls.slice(0, n).forEach(preloadImage); })
-            .catch(() => {});
-        }
-        if (idx > 0) fetchPages(store.activeChapterList[idx - 1].id).catch(() => {});
-      }
-    }
-  });
-
-  $effect(() => {
     if (style === "double" && store.pageUrls.length) {
       let cancelled = false;
       const snap = store.pageUrls;
@@ -474,10 +568,19 @@
   });
 
   $effect(() => {
-    const ahead = store.settings.preloadPages ?? 3;
-    for (let i = 1; i <= ahead; i++) { const url = store.pageUrls[store.pageNumber - 1 + i]; if (url) preloadImage(url); }
-    const behind = store.pageUrls[store.pageNumber - 2];
-    if (behind) preloadImage(behind);
+    for (let i = 1; i <= PRELOAD_FORWARD_PAGES; i++) {
+      const url = store.pageUrls[store.pageNumber - 1 + i];
+      if (url) preloadImage(url);
+    }
+    for (let i = 1; i <= PRELOAD_BACKWARD_PAGES; i++) {
+      const url = store.pageUrls[store.pageNumber - 1 - i];
+      if (url) preloadImage(url);
+    }
+  });
+
+  $effect(() => {
+    if (style !== "longstrip") return;
+    pruneStripWindow(visibleChapterId ?? store.activeChapter?.id ?? null);
   });
 
   $effect(() => {
@@ -717,7 +820,11 @@
     let readerWebViewUnlisten: (() => void) | null = null;
     let cleanedUp = false;
     listen<boolean>("reader-webview-state", (event) => {
+      const wasOpen = webViewWindowOpen;
       webViewWindowOpen = !!event.payload;
+      if (wasOpen && !webViewWindowOpen) {
+        void retryAfterSuwayomiWebViewClose();
+      }
     }).then((unlisten) => {
       if (cleanedUp) {
         unlisten();
@@ -738,19 +845,22 @@
       window.removeEventListener("wheel", onWheel);
       cleanupScroll();
       ro.disconnect();
+      resetReaderSessionCaches();
     };
   });
 
   onDestroy(() => {
     closeReaderWebView().catch(() => {});
+    resetReaderSessionCaches();
   });
 </script>
 
-<div class="root" class:overlay-bars={overlayBars} role="presentation" onmousemove={(e) => { if (e.clientY < 60 || window.innerHeight - e.clientY < 60) showUi(); }}>
-
-  <div class="topbar" class:hidden={!uiVisible}>
-
-    <div class="topbar-left">
+<ReaderHud
+  {overlayBars}
+  {uiVisible}
+  onMouseMove={(e) => { if (e.clientY < 60 || window.innerHeight - e.clientY < 60) showUi(); }}
+>
+  {#snippet topbarLeft()}
         <button class="icon-btn" onclick={exitReader} title="Close reader"><X size={15} weight="light" /></button>
       <button class="icon-btn" onclick={() => { if (adjacent.prev) { maybeMarkCurrentRead(); openReader(adjacent.prev, store.activeChapterList); } }} disabled={!adjacent.prev}>
         <CaretLeft size={14} weight="light" />
@@ -764,9 +874,9 @@
         <CaretRight size={14} weight="light" />
       </button>
       <span class="page-label">{store.pageNumber} / {visibleChunkLastPage || "…"}</span>
-    </div>
+  {/snippet}
 
-    <div class="topbar-right">
+  {#snippet topbarRight()}
       <div class="top-sep"></div>
 
       <button class="mode-btn" onclick={cycleFit}>
@@ -847,8 +957,7 @@
       <button class="icon-btn" class:active={isBookmarked} onclick={toggleBookmark} title={isBookmarked ? "Remove bookmark" : "Bookmark this page"}>
           <Bookmark size={15} weight={isBookmarked ? "fill" : "regular"} />
         </button>
-    </div>
-  </div>
+  {/snippet}
 
   {#if showResumeBanner}
     <div class="resume-banner" class:fading={resumeFading} role="status" onclick={() => { resumeVisible = false; resumeFading = false; }}>
@@ -894,7 +1003,7 @@
         {#each stripToRender as chunk}
           {#each chunk.urls as url, i}
             <img
-            src={url}
+            use:resolvedImage={url}
             alt="{chunk.chapterName} – Page {i + 1}"
             data-local-page={i + 1}
             data-chapter={chunk.chapterId}
@@ -909,7 +1018,7 @@
 
     {:else if style === "fade" && pageReady}
       <img
-        src={store.pageUrls[store.pageNumber - 1]}
+        use:resolvedImage={store.pageUrls[store.pageNumber - 1]}
         alt="Page {store.pageNumber}"
         class={imgCls}
         decoding="async"
@@ -921,7 +1030,7 @@
         <div class="double-wrap">
           {#each currentGroup as pg, i}
             <img
-              src={store.pageUrls[pg - 1]}
+              use:resolvedImage={store.pageUrls[pg - 1]}
               alt="Page {pg}"
               class="{imgCls} page-half {i === 0 ? 'gap-left' : 'gap-right'}"
               decoding="async"
@@ -933,11 +1042,11 @@
       {/if}
 
     {:else if pageReady}
-      <img src={store.pageUrls[store.pageNumber - 1]} alt="Page {store.pageNumber}" class={imgCls} decoding="async" />
+      <img use:resolvedImage={store.pageUrls[store.pageNumber - 1]} alt="Page {store.pageNumber}" class={imgCls} decoding="async" />
     {/if}
   </div>
 
-  <div class="bottombar" class:hidden={!uiVisible}>
+  {#snippet bottombar()}
     <button class="nav-btn" onclick={goPrev} disabled={loading || (style === "longstrip" ? !adjacent.prev : (store.pageNumber === 1 && !adjacent.prev))}>
       <ArrowLeft size={13} weight="light" />
     </button>
@@ -987,7 +1096,7 @@
     <button class="nav-btn" onclick={goNext} disabled={loading || (style === "longstrip" ? !adjacent.next : (store.pageNumber === lastPage && !adjacent.next))}>
       <ArrowRight size={13} weight="light" />
     </button>
-  </div>
+  {/snippet}
 
   {#if dlOpen && store.activeChapter}
     {@const queueable = adjacent.remaining.filter(c => !c.isDownloaded)}
@@ -1019,58 +1128,15 @@
       </div>
     </div>
   {/if}
-</div>
+</ReaderHud>
 
 <style>
-  .root { position: fixed; inset: 0; background: #000; display: flex; flex-direction: column; z-index: var(--z-reader); transform: translateZ(0); will-change: transform; }
-  .overlay-bars { position: fixed; }
-  .overlay-bars .topbar    { position: absolute; top: 0; left: 0; right: 0; z-index: 10; }
-  .overlay-bars .bottombar { position: absolute; bottom: 0; left: 0; right: 0; z-index: 10; }
-  .overlay-bars .viewer    { height: 100%; }
   .error-stack { display: flex; flex-direction: column; align-items: center; gap: 12px; }
   .reader-error-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; }
   .reader-error-btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: var(--radius-md); border: 1px solid var(--accent-dim); background: var(--accent-muted); color: var(--accent-fg); font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); cursor: pointer; transition: background var(--t-base), border-color var(--t-base), color var(--t-base); }
   .reader-error-btn:hover { background: var(--accent-dim); }
   .reader-error-btn.subtle { border-color: var(--border-strong); background: var(--bg-raised); color: var(--text-secondary); }
   .reader-error-btn.subtle:hover { border-color: var(--border-focus); color: var(--text-primary); }
-
-  .topbar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-1); padding: 0 var(--sp-3); height: 40px; background: var(--bg-void); border-bottom: 1px solid var(--border-dim); flex-shrink: 0; position: relative; z-index: 2; transition: opacity 0.25s ease; }
-  .topbar.hidden, .bottombar.hidden { opacity: 0; pointer-events: none; }
-
-  .topbar-left { display: flex; align-items: center; gap: var(--sp-1); min-width: 0; flex: 1; overflow: hidden; }
-  .topbar-right { display: flex; align-items: center; gap: var(--sp-1); flex-shrink: 0; }
-  .mode-extras { display: flex; align-items: center; gap: var(--sp-1); min-width: 0; }
-
-  .icon-btn { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: var(--radius-sm); color: var(--text-muted); flex-shrink: 0; transition: color var(--t-base), background var(--t-base); }
-  .icon-btn:hover:not(:disabled) { color: var(--text-primary); background: var(--bg-raised); }
-  .icon-btn:disabled { opacity: 0.2; cursor: default; }
-  .icon-btn.active { color: var(--accent-fg); }
-
-  .ch-label { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--text-sm); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  .ch-title { color: var(--text-secondary); font-weight: var(--weight-medium); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ch-sep   { color: var(--text-faint); flex-shrink: 0; }
-  .page-label { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-muted); letter-spacing: var(--tracking-wide); flex-shrink: 0; }
-  .top-sep { width: 1px; height: 16px; background: var(--border-dim); flex-shrink: 0; margin: 0 var(--sp-1); }
-
-  .mode-btn { display: flex; align-items: center; gap: 4px; padding: 4px var(--sp-2); border-radius: var(--radius-sm); color: var(--text-muted); flex-shrink: 0; font-family: var(--font-ui); font-size: var(--text-2xs); letter-spacing: var(--tracking-wide); transition: color var(--t-base), background var(--t-base); }
-  .mode-btn:hover { color: var(--text-primary); background: var(--bg-raised); }
-  .mode-btn.active { color: var(--accent-fg); background: var(--accent-muted); }
-  .mode-label { text-transform: capitalize; }
-
-  .zoom-wrap { position: relative; flex-shrink: 0; }
-  .zoom-inline { display: flex; align-items: center; gap: 1px; background: var(--bg-overlay); border: 1px solid var(--border-base); border-radius: var(--radius-sm); overflow: hidden; }
-  .zoom-step-btn { display: flex; align-items: center; justify-content: center; width: 22px; height: 24px; color: var(--text-muted); transition: color var(--t-base), background var(--t-base); }
-  .zoom-step-btn:hover:not(:disabled) { color: var(--text-primary); background: var(--bg-raised); }
-  .zoom-step-btn:disabled { opacity: 0.25; cursor: default; }
-  .zoom-pct-btn { font-family: var(--font-ui); font-size: var(--text-2xs); letter-spacing: var(--tracking-wide); color: var(--text-secondary); padding: 0 var(--sp-2); height: 24px; min-width: 38px; text-align: center; transition: color var(--t-base), background var(--t-base); border-left: 1px solid var(--border-dim); border-right: 1px solid var(--border-dim); }
-  .zoom-pct-btn:hover { color: var(--text-primary); background: var(--bg-raised); }
-  .zoom-popover { position: absolute; top: calc(100% + 6px); left: 50%; translate: -50% 0; background: var(--bg-raised); border: 1px solid var(--border-base); border-radius: var(--radius-lg); padding: var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-2); box-shadow: 0 8px 24px rgba(0,0,0,0.5); z-index: 100; min-width: 180px; animation: scaleIn 0.1s ease both; transform-origin: top center; }
-  .zoom-slider-row { display: flex; align-items: center; gap: var(--sp-2); }
-  .zoom-slider { flex: 1; height: 3px; appearance: none; -webkit-appearance: none; background: var(--border-strong); border-radius: 2px; outline: none; cursor: pointer; }
-  .zoom-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: var(--accent-fg); cursor: pointer; }
-  .zoom-reset { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-muted); letter-spacing: var(--tracking-wide); padding: 3px var(--sp-2); border-radius: var(--radius-sm); border: 1px solid var(--border-dim); transition: color var(--t-base), background var(--t-base), border-color var(--t-base); }
-  .zoom-reset:hover:not(:disabled) { color: var(--text-primary); background: var(--bg-overlay); border-color: var(--border-strong); }
-  .zoom-reset:disabled { opacity: 0.3; cursor: default; }
 
   .viewer { flex: 1; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; align-items: center; justify-content: center; -webkit-overflow-scrolling: touch; position: relative; }
   .viewer.strip { justify-content: flex-start; padding: var(--sp-4) 0; }
@@ -1092,21 +1158,7 @@
   .center-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
   .error-msg { color: var(--color-error); font-size: var(--text-base); }
 
-  .bottombar { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-2) var(--sp-3); border-top: 1px solid var(--border-dim); background: var(--bg-void); flex-shrink: 0; transition: opacity 0.25s ease; }
-  .nav-btn { display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; flex-shrink: 0; border-radius: var(--radius-md); border: 1px solid var(--border-strong); color: var(--text-muted); transition: background var(--t-base), color var(--t-base); }
-  .nav-btn:hover:not(:disabled) { background: var(--bg-raised); color: var(--text-primary); }
-  .nav-btn:disabled { opacity: 0.25; cursor: default; }
-
-  .slider-wrap { flex: 1; position: relative; display: flex; align-items: center; height: 34px; cursor: pointer; }
-  .slider-track-bg { position: absolute; left: 0; right: 0; height: 3px; background: var(--border-strong); border-radius: 2px; overflow: hidden; pointer-events: none; }
-  .slider-fill { height: 100%; background: var(--accent-fg); border-radius: 2px; transition: width 0.05s linear; }
-  .slider-input { position: absolute; left: 0; right: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; margin: 0; z-index: 2; }
-  .slider-checkpoint { position: absolute; top: 50%; width: 4px; height: 10px; border-radius: 2px; transform: translate(-50%, -50%); pointer-events: none; z-index: 1; }
-  .bookmark-checkpoint { background: var(--accent-fg); opacity: 0.7; }
-  .slider-tooltip { position: absolute; bottom: calc(100% + 2px); transform: translateX(-50%); background: var(--bg-raised); border: 1px solid var(--border-base); border-radius: var(--radius-sm); padding: 2px 6px; font-family: var(--font-ui); font-size: var(--text-2xs); color: var(--text-secondary); white-space: nowrap; pointer-events: none; z-index: 10; letter-spacing: var(--tracking-wide); }
-  .slider-wrap:hover .slider-track-bg, .slider-wrap.dragging .slider-track-bg { height: 5px; }
-
-  .resume-banner { position: fixed; top: 48px; left: 50%; display: flex; align-items: center; gap: var(--sp-2); background: var(--bg-raised); border: 1px solid var(--border-base); border-radius: var(--radius-lg); padding: 6px var(--sp-3); font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-secondary); z-index: 20; box-shadow: 0 4px 16px rgba(0,0,0,0.4); animation: bannerIn 0.2s cubic-bezier(0.16,1,0.3,1) both; white-space: nowrap; cursor: pointer; }
+  .resume-banner { position: fixed; top: 48px; left: 50%; display: flex; align-items: center; gap: var(--sp-2); background: var(--bg-raised); border: 1px solid var(--border-base); border-radius: var(--hud-toast-radius); padding: 6px var(--sp-3); font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-secondary); z-index: 20; box-shadow: 0 4px 16px rgba(0,0,0,0.4); animation: bannerIn var(--t-slow) cubic-bezier(0.16,1,0.3,1) both; white-space: nowrap; cursor: pointer; }
   .resume-banner.fading { animation: bannerOut 1s ease forwards; }
   @keyframes bannerIn  { from { opacity: 0; transform: translateX(-50%) translateY(-6px) scale(0.97); } to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); } }
   @keyframes bannerOut { from { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); } to { opacity: 0; transform: translateX(-50%) translateY(-4px) scale(0.97); } }
@@ -1114,7 +1166,7 @@
   .resume-jump:hover { filter: brightness(1.15); }
 
   .dl-backdrop { position: fixed; inset: 0; z-index: calc(var(--z-reader) + 10); display: flex; align-items: flex-start; justify-content: flex-end; padding: 48px var(--sp-4) 0; }
-  .dl-modal { background: var(--bg-raised); border: 1px solid var(--border-base); border-radius: var(--radius-xl); padding: var(--sp-3); min-width: 210px; display: flex; flex-direction: column; gap: var(--sp-1); box-shadow: 0 8px 32px rgba(0,0,0,0.6); animation: scaleIn 0.12s ease both; transform-origin: top right; }
+  .dl-modal { background: var(--bg-raised); border: 1px solid var(--border-base); border-radius: var(--hud-popover-radius); padding: var(--sp-3); min-width: 210px; display: flex; flex-direction: column; gap: var(--sp-1); box-shadow: 0 8px 32px rgba(0,0,0,0.6); animation: scaleIn var(--t-fast) both; transform-origin: top right; }
   .dl-title { font-family: var(--font-ui); font-size: var(--text-2xs); color: var(--text-faint); letter-spacing: var(--tracking-wider); text-transform: uppercase; padding: 2px var(--sp-2) var(--sp-2); border-bottom: 1px solid var(--border-dim); margin-bottom: var(--sp-1); }
   .dl-option { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 7px var(--sp-3); border-radius: var(--radius-md); font-size: var(--text-sm); color: var(--text-secondary); background: none; border: none; cursor: pointer; text-align: left; transition: background var(--t-fast), color var(--t-fast); }
   .dl-option:hover:not(:disabled) { background: var(--bg-overlay); color: var(--text-primary); }

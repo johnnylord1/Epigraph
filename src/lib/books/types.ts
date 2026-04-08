@@ -30,6 +30,7 @@ export interface BookEntry {
   /** Legacy migration-only field. Never use as an active render source. */
   coverUrl?: string | null;
   subtype: BookSubtype;
+  pageCount?: number | null;
   createdAt: number;
   updatedAt: number;
   importPath: string;
@@ -49,6 +50,20 @@ export interface BookProgress {
   href: string | null;
   progressPercent: number;
   lastReadAt: number;
+  pageIndex?: number | null;
+  totalPages?: number | null;
+  sectionLabel?: string | null;
+  renderer?: BookSubtype | null;
+}
+
+export interface BookBookmarkEntry {
+  bookId: string;
+  location: string | null;
+  href: string | null;
+  pageIndex: number | null;
+  progressPercent: number;
+  label?: string;
+  savedAt: number;
 }
 
 export interface ParsedBookCover {
