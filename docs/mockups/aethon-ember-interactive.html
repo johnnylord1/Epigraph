@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aethon Ember Interactive Mockup</title>
+    <link rel="stylesheet" href="./aethon-ember-interactive.css" />
+  </head>
+  <body>
+    <main class="app" aria-label="Aethon Ember mockup">
+      <aside class="rail" aria-label="Primary">
+        <div class="mark">Ae</div>
+        <button class="rail-btn is-active" data-view="home" aria-label="Home"><span>H</span></button>
+        <button class="rail-btn" data-view="library" aria-label="Library"><span>L</span></button>
+        <button class="rail-btn" data-view="browse" aria-label="Browse"><span>B</span></button>
+        <button class="rail-btn" data-view="downloads" aria-label="Downloads"><span>D</span></button>
+        <button class="rail-btn rail-bottom" data-view="settings" aria-label="Settings"><span>S</span></button>
+      </aside>
+
+      <section class="shell">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow" id="crumb">Home</p>
+            <h1 id="view-title">Aethon</h1>
+          </div>
+          <label class="search">
+            <span>/</span>
+            <input id="global-search" placeholder="Search library, sources, chapters" />
+          </label>
+          <div class="top-actions">
+            <button class="tiny">Sync</button>
+            <button class="tiny accent" data-open-reader>Read</button>
+          </div>
+        </header>
+
+        <section class="view is-visible" data-panel="home">
+          <div class="home-grid">
+            <article class="continue-card">
+              <div class="cover ember-cover tall"></div>
+              <div class="continue-copy">
+                <p class="eyebrow">Continue reading</p>
+                <h2>Houseki no Kuni</h2>
+                <p class="muted">Chapter 82 · page 13 of 28</p>
+                <div class="progress"><span style="width: 58%"></span></div>
+                <div class="inline-actions">
+                  <button class="primary" data-open-reader>Resume</button>
+                  <button class="ghost" data-open-detail>Details</button>
+                </div>
+              </div>
+            </article>
+
+            <section class="quiet-panel">
+              <div class="section-head">
+                <h3>Up next</h3>
+                <button class="text-btn">Edit</button>
+              </div>
+              <div class="chapter-list compact">
+                <button class="chapter-row" data-open-reader><b>Ch. 83</b><span>Queued</span></button>
+                <button class="chapter-row" data-open-reader><b>Ch. 84</b><span>New</span></button>
+                <button class="chapter-row" data-open-reader><b>Vol. 11 extra</b><span>Unread</span></button>
+              </div>
+            </section>
+
+            <section class="quiet-panel wide">
+              <div class="section-head">
+                <h3>Recent updates</h3>
+                <button class="text-btn" data-view="library">Library</button>
+              </div>
+              <div class="mini-feed">
+                <div><span class="dot"></span><b>Witch Hat Atelier</b><small>2 new chapters</small></div>
+                <div><span class="dot dim"></span><b>Frieren</b><small>1 chapter downloaded</small></div>
+                <div><span class="dot dim"></span><b>Monogatari</b><small>novel section synced</small></div>
+              </div>
+            </section>
+
+            <section class="quiet-panel wide">
+              <div class="section-head">
+                <h3>Finished works</h3>
+                <button class="text-btn">12 total</button>
+              </div>
+              <div class="shelf">
+                <button class="book-tile" data-open-detail><span class="cover c1"></span><b>Blame!</b></button>
+                <button class="book-tile" data-open-detail><span class="cover c2"></span><b>Pluto</b></button>
+                <button class="book-tile" data-open-detail><span class="cover c3"></span><b>Solanin</b></button>
+                <button class="book-tile" data-open-detail><span class="cover c4"></span><b>Girls' Last Tour</b></button>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" data-panel="library">
+          <div class="library-head">
+            <nav class="chips" aria-label="Library categories">
+              <button class="chip is-active">All</button>
+              <button class="chip">Reading</button>
+              <button class="chip">Updates</button>
+              <button class="chip">Finished</button>
+              <button class="chip">Offline</button>
+            </nav>
+            <div class="segmented" aria-label="Library view">
+              <button class="is-active" data-layout="covers">Covers</button>
+              <button data-layout="compact">Compact</button>
+              <button data-layout="list">List</button>
+            </div>
+          </div>
+          <div class="library-grid" id="library-grid">
+            <button class="manga-card" data-open-detail><span class="cover c1"></span><b>Houseki no Kuni</b><small>82 / 108</small></button>
+            <button class="manga-card" data-open-detail><span class="cover c2"></span><b>Witch Hat Atelier</b><small>41 unread</small></button>
+            <button class="manga-card" data-open-detail><span class="cover c3"></span><b>Frieren</b><small>Updated today</small></button>
+            <button class="manga-card" data-open-detail><span class="cover c4"></span><b>Blame!</b><small>Finished</small></button>
+            <button class="manga-card" data-open-detail><span class="cover c5"></span><b>Monogatari</b><small>Novel · 64%</small></button>
+            <button class="manga-card" data-open-detail><span class="cover c6"></span><b>Vagabond</b><small>Downloaded</small></button>
+            <button class="manga-card" data-open-detail><span class="cover c7"></span><b>Pluto</b><small>Finished</small></button>
+            <button class="manga-card" data-open-detail><span class="cover c8"></span><b>Yokohama</b><small>Reading</small></button>
+          </div>
+        </section>
+
+        <section class="view" data-panel="browse">
+          <div class="browse-layout">
+            <aside class="side-panel">
+              <h3>Browse</h3>
+              <button class="source is-active">MangaDex <span>online</span></button>
+              <button class="source">Local EPUB <span>folder</span></button>
+              <button class="source">Novel sources <span>3 enabled</span></button>
+            </aside>
+            <section class="quiet-panel grow">
+              <div class="section-head">
+                <h3>Search results</h3>
+                <div class="chips small"><button class="chip is-active">Popular</button><button class="chip">Latest</button><button class="chip">Seinen</button></div>
+              </div>
+              <div class="library-grid tight">
+                <button class="manga-card" data-open-detail><span class="cover c8"></span><b>Orb</b><small>MangaDex</small></button>
+                <button class="manga-card" data-open-detail><span class="cover c6"></span><b>Hirayasumi</b><small>Latest</small></button>
+                <button class="manga-card" data-open-detail><span class="cover c2"></span><b>Blue Period</b><small>Popular</small></button>
+                <button class="manga-card" data-open-detail><span class="cover c5"></span><b>Spice & Wolf</b><small>Novel</small></button>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" data-panel="downloads">
+          <section class="quiet-panel">
+            <div class="section-head">
+              <h3>Downloads</h3>
+              <div class="top-actions"><button class="tiny">Pause</button><button class="tiny">Retry</button><button class="tiny">Clear</button></div>
+            </div>
+            <div class="download-strip"><b>2 active</b><span>14 queued</span><span>8.6 GB used</span></div>
+            <div class="queue">
+              <div class="queue-row"><span class="thumb c1"></span><b>Houseki no Kuni · Ch. 83</b><div class="progress"><span style="width: 74%"></span></div><small>74%</small></div>
+              <div class="queue-row"><span class="thumb c2"></span><b>Witch Hat Atelier · Ch. 72</b><div class="progress"><span style="width: 38%"></span></div><small>38%</small></div>
+              <div class="queue-row"><span class="thumb c5"></span><b>Monogatari · Part 04</b><div class="progress"><span style="width: 100%"></span></div><small>Done</small></div>
+            </div>
+          </section>
+        </section>
+
+        <section class="view" data-panel="settings">
+          <div class="settings-layout">
+            <aside class="side-panel">
+              <h3>Settings</h3>
+              <button class="source">App</button>
+              <button class="source is-active">Reading</button>
+              <button class="source">Library</button>
+              <button class="source">Content</button>
+              <button class="source">System</button>
+            </aside>
+            <section class="quiet-panel grow">
+              <div class="setting-row"><b>Reader mode</b><div class="segmented"><button class="is-active">Paged</button><button>Vertical</button><button>Double</button></div></div>
+              <div class="setting-row"><b>Library density</b><div class="segmented"><button>Airy</button><button class="is-active">Dense</button><button>List</button></div></div>
+              <div class="setting-row"><b>Accent</b><span class="swatch"></span><small>Aethon Ember</small></div>
+              <div class="setting-row"><b>Auto-next chapter</b><label class="toggle"><input type="checkbox" checked /><span></span></label></div>
+              <div class="setting-row"><b>Reduce chrome in reader</b><label class="toggle"><input type="checkbox" checked /><span></span></label></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" data-panel="detail">
+          <div class="detail-layout">
+            <aside class="detail-cover">
+              <button class="text-btn" data-view="library">Back to library</button>
+              <span class="cover c1 hero-cover"></span>
+              <div class="progress"><span style="width: 76%"></span></div>
+              <p class="muted">82 / 108 chapters</p>
+            </aside>
+            <section class="detail-main">
+              <p class="eyebrow">MangaDex · Ongoing</p>
+              <h2>Houseki no Kuni</h2>
+              <p class="muted max">A quiet mineral world, fragile bodies, and a long search for memory. Description stays short so the chapter list owns the page.</p>
+              <div class="inline-actions">
+                <button class="primary" data-open-reader>Continue</button>
+                <button class="ghost">In library</button>
+                <button class="ghost">Download</button>
+                <button class="ghost">Tracking</button>
+              </div>
+              <nav class="chips small"><button class="chip is-active">All</button><button class="chip">Unread</button><button class="chip">Downloaded</button><button class="chip">Bookmarked</button></nav>
+              <div class="chapter-list">
+                <button class="chapter-row" data-open-reader><b>Ch. 108 · Sunspot</b><span>Unread · 24 pages</span></button>
+                <button class="chapter-row" data-open-reader><b>Ch. 107 · The Long Night</b><span>Downloaded</span></button>
+                <button class="chapter-row" data-open-reader><b>Ch. 106 · Phosphophyllite</b><span>Read</span></button>
+                <button class="chapter-row" data-open-reader><b>Ch. 105 · Quiet Surface</b><span>Read</span></button>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view reader-view" data-panel="reader">
+          <div class="reader-top">
+            <button class="text-btn" data-view="detail">Back</button>
+            <span>Houseki no Kuni · Ch. 108</span>
+            <div class="segmented small-control">
+              <button class="is-active" data-reader-mode="paged">Paged</button>
+              <button data-reader-mode="vertical">Vertical</button>
+              <button data-reader-mode="focus">Focus</button>
+            </div>
+          </div>
+          <div class="page-stage" id="page-stage">
+            <div class="manga-page">
+              <span></span><span></span><span></span><span></span><span></span><span></span>
+            </div>
+          </div>
+          <div class="reader-bottom">
+            <span>13 / 28</span>
+            <input id="reader-progress" type="range" min="1" max="28" value="13" />
+            <button class="tiny" id="brightness">Brightness</button>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="./aethon-ember-interactive.js"></script>
+  </body>
+</html>

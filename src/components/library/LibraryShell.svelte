@@ -7,6 +7,7 @@
     LibrarySectionTabVM,
     LibraryCollectionVM,
     LibraryToolbarVM,
+    BooksTypeOptionVM,
   } from "../../lib/library/contracts";
   import LibraryCollectionsBar from "./LibraryCollectionsBar.svelte";
   import LibraryHeader from "./LibraryHeader.svelte";
@@ -21,16 +22,19 @@
     sortDefaultMode: string;
     sortDefaultDir: "asc" | "desc";
     filterDefaultValue: string;
+    bookTypeOptions?: BooksTypeOptionVM[];
     sortLabel?: string;
     filterLabel?: string;
     collectionsReorderApi?: LibraryCollectionsReorderApi | null;
     headerControls?: Snippet;
+    hero?: Snippet;
     onSectionChange?: (section: LibrarySectionKind) => void;
     onCollectionSelect?: (collectionId: string) => void;
     onSearchChange?: (value: string) => void;
     onSortModeChange?: (mode: string) => void;
     onSortDirToggle?: () => void;
     onFilterChange?: (value: string) => void;
+    onBookTypeChange?: (value: BooksTypeOptionVM["id"]) => void;
     onViewModeChange?: (mode: LibraryDisplaySettings["viewMode"]) => void;
     onPreferredColumnsChange?: (value: LibraryDisplaySettings["preferredColumns"]) => void;
     onShowProgressChange?: (value: boolean) => void;
@@ -40,23 +44,26 @@
 
   let {
     sectionTabs,
-    collections,
-    toolbar,
+    collections: collectionsVm,
+    toolbar: toolbarVm,
     displaySettings,
     branchesEnabled = true,
     sortDefaultMode,
     sortDefaultDir,
     filterDefaultValue,
+    bookTypeOptions = [],
     sortLabel = "Sort by",
     filterLabel = "Filter",
     collectionsReorderApi = null,
     headerControls,
+    hero,
     onSectionChange = () => {},
     onCollectionSelect = () => {},
     onSearchChange = () => {},
     onSortModeChange = () => {},
     onSortDirToggle = () => {},
     onFilterChange = () => {},
+    onBookTypeChange = () => {},
     onViewModeChange = () => {},
     onPreferredColumnsChange = () => {},
     onShowProgressChange = () => {},
@@ -91,35 +98,44 @@
     {#snippet headerControls()}
       {@render headerControls?.()}
     {/snippet}
-    {#snippet collections()}
-      {#if collections.length}
-        <LibraryCollectionsBar
-          {collections}
-          onSelect={onCollectionSelect}
-          reorderApi={collectionsReorderApi}
-        />
-      {/if}
-    {/snippet}
-    {#snippet toolbar()}
+    {#snippet centerContent()}
       <LibraryToolbar
-        {toolbar}
+        toolbar={toolbarVm}
         {displaySettings}
         {sortDefaultMode}
         {sortDefaultDir}
         {filterDefaultValue}
+        {bookTypeOptions}
         {sortLabel}
         {filterLabel}
         {onSearchChange}
         {onSortModeChange}
         {onSortDirToggle}
         {onFilterChange}
+        {onBookTypeChange}
         {onViewModeChange}
         {onPreferredColumnsChange}
         {onShowProgressChange}
         {onShowOutlineChange}
+        showActions={false}
       />
     {/snippet}
+    {#if collectionsVm.length}
+      {#snippet collections()}
+        <LibraryCollectionsBar
+          collections={collectionsVm}
+          onSelect={onCollectionSelect}
+          reorderApi={collectionsReorderApi}
+        />
+      {/snippet}
+    {/if}
   </LibraryHeader>
+
+  {#if hero}
+    <div class="hero-slot">
+      {@render hero?.()}
+    </div>
+  {/if}
 
   <div class="body-slot">
     {@render children?.()}
@@ -141,6 +157,11 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
+    padding-top: calc(12px * var(--n-hud-scale));
+  }
+
+  .hero-slot {
+    flex-shrink: 0;
   }
 
   .branches {

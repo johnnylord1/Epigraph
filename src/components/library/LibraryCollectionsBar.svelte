@@ -70,6 +70,7 @@
     border-radius: var(--radius-md);
     padding: 2px;
     flex-wrap: wrap;
+    margin-bottom: calc(12px * var(--n-hud-scale));
   }
 
   .tab {

@@ -1,5 +1,5 @@
 import { gql } from "../client";
-import { FETCH_MANGA, FETCH_SOURCE_MANGA, GET_CHAPTERS } from "../queries";
+import { FETCH_MANGA, GET_CHAPTERS } from "../queries";
 import type { Manga } from "../types";
 import { DEFAULT_CLUSTER_INFERENCE_CONFIG } from "./constants";
 import { diceCoefficient, extractSlug, normalizeText, safeNumberSimilarity, tokenize } from "./text";
@@ -12,6 +12,7 @@ import type {
   ReconciliationWarning,
   SourceInventoryEntry,
 } from "./types";
+import { fetchSourceMangaSearchWithFallback } from "../manga/sourceSearch";
 
 type SearchResult = {
   manga: Manga;
@@ -76,17 +77,17 @@ async function searchSource(
   const cached = searchCache.get(cacheKey);
   if (cached) return cached;
 
-  const result = await withTimeout(
+  const mangas = await withTimeout(
     (signal) =>
-      gql<{ fetchSourceManga: { mangas: Manga[] } }>(
-        FETCH_SOURCE_MANGA,
-        { source: source.sourceId, type: "SEARCH", page: 1, query: title },
+      fetchSourceMangaSearchWithFallback({
+        sourceId: source.sourceId,
+        query: title,
         signal,
-      ),
+      }),
     config.requestTimeoutMs,
   );
 
-  const ranked = (result.fetchSourceManga.mangas ?? [])
+  const ranked = (mangas ?? [])
     .map((manga) => ({
       manga,
       titleSimilarity: diceCoefficient(title, manga.title),

@@ -4,20 +4,10 @@
   import { BookOpen, Folder, FolderSimplePlus, UploadSimple } from "phosphor-svelte";
   import { addToast, setActiveBookId, setLibraryScrollTop, store, updateSettings, upsertBook } from "../../store/state.svelte";
   import { hasBookLocalAsset, MISSING_BOOK_ASSET_MESSAGE } from "../../lib/books/availability";
-  import { BookAssetResolver, createImportedBookId } from "../../lib/books/assets";
-  import { resolveImportedBookFingerprint } from "../../lib/books/import";
-  import { parseEpubArchive } from "../../lib/books/epub";
-  import { extractPdfBookData } from "../../lib/books/pdf";
-  import { findBookByFingerprint } from "../../lib/books/identity";
-  import { createBookSectionSnapshot } from "../../lib/books/summary";
-  import {
-    canRenderEmbeddedImage,
-    computeFileSha256,
-    copyImportedBook,
-    readFileAsArrayBuffer,
-    writeBookCover,
-  } from "../../lib/books/storage";
-  import type { BookEntry, BookSubtype } from "../../lib/books/types";
+  import { BookAssetResolver } from "../../lib/books/assets";
+  import { importLocalBookFile, isSupportedBookImportPath } from "../../lib/books/importFile";
+  import type { BookEntry, BookProgress } from "../../lib/books/types";
+  import { presentBookWithCoverSrc } from "../../lib/books/presentation";
   import { createBookLibraryCardId } from "../../lib/library/cardIdentity";
   import {
     createBooksCategory,
@@ -34,6 +24,7 @@
     vm: BooksSectionVM;
     books: BookEntry[];
     totalBooks: number;
+    renderLimit?: number;
     viewKey: string;
     viewMode: LibraryViewMode;
     preferredColumns: LibraryPreferredGridColumns;
@@ -45,6 +36,7 @@
     vm,
     books,
     totalBooks,
+    renderLimit = 48,
     viewKey,
     viewMode = "grid",
     preferredColumns = "auto",
@@ -53,31 +45,65 @@
   }: Props = $props();
 
   const win = getCurrentWindow();
-  const SUPPORTED_EXTS = new Set(["epub", "pdf"]);
-
   let contentEl: HTMLDivElement | null = $state(null);
   let dropActive = $state(false);
   let importingDrop = $state(false);
   let brokenCoverKeys = $state(new Set<string>());
   let contentWidth = $state(0);
   let ctx: { x: number; y: number; book: BookEntry } | null = $state(null);
+  let renderVisible = $state(0);
   let scrollReady = false;
+  let viewStateReady = false;
 
   const bookByCardId = $derived(
     new Map(books.map((book) => [createBookLibraryCardId(book.id), book])),
   );
 
+  const bookProgressById = $derived(
+    new Map(store.bookProgress.map((progress: BookProgress) => [progress.bookId, progress])),
+  );
+
+  const visibleBooks = $derived(books.slice(0, renderVisible));
   const visibleCards = $derived(
-    vm.cards.map((card) => {
-      const book = bookByCardId.get(card.id);
-      if (!book) return card;
+    visibleBooks.map((book) => {
+      const progress = bookProgressById.get(book.id);
+      const coverSrc = brokenCoverKeys.has(bookCoverKey(book))
+        ? null
+        : BookAssetResolver.resolveCoverSrc(book);
+      const presented = presentBookWithCoverSrc(book, progress, coverSrc);
+      const hasLocalAsset = hasBookLocalAsset(book);
+      const badges = [{ kind: "subtype" as const, label: presented.subtypeLabel }];
+      if (!hasLocalAsset) {
+        badges.push({ kind: "status" as const, label: "Missing file" });
+      }
+      const metaChips = [presented.sectionCountLabel];
+      if (!hasLocalAsset) {
+        metaChips.push("Metadata only");
+      }
 
       return {
-        ...card,
-        coverSrc: brokenCoverKeys.has(bookCoverKey(book)) ? null : card.coverSrc,
+        id: createBookLibraryCardId(book.id),
+        title: presented.title,
+        subtitle: presented.authorLabel,
+        coverSrc: presented.coverSrc,
+        coverFit: "cover" as const,
+        badges,
+        metaChips,
+        progress: presented.showProgress
+          ? {
+              primaryLabel: presented.progressSummary,
+              secondaryLabel: presented.readPercentLabel,
+              percent: presented.readPercent,
+            }
+          : null,
+        selectable: false,
+        selected: false,
+        disabled: !hasLocalAsset,
       };
     }),
   );
+  const hasMore = $derived(books.length > renderVisible);
+  const remainingCount = $derived(Math.max(0, books.length - renderVisible));
   const layout = $derived(
     computeLibraryLayout({
       availableWidth: contentWidth,
@@ -98,21 +124,24 @@
     return fileBasename(path).replace(/\.[^.]+$/i, "");
   }
 
-  function extFromPath(path: string): string {
-    const match = path.match(/\.([^.\\/]+)$/i);
-    return match?.[1]?.toLowerCase() ?? "";
-  }
-
-  function isSupportedBookPath(path: string): boolean {
-    return SUPPORTED_EXTS.has(extFromPath(path));
-  }
-
   function setsEqual<T>(left: Set<T>, right: Set<T>): boolean {
     if (left.size !== right.size) return false;
     for (const value of left) {
       if (!right.has(value)) return false;
     }
     return true;
+  }
+
+  function loadMore() {
+    renderVisible = Math.min(books.length, renderVisible + renderLimit);
+  }
+
+  function maybeLoadMore() {
+    if (!contentEl || !hasMore) return;
+    const nearBottom = contentEl.scrollTop + contentEl.clientHeight >= contentEl.scrollHeight - 800;
+    if (nearBottom) {
+      loadMore();
+    }
   }
 
   $effect(() => {
@@ -125,84 +154,38 @@
 
   $effect(() => {
     viewKey;
-    if (!scrollReady) {
+    if (!viewStateReady) {
+      viewStateReady = true;
       scrollReady = true;
+      renderVisible = Math.min(renderLimit, books.length);
+      setLibraryScrollTop(0);
       return;
     }
+
+    renderVisible = Math.min(renderLimit, books.length);
     setLibraryScrollTop(0);
     if (contentEl) contentEl.scrollTo({ top: 0 });
   });
 
-  async function importBookFile(sourcePath: string): Promise<BookEntry> {
-    const subtype = extFromPath(sourcePath) as BookSubtype;
-    const now = Date.now();
-    const { assetFingerprint } = await resolveImportedBookFingerprint(sourcePath, subtype, {
-      computeFileSha256,
-    });
-    const existing = findBookByFingerprint(store.books, assetFingerprint);
-    const id = existing?.id ?? createImportedBookId(subtype, assetFingerprint);
-    const assetPath = await copyImportedBook(sourcePath, id);
-
-    if (subtype === "epub") {
-      const buffer = await readFileAsArrayBuffer(assetPath);
-      const parsed = await parseEpubArchive(buffer, fileStem(sourcePath));
-
-      let coverPath: string | null = existing?.coverPath ?? null;
-      if (parsed.cover) {
-        const isRenderableCover = await canRenderEmbeddedImage(
-          parsed.cover.bytesBase64,
-          parsed.cover.mediaType,
-        );
-        if (isRenderableCover) {
-          try {
-            coverPath = await writeBookCover(id, parsed.cover.bytesBase64, parsed.cover.ext);
-          } catch {
-            coverPath = existing?.coverPath ?? null;
-          }
-        } else {
-          coverPath = null;
-        }
-      }
-
-      const entry: BookEntry = {
-        id,
-        assetFingerprint,
-        title: parsed.title,
-        author: parsed.author,
-        description: parsed.description,
-        coverPath,
-        subtype,
-        createdAt: existing?.createdAt ?? now,
-        updatedAt: now,
-        importPath: sourcePath,
-        assetPath,
-        ...createBookSectionSnapshot(parsed.toc, parsed.spine),
-      };
-
-      upsertBook(entry);
-      addToast({
-        kind: "success",
-        title: existing ? "Updated EPUB" : "Imported EPUB",
-        body: entry.title,
-      });
-      return entry;
+  $effect(() => {
+    books.length;
+    if (renderVisible > books.length) {
+      renderVisible = books.length;
     }
+    if (scrollReady && contentEl) {
+      maybeLoadMore();
+    }
+  });
 
-    const entry: BookEntry = {
-      id,
-      assetFingerprint,
-      ...(await extractPdfBookData(assetPath, id, fileStem(sourcePath) || "Imported PDF")),
-      subtype: "pdf",
-      createdAt: existing?.createdAt ?? now,
-      updatedAt: now,
-      importPath: sourcePath,
-      assetPath,
-    };
-
+  async function importBookFile(sourcePath: string): Promise<BookEntry> {
+    const imported = await importLocalBookFile(sourcePath, { existingBooks: store.books });
+    const entry = imported.entry;
     upsertBook(entry);
     addToast({
       kind: "success",
-      title: existing ? "Updated PDF" : "Imported PDF",
+      title: imported.existing
+        ? `Updated ${entry.subtype.toUpperCase()}`
+        : `Imported ${entry.subtype.toUpperCase()}`,
       body: entry.title,
     });
     return entry;
@@ -210,8 +193,8 @@
 
   async function importDroppedPaths(paths: string[]) {
     const deduped = [...new Set(paths)];
-    const supported = deduped.filter(isSupportedBookPath);
-    const skipped = deduped.filter((path) => !isSupportedBookPath(path));
+    const supported = deduped.filter(isSupportedBookImportPath);
+    const skipped = deduped.filter((path) => !isSupportedBookImportPath(path));
 
     if (!supported.length) {
       addToast({
@@ -333,6 +316,7 @@
   function handleContentScroll() {
     if (!contentEl) return;
     setLibraryScrollTop(contentEl.scrollTop);
+    maybeLoadMore();
   }
 
   onMount(() => {
@@ -342,7 +326,7 @@
     void (async () => {
       unlisten = await win.onDragDropEvent((event) => {
         if (event.payload.type === "enter") {
-          dropActive = event.payload.paths.some(isSupportedBookPath);
+          dropActive = event.payload.paths.some(isSupportedBookImportPath);
           return;
         }
 
@@ -366,9 +350,6 @@
           contentWidth = nextWidth;
         });
         resizeObserver.observe(contentEl);
-      }
-      if (store.libraryScrollTop > 0 && contentEl) {
-        contentEl.scrollTo({ top: store.libraryScrollTop });
       }
     });
 
@@ -397,6 +378,14 @@
       onContextMenu={openBookContext}
       onCoverError={handleCoverError}
     />
+    {#if hasMore}
+      <div class="load-more-row">
+        <button type="button" class="load-more-btn" onclick={loadMore}>
+          Show {Math.min(remainingCount, renderLimit)} more
+          <span class="load-more-count">({remainingCount} remaining)</span>
+        </button>
+      </div>
+    {/if}
   {/if}
 
   {#if vm.dragDropEnabled && (dropActive || importingDrop)}
@@ -443,6 +432,41 @@
   .books-empty {
     font-size: var(--text-sm);
     line-height: var(--leading-base);
+  }
+
+  .load-more-row {
+    display: flex;
+    justify-content: center;
+    padding: var(--sp-5) 0 var(--sp-2);
+    position: relative;
+    z-index: 1;
+  }
+
+  .load-more-btn {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    font-family: var(--font-ui);
+    font-size: var(--text-xs);
+    letter-spacing: var(--tracking-wide);
+    padding: 8px 20px;
+    border-radius: var(--radius-full);
+    border: 1px solid var(--border-dim);
+    background: var(--bg-raised);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: color var(--t-base), border-color var(--t-base), background var(--t-base);
+  }
+
+  .load-more-btn:hover {
+    color: var(--accent-fg);
+    border-color: var(--accent-dim);
+    background: var(--accent-muted);
+  }
+
+  .load-more-count {
+    color: var(--text-faint);
+    font-size: var(--text-2xs);
   }
 
   .book-drop-overlay {

@@ -80,22 +80,35 @@ export async function gql<T>(
   query: string,
   variables?: Record<string, unknown>,
   signal?: AbortSignal,
+  timeoutMs = 12000,
 ): Promise<T> {
-  const res = await fetchWithRetry(gqlUrl(), {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...getAuthHeader() },
-    body: JSON.stringify({ query, variables }),
-  }, signal);
+  const controller = signal ? null : new AbortController();
+  const effectiveSignal = signal ?? controller?.signal;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
-  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-  if (!res.ok) throw new Error(`Suwayomi HTTP ${res.status}`);
+  try {
+    if (controller && Number.isFinite(timeoutMs) && timeoutMs > 0) {
+      timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    }
 
-  const json: GQLResponse<T> = await res.json();
+    const res = await fetchWithRetry(gqlUrl(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...getAuthHeader() },
+      body: JSON.stringify({ query, variables }),
+    }, effectiveSignal);
 
-  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-  if (json.errors?.length) throw new Error(json.errors[0].message);
+    if (effectiveSignal?.aborted) throw new DOMException("Aborted", "AbortError");
+    if (!res.ok) throw new Error(`Suwayomi HTTP ${res.status}`);
 
-  return json.data;
+    const json: GQLResponse<T> = await res.json();
+
+    if (effectiveSignal?.aborted) throw new DOMException("Aborted", "AbortError");
+    if (json.errors?.length) throw new Error(json.errors[0].message);
+
+    return json.data;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 }
 
 export async function gqlUpload<T>(

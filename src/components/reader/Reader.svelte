@@ -28,6 +28,7 @@
   const MAX_ASPECT_CACHE_ENTRIES = 500;
   const PRELOAD_FORWARD_PAGES = 2;
   const PRELOAD_BACKWARD_PAGES = 1;
+  const EMPTY_PAGES_RETRY_MS = 800;
 
   const PAGE_STYLES = ["single", "fade", "double", "longstrip"] as const;
   type PageStyle = typeof PAGE_STYLES[number];
@@ -52,14 +53,17 @@
 
   function fetchPages(chapterId: number, signal?: AbortSignal): Promise<string[]> {
     const cached = pageCache.get(chapterId);
-    if (cached) return Promise.resolve(cached);
+    if (cached?.length) return Promise.resolve(cached);
+    if (cached && cached.length === 0) pageCache.delete(chapterId);
     if (signal?.aborted) return Promise.reject(new DOMException("Aborted", "AbortError"));
     if (!inflight.has(chapterId)) {
       const p = gql<{ fetchChapterPages: { pages: string[] } }>(FETCH_CHAPTER_PAGES, { chapterId })
         .then(d => {
           const urls = d.fetchChapterPages.pages.map(thumbUrl);
-          void preloadBlobUrls(urls.slice(0, 2), 0).catch(() => {});
-          pageCache.set(chapterId, urls);
+          if (urls.length) {
+            void preloadBlobUrls(urls.slice(0, 2), 0).catch(() => {});
+            pageCache.set(chapterId, urls);
+          }
           return urls;
         })
         .finally(() => inflight.delete(chapterId));
@@ -71,6 +75,25 @@
       signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
       base.then(resolve, reject);
     });
+  }
+
+  function sleep(ms: number) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  async function fetchPagesWithEmptyRetry(id: number, signal: AbortSignal): Promise<string[]> {
+    let urls = await fetchPages(id, signal);
+    if (urls.length > 0 || signal.aborted) return urls;
+
+    clearChapterPageCache(id);
+    await sleep(EMPTY_PAGES_RETRY_MS);
+    if (signal.aborted) return [];
+
+    urls = await fetchPages(id, signal);
+    if (urls.length === 0) {
+      throw new Error("No pages returned for this chapter. The source may still be preparing the chapter or blocking image fetches.");
+    }
+    return urls;
   }
 
   const aspectCache = new Map<string, number>();
@@ -176,6 +199,7 @@
   let resumeVisible     = $state(false);
   let webViewWindowOpen = $state(false);
   let retryingAfterWebViewClose = false;
+  let emptyReaderRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
 
   function scheduleResumeDismiss() {
     if (resumeTimer)     clearTimeout(resumeTimer);
@@ -292,6 +316,33 @@
     if (ch) untrack(() => loadChapter(ch.id));
   });
 
+  $effect(() => {
+    const ch = store.activeChapter;
+    const hasPages = store.pageUrls.length > 0;
+    if (!ch || loading || error || hasPages) {
+      if (emptyReaderRecoveryTimer) {
+        clearTimeout(emptyReaderRecoveryTimer);
+        emptyReaderRecoveryTimer = null;
+      }
+      return;
+    }
+
+    emptyReaderRecoveryTimer = setTimeout(() => {
+      emptyReaderRecoveryTimer = null;
+      const current = store.activeChapter;
+      if (current && current.id === ch.id && !loading && !error && store.pageUrls.length === 0) {
+        void loadChapter(current.id);
+      }
+    }, 250);
+
+    return () => {
+      if (emptyReaderRecoveryTimer) {
+        clearTimeout(emptyReaderRecoveryTimer);
+        emptyReaderRecoveryTimer = null;
+      }
+    };
+  });
+
   async function loadChapter(id: number) {
     abortCtrl?.abort();
     const ctrl = new AbortController();
@@ -318,7 +369,7 @@
 
     store.pageNumber = 1;
     try {
-      const urls = await fetchPages(id, ctrl.signal);
+      const urls = await fetchPagesWithEmptyRetry(id, ctrl.signal);
       if (ctrl.signal.aborted) return;
       store.pageUrls = urls;
       if (resumeTo > 1) store.pageNumber = Math.min(resumeTo, urls.length || resumeTo);
@@ -494,12 +545,13 @@
 
   function setupScrollTracking(): () => void {
     if (!containerEl || style !== "longstrip") return () => {};
+    const scrollEl = containerEl;
 
     function onScroll() {
-      const imgs = containerEl.querySelectorAll<HTMLElement>("img[data-local-page]");
+      const imgs = scrollEl.querySelectorAll<HTMLElement>("img[data-local-page]");
       if (!imgs.length) return;
-      const containerTop = containerEl.getBoundingClientRect().top;
-      const readLineY    = containerTop + containerEl.clientHeight * READ_LINE_PCT;
+      const containerTop = scrollEl.getBoundingClientRect().top;
+      const readLineY    = containerTop + scrollEl.clientHeight * READ_LINE_PCT;
       let activePage: number | null = null;
       let activeChId: number | null = null;
       for (const img of imgs) {
@@ -519,22 +571,22 @@
         const total = chunk ? chunk.urls.length : store.pageUrls.length;
         if (total > 0 && activePage >= total) markChapterRead(activeChId);
       }
-      if (containerEl.scrollTop + containerEl.clientHeight >= containerEl.scrollHeight - 40) {
+      if (scrollEl.scrollTop + scrollEl.clientHeight >= scrollEl.scrollHeight - 40) {
         const last = stripChaptersRef[stripChaptersRef.length - 1];
         if (last && store.settings.autoMarkRead) markChapterRead(last.chapterId);
       }
     }
 
     function onScrollAppend() {
-      const pct = (containerEl.scrollTop + containerEl.clientHeight) / containerEl.scrollHeight;
+      const pct = (scrollEl.scrollTop + scrollEl.clientHeight) / scrollEl.scrollHeight;
       if (pct >= 0.80) appendNextChapter();
     }
 
-    containerEl.addEventListener("scroll", onScroll,       { passive: true });
-    containerEl.addEventListener("scroll", onScrollAppend, { passive: true });
+    scrollEl.addEventListener("scroll", onScroll,       { passive: true });
+    scrollEl.addEventListener("scroll", onScrollAppend, { passive: true });
     return () => {
-      containerEl.removeEventListener("scroll", onScroll);
-      containerEl.removeEventListener("scroll", onScrollAppend);
+      scrollEl.removeEventListener("scroll", onScroll);
+      scrollEl.removeEventListener("scroll", onScrollAppend);
     };
   }
 
@@ -816,6 +868,9 @@
     window.addEventListener("wheel", onWheel, { passive: false });
     containerEl?.focus({ preventScroll: true });
     refreshReaderWebViewState().catch(() => {});
+    if (store.activeChapter) {
+      void loadChapter(store.activeChapter.id);
+    }
 
     let readerWebViewUnlisten: (() => void) | null = null;
     let cleanedUp = false;
@@ -841,6 +896,7 @@
       readerWebViewUnlisten?.();
       abortCtrl?.abort();
       if (hideTimer) clearTimeout(hideTimer);
+      if (emptyReaderRecoveryTimer) clearTimeout(emptyReaderRecoveryTimer);
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("wheel", onWheel);
       cleanupScroll();

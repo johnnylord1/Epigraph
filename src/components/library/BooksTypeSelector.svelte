@@ -12,62 +12,48 @@
   }: Props = $props();
 </script>
 
-<div class="type-selector" aria-label="Books type">
+<div class="books-type-selector" aria-label="Books type">
   {#each options as option}
     <button
       type="button"
-      class="type-btn"
-      class:type-btn-active={option.active}
+      class="n-chip books-type-btn"
+      class:is-active={option.active}
       aria-pressed={option.active}
       onclick={() => onSelect(option.id)}
     >
-      <span>{option.label}</span>
-      <span class="type-count">{option.count}</span>
+      <span class="books-type-label">{option.label}</span>
+      <span class="books-type-count">{option.count}</span>
     </button>
   {/each}
 </div>
 
 <style>
-  .type-selector {
+  .books-type-selector {
     display: flex;
     align-items: center;
-    gap: 2px;
-    padding: 2px;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border-dim);
-    background: var(--bg-raised);
+    gap: 12px;
+    flex-wrap: wrap;
+    align-self: flex-start;
   }
 
-  .type-btn {
+  .books-type-btn {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 4px 10px;
-    border: 1px solid transparent;
-    border-radius: var(--radius-sm);
-    background: transparent;
-    color: var(--text-faint);
+    gap: 5px;
+    min-height: 30px;
+    padding: 0 12px;
     font-family: var(--font-ui);
-    font-size: var(--text-2xs);
-    letter-spacing: var(--tracking-wide);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.05em;
     text-transform: uppercase;
     cursor: pointer;
-    transition: color var(--t-base), background var(--t-base), border-color var(--t-base);
   }
 
-  .type-btn:hover {
-    color: var(--text-muted);
-  }
-
-  .type-btn-active {
-    color: var(--accent-fg);
-    border-color: var(--accent-dim);
-    background: var(--accent-muted);
-  }
-
-  .type-count {
+  .books-type-count {
     color: inherit;
     opacity: 0.7;
-    font-size: var(--text-2xs);
+    font-size: 10px;
+    font-weight: 800;
   }
 </style>

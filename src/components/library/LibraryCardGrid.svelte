@@ -42,7 +42,11 @@
   const gridStyle = $derived(
     viewMode === "list"
       ? ""
-      : `--library-columns:${Math.max(1, effectiveColumns)};`,
+      : [
+          `--library-columns:${Math.max(1, effectiveColumns)};`,
+          `--library-card-min:${viewMode === "compact_grid" ? 116 : 140}px;`,
+          `--library-card-max:${viewMode === "compact_grid" ? 150 : 180}px;`,
+        ].join(""),
   );
 </script>
 
@@ -72,16 +76,17 @@
     isolation: isolate;
     display: grid;
     grid-template-columns: repeat(var(--library-columns, 1), minmax(0, 1fr));
-    gap: var(--sp-4);
+    gap: 40px 24px;
     align-items: start;
+    justify-content: start;
   }
 
   .grid-compact {
-    gap: var(--sp-3);
+    gap: 32px 18px;
   }
 
   .grid-list {
     grid-template-columns: minmax(0, 1fr);
-    gap: var(--sp-3);
+    gap: 12px;
   }
 </style>

@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Aethon — Browse</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@200;300;400;500;600;700;800&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link href="./nocturne-base.css?v=6" rel="stylesheet"/>
+<script id="tailwind-config">
+  tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        colors: {
+          "on-background": "#e5e2e1",
+          "secondary-container": "#4a435c",
+          "surface-container": "#201f1f",
+          "on-primary": "#352660",
+          "background": "#131313",
+          "on-primary-container": "#483a74",
+          "on-error": "#690005",
+          "surface-bright": "#393939",
+          "surface-container-high": "#2a2a2a",
+          "on-secondary": "#332d44",
+          "surface-dim": "#131313",
+          "primary-container": "#b8a7ea",
+          "secondary": "#cbc2e0",
+          "primary": "#d3c4ff",
+          "outline": "#948f9a",
+          "tertiary": "#dece71",
+          "surface-tint": "#cebdff",
+          "error-container": "#93000a",
+          "tertiary-container": "#c1b259",
+          "surface-variant": "#353534",
+          "inverse-surface": "#e5e2e1",
+          "on-surface-variant": "#cac4d0",
+          "on-error-container": "#ffdad6",
+          "on-secondary-container": "#bab1ce",
+          "inverse-primary": "#645592",
+          "surface-container-lowest": "#0e0e0e",
+          "surface": "#131313",
+          "surface-container-highest": "#353534",
+          "on-surface": "#e5e2e1",
+          "surface-container-low": "#1c1b1b",
+          "primary-fixed": "#e8ddff",
+          "outline-variant": "#48454f",
+          "error": "#ffb4ab",
+          "primary-fixed-dim": "#cebdff"
+        },
+        fontFamily: { headline: ["Manrope"], body: ["Manrope"], label: ["Manrope"] }
+      },
+    },
+  }
+</script>
+<style>
+  .browse-filter-pane { scrollbar-width: thin; scrollbar-color: #353534 transparent; }
+  .source-item { transition: background 140ms ease, color 140ms ease, transform 140ms ease; }
+  .source-item:hover { transform: translateX(2px); }
+  .source-item:active { transform: scale(0.97); transition-duration: 60ms; }
+  .genre-tag { transition: background 140ms ease, color 140ms ease, transform 140ms ease; }
+  .genre-tag:hover { transform: translateY(-1px); }
+  .genre-tag:active { transform: scale(0.95); transition-duration: 60ms; }
+</style>
+</head>
+<body class="bg-background text-on-surface antialiased flex overflow-hidden h-screen">
+
+<!-- ═══════════ SIDEBAR ═══════════ -->
+<aside class="n-sidebar" data-component="sidebar" data-action="navigate:route">
+  <div class="n-sidebar__brand" data-component="sidebar-brand" data-action="navigate:route(/home)">
+    <img src="aethon-mark.png" alt="Aethon Logo" />
+  </div>
+  <nav class="n-sidebar__nav">
+    <button class="n-sidebar-btn" data-tooltip="Home" type="button">
+      <span class="n-icon"></span>
+    </button>
+    <button class="n-sidebar-btn" data-tooltip="Library" type="button">
+      <span class="n-icon"></span>
+    </button>
+    <button class="n-sidebar-btn is-active" data-tooltip="Browse" type="button">
+      <span class="n-icon"></span>
+    </button>
+    <button class="n-sidebar-btn" data-tooltip="Downloads" type="button">
+      <span class="n-icon"></span>
+    </button>
+  </nav>
+  <div class="n-sidebar__footer">
+    <button class="n-sidebar-btn" data-tooltip="Settings" type="button">
+      <span class="n-icon"></span>
+    </button>
+  </div>
+</aside>
+
+<!-- ═══════════ MAIN SHELL ═══════════ -->
+<main class="n-shell flex-1 flex flex-col h-full">
+
+  <!-- ═══════════ TOPBAR ═══════════ -->
+  <header class="n-topbar">
+    <div class="n-topbar__left">
+      <!-- Content type segmented -->
+      <nav class="n-segmented" data-active="manga" id="browseSegmented" data-component="segmented-control" data-action="state:setBrowseContentType(manga|novels)">
+        <span class="n-segmented__thumb" aria-hidden="true"></span>
+        <button class="n-segmented__btn is-active" data-segment="manga" type="button">Manga</button>
+        <button class="n-segmented__btn" data-segment="novels" type="button">Novels</button>
+      </nav>
+    </div>
+
+    <div class="n-topbar__center">
+      <div class="n-search" data-component="search-bar" data-action="search:searchSources(query)">
+        <span class="n-search__icon material-symbols-outlined">search</span>
+        <input class="n-search__input" placeholder="Search sources..." type="text"/>
+      </div>
+    </div>
+
+    <div class="n-topbar__right flex items-center gap-1">
+      <button class="n-icon-btn" title="Sort results" data-component="sort-btn" data-action="state:setBrowseSortMode(value)" type="button">
+        <span class="material-symbols-outlined">sort</span>
+      </button>
+      <button class="n-icon-btn" title="View mode" data-component="layout-toggle" data-action="state:setBrowseLayout(grid|list)" type="button">
+        <span class="material-symbols-outlined">grid_view</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- ═══════════ SUB-TABS ═══════════ -->
+  <div class="flex items-center gap-6 px-10 py-2.5 border-b border-outline-variant/5" style="margin-top: var(--n-topbar-height);">
+    <button class="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant/40 hover:text-on-surface transition-colors" data-component="sub-tab" data-action="state:setBrowseTab('keyword')">Keyword</button>
+    <button class="text-[10px] font-bold uppercase tracking-widest" style="color: var(--n-primary); border-bottom: 1px solid var(--n-primary); padding-bottom: 2px;" data-component="sub-tab" data-action="state:setBrowseTab('browse')">Browse</button>
+    <button class="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant/40 hover:text-on-surface transition-colors" data-component="sub-tab" data-action="state:setBrowseTab('source')">Source</button>
+  </div>
+
+  <!-- ═══════════ CONTENT: Filter + Grid ═══════════ -->
+  <div class="flex-1 flex min-h-0 overflow-hidden">
+
+    <!-- ═══════════ LEFT FILTER PANE ═══════════ -->
+    <aside class="w-64 bg-surface-container-low/50 flex flex-col p-5 gap-6 browse-filter-pane overflow-y-auto border-r border-outline-variant/5" data-component="filter-pane" data-action="state:updateBrowseFilters()">
+
+      <!-- Sources -->
+      <section>
+        <h3 class="n-eyebrow mb-3">Manga Sources</h3>
+        <div class="flex flex-col gap-1">
+          <button class="source-item flex items-center justify-between p-2.5 rounded-xl bg-surface-container-high/60 font-semibold text-xs" style="color: var(--n-primary);" data-component="source-item" data-action="state:setSelectedSource('mangadex')">
+            <div class="flex items-center gap-2.5">
+              <span class="material-symbols-outlined text-base">cloud</span>
+              Mangadex
+            </div>
+            <span class="text-[8px] bg-primary/15 px-1.5 py-0.5 rounded-full font-bold" style="color: var(--n-primary);">v1.4</span>
+          </button>
+          <button class="source-item flex items-center gap-2.5 p-2.5 rounded-xl hover:bg-surface-container-high/40 text-on-surface-variant text-xs" data-component="source-item" data-action="state:setSelectedSource('mangasee')">
+            <span class="material-symbols-outlined text-base">public</span>
+            Mangasee
+          </button>
+          <button class="source-item flex items-center gap-2.5 p-2.5 rounded-xl hover:bg-surface-container-high/40 text-on-surface-variant text-xs">
+            <span class="material-symbols-outlined text-base">language</span>
+            ReadComics
+          </button>
+        </div>
+      </section>
+
+      <!-- Genres -->
+      <section>
+        <div class="flex justify-between items-center mb-3">
+          <h3 class="n-eyebrow">Genres</h3>
+          <div class="n-inline-segmented"  data-component="genre-mode" data-action="state:setGenreMode(and|or)">
+            <button class="n-inline-segment is-selected" >AND</button>
+            <button class="n-inline-segment" >OR</button>
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-1.5">
+          <span class="genre-tag n-genre-chip cursor-pointer is-active">Action</span>
+          <span class="genre-tag n-genre-chip cursor-pointer" data-component="genre-chip" data-action="filter:toggleGenre(genreName)">Seinen</span>
+          <span class="genre-tag n-genre-chip cursor-pointer" data-component="genre-chip" data-action="filter:toggleGenre(genreName)">Fantasy</span>
+          <span class="genre-tag n-genre-chip cursor-pointer" data-component="genre-chip" data-action="filter:toggleGenre(genreName)">Sci-Fi</span>
+          <span class="genre-tag n-genre-chip cursor-pointer" data-component="genre-chip" data-action="filter:toggleGenre(genreName)">Horror</span>
+          <span class="genre-tag n-genre-chip cursor-pointer is-active">Psychological</span>
+          <span class="genre-tag n-genre-chip cursor-pointer" data-component="genre-chip" data-action="filter:toggleGenre(genreName)">Mystery</span>
+          <span class="genre-tag n-genre-chip cursor-pointer" data-component="genre-chip" data-action="filter:toggleGenre(genreName)">Romance</span>
+          <span class="genre-tag n-genre-chip cursor-pointer" data-component="genre-chip" data-action="filter:toggleGenre(genreName)">Slice of Life</span>
+        </div>
+      </section>
+
+      <!-- Language -->
+      <section>
+        <h3 class="n-eyebrow mb-3">Language</h3>
+        <div class="flex gap-1.5">
+          <button class="n-density-chip is-selected" style="min-width: 32px;">EN</button>
+          <button class="n-density-chip" style="min-width: 32px;">JP</button>
+          <button class="n-density-chip" style="min-width: 32px;">KR</button>
+          <button class="n-density-chip" style="min-width: 32px;">FR</button>
+        </div>
+      </section>
+
+      <!-- Visibility notice -->
+      <div class="mt-auto p-3 rounded-xl border border-error/10 bg-error/5 flex items-start gap-2.5">
+        <span class="material-symbols-outlined text-error text-base mt-0.5" style="opacity: 0.6;">visibility_off</span>
+        <div>
+          <p class="text-[9px] font-bold text-error uppercase tracking-wider">Visibility Filter</p>
+          <p class="text-[9px] text-on-surface-variant/50 leading-relaxed mt-1">Some titles hidden by safety preferences.</p>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ═══════════ BROWSE GRID ═══════════ -->
+    <div class="flex-1 p-10 overflow-y-auto">
+      <!-- Section header -->
+      <div class="flex justify-between items-end mb-6">
+        <div>
+          <h2 class="text-xl font-bold text-on-surface tracking-tight">Discover New Series</h2>
+          <p class="text-[11px] text-on-surface-variant/50 mt-1">From <span style="color: var(--n-primary);">Mangadex</span> · Action + Psychological</p>
+        </div>
+        <div class="n-soft-pill">
+          <span class="material-symbols-outlined text-xs" style="color: var(--n-primary-container);">analytics</span>
+          <span>342 Titles</span>
+        </div>
+      </div>
+
+      <!-- Grid -->
+      <div class="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-x-5 gap-y-8" data-component="browse-grid" data-action="data:renderItems(browseResults)">
+        <!-- Card 1 -->
+        <div class="n-library-card group">
+          <div class="n-library-card__cover">
+            <img alt="Abyssal Reach" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDYXs83Kw7tM_YZ4Z7DQ1wI_8yfsRvwNQZbkp9vBgnG20lmsGqRSDw4Rfpg_uSkIdNdMBEwxRsSpEcq-_o-xwd9QmPiTIPIcwUbO7k9yfwTKB7tJ1iE0_0gZa5wJLQcPuivhj9_1yaWk2uwzQsN4ew7vVwMjdAAFD27231M40yv_8pL-t3z_24BYoYUWNyl0eSNHSECipCGDUEvMS00OZg9iLXQZkAYb3bKjuyONj3oFbJLJr3k7awUPIvF6rqsWDGP-EM10Ej9VU4"/>
+            <span class="n-library-card__badge">In Library</span>
+          </div>
+          <div class="n-library-card__info">
+            <h3 class="n-library-card__title">Abyssal Reach</h3>
+            <div class="n-library-card__meta">
+              <span class="n-library-card__author">MangaDex</span>
+              <span class="n-library-card__vol">Ch. 142</span>
+            </div>
+          </div>
+        </div>
+        <!-- Card 2 -->
+        <div class="n-library-card group">
+          <div class="n-library-card__cover">
+            <img alt="Neon Gaze" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBkieSfCi7cZtbEQoZ3OCmtxNtWmbg-fla9hAK2lmx24CveX9qgthQox0F5Us_3l9ftd8-6JdCp0ragSXMDp-zT3jxMy_XbCFjEfw1eZ46oMYf3wR-z3-Qo8rQ0T1G-YmRb-npZLso-zptml2SBoIVLbtjE0ICuQFFygS-GIXxctUKPexMcUs2qBlaET7N_BUe2AtSxYmzLJ_cUvgzaRL6D03kKYkIC7Nb891T0YC_5HAkI32ObGD-HV-hX7bCRdpBv16D5oJ0MWWQ"/>
+          </div>
+          <div class="n-library-card__info">
+            <h3 class="n-library-card__title">Neon Gaze: Part II</h3>
+            <div class="n-library-card__meta">
+              <span class="n-library-card__author">MangaDex</span>
+              <span class="n-library-card__vol">Ch. 24</span>
+            </div>
+          </div>
+        </div>
+        <!-- Card 3 -->
+        <div class="n-library-card group">
+          <div class="n-library-card__cover">
+            <img alt="Spirit Blade" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCotnl4-ZqJJO75AQby_NTbNPiKXUVmDK-DnXHYAJ-WMm3fsCoSkB4b0yhFFRGsgbhWRpTmfy1UZLBnFusEyNycpgNKlZrNd0z4SA--HxVFDxAQDpScbWvAJPVPMsjnKHg4bklQu1ZN0iHKlZn8jNivMNwS3b1I8adXcuMsouAvISfiFYVEjBesnBmw7XYrKg0tJTcwDw4_u_6BZvE14-HMFP9pDJgigpXR2eKdNOOZoB-upkFNweeqaWY4th6aQsNDKO-IhAnNmyA"/>
+          </div>
+          <div class="n-library-card__info">
+            <h3 class="n-library-card__title">Spirit Blade</h3>
+            <div class="n-library-card__meta">
+              <span class="n-library-card__author">MangaDex</span>
+              <span class="n-library-card__vol">Ch. 89</span>
+            </div>
+          </div>
+        </div>
+        <!-- Card 4 -->
+        <div class="n-library-card group">
+          <div class="n-library-card__cover">
+            <img alt="Celestial Arch" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCAdKiWKcUA0CqpT0OZxS_L0Hc-C3NrtJcziaZqPIDPn79qXLbmIy3SrdEbK2qAoi8Y3Bh3fXSzKVKZeNxDZ2n-a8UjSmisLbsQ5mWPrtl260ZtO0c_4TA1bc-sW70kyRiubYBvBeH8OIjbthrJOZKiuDJg0_Rg9S3C9ss0tS53hSompLHWoOGLqsrcjh4IplGmK6JWSitOyy9yudB-e0g7DxAT5nbxOeBb2K8u9ZiIYrdNJQW4T3Q0uz4DvzWBrZS8EimPvzc287Y"/>
+          </div>
+          <div class="n-library-card__info">
+            <h3 class="n-library-card__title">Celestial Arch</h3>
+            <div class="n-library-card__meta">
+              <span class="n-library-card__author">MangaDex</span>
+              <span class="n-library-card__vol">Ch. 12</span>
+            </div>
+          </div>
+        </div>
+        <!-- Card 5 -->
+        <div class="n-library-card group">
+          <div class="n-library-card__cover">
+            <img alt="Augment: Zero" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCVcnwyahABwgNKK5aVNk54Hn8Pwjc8Z-xosURylm0UU9oqVEYEJ7_lS7K27KpEB2OrsQEIzD-01UuqYGphUEsRTwDJJMHzg5psdto5vRcMjt_oSJZNGxAGtgZpmmHRfVTPnRpuSJuOrmW_EyYCdF6R5Gf_vZpM4cdNIq784Sj-FQD4xLbW5A_9MEKlaLwcj3PkJ9TMYaMRgEsiihQigG9IaLY04aHa_YWzqdeVbEj5CqZLfXeI8PUSG9Jpr_XdchcT4b-8PZ-j7yI"/>
+          </div>
+          <div class="n-library-card__info">
+            <h3 class="n-library-card__title">Augment: Zero</h3>
+            <div class="n-library-card__meta">
+              <span class="n-library-card__author">MangaDex</span>
+              <span class="n-library-card__vol">Ch. 55</span>
+            </div>
+          </div>
+        </div>
+        <!-- Card 6 -->
+        <div class="n-library-card group">
+          <div class="n-library-card__cover">
+            <img alt="Ethereal Tide" src="https://lh3.googleusercontent.com/aida-public/AB6AXuC_-T33cnj7eyf6Y0_ufVew7JJp1EtRSD5qL7dfG-8srrSuFGjZBVBiedoDFjVMmqLEqZqcovzkuuLycKuATwqfUTuPqr4rDrNk1_A-fMNpPAaRo9dfgpanzrUqOl1di6zjL55IlwqFBZpvU7-FFYxRrjNXud_re0E1eUU-PaquIqk4Nbt2UDGGJmoMXLPjGeRAPOPrJN44pJk5RtGaFdRCqMzWKIK_q5Eki1IDbwTKdntT9J0t42UaOuhJmG8EZa-Hu-OcsVaBelU"/>
+          </div>
+          <div class="n-library-card__info">
+            <h3 class="n-library-card__title">Ethereal Tide</h3>
+            <div class="n-library-card__meta">
+              <span class="n-library-card__author">MangaDex</span>
+              <span class="n-library-card__vol">Ch. 101</span>
+            </div>
+          </div>
+        </div>
+        <!-- Card 7 -->
+        <div class="n-library-card group">
+          <div class="n-library-card__cover">
+            <img alt="Phase Shift" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCNzuwHTnUkbUR3TGIgHNyRDX1XOOuGWu7sPNbEYYfkc8hN0VSeR5jsQgf_uIzS_1KvMwGN1LbTKIS-CMoyqguU8oapUsKGL8Zk2h5TnlmhalLfCt7GNlg_EPEwGuKOeZuxfk_y2Mh8dflZJ9-k_QdFT9I-K41-u5BsI3TkBEB5xy_t9IcSzMUOuH25q7HQRb9n-p1j6qH4FUrmg8txZ0UCRew3BcyIi6J2R72WlPWaOGzvWQ9eG9O9m3lbNF0jCXq1Z5ftLQ50F8s"/>
+          </div>
+          <div class="n-library-card__info">
+            <h3 class="n-library-card__title">Phase Shift</h3>
+            <div class="n-library-card__meta">
+              <span class="n-library-card__author">MangaDex</span>
+              <span class="n-library-card__vol">Ch. 210</span>
+            </div>
+          </div>
+        </div>
+        <!-- Card 8 -->
+        <div class="n-library-card group">
+          <div class="n-library-card__cover">
+            <img alt="Monolith Code" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDvlXvAPmD_YsRB6QKgR663fq2mYeW4x1Xz5NXZ6vzyEwzPj_fDr4_5dr5mMyp3VdiWwcIw1pkgBacP-YrGP_9uR0B6WpRq2FLrNDIjquEh-8ZkygP5h1BsvV58OjvjipXn9OFI4P9R5pCQggoFWusahHTvxvY64yo4S2ympvS0XMDkB7eTaZ9gy5tbDx5M41Q20YVbF7y8E2FBDpViJhp4citSkj9YU8Wpa70-m20hPiij5UxrwJ5w4YU0wHGxAqNg51lx3qjZnX8"/>
+          </div>
+          <div class="n-library-card__info">
+            <h3 class="n-library-card__title">Monolith Code</h3>
+            <div class="n-library-card__meta">
+              <span class="n-library-card__author">MangaDex</span>
+              <span class="n-library-card__vol">Ch. 3</span>
+            </div>
+          </div>
+        </div>
+        <!-- Card 9 -->
+        <div class="n-library-card group">
+          <div class="n-library-card__cover">
+            <img alt="Last Beacon" src="https://lh3.googleusercontent.com/aida-public/AB6AXuChEAKCeRq0CvkaGb6xFlIJ0cip1D9s1jB-TbS_93qUxxjolXUXjNAxop8XMZ_J3Vv_vWlsP-EZYqvU0dgFNoMBt-VponmxURMsId7QxosU8MePUlbFZJixA_SXdaB4ocYgC4yBVJG9UZI4cCrpRxrv816AeILt8VpIXeJ9HjOS8_WTjufDUMvVdwfDeERSR3Scqxv-4lo8lnzJ9XQKJfrmCJCU47ibBzvUiFlszCsqOSLntwMTdAYHUCpEBzzwYdPqtIcfXPVCgLA"/>
+          </div>
+          <div class="n-library-card__info">
+            <h3 class="n-library-card__title">Last Beacon</h3>
+            <div class="n-library-card__meta">
+              <span class="n-library-card__author">MangaDex</span>
+              <span class="n-library-card__vol">Ch. 77</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Load more -->
+      <div class="mt-12 flex justify-center pb-10">
+        <button class="n-btn-secondary gap-2" data-component="load-more" data-action="action:loadNextPage()">
+          <span class="material-symbols-outlined text-base">expand_more</span>
+          Load more titles
+        </button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- ═══════════ JS: Segmented ═══════════ -->
+<script>
+(() => {
+  const segmented = document.getElementById('browseSegmented');
+  if (!segmented) return;
+  const buttons = Array.from(segmented.querySelectorAll('[data-segment]'));
+  buttons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      segmented.dataset.active = btn.dataset.segment;
+      buttons.forEach(b => b.classList.toggle('is-active', b === btn));
+    });
+  });
+})();
+</script>
+<div class="n-search-dim" id="searchDim"></div>
+<script src="./nocturne-search.js"></script>
+</body>
+</html>
+
+
+

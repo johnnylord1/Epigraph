@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { Category, Manga } from "../types";
-import { buildComicsSectionState } from "./comicsSection";
+import {
+  buildComicsLibraryCardVm,
+  buildComicsReadingStateLabel,
+  buildComicsSectionState,
+} from "./comicsSection";
 
 function manga(overrides: Partial<Manga> = {}): Manga {
   return {
@@ -119,5 +123,37 @@ describe("buildComicsSectionState", () => {
 
     expect(state.filteredManga.map((entry) => entry.id)).toEqual([3]);
     expect(state.vm.cards.map((card) => card.id)).toEqual(["comic:3"]);
+  });
+
+  it("builds Aethon comic card metadata from unread count and inferred state", () => {
+    const unknownUnread = manga({
+      status: "UNKNOWN",
+      unreadCount: 12,
+      chapterCount: 50,
+    });
+    const unknownRead = manga({
+      id: 2,
+      status: "UNKNOWN",
+      unreadCount: 0,
+      chapterCount: 50,
+    });
+    const finished = manga({
+      id: 3,
+      status: "COMPLETED",
+      unreadCount: 0,
+      chapterCount: 20,
+    });
+
+    const card = buildComicsLibraryCardVm(unknownUnread, {
+      cropCovers: true,
+      selectedIds: new Set(),
+      trackedCompletedIds: new Set(),
+      trackedChapterTotalsByMangaId: new Map(),
+    });
+
+    expect(card.badges).toEqual([{ kind: "unread", label: "CH 12" }]);
+    expect(card.metaChips).toEqual(["Reading"]);
+    expect(buildComicsReadingStateLabel(unknownRead)).toBe("Up to date");
+    expect(buildComicsReadingStateLabel(finished, new Set([3]), new Map([[3, 20]]))).toBe("Finished");
   });
 });

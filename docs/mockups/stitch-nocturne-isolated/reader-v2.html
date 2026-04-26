@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Aethon — Reader</title>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@200;300;400;500;600;700;800&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link href="./nocturne-base.css?v=6" rel="stylesheet"/>
+<style>
+  /* Reader — full immersive canvas, no sidebar */
+  html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #0a0a0c;
+    cursor: none;
+  }
+
+  .reader-app {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Canvas for manga pages */
+  .reader-canvas {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    position: relative;
+    background:
+      radial-gradient(ellipse at center, rgba(20,20,24,1) 0%, #0a0a0c 100%);
+    cursor: default;
+  }
+
+  .reader-canvas img {
+    max-height: 100%;
+    max-width: 100%;
+    object-fit: contain;
+    user-select: none;
+    -webkit-user-drag: none;
+    transition: opacity 200ms ease;
+  }
+
+  /* ═══ TOP CHROME — auto-hide header ═══ */
+  .reader-top {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    background: linear-gradient(180deg, rgba(10,10,12,0.92), rgba(10,10,12,0.75));
+    backdrop-filter: blur(16px) saturate(130%);
+    border-bottom: 1px solid rgba(202,196,208,0.05);
+    z-index: 100;
+    transition: transform 300ms cubic-bezier(0.22,1,0.36,1), opacity 300ms ease;
+  }
+
+  .reader-top.is-hidden {
+    transform: translateY(-100%);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .reader-top__left,
+  .reader-top__right {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .reader-top__title {
+    display: flex;
+    flex-direction: column;
+    margin-left: 8px;
+    gap: 1px;
+  }
+
+  .reader-top__series {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--n-on-surface);
+    letter-spacing: -0.01em;
+  }
+
+  .reader-top__chapter {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--n-on-surface-variant);
+    letter-spacing: 0.02em;
+  }
+
+  /* ═══ BOTTOM CHROME — slider + controls ═══ */
+  .reader-bottom {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 0 20px 14px;
+    background: linear-gradient(0deg, rgba(10,10,12,0.92), rgba(10,10,12,0.7));
+    backdrop-filter: blur(16px) saturate(130%);
+    border-top: 1px solid rgba(202,196,208,0.05);
+    z-index: 100;
+    transition: transform 300ms cubic-bezier(0.22,1,0.36,1), opacity 300ms ease;
+  }
+
+  .reader-bottom.is-hidden {
+    transform: translateY(100%);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* Progress slider row */
+  .reader-slider-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 4px 6px;
+  }
+
+  .reader-slider-label {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--n-on-surface-variant);
+    min-width: 42px;
+    text-align: center;
+    letter-spacing: 0.02em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .reader-slider-track {
+    flex: 1;
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(202,196,208,0.1);
+    position: relative;
+    cursor: pointer;
+    transition: height 100ms ease;
+  }
+
+  .reader-slider-track:hover {
+    height: 6px;
+  }
+
+  .reader-slider-fill {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    border-radius: 2px;
+    background: var(--n-gradient-primary);
+    transition: width 100ms ease;
+  }
+
+  .reader-slider-thumb {
+    position: absolute;
+    top: 50%;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--n-primary);
+    box-shadow: 0 0 8px rgba(184,167,234,0.4), 0 2px 6px rgba(0,0,0,0.3);
+    transform: translate(-50%, -50%);
+    transition: transform 100ms ease, box-shadow 200ms ease;
+    cursor: grab;
+  }
+
+  .reader-slider-track:hover .reader-slider-thumb {
+    transform: translate(-50%, -50%) scale(1.2);
+    box-shadow: 0 0 14px rgba(184,167,234,0.55), 0 2px 8px rgba(0,0,0,0.3);
+  }
+
+  /* Bottom controls row */
+  .reader-controls-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 2px 4px;
+  }
+
+  .reader-controls-row__left,
+  .reader-controls-row__center,
+  .reader-controls-row__right {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .reader-controls-row__center {
+    gap: 6px;
+  }
+
+  /* Reader icon button (smaller for reader chrome) */
+  .reader-btn {
+    width: 34px;
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    border: none;
+    background: transparent;
+    color: rgba(202, 196, 208, 0.65);
+    cursor: pointer;
+    transition: color 140ms ease, background 140ms ease, transform 140ms ease;
+  }
+
+  .reader-btn .material-symbols-outlined {
+    font-size: 20px;
+  }
+
+  .reader-btn:hover {
+    color: var(--n-on-surface);
+    background: rgba(255,255,255,0.04);
+    transform: scale(1.06);
+  }
+
+  .reader-btn:active {
+    transform: scale(0.9);
+    transition-duration: 60ms;
+  }
+
+  .reader-btn.is-active {
+    color: var(--n-primary);
+  }
+
+  /* Mode indicator pill */
+  .reader-mode-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 28px;
+    padding: 0 12px;
+    border-radius: 999px;
+    background: rgba(184,167,234,0.08);
+    border: 1px solid rgba(184,167,234,0.1);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: rgba(211,196,255,0.8);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 2px 6px rgba(0,0,0,0.15);
+  }
+
+  .reader-mode-pill .material-symbols-outlined { font-size: 15px; }
+
+  /* Chapter nav buttons at edges */
+  .reader-nav {
+    position: fixed;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 90;
+    width: 44px;
+    height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: rgba(10,10,12,0.5);
+    backdrop-filter: blur(8px);
+    border-radius: 12px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 200ms ease, transform 200ms ease, background 200ms ease;
+  }
+
+  .reader-nav .material-symbols-outlined {
+    font-size: 24px;
+    color: rgba(202,196,208,0.5);
+    transition: color 140ms ease;
+  }
+
+  .reader-nav:hover {
+    background: rgba(184,167,234,0.1);
+  }
+
+  .reader-nav:hover .material-symbols-outlined {
+    color: var(--n-primary);
+  }
+
+  .reader-nav:active {
+    transform: translateY(-50%) scale(0.92);
+    transition-duration: 60ms;
+  }
+
+  .reader-nav--prev { left: 8px; }
+  .reader-nav--next { right: 8px; }
+
+  .reader-app:hover .reader-nav,
+  .reader-app.chrome-visible .reader-nav {
+    opacity: 1;
+  }
+
+  /* Page turn animation */
+  @keyframes page-enter {
+    from { opacity: 0; transform: translateX(20px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+
+  .reader-canvas img.entering {
+    animation: page-enter 250ms var(--n-ease-out) both;
+  }
+
+  /* Error overlay */
+  .reader-error {
+    position: absolute;
+    inset: 0;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    background: rgba(10,10,12,0.85);
+    z-index: 80;
+  }
+
+  .reader-error.is-visible { display: flex; }
+
+  .reader-error__icon {
+    font-size: 48px;
+    color: var(--n-error);
+    opacity: 0.5;
+  }
+
+  .reader-error__text {
+    font-size: 12px;
+    color: var(--n-on-surface-variant);
+    text-align: center;
+    max-width: 280px;
+    line-height: 1.5;
+  }
+</style>
+</head>
+<body>
+<div class="reader-app chrome-visible" id="readerApp">
+
+  <!-- ═══════════ TOP CHROME ═══════════ -->
+  <header class="reader-top" id="readerTop" data-component="reader-top-chrome" data-state="chromeVisible:true">
+    <div class="reader-top__left">
+      <button class="reader-btn" title="Back to Series" type="button" id="backBtn" data-component="back-btn" data-action="navigate:goBack()">
+        <span class="material-symbols-outlined">arrow_back</span>
+      </button>
+      <div class="reader-top__title" data-component="reader-title" data-action="data:renderChapterTitle(series,chapter)">
+        <span class="reader-top__series">Vagabond</span>
+        <span class="reader-top__chapter">Chapter 327 — The Man Named Tadaoki</span>
+      </div>
+    </div>
+    <div class="reader-top__right">
+      <button class="reader-btn" title="Bookmark page" type="button" data-component="bookmark-btn" data-action="action:bookmarkPage(currentPage)">
+        <span class="material-symbols-outlined">bookmark</span>
+      </button>
+      <button class="reader-btn" title="Reader settings" type="button" id="settingsBtn" data-component="settings-btn" data-action="action:openReaderSettings()">
+        <span class="material-symbols-outlined">tune</span>
+      </button>
+      <button class="reader-btn" title="More options" type="button" data-component="more-btn" data-action="action:openReaderMenu()">
+        <span class="material-symbols-outlined">more_vert</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- ═══════════ CHAPTER NAV ═══════════ -->
+  <button class="reader-nav reader-nav--prev" title="Previous Chapter" type="button" id="prevChapter" data-component="chapter-nav" data-action="action:prevChapter()">
+    <span class="material-symbols-outlined">chevron_left</span>
+  </button>
+  <button class="reader-nav reader-nav--next" title="Next Chapter" type="button" id="nextChapter" data-component="chapter-nav" data-action="action:nextChapter()">
+    <span class="material-symbols-outlined">chevron_right</span>
+  </button>
+
+  <!-- ═══════════ CANVAS ═══════════ -->
+  <div class="reader-canvas" id="readerCanvas" data-component="reader-canvas" data-action="action:toggleChrome()">
+    <img id="readerPage" alt="Manga page" data-component="page-image" data-action="data:renderPage(pages[currentPage].url)" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBZ014CHeTlVg2kDXqj4MNIwNU2uM2nt5ishLnYq3qNqLoIox9CxrLyBHRhGXMf7_LXPgGP9SM8G0Wl39QiSvBXcxLKnAalI-fnbjhfHMXdZAJguO57IJqa0gpQ_vNYY2E6u8Uu331qekUXQFGs0TPQK9CJxXSGM-SRMTr-eht7oDK6LtTBf5qS5RV-i_2rBuCtnZZmBudsnr-Whd_59kWVHOTByLaADBC1Pw2gqyg9jCws8BxpPaR1GkFrbPiy-oAySZhu7hvwHJY"/>
+
+    <!-- Error overlay (hidden by default) -->
+    <div class="reader-error" id="readerError" data-component="error-overlay" data-state="loadError:false">
+      <span class="material-symbols-outlined reader-error__icon">cloud_off</span>
+      <p class="reader-error__text">Failed to load page. Check your connection and try again.</p>
+      <button class="n-btn-secondary" type="button" id="retryBtn" data-component="retry-btn" data-action="action:retryPageLoad()">
+        <span class="material-symbols-outlined" style="font-size: 16px;">refresh</span>
+        Retry
+      </button>
+    </div>
+  </div>
+
+  <!-- ═══════════ BOTTOM CHROME ═══════════ -->
+  <footer class="reader-bottom" id="readerBottom" data-component="reader-bottom-chrome" data-state="chromeVisible:true">
+    <!-- Slider -->
+    <div class="reader-slider-row" data-component="page-slider" data-action="state:setCurrentPage(n)">
+      <span class="reader-slider-label" id="pageCurrentLabel">12</span>
+      <div class="reader-slider-track" id="sliderTrack">
+        <div class="reader-slider-fill" id="sliderFill" style="width: 35.3%;"></div>
+        <div class="reader-slider-thumb" id="sliderThumb" style="left: 35.3%;"></div>
+      </div>
+      <span class="reader-slider-label" id="pageTotalLabel">34</span>
+    </div>
+
+    <!-- Controls -->
+    <div class="reader-controls-row">
+      <div class="reader-controls-row__left">
+        <button class="reader-btn" title="Previous page" type="button" id="prevPage" data-component="page-nav" data-action="action:prevPage()">
+          <span class="material-symbols-outlined">navigate_before</span>
+        </button>
+        <button class="reader-btn" title="Next page" type="button" id="nextPage" data-component="page-nav" data-action="action:nextPage()">
+          <span class="material-symbols-outlined">navigate_next</span>
+        </button>
+      </div>
+
+      <div class="reader-controls-row__center">
+        <!-- Reading mode pill -->
+        <div class="reader-mode-pill" id="modePill" data-component="mode-indicator" data-action="data:renderReadingDirection()">
+          <span class="material-symbols-outlined">swap_horiz</span>
+          Left to Right
+        </div>
+      </div>
+
+      <div class="reader-controls-row__right">
+        <!-- Fit mode -->
+        <button class="reader-btn is-active" title="Fit width" type="button" data-fit="width" id="fitWidth" data-component="fit-toggle" data-action="state:setFitMode('width')">
+          <span class="material-symbols-outlined">width_full</span>
+        </button>
+        <button class="reader-btn" title="Fit height" type="button" data-fit="height" id="fitHeight" data-component="fit-toggle" data-action="state:setFitMode('height')">
+          <span class="material-symbols-outlined">height</span>
+        </button>
+        <div style="width: 1px; height: 14px; background: rgba(202,196,208,0.08); margin: 0 4px;"></div>
+        <!-- Zoom -->
+        <button class="reader-btn" title="Zoom out" type="button" id="zoomOut" data-component="zoom-btn" data-action="action:zoom(-1)">
+          <span class="material-symbols-outlined">zoom_out</span>
+        </button>
+        <button class="reader-btn" title="Zoom in" type="button" id="zoomIn" data-component="zoom-btn" data-action="action:zoom(+1)">
+          <span class="material-symbols-outlined">zoom_in</span>
+        </button>
+        <div style="width: 1px; height: 14px; background: rgba(202,196,208,0.08); margin: 0 4px;"></div>
+        <!-- Direction -->
+        <button class="reader-btn is-active" title="Left to Right" type="button" data-dir="ltr" id="dirLTR" data-component="direction-toggle" data-action="state:setReadingDirection('ltr')">
+          <span class="material-symbols-outlined">arrow_forward</span>
+        </button>
+        <button class="reader-btn" title="Right to Left" type="button" data-dir="rtl" id="dirRTL" data-component="direction-toggle" data-action="state:setReadingDirection('rtl')">
+          <span class="material-symbols-outlined">arrow_back</span>
+        </button>
+        <button class="reader-btn" title="Vertical scroll" type="button" data-dir="vertical" id="dirVertical" data-component="direction-toggle" data-action="state:setReadingDirection('vertical')">
+          <span class="material-symbols-outlined">swap_vert</span>
+        </button>
+      </div>
+    </div>
+  </footer>
+</div>
+
+<!-- ═══════════ JS: Reader Chrome Logic ═══════════ -->
+<script>
+(() => {
+  const app = document.getElementById('readerApp');
+  const top = document.getElementById('readerTop');
+  const bottom = document.getElementById('readerBottom');
+  const canvas = document.getElementById('readerCanvas');
+
+  let chromeVisible = true;
+  let hideTimeout = null;
+
+  function showChrome() {
+    chromeVisible = true;
+    app.classList.add('chrome-visible');
+    top.classList.remove('is-hidden');
+    bottom.classList.remove('is-hidden');
+    document.body.style.cursor = 'default';
+    resetAutoHide();
+  }
+
+  function hideChrome() {
+    chromeVisible = false;
+    app.classList.remove('chrome-visible');
+    top.classList.add('is-hidden');
+    bottom.classList.add('is-hidden');
+    document.body.style.cursor = 'none';
+  }
+
+  function toggleChrome() {
+    chromeVisible ? hideChrome() : showChrome();
+  }
+
+  function resetAutoHide() {
+    clearTimeout(hideTimeout);
+    hideTimeout = setTimeout(hideChrome, 4000);
+  }
+
+  // Canvas click toggles chrome
+  canvas.addEventListener('click', (e) => {
+    if (e.target.closest('.reader-error')) return;
+    toggleChrome();
+  });
+
+  // Mouse movement shows chrome
+  document.addEventListener('mousemove', () => {
+    if (!chromeVisible) showChrome();
+    else resetAutoHide();
+  });
+
+  // Prevent auto-hide when hovering chrome bars
+  top.addEventListener('mouseenter', () => clearTimeout(hideTimeout));
+  bottom.addEventListener('mouseenter', () => clearTimeout(hideTimeout));
+  top.addEventListener('mouseleave', resetAutoHide);
+  bottom.addEventListener('mouseleave', resetAutoHide);
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown', (e) => {
+    switch (e.key) {
+      case 'Escape':
+        hideChrome();
+        break;
+      case ' ':
+        e.preventDefault();
+        toggleChrome();
+        break;
+      case 'ArrowRight':
+        e.preventDefault();
+        simulatePageTurn('next');
+        break;
+      case 'ArrowLeft':
+        e.preventDefault();
+        simulatePageTurn('prev');
+        break;
+    }
+  });
+
+  // Page navigation buttons
+  const state = { currentPage: 12, totalPages: 34 };
+
+  function updateSlider() {
+    const pct = ((state.currentPage / state.totalPages) * 100).toFixed(1);
+    document.getElementById('sliderFill').style.width = pct + '%';
+    document.getElementById('sliderThumb').style.left = pct + '%';
+    document.getElementById('pageCurrentLabel').textContent = state.currentPage;
+  }
+
+  function simulatePageTurn(direction) {
+    if (direction === 'next' && state.currentPage < state.totalPages) {
+      state.currentPage++;
+    } else if (direction === 'prev' && state.currentPage > 1) {
+      state.currentPage--;
+    }
+    updateSlider();
+    // Page enter animation
+    const img = document.getElementById('readerPage');
+    img.classList.remove('entering');
+    void img.offsetWidth;
+    img.classList.add('entering');
+  }
+
+  document.getElementById('prevPage')?.addEventListener('click', () => simulatePageTurn('prev'));
+  document.getElementById('nextPage')?.addEventListener('click', () => simulatePageTurn('next'));
+  document.getElementById('prevChapter')?.addEventListener('click', () => simulatePageTurn('prev'));
+  document.getElementById('nextChapter')?.addEventListener('click', () => simulatePageTurn('next'));
+
+  // Fit mode toggle
+  const fitBtns = document.querySelectorAll('[data-fit]');
+  fitBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      fitBtns.forEach(b => b.classList.remove('is-active'));
+      btn.classList.add('is-active');
+    });
+  });
+
+  // Direction toggle
+  const dirBtns = document.querySelectorAll('[data-dir]');
+  const modePill = document.getElementById('modePill');
+  const dirLabels = { ltr: 'Left to Right', rtl: 'Right to Left', vertical: 'Vertical Scroll' };
+  const dirIcons = { ltr: 'swap_horiz', rtl: 'swap_horiz', vertical: 'swap_vert' };
+  dirBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      dirBtns.forEach(b => b.classList.remove('is-active'));
+      btn.classList.add('is-active');
+      const dir = btn.dataset.dir;
+      modePill.innerHTML = `<span class="material-symbols-outlined">${dirIcons[dir]}</span> ${dirLabels[dir]}`;
+    });
+  });
+
+  // Slider interaction
+  const track = document.getElementById('sliderTrack');
+  track?.addEventListener('click', (e) => {
+    const rect = track.getBoundingClientRect();
+    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    state.currentPage = Math.max(1, Math.round(pct * state.totalPages));
+    updateSlider();
+  });
+
+  // Initial auto-hide
+  resetAutoHide();
+})();
+</script>
+</body>
+</html>
+
+

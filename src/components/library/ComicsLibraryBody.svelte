@@ -3,6 +3,7 @@
   import { Books, CheckSquare, Folder, FolderSimplePlus, Trash, X } from "phosphor-svelte";
   import { thumbUrl } from "../../lib/client";
   import { createComicLibraryCardId } from "../../lib/library/cardIdentity";
+  import { buildComicsLibraryCardVm } from "../../lib/library/comicsSection";
   import { computeLibraryLayout, type LibraryPreferredGridColumns, type LibraryViewMode } from "../../lib/libraryDisplay";
   import type { ComicsSectionVM } from "../../lib/library/contracts";
   import { getCategoryDisplayName } from "../../lib/library/categories";
@@ -11,6 +12,7 @@
     setLibraryReturnToMangaId,
     setLibraryScrollTop,
     setLibraryVisibleCount,
+    setActiveManga,
     store,
   } from "../../store/state.svelte";
   import ContextMenu, { type MenuEntry } from "../shared/ContextMenu.svelte";
@@ -21,6 +23,8 @@
     mangas: Manga[];
     categories: Category[];
     categoryMangaMap: Map<number, Manga[]>;
+    trackedCompletedIds?: ReadonlySet<number>;
+    trackedChapterTotalsByMangaId?: ReadonlyMap<number, number>;
     renderLimit?: number;
     viewKey: string;
     viewMode: LibraryViewMode;
@@ -40,7 +44,8 @@
     mangas,
     categories,
     categoryMangaMap,
-    renderLimit = 48,
+    trackedCompletedIds = new Set(),
+    trackedChapterTotalsByMangaId = new Map(),
     viewKey,
     viewMode = "grid",
     preferredColumns = "auto",
@@ -64,9 +69,7 @@
   let bulkMoveOpen = $state(false);
   let failedCoverIds = $state(new Set<number>());
   let coverRetryCounts = $state(new Map<number, number>());
-  let renderVisible = $state(0);
   let viewStateReady = false;
-  let renderWindowReady = false;
   let pendingScrollRestore = false;
   let pendingCardRestore = false;
   let prevActiveMangaId: number | null = null;
@@ -79,22 +82,21 @@
     new Map(mangas.map((manga) => [createComicLibraryCardId(manga.id), manga])),
   );
 
-  const allCards = $derived(
-    vm.cards.map((card) => {
-      const manga = mangaByCardId.get(card.id);
-      if (!manga) return card;
+  const visibleCards = $derived(
+    mangas.map((manga) => {
+      const card = buildComicsLibraryCardVm(manga, {
+        cropCovers: store.settings.libraryCropCovers,
+        selectedIds,
+        trackedCompletedIds,
+        trackedChapterTotalsByMangaId,
+      });
 
       return {
         ...card,
-        selected: selectedIds.has(manga.id),
         coverSrc: hasUsableCover(manga) ? getCoverSrc(manga) : null,
       };
     }),
   );
-
-  const visibleCards = $derived(allCards.slice(0, renderVisible));
-  const hasMore = $derived(allCards.length > renderVisible);
-  const remainingCount = $derived(allCards.length - renderVisible);
   const layout = $derived(
     computeLibraryLayout({
       availableWidth: contentWidth,
@@ -143,6 +145,7 @@
   }
 
   function onOpenCard(cardId: string, event: MouseEvent | KeyboardEvent) {
+    clearLongPress();
     const manga = mangaByCardId.get(cardId);
     if (!manga) return;
 
@@ -157,7 +160,7 @@
       return;
     }
 
-    store.activeManga = manga;
+    setActiveManga(manga);
   }
 
   async function bulkMoveToCategory(category: Category) {
@@ -335,25 +338,9 @@
     }];
   }
 
-  function loadMore() {
-    renderVisible += renderLimit;
-  }
-
   $effect(() => {
-    viewKey;
-    if (!renderWindowReady) {
-      renderWindowReady = true;
-      renderVisible = Math.max(renderLimit, store.libraryVisibleCount || 0);
-      return;
-    }
-
-    renderVisible = renderLimit;
-    setLibraryVisibleCount(renderLimit);
-  });
-
-  $effect(() => {
-    renderVisible;
-    setLibraryVisibleCount(renderVisible);
+    mangas.length;
+    setLibraryVisibleCount(mangas.length);
   });
 
   $effect(() => {
@@ -372,15 +359,13 @@
     const activeMangaId = store.activeManga?.id ?? null;
 
     if (activeMangaId !== null && contentEl) {
+      clearLongPress();
       setLibraryScrollTop(contentEl.scrollTop);
-      setLibraryVisibleCount(renderVisible);
+      setLibraryVisibleCount(mangas.length);
       setLibraryReturnToMangaId(activeMangaId);
     }
 
     if (prevActiveMangaId !== null && activeMangaId === null) {
-      if (store.libraryVisibleCount > renderVisible) {
-        renderVisible = store.libraryVisibleCount;
-      }
       pendingScrollRestore = store.libraryScrollTop > 0;
       pendingCardRestore = !pendingScrollRestore && store.libraryReturnToMangaId !== null;
     }
@@ -442,14 +427,16 @@
     queueMicrotask(() => {
       if (contentEl) {
         contentWidth = contentEl.clientWidth;
-        resizeObserver = new ResizeObserver((entries) => {
-          const nextWidth = entries[0]?.contentRect.width ?? contentEl?.clientWidth ?? 0;
-          contentWidth = nextWidth;
+        if (typeof ResizeObserver !== "undefined") {
+          resizeObserver = new ResizeObserver((entries) => {
+            const nextWidth = entries[0]?.contentRect.width ?? contentEl?.clientWidth ?? 0;
+            contentWidth = nextWidth;
+          });
+          resizeObserver.observe(contentEl);
+        }
+        requestAnimationFrame(() => {
+          if (contentEl) contentWidth = contentEl.clientWidth;
         });
-        resizeObserver.observe(contentEl);
-      }
-      if (store.libraryVisibleCount > renderVisible) {
-        renderVisible = store.libraryVisibleCount;
       }
       if (store.libraryScrollTop > 0) {
         pendingScrollRestore = true;
@@ -559,14 +546,6 @@
       onCoverLoad={handleCoverLoad}
       onCoverError={handleCoverError}
     />
-    {#if hasMore}
-      <div class="load-more-row">
-        <button type="button" class="load-more-btn" onclick={loadMore}>
-          Show {Math.min(remainingCount, renderLimit)} more
-          <span class="load-more-count">({remainingCount} remaining)</span>
-        </button>
-      </div>
-    {/if}
   {/if}
 </div>
 
@@ -622,41 +601,6 @@
     gap: var(--sp-2);
     text-align: center;
     line-height: var(--leading-base);
-  }
-
-  .load-more-row {
-    display: flex;
-    justify-content: center;
-    padding: var(--sp-5) 0 var(--sp-2);
-    position: relative;
-    z-index: 1;
-  }
-
-  .load-more-btn {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-2);
-    font-family: var(--font-ui);
-    font-size: var(--text-xs);
-    letter-spacing: var(--tracking-wide);
-    padding: 8px 20px;
-    border-radius: var(--radius-full);
-    border: 1px solid var(--border-dim);
-    background: var(--bg-raised);
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: color var(--t-base), border-color var(--t-base), background var(--t-base);
-  }
-
-  .load-more-btn:hover {
-    color: var(--accent-fg);
-    border-color: var(--accent-dim);
-    background: var(--accent-muted);
-  }
-
-  .load-more-count {
-    color: var(--text-faint);
-    font-size: var(--text-2xs);
   }
 
   .select-bar {

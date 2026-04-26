@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aethon Compact Reader Refresh</title>
+    <link rel="stylesheet" href="./reader-compact-refresh.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="concept-header">
+        <div>
+          <p class="eyebrow">Aethon / Compact Reader Direction</p>
+          <h1>Manga-first, denser, and much less showcase-heavy.</h1>
+          <p class="intro">
+            This pass keeps the current idea of a cover-first library, but trims the oversized
+            dashboard feel. The layout is based on common patterns from Mihon, Shonen Jump,
+            MANGA Plus, and Panels: fast continue reading, dense shelves, finished works on the
+            home view, and a reader that gets out of the way.
+          </p>
+        </div>
+
+        <div class="reference-strip" aria-label="Reference links">
+          <a href="https://mihon.app/" target="_blank" rel="noreferrer">Mihon</a>
+          <a href="https://www.viz.com/apps" target="_blank" rel="noreferrer">Shonen Jump</a>
+          <a href="https://mangaplus.shueisha.co.jp/web_pages/578/" target="_blank" rel="noreferrer">MANGA Plus</a>
+          <a href="https://guides.panels.app/" target="_blank" rel="noreferrer">Panels</a>
+        </div>
+      </header>
+
+      <div class="app-frame">
+        <aside class="sidebar">
+          <div class="brand-block">
+            <div class="brand-mark-wrap">
+              <img src="../../src/assets/moku-icon.svg" alt="Aethon mark" class="brand-mark" />
+            </div>
+            <div>
+              <p class="micro-label">Aethon</p>
+              <strong>Reader</strong>
+            </div>
+          </div>
+
+          <nav class="sidebar-nav" aria-label="Main navigation">
+            <button type="button" class="nav-button nav-button-active" data-view="dashboard">
+              <span class="nav-code">DB</span>
+              <span class="nav-copy">
+                <strong>Dashboard</strong>
+                <small>Resume and updates</small>
+              </span>
+            </button>
+            <button type="button" class="nav-button" data-view="library">
+              <span class="nav-code">LB</span>
+              <span class="nav-copy">
+                <strong>Library</strong>
+                <small>Compact cover grid</small>
+              </span>
+            </button>
+            <button type="button" class="nav-button" data-view="reader">
+              <span class="nav-code">RD</span>
+              <span class="nav-copy">
+                <strong>Reader</strong>
+                <small>Minimal chrome</small>
+              </span>
+            </button>
+          </nav>
+
+          <div class="sidebar-meta panel">
+            <p class="micro-label">Session</p>
+            <div class="meta-grid">
+              <div>
+                <strong>06</strong>
+                <span>up next</span>
+              </div>
+              <div>
+                <strong>11</strong>
+                <span>finished</span>
+              </div>
+              <div>
+                <strong>03</strong>
+                <span>offline</span>
+              </div>
+              <div>
+                <strong>14</strong>
+                <span>updates</span>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <section class="main-shell">
+          <header class="topbar">
+            <div class="topbar-copy">
+              <p id="view-kicker" class="micro-label">Reading flow</p>
+              <h2 id="view-title">Dashboard</h2>
+            </div>
+
+            <div class="topbar-tools">
+              <div class="search-pill">Quick search / title / chapter / source</div>
+              <button type="button" class="ghost-button">Sync</button>
+              <div class="streak-pill">
+                <strong>18m</strong>
+                <span>reading streak</span>
+              </div>
+            </div>
+          </header>
+
+          <main class="view-host">
+            <section class="view view-active" data-view-panel="dashboard">
+              <div class="dashboard-grid">
+                <article class="panel current-panel">
+                  <div class="section-head">
+                    <div>
+                      <p class="micro-label">Continue reading</p>
+                      <h3>Right back into the chapter</h3>
+                    </div>
+                    <button type="button" class="ghost-button small-button" data-view="reader">Open reader</button>
+                  </div>
+                  <div id="current-series" class="current-series"></div>
+                </article>
+
+                <aside class="panel updates-panel">
+                  <div class="section-head">
+                    <div>
+                      <p class="micro-label">Recent updates</p>
+                      <h3>What changed since last session</h3>
+                    </div>
+                    <span class="section-note">14 items</span>
+                  </div>
+                  <div id="updates-feed" class="feed-list"></div>
+                </aside>
+
+                <section class="panel shelf-panel">
+                  <div class="section-head">
+                    <div>
+                      <p class="micro-label">Queue</p>
+                      <h3>Keep the active rotation small</h3>
+                    </div>
+                    <span class="section-note">cover-first shelf</span>
+                  </div>
+                  <div id="queue-shelf" class="cover-shelf"></div>
+                </section>
+
+                <section class="panel shelf-panel">
+                  <div class="section-head">
+                    <div>
+                      <p class="micro-label">Finished</p>
+                      <h3>Completed works stay visible on the dashboard</h3>
+                    </div>
+                    <span class="section-note">archived but close</span>
+                  </div>
+                  <div id="finished-shelf" class="cover-shelf finished-shelf"></div>
+                </section>
+              </div>
+            </section>
+
+            <section class="view" data-view-panel="library" hidden>
+              <div class="library-header">
+                <div class="filter-strip" aria-label="Library filters">
+                  <button type="button" class="filter-chip filter-chip-active" data-filter="all">All</button>
+                  <button type="button" class="filter-chip" data-filter="reading">Reading</button>
+                  <button type="button" class="filter-chip" data-filter="upnext">Up next</button>
+                  <button type="button" class="filter-chip" data-filter="finished">Finished</button>
+                  <button type="button" class="filter-chip" data-filter="offline">Offline</button>
+                </div>
+
+                <div class="library-actions">
+                  <div class="view-toggle" aria-label="Card density">
+                    <button type="button" class="density-button density-button-active" data-card-view="grid">Grid</button>
+                    <button type="button" class="density-button" data-card-view="compact">Compact</button>
+                    <button type="button" class="density-button" data-card-view="list">List</button>
+                  </div>
+                  <div class="sort-pill">Sort: latest activity</div>
+                </div>
+              </div>
+
+              <div class="library-layout">
+                <aside class="panel collection-panel">
+                  <div class="section-head">
+                    <div>
+                      <p class="micro-label">Shelves</p>
+                      <h3>Focused folders</h3>
+                    </div>
+                  </div>
+                  <div id="collection-list" class="collection-list"></div>
+                </aside>
+
+                <section class="library-pane">
+                  <div class="library-pane-head">
+                    <div>
+                      <p class="micro-label">Library</p>
+                      <h3 id="library-heading">All manga in one compact grid</h3>
+                    </div>
+                    <span id="library-count" class="section-note">0 titles</span>
+                  </div>
+                  <div id="library-grid" class="library-grid" data-card-view="grid"></div>
+                </section>
+              </div>
+            </section>
+
+            <section class="view" data-view-panel="reader" hidden>
+              <div class="reader-shell">
+                <header class="reader-bar">
+                  <div class="reader-heading">
+                    <button type="button" class="ghost-button small-button" data-view="dashboard">Back</button>
+                    <div>
+                      <p class="micro-label">Reader</p>
+                      <h3 id="reader-series-title">The Horizon</h3>
+                      <span id="reader-series-meta" class="reader-meta">Chapter 12 / page 18</span>
+                    </div>
+                  </div>
+
+                  <div class="reader-modes" aria-label="Reader modes">
+                    <button type="button" class="mode-chip mode-chip-active" data-reader-mode="fit">Fit width</button>
+                    <button type="button" class="mode-chip" data-reader-mode="vertical">Vertical</button>
+                    <button type="button" class="mode-chip" data-reader-mode="focus">Focus</button>
+                  </div>
+                </header>
+
+                <div id="reader-layout" class="reader-layout" data-reader-mode="fit">
+                  <aside class="panel chapter-panel">
+                    <div class="section-head">
+                      <div>
+                        <p class="micro-label">Chapter list</p>
+                        <h3>Fast return</h3>
+                      </div>
+                    </div>
+                    <div id="chapter-list" class="chapter-list"></div>
+                  </aside>
+
+                  <main class="reader-stage">
+                    <div class="stage-glow"></div>
+                    <article id="page-sheet" class="page-sheet">
+                      <div class="page-ribbon">
+                        <span id="stage-series-label">The Horizon</span>
+                        <span id="stage-page-label">Page 18 / 26</span>
+                      </div>
+
+                      <div class="panel-stack">
+                        <div class="page-panel page-panel-wide page-panel-sky"></div>
+                        <div class="page-panel-row">
+                          <div class="page-panel page-panel-figure"></div>
+                          <div class="page-panel page-panel-horizon"></div>
+                        </div>
+                      </div>
+
+                      <p class="reader-note">
+                        Reader chrome stays slim so the page is the main event.
+                      </p>
+                    </article>
+                  </main>
+
+                  <aside class="panel tool-panel">
+                    <div class="tool-block">
+                      <div class="tool-row">
+                        <span>Brightness</span>
+                        <strong id="brightness-number">82%</strong>
+                      </div>
+                      <input id="brightness-range" class="tool-range" type="range" min="40" max="100" value="82" />
+                    </div>
+
+                    <div class="tool-block">
+                      <div class="tool-row">
+                        <span>Progress</span>
+                        <strong id="reader-progress-number">18 / 26</strong>
+                      </div>
+                      <input id="progress-range" class="tool-range" type="range" min="1" max="26" value="18" />
+                      <div class="progress-track">
+                        <div id="reader-progress-fill" class="progress-fill"></div>
+                      </div>
+                    </div>
+
+                    <div class="tool-grid">
+                      <button type="button" class="tool-chip">Double page</button>
+                      <button type="button" class="tool-chip">Webtoon</button>
+                      <button type="button" class="tool-chip">Sharpen</button>
+                      <button type="button" class="tool-chip">Offline</button>
+                    </div>
+
+                    <p class="tool-note">
+                      Compact side controls, chapter list on the left, and one dominant page surface.
+                    </p>
+                  </aside>
+                </div>
+
+                <footer class="reader-footer">
+                  <div class="footer-progress">
+                    <span id="footer-progress-label">Page 18 / 26</span>
+                    <div class="progress-track slim-track">
+                      <div id="footer-progress-fill" class="progress-fill"></div>
+                    </div>
+                  </div>
+
+                  <div class="footer-actions">
+                    <button type="button" class="ghost-button small-button" data-step="-1">Prev</button>
+                    <button type="button" class="primary-button small-button" data-step="1">Next</button>
+                  </div>
+                </footer>
+              </div>
+            </section>
+          </main>
+        </section>
+      </div>
+    </div>
+
+    <script src="./reader-compact-refresh.js"></script>
+  </body>
+</html>

@@ -35,6 +35,7 @@
   import { hasBookLocalAsset, MISSING_BOOK_ASSET_MESSAGE } from "../../lib/books/availability";
   import { mediaAuditEnabled, traceMediaAudit } from "../../lib/mediaAudit";
   import type { BookBookmarkEntry, BookProgress } from "../../lib/books/types";
+  import { peekPersistedBookEntry, peekPersistedBookProgress } from "../../lib/books/libraryState";
   import {
     addBookBookmark,
     closeBookReader,
@@ -52,10 +53,18 @@
   const ZOOM_MAX = 4;
   const MAX_PDF_CANVAS_PIXELS = 16_000_000;
   const activeBook = $derived(
-    store.books.find((book) => book.id === store.activeBookReaderId) ?? null,
+    (store.activeBookReaderId && store.books.find((book) => book.id === store.activeBookReaderId))
+    ?? (store.activeBookReaderId ? peekPersistedBookEntry(store.activeBookReaderId) : null),
   );
   const activeProgress = $derived(
-    activeBook ? store.bookProgress.find((progress) => progress.bookId === activeBook.id) ?? null : null,
+    activeBook
+      ? store.bookProgress.find((progress) => progress.bookId === activeBook.id)
+        ?? peekPersistedBookProgress(activeBook.id)
+      : null,
+  );
+  const booksLibraryReady = $derived(store.booksLibraryHydrated);
+  const waitingForBookHydration = $derived(
+    !!store.activeBookReaderId && !activeBook && !booksLibraryReady,
   );
   const currentBookmark = $derived(
     activeBook ? store.bookBookmarks.find((bookmark) => bookmark.bookId === activeBook.id) ?? null : null,
@@ -699,7 +708,7 @@
   });
 
   $effect(() => {
-    if (store.activeBookReaderId && !activeBook) {
+    if (store.activeBookReaderId && !activeBook && booksLibraryReady) {
       requestClose("missing-book");
     }
   });
@@ -782,6 +791,12 @@
   {/snippet}
 
   <div class="viewer book-viewer" class:pdf={activeBook?.subtype === "pdf"}>
+    {#if waitingForBookHydration}
+      <div class="center-overlay">
+        <CircleNotch size={20} weight="light" class="anim-spin" style="color:var(--text-faint)" />
+      </div>
+    {/if}
+
     {#if activeBook?.subtype === "epub"}
       <div class="epub-host" bind:this={hostEl}></div>
     {:else if activeBook?.subtype === "pdf"}

@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Aethon | Premium Reader</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Epilogue:wght@200;300;400;500&amp;family=Inter:wght@300;400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-tertiary-fixed": "#1f1c00",
+                        "surface-container-high": "#2a2a2a",
+                        "surface-container-low": "#1c1b1b",
+                        "tertiary-fixed-dim": "#d2c96f",
+                        "outline-variant": "#49454f",
+                        "surface-bright": "#3a3939",
+                        "surface-dim": "#131313",
+                        "outline": "#958e9a",
+                        "inverse-on-surface": "#313030",
+                        "background": "#0e0e0e",
+                        "on-surface-variant": "#cbc4d0",
+                        "primary": "#ebddff",
+                        "on-error": "#690005",
+                        "on-secondary-container": "#b6b4b7",
+                        "on-secondary-fixed-variant": "#474649",
+                        "secondary-fixed": "#e4e2e4",
+                        "on-background": "#e5e2e1",
+                        "on-secondary-fixed": "#1b1b1d",
+                        "inverse-surface": "#e5e2e1",
+                        "surface-variant": "#353534",
+                        "on-primary": "#39255e",
+                        "surface-container-lowest": "#0e0e0e",
+                        "surface-tint": "#d4bbff",
+                        "on-primary-fixed-variant": "#503c76",
+                        "on-tertiary-fixed-variant": "#4e4800",
+                        "surface": "#131313",
+                        "on-primary-fixed": "#240d48",
+                        "on-primary-container": "#5d4883",
+                        "on-tertiary-container": "#5a5401",
+                        "surface-container": "#201f1f",
+                        "error": "#ffb4ab",
+                        "primary-container": "#d4bbff",
+                        "on-surface": "#e5e2e1",
+                        "secondary-fixed-dim": "#c8c6c8",
+                        "secondary": "#c8c6c8",
+                        "tertiary-fixed": "#efe588",
+                        "secondary-container": "#474649",
+                        "primary-fixed-dim": "#d4bbff",
+                        "error-container": "#93000a",
+                        "on-error-container": "#ffdad6",
+                        "inverse-primary": "#69538f",
+                        "on-tertiary": "#353100",
+                        "surface-container-highest": "#353534",
+                        "tertiary": "#efe588",
+                        "primary-fixed": "#ebdcff",
+                        "on-secondary": "#303032",
+                        "tertiary-container": "#d2c96f"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "fontFamily": {
+                        "headline": ["Epilogue"],
+                        "body": ["Inter"],
+                        "label": ["Inter"]
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 200, 'GRAD' 0, 'opsz' 24;
+        }
+        .star-4-point {
+            clip-path: polygon(50% 0%, 60% 40%, 100% 50%, 60% 60%, 50% 100%, 40% 60%, 0% 50%, 40% 40%);
+        }
+        .orbital-path {
+            border: 0.5px solid rgba(212, 187, 255, 0.08);
+            border-radius: 50%;
+            position: absolute;
+            pointer-events: none;
+        }
+        .shimmer {
+            background: linear-gradient(90deg, transparent 0%, rgba(212, 187, 255, 0.1) 50%, transparent 100%);
+            background-size: 200% 100%;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-surface font-body overflow-hidden h-screen w-screen flex flex-col items-center justify-center selection:bg-primary-container selection:text-on-primary-container">
+<!-- Subtle Background Stars -->
+<div class="fixed inset-0 pointer-events-none opacity-40">
+<div class="absolute top-[15%] left-[20%] w-1.5 h-1.5 bg-primary-container star-4-point"></div>
+<div class="absolute top-[40%] right-[15%] w-1 h-1 bg-primary star-4-point opacity-60"></div>
+<div class="absolute bottom-[25%] left-[30%] w-1 h-1 bg-primary star-4-point opacity-80"></div>
+<div class="absolute top-[70%] right-[35%] w-2 h-2 bg-primary-container star-4-point opacity-30"></div>
+</div>
+<!-- Main Orbital Composition -->
+<main class="relative w-[600px] h-[600px] flex items-center justify-center">
+<!-- Background Glow -->
+<div class="absolute w-[300px] h-[300px] rounded-full bg-primary/5 blur-[120px]"></div>
+<!-- Orbital Paths -->
+<!-- Near-Horizontal Orbit -->
+<div class="orbital-path w-[480px] h-[120px] rotate-[5deg]">
+<div class="absolute top-1/2 left-0 -translate-y-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-primary star-4-point shadow-[0_0_8px_rgba(212,187,255,0.4)]"></div>
+</div>
+<!-- Diagonal Orbit -->
+<div class="orbital-path w-[400px] h-[180px] rotate-[-35deg]">
+<div class="absolute top-0 left-1/2 -translate-y-1/2 -translate-x-1/2 w-1 h-1 bg-primary-fixed-dim star-4-point"></div>
+</div>
+<!-- Near-Vertical Orbit -->
+<div class="orbital-path w-[140px] h-[520px] rotate-[15deg]">
+<div class="absolute bottom-0 left-1/2 -translate-y-1/2 -translate-x-1/2 w-2 h-2 bg-primary-container star-4-point opacity-70"></div>
+</div>
+<!-- Central Hollow Droplet Mark -->
+<div class="relative z-10 w-24 h-32 flex items-center justify-center">
+<svg class="w-full h-full drop-shadow-[0_0_30px_rgba(212,187,255,0.2)]" fill="none" viewbox="0 0 100 140" xmlns="http://www.w3.org/2000/svg">
+<path d="M50 135C25 135 5 110 5 80C5 50 50 5 50 5C50 5 95 50 95 80C95 110 75 135 50 135Z" stroke="#D4BBFF" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></path>
+<!-- Internal mystical detail -->
+<circle class="opacity-80" cx="50" cy="80" fill="#D4BBFF" r="4"></circle>
+</svg>
+<!-- 4-point star decorative anchors -->
+<div class="absolute -top-4 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-primary star-4-point"></div>
+</div>
+<!-- Brand Name Alignment -->
+<div class="absolute bottom-20 flex flex-col items-center">
+<h1 class="font-headline text-3xl font-light tracking-[0.4em] text-primary uppercase translate-x-[0.2em]">Aethon</h1>
+<p class="font-label text-[10px] tracking-[0.2em] text-on-surface-variant uppercase mt-4 opacity-40">Orbital Reader System</p>
+</div>
+</main>
+<!-- Footer: Status Variants Cluster -->
+<footer class="fixed bottom-12 w-full max-w-4xl px-12">
+<div class="flex flex-wrap justify-between items-end gap-12">
+<!-- Default: Loading State -->
+<div class="flex flex-col gap-3 group">
+<span class="font-label text-[9px] uppercase tracking-widest text-on-surface-variant opacity-50">System State / 01</span>
+<div class="flex items-center gap-3">
+<div class="w-32 h-[1px] bg-surface-container-high relative overflow-hidden">
+<div class="absolute inset-0 shimmer translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-[3000ms] ease-linear"></div>
+</div>
+<span class="font-label text-[10px] text-primary tracking-tighter">Loading...</span>
+</div>
+</div>
+<!-- Idle State -->
+<div class="flex flex-col gap-3">
+<span class="font-label text-[9px] uppercase tracking-widest text-on-surface-variant opacity-50">Availability / 02</span>
+<div class="flex items-center gap-2">
+<div class="w-1.5 h-1.5 rounded-full border border-primary/40"></div>
+<span class="font-label text-[10px] text-on-surface tracking-tighter">Ready</span>
+</div>
+</div>
+<!-- PIN State -->
+<div class="flex flex-col gap-3">
+<span class="font-label text-[9px] uppercase tracking-widest text-on-surface-variant opacity-50">Verification / 03</span>
+<div class="flex gap-2.5">
+<div class="w-1.5 h-1.5 rounded-full bg-primary shadow-[0_0_8px_rgba(212,187,255,0.4)]"></div>
+<div class="w-1.5 h-1.5 rounded-full bg-primary/20"></div>
+<div class="w-1.5 h-1.5 rounded-full bg-primary/20"></div>
+<div class="w-1.5 h-1.5 rounded-full bg-primary/20"></div>
+</div>
+</div>
+<!-- Error State -->
+<div class="flex flex-col gap-3">
+<span class="font-label text-[9px] uppercase tracking-widest text-on-surface-variant opacity-50">Exception / 04</span>
+<div class="flex items-center gap-6">
+<div class="flex items-center gap-1.5">
+<div class="w-1 h-1 bg-error star-4-point"></div>
+<span class="font-label text-[10px] text-error tracking-tighter">Connection Interrupted</span>
+</div>
+<div class="flex gap-4">
+<button class="font-label text-[10px] text-on-surface hover:text-primary transition-colors tracking-tighter cursor-pointer">Retry</button>
+<button class="font-label text-[10px] text-on-surface/40 hover:text-on-surface transition-colors tracking-tighter cursor-pointer">Bypass</button>
+</div>
+</div>
+</div>
+</div>
+</footer>
+<!-- Decorative Corner Anchors (Design System Signature) -->
+<div class="fixed top-8 left-8 w-2 h-2 border-l border-t border-primary/20"></div>
+<div class="fixed top-8 right-8 w-2 h-2 border-r border-t border-primary/20"></div>
+<div class="fixed bottom-8 left-8 w-2 h-2 border-l border-b border-primary/20"></div>
+<div class="fixed bottom-8 right-8 w-2 h-2 border-r border-b border-primary/20"></div>
+<!-- Shared Component: Minimal Global Footer (Implicit) -->
+<div class="fixed bottom-4 w-full flex justify-center pointer-events-none">
+<span class="font-label text-[8px] uppercase tracking-[0.4em] text-on-surface-variant opacity-20">Aethon Orbital System v.4.0.2</span>
+</div>
+</body></html>

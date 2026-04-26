@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aethon Reader Reference Refresh</title>
+    <link rel="stylesheet" href="./reader-reference-refresh.css" />
+  </head>
+  <body>
+    <div class="board">
+      <header class="board-header">
+        <div>
+          <p class="eyebrow">Aethon / Reader Reference Refresh</p>
+          <h1>Cover-first library, reader-first product</h1>
+          <p class="intro">
+            This pass is based on common reader patterns from Panels, Mihon, Apple Books, and Kindle:
+            "Reading Now", collections, fast return to the active title, immersive reading chrome,
+            and a strong cover grid for comics.
+          </p>
+        </div>
+        <div class="reference-list">
+          <span>Panels</span>
+          <span>Mihon</span>
+          <span>Apple Books</span>
+          <span>Kindle</span>
+        </div>
+      </header>
+
+      <nav class="prototype-nav panel" aria-label="Prototype navigation">
+        <button type="button" class="prototype-nav-btn prototype-nav-btn-active" data-jump="reading-now-screen">Reading Now</button>
+        <button type="button" class="prototype-nav-btn" data-jump="library-screen-v2">Library</button>
+        <button type="button" class="prototype-nav-btn" data-jump="reader-screen">Reader</button>
+      </nav>
+
+      <section class="screen" id="reading-now-screen">
+        <div class="screen-meta">
+          <p class="screen-kicker">Screen 01</p>
+          <h2>Reading Now</h2>
+          <p>
+            Less dashboard, more reading momentum. The first thing you see is your current title,
+            recent chapters, source updates, and a clear path back into the reader.
+          </p>
+        </div>
+
+        <div class="app-shell app-home">
+          <aside class="side-rail">
+            <div class="brand-lockup">
+              <div class="brand-mark-wrap">
+                <img src="../../src/assets/moku-icon.svg" alt="Aethon mark" class="brand-mark" />
+              </div>
+              <div>
+                <p class="rail-eyebrow">Aethon</p>
+                <strong>Reader</strong>
+              </div>
+            </div>
+
+            <nav class="rail-nav">
+              <button type="button" class="rail-item rail-item-active" data-jump="reading-now-screen">
+                <span>Reading Now</span>
+                <small>Continue and recent</small>
+              </button>
+              <button type="button" class="rail-item" data-jump="library-screen-v2">
+                <span>Library</span>
+                <small>Collections and folders</small>
+              </button>
+              <button type="button" class="rail-item">
+                <span>Browse</span>
+                <small>Sources and discovery</small>
+              </button>
+              <button type="button" class="rail-item">
+                <span>Downloads</span>
+                <small>Offline chapters</small>
+              </button>
+            </nav>
+
+            <div class="mini-panel">
+              <p class="mini-label">Quick return</p>
+              <div class="return-chip">
+                <div class="tiny-cover cover-horizon"></div>
+                <div>
+                  <strong>The Horizon</strong>
+                  <span>Chapter 12 - p.18</span>
+                </div>
+              </div>
+            </div>
+          </aside>
+
+          <main class="workspace">
+            <div class="workspace-top">
+              <div>
+                <p class="eyebrow">Reading Now</p>
+                <h3>Pick up exactly where you stopped</h3>
+              </div>
+              <div class="top-actions">
+                <div class="search-pill">Search titles, folders, chapters</div>
+                <button class="ghost-button">Sync updates</button>
+              </div>
+            </div>
+
+            <section class="feature-strip">
+              <article class="current-title panel">
+                <div id="hero-cover" class="feature-cover cover-horizon large"></div>
+                <div class="feature-copy">
+                  <div class="chip-row">
+                    <span id="hero-chip-state" class="chip chip-active">Reading</span>
+                    <span id="hero-chip-genre" class="chip">Drama</span>
+                    <span class="chip">Library</span>
+                  </div>
+                  <h4 id="hero-title">The Horizon</h4>
+                  <p id="hero-subcopy" class="subcopy">Chapter 12 - The Boy and the Girl - page 18</p>
+                  <p class="body-copy">
+                    This screen borrows the "Reading Now" priority from Apple Books and Kindle,
+                    but keeps a manga/comic emphasis: bigger cover, immediate chapter context,
+                    and direct return to the active place in the story.
+                  </p>
+                  <div class="button-row">
+                    <button type="button" id="resume-reading-btn" class="primary-button">Resume Reading</button>
+                    <button type="button" class="ghost-button" data-jump="reader-screen">Open Reader</button>
+                  </div>
+                </div>
+              </article>
+
+              <aside class="up-next panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="mini-label">Up Next</p>
+                    <h5>Chapter queue</h5>
+                  </div>
+                  <span class="muted-link">All chapters</span>
+                </div>
+                <div class="queue-list">
+                  <button type="button" class="queue-item queue-item-active" data-series="The Horizon" data-subcopy="Chapter 12 - The Boy and the Girl - page 18" data-state="Reading" data-genre="Drama" data-cover="cover-horizon" data-reader-chapter="Chapter 12 - The Boy and the Girl">
+                    <strong>Ch. 12</strong>
+                    <span>The Boy and the Girl</span>
+                  </button>
+                  <button type="button" class="queue-item" data-series="The Horizon" data-subcopy="Chapter 13 - Road of Glass - page 1" data-state="Queued" data-genre="Drama" data-cover="cover-horizon" data-reader-chapter="Chapter 13 - Road of Glass">
+                    <strong>Ch. 13</strong>
+                    <span>Road of Glass</span>
+                  </button>
+                  <button type="button" class="queue-item" data-series="The Horizon" data-subcopy="Chapter 14 - Ashes and Floodlight - page 1" data-state="Unread" data-genre="Drama" data-cover="cover-horizon" data-reader-chapter="Chapter 14 - Ashes and Floodlight">
+                    <strong>Ch. 14</strong>
+                    <span>Ashes and Floodlight</span>
+                  </button>
+                </div>
+              </aside>
+            </section>
+
+            <section class="home-lower">
+              <div class="panel updates-panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="mini-label">Recent</p>
+                    <h5>Continue stack</h5>
+                  </div>
+                  <span class="muted-link">History</span>
+                </div>
+                <div class="continue-row">
+                  <article class="continue-card">
+                    <div class="continue-cover cover-horizon"></div>
+                    <strong>The Horizon</strong>
+                    <span>p.18 - 1d ago</span>
+                  </article>
+                  <article class="continue-card">
+                    <div class="continue-cover cover-returner"></div>
+                    <strong>Returner's Magic</strong>
+                    <span>p.26 - 8h ago</span>
+                  </article>
+                  <article class="continue-card">
+                    <div class="continue-cover cover-northern"></div>
+                    <strong>Northern Blade</strong>
+                    <span>p.21 - just now</span>
+                  </article>
+                </div>
+              </div>
+
+              <div class="panel updates-panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="mini-label">Updates</p>
+                    <h5>From your sources</h5>
+                  </div>
+                  <span class="muted-link">Browse</span>
+                </div>
+                <div class="update-list">
+                  <div class="update-row">
+                    <div class="status-dot"></div>
+                    <div>
+                      <strong>3 new chapters in followed series</strong>
+                      <span>Mangadex, Webtoon, local library</span>
+                    </div>
+                  </div>
+                  <div class="update-row">
+                    <div class="status-dot amber"></div>
+                    <div>
+                      <strong>12 items finished downloading</strong>
+                      <span>Ready for offline reading</span>
+                    </div>
+                  </div>
+                  <div class="update-row">
+                    <div class="status-dot blue"></div>
+                    <div>
+                      <strong>Tracking synced for 4 series</strong>
+                      <span>MAL and AniList are up to date</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </main>
+        </div>
+      </section>
+
+      <section class="screen" id="library-screen-v2">
+        <div class="screen-meta">
+          <p class="screen-kicker">Screen 02</p>
+          <h2>Library</h2>
+          <p>
+            The comic cards stay. The library becomes more like Panels and Mihon:
+            covers first, collections up top, folders at the side, and no extra noise.
+          </p>
+        </div>
+
+        <div class="app-shell app-library">
+          <div class="library-header">
+            <div>
+              <p class="eyebrow">Library</p>
+              <h3>Your collection, organized by reading behavior</h3>
+            </div>
+            <div class="top-actions">
+              <div class="chip-row">
+                <button type="button" class="chip chip-active collection-chip" data-domain="comics">Comics</button>
+                <button type="button" class="chip collection-chip" data-domain="books">Books</button>
+                <button type="button" class="chip collection-chip" data-domain="downloaded">Downloaded</button>
+              </div>
+              <div class="search-pill">Search library</div>
+            </div>
+          </div>
+
+          <div class="toolbar panel">
+            <div class="toolbar-section">
+              <span class="toolbar-label">Collections</span>
+              <div class="chip-row">
+                <button type="button" class="chip chip-active filter-chip" data-filter="all">All titles</button>
+                <button type="button" class="chip filter-chip" data-filter="reading">Reading</button>
+                <button type="button" class="chip filter-chip" data-filter="completed">Completed</button>
+                <button type="button" class="chip filter-chip" data-filter="downloaded">Downloaded</button>
+                <button type="button" class="chip filter-chip" data-filter="notes">Field Notes</button>
+              </div>
+            </div>
+            <div class="toolbar-section">
+              <span class="toolbar-label">View</span>
+              <div class="mode-toggle">
+                <button type="button" class="mode-option mode-active" data-view="grid">Grid</button>
+                <button type="button" class="mode-option" data-view="compact">Compact</button>
+                <button type="button" class="mode-option" data-view="list">List</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="library-grid-shell">
+            <aside class="folders panel">
+              <div class="panel-head">
+                <div>
+                  <p class="mini-label">Folders</p>
+                  <h5>Saved shelves</h5>
+                </div>
+              </div>
+              <div class="folder-list">
+                <button type="button" class="folder-item" data-filter="reading">
+                  <span>Reading now</span>
+                  <small>18</small>
+                </button>
+                <button type="button" class="folder-item" data-filter="notes">
+                  <span>Quiet hours</span>
+                  <small>7</small>
+                </button>
+                <button type="button" class="folder-item" data-filter="completed">
+                  <span>Completed</span>
+                  <small>13</small>
+                </button>
+                <button type="button" class="folder-item" data-filter="notes">
+                  <span>To review</span>
+                  <small>5</small>
+                </button>
+                <button type="button" class="folder-item" data-filter="downloaded">
+                  <span>Downloaded</span>
+                  <small>22</small>
+                </button>
+              </div>
+            </aside>
+
+            <section id="library-card-grid" class="library-card-grid" data-view="grid">
+              <article class="comic-card panel" data-tags="all reading comics">
+                <div class="comic-cover cover-horizon"></div>
+                <div class="comic-copy">
+                  <div class="chip-row card-chip-row">
+                    <span class="chip chip-small chip-active">Reading</span>
+                    <span class="chip chip-small">p.18</span>
+                  </div>
+                  <h4>The Horizon</h4>
+                  <p>Minimal literary drama</p>
+                </div>
+              </article>
+
+              <article class="comic-card panel" data-tags="all comics">
+                <div class="comic-cover cover-returner"></div>
+                <div class="comic-copy">
+                  <div class="chip-row card-chip-row">
+                    <span class="chip chip-small">Pinned</span>
+                    <span class="chip chip-small">42 unread</span>
+                  </div>
+                  <h4>A Returner's Magic</h4>
+                  <p>High-action academy fantasy</p>
+                </div>
+              </article>
+
+              <article class="comic-card panel" data-tags="all downloaded comics">
+                <div class="comic-cover cover-northern"></div>
+                <div class="comic-copy">
+                  <div class="chip-row card-chip-row">
+                    <span class="chip chip-small">Downloaded</span>
+                    <span class="chip chip-small">12</span>
+                  </div>
+                  <h4>Northern Blade</h4>
+                  <p>Ready for offline reading</p>
+                </div>
+              </article>
+
+              <article class="comic-card panel" data-tags="all comics">
+                <div class="comic-cover cover-ember"></div>
+                <div class="comic-copy">
+                  <div class="chip-row card-chip-row">
+                    <span class="chip chip-small">Unread 6</span>
+                    <span class="chip chip-small">Manhwa</span>
+                  </div>
+                  <h4>Ember District</h4>
+                  <p>Urban fantasy / procedural</p>
+                </div>
+              </article>
+
+              <article class="comic-card panel" data-tags="all completed notes comics">
+                <div class="comic-cover cover-vine"></div>
+                <div class="comic-copy">
+                  <div class="chip-row card-chip-row">
+                    <span class="chip chip-small">Completed</span>
+                    <span class="chip chip-small">Collection</span>
+                  </div>
+                  <h4>Vine Cathedral</h4>
+                  <p>Archived and finished</p>
+                </div>
+              </article>
+
+              <article class="comic-card panel" data-tags="all books">
+                <div class="comic-cover cover-codex"></div>
+                <div class="comic-copy">
+                  <div class="chip-row card-chip-row">
+                    <span class="chip chip-small">EPUB</span>
+                    <span class="chip chip-small">Book</span>
+                  </div>
+                  <h4>Codex of Rain</h4>
+                  <p>Imported book / 12 sections read</p>
+                </div>
+              </article>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen" id="reader-screen">
+        <div class="screen-meta">
+          <p class="screen-kicker">Screen 03</p>
+          <h2>Reader</h2>
+          <p>
+            This screen is the biggest shift. The UI now behaves like a reader first:
+            immersive page area, lightweight controls, chapter context, and mode toggles that feel native to comics.
+          </p>
+        </div>
+
+        <div class="app-shell app-reader">
+          <div class="reader-topbar panel panel-chrome">
+            <div class="reader-title">
+              <span class="reader-back">Back</span>
+              <div>
+                <strong>The Horizon</strong>
+                <small>Chapter 12 - The Boy and the Girl</small>
+              </div>
+            </div>
+
+            <div class="reader-modes">
+              <button type="button" class="chip chip-small reader-mode chip-active" data-reader-mode="fit">Fit width</button>
+              <button type="button" class="chip chip-small reader-mode" data-reader-mode="vertical">Vertical</button>
+              <button type="button" class="chip chip-small reader-mode" data-reader-mode="panel">Panel view</button>
+              <button type="button" class="chip chip-small reader-mode" data-reader-mode="filters">Filters</button>
+            </div>
+          </div>
+
+          <div id="reader-body" class="reader-body" data-reader-layout="fit">
+            <aside class="reader-left panel panel-chrome">
+              <p class="mini-label">Chapter list</p>
+              <div class="reader-chapter-list">
+                <button type="button" class="reader-chapter reader-chapter-active" data-reader-chapter-label="Chapter 12 - The Boy and the Girl" data-reader-progress="18 / 26" data-reader-page="Page 18 / 26">
+                  <strong>12</strong>
+                  <span>The Boy and the Girl</span>
+                </button>
+                <button type="button" class="reader-chapter" data-reader-chapter-label="Chapter 13 - Road of Glass" data-reader-progress="1 / 24" data-reader-page="Page 1 / 24">
+                  <strong>13</strong>
+                  <span>Road of Glass</span>
+                </button>
+                <button type="button" class="reader-chapter" data-reader-chapter-label="Chapter 14 - Ashes and Floodlight" data-reader-progress="1 / 28" data-reader-page="Page 1 / 28">
+                  <strong>14</strong>
+                  <span>Ashes and Floodlight</span>
+                </button>
+              </div>
+            </aside>
+
+            <main class="page-stage">
+              <div class="page-stage-glow"></div>
+              <div class="comic-page">
+                <div class="panel-frame panel-frame-wide">
+                  <div class="panel-art sky"></div>
+                </div>
+                <div class="panel-frame-row">
+                  <div class="panel-frame">
+                    <div class="panel-art figure"></div>
+                  </div>
+                  <div class="panel-frame">
+                    <div class="panel-art horizon"></div>
+                  </div>
+                </div>
+                <div class="speech-note">Panels-inspired chrome with a dedicated reader surface, not a dashboard skin.</div>
+              </div>
+            </main>
+
+            <aside class="reader-right panel panel-chrome">
+              <p class="mini-label">Reader tools</p>
+              <div class="tool-group">
+                <div class="tool-row">
+                  <span>Brightness</span>
+                  <strong id="brightness-value">72%</strong>
+                </div>
+                <div class="tool-slider">
+                  <div id="brightness-fill" class="tool-slider-fill"></div>
+                </div>
+                <input id="brightness-input" class="tool-range" type="range" min="20" max="100" value="72" />
+              </div>
+              <div class="tool-group">
+                <div class="tool-row">
+                  <span>Progress</span>
+                  <strong id="progress-value">18 / 26</strong>
+                </div>
+                <div class="tool-slider tool-slider-progress">
+                  <div id="progress-fill" class="tool-slider-fill tool-slider-fill-progress"></div>
+                </div>
+                <input id="progress-input" class="tool-range" type="range" min="1" max="26" value="18" />
+              </div>
+              <div class="tool-note">
+                Fast chapter access, display modes, and image filters sit beside the page instead of fighting for space in the content area.
+              </div>
+            </aside>
+          </div>
+
+          <div class="reader-bottombar panel panel-chrome">
+            <div class="bottom-progress">
+              <span id="bottom-page-label">Page 18 / 26</span>
+              <div class="bottom-track">
+                <div id="bottom-progress-fill" class="bottom-fill"></div>
+              </div>
+            </div>
+            <div class="bottom-actions">
+              <button type="button" class="bottom-nav" id="reader-prev-btn">Prev</button>
+              <span class="bottom-active">Current</span>
+              <button type="button" class="bottom-nav" id="reader-next-btn">Next</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+    <script src="./reader-reference-refresh.js"></script>
+  </body>
+</html>

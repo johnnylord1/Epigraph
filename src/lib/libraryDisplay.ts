@@ -2,6 +2,8 @@ export type LibraryViewMode = "grid" | "compact_grid" | "list";
 
 export type LibraryPreferredGridColumns =
   | "auto"
+  | 2
+  | 3
   | 4
   | 5
   | 6

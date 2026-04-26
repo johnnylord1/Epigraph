@@ -230,9 +230,10 @@
     }
 
     // Refresh library ID set so newly-added manga get filtered out
-    cache.get(CACHE_KEYS.DISCOVER, () =>
-      gql<{ mangas: { nodes: Manga[] } }>(EXPLORE_ALL_MANGA).then(d => d.mangas.nodes)
-    ).then(m => {
+    cache.get(CACHE_KEYS.DISCOVER, async () => {
+      const d = await gql<{ mangas?: { nodes?: Manga[] } }>(EXPLORE_ALL_MANGA);
+      return d.mangas?.nodes ?? [];
+    }).then(m => {
       store.discoverLibraryIds = new Set(
         dedupeMangaById(m).filter(x => x.inLibrary).map(x => x.id)
       );
@@ -335,6 +336,19 @@
       </div>
     {/if}
 
+    {#if embedded}
+      <div class="embedded-header">
+        <div class="embedded-copy">
+          <span class="heading">Discover New Series</span>
+          <p class="embedded-subtitle">From <span class="embedded-highlight">{rotatedSources()[0]?.displayName ?? "sources"}</span> · {currentGenre === "All" ? "Popular" : currentGenre}</p>
+        </div>
+        <div class="n-soft-pill embedded-pill">
+          <span class="material-symbols-outlined text-xs" style="color: var(--n-primary-container);">analytics</span>
+          <span>{visibleGrid.length} Titles</span>
+        </div>
+      </div>
+    {/if}
+
     <div class="body" class:bodyEmbedded={embedded}>
       {#if isLoading && visibleGrid.length === 0}
         <div class="manga-grid">
@@ -353,25 +367,36 @@
         <div class="empty"><span>Nothing found for "{currentGenre}"</span></div>
 
       {:else}
-        <div class="manga-grid">
+        <div class="manga-grid" class:embeddedGrid={embedded}>
           {#each visibleGrid as m (m.id)}
             <button
-              class="manga-card"
+              class="n-library-card"
               onclick={() => setPreviewManga(m)}
               oncontextmenu={(e) => openCtx(e, m)}
             >
-              <div class="cover-wrap">
-                <img src={thumbUrl(m.thumbnailUrl)} alt={m.title} class="cover" loading="lazy" decoding="async" />
-                <div class="cover-gradient"></div>
-                {#if m.inLibrary}<span class="lib-badge">Saved</span>{/if}
-                <div class="card-footer">
-                  <p class="card-title">{m.title}</p>
-                  {#if m.source?.displayName}<p class="card-source">{m.source.displayName}</p>{/if}
+              <div class="n-library-card__cover">
+                <img src={thumbUrl(m.thumbnailUrl)} alt={m.title} loading="lazy" decoding="async" />
+                {#if m.inLibrary}<span class="n-library-card__badge">In Library</span>{/if}
+              </div>
+              <div class="n-library-card__info">
+                <p class="n-library-card__title">{m.title}</p>
+                <div class="n-library-card__meta">
+                  <span class="n-library-card__author">{m.source?.displayName ?? "Browse"}</span>
+                  <span class="n-library-card__vol">{m.chapterCount ? `CH ${m.chapterCount}` : m.status ?? ""}</span>
                 </div>
               </div>
             </button>
           {/each}
         </div>
+
+        {#if embedded}
+          <div class="embedded-load-more">
+            <button class="n-btn-secondary embedded-load-more-btn gap-2" onclick={refresh}>
+              <span class="material-symbols-outlined text-base">expand_more</span>
+              Load more titles
+            </button>
+          </div>
+        {/if}
       {/if}
     </div>
 
@@ -393,20 +418,136 @@
   .genre-tab.active { background: var(--accent-muted); border-color: var(--accent-dim); color: var(--accent-fg); }
   .refresh-btn { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: var(--radius-sm); background: none; border: none; color: var(--text-faint); cursor: pointer; flex-shrink: 0; margin-left: auto; transition: color var(--t-base), background var(--t-base); }
   .refresh-btn:hover { color: var(--text-muted); background: var(--bg-raised); }
+  .embedded-header {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: var(--sp-4);
+    padding: var(--sp-4) var(--sp-5) 0;
+    flex-shrink: 0;
+  }
+  .embedded-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .embedded-subtitle {
+    font-size: var(--text-xs);
+    color: var(--text-faint);
+    letter-spacing: var(--tracking-wide);
+  }
+  .embedded-highlight {
+    color: var(--accent-fg);
+  }
+  .embedded-pill {
+    flex-shrink: 0;
+  }
   .body { flex: 1; overflow-y: auto; padding: var(--sp-4) var(--sp-5) var(--sp-6); will-change: scroll-position; -webkit-overflow-scrolling: touch; contain: layout style; }
-  .bodyEmbedded { padding: var(--sp-4); }
-  .manga-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(clamp(90px, 11vw, 130px), 1fr)); gap: var(--sp-2); align-content: start; contain: layout style; }
-  .manga-card { background: none; border: none; padding: 0; cursor: pointer; text-align: left; }
-  .manga-card:hover .cover { filter: brightness(1.08) saturate(1.05); transform: scale(1.02); }
-  .manga-card:hover .card-title { color: #fff; }
-  .manga-card:hover { will-change: transform; }
-  .cover-wrap { position: relative; aspect-ratio: 2/3; overflow: hidden; border-radius: var(--radius-md); background: var(--bg-raised); border: 1px solid var(--border-dim); box-shadow: 0 2px 8px rgba(0,0,0,0.25); }
-  .cover { width: 100%; height: 100%; object-fit: cover; display: block; transition: filter 0.15s ease, transform 0.15s ease; }
-  .cover-gradient { position: absolute; inset: 0; background: linear-gradient(to top, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.15) 50%, transparent 72%); pointer-events: none; }
-  .lib-badge { position: absolute; top: var(--sp-1); right: var(--sp-1); font-family: var(--font-ui); font-size: 9px; letter-spacing: var(--tracking-wide); text-transform: uppercase; background: var(--accent-muted); color: var(--accent-fg); border: 1px solid var(--accent-dim); padding: 1px 5px; border-radius: var(--radius-sm); }
-  .card-footer { position: absolute; bottom: 0; left: 0; right: 0; padding: var(--sp-2); pointer-events: none; }
-  .card-title { font-size: var(--text-xs); font-weight: var(--weight-medium); color: rgba(255,255,255,0.92); line-height: var(--leading-snug); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-shadow: 0 1px 4px rgba(0,0,0,0.7); transition: color var(--t-base); }
-  .card-source { font-family: var(--font-ui); font-size: 9px; color: rgba(255,255,255,0.45); letter-spacing: var(--tracking-wide); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bodyEmbedded { padding: var(--sp-4) var(--sp-5) var(--sp-6); }
+  .manga-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(clamp(120px, 11vw, 164px), 1fr));
+    gap: var(--sp-5);
+    align-content: start;
+    contain: layout style;
+  }
+  .embeddedGrid { gap: var(--sp-5); }
+  .n-library-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    text-align: left;
+    min-width: 0;
+    transition: transform 160ms ease, filter 160ms ease;
+  }
+  .n-library-card:hover {
+    transform: translateY(-2px);
+  }
+  .n-library-card:hover .n-library-card__cover img {
+    filter: brightness(1.06) saturate(1.04);
+  }
+  .n-library-card:hover .n-library-card__title {
+    color: #fff;
+  }
+  .n-library-card__cover {
+    position: relative;
+    aspect-ratio: 2 / 3;
+    overflow: hidden;
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+    border: 1px solid var(--border-dim);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
+  }
+  .n-library-card__cover img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    transition: filter 160ms ease, transform 160ms ease;
+  }
+  .n-library-card__badge {
+    position: absolute;
+    top: var(--sp-2);
+    right: var(--sp-2);
+    display: inline-flex;
+    align-items: center;
+    min-height: 20px;
+    padding: 0 7px;
+    border-radius: 9999px;
+    background: rgba(36, 33, 43, 0.9);
+    border: 1px solid rgba(184, 167, 234, 0.12);
+    color: var(--n-primary);
+    font-family: var(--font-ui);
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.18);
+  }
+  .n-library-card__info {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+  }
+  .n-library-card__title {
+    font-size: var(--text-xs);
+    font-weight: var(--weight-medium);
+    color: rgba(255, 255, 255, 0.92);
+    line-height: var(--leading-snug);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+    transition: color var(--t-base);
+  }
+  .n-library-card__meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-2);
+    min-width: 0;
+  }
+  .n-library-card__author,
+  .n-library-card__vol {
+    font-family: var(--font-ui);
+    font-size: 9px;
+    letter-spacing: var(--tracking-wide);
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.45);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .n-library-card__vol {
+    color: rgba(255, 255, 255, 0.7);
+    flex-shrink: 0;
+  }
   .card-skeleton { padding: 0; }
   .cover-area { aspect-ratio: 2/3; border-radius: var(--radius-md); }
   .skeleton { background: var(--bg-raised); border-radius: var(--radius-sm); animation: pulse 1.6s ease-in-out infinite; }

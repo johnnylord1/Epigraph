@@ -72,6 +72,7 @@ const SAMPLE_NOVELS_SNAPSHOT: AethonNovelsSnapshot = {
     {
       id: "novel-1",
       title: "Novel One",
+      path: "/works/1",
       source: {
         repositoryUrl: "https://plugins.example.com/index.json",
         pluginId: "app.lnreader.sources.example",
@@ -79,6 +80,17 @@ const SAMPLE_NOVELS_SNAPSHOT: AethonNovelsSnapshot = {
       },
       addedAt: 1,
       updatedAt: 2,
+    },
+  ],
+  chapters: [
+    {
+      id: "chapter-1",
+      novelId: "novel-1",
+      path: "/works/1/chapters/1",
+      title: "Chapter 1",
+      order: 1,
+      releaseTime: null,
+      unread: true,
     },
   ],
   progress: [],
@@ -331,7 +343,7 @@ describe("aethon restore planner", () => {
     );
   });
 
-  it("keeps a valid minimal app payload as warning-only portable metadata", async () => {
+  it("keeps a valid minimal app payload executable as warning-only portable metadata", async () => {
     const built = await buildAethonBackupContainer({
       payloads: [buildAethonAppPayload({ defaultLocalProfileId: "main" })],
     });
@@ -341,8 +353,10 @@ describe("aethon restore planner", () => {
 
     expect(app.kind).toBe("app");
     expect(app.status).toBe("warning-only");
+    expect(app.canExecuteRestore).toBe(true);
     expect(app.canRestoreNow).toBe(true);
     expect(app.needsUserAction).toBe(false);
+    expect(app.selectedByDefault).toBe(true);
     expect(app.warnings).toContainEqual(expect.objectContaining({ code: "portable-metadata-only" }));
   });
 

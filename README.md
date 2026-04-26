@@ -129,6 +129,16 @@ npm exec pnpm tauri:dev
 - `npm exec pnpm tauri:dev` additionally requires WebView2, `rustup`/`rustc`/`cargo`, and Visual Studio Build Tools with MSVC + Windows SDK.
 - In the current validation environment, the frontend build succeeded and `tauri info` confirmed WebView2 is installed, but Rust and Visual Studio Build Tools were missing, so native desktop boot could not be completed here.
 
+### Runtime launch policy
+
+For local desktop verification, use the managed launcher instead of opening raw gates directly:
+
+- Desktop shortcut: `Aethon.lnk`
+- Script: `scripts/launch-latest-aethon.ps1`
+- Cleanup: `scripts/stop-aethon-orphans.ps1`
+
+Purpose-specific Syncd gates still exist, but they are only for Syncd protocol/runtime verification. The full policy lives in [docs/runtime-session-policy.md](./docs/runtime-session-policy.md).
+
 ### Nix
 
 Or with Nix:

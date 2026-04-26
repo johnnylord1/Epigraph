@@ -1,0 +1,307 @@
+import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+
+export type SyncdEffectiveDiscoverySource =
+  | "advertised-endpoint"
+  | "manual-endpoint";
+
+export type PairingSessionStatus =
+  | "pending"
+  | "claimed"
+  | "approved"
+  | "rejected"
+  | "expired";
+
+export type SyncdDesktopConnectionStatus =
+  | "idle"
+  | "pending"
+  | "claimed"
+  | "approved"
+  | "rejected"
+  | "expired"
+  | "connected"
+  | "unreachable"
+  | "needs_reauth"
+  | "tls_mismatch";
+
+export interface SyncdBootstrapBundle {
+  pairingSessionId: string;
+  pairingCode: string;
+  syncdBaseUrl: string;
+  profileId: string;
+  expiresAtMs: number;
+  tlsCertSha256: string;
+}
+
+export interface SyncdDesktopDiscoveryCandidate {
+  instanceName: string;
+  serverId: string;
+  effectiveOrigin: string;
+  effectiveSource: SyncdEffectiveDiscoverySource;
+  discoveryOrigin: string;
+  tlsCertSha256: string;
+  supportsBootstrapSessionCreate: boolean;
+  supportsBootstrapSessionFetch: boolean;
+  supportsLivePairingStatus: boolean;
+  fallbackOrigins: string[];
+}
+
+export interface SyncdHostPairingState {
+  profileId: string;
+  sessionId: string;
+  pairingCode: string;
+  syncdBaseUrl: string;
+  localControlUrl: string;
+  advertisedBaseUrl: string;
+  tlsCertSha256: string;
+  expiresAtMs: number;
+  status: PairingSessionStatus;
+  claimedDeviceId?: string | null;
+  bootstrapBundle: string;
+  hostReady: boolean;
+  error?: string | null;
+}
+
+export interface SyncdConnectState {
+  localProfileId: string;
+  sessionId: string;
+  remoteProfileId: string;
+  remoteOrigin: string;
+  tlsCertSha256: string;
+  status: SyncdDesktopConnectionStatus;
+  attemptedOrigin: string;
+  fallbackOrigins: string[];
+  claimedDeviceId?: string | null;
+  sessionKey?: string | null;
+  error?: string | null;
+}
+
+export interface PersistedSyncSession {
+  sessionKey: string;
+  localProfileId: string;
+  remoteServerId: string;
+  remoteProfileId: string;
+  canonicalOrigin: string;
+  fallbackOrigins: string[];
+  tlsCertSha256: string;
+  accessToken: string;
+  lastDiscoverySource: SyncdEffectiveDiscoverySource;
+  lastValidatedAtMs?: number | null;
+  lastKnownStatus: SyncdDesktopConnectionStatus;
+}
+
+export interface SyncdReconnectStatus {
+  sessionKey: string;
+  localProfileId: string;
+  remoteOrigin: string;
+  status: SyncdDesktopConnectionStatus;
+  error?: string | null;
+}
+
+export type SyncdReplicationStatus =
+  | "idle"
+  | "connecting"
+  | "replaying"
+  | "live"
+  | "paused"
+  | "degraded"
+  | "offline"
+  | "needs_reauth";
+
+export type SyncdReplicationReplayMode =
+  | "changes_bootstrap"
+  | "sse_live"
+  | "recovery_replay";
+
+export interface SyncdReplicationScopeCheckpoint {
+  scopeId: string;
+  lastAppliedServerVersion: number;
+  minReplayableSeen: number;
+  lastReplayMode: SyncdReplicationReplayMode;
+  lastAppliedAtMs: number;
+}
+
+export interface SyncdReplicationSnapshot {
+  localProfileId: string;
+  activeSessionKey?: string | null;
+  replicationStatus: SyncdReplicationStatus;
+  lastConnectedAtMs?: number | null;
+  lastError?: string | null;
+  booksScopeCheckpoint?: SyncdReplicationScopeCheckpoint | null;
+  novelsScopeCheckpoint?: SyncdReplicationScopeCheckpoint | null;
+  paused: boolean;
+  lastAppliedScopes: string[];
+  lastAppliedAtMs?: number | null;
+}
+
+export interface SyncdSessionActionAvailability {
+  canSetActive: boolean;
+  canPause: boolean;
+  canResume: boolean;
+  canRevalidate: boolean;
+  canDisconnect: boolean;
+  canForget: boolean;
+}
+
+export interface PersistedSyncSessionView extends PersistedSyncSession {
+  isActiveForSync: boolean;
+  replicationStatus?: SyncdReplicationStatus | null;
+  actions: SyncdSessionActionAvailability;
+}
+
+export interface SyncdSessionCatalog {
+  localProfileId: string;
+  activeSessionKey?: string | null;
+  replication: SyncdReplicationSnapshot;
+  sessions: PersistedSyncSessionView[];
+}
+
+export interface SyncdReplicationErrorPayload {
+  profileId: string;
+  error: string;
+}
+
+export interface SyncdDesktopSnapshot {
+  host?: SyncdHostPairingState | null;
+  connect?: SyncdConnectState | null;
+}
+
+export interface SyncdConnectBootstrapInput {
+  localProfileId: string;
+  bootstrapBundle: string;
+  manualOrigin?: string | null;
+}
+
+export type PairingHostDecision = "approve" | "reject";
+
+export interface SyncdDisconnectSessionInput {
+  sessionKey: string;
+}
+
+export type SyncdPairingStatusPayload = SyncdHostPairingState | SyncdConnectState;
+
+export function syncdListDiscoveryCandidates(): Promise<SyncdDesktopDiscoveryCandidate[]> {
+  return invoke("syncd_list_discovery_candidates");
+}
+
+export function syncdStartHostPairing(profileId: string): Promise<SyncdHostPairingState> {
+  return invoke("syncd_start_host_pairing", { profileId });
+}
+
+export function syncdGetActiveHostPairing(): Promise<SyncdHostPairingState | null> {
+  return invoke("syncd_get_active_host_pairing");
+}
+
+export function syncdConnectWithBootstrap(
+  input: SyncdConnectBootstrapInput,
+): Promise<SyncdConnectState> {
+  return invoke("syncd_connect_with_bootstrap", { input });
+}
+
+export function syncdHostDecidePairing(
+  sessionId: string,
+  decision: PairingHostDecision,
+): Promise<SyncdHostPairingState> {
+  return invoke("syncd_host_decide_pairing", { sessionId, decision });
+}
+
+export function syncdListPersistedSyncSessions(
+  profileId: string,
+): Promise<PersistedSyncSession[]> {
+  return invoke("syncd_list_persisted_sync_sessions", { profileId });
+}
+
+export function syncdRevalidatePersistedSyncSessions(
+  profileId: string,
+): Promise<SyncdReconnectStatus[]> {
+  return invoke("syncd_revalidate_persisted_sync_sessions", { profileId });
+}
+
+export function syncdDisconnectPersistedSession(
+  sessionKey: string,
+): Promise<void> {
+  return invoke("syncd_disconnect_persisted_session", { input: { sessionKey } });
+}
+
+export function syncdGetReplicationState(
+  profileId: string,
+): Promise<SyncdReplicationSnapshot> {
+  return invoke("syncd_get_replication_state", { profileId });
+}
+
+export function syncdSetActiveReplicationSession(
+  profileId: string,
+  sessionKey: string,
+): Promise<SyncdReplicationSnapshot> {
+  return invoke("syncd_set_active_replication_session", {
+    input: { profileId, sessionKey },
+  });
+}
+
+export function syncdPauseReplication(
+  profileId: string,
+): Promise<SyncdReplicationSnapshot> {
+  return invoke("syncd_pause_replication", { input: { profileId } });
+}
+
+export function syncdResumeReplication(
+  profileId: string,
+): Promise<SyncdReplicationSnapshot> {
+  return invoke("syncd_resume_replication", { input: { profileId } });
+}
+
+export function syncdForceReplicationReconnect(
+  profileId: string,
+): Promise<SyncdReplicationSnapshot> {
+  return invoke("syncd_force_replication_reconnect", { input: { profileId } });
+}
+
+export function syncdGetSessionCatalog(
+  profileId: string,
+): Promise<SyncdSessionCatalog> {
+  return invoke("syncd_get_session_catalog", { profileId });
+}
+
+export function syncdRevalidateSession(
+  profileId: string,
+  sessionKey: string,
+): Promise<SyncdReconnectStatus> {
+  return invoke("syncd_revalidate_session", { input: { profileId, sessionKey } });
+}
+
+export function syncdForgetPersistedSession(
+  profileId: string,
+  sessionKey: string,
+): Promise<void> {
+  return invoke("syncd_forget_persisted_session", { input: { profileId, sessionKey } });
+}
+
+export function listenSyncdDesktopState(
+  handler: (payload: SyncdDesktopSnapshot) => void,
+): Promise<UnlistenFn> {
+  return listen<SyncdDesktopSnapshot>("syncd-desktop-state", ({ payload }) => handler(payload));
+}
+
+export function listenSyncdPairingStatus(
+  handler: (payload: SyncdPairingStatusPayload) => void,
+): Promise<UnlistenFn> {
+  return listen<SyncdPairingStatusPayload>("syncd-pairing-status", ({ payload }) => handler(payload));
+}
+
+export function listenSyncdReconnectStatus(
+  handler: (payload: SyncdReconnectStatus) => void,
+): Promise<UnlistenFn> {
+  return listen<SyncdReconnectStatus>("syncd-reconnect-status", ({ payload }) => handler(payload));
+}
+
+export function listenSyncdReplicationState(
+  handler: (payload: SyncdReplicationSnapshot) => void,
+): Promise<UnlistenFn> {
+  return listen<SyncdReplicationSnapshot>("syncd-replication-state", ({ payload }) => handler(payload));
+}
+
+export function listenSyncdReplicationError(
+  handler: (payload: SyncdReplicationErrorPayload) => void,
+): Promise<UnlistenFn> {
+  return listen<SyncdReplicationErrorPayload>("syncd-replication-error", ({ payload }) => handler(payload));
+}

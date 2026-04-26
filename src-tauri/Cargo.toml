@@ -2,6 +2,7 @@
 name = "aethon"
 version = "0.6.7"
 edition = "2021"
+default-run = "aethon"
 
 [lib]
 name = "aethon_lib"
@@ -10,6 +11,10 @@ crate-type = ["cdylib", "rlib"]
 [[bin]]
 name = "aethon"
 path = "src/main.rs"
+
+[[bin]]
+name = "aethon-syncd"
+path = "src/syncd_main.rs"
 
 [build-dependencies]
 tauri-build = { version = "2.0", features = [] }
@@ -32,7 +37,30 @@ tauri-plugin-drpc = "0.1.6"
 url = "2"
 percent-encoding = "2"
 sha2 = "0.10"
+mdns-sd = "0.19"
 windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }
+anyhow = "1"
+async-stream = "0.3"
+axum = { version = "0.7", features = ["http2", "macros", "ws"] }
+axum-server = { version = "0.7", features = ["tls-rustls"] }
+http-body-util = "0.1"
+futures-util = "0.3"
+rcgen = "0.13"
+pem = "3"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+rustls = "0.23"
+semver = "1"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "migrate", "macros"] }
+thiserror = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time", "fs", "net", "io-util"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+tower = { version = "0.5", features = ["util"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+uuid = { version = "1", features = ["serde", "v4", "v7"] }
+
+[dev-dependencies]
+tempfile = "3"
 
 [profile.release]
 codegen-units = 1

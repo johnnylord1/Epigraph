@@ -1,170 +1,109 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { platform } from "@tauri-apps/plugin-os";
-  import { getServerTargetInfo } from "../../lib/serverTarget";
+  import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
 
-  const win      = getCurrentWindow();
-  const os       = platform();
-  const isMac    = os === "macos";
-  const isWindows = os === "windows";
+  let win = $state<Window | null>(null);
 
-  let isFullscreen = $state(false);
-  const serverTarget = $derived(getServerTargetInfo());
-
-  onMount(async () => {
-    isFullscreen = await win.isFullscreen();
-    const unlisten = await win.onResized(async () => {
-      isFullscreen = await win.isFullscreen();
-    });
-    return unlisten;
+  onMount(() => {
+    try {
+      win = getCurrentWindow();
+    } catch (error) {
+      console.error("TitleBar failed to acquire current window", error);
+      win = null;
+    }
   });
+
+  async function minimizeWindow() {
+    if (!win) return;
+    await win.minimize();
+  }
+
+  async function toggleMaximizeWindow() {
+    if (!win) return;
+    await win.toggleMaximize();
+  }
+
+  async function closeWindow() {
+    if (!win) return;
+    await win.close();
+  }
 </script>
 
-{#if !isFullscreen}
-  <div class="bar" data-tauri-drag-region>
-    {#if isMac}<div class="mac-spacer"></div>{/if}
-    <div class="title-wrap" data-tauri-drag-region>
-      <span class="title" data-tauri-drag-region>Aethon</span>
-      <span class="target-pill target-{serverTarget.mode}" data-tauri-drag-region>{serverTarget.title}</span>
-    </div>
-    {#if !isMac}
-      <div class="controls">
-        <button onclick={() => win.minimize()} title="Minimize" aria-label="Minimize">
-          <svg width="10" height="1" viewBox="0 0 10 1">
-            <line x1="0" y1="0.5" x2="10" y2="0.5" stroke="currentColor" stroke-width="1.5" />
-          </svg>
-        </button>
-        <button onclick={() => win.toggleMaximize()} title="Maximize" aria-label="Maximize">
-          <svg width="9" height="9" viewBox="0 0 9 9">
-            <rect x="0.75" y="0.75" width="7.5" height="7.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.5" />
-          </svg>
-        </button>
-        <button class="close" onclick={() => win.close()} title="Close" aria-label="Close">
-          <svg width="10" height="10" viewBox="0 0 10 10">
-            <line x1="1" y1="1" x2="9" y2="9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-            <line x1="9" y1="1" x2="1" y2="9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-          </svg>
-        </button>
-      </div>
-    {/if}
-  </div>
-{:else if isWindows}
-  <!-- On Windows, fullscreen hides the native titlebar — show a hoverable overlay so the user isn't locked in -->
-  <div class="fullscreen-controls">
-    <button onclick={() => win.setFullscreen(false)} title="Exit Fullscreen" aria-label="Exit Fullscreen">
-      <svg width="10" height="10" viewBox="0 0 10 10">
-        <polyline points="1,4 1,1 4,1" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-        <polyline points="6,1 9,1 9,4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-        <polyline points="9,6 9,9 6,9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-        <polyline points="4,9 1,9 1,6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-    </button>
-    <button class="close" onclick={() => win.close()} title="Close" aria-label="Close">
-      <svg width="10" height="10" viewBox="0 0 10 10">
-        <line x1="1" y1="1" x2="9" y2="9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-        <line x1="9" y1="1" x2="1" y2="9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-      </svg>
-    </button>
-  </div>
-{/if}
+<div class="window-controls" aria-label="Window controls">
+  <button type="button" class="window-btn" onclick={minimizeWindow} title="Minimize" aria-label="Minimize">
+    <svg width="10" height="1" viewBox="0 0 10 1" aria-hidden="true">
+      <line x1="0" y1="0.5" x2="10" y2="0.5" stroke="currentColor" stroke-width="1.5" />
+    </svg>
+  </button>
+
+  <button type="button" class="window-btn" onclick={toggleMaximizeWindow} title="Maximize" aria-label="Maximize">
+    <svg width="9" height="9" viewBox="0 0 9 9" aria-hidden="true">
+      <rect x="0.75" y="0.75" width="7.5" height="7.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.5" />
+    </svg>
+  </button>
+
+  <button type="button" class="window-btn window-btn--close" onclick={closeWindow} title="Close" aria-label="Close">
+    <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+      <line x1="1" y1="1" x2="9" y2="9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+      <line x1="9" y1="1" x2="1" y2="9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+    </svg>
+  </button>
+</div>
 
 <style>
-  .fullscreen-controls {
+  .window-controls {
     position: fixed;
-    top: 0;
-    right: 0;
-    z-index: 9999;
+    top: 8px;
+    right: 12px;
+    z-index: 3000;
     display: flex;
     align-items: center;
-    gap: 2px;
-    padding: 4px;
-    opacity: 0;
-    transition: opacity 0.2s ease;
+    gap: 6px;
+    pointer-events: auto;
     -webkit-app-region: no-drag;
   }
-  .fullscreen-controls:hover { opacity: 1; }
 
-  .bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    height: 32px;
-    padding: 0 var(--sp-3) 0 var(--sp-4);
-    background: var(--bg-void);
-    border-bottom: 1px solid var(--border-dim);
-    flex-shrink: 0;
-    user-select: none;
-    -webkit-app-region: drag;
-  }
-  /* Spacer to clear the native macOS traffic lights (~70px) */
-  .mac-spacer {
-    width: 70px;
-    flex-shrink: 0;
-    -webkit-app-region: drag;
-  }
-  .title {
-    font-family: var(--font-ui);
-    font-size: var(--text-2xs);
-    color: var(--text-faint);
-    letter-spacing: var(--tracking-wider);
-    text-transform: uppercase;
-    -webkit-app-region: drag;
-  }
-  .title-wrap {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-    -webkit-app-region: drag;
-  }
-  .target-pill {
+  .window-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 0;
-    padding: 3px 8px;
-    border-radius: 999px;
-    border: 1px solid var(--border-base);
-    font-family: var(--font-ui);
-    font-size: 10px;
-    letter-spacing: var(--tracking-wide);
-    text-transform: uppercase;
-    color: var(--text-muted);
-    background: var(--bg-raised);
-    -webkit-app-region: drag;
-  }
-  .target-main {
-    border-color: var(--border-base);
-    color: var(--text-secondary);
-    background: var(--bg-raised);
-  }
-  .target-test {
-    border-color: var(--accent-dim);
-    color: var(--accent-fg);
-    background: var(--accent-muted);
-  }
-  .target-custom {
-    border-color: var(--color-info);
-    color: var(--color-info);
-    background: var(--color-info-bg);
-  }
-  .controls {
-    display: flex;
-    align-items: center;
-    gap: 2px;
+    width: 30px;
+    height: 28px;
+    border-radius: 10px;
+    border: 1px solid rgba(184, 167, 234, 0.12);
+    background: rgba(26, 24, 34, 0.88);
+    color: rgba(239, 234, 255, 0.68);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.04),
+      0 6px 16px rgba(0, 0, 0, 0.24);
+    transition:
+      transform 140ms ease,
+      background 160ms ease,
+      border-color 160ms ease,
+      color 160ms ease,
+      box-shadow 160ms ease;
+    backdrop-filter: blur(22px) saturate(140%);
     -webkit-app-region: no-drag;
   }
-  button {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px; height: 28px;
-    border-radius: var(--radius-sm);
-    color: var(--text-faint);
-    transition: color var(--t-base), background var(--t-base);
-    -webkit-app-region: no-drag;
+
+  .window-btn:hover {
+    transform: translateY(-1px);
+    color: rgba(248, 244, 255, 0.92);
+    border-color: rgba(184, 167, 234, 0.24);
+    background: rgba(34, 31, 44, 0.94);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.06),
+      0 10px 24px rgba(0, 0, 0, 0.3);
   }
-  button:hover { color: var(--text-muted); background: var(--bg-raised); }
-  .close:hover { color: #fff; background: #c0392b; }
+
+  .window-btn:active {
+    transform: translateY(0) scale(0.96);
+    background: rgba(20, 18, 28, 0.96);
+  }
+
+  .window-btn--close:hover {
+    color: #fff;
+    border-color: rgba(229, 70, 99, 0.5);
+    background: rgba(184, 48, 74, 0.92);
+  }
 </style>

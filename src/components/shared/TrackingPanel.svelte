@@ -509,7 +509,7 @@
   </div>
 </div>
 
-<script module>
+<script context="module" lang="ts">
   function autoFocus(node: HTMLElement) { setTimeout(() => node.focus(), 50); }
 </script>
 
@@ -627,7 +627,6 @@
   .result-bound { background: var(--accent-muted) !important; }
   .result-cover { width: 46px; height: 66px; object-fit: cover; border-radius: var(--radius-sm); border: 1px solid var(--border-dim); flex-shrink: 0; }
   .result-cover-empty { background: var(--bg-raised); }
-  .hidden { display: none; }
   .result-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-1); padding-top: 2px; }
   .result-title { font-size: var(--text-sm); color: var(--text-secondary); line-height: var(--leading-snug); text-align: left; }
   .result-meta { display: flex; flex-wrap: wrap; gap: var(--sp-1); }

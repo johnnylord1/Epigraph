@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "tertiary": "#cecbd3",
+                        "surface-container-lowest": "#0e0e10",
+                        "primary-fixed": "#e8ddff",
+                        "inverse-surface": "#e5e1e4",
+                        "surface-container": "#201f21",
+                        "on-secondary-fixed": "#1f025d",
+                        "on-tertiary-container": "#434349",
+                        "secondary-fixed": "#e7deff",
+                        "on-error": "#690005",
+                        "surface-variant": "#353437",
+                        "secondary": "#cdbdff",
+                        "on-tertiary": "#303036",
+                        "surface-container-highest": "#353437",
+                        "outline-variant": "#48454f",
+                        "tertiary-fixed": "#e4e1e9",
+                        "on-secondary-fixed-variant": "#4b3989",
+                        "on-secondary-container": "#bfadff",
+                        "on-primary-fixed-variant": "#4c3d78",
+                        "on-primary": "#352660",
+                        "on-error-container": "#ffdad6",
+                        "on-background": "#e5e1e4",
+                        "error-container": "#93000a",
+                        "secondary-fixed-dim": "#cdbdff",
+                        "secondary-container": "#4e3b8c",
+                        "surface-dim": "#131315",
+                        "surface-tint": "#cebdff",
+                        "inverse-on-surface": "#303032",
+                        "background": "#131315",
+                        "surface": "#131315",
+                        "on-tertiary-fixed": "#1b1b21",
+                        "tertiary-fixed-dim": "#c7c5cd",
+                        "primary": "#d3c4ff",
+                        "on-surface": "#e5e1e4",
+                        "inverse-primary": "#645592",
+                        "error": "#ffb4ab",
+                        "tertiary-container": "#b2b0b8",
+                        "on-secondary": "#352072",
+                        "on-surface-variant": "#cac4d0",
+                        "on-primary-fixed": "#200f4a",
+                        "surface-container-high": "#2a2a2c",
+                        "surface-container-low": "#1b1b1d",
+                        "primary-fixed-dim": "#cebdff",
+                        "on-tertiary-fixed-variant": "#46464d",
+                        "surface-bright": "#39393b",
+                        "on-primary-container": "#483a74",
+                        "primary-container": "#b8a7ea",
+                        "outline": "#948f9a"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "fontFamily": {
+                        "headline": ["Inter"],
+                        "body": ["Inter"],
+                        "label": ["Inter"]
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 200, 'GRAD' 0, 'opsz' 24; }
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #353437; border-radius: 2px; }
+        ::-webkit-scrollbar-thumb:hover { background: #d3c4ff; }
+        .glass-panel { background: rgba(32, 31, 33, 0.8); backdrop-filter: blur(20px); }
+        html { scroll-behavior: smooth; }
+        .hud-section-nav {
+          position: fixed;
+          right: 18px;
+          top: 76px;
+          z-index: 80;
+          width: 176px;
+          padding: 10px;
+          border: 1px solid rgba(211, 196, 255, 0.16);
+          border-radius: 14px;
+          background: rgba(14, 14, 16, 0.86);
+          backdrop-filter: blur(18px);
+          box-shadow: 0 20px 60px rgba(0, 0, 0, 0.34);
+        }
+        .hud-section-nav__label {
+          display: block;
+          margin: 2px 6px 8px;
+          color: rgba(229, 225, 228, 0.56);
+          font-size: 9px;
+          font-weight: 800;
+          letter-spacing: 0.18em;
+          text-transform: uppercase;
+        }
+        .hud-section-nav a {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          min-height: 28px;
+          margin: 2px 0;
+          padding: 0 8px;
+          border-radius: 9px;
+          color: rgba(229, 225, 228, 0.74);
+          font-size: 10px;
+          font-weight: 800;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          transition: color 120ms ease, background 120ms ease, transform 120ms ease;
+        }
+        .hud-section-nav a::before {
+          content: "";
+          width: 5px;
+          height: 5px;
+          border-radius: 999px;
+          background: rgba(211, 196, 255, 0.42);
+          box-shadow: 0 0 0 1px rgba(211, 196, 255, 0.08);
+        }
+.hud-section-nav a:hover {
+          color: #e5e1e4;
+          background: rgba(211, 196, 255, 0.10);
+          transform: translateX(-2px);
+        }
+        .hud-section-nav a.active {
+          color: #d3c4ff;
+          background: rgba(211, 196, 255, 0.14);
+        }
+        .hud-section-nav a.active::before {
+          background: #d3c4ff;
+          box-shadow: 0 0 10px rgba(211, 196, 255, 0.32);
+        }
+        .hud-section-nav .child {
+          margin-left: 16px;
+          opacity: 0.88;
+        }
+        .scroll-target {
+          scroll-margin-top: 72px;
+        }
+        @media (max-width: 1180px) {
+          .hud-section-nav { display: none; }
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background font-body selection:bg-primary/30">
+<nav class="hud-section-nav" aria-label="HUD board section navigation">
+<span class="hud-section-nav__label">HUD hierarchy</span>
+<a href="#hud-shell" data-target="hud-shell">Shell</a>
+<a href="#hud-home" data-target="hud-home" class="child">Home</a>
+<a href="#hud-library" data-target="hud-library" class="child">Library</a>
+<a href="#hud-browse" data-target="hud-browse" class="child">Browse</a>
+<a href="#hud-series" data-target="hud-series">Series Detail</a>
+<a href="#hud-reader" data-target="hud-reader">Reader</a>
+<a href="#hud-downloads" data-target="hud-downloads">Downloads + Settings</a>
+</nav>
+<div id="hud-shell" class="scroll-target"></div>
+<!-- APP SHELL: TOP NAV -->
+<header class="fixed top-0 w-full z-50 flex justify-between items-center px-4 h-12 bg-slate-950/80 backdrop-blur-xl shadow-[0_24px_24px_-12px_rgba(32,15,74,0.06)]">
+<div class="flex items-center gap-4">
+<span class="text-lg font-bold tracking-tighter text-violet-200 uppercase font-headline">Aethon Nocturne</span>
+<div class="h-4 w-px bg-outline-variant/30"></div>
+<div class="flex items-center gap-2">
+<span class="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>
+<span class="text-[10px] font-medium tracking-[0.1em] text-on-surface-variant uppercase">SYSTEM: NOMINAL</span>
+</div>
+</div>
+<div class="flex items-center gap-6">
+<div class="flex gap-4">
+<span class="material-symbols-outlined text-slate-400 hover:text-violet-100 transition-colors duration-200 cursor-pointer" data-icon="notifications">notifications</span>
+<span class="material-symbols-outlined text-slate-400 hover:text-violet-100 transition-colors duration-200 cursor-pointer" data-icon="battery_very_low">battery_very_low</span>
+<span class="material-symbols-outlined text-slate-400 hover:text-violet-100 transition-colors duration-200 cursor-pointer" data-icon="settings_input_component">settings_input_component</span>
+</div>
+<div class="w-8 h-8 rounded bg-surface-container-highest border border-outline-variant/20 overflow-hidden">
+<img class="w-full h-full object-cover" data-alt="Cyberpunk style character portrait with neon lighting and high tech visor" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAkgF90E3bHc271u3ID3evhb00OY7Ko6xiqMqYWN-Dlkqd9-9oV85b_CMGc0HmWn15T9BnKqXZ7u4aBwpMKPXf98L8dm8y41uB73lCAIm0iDuomaXD1c6mnyImg_2bIcPlW12dNjPJonqDpIcu2y6kQNsNrCFyEpg685Lgz2f5IdJh2__tEda1gYEpfh-K0fzSsXgTXFyMmohUy8MW8EPkQrQG9gpEYPd5e-O2MgE9Ob_cUnYM4F8u4YFFDdySGszTMCNNcfTThAGA"/>
+</div>
+</div>
+</header>
+<!-- APP SHELL: SIDE NAV -->
+<aside class="fixed left-0 top-0 h-full flex flex-col items-center py-4 z-40 bg-slate-950 w-16 border-r-0 pt-16">
+<div class="flex flex-col gap-8 w-full">
+<div class="flex flex-col items-center gap-1 text-violet-200 border-r-2 border-violet-300 bg-slate-900/50 py-3">
+<span class="material-symbols-outlined" data-icon="home" style="font-variation-settings: 'FILL' 1;">home</span>
+<span class="text-[9px] font-bold uppercase tracking-tighter">Home</span>
+</div>
+<div class="flex flex-col items-center gap-1 text-slate-500 hover:bg-slate-900 hover:text-violet-100 transition-all py-3 cursor-pointer">
+<span class="material-symbols-outlined" data-icon="book_2">book_2</span>
+<span class="text-[9px] font-bold uppercase tracking-tighter">Library</span>
+</div>
+<div class="flex flex-col items-center gap-1 text-slate-500 hover:bg-slate-900 hover:text-violet-100 transition-all py-3 cursor-pointer">
+<span class="material-symbols-outlined" data-icon="explore">explore</span>
+<span class="text-[9px] font-bold uppercase tracking-tighter">Browse</span>
+</div>
+<div class="flex flex-col items-center gap-1 text-slate-500 hover:bg-slate-900 hover:text-violet-100 transition-all py-3 cursor-pointer">
+<span class="material-symbols-outlined" data-icon="download">download</span>
+<span class="text-[9px] font-bold uppercase tracking-tighter">DL</span>
+</div>
+<div class="mt-auto flex flex-col items-center gap-1 text-slate-500 hover:bg-slate-900 hover:text-violet-100 transition-all py-3 cursor-pointer">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+<span class="text-[9px] font-bold uppercase tracking-tighter">Set</span>
+</div>
+</div>
+</aside>
+<!-- MAIN CANVAS -->
+<main class="pl-16 pt-12 min-h-screen grid grid-cols-12 gap-px bg-outline-variant/10">
+<!-- SECTION 2: HOME HERO -->
+<section id="hud-home" class="scroll-target col-span-12 p-8 bg-surface-container-lowest border-b border-outline-variant/20">
+<div class="flex items-center justify-between mb-4">
+<span class="text-[11px] font-bold uppercase tracking-[0.2em] text-primary">01 // CONTINUITY_LOG</span>
+</div>
+<div class="relative h-64 rounded-xl overflow-hidden group">
+<img class="w-full h-full object-cover opacity-60" data-alt="Cinematic wide shot of a lone wanderer in a desolate futuristic landscape with dramatic lighting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCtmGPrwbar_mP6mMFuAdmbgrlZYsM3OnhK-lcAcpTt_E1r2SVKTqS_VAiT9KOXJpxSfmDvvw1kLLX-tftRjT4-Syoo-mRimN4esJv2kbVyhRxtfKAYgWkXMPnYdhg6RCHpHECY4wkkiBeo4Tf2Qhh2ZTwE8ifzBhMyPWaaokE-lCcMiOfmCssoY-ivJDSfumloKP7x--Tsso9shxv5wPSeScuCdKCe-tuSX8K-_R5dkWGxmnquxswSRT2bhtcRh5Iuu1jffAq5wlY"/>
+<div class="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent"></div>
+<div class="absolute bottom-0 left-0 p-8 w-full">
+<div class="flex items-end justify-between">
+<div>
+<h2 class="text-3xl font-black tracking-tighter text-on-surface mb-1">Vagabond Vol. 4</h2>
+<p class="text-sm text-on-surface-variant font-medium">Chapter 142: The Path of Silk</p>
+</div>
+<button class="bg-gradient-to-br from-primary to-primary-container text-on-primary-fixed px-6 py-2 rounded-md font-bold text-xs uppercase tracking-widest flex items-center gap-2 hover:scale-105 transition-transform">
+<span class="material-symbols-outlined text-sm" data-icon="play_arrow" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
+                            Resume
+                        </button>
+</div>
+<div class="mt-6 w-full h-1 bg-surface-container rounded-full overflow-hidden">
+<div class="w-[85%] h-full bg-primary shadow-[0_0_8px_rgba(211,196,255,0.8)]"></div>
+</div>
+</div>
+</div>
+<div class="mt-8">
+<div class="flex items-center gap-2 mb-4">
+<span class="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">RECENTLY_ACQUIRED</span>
+</div>
+<div class="flex gap-4 overflow-x-auto pb-4">
+<!-- Recent items -->
+<div class="min-w-[140px] aspect-[2/3] bg-surface-container-high rounded-lg overflow-hidden border border-outline-variant/10 hover:border-primary/50 transition-colors cursor-pointer group">
+<img class="w-full h-full object-cover transition-transform group-hover:scale-110" data-alt="Dark stylized book cover with abstract geometric patterns and silver foil accents" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAtBMYnXaATul10Oz3c2vtyWBW24oTi5rhm5p6ByZeGY-NdpQDQlEBJWSnYF9754sbTMF6iV--IGT4FkyoJnQ-nfD9g7c1wm9JWKUDgg39MA1iF0KiJ0Wl-UFIJ_J7qLp6OKuXrqIXlFamTlbPDl4JaGO7PBhhnyXRZy1clSGe0TuwS-6gUPsbptUTaGG7jEsDBQyo-GhzN-alJkYXUmLNNvULQw13AD0vSjubcqs8nawB9OxClMerGxDy-BJI9blH-1NwNqvv_AYs"/>
+</div>
+<div class="min-w-[140px] aspect-[2/3] bg-surface-container-high rounded-lg overflow-hidden border border-outline-variant/10 cursor-pointer group">
+<img class="w-full h-full object-cover transition-transform group-hover:scale-110" data-alt="High contrast black and white graphic novel cover art featuring a mysterious silhouette" src="https://lh3.googleusercontent.com/aida-public/AB6AXuC8D1zw1NWjMA2TGOY2N05UGEyx3Tp5SBkhXXQOMtdP6Z53T_X68JBMtX1P8n-Z14mo_vkMjypSsj2J3rwESX4mDlGV3IIkDr_y5mpU3tj7n7AC9znOdwof-mu4ADRUrcyOtBVwOc6u5EiRChi4gEmXEb16iT3szHM2nCFnv0nfzMNyMJIKSFb34f9Hut0GIFoOk2tmhGx2PwSMrsosVGI5tKrO5B0CTSPMCWIFJxrE9yMj0wX4rfepF5KyOl_iLd6XnVJsd0Qg0TI"/>
+</div>
+<div class="min-w-[140px] aspect-[2/3] bg-surface-container-high rounded-lg overflow-hidden border border-outline-variant/10 cursor-pointer group">
+<img class="w-full h-full object-cover transition-transform group-hover:scale-110" data-alt="Anime style illustration of a sprawling futuristic cityscape under a twilight sky" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCuAABwSfmrQoLdHFdrKKTSQ_WaYElDqIOw3RI2k23R-4qCw3EQUoReh-IACjWA2peVcNImUpeb0dKTJP9SWvA-obI0dageWKiTM3ei1Gh3qhCDNJW3Lmm31PBO-Cj3EDdaJwNVJjxBgY-eR9Vno63IOfZS0ecoHSB0FufR05KzCxj9k-emjczNUapZnU-V-RxZFrzQiK7iUWB4-sqeThISD-Ut7J2qysedWdMG_b7p6a-hAoxoZpT1gnDS6xKkpgD0RPyMqJgad6A"/>
+</div>
+<div class="min-w-[140px] aspect-[2/3] bg-surface-container-high rounded-lg overflow-hidden border border-outline-variant/10 cursor-pointer group">
+<img class="w-full h-full object-cover transition-transform group-hover:scale-110" data-alt="Abstract digital art with deep purples and glowing neon lines resembling a data stream" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBjkl0FbSLTHI2ArtstWcrfxYnP1eA02aDw_jL5gBuuwmMoOpFVWiI6lZg0IrlUJmH4sfsKpYCD5hUiWxm3lpJU2P9gK_aHXsZDNJ-7_1NThhMt-2AX_1ADnj7P-2CBVgFqkR8_iP3QzybuSqjDVgFHIQ_O6i4hTI3Elb2d8n26RRC7S48cvZSm1lumNiAnaqfP39N5xs5R_eJhc10e2Kyn7QF2My7k_7aXGiMJ1B2P_ZUWrIqlJSeE5pKlIfnd94dDSKhyYCSPJxY"/>
+</div>
+</div>
+</div>
+</section>
+<!-- SECTION 3 & 4: LIBRARY & BROWSE -->
+<section id="hud-library" class="scroll-target col-span-8 p-8 bg-surface">
+<div class="flex items-center justify-between mb-8">
+<div class="flex items-center gap-8">
+<h3 class="text-xl font-bold tracking-tighter text-on-surface uppercase">02 // ARCHIVE_GRID</h3>
+<div class="flex items-center bg-surface-container-low px-3 py-1 rounded-lg border border-outline-variant/20">
+<span class="material-symbols-outlined text-[18px] text-primary" data-icon="search">search</span>
+<input class="bg-transparent border-none focus:ring-0 text-[11px] uppercase tracking-wider text-on-surface-variant w-40" placeholder="QUERY_ARCHIVE..." type="text"/>
+</div>
+</div>
+<div class="flex gap-2">
+<button class="flex items-center gap-2 bg-surface-container-high px-3 py-1.5 rounded border border-outline-variant/20 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest hover:bg-surface-container-highest">
+<span class="material-symbols-outlined text-[16px]" data-icon="filter_list">filter_list</span> Sort
+                    </button>
+<button class="flex items-center gap-2 bg-surface-container-high px-3 py-1.5 rounded border border-outline-variant/20 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest hover:bg-surface-container-highest">
+<span class="material-symbols-outlined text-[16px]" data-icon="grid_view">grid_view</span>
+</button>
+</div>
+</div>
+<div class="grid grid-cols-4 gap-6">
+<!-- Manga Card Loop -->
+<div class="space-y-2 group cursor-pointer">
+<div class="aspect-[2/3] rounded-lg bg-surface-container-highest overflow-hidden border border-outline-variant/10 group-hover:border-primary/40 transition-all shadow-lg">
+<img class="w-full h-full object-cover opacity-80 group-hover:opacity-100 group-hover:scale-105 transition-all" data-alt="Gritty ink sketch of a samurai warrior in a dynamic pose" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAmu--rS9oXXCQH-fMscDVzJh-QkQZmZQeOAcPRdQm_fMqJRrHCnEEEwBzH4Qxl2Ey1-POT_CECfSPLbOsMcjyyvRg07WECF1RT_4yPF0ixmk_NfNp4bFV2gWuS1kN-nOqb9X13k8r2399gUedNDuMA2Byz6fsYrd45iIznqyupqKPPOgT3R-cMuoN2eZvL1EIYhhk2uw_n9y75G1vDg6m796XXEI4wmzOFEAVDSZr5PsuN3r7thHixmuOAzZH_69giL0j1leUhjMY"/>
+</div>
+<div>
+<div class="text-[10px] font-black tracking-widest text-primary uppercase">Completed</div>
+<div class="text-sm font-bold truncate">Berserk: Golden Age</div>
+</div>
+</div>
+<div class="space-y-2 group cursor-pointer">
+<div class="aspect-[2/3] rounded-lg bg-surface-container-highest overflow-hidden border border-outline-variant/10 group-hover:border-primary/40 transition-all">
+<img class="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-all" data-alt="Traditional Japanese woodblock print style illustration of waves and a red sun" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAUdILqSjlXY3DlNPHTJKYfizSKhZnIkCzhc63_aCZdAGmqVmMa2IvNF7U8W1H9vusaWy3bNXOP6Z4X90aeqcGJnogV3xYfMuiEVBPM2zlkB-Ckrk2P41nMC9JWDX2Z3DEUy3qmq0ySIX3i80PFURMfavhE7eI05DvVZT43BAQId8APwMXPJsaIHTp9BiYIDyLeXk9KHmFQ5Vvbt3ZglkwMLwQmbO-OxiBB23GszN-u3P0BkZmCr2idjrtHEa6-QNHl1EnK0tjNT1Y"/>
+</div>
+<div>
+<div class="text-[10px] font-black tracking-widest text-on-surface-variant uppercase">Ongoing</div>
+<div class="text-sm font-bold truncate">Ghost in the Shell</div>
+</div>
+</div>
+<div class="space-y-2 group cursor-pointer">
+<div class="aspect-[2/3] rounded-lg bg-surface-container-highest overflow-hidden border border-outline-variant/10 group-hover:border-primary/40 transition-all">
+<img class="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-all" data-alt="Cyberpunk character with glowing cybernetic eyes and messy dark hair" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCwFRW1TtO_wRihMLhxqleHGFBcHIJCSxRO0BJvxtRZVDspgE5kXpbPab438nb2U821COGHe6e3tU1NenxM7j9NxT44vMBgZdAiBPRXO4u-8PkO7hPv3wmKdj-OH_cm9t4sCNMDQfFB74Dsf96FWlb2QVf_u2oSkn4gCaMy0DWBj-g6x8Si09SxuzpSwKzTwa1ysURpKSmZCP4tBEpb-VQL2f0xCGakF7xyffWNqqDjmHMU5TAKS_Y6gR-rYKQXM9KHE6tySOkJiJo"/>
+</div>
+<div>
+<div class="text-[10px] font-black tracking-widest text-on-surface-variant uppercase">On Hiatus</div>
+<div class="text-sm font-bold truncate">Akira: Neo-Tokyo</div>
+</div>
+</div>
+<div class="space-y-2 group cursor-pointer">
+<div class="aspect-[2/3] rounded-lg bg-surface-container-highest overflow-hidden border border-outline-variant/10 group-hover:border-primary/40 transition-all">
+<img class="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-all" data-alt="Minimalist ink drawing of a bamboo forest with misty background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAOy8a-1MGJ72mFdS1VAS2qxPhHIo0qM60ZqROGNWEqtmyFL4fb4Jhq9qtOQYfIY2Gyyw3lXteSZrs1l9ZJFLNN8-Mvo4BsZ4mLUDe3NYyp46J3_ZpMSg5OShnfSn3Az2dUFr0dWcn_WPBGKOccImu5NuIC1ZvegqTGrWhPdyx3BZZ8wfuW8Prvu6yAXTGOIRovkSuVCZfwCgh-mn1Sm_7dXiJSRay3BtfQGb-X51JHddGzznvdL6asQcFhRjwzPzsI4B6r2_jVLuo"/>
+</div>
+<div>
+<div class="text-[10px] font-black tracking-widest text-primary uppercase">New</div>
+<div class="text-sm font-bold truncate">Lone Wolf &amp; Cub</div>
+</div>
+</div>
+</div>
+</section>
+<!-- TRENDING LIST (BROWSE) -->
+<section id="hud-browse" class="scroll-target col-span-4 p-8 bg-surface-container-low border-l border-outline-variant/20">
+<h3 class="text-[11px] font-bold uppercase tracking-[0.2em] text-on-surface-variant mb-6">03 // TRENDING_STREAM</h3>
+<div class="space-y-6">
+<!-- Trending Item -->
+<div class="flex gap-4 group cursor-pointer">
+<div class="w-16 h-20 rounded bg-surface-container overflow-hidden flex-shrink-0">
+<img class="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all" data-alt="Dramatic mountain landscape with sharp peaks and dark clouds" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAe8GFMkCh81S4ZgZ7XKsxotQ-xw7Jt4d4OrpHpyjVTIOz-a_yJFHg-fwQBkRHrON9iO33ZUJYWLhh5WYL0bgY0KZfwgjrZjbFOp36efFEzMVrCJKUvyf_tYbl0rCqezXav1jRwKxg-_1lG0J33STJDr9b0uGcATT0rZYtjGiODJSj8ABQH9eBni6Tg25PwZUJcAlhomhsESfbbBsA5h3l2u4QmPvSqo2g59GuyVd2PGqAhG2M7RwDZSWHW1vYjjwn7zZ3f_d550jw"/>
+</div>
+<div class="flex-grow min-w-0">
+<h4 class="text-xs font-bold truncate text-on-surface">The Obsidian Protocol</h4>
+<p class="text-[10px] text-on-surface-variant mb-2">Sci-fi / Thriller</p>
+<div class="flex gap-1">
+<span class="text-[8px] px-1.5 py-0.5 rounded bg-surface-container-high border border-outline-variant/30 text-primary uppercase font-bold tracking-tighter">Cyberpunk</span>
+<span class="text-[8px] px-1.5 py-0.5 rounded bg-surface-container-high border border-outline-variant/30 text-on-surface-variant uppercase font-bold tracking-tighter">Seinen</span>
+</div>
+</div>
+<div class="flex flex-col items-end justify-center">
+<span class="material-symbols-outlined text-sm text-primary" data-icon="trending_up">trending_up</span>
+<span class="text-[9px] font-black">#01</span>
+</div>
+</div>
+<div class="flex gap-4 group cursor-pointer">
+<div class="w-16 h-20 rounded bg-surface-container overflow-hidden flex-shrink-0">
+<img class="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all" data-alt="Dense dark forest with light rays filtering through the canopy" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAtW5ryCXn1p2xcUgFNiC9IxVctX2gHcntA3ZjO_qpjpV0xJMKj2Sm6pV_otbLwQt4wn7DM3S03MJr4iKYNogYYNI0p2rCxvz3LEEY4dKGPQF3aNjfPpF5b-TME-B-8JE_kwuTJyHeEV7pXOsu8PzRwh27o5q79Exy77VSzYj_Al5HbtrFcu4Ji2keuR2Va4bYDkgAhSddnETSTK8tAoaQzDRk1LDvFC9vggjldu0pkmDz3ebZyCk6j8t6D_2DoGC-_J0r9Lz_ovzA"/>
+</div>
+<div class="flex-grow min-w-0">
+<h4 class="text-xs font-bold truncate text-on-surface">Nightfall Horizon</h4>
+<p class="text-[10px] text-on-surface-variant mb-2">Fantasy / Mystery</p>
+<div class="flex gap-1">
+<span class="text-[8px] px-1.5 py-0.5 rounded bg-surface-container-high border border-outline-variant/30 text-on-surface-variant uppercase font-bold tracking-tighter">Magic</span>
+<span class="text-[8px] px-1.5 py-0.5 rounded bg-surface-container-high border border-outline-variant/30 text-on-surface-variant uppercase font-bold tracking-tighter">Noir</span>
+</div>
+</div>
+<div class="flex flex-col items-end justify-center">
+<span class="material-symbols-outlined text-sm text-on-surface-variant" data-icon="trending_up">trending_up</span>
+<span class="text-[9px] font-black">#02</span>
+</div>
+</div>
+</div>
+</section>
+<!-- SECTION 5: SERIES DETAIL -->
+<section id="hud-series" class="scroll-target col-span-12 grid grid-cols-12 bg-surface-container-lowest border-t border-b border-outline-variant/20 h-[500px]">
+<div class="col-span-4 p-12 border-r border-outline-variant/20 relative">
+<div class="mb-6">
+<span class="text-[10px] font-bold text-primary uppercase tracking-[0.3em] mb-2 block">ENTRY_042</span>
+<h2 class="text-4xl font-black tracking-tighter uppercase leading-none">The Obsidian Protocol</h2>
+<p class="mt-4 text-sm text-on-surface-variant leading-relaxed">In a world where memories are traded like currency, a low-level data courier discovers a protocol that could delete the history of a whole civilization.</p>
+</div>
+<div class="flex flex-col gap-3 mt-8">
+<button class="w-full flex items-center justify-between bg-primary text-on-primary-fixed px-4 py-3 rounded-md font-bold text-xs uppercase tracking-widest">
+<span>Add to Archive</span>
+<span class="material-symbols-outlined" data-icon="bookmark_add">bookmark_add</span>
+</button>
+<button class="w-full flex items-center justify-between border border-outline-variant bg-transparent text-on-surface px-4 py-3 rounded-md font-bold text-xs uppercase tracking-widest hover:bg-surface-container-high">
+<span>Read Chapter 01</span>
+<span class="material-symbols-outlined" data-icon="menu_book">menu_book</span>
+</button>
+</div>
+<div class="absolute bottom-8 left-12 right-12 flex justify-between items-center text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">
+<span>Rank #14</span>
+<span>1.2M Reads</span>
+<span>Active</span>
+</div>
+</div>
+<div class="col-span-8 flex flex-col">
+<div class="p-4 border-b border-outline-variant/10 flex items-center justify-between bg-slate-900/40">
+<span class="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Chapter List</span>
+<div class="flex gap-4">
+<span class="material-symbols-outlined text-sm text-on-surface-variant cursor-pointer" data-icon="swap_vert">swap_vert</span>
+<span class="material-symbols-outlined text-sm text-on-surface-variant cursor-pointer" data-icon="download_for_offline">download_for_offline</span>
+</div>
+</div>
+<div class="flex-grow overflow-y-auto">
+<!-- Chapter List Item -->
+<div class="px-8 py-4 flex items-center justify-between hover:bg-surface-container-high border-b border-outline-variant/5 transition-colors cursor-pointer group">
+<div class="flex items-center gap-6">
+<span class="text-[10px] font-mono text-primary">142</span>
+<span class="text-sm font-bold group-hover:text-primary transition-colors">The Protocol Awakens</span>
+</div>
+<div class="flex items-center gap-6">
+<span class="text-[10px] text-on-surface-variant font-medium">12 OCT 2023</span>
+<span class="material-symbols-outlined text-sm text-on-surface-variant" data-icon="download">download</span>
+</div>
+</div>
+<div class="px-8 py-4 flex items-center justify-between hover:bg-surface-container-high border-b border-outline-variant/5 transition-colors cursor-pointer">
+<div class="flex items-center gap-6">
+<span class="text-[10px] font-mono text-on-surface-variant">141</span>
+<span class="text-sm font-bold">Midnight in Neo-Seoul</span>
+</div>
+<div class="flex items-center gap-6">
+<span class="text-[10px] text-on-surface-variant font-medium">05 OCT 2023</span>
+<span class="material-symbols-outlined text-sm text-primary" data-icon="check_circle" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+</div>
+</div>
+<div class="px-8 py-4 flex items-center justify-between hover:bg-surface-container-high border-b border-outline-variant/5 transition-colors cursor-pointer">
+<div class="flex items-center gap-6">
+<span class="text-[10px] font-mono text-on-surface-variant">140</span>
+<span class="text-sm font-bold">The Courier's Choice</span>
+</div>
+<div class="flex items-center gap-6">
+<span class="text-[10px] text-on-surface-variant font-medium">28 SEP 2023</span>
+<span class="material-symbols-outlined text-sm text-primary" data-icon="check_circle" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- SECTION 6: READER VIEW -->
+<section id="hud-reader" class="scroll-target col-span-12 h-screen relative bg-surface-container-lowest overflow-hidden flex flex-col">
+<div class="h-10 bg-slate-950/90 border-b border-outline-variant/20 flex items-center justify-between px-6 z-10">
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-sm text-on-surface-variant cursor-pointer" data-icon="arrow_back">arrow_back</span>
+<span class="text-[10px] font-black uppercase tracking-[0.2em]">The Obsidian Protocol // CH_142</span>
+</div>
+<div class="flex items-center gap-4">
+<span class="text-[10px] font-bold text-on-surface-variant">PAGE 24 / 48</span>
+<span class="material-symbols-outlined text-sm text-on-surface-variant cursor-pointer" data-icon="more_vert">more_vert</span>
+</div>
+</div>
+<div class="flex-grow flex items-center justify-center p-8 bg-[#0a0a0b] relative overflow-hidden">
+<!-- Mock Reader Page -->
+<div class="h-full aspect-[2/3] bg-white rounded-sm shadow-2xl overflow-hidden relative border border-white/5">
+<img class="w-full h-full object-cover" data-alt="Traditional manga page mockup with intricate ink work and speed lines showing a high speed chase" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDrtjkKnhmirOpqQRXnmv8-5Feb1J9kR7iVJOKs1qnlFOOwjnOkByp3H5gQquvNlraYK77tQouMMyDA47lodUgbPsDWUhgl-2Au9mja30ul2yR92ILyzywuHZfdMjU2H4vetJ8v2OJG3owxhvwFP4Y3bNeqyT7DB8KUtRr4Z12dcZd-8iZCwN-RkjY1poFgj8i1qwHQnmme1BbfxJ0mz1i77ad-JGInlE5ytyRFlXD1aff8SG9Gs3PrB-bkPP_DUSxwW64wOh5hf_4"/>
+<!-- Overlays to simulate manga look -->
+<div class="absolute inset-0 bg-slate-900/5 pointer-events-none"></div>
+</div>
+<!-- FLOAT HUD -->
+<div class="absolute bottom-8 left-1/2 -translate-x-1/2 glass-panel px-6 py-3 rounded-xl border border-outline-variant/20 shadow-2xl flex items-center gap-8">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary text-sm" data-icon="auto_stories">auto_stories</span>
+<span class="text-[9px] font-bold uppercase tracking-widest text-on-surface-variant">PAGED</span>
+</div>
+<div class="w-px h-4 bg-outline-variant/30"></div>
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary text-sm" data-icon="grid_view">grid_view</span>
+<span class="text-[9px] font-bold uppercase tracking-widest text-on-surface-variant">DOUBLE</span>
+</div>
+<div class="w-px h-4 bg-outline-variant/30"></div>
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary text-sm" data-icon="palette">palette</span>
+<span class="text-[9px] font-bold uppercase tracking-widest text-on-surface-variant">NOCTURNE</span>
+</div>
+<div class="w-px h-4 bg-outline-variant/30"></div>
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-primary text-sm" data-icon="zoom_out">zoom_out</span>
+<div class="w-24 h-1 bg-surface-container rounded-full relative">
+<div class="absolute inset-0 w-3/4 bg-primary"></div>
+<div class="absolute top-1/2 left-3/4 -translate-y-1/2 w-2 h-2 bg-white rounded-full"></div>
+</div>
+<span class="material-symbols-outlined text-primary text-sm" data-icon="zoom_in">zoom_in</span>
+</div>
+</div>
+</div>
+</section>
+<!-- SECTION 7: DOWNLOADS & SETTINGS & FLOW -->
+<section id="hud-downloads" class="scroll-target col-span-8 p-12 bg-surface">
+<h3 class="text-[11px] font-bold uppercase tracking-[0.3em] text-on-surface-variant mb-8">04 // SYSTEM_OPERATIONS</h3>
+<div class="grid grid-cols-2 gap-12">
+<div>
+<h4 class="text-[10px] font-black uppercase text-primary mb-4 tracking-widest">Active Downloads</h4>
+<div class="space-y-6">
+<div class="space-y-2">
+<div class="flex justify-between text-[10px] font-bold uppercase">
+<span>Vagabond Vol. 5</span>
+<span class="text-primary">74%</span>
+</div>
+<div class="h-1 bg-surface-container rounded-full overflow-hidden">
+<div class="w-[74%] h-full bg-primary"></div>
+</div>
+</div>
+<div class="space-y-2">
+<div class="flex justify-between text-[10px] font-bold uppercase">
+<span>Berserk #12</span>
+<span class="text-on-surface-variant">Queued</span>
+</div>
+<div class="h-1 bg-surface-container rounded-full overflow-hidden">
+<div class="w-0 h-full bg-primary"></div>
+</div>
+</div>
+</div>
+</div>
+<div>
+<h4 class="text-[10px] font-black uppercase text-primary mb-4 tracking-widest">UI Configuration</h4>
+<div class="space-y-4">
+<div class="flex items-center justify-between p-2 rounded hover:bg-surface-container-low transition-colors">
+<span class="text-[10px] font-bold uppercase tracking-wider">UI Density</span>
+<span class="text-[10px] font-bold text-primary uppercase">Ultra-Compact</span>
+</div>
+<div class="flex items-center justify-between p-2 rounded hover:bg-surface-container-low transition-colors">
+<span class="text-[10px] font-bold uppercase tracking-wider">Theme Matrix</span>
+<span class="text-[10px] font-bold text-primary uppercase">Nocturne_v2.0</span>
+</div>
+<div class="flex items-center justify-between p-2 rounded hover:bg-surface-container-low transition-colors">
+<span class="text-[10px] font-bold uppercase tracking-wider">Data Saver</span>
+<div class="w-8 h-4 bg-primary rounded-full relative">
+<div class="absolute right-0.5 top-0.5 w-3 h-3 bg-on-primary-fixed rounded-full"></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- SIMPLIFIED FLOW DIAGRAM -->
+<section class="col-span-4 p-12 bg-surface-container-low flex flex-col items-center justify-center">
+<h3 class="text-[10px] font-bold uppercase tracking-[0.2em] text-on-surface-variant mb-8 self-start">05 // WORKFLOW_DIAGRAM</h3>
+<div class="flex flex-col items-center gap-4">
+<div class="w-24 h-12 border border-primary/30 rounded flex items-center justify-center bg-primary/5">
+<span class="text-[9px] font-black uppercase tracking-widest text-primary">Library</span>
+</div>
+<span class="material-symbols-outlined text-sm text-outline-variant" data-icon="south">south</span>
+<div class="w-24 h-12 border border-primary/30 rounded flex items-center justify-center bg-primary/10">
+<span class="text-[9px] font-black uppercase tracking-widest text-primary">Series</span>
+</div>
+<span class="material-symbols-outlined text-sm text-outline-variant" data-icon="south">south</span>
+<div class="w-24 h-12 border border-primary bg-primary rounded flex items-center justify-center">
+<span class="text-[9px] font-black uppercase tracking-widest text-on-primary-fixed">Reader</span>
+</div>
+</div>
+<p class="mt-8 text-[9px] text-center text-on-surface-variant uppercase leading-relaxed tracking-wider opacity-60">
+                Linear state progression optimized<br/>for minimal latency.
+            </p>
+</section>
+</main>
+<!-- FOOTER NAV BAR (MOBILE REPLACEMENT HINT) -->
+<footer class="md:hidden fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-6 bg-slate-900/85 backdrop-blur-lg h-14 shadow-[0_-8px_20px_rgba(0,0,0,0.4)]">
+<div class="flex flex-col items-center justify-center text-violet-200 bg-violet-950/40 rounded-md px-3 py-1">
+<span class="material-symbols-outlined text-xl" data-icon="auto_stories">auto_stories</span>
+<span class="text-[10px] font-bold uppercase tracking-widest">Reader</span>
+</div>
+<div class="flex flex-col items-center justify-center text-slate-400 px-3 py-1">
+<span class="material-symbols-outlined text-xl" data-icon="grid_view">grid_view</span>
+<span class="text-[10px] font-bold uppercase tracking-widest">Layout</span>
+</div>
+<div class="flex flex-col items-center justify-center text-slate-400 px-3 py-1">
+<span class="material-symbols-outlined text-xl" data-icon="palette">palette</span>
+<span class="text-[10px] font-bold uppercase tracking-widest">Style</span>
+</div>
+<div class="flex flex-col items-center justify-center text-slate-400 px-3 py-1">
+<span class="material-symbols-outlined text-xl" data-icon="zoom_in">zoom_in</span>
+<span class="text-[10px] font-bold uppercase tracking-widest">Zoom</span>
+</div>
+</footer>
+<script>
+  (() => {
+    const links = Array.from(document.querySelectorAll(".hud-section-nav a[data-target]"));
+    const setActive = (activeLink) => {
+      links.forEach((link) => link.classList.toggle("active", link === activeLink));
+    };
+
+    links.forEach((link) => {
+      link.addEventListener("click", (event) => {
+        event.preventDefault();
+        const target = document.getElementById(link.dataset.target);
+        if (!target) return;
+        setActive(link);
+        const top = target.getBoundingClientRect().top + window.scrollY - 64;
+        window.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+        history.replaceState(null, "", `#${link.dataset.target}`);
+      });
+    });
+
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+      if (!visible) return;
+      const activeLink = links.find((link) => link.dataset.target === visible.target.id);
+      if (activeLink) setActive(activeLink);
+    }, { root: null, threshold: [0.1, 0.25, 0.5], rootMargin: "-80px 0px -55% 0px" });
+
+    links.forEach((link) => {
+      const target = document.getElementById(link.dataset.target);
+      if (target) observer.observe(target);
+    });
+  })();
+</script>
+</body></html>

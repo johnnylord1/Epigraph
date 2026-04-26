@@ -1,0 +1,629 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aethon Identity Comparison</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #050507;
+        --panel: #0a0a0f;
+        --panel-soft: #10101a;
+        --line: rgba(236, 231, 255, 0.1);
+        --ink: #f0ecff;
+        --muted: rgba(240, 236, 255, 0.55);
+        --dim: rgba(240, 236, 255, 0.34);
+        --moku: #2d7a5f;
+        --nocturne: #b7a8ff;
+        --nocturne-deep: #5d4b9f;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        color: var(--ink);
+        background:
+          linear-gradient(145deg, rgba(10, 10, 18, 0.94), rgba(3, 3, 6, 0.98)),
+          #050507;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+      }
+
+      main {
+        width: min(1320px, calc(100vw - 48px));
+        margin: 0 auto;
+        padding: 42px 0 56px;
+      }
+
+      header {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 24px;
+        margin-bottom: 18px;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: 24px;
+        font-weight: 650;
+        letter-spacing: -0.045em;
+      }
+
+      h2 {
+        font-size: 13px;
+        font-weight: 620;
+        letter-spacing: 0.02em;
+      }
+
+      h3 {
+        font-size: 11px;
+        font-weight: 620;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .lead {
+        max-width: 780px;
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.55;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: end;
+        gap: 10px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 32px;
+        padding: 0 13px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: rgba(240, 236, 255, 0.68);
+        background: rgba(14, 14, 22, 0.72);
+        font-size: 11px;
+        text-decoration: none;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 26px;
+        background: rgba(10, 10, 15, 0.88);
+        overflow: hidden;
+      }
+
+      .card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 16px 18px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .tag {
+        color: var(--dim);
+        font-size: 10px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      .comparison-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        padding: 16px;
+      }
+
+      .identity-panel {
+        min-height: 250px;
+        border: 1px solid rgba(240, 236, 255, 0.075);
+        border-radius: 22px;
+        padding: 18px;
+        background: #07070b;
+      }
+
+      .identity-panel.current {
+        background:
+          linear-gradient(145deg, rgba(11, 25, 18, 0.72), rgba(5, 9, 7, 0.96)),
+          #050705;
+      }
+
+      .identity-panel.nocturne {
+        background:
+          linear-gradient(145deg, rgba(13, 12, 22, 0.78), rgba(4, 4, 8, 0.9)),
+          linear-gradient(35deg, rgba(43, 35, 76, 0.08), transparent 42%, rgba(112, 96, 176, 0.04)),
+          #030306;
+      }
+
+      .identity-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 22px;
+      }
+
+      .identity-title p {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .icon-row {
+        display: grid;
+        grid-template-columns: 116px 1fr;
+        gap: 18px;
+        align-items: center;
+      }
+
+      .app-icon {
+        width: 112px;
+        height: 112px;
+        display: grid;
+        place-items: center;
+        border-radius: 28px;
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .app-icon img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        border-radius: inherit;
+      }
+
+      .mark-preview {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .splash-mark {
+        width: 86px;
+        height: 86px;
+        object-fit: contain;
+      }
+
+      .mask-box {
+        width: 52px;
+        height: 52px;
+        border-radius: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(255, 255, 255, 0.03);
+        display: grid;
+        place-items: center;
+      }
+
+      .mask {
+        width: 34px;
+        height: 34px;
+        background: var(--moku);
+        -webkit-mask: var(--mask-url) center / contain no-repeat;
+        mask: var(--mask-url) center / contain no-repeat;
+      }
+
+      .mask.new {
+        background: linear-gradient(180deg, #eee9ff, #9d8cf1);
+      }
+
+      .summary {
+        display: grid;
+        gap: 8px;
+      }
+
+      .metric {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 9px 0;
+        border-bottom: 1px solid rgba(240, 236, 255, 0.065);
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .metric strong {
+        color: rgba(240, 236, 255, 0.78);
+        font-weight: 560;
+      }
+
+      .surface-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 14px;
+        padding: 16px;
+      }
+
+      .surface {
+        min-height: 246px;
+        border: 1px solid rgba(240, 236, 255, 0.075);
+        border-radius: 22px;
+        padding: 14px;
+        background:
+          linear-gradient(145deg, rgba(13, 12, 22, 0.78), rgba(4, 4, 8, 0.96)),
+          #030306;
+      }
+
+      .mini-window {
+        height: 178px;
+        margin-top: 14px;
+        display: grid;
+        grid-template-columns: 42px 1fr;
+        gap: 12px;
+        border-radius: 18px;
+        padding: 10px;
+        background: rgba(0, 0, 0, 0.24);
+        border: 1px solid rgba(240, 236, 255, 0.07);
+      }
+
+      .mini-sidebar {
+        display: grid;
+        align-content: start;
+        justify-items: center;
+        gap: 9px;
+        padding: 8px 0;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.025);
+      }
+
+      .mini-dot {
+        width: 18px;
+        height: 18px;
+        border-radius: 7px;
+        background: rgba(183, 168, 255, 0.18);
+      }
+
+      .mini-dot.active {
+        background: linear-gradient(180deg, #eee9ff, #8d7ae8);
+      }
+
+      .mini-content {
+        display: grid;
+        align-content: start;
+        gap: 10px;
+      }
+
+      .mini-line {
+        height: 8px;
+        border-radius: 999px;
+        background: rgba(240, 236, 255, 0.12);
+      }
+
+      .mini-line.short {
+        width: 58%;
+      }
+
+      .mini-cards {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 8px;
+      }
+
+      .mini-cover {
+        height: 84px;
+        border-radius: 10px;
+        background:
+          linear-gradient(160deg, rgba(183, 168, 255, 0.42), rgba(32, 27, 58, 0.88)),
+          #141225;
+      }
+
+      .reader-page {
+        height: 122px;
+        border-radius: 14px;
+        background:
+          linear-gradient(180deg, rgba(236, 231, 255, 0.86), rgba(180, 170, 220, 0.72)),
+          #ddd6ff;
+      }
+
+      .splash-preview {
+        min-height: 440px;
+        padding: 20px;
+      }
+
+      .splash-stage-mini {
+        position: relative;
+        height: 360px;
+        display: grid;
+        place-items: center;
+        overflow: hidden;
+        border: 1px solid rgba(240, 236, 255, 0.08);
+        border-radius: 22px;
+        background:
+          linear-gradient(145deg, rgba(13, 12, 22, 0.74), rgba(4, 4, 8, 0.88) 46%, rgba(4, 4, 8, 0.96)),
+          linear-gradient(35deg, rgba(43, 35, 76, 0.072), transparent 38%, rgba(112, 96, 176, 0.038) 72%, transparent),
+          repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.009) 0 1px, transparent 1px 5px),
+          #030306;
+      }
+
+      .splash-stage-mini img {
+        width: 132px;
+        height: 132px;
+        object-fit: contain;
+        filter:
+          drop-shadow(0 0 9px rgba(218, 209, 255, 0.06))
+          drop-shadow(0 0 26px rgba(139, 119, 224, 0.052));
+      }
+
+      .mini-state {
+        position: absolute;
+        left: 50%;
+        top: calc(50% + 88px);
+        transform: translateX(-50%);
+        color: rgba(240, 236, 255, 0.72);
+        font-size: 10px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+      }
+
+      .mini-state::after {
+        content: "";
+        display: block;
+        width: 160px;
+        height: 1px;
+        margin: 10px auto 0;
+        background: linear-gradient(90deg, transparent, rgba(240, 236, 255, 0.28), transparent);
+      }
+
+      .star {
+        position: absolute;
+        width: var(--s);
+        height: var(--s);
+        left: var(--x);
+        top: var(--y);
+        opacity: var(--o);
+      }
+
+      .star::before,
+      .star::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: rgba(232, 226, 255, 0.8);
+      }
+
+      .star::before {
+        height: 1px;
+        top: 50%;
+      }
+
+      .star::after {
+        width: 1px;
+        left: 50%;
+      }
+
+      @media (max-width: 980px) {
+        header,
+        .comparison-row,
+        .surface-grid,
+        .grid {
+          grid-template-columns: 1fr;
+        }
+
+        header {
+          display: block;
+        }
+
+        .actions {
+          justify-content: start;
+          margin-top: 14px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>Aethon Identity Comparison</h1>
+          <p class="lead">
+            Comparison board for the current Moku-inspired identity versus the Nocturne Concept A package. This is still a mockup only; no production assets are applied.
+          </p>
+        </div>
+        <nav class="actions" aria-label="Preview links">
+          <a class="pill" href="./splash-concept-a-v4-particles.html">Open animated splash</a>
+          <a class="pill" href="./package/icon/app-icon-512.png">Open final app icon</a>
+          <a class="pill" href="./package/splash/mark.png">Open splash mark</a>
+        </nav>
+      </header>
+
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <h2>Core Assets</h2>
+            <p class="lead">Current app assets on the left; proposed packaged assets on the right.</p>
+          </div>
+          <span class="tag">Icon / Splash / Sidebar</span>
+        </div>
+
+        <div class="comparison-row">
+          <article class="identity-panel current">
+            <div class="identity-title">
+              <div>
+                <h3>Current</h3>
+                <p>Moku green organic mark</p>
+              </div>
+              <span class="tag">Existing</span>
+            </div>
+            <div class="icon-row">
+              <div class="app-icon">
+                <img src="../../../src/assets/moku-icon.svg" alt="Current Moku app icon" />
+              </div>
+              <div class="summary">
+                <div class="mark-preview">
+                  <img class="splash-mark" src="../../../src/assets/moku-icon-splash.svg" alt="Current splash mark" />
+                  <div class="mask-box">
+                    <span class="mask" style="--mask-url: url('../../../src/assets/moku-icon-wordmark.svg')"></span>
+                  </div>
+                </div>
+                <div class="metric"><span>Color story</span><strong>Sage / black</strong></div>
+                <div class="metric"><span>Feeling</span><strong>Organic, quiet</strong></div>
+                <div class="metric"><span>Risk</span><strong>Less reader/mystic</strong></div>
+              </div>
+            </div>
+          </article>
+
+          <article class="identity-panel nocturne">
+            <div class="identity-title">
+              <div>
+                <h3>Nocturne Concept A</h3>
+                <p>Hollow droplet, lunar lavender</p>
+              </div>
+              <span class="tag">Proposed</span>
+            </div>
+            <div class="icon-row">
+              <div class="app-icon">
+                <img src="./package/icon/app-icon-512.png" alt="Nocturne Concept A app icon" />
+              </div>
+              <div class="summary">
+                <div class="mark-preview">
+                  <img class="splash-mark" src="./package/splash/mark.png" alt="Nocturne splash mark" />
+                  <div class="mask-box">
+                    <span class="mask new" style="--mask-url: url('./package/icon/sidebar-mask.svg')"></span>
+                  </div>
+                </div>
+                <div class="metric"><span>Color story</span><strong>Nocturne / lavender</strong></div>
+                <div class="metric"><span>Feeling</span><strong>Mystic, quieter</strong></div>
+                <div class="metric"><span>Risk</span><strong>Mask needs final pass</strong></div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="grid" style="margin-top: 16px">
+        <article class="card splash-preview">
+          <div class="card-header" style="padding: 0 0 16px; border: 0">
+            <div>
+              <h2>Splash Direction</h2>
+              <p class="lead">Static preview of the packaged splash identity. Use the link above for motion.</p>
+            </div>
+            <span class="tag">V4 Reference</span>
+          </div>
+          <div class="splash-stage-mini">
+            <i class="star" style="--x: 20%; --y: 22%; --s: 4px; --o: .22"></i>
+            <i class="star" style="--x: 64%; --y: 31%; --s: 6px; --o: .38"></i>
+            <i class="star" style="--x: 77%; --y: 66%; --s: 3px; --o: .18"></i>
+            <i class="star" style="--x: 36%; --y: 72%; --s: 5px; --o: .24"></i>
+            <img src="./package/splash/mark.png" alt="Nocturne splash mark preview" />
+            <span class="mini-state">Loading</span>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-header">
+            <div>
+              <h2>Package Inventory</h2>
+              <p class="lead">Files that represent the current approved mockup package.</p>
+            </div>
+            <span class="tag">Final mockup</span>
+          </div>
+          <div style="padding: 16px">
+            <div class="metric"><span>Desktop icon</span><strong>package/icon/app-icon-512.png</strong></div>
+            <div class="metric"><span>Small exports</span><strong>32 / 48 / 67 / 96 / 128 / 256</strong></div>
+            <div class="metric"><span>Splash mark</span><strong>package/splash/mark.png</strong></div>
+            <div class="metric"><span>Sidebar mask</span><strong>package/icon/sidebar-mask.svg</strong></div>
+            <div class="metric"><span>Animated preview</span><strong>splash-concept-a-v4-particles.html</strong></div>
+          </div>
+        </article>
+      </section>
+
+      <section class="card" style="margin-top: 16px">
+        <div class="card-header">
+          <div>
+            <h2>App Surface Direction</h2>
+            <p class="lead">A compact check that the new identity can extend into Home, Library and Reader without copying the current UI exactly.</p>
+          </div>
+          <span class="tag">Next mockup target</span>
+        </div>
+        <div class="surface-grid">
+          <article class="surface">
+            <h3>Home</h3>
+            <p class="lead">Keep stats, but make them quiet and grouped.</p>
+            <div class="mini-window">
+              <div class="mini-sidebar">
+                <span class="mini-dot active"></span>
+                <span class="mini-dot"></span>
+                <span class="mini-dot"></span>
+              </div>
+              <div class="mini-content">
+                <span class="mini-line short"></span>
+                <span class="mini-line"></span>
+                <div class="mini-cards">
+                  <span class="mini-cover"></span>
+                  <span class="mini-cover"></span>
+                  <span class="mini-cover"></span>
+                  <span class="mini-cover"></span>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article class="surface">
+            <h3>Library</h3>
+            <p class="lead">Cover-first density, reader controls in the header.</p>
+            <div class="mini-window">
+              <div class="mini-sidebar">
+                <span class="mini-dot"></span>
+                <span class="mini-dot active"></span>
+                <span class="mini-dot"></span>
+              </div>
+              <div class="mini-content">
+                <span class="mini-line"></span>
+                <div class="mini-cards">
+                  <span class="mini-cover"></span>
+                  <span class="mini-cover"></span>
+                  <span class="mini-cover"></span>
+                  <span class="mini-cover"></span>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article class="surface">
+            <h3>Reader</h3>
+            <p class="lead">Minimal chrome, quiet nocturne controls.</p>
+            <div class="mini-window">
+              <div class="mini-sidebar">
+                <span class="mini-dot"></span>
+                <span class="mini-dot"></span>
+                <span class="mini-dot active"></span>
+              </div>
+              <div class="mini-content">
+                <span class="mini-line short"></span>
+                <span class="reader-page"></span>
+              </div>
+            </div>
+          </article>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

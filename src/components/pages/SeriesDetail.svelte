@@ -140,8 +140,15 @@
 
   function openChapterReader(chapter: Chapter) {
     const target = resolveReaderChapterTarget(chapter, chaptersAsc);
-    if (!target) return;
-    openReader(target, chaptersAsc);
+    if (target) {
+      openReader(target, chaptersAsc);
+      return;
+    }
+
+    const fallbackChapters = [...chapters].sort((left, right) => left.sourceOrder - right.sourceOrder);
+    const fallbackTarget = resolveReaderChapterTarget(chapter, fallbackChapters);
+    if (!fallbackTarget) return;
+    openReader(fallbackTarget, fallbackChapters);
   }
 
   function applyChapters(nodes: Chapter[]) {
@@ -1362,6 +1369,6 @@
   @keyframes scaleIn { from { opacity: 0; transform: scale(0.97) } to { opacity: 1; transform: scale(1) } }
 </style>
 
-<script module lang="ts">
+<script context="module" lang="ts">
   function focusOnMount(node: HTMLElement) { node.focus(); }
 </script>

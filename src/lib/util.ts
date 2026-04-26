@@ -16,7 +16,6 @@ export const DEFAULT_NSFW_TAGS = [
   "adult",
   "mature",
   "hentai",
-  "ecchi",
   "erotic",       // catches "erotica", "erotic content", "erotic manga"
   "pornograph",   // catches "pornographic", "pornography"
   "18+",
@@ -60,17 +59,22 @@ export function shouldHideNsfw(
   },
   settings: {
     showNsfw:            boolean;
-    nsfwFilteredTags:    string[];
+    filterBlockedTags?:  boolean;
+    adultContentTags?:   string[];
+    nsfwFilteredTags?:   string[];
     nsfwAllowedSourceIds: string[];
     nsfwBlockedSourceIds: string[];
   },
 ): boolean {
   const srcId = manga.source?.id;
 
-  // Explicit block always wins, even when showNsfw is on
+  // Explicit source block always wins, even when showNsfw is on.
   if (srcId && settings.nsfwBlockedSourceIds.includes(srcId)) return true;
 
-  // If NSFW is globally allowed, only explicit blocks apply
+  // User blocked tags are a personal blacklist and stay independent from NSFW visibility.
+  if (settings.filterBlockedTags !== false && isNsfwManga(manga, settings.nsfwFilteredTags ?? [])) return true;
+
+  // If NSFW is globally allowed, only explicit blocks and user blocked tags apply.
   if (settings.showNsfw) return false;
 
   // Source is explicitly allowed — skip the isNsfw flag check, but still filter genres
@@ -78,7 +82,7 @@ export function shouldHideNsfw(
 
   if (!sourceAllowed && manga.source?.isNsfw) return true;
 
-  return isNsfwManga(manga, settings.nsfwFilteredTags);
+  return isNsfwManga(manga, settings.adultContentTags ?? DEFAULT_NSFW_TAGS);
 }
 
 /**

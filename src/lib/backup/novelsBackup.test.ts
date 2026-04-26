@@ -16,6 +16,7 @@ const SAMPLE_NOVELS_SNAPSHOT: AethonNovelsSnapshot = {
     {
       id: "novel-1",
       title: "Realm of Sand",
+      path: "/novels/realm-of-sand",
       author: "A. Author",
       description: "A portable novel payload fixture.",
       coverUrl: "https://example.com/realm.jpg",
@@ -35,6 +36,17 @@ const SAMPLE_NOVELS_SNAPSHOT: AethonNovelsSnapshot = {
       },
       addedAt: 1712000000000,
       updatedAt: 1712001000000,
+    },
+  ],
+  chapters: [
+    {
+      id: "chapter-7",
+      novelId: "novel-1",
+      path: "/novels/realm-of-sand/chapter-7",
+      title: "A Door Opens",
+      order: 7,
+      releaseTime: 1712001900000,
+      unread: false,
     },
   ],
   progress: [
@@ -109,6 +121,8 @@ describe("novels backup payload", () => {
       }),
     ]);
     expect(parsed.snapshot.entries[0]?.source?.pluginId).toBe("app.lnreader.sources.example");
+    expect(parsed.snapshot.entries[0]?.path).toBe("/novels/realm-of-sand");
+    expect(parsed.snapshot.chapters[0]?.path).toBe("/novels/realm-of-sand/chapter-7");
     expect(parsed.snapshot.progress[0]?.progressPercent).toBe(0.65);
   });
 

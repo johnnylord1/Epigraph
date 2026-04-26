@@ -8,6 +8,7 @@ import {
   type InspectedAethonBackupContainer,
 } from "./aethonBackup";
 import { reconcileBookIdentityState } from "../books/identity";
+import type { PersistedBookLibraryState, PersistedBooksLibraryUiState } from "../books/libraryState";
 import { normalizeBookBookmark, normalizeBookProgress } from "../books/progress";
 import { readFileAsArrayBuffer, writeBookAsset, writeBookCover } from "../books/storage";
 import type { BookBookmarkEntry, BookEntry, BookProgress, BookSectionSummaryItem, BookSubtype } from "../books/types";
@@ -36,6 +37,7 @@ export interface AethonBooksSnapshot {
   bookBookmarks: BookBookmarkEntry[];
   booksCategories?: AethonBooksCategoryRecord[];
   booksCategoryAssignments?: Record<string, string[]>;
+  booksLibraryUi?: PersistedBooksLibraryUiState;
 }
 
 interface PortableBookRecord {
@@ -76,6 +78,7 @@ interface BooksCategoriesFile {
   version: 1;
   categories: AethonBooksCategoryRecord[];
   assignments: Record<string, string[]>;
+  ui: PersistedBooksLibraryUiState;
 }
 
 export interface AethonBooksRestoreIssue {
@@ -178,6 +181,67 @@ function normalizeCategoryAssignments(
   );
 }
 
+function normalizeBooksLibraryUi(
+  value: PersistedBooksLibraryUiState | undefined,
+): PersistedBooksLibraryUiState {
+  const record = value ?? {
+    activeCategoryId: null,
+    typeFilter: "all",
+    statusFilter: "all",
+    search: "",
+    sortMode: "recentlyAdded",
+    sortDir: "desc",
+  };
+  const normalizedStatus = (() => {
+    const raw = String(record.statusFilter ?? "all").toLowerCase();
+    if (raw === "unopened") return "unopened";
+    if (raw === "in_progress") return "in_progress";
+    if (raw === "finished") return "finished";
+    return "all";
+  })() as PersistedBooksLibraryUiState["statusFilter"];
+  const normalizedType = (() => {
+    const raw = String(record.typeFilter ?? "all").toLowerCase();
+    if (raw === "epub") return "epub";
+    if (raw === "pdf") return "pdf";
+    if (raw === "sources") return "sources";
+    return "all";
+  })() as PersistedBooksLibraryUiState["typeFilter"];
+  const normalizedSortMode = (() => {
+    const raw = String(record.sortMode ?? "recentlyAdded");
+    if (raw === "az" || raw === "author" || raw === "recentlyAdded" || raw === "recentlyRead" || raw === "sectionCount") {
+      return raw;
+    }
+    return "recentlyAdded";
+  })() as PersistedBooksLibraryUiState["sortMode"];
+
+  return {
+    activeCategoryId: typeof record.activeCategoryId === "string" && record.activeCategoryId.trim()
+      ? record.activeCategoryId
+      : null,
+    typeFilter: normalizedType,
+    statusFilter: normalizedStatus,
+    search: typeof record.search === "string" ? record.search : "",
+    sortMode: normalizedSortMode,
+    sortDir: record.sortDir === "asc" ? "asc" : "desc",
+  };
+}
+
+export function buildAethonBooksSnapshotFromLibraryState(
+  state: Pick<
+    PersistedBookLibraryState,
+    "books" | "bookProgress" | "bookBookmarks" | "booksCategories" | "booksCategoryAssignments" | "booksLibraryUi"
+  >,
+): AethonBooksSnapshot {
+  return {
+    books: [...state.books],
+    bookProgress: [...state.bookProgress],
+    bookBookmarks: [...state.bookBookmarks],
+    booksCategories: normalizeCategories(state.booksCategories),
+    booksCategoryAssignments: normalizeCategoryAssignments(state.booksCategoryAssignments),
+    booksLibraryUi: normalizeBooksLibraryUi(state.booksLibraryUi),
+  };
+}
+
 function toPortableBookRecord(book: BookEntry, exportMode: AethonBooksExportMode): PortableBookRecord {
   const normalized = {
     ...book,
@@ -253,6 +317,7 @@ export async function buildAethonBooksPayload(
   const exportMode = options.exportMode ?? "full";
   const categories = normalizeCategories(snapshot.booksCategories);
   const assignments = normalizeCategoryAssignments(snapshot.booksCategoryAssignments);
+  const booksLibraryUi = normalizeBooksLibraryUi(snapshot.booksLibraryUi);
   const libraryRecords = snapshot.books.map((book) => toPortableBookRecord(book, exportMode));
 
   const files: AethonBackupPayloadBuildInput["files"] = [
@@ -286,6 +351,7 @@ export async function buildAethonBooksPayload(
         version: 1,
         categories,
         assignments,
+        ui: booksLibraryUi,
       } satisfies BooksCategoriesFile),
       contentType: "application/json",
       role: "categories",
@@ -330,6 +396,7 @@ export async function buildAethonBooksPayload(
       progressCount: snapshot.bookProgress.length,
       bookmarkCount: snapshot.bookBookmarks.length,
       categoryCount: categories.length,
+      libraryUiIncluded: true,
       includesFiles: exportMode === "full",
     },
     files,
@@ -387,7 +454,12 @@ export async function parseAethonBooksPayload(
     library,
     progress,
     bookmarks,
-    categories: categories ?? { version: 1, categories: [], assignments: {} },
+    categories: categories ?? {
+      version: 1,
+      categories: [],
+      assignments: {},
+      ui: normalizeBooksLibraryUi(undefined),
+    },
     inspection,
   };
 }
@@ -493,6 +565,7 @@ export async function restoreAethonBooksPayload(
     bookBookmarks: restoredBookmarks,
     booksCategories: normalizeCategories(parsed.categories.categories),
     booksCategoryAssignments: restoredAssignments,
+    booksLibraryUi: normalizeBooksLibraryUi(parsed.categories.ui),
     issues,
   };
 }

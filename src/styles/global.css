@@ -1,10 +1,34 @@
-@import url("https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,400&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,400&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=Manrope:wght@200;300;400;500;600;700;800&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap");
 @import "./tokens.css";
 @import "./animations.css";
+@import "./nocturne-port.css";
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-html, body, #app { height: 100%; overflow: hidden; }
+html, body, #app { width: 100%; min-height: 100%; overflow: hidden; }
+
+:root {
+  --app-shell-visual-width: 1440px;
+  --app-shell-inline-pad: clamp(18px, calc(28px * var(--app-resolution-scale)), 32px);
+  --app-shell-block-pad: clamp(20px, calc(28px * var(--app-resolution-scale)), 36px);
+  --app-shell-section-gap: clamp(16px, calc(24px * var(--app-resolution-scale)), 30px);
+  --app-shell-card-max-inline: calc(560px * var(--n-hud-scale, 1));
+  --app-shell-action-max-inline: calc(420px * var(--n-hud-scale, 1));
+}
+
+:root[data-app-resolution-tier="cozy"] {
+  --app-shell-inline-pad: clamp(16px, calc(24px * var(--app-resolution-scale)), 28px);
+  --app-shell-block-pad: clamp(18px, calc(24px * var(--app-resolution-scale)), 30px);
+  --app-shell-section-gap: clamp(14px, calc(20px * var(--app-resolution-scale)), 24px);
+}
+
+:root[data-app-resolution-tier="compact"] {
+  --app-shell-inline-pad: clamp(14px, calc(20px * var(--app-resolution-scale)), 22px);
+  --app-shell-block-pad: clamp(16px, calc(20px * var(--app-resolution-scale)), 24px);
+  --app-shell-section-gap: clamp(12px, calc(16px * var(--app-resolution-scale)), 18px);
+  --app-shell-card-max-inline: calc(520px * var(--n-hud-scale, 1));
+  --app-shell-action-max-inline: calc(360px * var(--n-hud-scale, 1));
+}
 
 body {
   background: var(--bg-void);
@@ -16,6 +40,23 @@ body {
   -moz-osx-font-smoothing: grayscale;
   font-feature-settings: "kern" 1, "liga" 1;
   transform: translateZ(0);
+}
+
+body[data-app-shell-mode="standard"] .aethon-app-shell .main > .root {
+  height: auto;
+  min-height: 100%;
+}
+
+body[data-app-shell-mode="standard"] .aethon-app-shell .main > .root {
+  min-width: 0;
+}
+
+body[data-app-shell-mode="standard"][data-app-resolution-tier="compact"] .aethon-app-shell .main > .root :is(.home-continue-grid, .home-quick-actions) {
+  justify-items: center;
+}
+
+body[data-app-shell-mode="standard"][data-app-resolution-tier="compact"] .aethon-app-shell .main > .root :is(.home-continue-grid, .home-quick-actions) > * {
+  width: min(100%, var(--app-shell-card-max-inline));
 }
 
 ::-webkit-scrollbar { width: 4px; height: 4px; }

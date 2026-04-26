@@ -1,0 +1,958 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Aethon — Settings</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@200;300;400;500;600;700;800&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link href="./nocturne-base.css?v=6" rel="stylesheet"/>
+<script id="tailwind-config">
+  tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        colors: {
+          "on-background": "#e5e2e1", "secondary-container": "#4a435c", "surface-container": "#201f1f",
+          "on-primary": "#352660", "background": "#131313", "on-primary-container": "#483a74",
+          "on-error": "#690005", "surface-bright": "#393939", "surface-container-high": "#2a2a2a",
+          "on-secondary": "#332d44", "surface-dim": "#131313", "primary-container": "#b8a7ea",
+          "secondary": "#cbc2e0", "primary": "#d3c4ff", "outline": "#948f9a", "tertiary": "#dece71",
+          "surface-tint": "#cebdff", "error-container": "#93000a", "tertiary-container": "#c1b259",
+          "surface-variant": "#353534", "inverse-surface": "#e5e2e1", "on-surface-variant": "#cac4d0",
+          "on-error-container": "#ffdad6", "on-secondary-container": "#bab1ce", "inverse-primary": "#645592",
+          "surface-container-lowest": "#0e0e0e", "surface": "#131313", "surface-container-highest": "#353534",
+          "on-surface": "#e5e2e1", "surface-container-low": "#1c1b1b", "primary-fixed": "#e8ddff",
+          "outline-variant": "#48454f", "error": "#ffb4ab", "primary-fixed-dim": "#cebdff"
+        },
+        fontFamily: { headline: ["Manrope"], body: ["Manrope"], label: ["Manrope"] }
+      },
+    },
+  }
+</script>
+<style>
+  .settings-row {
+    border-radius: 14px;
+    transition: background 140ms ease, border-color 140ms ease;
+  }
+  .settings-row:hover {
+    background: rgba(184, 167, 234, 0.035);
+    border-color: rgba(184,167,234,0.12);
+  }
+  .settings-toggle {
+    width: 40px; height: 22px; border-radius: 11px; position: relative;
+    background: rgba(148,143,154,0.2); cursor: pointer; transition: background 200ms ease;
+    border: none; padding: 0;
+  }
+  .settings-toggle::after {
+    content: ""; position: absolute; top: 2px; left: 2px;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: rgba(202,196,208,0.5); transition: transform 200ms ease, background 200ms ease;
+  }
+  .settings-toggle.is-on { background: var(--n-primary-container); }
+  .settings-toggle.is-on::after { transform: translateX(18px); background: var(--n-on-primary-container); }
+  .cat-btn {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: 42px;
+    padding: 0 6px;
+    border: 1px solid transparent;
+    border-radius: 14px;
+    background: transparent;
+    color: rgba(202,196,208,0.76);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    text-align: left;
+    justify-content: flex-start;
+    gap: 7px;
+    flex-shrink: 0;
+    transition: background 140ms ease, border-color 140ms ease, color 140ms ease, transform 140ms ease;
+  }
+  .cat-btn .material-symbols-outlined {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    min-width: 16px;
+    font-size: 17px;
+    line-height: 1;
+  }
+  .cat-btn .cat-btn__label {
+    display: block;
+    min-width: 0;
+    line-height: 1.1;
+    white-space: nowrap;
+  }
+  .cat-btn[data-settings-group="content"] .cat-btn__label {
+    font-size: 12px;
+  }
+  .cat-btn:hover {
+    background: rgba(255,255,255,0.025);
+    color: rgba(229,226,225,0.92);
+  }
+  .cat-btn.is-active {
+    background: rgba(184,167,234,0.08);
+    border-color: rgba(184,167,234,0.14);
+    color: #f0edf8;
+  }
+  .cat-btn:active { transform: scale(0.97); transition-duration: 60ms; }
+  #settingsGroupRail {
+    flex: 0 0 184px;
+    width: 184px;
+    min-width: 184px;
+    padding-left: 6px !important;
+    padding-right: 6px !important;
+  }
+  .settings-workbench {
+    display: grid;
+    grid-template-columns: 146px minmax(0, 1fr);
+    min-height: 100%;
+  }
+  .settings-subnav {
+    border-right: 1px solid rgba(72,69,79,0.12);
+    background: rgba(20,19,23,0.56);
+    padding: 15px 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .settings-subnav__eyebrow {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: rgba(202,196,208,0.38);
+    padding: 0 4px;
+  }
+  .settings-subnav__list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .settings-subnav-btn {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    width: 100%;
+    min-height: 42px;
+    padding: 0 6px;
+    border-radius: 12px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: rgba(202,196,208,0.72);
+    font-size: 12.5px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-align: left;
+    transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+  }
+  .settings-subnav-btn .material-symbols-outlined {
+    width: 17px;
+    min-width: 17px;
+    font-size: 17px;
+  }
+  .settings-subnav-btn:hover {
+    background: rgba(255,255,255,0.03);
+    color: var(--n-on-surface);
+  }
+  .settings-subnav-btn.is-active {
+    background: rgba(184,167,234,0.08);
+    border-color: rgba(184,167,234,0.12);
+    color: #f0edf8;
+  }
+  .settings-pane-shell {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .settings-pane-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 24px 24px 16px;
+    border-bottom: 1px solid rgba(72,69,79,0.12);
+  }
+  .settings-pane-header__eyebrow {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: rgba(202,196,208,0.38);
+    margin-bottom: 6px;
+  }
+  .settings-pane-header__title {
+    font-size: 33px;
+    font-weight: 800;
+    line-height: 1;
+    color: var(--n-on-surface);
+  }
+  .settings-pane-header__desc {
+    margin-top: 10px;
+    max-width: 660px;
+    font-size: 13.5px;
+    line-height: 1.45;
+    color: rgba(202,196,208,0.52);
+  }
+  .settings-pane-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 24px 28px;
+  }
+  .settings-pane {
+    display: none;
+  }
+  .settings-pane.is-active {
+    display: block;
+  }
+  .settings-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(320px, 1fr));
+    gap: 18px;
+  }
+  .settings-card {
+    border: 1px solid rgba(72,69,79,0.14);
+    background: rgba(28,27,27,0.6);
+    border-radius: 18px;
+    padding: 18px;
+  }
+  .settings-card--wide {
+    grid-column: 1 / -1;
+  }
+  .settings-card__title {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: rgba(202,196,208,0.42);
+    margin-bottom: 14px;
+  }
+  .settings-card__stack {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .settings-mini-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 12px 0;
+    border-top: 1px solid rgba(255,255,255,0.04);
+  }
+  .settings-mini-row:first-child {
+    border-top: none;
+    padding-top: 0;
+  }
+  .settings-mini-row__label {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--n-on-surface);
+  }
+  .settings-mini-row__hint {
+    margin-top: 3px;
+    font-size: 11px;
+    color: rgba(202,196,208,0.42);
+  }
+  .settings-chip-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .settings-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 32px;
+    padding: 0 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(72,69,79,0.18);
+    background: rgba(255,255,255,0.02);
+    color: rgba(229,226,225,0.86);
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .settings-section-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .settings-token-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .settings-token {
+    min-height: 74px;
+    border-radius: 14px;
+    border: 1px solid rgba(72,69,79,0.12);
+    background: rgba(255,255,255,0.02);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .settings-token__name {
+    font-size: 11px;
+    font-weight: 700;
+    color: rgba(229,226,225,0.86);
+  }
+  .settings-token__value {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(202,196,208,0.42);
+  }
+  .settings-card__footer {
+    margin-top: 16px;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  @media (max-width: 1200px) {
+    #settingsGroupRail {
+      flex-basis: 174px;
+      width: 174px;
+      min-width: 174px;
+    }
+    .settings-workbench {
+      grid-template-columns: 138px minmax(0, 1fr);
+    }
+    .settings-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+</head>
+<body class="bg-background text-on-surface antialiased flex overflow-hidden h-screen">
+
+<!-- ═══════════ SIDEBAR ═══════════ -->
+<aside class="n-sidebar" data-component="sidebar" data-action="navigate:route">
+  <div class="n-sidebar__brand" data-component="sidebar-brand" data-action="navigate:route(/home)">
+    <img src="aethon-mark.png" alt="Aethon Logo" />
+  </div>
+  <nav class="n-sidebar__nav">
+    <button class="n-sidebar-btn" data-tooltip="Home" type="button"><span class="n-icon"></span></button>
+    <button class="n-sidebar-btn" data-tooltip="Library" type="button"><span class="n-icon"></span></button>
+    <button class="n-sidebar-btn" data-tooltip="Browse" type="button"><span class="n-icon"></span></button>
+    <button class="n-sidebar-btn" data-tooltip="Downloads" type="button"><span class="n-icon"></span></button>
+  </nav>
+  <div class="n-sidebar__footer">
+    <button class="n-sidebar-btn is-active" data-tooltip="Settings" type="button"><span class="n-icon"></span></button>
+  </div>
+</aside>
+
+<!-- ═══════════ MAIN SHELL ═══════════ -->
+<main class="n-shell flex-1 flex flex-col h-full">
+
+  <!-- ═══════════ TOPBAR ═══════════ -->
+  <header class="n-topbar">
+    <div class="n-topbar__left"></div>
+    <div class="n-topbar__center">
+      <div class="n-search" data-component="search-bar" data-action="search:filterSettings(query)">
+        <span class="n-search__icon material-symbols-outlined">search</span>
+        <input class="n-search__input" placeholder="Search settings..." type="text"/>
+      </div>
+    </div>
+    <div class="n-topbar__right flex items-center gap-1">
+      <button class="n-icon-btn" title="Help" type="button"><span class="material-symbols-outlined">help_outline</span></button>
+    </div>
+  </header>
+
+  <!-- ═══════════ CONTENT: Category sidebar + settings panel ═══════════ -->
+  <div class="flex-1 flex min-h-0 overflow-hidden" style="margin-top: var(--n-topbar-height);">
+
+    <!-- ═══════════ CATEGORY SIDEBAR ═══════════ -->
+    <aside class="bg-surface-container-low/30 flex flex-col p-3 gap-1.5 border-r border-outline-variant/5 overflow-y-auto" id="settingsGroupRail">
+      <button class="cat-btn is-active" data-settings-group="app" type="button">
+        <span class="material-symbols-outlined text-sm">apps</span>
+        <span class="cat-btn__label">App</span>
+      </button>
+      <button class="cat-btn" data-settings-group="reader-library" type="button">
+        <span class="material-symbols-outlined text-sm">menu_book</span>
+        <span class="cat-btn__label">Reader &amp; Library</span>
+      </button>
+      <button class="cat-btn" data-settings-group="content" type="button">
+        <span class="material-symbols-outlined text-sm">extension</span>
+        <span class="cat-btn__label">Content &amp; Integrations</span>
+      </button>
+      <button class="cat-btn" data-settings-group="system" type="button">
+        <span class="material-symbols-outlined text-sm">storage</span>
+        <span class="cat-btn__label">System</span>
+      </button>
+      <button class="cat-btn" data-settings-group="advanced" type="button">
+        <span class="material-symbols-outlined text-sm">terminal</span>
+        <span class="cat-btn__label">Advanced</span>
+      </button>
+
+      <!-- About card pinned to bottom -->
+      <div class="mt-auto pt-4">
+        <div class="p-3 rounded-lg bg-surface-container-low/40 border border-outline-variant/5">
+          <div class="flex items-center gap-2 mb-2">
+            <div class="w-7 h-7 rounded-lg flex items-center justify-center" style="background: var(--n-gradient-primary);">
+              <span class="material-symbols-outlined text-sm" style="color: var(--n-on-primary); font-variation-settings: 'FILL' 1;">book_5</span>
+            </div>
+            <div>
+              <p class="text-[10px] font-bold text-on-surface leading-tight">Aethon Nocturne</p>
+              <p class="text-[8px] text-on-surface-variant/30 font-mono">v4.2.0 · ef72ac1</p>
+            </div>
+          </div>
+          <div class="flex gap-1">
+            <button class="n-btn-ghost text-[9px] flex-1 !px-1 !py-1 !min-h-0">Updates</button>
+            <button class="n-btn-ghost text-[9px] flex-1 !px-1 !py-1 !min-h-0">GitHub</button>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ═══════════ SETTINGS PANEL — grouped rail + contextual tabs ═══════════ -->
+    <section class="flex-1 min-h-0">
+      <div class="settings-workbench">
+        <aside class="settings-subnav">
+          <p class="settings-subnav__eyebrow" id="settingsSubnavEyebrow">App</p>
+          <div class="settings-subnav__list" id="settingsTabRail"></div>
+        </aside>
+
+        <section class="settings-pane-shell">
+          <header class="settings-pane-header">
+            <div>
+              <p class="settings-pane-header__eyebrow" id="settingsPaneGroupLabel">App</p>
+              <h2 class="settings-pane-header__title" id="settingsPaneTitle">General</h2>
+              <p class="settings-pane-header__desc" id="settingsPaneDesc">Core desktop behavior, launch flow, profiles and everyday shell defaults.</p>
+            </div>
+            <div class="settings-section-actions">
+              <button class="n-btn n-btn--sm n-btn-ghost" type="button">Section search</button>
+              <button class="n-btn n-btn--sm n-btn-ghost" type="button">Reset</button>
+            </div>
+          </header>
+
+          <div class="settings-pane-body">
+            <div class="settings-pane is-active" data-settings-pane="general">
+              <div class="settings-grid">
+                <div class="settings-card">
+                  <p class="settings-card__title">Startup</p>
+                  <div class="settings-card__stack">
+                    <div class="settings-mini-row"><div><p class="settings-mini-row__label">Launch into library</p><p class="settings-mini-row__hint">Open the last active library section on startup.</p></div><button class="settings-toggle is-on" type="button"></button></div>
+                    <div class="settings-mini-row"><div><p class="settings-mini-row__label">Auto-start local server</p><p class="settings-mini-row__hint">Only when using the embedded desktop server.</p></div><button class="settings-toggle" type="button"></button></div>
+                    <div class="settings-mini-row"><div><p class="settings-mini-row__label">Discord Rich Presence</p><p class="settings-mini-row__hint">Show reading activity when supported.</p></div><button class="settings-toggle is-on" type="button"></button></div>
+                  </div>
+                </div>
+                <div class="settings-card">
+                  <p class="settings-card__title">Profiles</p>
+                  <div class="settings-card__stack">
+                    <div class="settings-mini-row"><div><p class="settings-mini-row__label">Active profile</p><p class="settings-mini-row__hint">Local profile controls workspace, paths and session defaults.</p></div><button class="n-btn n-btn--sm n-btn-ghost" type="button">Default</button></div>
+                    <div class="settings-mini-row"><div><p class="settings-mini-row__label">Idle timeout</p><p class="settings-mini-row__hint">Pause background operations after inactivity.</p></div><button class="n-btn n-btn--sm n-btn-ghost" type="button">30 min</button></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-pane" data-settings-pane="appearance">
+              <div class="settings-grid">
+                <div class="settings-card settings-card--wide">
+                  <p class="settings-card__title">Theme</p>
+                  <div class="relative h-28 rounded-xl overflow-hidden bg-surface-container border border-outline-variant/5 mb-4">
+                    <div class="absolute inset-0 bg-gradient-to-br from-surface via-surface-container-low to-surface-container-high opacity-50"></div>
+                    <div class="absolute top-3 left-3 flex gap-1.5">
+                      <div class="w-14 h-1 rounded-full" style="background: var(--n-primary-container);"></div>
+                      <div class="w-7 h-1 rounded-full bg-surface-container-highest"></div>
+                    </div>
+                    <div class="absolute bottom-3 left-3 right-3 grid grid-cols-6 gap-1.5">
+                      <div class="aspect-[3/4] rounded-sm bg-surface-container-highest/30"></div><div class="aspect-[3/4] rounded-sm bg-surface-container-highest/30"></div><div class="aspect-[3/4] rounded-sm bg-surface-container-highest/30"></div><div class="aspect-[3/4] rounded-sm bg-surface-container-highest/30"></div><div class="aspect-[3/4] rounded-sm bg-surface-container-highest/30"></div><div class="aspect-[3/4] rounded-sm bg-surface-container-highest/30"></div>
+                    </div>
+                  </div>
+                  <div class="settings-mini-row"><div><p class="settings-mini-row__label">OLED dark mode</p><p class="settings-mini-row__hint">Pure black surfaces for high contrast displays.</p></div><button class="settings-toggle is-on" type="button"></button></div>
+                  <div class="settings-mini-row"><div><p class="settings-mini-row__label">Accent intensity</p><p class="settings-mini-row__hint">Tune the lavender highlight strength.</p></div><input class="w-28 h-1 bg-surface-container-highest rounded-lg appearance-none cursor-pointer" type="range" style="accent-color: var(--n-primary);" /></div>
+                </div>
+                <div class="settings-card">
+                  <p class="settings-card__title">Window chrome</p>
+                  <div class="settings-card__stack">
+                    <div class="settings-mini-row"><div><p class="settings-mini-row__label">Compact topbar</p><p class="settings-mini-row__hint">Reduce shell chrome height for dense layouts.</p></div><button class="settings-toggle" type="button"></button></div>
+                    <div class="settings-mini-row"><div><p class="settings-mini-row__label">Sidebar glow</p><p class="settings-mini-row__hint">Keep brand glow subtle in dark mode.</p></div><button class="settings-toggle is-on" type="button"></button></div>
+                  </div>
+                </div>
+                <div class="settings-card">
+                  <p class="settings-card__title">UI density</p>
+                  <div class="settings-card__stack">
+                    <div class="settings-mini-row"><div><p class="settings-mini-row__label">Interface scale</p><p class="settings-mini-row__hint">Desktop sizing for controls and labels.</p></div><div class="n-inline-segmented"><button class="n-inline-segment" type="button">Compact</button><button class="n-inline-segment is-selected" type="button">Default</button><button class="n-inline-segment" type="button">Comfort</button></div></div>
+                    <div class="settings-mini-row"><div><p class="settings-mini-row__label">Card emphasis</p><p class="settings-mini-row__hint">Covers vs metadata balance.</p></div><button class="n-btn n-btn--sm n-btn-ghost" type="button">Balanced</button></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-pane" data-settings-pane="keybinds">
+              <div class="settings-grid"><div class="settings-card settings-card--wide"><p class="settings-card__title">Keybinds</p><div class="settings-card__stack"><div class="settings-mini-row"><div><p class="settings-mini-row__label">Next page</p><p class="settings-mini-row__hint">Reader navigation forward.</p></div><button class="n-btn n-btn--sm n-btn-ghost" type="button">Right Arrow</button></div><div class="settings-mini-row"><div><p class="settings-mini-row__label">Previous page</p><p class="settings-mini-row__hint">Reader navigation backward.</p></div><button class="n-btn n-btn--sm n-btn-ghost" type="button">Left Arrow</button></div><div class="settings-mini-row"><div><p class="settings-mini-row__label">Toggle chrome</p><p class="settings-mini-row__hint">Show or hide reader HUD.</p></div><button class="n-btn n-btn--sm n-btn-ghost" type="button">Space</button></div></div></div></div>
+            </div>
+
+            <div class="settings-pane" data-settings-pane="reader">
+              <div class="settings-grid"><div class="settings-card"><p class="settings-card__title">Layout</p><div class="settings-card__stack"><div class="settings-mini-row"><div><p class="settings-mini-row__label">Page style</p></div><div class="n-inline-segmented"><button class="n-inline-segment is-selected" type="button">Single</button><button class="n-inline-segment" type="button">Double</button><button class="n-inline-segment" type="button">Longstrip</button></div></div><div class="settings-mini-row"><div><p class="settings-mini-row__label">Reading direction</p></div><div class="n-inline-segmented"><button class="n-inline-segment is-selected" type="button">LTR</button><button class="n-inline-segment" type="button">RTL</button></div></div></div></div><div class="settings-card"><p class="settings-card__title">Behavior</p><div class="settings-card__stack"><div class="settings-mini-row"><div><p class="settings-mini-row__label">Page gap</p></div><button class="settings-toggle is-on" type="button"></button></div><div class="settings-mini-row"><div><p class="settings-mini-row__label">Auto next chapter</p></div><button class="settings-toggle is-on" type="button"></button></div><div class="settings-mini-row"><div><p class="settings-mini-row__label">Mark read on next</p></div><button class="settings-toggle" type="button"></button></div></div></div></div>
+            </div>
+
+            <div class="settings-pane" data-settings-pane="library">
+              <div class="settings-grid"><div class="settings-card"><p class="settings-card__title">Display</p><div class="settings-card__stack"><div class="settings-mini-row"><div><p class="settings-mini-row__label">Default layout</p></div><div class="n-inline-segmented"><button class="n-inline-segment is-selected" type="button">Grid</button><button class="n-inline-segment" type="button">Compact</button><button class="n-inline-segment" type="button">List</button></div></div><div class="settings-mini-row"><div><p class="settings-mini-row__label">Density</p><p class="settings-mini-row__hint">Preferred items per row.</p></div><button class="n-btn n-btn--sm n-btn-ghost" type="button">Auto</button></div></div></div><div class="settings-card"><p class="settings-card__title">Metadata overlays</p><div class="settings-card__stack"><div class="settings-mini-row"><div><p class="settings-mini-row__label">Show progress</p></div><button class="settings-toggle is-on" type="button"></button></div><div class="settings-mini-row"><div><p class="settings-mini-row__label">Show outlines</p></div><button class="settings-toggle is-on" type="button"></button></div><div class="settings-mini-row"><div><p class="settings-mini-row__label">Crop covers</p></div><button class="settings-toggle" type="button"></button></div></div></div></div>
+            </div>
+
+            <div class="settings-pane" data-settings-pane="categories">
+              <div class="settings-grid"><div class="settings-card settings-card--wide"><p class="settings-card__title">Categories</p><div class="settings-chip-list"><span class="settings-chip">Reading</span><span class="settings-chip">Completed</span><span class="settings-chip">On Hold</span><span class="settings-chip">Plan to Read</span><span class="settings-chip">Dropped</span></div><div class="settings-mini-row"><div><p class="settings-mini-row__label">Comics categories</p><p class="settings-mini-row__hint">Sync with the server and other clients.</p></div><button class="n-btn n-btn--sm n-btn-ghost" type="button">Manage</button></div><div class="settings-mini-row"><div><p class="settings-mini-row__label">Books categories</p><p class="settings-mini-row__hint">Local to desktop and separated from comics.</p></div><button class="n-btn n-btn--sm n-btn-ghost" type="button">Manage</button></div></div></div>
+            </div>
+
+            <div class="settings-pane" data-settings-pane="content">
+              <div class="settings-grid"><div class="settings-card"><p class="settings-card__title">Content filters</p><div class="settings-card__stack"><div class="settings-mini-row"><div><p class="settings-mini-row__label">Show adult content</p><p class="settings-mini-row__hint">Hide titles matching blocked tags when disabled.</p></div><button class="settings-toggle" type="button"></button></div><div class="settings-mini-row"><div><p class="settings-mini-row__label">Filter by blocked tags</p><p class="settings-mini-row__hint">Apply global hidden-tag rules across sources.</p></div><button class="settings-toggle is-on" type="button"></button></div></div></div><div class="settings-card"><p class="settings-card__title">Blocked tags</p><div class="settings-chip-list"><span class="settings-chip">gore</span><span class="settings-chip">extreme violence</span><span class="settings-chip">adult</span></div></div><div class="settings-card"><p class="settings-card__title">Source rules</p><div class="settings-card__stack"><div class="settings-mini-row"><div><p class="settings-mini-row__label">Allowed sources</p><p class="settings-mini-row__hint">Whitelist trusted catalogs.</p></div><button class="n-btn n-btn--sm n-btn-ghost" type="button">Manage</button></div><div class="settings-mini-row"><div><p class="settings-mini-row__label">Blocked sources</p><p class="settings-mini-row__hint">Hide noisy or broken catalogs.</p></div><button class="n-btn n-btn--sm n-btn-ghost" type="button">Manage</button></div></div></div></div>
+            </div>
+
+            <div class="settings-pane" data-settings-pane="tracking">
+              <div class="settings-grid"><div class="settings-card"><p class="settings-card__title">Connected services</p><div class="settings-card__stack"><div class="settings-mini-row"><div><p class="settings-mini-row__label">AniList</p><p class="settings-mini-row__hint">Connected</p></div><button class="n-btn n-btn--sm n-btn-ghost" type="button">Disconnect</button></div><div class="settings-mini-row"><div><p class="settings-mini-row__label">MyAnimeList</p><p class="settings-mini-row__hint">Offline</p></div><button class="n-btn n-btn--sm n-btn-ghost" type="button">Login</button></div><div class="settings-mini-row"><div><p class="settings-mini-row__label">Kitsu</p><p class="settings-mini-row__hint">Offline</p></div><button class="n-btn n-btn--sm n-btn-ghost" type="button">Login</button></div></div></div><div class="settings-card"><p class="settings-card__title">Sync behavior</p><div class="settings-card__stack"><div class="settings-mini-row"><div><p class="settings-mini-row__label">Update progress automatically</p><p class="settings-mini-row__hint">Push chapter progress as you read.</p></div><button class="settings-toggle is-on" type="button"></button></div><div class="settings-mini-row"><div><p class="settings-mini-row__label">Prefer OAuth login</p><p class="settings-mini-row__hint">Use browser auth when supported.</p></div><button class="settings-toggle is-on" type="button"></button></div></div></div></div>
+            </div>
+
+            <div class="settings-pane" data-settings-pane="storage">
+              <div class="settings-grid"><div class="settings-card"><p class="settings-card__title">Paths</p><div class="settings-card__stack"><div class="settings-mini-row"><div><p class="settings-mini-row__label">Downloads path</p><p class="settings-mini-row__hint font-mono">/volumes/archive/aethon/downloads</p></div><button class="n-btn n-btn--sm n-btn-ghost" type="button">Browse</button></div><div class="settings-mini-row"><div><p class="settings-mini-row__label">Local source path</p><p class="settings-mini-row__hint font-mono">/volumes/archive/aethon/books</p></div><button class="n-btn n-btn--sm n-btn-ghost" type="button">Browse</button></div></div></div><div class="settings-card"><p class="settings-card__title">Usage</p><div class="mb-3 flex items-baseline justify-between"><span class="settings-mini-row__label">Storage usage</span><span class="text-[10px] text-on-surface-variant/40 font-mono">142.8 / 500 GB</span></div><div class="w-full h-1 rounded-full overflow-hidden mb-4" style="background: rgba(148,143,154,0.06);"><div class="h-full rounded-full" style="width: 28%; background: var(--n-gradient-primary);"></div></div><div class="flex gap-2"><button class="n-btn n-btn--sm n-btn-ghost" type="button">Clean Cache</button><button class="n-btn n-btn--sm n-btn-ghost" type="button">Create Backup</button></div></div></div>
+            </div>
+
+            <div class="settings-pane" data-settings-pane="performance">
+              <div class="settings-grid"><div class="settings-card"><p class="settings-card__title">Rendering</p><div class="settings-card__stack"><div class="settings-mini-row"><div><p class="settings-mini-row__label">GPU acceleration</p></div><button class="settings-toggle is-on" type="button"></button></div><div class="settings-mini-row"><div><p class="settings-mini-row__label">Render limit</p></div><button class="n-btn n-btn--sm n-btn-ghost" type="button">12 items</button></div><div class="settings-mini-row"><div><p class="settings-mini-row__label">Animated splash cards</p></div><button class="settings-toggle" type="button"></button></div></div></div><div class="settings-card"><p class="settings-card__title">Diagnostics</p><div class="settings-card__stack"><div class="settings-mini-row"><div><p class="settings-mini-row__label">Compact sidebar</p></div><button class="settings-toggle" type="button"></button></div><div class="settings-mini-row"><div><p class="settings-mini-row__label">Refresh metrics</p><p class="settings-mini-row__hint">Update CPU, memory and renderer indicators.</p></div><button class="n-btn n-btn--sm n-btn-ghost" type="button">Refresh</button></div></div></div></div>
+            </div>
+
+            <div class="settings-pane" data-settings-pane="security">
+              <div class="settings-grid"><div class="settings-card"><p class="settings-card__title">Security</p><div class="settings-card__stack"><div class="settings-mini-row"><div><p class="settings-mini-row__label">Require PIN on open</p></div><button class="settings-toggle" type="button"></button></div><div class="settings-mini-row"><div><p class="settings-mini-row__label">SOCKS proxy</p><p class="settings-mini-row__hint">127.0.0.1:9050</p></div><button class="n-btn n-btn--sm n-btn-ghost" type="button">Edit</button></div><div class="settings-mini-row"><div><p class="settings-mini-row__label">FlareSolverr</p></div><button class="settings-toggle is-on" type="button"></button></div></div></div><div class="settings-card"><p class="settings-card__title">Authentication</p><div class="settings-card__stack"><div class="settings-mini-row"><div><p class="settings-mini-row__label">Server auth</p><p class="settings-mini-row__hint">Require credentials for remote access.</p></div><button class="settings-toggle" type="button"></button></div><div class="settings-mini-row"><div><p class="settings-mini-row__label">Proxy mode</p><p class="settings-mini-row__hint">Choose local or container route.</p></div><button class="n-btn n-btn--sm n-btn-ghost" type="button">Docker</button></div></div></div></div>
+            </div>
+
+            <div class="settings-pane" data-settings-pane="about">
+              <div class="settings-grid"><div class="settings-card settings-card--wide"><p class="settings-card__title">About</p><p class="text-[13px] text-on-surface/88 leading-relaxed">Aethon is a desktop manga and books frontend for Suwayomi-inspired reading workflows, adapted here as the Nocturne settings shell.</p><div class="settings-mini-row"><div><p class="settings-mini-row__label">Current build</p><p class="settings-mini-row__hint font-mono">v4.2.0 · ef72ac1</p></div><button class="n-btn n-btn--sm n-btn-ghost" type="button">Check updates</button></div></div></div>
+            </div>
+
+            <div class="settings-pane" data-settings-pane="devtools">
+              <div class="settings-grid"><div class="settings-card settings-card--wide"><p class="settings-card__title">Dev tools</p><div class="flex flex-wrap gap-2"><button class="n-btn n-btn--sm n-btn-ghost" type="button">Open logs</button><button class="n-btn n-btn--sm n-btn-ghost" type="button">Preview splash</button><button class="n-btn n-btn--sm n-btn-ghost" type="button">Inspect theme tokens</button></div></div></div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <section class="flex-1 overflow-y-auto px-6 py-5" id="settingsLegacyOverview" hidden>
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 max-w-[1400px]">
+
+        <!-- COL 1: Appearance + Data -->
+        <div class="space-y-6">
+
+          <!-- Appearance -->
+          <div class="space-y-3">
+            <div class="flex items-center gap-2 pb-2 border-b border-outline-variant/6">
+              <span class="material-symbols-outlined text-sm" style="color: var(--n-primary);">palette</span>
+              <h2 class="text-xs font-bold text-on-surface uppercase tracking-wider">Appearance</h2>
+            </div>
+
+            <!-- Theme preview -->
+            <div class="p-3 rounded-xl bg-surface-container-low/40 border border-outline-variant/5 space-y-2.5">
+              <span class="text-[9px] font-bold uppercase tracking-wider text-on-surface-variant/35">Theme</span>
+              <div class="relative h-24 rounded-lg overflow-hidden bg-surface-container border border-outline-variant/5">
+                <div class="absolute inset-0 bg-gradient-to-br from-surface via-surface-container-low to-surface-container-high opacity-50"></div>
+                <div class="absolute top-2.5 left-2.5 flex gap-1.5">
+                  <div class="w-12 h-1 rounded-full" style="background: var(--n-primary-container);"></div>
+                  <div class="w-6 h-1 rounded-full bg-surface-container-highest"></div>
+                </div>
+                <div class="absolute bottom-2.5 left-2.5 right-2.5 grid grid-cols-5 gap-1">
+                  <div class="aspect-[3/4] rounded-sm bg-surface-container-highest/30"></div>
+                  <div class="aspect-[3/4] rounded-sm bg-surface-container-highest/30"></div>
+                  <div class="aspect-[3/4] rounded-sm bg-surface-container-highest/30"></div>
+                  <div class="aspect-[3/4] rounded-sm bg-surface-container-highest/30"></div>
+                  <div class="aspect-[3/4] rounded-sm bg-surface-container-highest/30"></div>
+                </div>
+              </div>
+              <div class="flex justify-between items-center">
+                <div class="flex gap-1.5">
+                  <button class="n-btn n-btn--sm n-btn-ghost">Import</button>
+                  <button class="n-btn n-btn--sm n-btn-ghost">Export</button>
+                </div>
+                <div class="flex gap-1.5">
+                  <div class="w-4 h-4 rounded-full cursor-pointer ring-1 ring-offset-1 ring-offset-background" style="background: #b8a7ea; --tw-ring-color: #b8a7ea;"></div>
+                  <div class="w-4 h-4 rounded-full bg-emerald-400 cursor-pointer"></div>
+                  <div class="w-4 h-4 rounded-full bg-amber-400 cursor-pointer"></div>
+                  <div class="w-4 h-4 rounded-full bg-rose-400 cursor-pointer"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Settings rows -->
+            <div class="space-y-0.5">
+              <div class="settings-row flex items-center justify-between p-2.5 rounded-lg">
+                <div>
+                  <p class="text-[11px] font-semibold text-on-surface">OLED Dark Mode</p>
+                  <p class="text-[9px] text-on-surface-variant/35 mt-0.5">Pure black background</p>
+                </div>
+                <button class="settings-toggle is-on" type="button" onclick="this.classList.toggle('is-on')" data-component="settings-toggle" data-action="state:setOledMode(bool)"></button>
+              </div>
+              <div class="settings-row flex items-center justify-between p-2.5 rounded-lg">
+                <div>
+                  <p class="text-[11px] font-semibold text-on-surface">Accent Intensity</p>
+                  <p class="text-[9px] text-on-surface-variant/35 mt-0.5">Lavender saturation</p>
+                </div>
+                <div class="flex items-center gap-2">
+                  <input class="w-20 h-1 bg-surface-container-highest rounded-lg appearance-none cursor-pointer" type="range" style="accent-color: var(--n-primary);"/>
+                  <span class="text-[8px] font-mono text-on-surface-variant/40">85%</span>
+                </div>
+              </div>
+              <div class="settings-row flex items-center justify-between p-2.5 rounded-lg">
+                <div>
+                  <p class="text-[11px] font-semibold text-on-surface">Cover Mode</p>
+                </div>
+                <div class="n-inline-segmented">
+                  <button class="n-inline-segment" type="button">Dense</button>
+                  <button class="n-inline-segment is-selected" type="button">Comfort</button>
+                  <button class="n-inline-segment" type="button">Artistic</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Data & Storage -->
+          <div class="space-y-3">
+            <div class="flex items-center gap-2 pb-2 border-b border-outline-variant/6">
+              <span class="material-symbols-outlined text-sm" style="color: var(--n-primary);">storage</span>
+              <h2 class="text-xs font-bold text-on-surface uppercase tracking-wider">Data & Storage</h2>
+            </div>
+            <div class="space-y-0.5">
+              <div class="settings-row flex items-center justify-between p-2.5 rounded-lg">
+                <div>
+                  <p class="text-[11px] font-semibold text-on-surface">Cache Directory</p>
+                  <p class="text-[9px] text-on-surface-variant/35 mt-0.5 font-mono">/volumes/archive/aethon/</p>
+                </div>
+                <button class="n-icon-btn" style="width:28px;height:28px;" title="Browse"><span class="material-symbols-outlined" style="font-size:16px;">folder_open</span></button>
+              </div>
+              <div class="settings-row flex items-center justify-between p-2.5 rounded-lg">
+                <div>
+                  <p class="text-[11px] font-semibold text-on-surface">Auto-Index</p>
+                  <p class="text-[9px] text-on-surface-variant/35 mt-0.5">Scan every 15 min</p>
+                </div>
+                <button class="settings-toggle" type="button" onclick="this.classList.toggle('is-on')"></button>
+              </div>
+              <div class="settings-row p-2.5 rounded-lg">
+                <div class="flex justify-between items-baseline mb-1.5">
+                  <p class="text-[11px] font-semibold text-on-surface">Storage Usage</p>
+                  <p class="text-[8px] font-mono text-on-surface-variant/35">142.8 / 500 GB</p>
+                </div>
+                <div class="w-full h-1 rounded-full overflow-hidden" style="background: rgba(148,143,154,0.06);">
+                  <div class="h-full rounded-full" style="width: 28%; background: var(--n-gradient-primary);"></div>
+                </div>
+                <button class="n-btn n-btn--sm n-btn-ghost mt-2" data-action="action:cleanCache()">Clean Cache</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- COL 2: Reading + Library Behavior -->
+        <div class="space-y-6">
+
+          <!-- Reading Preferences -->
+          <div class="space-y-3">
+            <div class="flex items-center gap-2 pb-2 border-b border-outline-variant/6">
+              <span class="material-symbols-outlined text-sm" style="color: var(--n-primary);">menu_book</span>
+              <h2 class="text-xs font-bold text-on-surface uppercase tracking-wider">Reading</h2>
+            </div>
+            <div class="space-y-0.5">
+              <div class="settings-row flex items-center justify-between p-2.5 rounded-lg">
+                <p class="text-[11px] font-semibold text-on-surface">Default Mode</p>
+                <div class="n-inline-segmented">
+                  <button class="n-inline-segment is-selected" type="button">LTR</button>
+                  <button class="n-inline-segment" type="button">RTL</button>
+                  <button class="n-inline-segment" type="button">Vertical</button>
+                </div>
+              </div>
+              <div class="settings-row flex items-center justify-between p-2.5 rounded-lg">
+                <p class="text-[11px] font-semibold text-on-surface">Keep Screen On</p>
+                <button class="settings-toggle is-on" type="button" onclick="this.classList.toggle('is-on')"></button>
+              </div>
+              <div class="settings-row flex items-center justify-between p-2.5 rounded-lg">
+                <p class="text-[11px] font-semibold text-on-surface">Preload Pages</p>
+                <button class="settings-toggle is-on" type="button" onclick="this.classList.toggle('is-on')"></button>
+              </div>
+              <div class="settings-row flex items-center justify-between p-2.5 rounded-lg">
+                <p class="text-[11px] font-semibold text-on-surface">Background Color</p>
+                <div class="n-inline-segmented">
+                  <button class="n-inline-segment is-selected" type="button">Black</button>
+                  <button class="n-inline-segment" type="button">Gray</button>
+                  <button class="n-inline-segment" type="button">White</button>
+                </div>
+              </div>
+              <div class="settings-row flex items-center justify-between p-2.5 rounded-lg">
+                <p class="text-[11px] font-semibold text-on-surface">Long Strip Gap</p>
+                <div class="flex items-center gap-2">
+                  <input class="w-16 h-1 bg-surface-container-highest rounded-lg appearance-none cursor-pointer" type="range" min="0" max="20" value="0" style="accent-color: var(--n-primary);"/>
+                  <span class="text-[8px] font-mono text-on-surface-variant/40">0px</span>
+                </div>
+              </div>
+              <div class="settings-row flex items-center justify-between p-2.5 rounded-lg">
+                <p class="text-[11px] font-semibold text-on-surface">Zoom Sensitivity</p>
+                <div class="flex items-center gap-2">
+                  <input class="w-16 h-1 bg-surface-container-highest rounded-lg appearance-none cursor-pointer" type="range" style="accent-color: var(--n-primary);"/>
+                  <span class="text-[8px] font-mono text-on-surface-variant/40">50%</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Library Behavior -->
+          <div class="space-y-3">
+            <div class="flex items-center gap-2 pb-2 border-b border-outline-variant/6">
+              <span class="material-symbols-outlined text-sm" style="color: var(--n-primary);">grid_view</span>
+              <h2 class="text-xs font-bold text-on-surface uppercase tracking-wider">Library</h2>
+            </div>
+            <div class="space-y-0.5">
+              <div class="settings-row flex items-center justify-between p-2.5 rounded-lg">
+                <div>
+                  <p class="text-[11px] font-semibold text-on-surface">Auto-Update Library</p>
+                  <p class="text-[9px] text-on-surface-variant/35 mt-0.5">Check for new chapters on app launch</p>
+                </div>
+                <button class="settings-toggle is-on" type="button" onclick="this.classList.toggle('is-on')"></button>
+              </div>
+              <div class="settings-row flex items-center justify-between p-2.5 rounded-lg">
+                <div>
+                  <p class="text-[11px] font-semibold text-on-surface">Mark Previous as Read</p>
+                  <p class="text-[9px] text-on-surface-variant/35 mt-0.5">When opening a new chapter</p>
+                </div>
+                <button class="settings-toggle is-on" type="button" onclick="this.classList.toggle('is-on')"></button>
+              </div>
+              <div class="settings-row flex items-center justify-between p-2.5 rounded-lg">
+                <p class="text-[11px] font-semibold text-on-surface">Default Sort</p>
+                <div class="n-inline-segmented">
+                  <button class="n-inline-segment is-selected" type="button">Recent</button>
+                  <button class="n-inline-segment" type="button">Alpha</button>
+                  <button class="n-inline-segment" type="button">Unread</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- COL 3: Network + Integrations -->
+        <div class="space-y-6">
+
+          <!-- Network & Downloads -->
+          <div class="space-y-3">
+            <div class="flex items-center gap-2 pb-2 border-b border-outline-variant/6">
+              <span class="material-symbols-outlined text-sm" style="color: var(--n-primary);">wifi</span>
+              <h2 class="text-xs font-bold text-on-surface uppercase tracking-wider">Network</h2>
+            </div>
+            <div class="space-y-0.5">
+              <div class="settings-row flex items-center justify-between p-2.5 rounded-lg">
+                <div>
+                  <p class="text-[11px] font-semibold text-on-surface">Concurrent Downloads</p>
+                  <p class="text-[9px] text-on-surface-variant/35 mt-0.5">Simultaneous connections</p>
+                </div>
+                <div class="n-inline-segmented">
+                  <button class="n-inline-segment" type="button">1</button>
+                  <button class="n-inline-segment is-selected" type="button">2</button>
+                  <button class="n-inline-segment" type="button">4</button>
+                </div>
+              </div>
+              <div class="settings-row flex items-center justify-between p-2.5 rounded-lg">
+                <div>
+                  <p class="text-[11px] font-semibold text-on-surface">Download on WiFi Only</p>
+                </div>
+                <button class="settings-toggle is-on" type="button" onclick="this.classList.toggle('is-on')"></button>
+              </div>
+              <div class="settings-row flex items-center justify-between p-2.5 rounded-lg">
+                <div>
+                  <p class="text-[11px] font-semibold text-on-surface">Image Quality</p>
+                </div>
+                <div class="n-inline-segmented">
+                  <button class="n-inline-segment" type="button">Low</button>
+                  <button class="n-inline-segment" type="button">Mid</button>
+                  <button class="n-inline-segment is-selected" type="button">High</button>
+                </div>
+              </div>
+              <div class="settings-row flex items-center justify-between p-2.5 rounded-lg">
+                <div>
+                  <p class="text-[11px] font-semibold text-on-surface">Auto-Retry Failed</p>
+                  <p class="text-[9px] text-on-surface-variant/35 mt-0.5">Retry on error up to 3 times</p>
+                </div>
+                <button class="settings-toggle is-on" type="button" onclick="this.classList.toggle('is-on')"></button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Integrations -->
+          <div class="space-y-3">
+            <div class="flex items-center gap-2 pb-2 border-b border-outline-variant/6">
+              <span class="material-symbols-outlined text-sm" style="color: var(--n-primary);">extension</span>
+              <h2 class="text-xs font-bold text-on-surface uppercase tracking-wider">Integrations</h2>
+            </div>
+            <div class="space-y-2">
+              <!-- MAL Sync -->
+              <div class="p-3 rounded-xl bg-surface-container-low/40 border border-outline-variant/5 flex items-center justify-between">
+                <div class="flex items-center gap-2.5">
+                  <div class="w-8 h-8 rounded-lg bg-surface-container-highest/40 flex items-center justify-center">
+                    <span class="material-symbols-outlined text-sm" style="color: var(--n-primary);">sync</span>
+                  </div>
+                  <div>
+                    <p class="text-[11px] font-bold text-on-surface">MalSync</p>
+                    <p class="text-[9px] text-on-surface-variant/35 uppercase tracking-wider">Connected</p>
+                  </div>
+                </div>
+                <button class="text-[9px] font-semibold" style="color: var(--n-error);">Disconnect</button>
+              </div>
+              <!-- AniList -->
+              <div class="p-3 rounded-xl bg-surface-container-low/40 border border-outline-variant/5 flex items-center justify-between">
+                <div class="flex items-center gap-2.5">
+                  <div class="w-8 h-8 rounded-lg bg-surface-container-highest/40 flex items-center justify-center">
+                    <span class="material-symbols-outlined text-sm text-on-surface-variant/30">cloud_off</span>
+                  </div>
+                  <div>
+                    <p class="text-[11px] font-bold text-on-surface">AniList</p>
+                    <p class="text-[9px] text-on-surface-variant/35 uppercase tracking-wider">Offline</p>
+                  </div>
+                </div>
+                <button class="text-[9px] font-semibold" style="color: var(--n-primary);">Login</button>
+              </div>
+              <!-- Kitsu -->
+              <div class="p-3 rounded-xl bg-surface-container-low/40 border border-outline-variant/5 flex items-center justify-between">
+                <div class="flex items-center gap-2.5">
+                  <div class="w-8 h-8 rounded-lg bg-surface-container-highest/40 flex items-center justify-center">
+                    <span class="material-symbols-outlined text-sm text-on-surface-variant/30">cloud_off</span>
+                  </div>
+                  <div>
+                    <p class="text-[11px] font-bold text-on-surface">Kitsu</p>
+                    <p class="text-[9px] text-on-surface-variant/35 uppercase tracking-wider">Offline</p>
+                  </div>
+                </div>
+                <button class="text-[9px] font-semibold" style="color: var(--n-primary);">Login</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+  </div>
+</main>
+
+<!-- Toggle + Settings Navigation JS -->
+<script>
+(() => {
+  document.querySelectorAll('.settings-toggle').forEach((btn) => {
+    btn.addEventListener('click', () => btn.classList.toggle('is-on'));
+  });
+
+  const groups = {
+    app: {
+      label: 'App',
+      tabs: [
+        { id: 'general', label: 'General', icon: 'tune', desc: 'Core desktop behavior, launch flow, profiles and everyday shell defaults.' },
+        { id: 'appearance', label: 'Appearance', icon: 'palette', desc: 'Theme, surfaces, accent tuning and visual polish.' },
+        { id: 'keybinds', label: 'Keybinds', icon: 'keyboard', desc: 'Keyboard shortcuts and desktop interaction patterns.' },
+      ],
+    },
+    'reader-library': {
+      label: 'Reader & Library',
+      tabs: [
+        { id: 'reader', label: 'Reader', icon: 'menu_book', desc: 'Reading modes, direction, zoom and chapter flow defaults.' },
+        { id: 'library', label: 'Library', icon: 'grid_view', desc: 'Card density, overlays, layout defaults and browsing behavior.' },
+        { id: 'categories', label: 'Categories', icon: 'folder', desc: 'Comics and books category management.' },
+      ],
+    },
+    content: {
+      label: 'Content & Integrations',
+      tabs: [
+        { id: 'content', label: 'Content', icon: 'visibility_off', desc: 'Blocked tags, source visibility and NSFW controls.' },
+        { id: 'tracking', label: 'Tracking', icon: 'monitoring', desc: 'Connected tracking providers and sync state.' },
+      ],
+    },
+    system: {
+      label: 'System',
+      tabs: [
+        { id: 'storage', label: 'Storage', icon: 'storage', desc: 'Paths, usage, backup and local content management.' },
+        { id: 'performance', label: 'Performance', icon: 'speed', desc: 'GPU usage, rendering limits and runtime responsiveness.' },
+        { id: 'security', label: 'Security', icon: 'lock', desc: 'PIN, proxy, FlareSolverr and trust-sensitive settings.' },
+      ],
+    },
+    advanced: {
+      label: 'Advanced',
+      tabs: [
+        { id: 'about', label: 'About', icon: 'info', desc: 'Version, update flow and project information.' },
+        { id: 'devtools', label: 'Dev Tools', icon: 'terminal', desc: 'Debug actions and internal preview helpers.' },
+      ],
+    },
+  };
+
+  const groupButtons = Array.from(document.querySelectorAll('[data-settings-group]'));
+  const tabRail = document.getElementById('settingsTabRail');
+  const subnavEyebrow = document.getElementById('settingsSubnavEyebrow');
+  const paneGroupLabel = document.getElementById('settingsPaneGroupLabel');
+  const paneTitle = document.getElementById('settingsPaneTitle');
+  const paneDesc = document.getElementById('settingsPaneDesc');
+  const panes = Array.from(document.querySelectorAll('[data-settings-pane]'));
+
+  const params = new URLSearchParams(window.location.search);
+  const requestedGroup = params.get('group');
+  const requestedTab = params.get('tab');
+  const initialGroup = requestedGroup && groups[requestedGroup] ? requestedGroup : 'app';
+  const initialTab = requestedTab && groups[initialGroup].tabs.some((tab) => tab.id === requestedTab)
+    ? requestedTab
+    : groups[initialGroup].tabs[0].id;
+
+  const state = { group: initialGroup, tab: initialTab };
+
+  function renderGroupButtons() {
+    groupButtons.forEach((item) => {
+      item.classList.toggle('is-active', item.dataset.settingsGroup === state.group);
+    });
+  }
+
+  function renderTabs() {
+    const currentGroup = groups[state.group];
+    if (!currentGroup || !tabRail) return;
+    tabRail.innerHTML = '';
+    subnavEyebrow.textContent = currentGroup.label;
+    paneGroupLabel.textContent = currentGroup.label;
+    currentGroup.tabs.forEach((tab) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'settings-subnav-btn' + (tab.id === state.tab ? ' is-active' : '');
+      button.dataset.settingsTab = tab.id;
+      button.innerHTML = `<span class="material-symbols-outlined text-sm">${tab.icon}</span><span>${tab.label}</span>`;
+      button.addEventListener('click', () => {
+        state.tab = tab.id;
+        renderTabs();
+        renderPanes();
+      });
+      tabRail.appendChild(button);
+    });
+  }
+
+  function renderPanes() {
+    panes.forEach((pane) => pane.classList.toggle('is-active', pane.dataset.settingsPane === state.tab));
+    const currentTab = groups[state.group].tabs.find((tab) => tab.id === state.tab);
+    if (currentTab) {
+      paneTitle.textContent = currentTab.label;
+      paneDesc.textContent = currentTab.desc;
+    }
+  }
+
+  groupButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      state.group = button.dataset.settingsGroup;
+      state.tab = groups[state.group].tabs[0].id;
+      renderGroupButtons();
+      renderTabs();
+      renderPanes();
+    });
+  });
+
+  renderGroupButtons();
+  renderTabs();
+  renderPanes();
+})();
+</script>
+<div class="n-search-dim" id="searchDim"></div>
+<script src="./nocturne-search.js"></script>
+</body>
+</html>
+
+
+

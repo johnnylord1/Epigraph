@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Aethon Nocturne - Digital Archivist</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&amp;family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "tertiary": "#dece71",
+                        "surface-container-lowest": "#0e0e0e",
+                        "secondary-fixed-dim": "#cbc2e0",
+                        "surface-variant": "#353534",
+                        "on-primary-container": "#483a74",
+                        "on-background": "#e5e2e1",
+                        "on-error": "#690005",
+                        "secondary": "#cbc2e0",
+                        "outline": "#948f9a",
+                        "error-container": "#93000a",
+                        "on-secondary-fixed": "#1e182e",
+                        "surface-container-low": "#1c1b1b",
+                        "on-primary-fixed": "#200f4a",
+                        "error": "#ffb4ab",
+                        "tertiary-fixed": "#f4e485",
+                        "on-secondary": "#332d44",
+                        "inverse-primary": "#645592",
+                        "inverse-surface": "#e5e2e1",
+                        "secondary-fixed": "#e8defd",
+                        "on-tertiary-container": "#4d4400",
+                        "inverse-on-surface": "#313030",
+                        "surface-container": "#201f1f",
+                        "primary-container": "#b8a7ea",
+                        "surface-container-highest": "#353534",
+                        "surface-dim": "#131313",
+                        "on-tertiary": "#383100",
+                        "background": "#131313",
+                        "on-primary-fixed-variant": "#4c3d78",
+                        "surface": "#131313",
+                        "on-primary": "#352660",
+                        "secondary-container": "#4a435c",
+                        "on-tertiary-fixed": "#201c00",
+                        "tertiary-fixed-dim": "#d7c86c",
+                        "primary": "#d3c4ff",
+                        "surface-tint": "#cebdff",
+                        "on-secondary-container": "#bab1ce",
+                        "on-surface": "#e5e2e1",
+                        "primary-fixed": "#e8ddff",
+                        "outline-variant": "#48454f",
+                        "tertiary-container": "#c1b259",
+                        "primary-fixed-dim": "#cebdff",
+                        "surface-bright": "#393939",
+                        "on-error-container": "#ffdad6",
+                        "on-tertiary-fixed-variant": "#514700",
+                        "on-surface-variant": "#cac4d0",
+                        "surface-container-high": "#2a2a2a",
+                        "on-secondary-fixed-variant": "#4a435c"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "fontFamily": {
+                        "headline": ["Manrope"],
+                        "body": ["Inter"],
+                        "label": ["Inter"]
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        body { font-family: 'Inter', sans-serif; }
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
+        .manga-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #353534; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #48454f; }
+        .lavender-gradient { background: linear-gradient(135deg, #B8A7EA 0%, #D3C4FF 100%); }
+    </style>
+</head>
+<body class="bg-background text-on-background overflow-hidden">
+<!-- SideNavBar (Shared Component) -->
+<aside class="h-screen w-16 fixed left-0 top-0 z-50 bg-[#1C1B1B] dark:bg-[#1C1B1B] flex flex-col items-center py-6 gap-8">
+<div class="mb-4">
+<span class="material-symbols-outlined text-[#B8A7EA] text-2xl">book_2</span>
+</div>
+<nav class="flex flex-col items-center gap-8 w-full">
+<button class="font-['Manrope'] font-medium text-sm tracking-tight text-[#D3C4FF] relative before:content-[''] before:absolute before:left-0 before:w-1 before:h-6 before:bg-[#D3C4FF] before:rounded-full hover:bg-[#2A2A2A] transition-colors duration-200 Active: scale-95 transition-transform p-2">
+<span class="material-symbols-outlined" data-icon="home">home</span>
+</button>
+<button class="font-['Manrope'] font-medium text-sm tracking-tight text-gray-500 hover:text-gray-300 hover:bg-[#2A2A2A] transition-colors duration-200 Active: scale-95 transition-transform p-2">
+<span class="material-symbols-outlined" data-icon="grid_view">grid_view</span>
+</button>
+<button class="font-['Manrope'] font-medium text-sm tracking-tight text-gray-500 hover:text-gray-300 hover:bg-[#2A2A2A] transition-colors duration-200 Active: scale-95 transition-transform p-2">
+<span class="material-symbols-outlined" data-icon="explore">explore</span>
+</button>
+<button class="font-['Manrope'] font-medium text-sm tracking-tight text-gray-500 hover:text-gray-300 hover:bg-[#2A2A2A] transition-colors duration-200 Active: scale-95 transition-transform p-2">
+<span class="material-symbols-outlined" data-icon="download">download</span>
+</button>
+<div class="mt-auto flex flex-col items-center gap-6">
+<button class="font-['Manrope'] font-medium text-sm tracking-tight text-gray-500 hover:text-gray-300 hover:bg-[#2A2A2A] transition-colors duration-200 Active: scale-95 transition-transform p-2">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+</button>
+<div class="w-8 h-8 rounded-full overflow-hidden border border-outline-variant/20">
+<img alt="Digital Archivist Profile" class="w-full h-full object-cover" data-alt="close up profile shot of a digital interface avatar with purple glowing accents and minimalist features" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCa87fgpTlCEys2-FUNu_2fDUTQ8IwwR_Q3z0BROQWLRgjVCHQ9wZ3q4RGuCGk2npE_v0P90Cy8OJ_mgDLI45hA5b8cjyKpTOitd6VHf5NyZC7RnmvtLCEs_8X94k5Dl0DKW_wnOn8bpCNEb4T8C0LtbSU2ivclPVwP_yfKa_jeyuKMGiLkiS6i5j5ZTgHGZIBAM7TnJ2CQK1WyywtX2uYh7ox9hZfxGdTHNsxA7OxXnqrFWRLHXdh1BQLa1iHt6NzpJ0gnB-q1TP8"/>
+</div>
+</div>
+</nav>
+</aside>
+<!-- TopNavBar (Shared Component) -->
+<header class="fixed top-0 right-0 left-16 h-14 z-40 bg-[#131313]/60 backdrop-blur-xl dark:bg-[#131313]/60 flex justify-between items-center px-8 w-full">
+<div class="flex items-center gap-6">
+<span class="text-lg font-bold text-[#B8A7EA] tracking-tighter font-headline">Digital Archivist</span>
+<div class="relative flex items-center">
+<span class="material-symbols-outlined absolute left-3 text-on-surface-variant text-sm">search</span>
+<input class="bg-surface-container-highest border-none rounded-lg pl-10 pr-4 py-1.5 text-sm w-80 focus:ring-1 ring-[#B8A7EA]/30 transition-all font-body" placeholder="Search collection..." type="text"/>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<button class="text-gray-400 hover:text-white transition-colors">
+<span class="material-symbols-outlined" data-icon="notifications">notifications</span>
+</button>
+<button class="text-gray-400 hover:text-white transition-colors">
+<span class="material-symbols-outlined" data-icon="history">history</span>
+</button>
+<div class="h-6 w-[1px] bg-outline-variant/30 mx-2"></div>
+<span class="font-headline font-bold text-[#D3C4FF] text-sm uppercase tracking-widest">Library</span>
+</div>
+</header>
+<!-- Main Content Canvas -->
+<main class="ml-16 mt-14 h-[calc(100vh-3.5rem)] overflow-y-auto grid grid-cols-12 gap-0">
+<!-- Left Column: Library & Home -->
+<div class="col-span-8 border-r border-outline-variant/10 flex flex-col">
+<!-- Home Section (Recent) -->
+<section class="p-6 bg-surface-container-low/30">
+<div class="flex items-center justify-between mb-4">
+<h2 class="font-headline text-lg font-bold tracking-tight text-on-background">Continue Reading</h2>
+<button class="text-xs font-bold text-primary tracking-widest uppercase flex items-center gap-1">
+                        View All <span class="material-symbols-outlined text-sm">chevron_right</span>
+</button>
+</div>
+<div class="grid grid-cols-4 gap-4">
+<div class="flex items-center gap-3 p-2 bg-surface-container rounded hover:bg-surface-container-highest transition-colors cursor-pointer group">
+<div class="w-12 h-16 rounded overflow-hidden flex-shrink-0">
+<img alt="Manga Cover" class="w-full h-full object-cover" data-alt="dark atmospheric manga cover illustration featuring a lone swordsman in a monochromatic ink wash style" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAIK7Jokyqa1V_zAwFr73ox99KqFuVIWcUPvRp4tODiCPiwUfD3YC-yoA3Ii6lOlB_usQ16k1bRCo0tXnYZLegPY-9_kg0-XoONTXgE8RqGa6sJ9haVnNTLUbBwahSmO1_jjxrf3WyEoXK0URSLqeEVEUBqZPTECxYJTUNis2vkGMro-aXwwIsdy-kE5uiVdjKSZ16IWUTtR77pvpgIUBbM1hxWFR7OOiHO36DcqDb82gK030VmfDIc_0uj3m2te22ebGrie1MR8t4"/>
+</div>
+<div class="overflow-hidden">
+<p class="font-body text-xs font-bold truncate">Vagabond</p>
+<p class="font-body text-[10px] text-on-surface-variant">Chapter 327 • 42% left</p>
+<div class="w-full h-1 bg-surface-container-highest mt-2 rounded-full overflow-hidden">
+<div class="w-[58%] h-full lavender-gradient"></div>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-3 p-2 bg-surface-container rounded hover:bg-surface-container-highest transition-colors cursor-pointer group">
+<div class="w-12 h-16 rounded overflow-hidden flex-shrink-0">
+<img alt="Manga Cover" class="w-full h-full object-cover" data-alt="stylized manga cover showing futuristic cityscape with neon accents and sharp linework" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCthmWuOSLf4oyTvkjodXJMwQ-tugrup5XDX0xWjRsAoH-AJnvCXlooV2KVsZHl7YUBS2qaDx_BZwjP-_-CsT1wYxq4FBJ_RhxfztCwMMYSxIb00oH6s0SpKS0rmCZORZLbNoS-eGQx3aVyY795rHk1_VhLCGLUNxDPtE3xUbyVVLAAk9EkELoYOi0L1AqHGeZOTmsWOhcVmI4oyTngxG1TNO75XpwUgzrC3E3Xg2nOSr1_IH5Hqc1QPgY0DmdYgCZu369gd7qmX48"/>
+</div>
+<div class="overflow-hidden">
+<p class="font-body text-xs font-bold truncate">Blame!</p>
+<p class="font-body text-[10px] text-on-surface-variant">Chapter 12 • 89% left</p>
+<div class="w-full h-1 bg-surface-container-highest mt-2 rounded-full overflow-hidden">
+<div class="w-[11%] h-full lavender-gradient"></div>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-3 p-2 bg-surface-container rounded hover:bg-surface-container-highest transition-colors cursor-pointer group">
+<div class="w-12 h-16 rounded overflow-hidden flex-shrink-0">
+<img alt="Manga Cover" class="w-full h-full object-cover" data-alt="traditional shonen manga cover with energetic character poses and vibrant action lines" src="https://lh3.googleusercontent.com/aida-public/AB6AXuD_jdCHmtHnPRHSkwVrC_iaWaUFUGHY0tllG5NA270Mafebw0oZe7KpUjcy6PSMNPVRxXrY8PbvW_nRAY4Ykqqog1GEWQXgr7SLu0RnJt73reyc0ngv-FnEecbR6HIoLt8EZLscCBOfN98kMqxZ4eW_SlSa0MAZtd4_l4yCmeQWc24Ultd83SQnz2fuW3Ojhw7HlBXxp-KuBLqqsfDWLxa7tKRT8CTsE76Dw2-isgcK6vhIXPOwMrYFH9X2ynb4Pmzu7m4IgOUrFbw"/>
+</div>
+<div class="overflow-hidden">
+<p class="font-body text-xs font-bold truncate">Chainsaw Man</p>
+<p class="font-body text-[10px] text-on-surface-variant">Chapter 155 • 2% left</p>
+<div class="w-full h-1 bg-surface-container-highest mt-2 rounded-full overflow-hidden">
+<div class="w-[98%] h-full lavender-gradient"></div>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-3 p-2 bg-surface-container rounded hover:bg-surface-container-highest transition-colors cursor-pointer group">
+<div class="w-12 h-16 rounded overflow-hidden flex-shrink-0">
+<img alt="Manga Cover" class="w-full h-full object-cover" data-alt="dark fantasy manga cover with intricate detail and gothic aesthetic" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBHJTowkJ1L48GDjjvcmaTTnPnK_8oBx2esC6qm556x_ECcmeEpACXcopbKQvyXNJRBqCYKZqa6SVowinw8PaEN7wtwi49KRM1dlj9FtbtOKkOsqwZCAILAZHL3QYNdRAI89iRd_rm-h8cbkckab2QxpueD-OgHINd_IBzIFV_Jivu8Z8RquIZUR2va-RdEeVI9yTkv0TejNi7ozn5-tw17PuIHwPxD0JoKzrmF7EzeN2ivL-AMwXECLXG6AlNIU5RJymRtHwmm9cU"/>
+</div>
+<div class="overflow-hidden">
+<p class="font-body text-xs font-bold truncate">Berserk</p>
+<p class="font-body text-[10px] text-on-surface-variant">Chapter 364 • 15% left</p>
+<div class="w-full h-1 bg-surface-container-highest mt-2 rounded-full overflow-hidden">
+<div class="w-[85%] h-full lavender-gradient"></div>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Library HUD Section -->
+<section class="flex-1 flex flex-col bg-surface-container-low">
+<div class="px-6 py-4 flex flex-col gap-4 border-b border-outline-variant/10">
+<div class="flex items-center justify-between">
+<div class="flex gap-2">
+<button class="px-3 py-1 bg-primary text-on-primary text-[11px] font-bold uppercase rounded-full">All</button>
+<button class="px-3 py-1 bg-surface-container-highest text-on-surface-variant text-[11px] font-bold uppercase rounded-full hover:text-on-surface transition-colors">Reading</button>
+<button class="px-3 py-1 bg-surface-container-highest text-on-surface-variant text-[11px] font-bold uppercase rounded-full hover:text-on-surface transition-colors">Completed</button>
+<button class="px-3 py-1 bg-surface-container-highest text-on-surface-variant text-[11px] font-bold uppercase rounded-full hover:text-on-surface transition-colors">On Hold</button>
+</div>
+<div class="flex gap-4">
+<div class="flex bg-surface-container p-0.5 rounded">
+<button class="px-3 py-1 bg-surface-container-highest text-[10px] font-bold uppercase rounded shadow-sm">Comics</button>
+<button class="px-3 py-1 text-on-surface-variant text-[10px] font-bold uppercase">Books</button>
+</div>
+</div>
+</div>
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-4 text-on-surface-variant">
+<button class="flex items-center gap-1.5 text-xs hover:text-on-surface">
+<span class="material-symbols-outlined text-sm">sort</span> Sort
+                            </button>
+<button class="flex items-center gap-1.5 text-xs hover:text-on-surface">
+<span class="material-symbols-outlined text-sm">filter_alt</span> Filter
+                            </button>
+</div>
+<div class="flex items-center gap-4 text-on-surface-variant">
+<button class="hover:text-on-surface"><span class="material-symbols-outlined text-base">view_module</span></button>
+<button class="hover:text-on-surface"><span class="material-symbols-outlined text-base">view_list</span></button>
+<div class="w-[1px] h-3 bg-outline-variant/30"></div>
+<button class="hover:text-on-surface"><span class="material-symbols-outlined text-base">density_medium</span></button>
+</div>
+</div>
+</div>
+<div class="p-6 overflow-y-auto">
+<div class="manga-grid gap-6">
+<!-- Card 1 -->
+<div class="group cursor-pointer">
+<div class="relative aspect-[3/4] rounded-md overflow-hidden mb-2 bg-surface-container-highest">
+<img alt="Manga Cover" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" data-alt="cover of a dark mystery manga featuring rain-slicked city streets and silhouettes" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBc9kWW4GM8JffOoATr453L9JjOOS8Q1PmH1k2eMDotDnkDW93qbTULRQ2s7J2A61eRJWcViPmfuF6FbIqb0YJNGhkxyjyXFSC6Rd-tDQr1mF808UM-uHwinUGo_82pldWLs5bkmj5uMMkMYpJyInDLRMiEgO4WdA3RCIpsHR7iZTNSegsvVXuYSrVJqk-F-NRC_u8gPXpsWMTZ3wN9PbbjFx6ZtXWFMgy7GiexuFY3e2tAT-gLBGBaeII79UUt-EwuOOQZbH1X8-M"/>
+<div class="absolute top-1.5 right-1.5 px-1.5 py-0.5 bg-primary text-on-primary text-[10px] font-bold rounded-sm">12</div>
+<div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+</div>
+<h3 class="font-body text-xs font-bold leading-tight line-clamp-2">20th Century Boys</h3>
+</div>
+<!-- Card 2 -->
+<div class="group cursor-pointer">
+<div class="relative aspect-[3/4] rounded-md overflow-hidden mb-2 bg-surface-container-highest">
+<img alt="Manga Cover" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" data-alt="manga cover with ethereal character art surrounded by cosmic nebulae and stars" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAN-U7gskqfzdJe_2U_2YngG8x7JH4BX7SE-CJ0LGAoulSYh4L9ocQ-l5VIrBAIrd9XhF-qGzY1eASoNZSZE_QvPDEQrpAEFYllFFcDqCvoOSdsTtzjmrz2iwoSRyf9WBuhYyhRXFR2mHAy-PtzOlwZ-p9nq45beZeRNvOFLsyP9CpDLOxqGJANpN-XE4WUxxbz9E--_l12UtfzsbCQXSqESOxbBd1MeAI5Ba-sMu3CWwySyxn1OWu1H5Ooue_U8R3F1zhcwfbOfec"/>
+<div class="absolute top-1.5 right-1.5 px-1.5 py-0.5 bg-secondary-container text-on-secondary-container text-[10px] font-bold rounded-sm uppercase">End</div>
+</div>
+<h3 class="font-body text-xs font-bold leading-tight line-clamp-2">Land of the Lustrous</h3>
+</div>
+<!-- Card 3 -->
+<div class="group cursor-pointer">
+<div class="relative aspect-[3/4] rounded-md overflow-hidden mb-2 bg-surface-container-highest">
+<img alt="Manga Cover" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" data-alt="intricate fantasy manga cover showing an ancient library filled with magical scrolls" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDQuaoksuMhPSpxm0XSgG1So0EmY-xp7Qw-iIwie1mHO8jSmScOnkBVrqqHCzLAPbterYeUzq4_FM3pMxSIaWkUfhGJPI_YM09ybY3tmKY8L9hgL3niXOqNzWz-xPBRks6m93OvvvwlEB4kLKZQWbOoCKn7h4EfcdqYCWKDcEvhXHamyEklLAcD5i3aBBgZqKylzWQe9cJMgvcVI0UAQuQJ2W2Pv-OrDxcy_wKugeQwyeOVlSGzwONYFdexUbmldoTHFZeemKmFuN4"/>
+</div>
+<h3 class="font-body text-xs font-bold leading-tight line-clamp-2">Witch Hat Atelier</h3>
+</div>
+<!-- Card 4 -->
+<div class="group cursor-pointer">
+<div class="relative aspect-[3/4] rounded-md overflow-hidden mb-2 bg-surface-container-highest">
+<img alt="Manga Cover" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" data-alt="horror manga cover with surreal imagery and stark black and white contrasts" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCj53RwrmA62M8xjheONchV9Lf7JJt9un8DaTyeNMOlEN5NRi6-zchXHk16MHvRkqNm_E_r5gYSPzV5Qkb0qJ2Kc0pYJrvDTW8HVVtyow-NMM0w-2KfDmjNlxBSFdO_yx4dLrA97RU6nkvk58iUih0uC88OwvspOLDC8ixY88nO6ODJKe_pFZqBoDOnXYMJ9iJFMTCdAcbdWVPkocHvQ-WjJKRF3HFc7UFBYui5HA9oKdnmJ114yxonMguiK9MiQwSZ62wH6h0KlNQ"/>
+<div class="absolute top-1.5 right-1.5 px-1.5 py-0.5 bg-primary text-on-primary text-[10px] font-bold rounded-sm">5</div>
+</div>
+<h3 class="font-body text-xs font-bold leading-tight line-clamp-2">Uzumaki</h3>
+</div>
+<!-- Card 5 -->
+<div class="group cursor-pointer">
+<div class="relative aspect-[3/4] rounded-md overflow-hidden mb-2 bg-surface-container-highest">
+<img alt="Manga Cover" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" data-alt="sci-fi manga cover with detailed mechanical parts and cyborg characters" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCSVtkpcIpY1D5ISACjMGtL4ZFCZLl7J7jep77BZ7bLfn56xhy2eyPmwEsxXvu2a5tqGwccAom_9t7RKej4xGK04Wl2S9DuRpeNO0HDS1Yl5OIwrATZN7afjgvADd2XRHVZVoYQYzeMwuXR4pvemVkCKjVbCmQTYbH6ukcb4O5Uv-wJDu1aV7IpMLFKPCMWCuPeRKOyT4_pJRBbrSdlb80KAD-R9PAVdlVQPXQgyE2XsFGqlX9RGYHfaCrla3dcishv1uiV_oCEoTk"/>
+</div>
+<h3 class="font-body text-xs font-bold leading-tight line-clamp-2">Pluto</h3>
+</div>
+<!-- Card 6 -->
+<div class="group cursor-pointer">
+<div class="relative aspect-[3/4] rounded-md overflow-hidden mb-2 bg-surface-container-highest">
+<img alt="Manga Cover" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" data-alt="action manga cover showing a high-speed car chase with dynamic motion blur" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAG7iM18rct0M9bQELsHSYRNLdXXJ2mhm93DkE6nHvQ_tNbtv4dcDnJwavOlKeVzg4ps4YHRBeqsWy4whB--FqH5NJIiHEryYj5abKZozH_zBab3TMAvhGErdJFyO1OLAzP4yC6ll1byTLfdL-bZvydvBWbgCHawl3fGtxipAHmiVxmg0ILlSS3qVZosjeutbRfKFHbQnAys7QNs-w8WFAsZeMoZnZxL0Ybti_k4mj8-39XiGiKTVqpvA6skId2-BrYbytaLLwvIh8"/>
+<div class="absolute top-1.5 right-1.5 px-1.5 py-0.5 bg-primary text-on-primary text-[10px] font-bold rounded-sm">2</div>
+</div>
+<h3 class="font-body text-xs font-bold leading-tight line-clamp-2">Initial D</h3>
+</div>
+</div>
+</div>
+</section>
+</div>
+<!-- Right Column: Browse & Detail HUD -->
+<div class="col-span-4 bg-surface flex flex-col h-full">
+<!-- Browse HUD (Top Right) -->
+<section class="h-1/2 border-b border-outline-variant/10 flex flex-col overflow-hidden">
+<div class="px-4 py-3 bg-surface-container flex items-center justify-between">
+<div class="flex gap-4">
+<span class="text-[11px] font-extrabold text-primary border-b border-primary pb-0.5 tracking-widest uppercase">Browse</span>
+<span class="text-[11px] font-bold text-on-surface-variant tracking-widest uppercase hover:text-on-surface cursor-pointer">Sources</span>
+</div>
+<button class="text-on-surface-variant hover:text-on-surface"><span class="material-symbols-outlined text-base">refresh</span></button>
+</div>
+<div class="p-4 flex-1 overflow-y-auto">
+<div class="flex flex-wrap gap-1.5 mb-4">
+<div class="px-2 py-0.5 rounded-sm bg-primary-container text-on-primary-container text-[10px] font-bold flex items-center gap-1">
+                            Seinen <span class="material-symbols-outlined text-[10px]">close</span>
+</div>
+<div class="px-2 py-0.5 rounded-sm bg-surface-container-highest text-on-surface-variant text-[10px] font-bold hover:bg-surface-bright cursor-pointer">Action</div>
+<div class="px-2 py-0.5 rounded-sm bg-surface-container-highest text-on-surface-variant text-[10px] font-bold hover:bg-surface-bright cursor-pointer">Sci-Fi</div>
+<div class="px-2 py-0.5 rounded-sm bg-surface-container-highest text-on-surface-variant text-[10px] font-bold hover:bg-surface-bright cursor-pointer">Mystery</div>
+<button class="text-[10px] text-primary font-bold ml-1 uppercase">+ Add Tag</button>
+</div>
+<div class="space-y-3">
+<div class="flex gap-3 p-2 rounded hover:bg-surface-container-low cursor-pointer transition-colors">
+<div class="w-10 h-14 rounded-sm overflow-hidden flex-shrink-0 bg-surface-variant">
+<img alt="Result" class="w-full h-full object-cover" data-alt="minimalist manga art of a character walking through a snowy landscape" src="https://lh3.googleusercontent.com/aida-public/AB6AXuChQQQiS0J6q5yeO-Av_tWO2IG8HHBg2Po9H3WxF1kyWxyjJvNbCStUxYi7fnAkRKulwpWQ7CVKzcvLldwaG0k-eWVSFTvkevpv85k3sPwVOzY5qDghXdAFz5GsERr5dNuIZdxSW6rik-3zz1sYP79wrZjTC2tuWXKUtlNhw4TK2qghR176OXLFG1tNDN7V8KdnN4FCYG3ocW13UWzhGDwp0siAexkW9mXRECdjTRuQGJ4koRFjrftreEHnU_kHGTWWXvcZagR31rA"/>
+</div>
+<div>
+<h4 class="text-xs font-bold text-on-background">The Climber</h4>
+<p class="text-[10px] text-on-surface-variant mb-1">MangaDex • Weekly</p>
+<span class="text-[9px] px-1 bg-surface-container-highest text-on-surface-variant rounded-sm uppercase font-bold tracking-tighter">Ongoing</span>
+</div>
+</div>
+<div class="flex gap-3 p-2 rounded hover:bg-surface-container-low cursor-pointer transition-colors">
+<div class="w-10 h-14 rounded-sm overflow-hidden flex-shrink-0 bg-surface-variant">
+<img alt="Result" class="w-full h-full object-cover" data-alt="experimental manga art with bold line patterns and abstract architecture" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAAj6uRbB3VEOOvwSQ0uR2iXZO2b-my61IL6iOorVB08yCqSoz3340is4P_SoBXBw-KjN5hvyM8GnsWAIXNw0l0-l-zDATzhGBmeXKdPtxrcEoW996XWY7ToRcOzI5khGl5fiv01L2xByyD2GwRSm3tGUDfdQwQFO-8rVdg9fUfUJRu0vIALKmnrXGxA4u_fyHTIHAySO9-wlF5BzxjRsJbMStpcM3ucDXOcB7o2A390YU3LI95OAoAgWB7hLwA5BarsKr_UFtpZac"/>
+</div>
+<div>
+<h4 class="text-xs font-bold text-on-background">Sunny</h4>
+<p class="text-[10px] text-on-surface-variant mb-1">Mangakakalot • Monthly</p>
+<span class="text-[9px] px-1 bg-surface-container-highest text-on-surface-variant rounded-sm uppercase font-bold tracking-tighter">Completed</span>
+</div>
+</div>
+<div class="flex gap-3 p-2 rounded hover:bg-surface-container-low cursor-pointer transition-colors">
+<div class="w-10 h-14 rounded-sm overflow-hidden flex-shrink-0 bg-surface-variant">
+<img alt="Result" class="w-full h-full object-cover" data-alt="noir style manga art with heavy shadows and sharp facial features" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAJkJqt5Pgn7z4DMYlHFjfxUfDwDNGzwGPNRISKowtlT1pkscmQp8RojmmdOHYRFaf0k9KHWdU794hHD2j4wQZ52J6rch2fDB8u_gxF679K89s-rYFdWrqKVHzrA2PM41uYsZ36ntM7gaiZF1lc8ZuDKBIsrQEBtpzIdTbyTEqYoQXF3fZEtlKtWpdLTb7YhufYDNDNYRLZXW5_J7AQPSFhqyjKqD-5NODIOOpNy8aSzFM7oDolkz22oAPKTVzIlfnjVhT4B3xwmrM"/>
+</div>
+<div>
+<h4 class="text-xs font-bold text-on-background">Monster</h4>
+<p class="text-[10px] text-on-surface-variant mb-1">MangaDex • Finished</p>
+<span class="text-[9px] px-1 bg-surface-container-highest text-on-surface-variant rounded-sm uppercase font-bold tracking-tighter">Completed</span>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Series Detail HUD (Bottom Right) -->
+<section class="h-1/2 flex flex-col overflow-hidden">
+<div class="px-4 py-3 bg-surface-container-low flex items-center justify-between border-b border-outline-variant/10">
+<span class="text-[11px] font-extrabold text-on-surface tracking-widest uppercase">Series Detail</span>
+<button class="text-on-surface-variant hover:text-on-surface"><span class="material-symbols-outlined text-base">more_vert</span></button>
+</div>
+<div class="p-4 flex flex-col h-full">
+<div class="flex gap-4 mb-4">
+<div class="w-24 aspect-[3/4] rounded-sm overflow-hidden flex-shrink-0 shadow-lg shadow-black/40">
+<img alt="Vagabond" class="w-full h-full object-cover" data-alt="highly detailed portrait of a samurai with intense eyes and weathered skin in black ink style" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDaVZDMVDbu6W9Ch1Gv98JENumkvatoypxM45GKGxo6_ZkQixKZEMo_vOmFwkQHLXEPcfO-EoIEr2z2L9QRHgk1blKAGhi2QKrx56WnmmkvdXHfnbICCKVbV1q3DQJUB5BCPmRzUD3AgB_oaF3SNqR2wPLp1CcDRFvzv-arGlfwQtZxZ9sgV9KNVWf1ztaZ8FrdgGJXyFjvx1B3gf4xhcoU1Iy_Jhqyxny1HjKA5_NwNpmv4Slwd9HTvnpD_Cl4MyBmBgVnxtpkdIA"/>
+</div>
+<div class="flex-1 overflow-hidden">
+<h2 class="font-headline text-lg font-extrabold leading-tight mb-1 truncate text-[#D3C4FF]">Vagabond</h2>
+<p class="text-[11px] text-on-surface-variant mb-3">Takehiko Inoue • Seinen</p>
+<div class="flex gap-2 mb-4">
+<span class="text-[9px] px-1.5 py-0.5 bg-surface-container-highest text-on-surface-variant rounded-sm uppercase font-bold">Ongoing</span>
+<span class="text-[9px] px-1.5 py-0.5 bg-surface-container-highest text-on-surface-variant rounded-sm uppercase font-bold">MangaDex</span>
+</div>
+<button class="w-full lavender-gradient text-on-primary text-[11px] font-extrabold py-2 rounded-sm uppercase tracking-widest shadow-sm hover:brightness-110 transition-all flex items-center justify-center gap-2">
+<span class="material-symbols-outlined text-sm">play_arrow</span> Continue Ch. 327
+                            </button>
+</div>
+</div>
+<div class="flex-1 overflow-y-auto pr-1">
+<div class="space-y-0.5">
+<div class="flex items-center justify-between p-2 rounded bg-surface-container-high/50 group hover:bg-surface-container-high">
+<div class="flex items-center gap-3">
+<div class="w-1.5 h-1.5 rounded-full bg-primary/40"></div>
+<span class="text-xs font-medium text-on-surface">Chapter 327: The Void</span>
+</div>
+<div class="flex items-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity">
+<span class="material-symbols-outlined text-base text-on-surface-variant cursor-pointer hover:text-primary">download</span>
+<span class="material-symbols-outlined text-base text-on-surface-variant cursor-pointer hover:text-primary">bookmark</span>
+</div>
+</div>
+<div class="flex items-center justify-between p-2 rounded group hover:bg-surface-container-high">
+<div class="flex items-center gap-3">
+<div class="w-1.5 h-1.5 rounded-full bg-surface-container-highest"></div>
+<span class="text-xs font-medium text-on-surface-variant">Chapter 326: Resonance</span>
+</div>
+<div class="flex items-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity">
+<span class="material-symbols-outlined text-base text-on-surface-variant cursor-pointer hover:text-primary">download</span>
+<span class="material-symbols-outlined text-base text-on-surface-variant cursor-pointer hover:text-primary">bookmark</span>
+</div>
+</div>
+<div class="flex items-center justify-between p-2 rounded group hover:bg-surface-container-high">
+<div class="flex items-center gap-3">
+<div class="w-1.5 h-1.5 rounded-full bg-surface-container-highest"></div>
+<span class="text-xs font-medium text-on-surface-variant">Chapter 325: The Path</span>
+</div>
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-base text-primary/60">download_done</span>
+</div>
+</div>
+<!-- More chapters simulated -->
+<div class="flex items-center justify-between p-2 rounded group hover:bg-surface-container-high">
+<div class="flex items-center gap-3">
+<div class="w-1.5 h-1.5 rounded-full bg-surface-container-highest"></div>
+<span class="text-xs font-medium text-on-surface-variant">Chapter 324: Stillness</span>
+</div>
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-base text-primary/60">download_done</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+</div>
+</main>
+<!-- Reader HUD Overlay (Floating Mockup Bottom) -->
+<div class="fixed bottom-6 right-6 w-[440px] h-[300px] bg-background border border-outline-variant/20 rounded-xl shadow-2xl overflow-hidden z-[100] flex flex-col group">
+<!-- Reader Minimal Top Bar -->
+<div class="h-8 bg-surface-container-lowest/80 backdrop-blur-md px-4 flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity">
+<span class="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Vagabond • Ch. 327</span>
+<span class="text-[10px] font-bold text-on-surface-variant">42 / 64</span>
+</div>
+<!-- Reader Content -->
+<div class="flex-1 bg-surface-container-lowest overflow-y-auto flex justify-center">
+<div class="w-full max-w-[280px]">
+<img alt="Reader View" class="w-full h-auto" data-alt="high contrast ink drawing of a samurai landscape with detailed brushwork and expressive linework" src="https://lh3.googleusercontent.com/aida-public/AB6AXuD9T2fef2dkMRI8ssQDCRJsRGJPyf_lYP9xETwEjOIN_r97rCXtiCls699T9WdkFgSt6r8pqjc0UDc6Wr8N-Ajpp095dD3Rf3TvjMhah75qt5pafhJpQ56zPMU_j3tWjUpzYTvtEnOQ0x74wMPSnK1EZ-oXt8-o3ZdD4dd0M255mp3iSJic4U-T_a2P5TUqZDN50FluC3cleCNPZ7nvrjBURo7O3AsQeCYkSh9x8YTQ_t4H61v4WqMpOZeBJ6vzEysnVeRdnMDSY5c"/>
+</div>
+</div>
+<!-- Reader Bottom Bar -->
+<div class="h-12 bg-surface-container-lowest/80 backdrop-blur-md px-4 flex items-center gap-4 opacity-0 group-hover:opacity-100 transition-opacity">
+<div class="flex-1 flex items-center gap-3">
+<span class="text-[10px] text-on-surface-variant font-bold">42</span>
+<div class="flex-1 h-0.5 bg-surface-container-highest rounded-full relative">
+<div class="absolute left-0 top-0 h-full w-[65%] bg-primary"></div>
+<div class="absolute left-[65%] top-1/2 -translate-y-1/2 w-2 h-2 bg-primary rounded-full shadow-lg"></div>
+</div>
+<span class="text-[10px] text-on-surface-variant font-bold">64</span>
+</div>
+<div class="flex items-center gap-3 border-l border-outline-variant/20 pl-4">
+<button class="text-on-surface-variant hover:text-primary"><span class="material-symbols-outlined text-lg">fit_screen</span></button>
+<button class="text-on-surface-variant hover:text-primary"><span class="material-symbols-outlined text-lg">auto_stories</span></button>
+<button class="text-primary"><span class="material-symbols-outlined text-lg">bookmark</span></button>
+</div>
+</div>
+<!-- Reader Trigger Label -->
+<div class="absolute inset-0 flex items-center justify-center pointer-events-none group-hover:hidden bg-black/40">
+<div class="px-4 py-2 bg-surface rounded shadow-xl border border-primary/20 flex items-center gap-2">
+<span class="material-symbols-outlined text-primary text-sm">chrome_reader_mode</span>
+<span class="text-[11px] font-extrabold uppercase tracking-widest text-on-surface">Reader HUD Active</span>
+</div>
+</div>
+</div>
+</body></html>

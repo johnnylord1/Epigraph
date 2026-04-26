@@ -31,6 +31,7 @@ export interface BuildBooksSectionInput {
   librarySection: LibrarySectionKind;
   profileLabel?: string | null;
   books: BookEntry[];
+  sourceCount?: number;
   progressByBookId: ReadonlyMap<string, BookProgress | undefined>;
   coverSrcByBookId?: ReadonlyMap<string, string | null>;
   categories: BooksCategory[];
@@ -45,6 +46,7 @@ export interface BuildBooksSectionInput {
   error: string | null;
   importing?: boolean;
   dropActive?: boolean;
+  buildCards?: boolean;
 }
 
 export interface BooksSectionState {
@@ -97,14 +99,17 @@ function buildStatusFilteredBooks(
   });
 }
 
-function buildTypeCounts(categoryScopedBooks: BookEntry[]): Record<BooksTypeFilterId, number> {
+function buildTypeCounts(
+  categoryScopedBooks: BookEntry[],
+  sourceCount = 0,
+): Record<BooksTypeFilterId, number> {
   const epub = categoryScopedBooks.filter((book) => book.subtype === "epub").length;
   const pdf = categoryScopedBooks.filter((book) => book.subtype === "pdf").length;
   return {
     all: categoryScopedBooks.length,
     epub,
     pdf,
-    sources: 0,
+    sources: sourceCount,
   };
 }
 
@@ -215,7 +220,7 @@ export function buildFilteredBooks(input: BuildBooksSectionInput): BookEntry[] {
 
 export function buildBooksSectionState(input: BuildBooksSectionInput): BooksSectionState {
   const categoryScopedBooks = buildCategoryScopedBooks(input);
-  const typeCounts = buildTypeCounts(categoryScopedBooks);
+  const typeCounts = buildTypeCounts(categoryScopedBooks, input.sourceCount ?? 0);
   const filteredBooks = buildFilteredBooks(input);
   const coverSrcByBookId = input.coverSrcByBookId ?? new Map<string, string | null>();
 
@@ -244,40 +249,42 @@ export function buildBooksSectionState(input: BuildBooksSectionInput): BooksSect
     loading: input.loading,
     error: input.error,
     emptyMessage: buildBooksEmptyMessage(input, filteredBooks),
-    cards: filteredBooks.map((book) => {
-      const progress = input.progressByBookId.get(book.id);
-      const coverSrc = coverSrcByBookId.get(book.id) ?? null;
-      const presented = presentBookWithCoverSrc(book, progress, coverSrc);
-      const hasLocalAsset = hasBookLocalAsset(book);
-      const badges = [{ kind: "subtype" as const, label: presented.subtypeLabel }];
-      if (!hasLocalAsset) {
-        badges.push({ kind: "status" as const, label: "Missing file" });
-      }
-      const metaChips = [presented.sectionCountLabel];
-      if (!hasLocalAsset) {
-        metaChips.push("Metadata only");
-      }
+    cards: input.buildCards === false
+      ? []
+      : filteredBooks.map((book) => {
+          const progress = input.progressByBookId.get(book.id);
+          const coverSrc = coverSrcByBookId.get(book.id) ?? null;
+          const presented = presentBookWithCoverSrc(book, progress, coverSrc);
+          const hasLocalAsset = hasBookLocalAsset(book);
+          const badges = [{ kind: "subtype" as const, label: presented.subtypeLabel }];
+          if (!hasLocalAsset) {
+            badges.push({ kind: "status" as const, label: "Missing file" });
+          }
+          const metaChips = [presented.sectionCountLabel];
+          if (!hasLocalAsset) {
+            metaChips.push("Metadata only");
+          }
 
-      return {
-        id: createBookLibraryCardId(book.id),
-        title: presented.title,
-        subtitle: presented.authorLabel,
-        coverSrc: presented.coverSrc,
-        coverFit: "cover" as const,
-        badges,
-        metaChips,
-        progress: presented.showProgress
-          ? {
-              primaryLabel: presented.progressSummary,
-              secondaryLabel: presented.readPercentLabel,
-              percent: presented.readPercent,
-            }
-          : null,
-        selectable: false,
-        selected: false,
-        disabled: !hasLocalAsset,
-      };
-    }),
+          return {
+            id: createBookLibraryCardId(book.id),
+            title: presented.title,
+            subtitle: presented.authorLabel,
+            coverSrc: presented.coverSrc,
+            coverFit: "cover" as const,
+            badges,
+            metaChips,
+            progress: presented.showProgress
+              ? {
+                  primaryLabel: presented.progressSummary,
+                  secondaryLabel: presented.readPercentLabel,
+                  percent: presented.readPercent,
+                }
+              : null,
+            selectable: false,
+            selected: false,
+            disabled: !hasLocalAsset,
+          };
+        }),
     dragDropEnabled: input.typeFilter !== "sources",
     importing: input.importing ?? false,
     dropActive: input.dropActive ?? false,

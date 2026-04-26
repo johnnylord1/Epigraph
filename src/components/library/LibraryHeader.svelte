@@ -1,14 +1,16 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import { BookOpen, Stack } from "phosphor-svelte";
   import type { LibrarySectionKind, LibrarySectionTabVM } from "../../lib/library/contracts";
+  import AppTopbar from "../layout/AppTopbar.svelte";
+  import WindowControlsInline from "../layout/WindowControlsInline.svelte";
 
   type Props = {
     heading?: string;
     sectionTabs: LibrarySectionTabVM[];
     headerControls?: Snippet;
+    centerContent?: Snippet;
     collections?: Snippet;
-    toolbar?: Snippet;
+    children?: Snippet;
     onSectionChange?: (section: LibrarySectionKind) => void;
   };
 
@@ -16,45 +18,51 @@
     heading = "Library",
     sectionTabs,
     headerControls,
+    centerContent,
     collections,
-    toolbar,
+    children,
     onSectionChange = () => {},
   }: Props = $props();
 </script>
 
 <div class="header">
-  <div class="header-top">
-    <div class="header-left">
-      <span class="heading">{heading}</span>
-      <div class="tabs section-tabs" aria-label={`${heading} sections`}>
+  <AppTopbar className="library-header-topbar">
+    {#snippet left()}
+      <div class="header-left">
+      <nav class="n-segmented section-tabs" aria-label={`${heading} sections`} data-active={sectionTabs.find((tab) => tab.active)?.id ?? "comics"}>
+        <span class="n-segmented__thumb" aria-hidden="true"></span>
         {#each sectionTabs as tab}
           <button
             type="button"
-            class="tab section-tab"
-            class:active={tab.active}
+            class="n-segmented__btn section-tab"
+            class:is-active={tab.active}
             onclick={() => onSectionChange(tab.id)}
             aria-pressed={tab.active}
           >
-            {#if tab.icon === "stack"}
-              <Stack size={11} weight="bold" />
-            {:else}
-              <BookOpen size={11} weight="bold" />
-            {/if}
             {tab.label}
           </button>
         {/each}
-      </div>
+      </nav>
       {@render headerControls?.()}
-    </div>
-    <div class="header-right">
-      {@render toolbar?.()}
-    </div>
-  </div>
+      </div>
+    {/snippet}
+    {#snippet center()}
+      <div class="header-center">
+        {@render centerContent?.()}
+      </div>
+    {/snippet}
+    {#snippet right()}
+      <div class="header-right">
+      <WindowControlsInline />
+      </div>
+    {/snippet}
+  </AppTopbar>
   {#if collections}
     <div class="header-bottom">
       {@render collections?.()}
     </div>
   {/if}
+  {@render children?.()}
 </div>
 
 <style>
@@ -62,89 +70,49 @@
     position: relative;
     z-index: 4;
     display: flex;
-    display: flex;
     flex-direction: column;
     align-items: stretch;
-    padding: var(--sp-4) var(--sp-6);
-    border-bottom: 1px solid var(--border-dim);
-    gap: var(--sp-3);
     flex-shrink: 0;
+    padding-top: var(--n-topbar-height);
   }
 
-  .header-top {
-    display: flex;
+  .header :global(.library-header-topbar) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     align-items: center;
-    justify-content: space-between;
-    gap: var(--sp-4);
-    flex-wrap: wrap;
+    gap: calc(16px * var(--n-hud-scale));
   }
 
   .header-left,
   .header-right,
+  .header-center,
   .header-bottom {
     display: flex;
     align-items: center;
     gap: var(--sp-3);
-    flex-wrap: wrap;
+    width: 100%;
+    min-width: 0;
+    flex-wrap: nowrap;
+    -webkit-app-region: no-drag;
   }
 
   .header-right {
     justify-content: flex-end;
-    margin-left: auto;
+    z-index: 2;
+  }
+
+  .header-center {
+    justify-content: center;
+    width: 100%;
   }
 
   .header-bottom {
     min-height: 0;
-  }
-
-  .heading {
-    font-family: var(--font-ui);
-    font-size: var(--text-xs);
-    color: var(--text-faint);
-    letter-spacing: var(--tracking-wider);
-    text-transform: uppercase;
-    flex-shrink: 0;
-  }
-
-  .tabs {
-    display: flex;
-    gap: 2px;
-    background: var(--bg-raised);
-    border: 1px solid var(--border-dim);
-    border-radius: var(--radius-md);
-    padding: 2px;
-  }
-
-  .section-tabs {
-    background: var(--bg-overlay);
-    border-color: var(--border-base);
-  }
-
-  .tab {
+    padding: 0 28px calc(22px * var(--n-hud-scale));
+    margin-bottom: calc(2px * var(--n-hud-scale));
     display: flex;
     align-items: center;
-    gap: 5px;
-    font-family: var(--font-ui);
-    font-size: var(--text-2xs);
-    letter-spacing: var(--tracking-wide);
-    text-transform: uppercase;
-    padding: 4px 10px;
-    border-radius: var(--radius-sm);
-    color: var(--text-faint);
-    white-space: nowrap;
-    transition: background var(--t-base), color var(--t-base), border-color var(--t-base);
-    background: transparent;
-    border: 1px solid transparent;
-    cursor: pointer;
-  }
-
-  .tab:hover {
-    color: var(--text-muted);
-  }
-
-  .tab.active {
-    background: var(--accent-muted);
-    color: var(--accent-fg);
-    border-color: var(--accent-dim);
+    width: 100%;
+    min-width: 0;
   }
 </style>

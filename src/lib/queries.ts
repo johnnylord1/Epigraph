@@ -466,6 +466,27 @@ export const CLEAR_DOWNLOADER = `
 
 // ── Sources ───────────────────────────────────────────────────────────────────
 
+export const REORDER_DOWNLOAD = `
+  mutation ReorderDownload($chapterId: Int!, $to: Int!) {
+    reorderChapterDownload(input: { chapterId: $chapterId, to: $to }) {
+      downloadStatus {
+        state
+        queue {
+          progress
+          state
+          chapter {
+            id
+            name
+            pageCount
+            mangaId
+            manga { id title thumbnailUrl }
+          }
+        }
+      }
+    }
+  }
+`;
+
 export const GET_SOURCES = `
   query GetSources {
     sources {
@@ -486,9 +507,14 @@ export const FETCH_SOURCE_MANGA = `
     fetchSourceManga(input: { source: $source, type: $type, page: $page, query: $query }) {
       mangas {
         id
-        title
-        thumbnailUrl
-        inLibrary
+          title
+          thumbnailUrl
+          inLibrary
+          status
+          source {
+            id
+            displayName
+        }
       }
       hasNextPage
     }
@@ -831,12 +857,14 @@ export const GET_ALL_TRACKER_RECORDS = `
   query GetAllTrackerRecords {
     trackers {
       nodes {
-        id
-        name
-        icon
-        isLoggedIn
-        scores
-        statuses { value name }
+          id
+          name
+          icon
+          isLoggedIn
+          authUrl
+          supportsPrivateTracking
+          scores
+          statuses { value name }
         trackRecords {
           nodes {
             id

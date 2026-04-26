@@ -25,27 +25,30 @@ describe("LibraryShell", () => {
     };
 
     const onSectionChange = vi.fn();
-    const onCollectionSelect = vi.fn();
-
     render(LibraryShell, {
       props: {
         sectionTabs,
         collections,
         toolbar,
+        displaySettings: {
+          viewMode: "grid",
+          preferredColumns: "auto",
+          showProgress: true,
+          showOutline: true,
+        },
         branchesEnabled: false,
         sortDefaultMode: "az",
         sortDefaultDir: "asc",
         filterDefaultValue: "ALL",
         onSectionChange,
-        onCollectionSelect,
       },
     });
 
-    expect(screen.getByText("Library")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Comics/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Books/i })).toBeTruthy();
+    expect(screen.getByPlaceholderText("Search")).toBeTruthy();
     await fireEvent.click(screen.getByRole("button", { name: /Books/i }));
-    await fireEvent.click(screen.getByRole("button", { name: /Saved/i }));
 
     expect(onSectionChange).toHaveBeenCalledWith("books");
-    expect(onCollectionSelect).toHaveBeenCalledWith("library");
   });
 });

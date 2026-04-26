@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { slide } from "svelte/transition";
-  import { X, Book, Image, Sliders, Info, Keyboard, Gear, HardDrives, FolderSimple, Plus, Pencil, Trash, Wrench, PaintBrush, ListChecks, Lock, Eye, EyeSlash, Star, ShieldCheck, Tag, CaretDown } from "phosphor-svelte";
+  import { X, Book, Image, Sliders, Info, Keyboard, Gear, HardDrives, FolderSimple, Plus, Pencil, Trash, Wrench, PaintBrush, ListChecks, Lock, Eye, EyeSlash, Star, ShieldCheck, Tag, CaretDown, MagnifyingGlass } from "phosphor-svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { getVersion } from "@tauri-apps/api/app";
@@ -17,19 +17,13 @@
     type LocalProfileId,
   } from "../../lib/localProfiles";
   import { getEffectiveServerUrl } from "../../lib/serverTarget";
-  import { parseMihonBackup } from "../../lib/backup/mihonBackup";
-  import {
-    AETHON_BACKUP_EXTENSION,
-    buildAethonBackupContainer,
-    type AethonBackupPayloadBuildInput,
-  } from "../../lib/backup/aethonBackup";
-  import {
-    buildAethonRestorePlan,
-    type AethonPayloadRestorePlan,
-    type AethonRestorePlan,
-    type AethonRestorePlannerRuntime,
+  import type { AethonBackupPayloadBuildInput } from "../../lib/backup/aethonBackup";
+  import { parseAethonAppPayload } from "../../lib/backup/appBackup";
+  import type {
+    AethonPayloadRestorePlan,
+    AethonRestorePlan,
+    AethonRestorePlannerRuntime,
   } from "../../lib/backup/aethonRestorePlanner";
-  import { buildAethonAppPayload } from "../../lib/backup/appBackup";
   import {
     buildRestoreRelaunchArgs,
     currentProfileSupportsOtherLocalTarget,
@@ -48,30 +42,15 @@
     type BackupLaunchIntent,
     type RestoreTargetMode,
   } from "../../lib/backup/backupRollout";
-  import { buildAethonBooksPayload, restoreAethonBooksPayload } from "../../lib/backup/booksBackup";
-  import { extractAethonMangaPayloadFile, buildAethonMangaPayload } from "../../lib/backup/mangaBackup";
-  import {
-    buildAethonNovelsPayload,
-    restoreAethonNovelsPayload,
-    type AethonNovelRuntimeState,
-  } from "../../lib/backup/novelsBackup";
-  import {
-    applyRestoredNovelsProfileSnapshot,
-    loadNovelsProfileSnapshot,
-    resolveNovelsProfileScope,
-  } from "../../lib/backup/novelsProfileState";
+  import type { AethonNovelRuntimeState } from "../../lib/backup/novelsBackup";
   import { findMissingSourceExtensionSuggestions, type MissingSourceExtensionSuggestion } from "../../lib/extensionSourceMap";
-  import { GET_CATEGORIES, CREATE_CATEGORY, UPDATE_CATEGORY, DELETE_CATEGORY, UPDATE_CATEGORY_ORDER, GET_SOURCES, GET_EXTENSIONS, GET_SETTINGS } from "../../lib/queries";
+  import { normalizeCategories } from "../../lib/library/categories";
+  import { GET_CATEGORIES, CREATE_CATEGORY, UPDATE_CATEGORY, DELETE_CATEGORY, UPDATE_CATEGORY_ORDER, GET_LIBRARY, GET_LIBRARY_TRACKING_SUMMARY, GET_SOURCES } from "../../lib/queries";
   import { GET_DOWNLOADS_PATH, SET_DOWNLOADS_PATH, SET_LOCAL_SOURCE_PATH, GET_TRACKERS, LOGIN_TRACKER_OAUTH, LOGIN_TRACKER_CREDENTIALS, LOGOUT_TRACKER, GET_TRACKER_RECORDS, GET_SERVER_SECURITY, SET_SERVER_AUTH, SET_SOCKS_PROXY, SET_FLARESOLVERR, CREATE_BACKUP, RESTORE_BACKUP, GET_RESTORE_STATUS, UPDATE_EXTENSION } from "../../lib/queries";
-  import { analyzeBackupReconciliation, overlayEntryFromAnalysis } from "../../lib/reconciliation/analyze";
-  import { readOverlayFile, upsertOverlayEntry } from "../../lib/reconciliation/overlay";
   import { buildRestoreReadiness } from "../../lib/reconciliation/readiness";
-  import { loadSourceInventory } from "../../lib/reconciliation/sourceInventory";
-  import { buildReconciledBackupFile } from "../../lib/reconciliation/restore";
   import { normalizeTrackerOAuthInput, trackerOAuthParamName } from "../../lib/trackerOAuth";
   import type { Category, Source, Extension } from "../../lib/types";
   import { BOOKS_FILTER_OPTIONS } from "../../lib/library/booksSection";
-  import { readFileAsArrayBuffer } from "../../lib/books/storage";
   import {
     countBooksForCategory,
     createBooksCategory,
@@ -81,23 +60,27 @@
     renameBooksCategory,
     sortBooksCategories,
   } from "../../lib/library/domainCategories";
-  import LibraryDensityRail from "../library/LibraryDensityRail.svelte";
-  import { store, updateSettings, resetKeybinds, clearHistory, wipeAllData, setSettingsOpen, setRuntimeSettingsTab, deleteCustomTheme, toggleHiddenCategory, setCategories, addToast, openSearchSources, replaceBooksState } from "../../store/state.svelte";
+  import splashMark from "../../assets/aethon-splash-mark.png";
+  import AppTopbar from "../layout/AppTopbar.svelte";
+  import WindowControlsInline from "../layout/WindowControlsInline.svelte";
+  import SyncdConnectionPanel from "./SyncdConnectionPanel.svelte";
+  import { store, updateSettings, resetSettings, resetKeybinds, clearHistory, wipeAllData, setSettingsOpen, setRuntimeSettingsTab, deleteCustomTheme, toggleHiddenCategory, setCategories, setLibraryMangaSnapshot, setLibraryTrackingSummarySnapshot, addToast, openSearchSources, replaceAppReadingState, replaceBooksState, DEFAULT_READING_STATS } from "../../store/state.svelte";
   import { cache } from "../../lib/cache";
   import { KEYBIND_LABELS, DEFAULT_KEYBINDS, eventToKeybind } from "../../lib/keybinds";
-  import type { Settings, FitMode, Theme, BooksCategory, BooksLibraryStatusFilter, BooksLibraryTypeFilter, RuntimeSettingsTab } from "../../store/state.svelte";
+  import type { HistoryEntry, ReadLogEntry, ReadingStats, Settings, FitMode, Theme, BooksCategory, BooksLibraryStatusFilter, BooksLibraryTypeFilter, RuntimeSettingsTab } from "../../store/state.svelte";
   import type { Keybinds } from "../../lib/keybinds";
   import type { Tracker } from "../../lib/types";
   import type { AvailableExtensionEntry, OverlayEntry, ParsedBackup, ReconciliationAnalysis, ReconciliationClusterResult, RestoreReadinessSummary, SourceInventoryEntry } from "../../lib/reconciliation/types";
+  import { SETTINGS_AETHON_BACKUP_EXTENSION, loadSettingsStorageRuntime } from "./settingsStorageRuntime";
   interface Props {
     onOpenThemeEditor?: (id?: string | null) => void;
     backupAuditPlan?: AethonRestorePlan | null;
     backupRestoreLaunchIntent?: BackupLaunchIntent | null;
   }
   let { onOpenThemeEditor, backupAuditPlan = null, backupRestoreLaunchIntent = null }: Props = $props();
-  type Tab = "general" | "appearance" | "reader" | "library" | "performance" | "keybinds" | "storage" | "folders" | "tracking" | "security" | "content" | "about" | "devtools";
-  type SettingsGroupId = "app" | "reading" | "library-group" | "content-integrations" | "system" | "advanced";
-  type SettingsNavItem = { id: Tab; label: string; icon: any };
+  type Tab = "general" | "appearance" | "reader" | "library" | "performance" | "keybinds" | "storage" | "categories" | "tracking" | "security" | "content" | "about" | "devtools";
+  type SettingsGroupId = "app" | "reader-library" | "content" | "system" | "advanced";
+  type SettingsNavItem = { id: Tab; label: string; desc: string; icon: any };
   type SettingsNavGroup = { id: SettingsGroupId; label: string; icon: any; items: SettingsNavItem[] };
   type FlareTestState = "idle" | "testing" | "ready" | "not-reachable" | "check-url";
   type DockerFlareSolverrStatus = {
@@ -119,35 +102,28 @@
       label: "App",
       icon: Gear,
       items: [
-        { id: "general",    label: "General",    icon: Gear       },
-        { id: "appearance", label: "Appearance", icon: PaintBrush },
-        { id: "keybinds",   label: "Keybinds",   icon: Keyboard   },
+        { id: "general",    label: "General",    desc: "Core desktop behavior, launch flow, profiles and everyday shell defaults.", icon: Gear       },
+        { id: "appearance", label: "Appearance", desc: "Theme, surfaces, accent tuning and visual polish.",                            icon: PaintBrush },
+        { id: "keybinds",   label: "Keybinds",   desc: "Keyboard shortcuts and desktop interaction patterns.",                         icon: Keyboard   },
       ],
     },
     {
-      id: "reading",
-      label: "Reading",
+      id: "reader-library",
+      label: "Reader & Library",
       icon: Book,
       items: [
-        { id: "reader",     label: "Reader",     icon: Book       },
+        { id: "reader",     label: "Reader",     desc: "Reading modes, direction, zoom and chapter flow defaults.",  icon: Book         },
+        { id: "library",    label: "Library",    desc: "Card density, overlays, layout defaults and browsing behavior.", icon: Image     },
+        { id: "categories", label: "Categories", desc: "Comics and books category management.",                      icon: FolderSimple },
       ],
     },
     {
-      id: "library-group",
-      label: "Library",
-      icon: FolderSimple,
-      items: [
-        { id: "library",    label: "Library",    icon: Image        },
-        { id: "folders",    label: "Categories", icon: FolderSimple },
-      ],
-    },
-    {
-      id: "content-integrations",
+      id: "content",
       label: "Content & Integrations",
       icon: ShieldCheck,
       items: [
-        { id: "content",    label: "Content",    icon: ShieldCheck },
-        { id: "tracking",   label: "Tracking",   icon: ListChecks  },
+        { id: "content",    label: "Content",    desc: "Blocked tags, source visibility and NSFW controls.", icon: ShieldCheck },
+        { id: "tracking",   label: "Tracking",   desc: "Connected tracking providers and sync state.",        icon: ListChecks  },
       ],
     },
     {
@@ -155,9 +131,9 @@
       label: "System",
       icon: HardDrives,
       items: [
-        { id: "storage",     label: "Storage",     icon: HardDrives },
-        { id: "performance", label: "Performance", icon: Sliders    },
-        { id: "security",    label: "Security",    icon: Lock       },
+        { id: "storage",     label: "Storage",     desc: "Paths, usage, backup and local content management.",     icon: HardDrives },
+        { id: "performance", label: "Performance", desc: "GPU usage, rendering limits and runtime responsiveness.", icon: Sliders    },
+        { id: "security",    label: "Security",    desc: "PIN, proxy, FlareSolverr and trust-sensitive settings.", icon: Lock       },
       ],
     },
     {
@@ -165,20 +141,134 @@
       label: "Advanced",
       icon: Wrench,
       items: [
-        { id: "about",      label: "About",      icon: Info   },
-        { id: "devtools",   label: "Dev Tools",  icon: Wrench },
+        { id: "about",      label: "About",      desc: "Version, update flow and project information.", icon: Info   },
+        { id: "devtools",   label: "Dev Tools",  desc: "Debug actions and internal preview helpers.",   icon: Wrench },
       ],
     },
   ];
   const TAB_LABELS: Record<Tab, string> = Object.fromEntries(
     SETTINGS_GROUPS.flatMap((group) => group.items.map((item) => [item.id, item.label] as const))
   ) as Record<Tab, string>;
+  const TAB_DESCRIPTIONS: Record<Tab, string> = {
+    general: "App defaults, profiles, startup behavior, and language preferences.",
+    appearance: "Theme, motion, and shell presentation across the desktop app.",
+    reader: "Reading defaults and layout controls shared by the active reader surfaces.",
+    library: "Library density, browse behavior, and presentation defaults.",
+    performance: "Runtime controls that affect startup, caching, and responsiveness.",
+    keybinds: "Keyboard shortcuts and remappable desktop actions.",
+    storage: "Downloads, imports, backup, restore, and profile-scoped data.",
+    categories: "Books category organization and assignment rules.",
+    tracking: "Tracker sign-in and progress integration settings.",
+    security: "Server auth, proxying, and request hardening options.",
+    content: "Source filtering, blocked tags and content visibility rules.",
+    about: "Versioning, releases, and update entry points.",
+    devtools: "Internal diagnostics and developer-only surfaces.",
+  };
   const TAB_TO_GROUP: Record<Tab, SettingsGroupId> = Object.fromEntries(
     SETTINGS_GROUPS.flatMap((group) => group.items.map((item) => [item.id, group.id] as const))
   ) as Record<Tab, SettingsGroupId>;
   const DEFAULT_TAB_BY_GROUP: Record<SettingsGroupId, Tab> = Object.fromEntries(
     SETTINGS_GROUPS.map((group) => [group.id, group.items[0].id] as const)
   ) as Record<SettingsGroupId, Tab>;
+  const SETTINGS_SEARCH_KEYWORDS: Record<Tab, string[]> = {
+    general: ["interface scale", "profile", "server", "autostart", "idle", "discord", "language", "startup", "zoom"],
+    appearance: ["theme", "oled", "accent", "visual", "surface", "custom themes", "editor"],
+    keybinds: ["keyboard", "shortcuts", "bindings", "keys", "reset"],
+    reader: ["reading", "direction", "fit", "zoom", "page style", "bookmarks"],
+    library: ["density", "layout", "cards", "library", "books", "browse"],
+    categories: ["categories", "folders", "hidden", "books categories", "assignments"],
+    content: ["blocked tags", "nsfw", "sources", "allowed", "blocked", "repositories"],
+    tracking: ["tracker", "oauth", "credentials", "sync", "anilist", "mal", "provider"],
+    storage: ["downloads", "paths", "backup", "restore", "reconciliation", "scan", "disk"],
+    performance: ["gpu", "render", "prefetch", "cache", "performance", "webview"],
+    security: ["pin", "proxy", "auth", "socks", "flaresolverr", "security"],
+    about: ["version", "release", "update", "github", "discord", "about"],
+    devtools: ["debug", "splash", "dev", "build info", "tools"],
+  };
+  const SETTINGS_SEARCHABLE_SELECTOR = [
+    ".section-title",
+    ".toggle-label",
+    ".toggle-desc",
+    ".kb-label",
+    ".folder-row-name",
+    ".folder-row-count",
+    ".tracker-label",
+    ".tracker-status-pill",
+    ".about-line",
+    ".theme-card-label",
+    ".theme-card-desc",
+    ".profile-status-label",
+    ".profile-status-value",
+    ".profile-status-meta",
+    ".content-source-name",
+    ".content-source-lang",
+    ".content-tag",
+    ".settings-mini-row__label",
+    ".settings-mini-row__hint",
+  ].join(", ");
+  type PaneRenderPolicy = {
+    shell: "mounted";
+    subtree: "mounted" | "lazy";
+    continuity: string[];
+  };
+  const SETTINGS_PANE_RENDER_POLICY: Record<Tab, PaneRenderPolicy> = {
+    general: { shell: "mounted", subtree: "mounted", continuity: [] },
+    appearance: { shell: "mounted", subtree: "mounted", continuity: [] },
+    keybinds: { shell: "mounted", subtree: "mounted", continuity: [] },
+    reader: { shell: "mounted", subtree: "mounted", continuity: [] },
+    library: { shell: "mounted", subtree: "mounted", continuity: [] },
+    categories: { shell: "mounted", subtree: "mounted", continuity: [] },
+    content: { shell: "mounted", subtree: "mounted", continuity: [] },
+    tracking: {
+      shell: "mounted",
+      subtree: "lazy",
+      continuity: ["selection", "filters", "oauth state", "provider context"],
+    },
+    storage: {
+      shell: "mounted",
+      subtree: "lazy",
+      continuity: ["scroll", "selection", "filters", "expansion state", "toolbar context"],
+    },
+    performance: { shell: "mounted", subtree: "mounted", continuity: [] },
+    security: { shell: "mounted", subtree: "mounted", continuity: [] },
+    about: { shell: "mounted", subtree: "mounted", continuity: [] },
+    devtools: { shell: "mounted", subtree: "mounted", continuity: [] },
+  };
+  const LAZY_TAB_SUBTREES = new Set<Tab>(
+    (Object.entries(SETTINGS_PANE_RENDER_POLICY) as Array<[Tab, PaneRenderPolicy]>)
+      .filter(([, policy]) => policy.subtree === "lazy")
+      .map(([pane]) => pane),
+  );
+  const INITIAL_PANE_SCROLL_TOP: Record<Tab, number> = {
+    general: 0,
+    appearance: 0,
+    keybinds: 0,
+    reader: 0,
+    library: 0,
+    categories: 0,
+    content: 0,
+    tracking: 0,
+    storage: 0,
+    performance: 0,
+    security: 0,
+    about: 0,
+    devtools: 0,
+  };
+  const INITIAL_PANE_HYDRATION: Record<Tab, boolean> = {
+    general: true,
+    appearance: true,
+    keybinds: true,
+    reader: true,
+    library: true,
+    categories: true,
+    content: true,
+    tracking: false,
+    storage: false,
+    performance: true,
+    security: true,
+    about: true,
+    devtools: true,
+  };
   const IDLE_TIMEOUT_LABELS: Record<string, string> = {
     "0": "Never",
     "1": "1 minute",
@@ -222,6 +312,51 @@
     const normalized = value ?? "width";
     return FIT_MODE_LABELS[normalized] ?? FIT_MODE_LABELS.width;
   }
+  type UiDensityMode = "compact" | "default" | "comfort";
+
+  function uiDensityMode(value: number | null | undefined): UiDensityMode {
+    const zoom = value ?? 1.0;
+    if (zoom <= 0.95) return "compact";
+    if (zoom >= 1.05) return "comfort";
+    return "default";
+  }
+
+  function applyUiDensity(mode: UiDensityMode) {
+    updateSettings({
+      uiZoom: mode === "compact" ? 0.9 : mode === "comfort" ? 1.1 : 1.0,
+    });
+  }
+
+  function libraryDensityLabel(value: Settings["libraryPreferredGridColumns"]): string {
+    return value === "auto" ? "Auto" : `${value} cols`;
+  }
+  const LIBRARY_DENSITY_OPTIONS: Settings["libraryPreferredGridColumns"][] = ["auto", 4, 5, 6, 7, 8, 9, 10, 11, 12];
+  function libraryDensityOptionLabel(value: Settings["libraryPreferredGridColumns"]): string {
+    return value === "auto" ? "Auto" : String(value);
+  }
+  function getLibraryDensityOptionIndex(value: Settings["libraryPreferredGridColumns"]): number {
+    return LIBRARY_DENSITY_OPTIONS.findIndex((option) => option === value);
+  }
+  function libraryDensityOptionFromIndex(index: number): Settings["libraryPreferredGridColumns"] {
+    const clampedIndex = Math.max(0, Math.min(LIBRARY_DENSITY_OPTIONS.length - 1, index));
+    return LIBRARY_DENSITY_OPTIONS[clampedIndex];
+  }
+  function getLibraryDensitySliderProgress(value: Settings["libraryPreferredGridColumns"]): string {
+    const maxIndex = Math.max(1, LIBRARY_DENSITY_OPTIONS.length - 1);
+    return String(getLibraryDensityOptionIndex(value) / maxIndex);
+  }
+
+  function renderLimitLabel(value: number | null | undefined): string {
+    return `${value ?? 48} items`;
+  }
+
+  function themeLabel(value: string | null | undefined): string {
+    const normalized = value ?? "dark";
+    const builtIn = THEMES.find((theme) => theme.id === normalized);
+    if (builtIn) return builtIn.label;
+    const custom = (store.settings.customThemes ?? []).find((theme) => theme.id === normalized);
+    return custom?.name ?? "Dark";
+  }
   const THEMES: { id: Theme; label: string; description: string; swatches: string[] }[] = [
     { id: "dark",           label: "Dark",           description: "Default near-black",            swatches: ["#101010","#151515","#a8c4a8","#f0efec"] },
     { id: "high-contrast",  label: "High Contrast",  description: "Darker base, sharper text",     swatches: ["#080808","#111111","#bcd8bc","#ffffff"] },
@@ -234,24 +369,224 @@
   let tab: Tab          = $state("general");
   let activeGroup: SettingsGroupId = $state("app");
   let contentBodyEl: HTMLDivElement;
+  let settingsSearchInputEl: HTMLInputElement | null = $state(null);
   let backupSectionEl: HTMLDivElement | undefined = $state();
   let backupSectionScrollKey = $state<string | null>(null);
+  let paneScrollTop = $state<Record<Tab, number>>({ ...INITIAL_PANE_SCROLL_TOP });
+  let paneHydrated = $state<Record<Tab, boolean>>({ ...INITIAL_PANE_HYDRATION });
+  let settingsSearchQuery = $state("");
+  let settingsSearchAnnouncement = $state("");
+  let settingsSearchFocused = $state(false);
+  let activeSettingsSearchHit: HTMLElement | null = null;
+  let categoriesDetailsPane = $state<"comics" | "books" | null>(null);
+  let contentSourceRulesOpen = $state(false);
+  let contentSourceRulesMode = $state<"allowed" | "blocked">("allowed");
+  let trackingSyncdOpen = $state(false);
+  let aboutReleasesOpen = $state(false);
+  let securityDetailPane = $state<"auth" | "socks" | "flare" | "pin" | "syncd" | null>(null);
   const currentGroup = $derived.by(
     () => SETTINGS_GROUPS.find((group) => group.id === activeGroup) ?? SETTINGS_GROUPS[0]
   );
+  const currentTabMeta = $derived.by(
+    () => {
+      const item = currentGroup.items.find((entry) => entry.id === tab) ?? currentGroup.items[0];
+      return {
+        ...item,
+        desc: TAB_DESCRIPTIONS[item.id],
+      };
+    }
+  );
+  function normalizeRuntimeSettingsTab(requestedTab: RuntimeSettingsTab | null): Tab | null {
+    if (!requestedTab) return null;
+    if (requestedTab === "folders") return "categories";
+    return requestedTab as Tab;
+  }
+  function ensurePaneHydrated(nextTab: Tab) {
+    if (!LAZY_TAB_SUBTREES.has(nextTab) || paneHydrated[nextTab]) return;
+    paneHydrated = { ...paneHydrated, [nextTab]: true };
+  }
+  function rememberPaneScroll() {
+    if (!contentBodyEl) return;
+    paneScrollTop = { ...paneScrollTop, [tab]: contentBodyEl.scrollTop };
+  }
+  function restorePaneScroll(nextTab: Tab) {
+    tick().then(() => contentBodyEl?.scrollTo({ top: paneScrollTop[nextTab] ?? 0 }));
+  }
+  function openTab(nextTab: Tab) {
+    if (nextTab === tab) return;
+    rememberPaneScroll();
+    ensurePaneHydrated(nextTab);
+    tab = nextTab;
+    activeGroup = TAB_TO_GROUP[nextTab];
+    selectOpen = null;
+    restorePaneScroll(nextTab);
+  }
+  function shouldRenderPane(nextTab: Tab) {
+    return !LAZY_TAB_SUBTREES.has(nextTab) || paneHydrated[nextTab];
+  }
   $effect(() => { activeGroup = TAB_TO_GROUP[tab]; });
   $effect(() => {
-    const requestedTab = store.runtimeSettingsTab as RuntimeSettingsTab | null;
+    const requestedTab = normalizeRuntimeSettingsTab(store.runtimeSettingsTab as RuntimeSettingsTab | null);
     if (requestedTab && requestedTab !== tab) {
-      tab = requestedTab as Tab;
-      activeGroup = TAB_TO_GROUP[tab];
+      ensurePaneHydrated(requestedTab);
+      tab = requestedTab;
+      activeGroup = TAB_TO_GROUP[requestedTab];
+      restorePaneScroll(requestedTab);
       setRuntimeSettingsTab(null);
     }
   });
-  $effect(() => { tab; tick().then(() => contentBodyEl?.scrollTo({ top: 0 })); });
   function openGroup(groupId: SettingsGroupId) {
     activeGroup = groupId;
-    if (TAB_TO_GROUP[tab] !== groupId) tab = DEFAULT_TAB_BY_GROUP[groupId];
+    if (TAB_TO_GROUP[tab] !== groupId) openTab(DEFAULT_TAB_BY_GROUP[groupId]);
+  }
+  function handleLibraryDensitySliderInput(event: Event) {
+    const nextIndex = Number((event.currentTarget as HTMLInputElement).value);
+    updateSettings({ libraryPreferredGridColumns: libraryDensityOptionFromIndex(nextIndex) });
+  }
+  async function openAppLogs() {
+    try {
+      await invoke("open_app_logs");
+    } catch (error) {
+      console.error("Failed to open app logs:", error);
+      addToast({ kind: "error", title: "Couldn't open the app logs." });
+    }
+  }
+  function clearSettingsSearchHighlight() {
+    if (!activeSettingsSearchHit) return;
+    activeSettingsSearchHit.classList.remove("is-search-hit");
+    activeSettingsSearchHit = null;
+  }
+  function normalizeSearchText(value: string | null | undefined) {
+    return value?.replace(/\s+/g, " ").trim().toLowerCase() ?? "";
+  }
+  function getSettingsPaneElement(targetTab: Tab) {
+    return document.querySelector(`.settings-pane[data-settings-pane="${targetTab}"]`) as HTMLElement | null;
+  }
+  function findSettingsSearchHit(targetTab: Tab, query: string) {
+    const pane = getSettingsPaneElement(targetTab);
+    if (!pane) return null;
+    const candidates = Array.from(pane.querySelectorAll<HTMLElement>(SETTINGS_SEARCHABLE_SELECTOR));
+    return candidates.find((candidate) => normalizeSearchText(candidate.textContent).includes(query)) ?? null;
+  }
+  const settingsSearchMatches = $derived.by(() => {
+    const query = normalizeSearchText(settingsSearchQuery);
+    if (!query) return [] as Array<{ tab: Tab; score: number }>;
+    return (Object.keys(TAB_LABELS) as Tab[])
+      .map((candidate) => {
+        const haystack = [
+          TAB_LABELS[candidate],
+          TAB_DESCRIPTIONS[candidate],
+          SETTINGS_SEARCH_KEYWORDS[candidate].join(" "),
+          TAB_TO_GROUP[candidate],
+        ].join(" ");
+        const normalizedHaystack = normalizeSearchText(haystack);
+        const exactBoost = normalizedHaystack.includes(query) ? 10 : 0;
+        const startsBoost = normalizeSearchText(TAB_LABELS[candidate]).startsWith(query) ? 8 : 0;
+        const keywordBoost = SETTINGS_SEARCH_KEYWORDS[candidate].some((term) => normalizeSearchText(term).includes(query)) ? 4 : 0;
+        return { tab: candidate, score: exactBoost + startsBoost + keywordBoost };
+      })
+      .filter((entry) => entry.score > 0)
+      .sort((left, right) => right.score - left.score);
+  });
+  function focusSettingsSearch() {
+    settingsSearchInputEl?.focus();
+    settingsSearchInputEl?.select();
+  }
+  function clearSettingsSearch() {
+    settingsSearchQuery = "";
+    settingsSearchAnnouncement = "";
+    clearSettingsSearchHighlight();
+    focusSettingsSearch();
+  }
+  function handleSettingsSearchFocusIn() {
+    settingsSearchFocused = true;
+  }
+  function handleSettingsSearchFocusOut(event: FocusEvent) {
+    const currentTarget = event.currentTarget as HTMLFormElement | null;
+    const nextTarget = event.relatedTarget as Node | null;
+    settingsSearchFocused = !!(currentTarget && nextTarget && currentTarget.contains(nextTarget));
+  }
+  function resetAllSettingsToDefaults() {
+    resetSettings();
+    listeningKey = null;
+    selectOpen = null;
+    settingsSearchQuery = "";
+    settingsSearchAnnouncement = "All settings were reset to defaults.";
+    clearSettingsSearchHighlight();
+    categoriesDetailsPane = null;
+    contentSourceRulesOpen = false;
+    contentSourceRulesMode = "allowed";
+    trackingSyncdOpen = false;
+    aboutReleasesOpen = false;
+    securityDetailPane = null;
+    advStorageOpen = false;
+    flareAdvancedOpen = false;
+    flareLocalOpen = false;
+    flareDockerOpen = false;
+    backupSavedPath = null;
+    backupError = null;
+    backupSectionScrollKey = null;
+    paneHydrated = { ...INITIAL_PANE_HYDRATION };
+    paneScrollTop = { ...INITIAL_PANE_SCROLL_TOP };
+    addToast({
+      kind: "success",
+      title: "Settings reset",
+      body: "All configuration values were restored to their defaults.",
+    });
+  }
+  function handleSettingsSearchInput() {
+    if (settingsSearchQuery.trim()) return;
+    settingsSearchAnnouncement = "";
+    clearSettingsSearchHighlight();
+  }
+  function handleSettingsSearchKeydown(event: KeyboardEvent) {
+    if (event.key !== "Escape" || !settingsSearchQuery.trim()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    clearSettingsSearch();
+  }
+  async function submitSettingsSearch(event: SubmitEvent) {
+    event.preventDefault();
+    const query = normalizeSearchText(settingsSearchQuery);
+    clearSettingsSearchHighlight();
+    if (!query) {
+      settingsSearchAnnouncement = "";
+      return;
+    }
+    const directMatch = findSettingsSearchHit(tab, query);
+    const targetTab = directMatch
+      ? tab
+      : settingsSearchMatches[0]?.tab ?? null;
+    if (!targetTab) {
+      settingsSearchAnnouncement = `No settings match ${settingsSearchQuery}.`;
+      return;
+    }
+    ensurePaneHydrated(targetTab);
+    if (targetTab !== tab) openTab(targetTab);
+    await tick();
+    const hit = findSettingsSearchHit(targetTab, query);
+    if (hit) {
+      hit.classList.add("is-search-hit");
+      activeSettingsSearchHit = hit;
+      hit.scrollIntoView({ block: "center", behavior: "smooth" });
+      settingsSearchAnnouncement = `Opened ${TAB_LABELS[targetTab]} for ${settingsSearchQuery}.`;
+      return;
+    }
+    contentBodyEl?.scrollTo({ top: 0, behavior: "smooth" });
+    settingsSearchAnnouncement = `Opened ${TAB_LABELS[targetTab]}.`;
+  }
+  const settingsSearchOverlayActive = $derived.by(() => settingsSearchFocused || settingsSearchQuery.trim().length > 0);
+
+  $effect(() => {
+    if (typeof document === "undefined") return;
+    const engaged = store.navPage === "settings" && settingsSearchOverlayActive;
+    document.body.classList.toggle("aethon-settings-search-engaged", engaged);
+    return () => {
+      document.body.classList.remove("aethon-settings-search-engaged");
+    };
+  });
+  async function getStorageRuntime() {
+    return loadSettingsStorageRuntime();
   }
   function setDefaultLocalProfile(profileId: LocalProfileId) {
     updateSettings({ defaultLocalProfileId: profileId });
@@ -287,8 +622,8 @@
   let clearing = $state(false);
   let cleared  = $state(false);
 
-  // â”€â”€ External server detection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  // A server is "external" if its URL doesn't point to localhost â€” in that case we
+  // Ã¢â€â‚¬Ã¢â€â‚¬ External server detection Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+  // A server is "external" if its URL doesn't point to localhost Ã¢â‚¬â€ in that case we
   // cannot invoke Tauri commands against its filesystem (path validation, disk usage,
   // migration). We can still read the server's paths via GraphQL, but we must never
   // overwrite the server's download directory config without the user explicitly asking.
@@ -319,12 +654,6 @@
   const otherLocalProfileMeta = $derived.by(
     () => getLocalProfileMeta(otherLocalProfileId)
   );
-  const novelsProfileScope = $derived.by(
-    () => resolveNovelsProfileScope({
-      profileId: currentRuntimeProfileId,
-      serverUrl: currentRuntimeServerUrl,
-    })
-  );
   const backupExecutionBlockedReason = $derived.by(
     () => executionBlockedReasonForProfile(currentRuntimeProfileId)
   );
@@ -337,7 +666,7 @@
   });
   const serverUrlManagedByProfile = $derived.by(() => Boolean(currentProfileMeta));
 
-  // â”€â”€ Download path editing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Download path editing Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   let downloadsPathInput    = $state(store.settings.serverDownloadsPath ?? "");
   let localSourcePathInput  = $state(store.settings.serverLocalSourcePath ?? "");
   let pathsSaving           = $state(false);
@@ -345,8 +674,8 @@
   let pathsFieldError: { dl?: string; loc?: string } = $state({});
   let pathsSaved            = $state(false);
 
-  // The actual resolved default path from Rust â€” shown as placeholder + scanned when dl path is empty.
-  // Only meaningful for local servers â€” Tauri can't stat a remote filesystem.
+  // The actual resolved default path from Rust Ã¢â‚¬â€ shown as placeholder + scanned when dl path is empty.
+  // Only meaningful for local servers Ã¢â‚¬â€ Tauri can't stat a remote filesystem.
   // Re-fetches reactively when the server URL changes (e.g. user switches to local).
   let defaultDownloadsPath  = $state("");
   $effect(() => {
@@ -357,11 +686,11 @@
     }
   });
 
-  // The last confirmed server paths â€” used to detect a change requiring migration
+  // The last confirmed server paths Ã¢â‚¬â€ used to detect a change requiring migration
   let confirmedDownloadsPath   = $state(store.settings.serverDownloadsPath ?? "");
   let confirmedLocalSourcePath = $state(store.settings.serverLocalSourcePath ?? "");
 
-  // â”€â”€ Migration state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Migration state Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   let migrateFrom: string | null   = $state(null); // old path that has content
   let migrateTo:   string | null   = $state(null); // new path
   let migrating                    = $state(false);
@@ -369,16 +698,61 @@
   let migrateError: string | null  = $state(null);
   let migrateUnlisten: (() => void) | null = null;
 
-  // â”€â”€ Extra scan directories (local-only, stored in app settings) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Extra scan directories (local-only, stored in app settings) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   let extraScanDirs: string[]   = $state([...(store.settings.extraScanDirs ?? [])]);
   let newScanDir                = $state("");
   let multiStorageInfos: (StorageInfo & { label: string })[] = $state([]);
   let advStorageOpen            = $state(false);
+  function openStorageAdvanced() {
+    advStorageOpen = true;
+  }
+  function openStorageBackupPanel() {
+    advStorageOpen = true;
+    void tick().then(() => {
+      backupSectionEl?.scrollIntoView({ block: "start", behavior: "smooth" });
+    });
+  }
+  const storageLimitBytes = $derived.by(() =>
+    store.settings.storageLimitGb === null ? null : store.settings.storageLimitGb * 1024 ** 3
+  );
+  const storageUsageSummary = $derived.by(() => {
+    const infos = multiStorageInfos.length > 0
+      ? multiStorageInfos
+      : storageInfo
+        ? [{ ...storageInfo, label: "Downloads" }]
+        : [];
+
+    if (infos.length === 0) {
+      return {
+        usedBytes: 0,
+        capBytes: 0,
+        pct: 0,
+        usageLabel: "No storage path configured.",
+        pathLabel: null as string | null,
+        freeLabel: null as string | null,
+      };
+    }
+
+    const usedBytes = infos.reduce((sum, info) => sum + info.manga_bytes, 0);
+    const capBytes = infos.reduce((sum, info) => {
+      const available = info.manga_bytes + info.free_bytes;
+      return sum + (storageLimitBytes === null ? available : Math.min(storageLimitBytes, available));
+    }, 0);
+    const freeBytes = infos.reduce((sum, info) => sum + info.free_bytes, 0);
+    return {
+      usedBytes,
+      capBytes,
+      pct: capBytes > 0 ? Math.min(100, (usedBytes / capBytes) * 100) : 0,
+      usageLabel: capBytes > 0 ? `${fmtBytes(usedBytes)} / ${fmtBytes(capBytes)}` : fmtBytes(usedBytes),
+      pathLabel: infos[0]?.path ?? null,
+      freeLabel: freeBytes > 0 ? `${fmtBytes(freeBytes)} free` : null,
+    };
+  });
 
   async function fetchStorage() {
     storageLoading = true; storageError = null;
     try {
-      // Always pull the current paths from the server via GQL â€” works for local and external.
+      // Always pull the current paths from the server via GQL Ã¢â‚¬â€ works for local and external.
       const pathData = await gql<{ settings: { downloadsPath: string; localSourcePath: string } }>(GET_DOWNLOADS_PATH);
       const dl  = pathData.settings.downloadsPath  ?? "";
       const loc = pathData.settings.localSourcePath ?? "";
@@ -389,13 +763,13 @@
       confirmedLocalSourcePath = loc;
       updateSettings({ serverDownloadsPath: dl, serverLocalSourcePath: loc });
 
-      // Disk usage scanning uses Tauri invoke â€” only possible when the server is local.
+      // Disk usage scanning uses Tauri invoke Ã¢â‚¬â€ only possible when the server is local.
       // For external servers we display the paths pulled above but skip the filesystem scan.
       if (isExternalServer) {
         multiStorageInfos = []; storageInfo = null; return;
       }
 
-      // When dl is empty the server uses the default path â€” scan that instead
+      // When dl is empty the server uses the default path Ã¢â‚¬â€ scan that instead
       const effectiveDl = dl || defaultDownloadsPath;
 
       const dirsToScan: { path: string; label: string }[] = [];
@@ -428,7 +802,7 @@
   }
 
   /** Validate a path exists on disk. Returns error string or null.
-   *  Only runs for local servers â€” we can't stat a remote filesystem via Tauri. */
+   *  Only runs for local servers Ã¢â‚¬â€ we can't stat a remote filesystem via Tauri. */
   async function validatePath(path: string): Promise<string | null> {
     if (!path.trim()) return null; // empty = use default, always valid
     if (isExternalServer) return null; // can't check remote paths locally
@@ -452,7 +826,7 @@
     pathsError = null; pathsFieldError = {};
 
     // Validate paths exist before touching the server (empty = use default = always valid).
-    // Skipped for external servers â€” we can't stat their filesystem.
+    // Skipped for external servers Ã¢â‚¬â€ we can't stat their filesystem.
     const [dlErr, locErr] = await Promise.all([validatePath(dl), validatePath(loc)]);
     if (dlErr || locErr) {
       pathsFieldError = { ...(dlErr ? { dl: dlErr } : {}), ...(locErr ? { loc: locErr } : {}) };
@@ -461,13 +835,13 @@
 
     pathsSaving = true;
     try {
-      // Send each mutation independently â€” localSourcePath rejects empty string server-side
+      // Send each mutation independently Ã¢â‚¬â€ localSourcePath rejects empty string server-side
       await gql(SET_DOWNLOADS_PATH, { path: dl });
       if (loc) await gql(SET_LOCAL_SOURCE_PATH, { path: loc });
 
       updateSettings({ serverDownloadsPath: dl, serverLocalSourcePath: loc });
 
-      // Migration requires local filesystem access â€” skip for external servers.
+      // Migration requires local filesystem access Ã¢â‚¬â€ skip for external servers.
       if (!isExternalServer) {
         const oldDl = confirmedDownloadsPath || defaultDownloadsPath;
         const newDl = dl || defaultDownloadsPath;
@@ -487,6 +861,25 @@
     } finally {
       pathsSaving = false;
     }
+  }
+
+  async function browseSettingsPath(kind: "downloads" | "local") {
+    if (isExternalServer) return;
+    const selected = await openDialog({
+      directory: true,
+      multiple: false,
+      defaultPath:
+        kind === "downloads"
+          ? (downloadsPathInput.trim() || defaultDownloadsPath || undefined)
+          : (localSourcePathInput.trim() || undefined),
+    });
+    if (typeof selected !== "string" || !selected.trim()) return;
+    if (kind === "downloads") {
+      downloadsPathInput = selected;
+    } else {
+      localSourcePathInput = selected;
+    }
+    await savePaths();
   }
 
   async function startMigration() {
@@ -566,11 +959,11 @@
   let backupUnifiedIncludeManga = $state(true);
   let backupUnifiedIncludeBooks = $state(true);
   let backupUnifiedIncludeNovels = $state(true);
-  let backupUnifiedIncludeApp = $state(false);
+  let backupUnifiedIncludeApp = $state(true);
   let backupBooksOnlyMetadataOnly = $state(false);
   let backupUnifiedPlan = $state<AethonRestorePlan | null>(null);
   let backupUnifiedSelection = $state<BackupExecutionSelection>({});
-  let backupRestoreTargetMode = $state<RestoreTargetMode>("other-local-profile");
+  let backupRestoreTargetMode = $state<RestoreTargetMode>("current-profile");
   let backupRestoreCurrentProfileConfirmed = $state(false);
   let backupRestoreHandoffSession = $state(false);
   let backupRestoreSourceProfileId = $state<LocalProfileId | null>(null);
@@ -578,10 +971,13 @@
   let backupLaunchIntentKey = $state<string | null>(null);
   let backupLastLegacyAnalysisPath: string | null = $state(null);
 
-  const backupNeedsReviewComplete = $derived(
-    !backupAnalysis
-      || backupAnalysis.needsReview.every((cluster) => backupReviewSelections[cluster.orphanSourceId]),
-  );
+  const backupNeedsReviewComplete = $derived.by<boolean>(() => {
+    const analysis = backupAnalysis;
+    if (!analysis) return true;
+    return analysis.needsReview.every(
+      (cluster: ReconciliationClusterResult) => !!backupReviewSelections[cluster.orphanSourceId],
+    );
+  });
   const backupReadiness = $derived.by<RestoreReadinessSummary | null>(() =>
     backupAnalysis
       ? buildRestoreReadiness(backupAnalysis, backupReviewSelections, backupInventory, backupAvailableExtensions)
@@ -737,37 +1133,34 @@
     backupRestoreCurrentProfileConfirmed = false;
     backupRestoreHandoffSession = false;
     backupRestoreSourceProfileId = null;
-    backupRestoreTargetMode = currentProfileSupportsOtherLocalTarget(currentRuntimeProfileId)
-      ? "other-local-profile"
-      : "current-profile";
+    backupRestoreTargetMode = "current-profile";
     resetLegacyBackupState();
     resetUnifiedBackupState();
   }
 
   async function loadNovelRuntimeState(): Promise<AethonNovelRuntimeState> {
-    const [settingsData, extensionsData, sourcesData] = await Promise.all([
-      gql<{ settings: { extensionRepos: string[] } }>(GET_SETTINGS),
-      gql<{ extensions: { nodes: Extension[] } }>(GET_EXTENSIONS),
-      gql<{ sources: { nodes: Source[] } }>(GET_SOURCES),
-    ]);
+    const storageRuntime = await getStorageRuntime();
+    const state = await storageRuntime.loadNovelRepositoryState({
+      profileId: currentRuntimeProfileId,
+      serverUrl: currentRuntimeServerUrl,
+    });
 
     return {
-      repositoryUrls: settingsData.settings.extensionRepos ?? [],
-      installedPluginIds: (extensionsData.extensions.nodes ?? [])
-        .filter((extension) => extension.isInstalled)
-        .map((extension) => extension.pkgName),
-      availableSourceIds: (sourcesData.sources.nodes ?? [])
-        .map((source) => source.id)
-        .filter((sourceId) => sourceId !== "0"),
+      repositoryUrls: state.repositories.map((repository) => repository.normalizedUrl),
+      installedPluginIds: state.installedPlugins
+        .filter((plugin) => plugin.enabled)
+        .map((plugin) => plugin.pluginId),
+      availableSourceIds: [...new Set(state.catalogEntries.map((entry) => entry.pluginId))],
     };
   }
 
   async function loadAethonRestoreRuntime(): Promise<AethonRestorePlannerRuntime> {
+    const storageRuntime = await getStorageRuntime();
     const [inventory, trackersData, novelsRuntime, overlay] = await Promise.all([
-      loadSourceInventory(),
+      storageRuntime.loadSourceInventory(),
       gql<{ trackers: { nodes: Tracker[] } }>(GET_TRACKERS),
       loadNovelRuntimeState(),
-      readOverlayFile(),
+      storageRuntime.readOverlayFile(),
     ]);
 
     return {
@@ -804,13 +1197,13 @@
       case "manga":
         return `aethon-manga-${stamp}.tachibk`;
       case "books":
-        return `aethon-books-${stamp}${AETHON_BACKUP_EXTENSION}`;
+        return `aethon-books-${stamp}${SETTINGS_AETHON_BACKUP_EXTENSION}`;
       case "novels":
-        return `aethon-novels-${stamp}${AETHON_BACKUP_EXTENSION}`;
+        return `aethon-novels-${stamp}${SETTINGS_AETHON_BACKUP_EXTENSION}`;
       case "app":
-        return `aethon-profile-${stamp}${AETHON_BACKUP_EXTENSION}`;
+        return `aethon-profile-${stamp}${SETTINGS_AETHON_BACKUP_EXTENSION}`;
       default:
-        return `aethon-unified-${stamp}${AETHON_BACKUP_EXTENSION}`;
+        return `aethon-unified-${stamp}${SETTINGS_AETHON_BACKUP_EXTENSION}`;
     }
   }
 
@@ -842,6 +1235,7 @@
   }
 
   async function buildSelectedExportBytes(): Promise<{ bytes: Uint8Array; defaultPath: string }> {
+    const storageRuntime = await getStorageRuntime();
     const appVersion = await getVersion().catch(() => null);
     const sourceProfileId = currentRuntimeProfileId ?? null;
 
@@ -854,21 +1248,19 @@
     }
 
     if (backupExportMode === "books") {
-      const built = await buildAethonBackupContainer({
+      const booksLibraryState = await storageRuntime.loadBookLibraryState();
+      const built = await storageRuntime.buildAethonBackupContainer({
         appVersion,
         platform: browserPlatform(),
         sourceSurface: "desktop",
         sourceProfileId,
         payloads: [
-          await buildAethonBooksPayload({
-            books: store.books,
-            bookProgress: store.bookProgress,
-            bookBookmarks: store.bookBookmarks,
-            booksCategories: store.settings.booksCategories,
-            booksCategoryAssignments: store.settings.booksCategoryAssignments,
-          }, {
+          await storageRuntime.buildAethonBooksPayload(
+            storageRuntime.buildAethonBooksSnapshotFromLibraryState(booksLibraryState),
+            {
             exportMode: backupBooksOnlyMetadataOnly ? "metadata-only" : "full",
-          }),
+            },
+          ),
         ],
       });
       return {
@@ -878,13 +1270,28 @@
     }
 
     if (backupExportMode === "novels") {
-      const built = await buildAethonBackupContainer({
+      const [novelLibraryState, novelRepositoryState] = await Promise.all([
+        storageRuntime.loadNovelLibraryState({
+          profileId: currentRuntimeProfileId,
+          serverUrl: currentRuntimeServerUrl,
+        }),
+        storageRuntime.loadNovelRepositoryState({
+          profileId: currentRuntimeProfileId,
+          serverUrl: currentRuntimeServerUrl,
+        }),
+      ]);
+      const built = await storageRuntime.buildAethonBackupContainer({
         appVersion,
         platform: browserPlatform(),
         sourceSurface: "desktop",
         sourceProfileId,
         payloads: [
-          await buildAethonNovelsPayload(loadNovelsProfileSnapshot(novelsProfileScope)),
+          await storageRuntime.buildAethonNovelsPayload(
+            storageRuntime.buildAethonNovelsSnapshotFromAuthoritativeState({
+              libraryState: novelLibraryState,
+              repositoryState: novelRepositoryState,
+            }),
+          ),
         ],
       });
       return {
@@ -894,14 +1301,17 @@
     }
 
     if (backupExportMode === "app") {
-      const built = await buildAethonBackupContainer({
+      const built = await storageRuntime.buildAethonBackupContainer({
         appVersion,
         platform: browserPlatform(),
         sourceSurface: "desktop",
         sourceProfileId,
         payloads: [
-          buildAethonAppPayload({
+          storageRuntime.buildAethonAppPayload({
             defaultLocalProfileId: persistedDefaultProfileId,
+            history: store.history,
+            readLog: store.readLog,
+            readingStats: store.readingStats,
           }),
         ],
       });
@@ -914,27 +1324,45 @@
     const payloads: AethonBackupPayloadBuildInput[] = [];
     if (backupUnifiedIncludeManga) {
       const manga = await fetchCurrentMangaBackup();
-      payloads.push(await buildAethonMangaPayload(manga.bytes, {
+      payloads.push(await storageRuntime.buildAethonMangaPayload(manga.bytes, {
         sourceFilename: manga.sourceFilename,
       }));
     }
     if (backupUnifiedIncludeBooks) {
-      payloads.push(await buildAethonBooksPayload({
-        books: store.books,
-        bookProgress: store.bookProgress,
-        bookBookmarks: store.bookBookmarks,
-        booksCategories: store.settings.booksCategories,
-        booksCategoryAssignments: store.settings.booksCategoryAssignments,
-      }, {
-        exportMode: "full",
-      }));
+      const booksLibraryState = await storageRuntime.loadBookLibraryState();
+      payloads.push(await storageRuntime.buildAethonBooksPayload(
+        storageRuntime.buildAethonBooksSnapshotFromLibraryState(booksLibraryState),
+        {
+          exportMode: "full",
+        },
+      ));
     }
     if (backupUnifiedIncludeNovels) {
-      payloads.push(await buildAethonNovelsPayload(loadNovelsProfileSnapshot(novelsProfileScope)));
+      const [novelLibraryState, novelRepositoryState] = await Promise.all([
+        storageRuntime.loadNovelLibraryState({
+          profileId: currentRuntimeProfileId,
+          serverUrl: currentRuntimeServerUrl,
+        }),
+        storageRuntime.loadNovelRepositoryState({
+          profileId: currentRuntimeProfileId,
+          serverUrl: currentRuntimeServerUrl,
+        }),
+      ]);
+      payloads.push(
+        await storageRuntime.buildAethonNovelsPayload(
+          storageRuntime.buildAethonNovelsSnapshotFromAuthoritativeState({
+            libraryState: novelLibraryState,
+            repositoryState: novelRepositoryState,
+          }),
+        ),
+      );
     }
     if (backupUnifiedIncludeApp) {
-      payloads.push(buildAethonAppPayload({
+      payloads.push(storageRuntime.buildAethonAppPayload({
         defaultLocalProfileId: persistedDefaultProfileId,
+        history: store.history,
+        readLog: store.readLog,
+        readingStats: store.readingStats,
       }));
     }
 
@@ -942,7 +1370,7 @@
       throw new Error("Select at least one payload to export.");
     }
 
-    const built = await buildAethonBackupContainer({
+    const built = await storageRuntime.buildAethonBackupContainer({
       appVersion,
       platform: browserPlatform(),
       sourceSurface: "desktop",
@@ -970,16 +1398,18 @@
   }
 
   async function fileFromPath(path: string): Promise<File> {
-    const buffer = await readFileAsArrayBuffer(path);
+    const storageRuntime = await getStorageRuntime();
+    const buffer = await storageRuntime.readFileAsArrayBuffer(path);
     return new File([buffer], backupPathLabel(path) ?? "backup.tachibk", {
       type: "application/octet-stream",
     });
   }
 
   async function loadUnifiedBackupPlan(path: string) {
-    const bytes = await readFileAsArrayBuffer(path);
+    const storageRuntime = await getStorageRuntime();
+    const bytes = await storageRuntime.readFileAsArrayBuffer(path);
     const runtime = await loadAethonRestoreRuntime();
-    const plan = await buildAethonRestorePlan(bytes, runtime);
+    const plan = await storageRuntime.buildAethonRestorePlan(bytes, runtime);
     backupUnifiedPlan = plan;
     backupUnifiedSelection = defaultExecutionSelection(plan);
   }
@@ -1007,8 +1437,8 @@
     backupRestoreSourceProfileId = options.sourceProfileId ?? null;
     backupRestoreTargetMode = options.handoff
       ? "current-profile"
-      : currentProfileSupportsOtherLocalTarget(currentRuntimeProfileId)
-        ? "other-local-profile"
+      : backupImportKind === "aethon"
+        ? "current-profile"
         : "current-profile";
 
     if (!backupImportKind) {
@@ -1084,7 +1514,8 @@
 
     backupExtensionLookupLoading = true;
     try {
-      const inventory = await loadSourceInventory();
+      const storageRuntime = await getStorageRuntime();
+      const inventory = await storageRuntime.loadSourceInventory();
       backupAvailableExtensions = inventory.availableExtensions;
       const result = await findMissingSourceExtensionSuggestions(
         missingSources,
@@ -1118,11 +1549,15 @@
       if (typeof savePath !== "string" || !savePath.trim()) return;
       const normalizedPath = normalizeBackupSavePath(
         savePath,
-        backupExportMode === "manga" ? ".tachibk" : AETHON_BACKUP_EXTENSION,
+        backupExportMode === "manga" ? ".tachibk" : SETTINGS_AETHON_BACKUP_EXTENSION,
       );
       const savedPath = await saveBytesToPath(normalizedPath, built.bytes);
       backupSavedPath = savedPath;
-      addToast({ kind: "success", message: `Backup saved to ${savedPath}` });
+      addToast({
+        kind: "success",
+        title: "Backup saved",
+        body: savedPath,
+      });
     } catch (e: any) {
       backupError = e?.message ?? "Failed to export backup";
     } finally {
@@ -1147,13 +1582,19 @@
     backupValidating = true;
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
+      const storageRuntime = await getStorageRuntime();
       const [inventory, trackersData, overlay] = await Promise.all([
-        loadSourceInventory(),
+        storageRuntime.loadSourceInventory(),
         gql<{ trackers: { nodes: Tracker[] } }>(GET_TRACKERS),
-        readOverlayFile(),
+        storageRuntime.readOverlayFile(),
       ]);
-      const parsed = await parseMihonBackup(bytes, inventory.inventory);
-      const { analysis } = await analyzeBackupReconciliation(bytes, inventory.inventory, trackersData.trackers.nodes ?? [], overlay);
+      const parsed = await storageRuntime.parseMihonBackup(bytes, inventory.inventory);
+      const { analysis } = await storageRuntime.analyzeBackupReconciliation(
+        bytes,
+        inventory.inventory,
+        trackersData.trackers.nodes ?? [],
+        overlay,
+      );
       backupParsed = parsed;
       backupInventory = inventory.inventory;
       backupAnalysis = {
@@ -1243,13 +1684,14 @@
     backupRestoreId = null;
     backupRestoreStatus = null;
     try {
-      const reconciledFile = buildReconciledBackupFile(
+      const storageRuntime = await getStorageRuntime();
+      const reconciledFile = storageRuntime.buildReconciledBackupFile(
         backupParsed,
         backupAnalysis,
         backupReviewSelections,
         backupSelectedFile.name,
       );
-      const overlayEntry: OverlayEntry = overlayEntryFromAnalysis({
+      const overlayEntry: OverlayEntry = storageRuntime.overlayEntryFromAnalysis({
         ...backupAnalysis,
         needsReview: backupAnalysis.needsReview.map((cluster) => {
           const selected = backupReviewSelections[cluster.orphanSourceId];
@@ -1262,7 +1704,7 @@
           };
         }),
       });
-      await upsertOverlayEntry(overlayEntry);
+      await storageRuntime.upsertOverlayEntry(overlayEntry);
       const res = await gqlUpload<{ restoreBackup: { id: string; status: BackupRestoreProgress | null } }>(
         RESTORE_BACKUP,
         { backup: null },
@@ -1273,7 +1715,19 @@
       await pollRestoreStatus(res.restoreBackup.id);
       const finalState = (backupRestoreStatus?.state ?? "").toUpperCase();
       if (["SUCCESS", "COMPLETED"].includes(finalState)) {
-        addToast({ kind: "success", message: "Backup restored. Restart or refresh views to pick up restored library state." });
+        if (backupImportKind === "manga") {
+          try {
+            await hydrateAppReadingStateFromImportedMangaBackup();
+          } catch (error) {
+            console.warn("Could not hydrate Home reading state from imported manga backup:", error);
+          }
+          await refreshHomeRestoreSnapshots();
+        }
+        addToast({
+          kind: "success",
+          title: "Backup restored",
+          body: "Restart or refresh views to pick up restored library state.",
+        });
         return { ok: true, finalState };
       } else {
         backupError = `Restore finished with state: ${backupRestoreStatus?.state ?? "unknown"}`;
@@ -1308,10 +1762,271 @@
   }
 
   async function applyCurrentProfileNovelsRestore(bytes: ArrayBuffer) {
+    const storageRuntime = await getStorageRuntime();
     const runtime = await loadNovelRuntimeState();
-    const restored = await restoreAethonNovelsPayload(bytes, runtime);
-    applyRestoredNovelsProfileSnapshot(novelsProfileScope, restored);
+    const restored = await storageRuntime.restoreAethonNovelsPayload(bytes, runtime);
+    const scopeInput = {
+      profileId: currentRuntimeProfileId,
+      serverUrl: currentRuntimeServerUrl,
+    };
+    const currentState = await storageRuntime.loadNovelLibraryState(scopeInput);
+    const nextState = storageRuntime.applyRestoredNovelsSnapshotToLibraryState({
+      currentState,
+      restored,
+    });
+    await storageRuntime.saveNovelLibraryState(nextState, scopeInput);
     return restored;
+  }
+
+  async function refreshHomeRestoreSnapshots() {
+    try {
+      const [mangaResult, categoryResult, trackingResult] = await Promise.all([
+        gql<{ mangas: { nodes: Category[] } }>(GET_LIBRARY),
+        gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES),
+        gql(GET_LIBRARY_TRACKING_SUMMARY),
+      ]);
+      setLibraryMangaSnapshot(
+        (mangaResult as any).mangas.nodes.map((manga: any) => ({
+          ...manga,
+          chapterCount: manga.chapters?.totalCount ?? manga.chapterCount ?? 0,
+        })),
+      );
+      setCategories(normalizeCategories(categoryResult.categories.nodes));
+      setLibraryTrackingSummarySnapshot((trackingResult as any).trackers.nodes ?? []);
+    } catch (error) {
+      console.warn("Could not refresh Home snapshots after restore:", error);
+    }
+  }
+
+  function normalizeImportedReadingKey(value: string): string {
+    return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  }
+
+  function legacyMangaLookupKey(sourceId: string, title: string): string {
+    return `${sourceId}|${normalizeImportedReadingKey(title)}`;
+  }
+
+  function legacyChapterLookupKey(url: string): string {
+    return normalizeImportedReadingKey(url);
+  }
+
+  function historyDateKey(ts: number): string {
+    const date = new Date(ts);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  }
+
+  function computeImportedReadingStats(entries: Array<{
+    manga: { source?: unknown; title?: string };
+    history: { url?: string; lastRead?: number | string; readDuration?: number | string };
+  }>): ReadingStats {
+    if (entries.length === 0) return { ...DEFAULT_READING_STATS };
+
+    const uniqueChapters = new Set(entries.map((entry) => `${String(entry.manga.source ?? "")}|${normalizeImportedReadingKey(entry.manga.title ?? "")}|${normalizeImportedReadingKey(entry.history.url ?? "")}`));
+    const uniqueManga = new Set(entries.map((entry) => `${String(entry.manga.source ?? "")}|${normalizeImportedReadingKey(entry.manga.title ?? "")}`));
+    const totalMinutes = entries.reduce((sum, entry) => {
+      const raw = Number(entry.history.readDuration ?? 0);
+      const minutes = raw > 0 ? Math.max(1, Math.round(raw / 60000)) : 5;
+      return sum + minutes;
+    }, 0);
+    const orderedDays = [...new Set(entries.map((entry) => historyDateKey(Number(entry.history.lastRead ?? 0) || Date.now())))].sort();
+    const lastStreakDate = orderedDays[orderedDays.length - 1] ?? "";
+
+    let currentStreakDays = 0;
+    let longestStreakDays = 0;
+    let streak = 0;
+    let previous = "";
+    for (const day of orderedDays) {
+      if (!previous) {
+        streak = 1;
+      } else {
+        const prevDate = new Date(`${previous}T00:00:00`);
+        prevDate.setDate(prevDate.getDate() + 1);
+        const expected = historyDateKey(prevDate.getTime());
+        streak = expected === day ? streak + 1 : 1;
+      }
+      longestStreakDays = Math.max(longestStreakDays, streak);
+      previous = day;
+    }
+
+    if (lastStreakDate) {
+      const latest = new Date(`${lastStreakDate}T00:00:00`);
+      let cursor = historyDateKey(latest.getTime());
+      let count = 0;
+      const byDay = new Set(orderedDays);
+      while (byDay.has(cursor)) {
+        count += 1;
+        latest.setDate(latest.getDate() - 1);
+        cursor = historyDateKey(latest.getTime());
+      }
+      currentStreakDays = count;
+    }
+
+    return {
+      totalChaptersRead: uniqueChapters.size,
+      totalMangaRead: uniqueManga.size,
+      totalMinutesRead: totalMinutes,
+      firstReadAt: Math.min(...entries.map((entry) => Number(entry.history.lastRead ?? 0) || 0)),
+      lastReadAt: Math.max(...entries.map((entry) => Number(entry.history.lastRead ?? 0) || 0)),
+      currentStreakDays,
+      longestStreakDays,
+      lastStreakDate,
+    };
+  }
+
+  async function hydrateAppReadingStateFromImportedMangaBackup(): Promise<boolean> {
+    if (!backupParsed || !Array.isArray(backupParsed.mangaMessages)) return false;
+
+    type ImportedBackupManga = {
+      source?: unknown;
+      title?: string;
+      thumbnailUrl?: string;
+      url?: string;
+      chapters?: Array<{ url?: string; name?: string; chapterNumber?: number }>;
+      history?: Array<{ url?: string; lastRead?: number | string; readDuration?: number | string }>;
+    };
+
+    type LiveManga = {
+      id: number;
+      title: string;
+      thumbnailUrl?: string | null;
+      source?: { id?: string | null } | null;
+    };
+
+    type LiveChapter = {
+      id: number;
+      name?: string | null;
+      chapterNumber?: number | null;
+      realUrl?: string | null;
+    };
+
+    const backupMangaMessages = backupParsed.mangaMessages as ImportedBackupManga[];
+    const importedRows = backupMangaMessages.flatMap((manga) => {
+      const mangaHistory = Array.isArray(manga.history) ? manga.history : [];
+      return mangaHistory.map((history) => ({
+        manga,
+        history,
+      }));
+    });
+
+    if (importedRows.length === 0) {
+      replaceAppReadingState({
+        history: [],
+        readLog: [],
+        readingStats: { ...DEFAULT_READING_STATS },
+      });
+      return false;
+    }
+
+    importedRows.sort((left, right) => Number(right.history.lastRead ?? 0) - Number(left.history.lastRead ?? 0));
+    const historyRows = importedRows.slice(0, 300);
+    const readLogRows = importedRows.slice(0, 5000);
+
+    const libraryResult = await gql<{ mangas: { nodes: LiveManga[] } }>(GET_LIBRARY);
+    const liveMangaByKey = new Map<string, LiveManga>();
+    for (const manga of libraryResult.mangas.nodes ?? []) {
+      const sourceId = String(manga.source?.id ?? "");
+      liveMangaByKey.set(legacyMangaLookupKey(sourceId, manga.title), manga);
+    }
+
+    const resolvedMangaIds = [...new Set(
+      historyRows
+        .map((row) => {
+          const sourceId = String(row.manga.source ?? "");
+          const liveManga = liveMangaByKey.get(legacyMangaLookupKey(sourceId, row.manga.title ?? ""));
+          return liveManga?.id ?? null;
+        })
+        .filter((value): value is number => typeof value === "number" && Number.isFinite(value)),
+    )];
+
+    const liveChapterByMangaId = new Map<number, LiveChapter[]>();
+    const batchSize = 20;
+    for (let index = 0; index < resolvedMangaIds.length; index += batchSize) {
+      const batch = resolvedMangaIds.slice(index, index + batchSize);
+      const aliases: string[] = [];
+      const variables: Record<string, number> = {};
+
+      batch.forEach((mangaId, batchIndex) => {
+        const variableName = `m${batchIndex}`;
+        variables[variableName] = mangaId;
+        aliases.push(`
+          c${batchIndex}: chapters(condition: { mangaId: $${variableName} }) {
+            nodes {
+              id
+              name
+              chapterNumber
+              realUrl
+            }
+          }
+        `);
+      });
+
+      const query = `query ImportedBackupChapters(${batch.map((_, batchIndex) => `$m${batchIndex}: Int!`).join(", ")}) {
+        ${aliases.join("\n")}
+      }`;
+      const response = await gql<Record<string, { nodes: LiveChapter[] }>>(query, variables);
+      batch.forEach((mangaId, batchIndex) => {
+        liveChapterByMangaId.set(mangaId, response[`c${batchIndex}`]?.nodes ?? []);
+      });
+    }
+
+    const historyEntries: HistoryEntry[] = [];
+    const readLogEntries: ReadLogEntry[] = [];
+
+    for (const row of historyRows) {
+      const sourceId = String(row.manga.source ?? "");
+      const liveManga = liveMangaByKey.get(legacyMangaLookupKey(sourceId, row.manga.title ?? ""));
+      if (!liveManga) continue;
+
+      const backupChapter = Array.isArray(row.manga.chapters)
+        ? row.manga.chapters.find((chapter) => legacyChapterLookupKey(chapter.url ?? "") === legacyChapterLookupKey(row.history.url ?? ""))
+        : null;
+      const liveChapters = liveChapterByMangaId.get(liveManga.id) ?? [];
+      const matchedLiveChapter = liveChapters.find((chapter) => legacyChapterLookupKey(chapter.realUrl ?? "") === legacyChapterLookupKey(row.history.url ?? ""))
+        ?? (backupChapter?.chapterNumber !== undefined
+          ? liveChapters.find((chapter) => Number(chapter.chapterNumber ?? Number.NaN) === Number(backupChapter.chapterNumber ?? Number.NaN))
+          : null)
+        ?? liveChapters[0]
+        ?? null;
+
+      const readAt = Number(row.history.lastRead ?? 0) || Date.now();
+      const chapterId = matchedLiveChapter?.id ?? 0;
+      const chapterName = matchedLiveChapter?.name
+        ?? backupChapter?.name
+        ?? row.history.url?.split("/").pop()
+        ?? "Chapter";
+      const thumbnailUrl = typeof liveManga.thumbnailUrl === "string" && liveManga.thumbnailUrl.length > 0
+        ? liveManga.thumbnailUrl
+        : (typeof row.manga.thumbnailUrl === "string" ? row.manga.thumbnailUrl : "");
+
+      historyEntries.push({
+        mangaId: liveManga.id,
+        mangaTitle: liveManga.title,
+        thumbnailUrl,
+        chapterId,
+        chapterName,
+        readAt,
+      });
+
+      const rawReadDuration = Number(row.history.readDuration ?? 0);
+      readLogEntries.push({
+        mangaId: liveManga.id,
+        chapterId,
+        readAt,
+        minutes: rawReadDuration > 0 ? Math.max(1, Math.round(rawReadDuration / 60000)) : 5,
+      });
+    }
+
+    if (historyEntries.length === 0 && readLogEntries.length === 0) {
+      return false;
+    }
+
+    replaceAppReadingState({
+      history: historyEntries,
+      readLog: readLogEntries,
+      readingStats: computeImportedReadingStats(importedRows),
+    });
+
+    return true;
   }
 
   async function applyUnifiedRestore() {
@@ -1323,14 +2038,15 @@
       throw new Error("Select at least one executable payload to restore.");
     }
 
-    const bytes = await readFileAsArrayBuffer(backupSelectedFilePath);
+    const storageRuntime = await getStorageRuntime();
+    const bytes = await storageRuntime.readFileAsArrayBuffer(backupSelectedFilePath);
     const results: Array<{ kind: string; status: "success" | "warning" | "failed" | "skipped"; summary: string; detail?: string | null }> = [];
 
     for (const kind of ["manga", "books", "novels", "app"] as const) {
       if (!selectedKinds.includes(kind)) continue;
       try {
         if (kind === "manga") {
-          const extracted = await extractAethonMangaPayloadFile(bytes);
+          const extracted = await storageRuntime.extractAethonMangaPayloadFile(bytes);
           backupSelectedFile = extracted;
           await analyzeSelectedBackupFile(extracted);
           const outcome = await restoreBackup();
@@ -1346,7 +2062,7 @@
         }
 
         if (kind === "books") {
-          const restored = await restoreAethonBooksPayload(bytes);
+          const restored = await storageRuntime.restoreAethonBooksPayload(bytes);
           replaceBooksState({
             books: restored.books,
             bookProgress: restored.bookProgress,
@@ -1373,16 +2089,40 @@
             summary: restored.summary.restoredMetadataOnlyCount > 0
               ? `${restored.summary.totalEntries} novel entries restored with metadata-only warnings.`
               : `${restored.summary.totalEntries} novel entries restored for this profile scope.`,
-            detail: `${restored.summary.restoredUsableCount} usable • ${restored.summary.restoredMetadataOnlyCount} metadata-only`,
+            detail: `${restored.summary.restoredUsableCount} usable / ${restored.summary.restoredMetadataOnlyCount} metadata-only`,
           });
           continue;
         }
 
-        results.push({
-          kind,
-          status: "skipped",
-          summary: "App payload is preview-only in this rollout.",
-        });
+        if (kind === "app") {
+          const restored = await parseAethonAppPayload(new Uint8Array(bytes));
+          updateSettings({
+            defaultLocalProfileId: restored.profile.defaultLocalProfileId,
+          });
+          if (restored.profile.version >= 2) {
+            replaceAppReadingState({
+              history: restored.profile.history,
+              readLog: restored.profile.readLog,
+              readingStats: restored.profile.readingStats,
+            });
+          } else {
+            replaceAppReadingState({
+              history: [],
+              readLog: [],
+              readingStats: DEFAULT_READING_STATS,
+            });
+          }
+          results.push({
+            kind,
+            status: restored.profile.version >= 2 ? "success" : "warning",
+            summary: restored.profile.version >= 2
+              ? "App reading state restored into the current session."
+              : "App payload restored, but this backup does not include Home reading history.",
+            detail: `schema v${restored.profile.version}`,
+          });
+          continue;
+        }
+
       } catch (error) {
         results.push({
           kind,
@@ -1392,12 +2132,16 @@
       }
     }
 
+      if (results.some((entry) => (entry.kind === "manga" || entry.kind === "app") && entry.status !== "failed")) {
+        await refreshHomeRestoreSnapshots();
+      }
+
     backupRestoreResults = results;
     const failed = results.filter((entry) => entry.status === "failed").length;
     addToast({
-      kind: failed > 0 ? "warning" : "success",
+      kind: failed > 0 ? "info" : "success",
       title: failed > 0 ? "Restore finished with issues" : "Restore finished",
-      body: results.map((entry) => `${entry.kind.toUpperCase()}: ${entry.status}`).join(" • "),
+      body: results.map((entry) => `${entry.kind.toUpperCase()}: ${entry.status}`).join(" | "),
       duration: 16000,
     });
   }
@@ -1515,7 +2259,7 @@
   }
   $effect(() => { if (tab === "performance") refreshPerfMetrics(); });
   function fmtAge(ts: number | null): string {
-    if (ts === null) return "â€”";
+    if (ts === null) return "-";
     const secs = Math.floor((Date.now() - ts) / 1000);
     if (secs < 60) return `${secs}s ago`;
     const mins = Math.floor(secs / 60);
@@ -1547,6 +2291,21 @@
   let editingId: string | number | null = $state(null);
   let editingName     = $state("");
   const sortedBooksCategories = $derived(sortBooksCategories(store.settings.booksCategories));
+  const comicsPreviewCategories = $derived(store.categories.filter((cat) => cat.id !== 0).slice(0, 5));
+  const booksPreviewCategories = $derived(sortedBooksCategories.slice(0, 5));
+  const categoryPreviewChips = $derived.by(() => {
+    const seen = new Set<string>();
+    const chips: string[] = [];
+    for (const category of [...comicsPreviewCategories, ...booksPreviewCategories]) {
+      const name = category.name.trim();
+      const key = name.toLowerCase();
+      if (!name || seen.has(key)) continue;
+      seen.add(key);
+      chips.push(name);
+      if (chips.length >= 5) break;
+    }
+    return chips;
+  });
   const booksCategoryCounts = $derived(
     Object.fromEntries(
       sortedBooksCategories.map((category) => [
@@ -1673,8 +2432,22 @@
     }
   }
   $effect(() => {
-    if (tab === "folders" && categoryDomain === "comics" && !store.categories.length && !catsLoading) loadCategories();
+    if (tab === "categories" && categoryDomain === "comics" && !store.categories.length && !catsLoading) loadCategories();
   });
+  function resetCategoryEditor() {
+    editingId = null;
+    editingName = "";
+    newFolderName = "";
+  }
+  function openCategoryManager(domain: "comics" | "books") {
+    categoryDomain = domain;
+    categoriesDetailsPane = domain;
+    resetCategoryEditor();
+  }
+  function closeCategoryManager() {
+    categoriesDetailsPane = null;
+    resetCategoryEditor();
+  }
   let selectOpen: string | null = $state(null);
   function toggleSelect(id: string) { selectOpen = selectOpen === id ? null : id; }
   function onSelectOutside(e: MouseEvent) {
@@ -1931,14 +2704,22 @@
     try {
       await invoke("open_flaresolverr_local_folder");
     } catch {
-      addToast("Folder unavailable");
+      addToast({
+        kind: "error",
+        title: "Folder unavailable",
+        body: "Could not open the local FlareSolverr folder.",
+      });
     }
   }
   async function openFlareLocalLogs() {
     try {
       await invoke("open_flaresolverr_local_logs");
     } catch {
-      addToast("Logs unavailable");
+      addToast({
+        kind: "error",
+        title: "Logs unavailable",
+        body: "Could not open the local FlareSolverr logs.",
+      });
     }
   }
   async function refreshFlareDockerStatus() {
@@ -1990,11 +2771,19 @@
   let oauthTrackerId:  number|null  = $state(null);
   let oauthCallbackInput: string    = $state("");
   let oauthSubmitting: boolean      = $state(false);
+  let oauthAutoCapturing: boolean   = $state(false);
+  let oauthAutoUnlisten: (() => void) | null = null;
   let credsTrackerId:  number|null  = $state(null);
   let credsUsername:   string       = $state("");
   let credsPassword:   string       = $state("");
   let credsSubmitting: boolean      = $state(false);
   let loggingOut:      number|null  = $state(null); // trackerId being logged out
+  const activeTrackerDetail = $derived.by(
+    () => trackers.find((candidate) => candidate.id === oauthTrackerId || candidate.id === credsTrackerId) ?? null,
+  );
+  const activeTrackerDetailMode = $derived.by(
+    () => (oauthTrackerId !== null ? "oauth" : credsTrackerId !== null ? "credentials" : null),
+  );
   async function loadTrackers() {
     trackersLoading = true; trackersError = null;
     try {
@@ -2010,9 +2799,31 @@
   async function startOAuth(tracker: Tracker) {
     if (!tracker.authUrl) return;
     trackersError = null;
+    credsTrackerId = null;
+    credsUsername = "";
+    credsPassword = "";
     oauthTrackerId     = tracker.id;
     oauthCallbackInput = "";
-    await openUrl(tracker.authUrl);
+    oauthAutoCapturing = true;
+    oauthAutoUnlisten?.();
+    oauthAutoUnlisten = await listen<{ url: string }>("tracker-oauth-callback", async (event) => {
+      if (oauthTrackerId !== tracker.id) return;
+      oauthCallbackInput = event.payload.url;
+      await submitOAuth();
+      oauthAutoUnlisten?.();
+      oauthAutoUnlisten = null;
+      oauthAutoCapturing = false;
+    });
+
+    try {
+      await invoke("open_tracker_oauth_window", { url: tracker.authUrl });
+    } catch (error) {
+      oauthAutoCapturing = false;
+      oauthAutoUnlisten?.();
+      oauthAutoUnlisten = null;
+      await openUrl(tracker.authUrl);
+      trackersError = "Automatic OAuth capture is unavailable. Paste the redirected callback URL below.";
+    }
   }
   async function submitOAuth() {
     if (!oauthTrackerId || !oauthCallbackInput.trim()) return;
@@ -2031,14 +2842,28 @@
       await loadTrackers();
       oauthTrackerId     = null;
       oauthCallbackInput = "";
+      oauthAutoCapturing = false;
+      oauthAutoUnlisten?.();
+      oauthAutoUnlisten = null;
     } catch (e: any) {
       trackersError = e?.message ?? "Login failed";
     } finally {
       oauthSubmitting = false;
     }
   }
-  function cancelOAuth() { oauthTrackerId = null; oauthCallbackInput = ""; }
+  function cancelOAuth() {
+    oauthTrackerId = null;
+    oauthCallbackInput = "";
+    oauthAutoCapturing = false;
+    oauthAutoUnlisten?.();
+    oauthAutoUnlisten = null;
+  }
   function startCredentials(tracker: Tracker) {
+    oauthTrackerId = null;
+    oauthCallbackInput = "";
+    oauthAutoCapturing = false;
+    oauthAutoUnlisten?.();
+    oauthAutoUnlisten = null;
     credsTrackerId = tracker.id;
     credsUsername  = "";
     credsPassword  = "";
@@ -2074,6 +2899,16 @@
       loggingOut = null;
     }
   }
+  function closeTrackerDetail() {
+    oauthTrackerId = null;
+    oauthCallbackInput = "";
+    oauthAutoCapturing = false;
+    oauthAutoUnlisten?.();
+    oauthAutoUnlisten = null;
+    credsTrackerId = null;
+    credsUsername = "";
+    credsPassword = "";
+  }
   function usesOAuth(t: Tracker): boolean { return !!t.authUrl; }
   interface ReleaseInfo {
     tag_name:     string;
@@ -2088,7 +2923,7 @@
     | "ready"      // downloaded, awaiting restart
     | "error";
   const IS_WINDOWS = navigator.userAgent.includes("Windows");
-  let appVersion      = $state("â€¦");
+  let appVersion      = $state("...");
   let releases        = $state<ReleaseInfo[]>([]);
   let releasesLoading = $state(false);
   let releasesError   = $state<string | null>(null);
@@ -2098,7 +2933,7 @@
   let dlBytes         = $state(0);
   let dlTotal         = $state<number | null>(null);
   let targetTag       = $state<string | null>(null); // tag being installed
-  let releasesLoaded = false; // plain var â€” not $state, so effect doesn't re-run on change
+  let releasesLoaded = false; // plain var, not $state, so effect does not re-run on change
   $effect(() => {
     if (tab !== "about") return;
     getVersion().then(v => appVersion = v).catch(() => appVersion = "unknown");
@@ -2134,7 +2969,7 @@
     return 0;
   }
   let onLatestVersion = $derived((() => {
-    if (releasesLoading || releases.length === 0 || !appVersion || appVersion === "â€¦") return false;
+    if (releasesLoading || releases.length === 0 || !appVersion || appVersion === "...") return false;
     const sorted = releases.slice().sort((a, b) => compareSemver(a.tag_name, b.tag_name));
     return compareSemver(appVersion, sorted[0].tag_name) >= 0;
   })());
@@ -2222,7 +3057,7 @@
     updateSettings({ nsfwFilteredTags: (store.settings.nsfwFilteredTags ?? []).filter(t => t !== tag) });
   }
   function resetTags() {
-    updateSettings({ nsfwFilteredTags: ["adult", "mature", "hentai", "ecchi", "erotic", "pornograph", "18+", "smut", "lemon", "explicit", "sexual violence"] });
+    updateSettings({ nsfwFilteredTags: [] });
   }
   function toggleSourceAllowed(ids: string[]) {
     const allowed = store.settings.nsfwAllowedSourceIds ?? [];
@@ -2270,781 +3105,990 @@
     return Array.from(map.values());
   });
 </script>
-<div class="backdrop" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) close(); }} onkeydown={(e) => { if (e.key === "Escape") close(); }}>
-  <div class="modal" role="dialog" aria-label="Settings">
-    <div class="sidebar">
-      <p class="modal-title">Settings</p>
-      <nav class="nav">
-        {#each SETTINGS_GROUPS as group}
-          <button class="nav-item nav-group-button" class:active={activeGroup === group.id} onclick={() => openGroup(group.id)}>
-            <group.icon size={14} weight="light" />
-            <span>{group.label}</span>
-          </button>
-        {/each}
-      </nav>
-    </div>
-    <div class="content">
-      <div class="content-header">
-        <p class="content-title">{TAB_LABELS[tab]}</p>
-        <button class="close-btn" aria-label="Close settings" onclick={close}><X size={15} weight="light" /></button>
-      </div>
-      <div class="content-subnav" aria-label={`${currentGroup.label} settings sections`}>
-        <p class="subnav-label">{currentGroup.label}</p>
-        <div class="subnav-list">
-          {#each currentGroup.items as t}
-            <button class="subnav-item" class:active={tab === t.id} onclick={() => tab = t.id}>
-              <t.icon size={14} weight="light" />
-              <span>{t.label}</span>
-            </button>
-          {/each}
+<main class="settings-page n-shell aethon-port--settings" class:is-search-engaged={settingsSearchOverlayActive}>
+  <AppTopbar className="n-topbar--settings">
+    {#snippet center()}
+      <form
+        class="n-search n-search--settings"
+        role="search"
+        aria-label="Search settings"
+        onsubmit={submitSettingsSearch}
+        onfocusin={handleSettingsSearchFocusIn}
+        onfocusout={handleSettingsSearchFocusOut}
+      >
+        <span class="n-search__icon" aria-hidden="true">
+          <MagnifyingGlass size={18} weight="light" />
+        </span>
+        <input
+          class="n-search__input"
+          aria-label="Search settings"
+          placeholder="Search settings..."
+          bind:this={settingsSearchInputEl}
+          bind:value={settingsSearchQuery}
+          autocomplete="off"
+          spellcheck="false"
+          oninput={handleSettingsSearchInput}
+          onkeydown={handleSettingsSearchKeydown}
+        />
+      </form>
+      <span class="settings-search-live" aria-live="polite">{settingsSearchAnnouncement}</span>
+    {/snippet}
+    {#snippet right()}
+      <button class="n-icon-btn" aria-label="Open about settings" type="button" onclick={() => openTab("about")}>
+        <Info size={16} weight="light" />
+      </button>
+      <button class="n-icon-btn" aria-label="Close settings" type="button" onclick={close}>
+        <X size={15} weight="light" />
+      </button>
+      <WindowControlsInline />
+    {/snippet}
+  </AppTopbar>
+  <div class="settings-search-overlay" class:is-active={settingsSearchOverlayActive} aria-hidden="true"></div>
+
+  <aside class="settings-group-rail" id="settingsGroupRail">
+    <nav class="settings-group-rail__nav" aria-label="Settings groups">
+      {#each SETTINGS_GROUPS as group}
+        <button
+          class="cat-btn"
+          class:is-active={activeGroup === group.id}
+          type="button"
+          data-settings-group={group.id}
+          onclick={() => openGroup(group.id)}
+        >
+          <span class="cat-btn__icon"><group.icon size={16} weight="light" /></span>
+          <span class="cat-btn__label">{group.label}</span>
+        </button>
+      {/each}
+    </nav>
+    <div class="settings-group-rail__footer">
+      <div class="settings-brand-card">
+        <div class="settings-brand-card__header">
+          <div class="settings-brand-card__badge">
+            <img src={splashMark} alt="" />
+          </div>
+          <div class="settings-brand-card__copy">
+            <p class="settings-brand-card__title">Aethon Nocturne</p>
+            <p class="settings-brand-card__meta">v{appVersion}</p>
+          </div>
+        </div>
+        <div class="settings-brand-card__actions">
+          <button class="settings-rail-action" type="button" onclick={() => openTab("about")}>Updates</button>
+          <button class="settings-rail-action" type="button" onclick={() => openUrl("https://github.com/Youwes09/Moku")}>GitHub</button>
         </div>
       </div>
-      <div class="content-body" bind:this={contentBodyEl}>
-        {#if tab === "general"}
-          <div class="panel">
-            <div class="section">
-              <p class="section-title">Interface Scale</p>
-              <div class="scale-row">
-                <input type="range" min={50} max={200} step={5}
-                  value={Math.round((store.settings.uiZoom ?? 1.0) * 100)}
-                  oninput={(e) => updateSettings({ uiZoom: Number(e.currentTarget.value) / 100 })}
-                  class="scale-slider" />
-                <input
-                  type="number" min={50} max={200} step={1}
-                  class="scale-val-input"
-                  value={Math.round((store.settings.uiZoom ?? 1.0) * 100)}
-                  oninput={(e) => {
-                    const n = parseInt(e.currentTarget.value, 10);
-                    if (!isNaN(n) && n >= 50 && n <= 200) updateSettings({ uiZoom: n / 100 });
-                  }}
-                  onblur={(e) => {
-                    const n = parseInt(e.currentTarget.value, 10);
-                    if (isNaN(n) || n < 50) { updateSettings({ uiZoom: 0.5 }); e.currentTarget.value = "50"; }
-                    else if (n > 200) { updateSettings({ uiZoom: 2.0 }); e.currentTarget.value = "200"; }
-                  }}
-                />
-                <span class="scale-pct">%</span>
-                <button class="step-btn" onclick={() => updateSettings({ uiZoom: 1.0 })} disabled={(store.settings.uiZoom ?? 1.0) === 1.0} title="Reset to 100%">â†º</button>
-              </div>
-              <p class="scale-hint">
-                {#each [50,60,70,80,90,100,110,125,150,175,200] as v}
-                  <button class="scale-preset" class:active={Math.round((store.settings.uiZoom ?? 1.0) * 100) === v} onclick={() => updateSettings({ uiZoom: v / 100 })}>{v}%</button>
-                {/each}
-              </p>
-            </div>
-            <div class="section">
-              <p class="section-title">Server</p>
-              <div class="step-row">
-                <div class="toggle-info">
-                  <span class="toggle-label">Profile</span>
-                  <span class="toggle-desc">Pick which local profile should boot on the next app start.</span>
-                </div>
-                <div class="profile-picker">
-                  {#each BUILTIN_LOCAL_PROFILES as profile}
-                    <button
-                      class="profile-option"
-                      class:active={persistedDefaultProfileId === profile.id}
-                      onclick={() => setDefaultLocalProfile(profile.id)}
-                    >
-                      <span class="profile-option-label">{profile.label}</span>
-                      <span class="profile-option-meta">:{profile.port}</span>
-                    </button>
-                  {/each}
-                </div>
-              </div>
-              <div class="profile-status-grid">
-                <div class="profile-status-card">
-                  <span class="profile-status-label">Current session</span>
-                  <span class="profile-status-value">{currentSessionProfileSummary}</span>
-                  <span class="profile-status-meta">{currentRuntimeServerUrl}</span>
-                </div>
-                <div class="profile-status-card">
-                  <span class="profile-status-label">Next launch default</span>
-                  <span class="profile-status-value">{nextLaunchProfileSummary}</span>
-                  <span class="profile-status-meta">{nextLaunchProfileMeta?.serverUrl ?? currentRuntimeServerUrl}</span>
-                </div>
-              </div>
-              <div class="profile-note">
-                {#if store.runtimeIsOverrideSession}
-                  This session is running under a launch override. Changing the default profile here will only affect the next normal app launch.
-                {:else}
-                  Changes here apply on the next app start. The current session stays on its active profile.
-                {/if}
-              </div>
-              <div class="step-row">
-                <div class="toggle-info">
-                  <span class="toggle-label">Server URL</span>
-                  <span class="toggle-desc">
-                    {serverUrlManagedByProfile
-                      ? "Managed by the current Profile for this session."
-                      : "Base URL of your Suwayomi instance."}
-                  </span>
-                </div>
-                <input
-                  class="text-input"
-                  value={currentRuntimeServerUrl}
-                  oninput={(e) => {
-                    if (!serverUrlManagedByProfile) updateSettings({ serverUrl: e.currentTarget.value });
-                  }}
-                  placeholder="http://localhost:4567"
-                  spellcheck="false"
-                  readonly={serverUrlManagedByProfile}
-                />
-              </div>
-              <label class="toggle-row">
-                <div class="toggle-info"><span class="toggle-label">Auto-start server</span><span class="toggle-desc">Launch tachidesk-server when Aethon opens</span></div>
-                <button role="switch" aria-checked={store.settings.autoStartServer} aria-label="Auto-start server" class="toggle" class:on={store.settings.autoStartServer} onclick={() => updateSettings({ autoStartServer: !store.settings.autoStartServer })}><span class="toggle-thumb"></span></button>
-              </label>
-            </div>
-            <div class="section">
-              <p class="section-title">Inactivity</p>
-              <div class="step-row">
-                <div class="toggle-info"><span class="toggle-label">Idle screen timeout</span><span class="toggle-desc">Show the Aethon idle splash after this much inactivity.</span></div>
-                <div class="select-wrap" id="idle-timeout">
-                  <button class="select-btn" onclick={() => toggleSelect("idle-timeout")}>
-                    <span>{idleTimeoutLabel(store.settings.idleTimeoutMin)}</span>
-                    <svg class="select-caret" class:open={selectOpen === "idle-timeout"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
-                  </button>
-                  {#if selectOpen === "idle-timeout"}
-                    <div class="select-menu">
-                      {#each [["0","Never"],["1","1 minute"],["2","2 minutes"],["5","5 minutes"],["10","10 minutes"],["15","15 minutes"],["30","30 minutes"]] as [v, l]}
-                        <button class="select-option" class:active={String(store.settings.idleTimeoutMin ?? 5) === v} onclick={() => { updateSettings({ idleTimeoutMin: Number(v) }); selectOpen = null; }}>{l}</button>
-                      {/each}
-                    </div>
-                  {/if}
-                </div>
-              </div>
-            </div>
-            <div class="section">
-              <p class="section-title">Integrations</p>
-              <label class="toggle-row">
-                <div class="toggle-info"><span class="toggle-label">Discord Rich Presence</span><span class="toggle-desc">Show what you're reading in your Discord status</span></div>
-                <button role="switch" aria-checked={store.settings.discordRpc} aria-label="Discord Rich Presence" class="toggle" class:on={store.settings.discordRpc} onclick={() => updateSettings({ discordRpc: !store.settings.discordRpc })}><span class="toggle-thumb"></span></button>
-              </label>
-            </div>
-            <div class="section">
-              <p class="section-title">Language</p>
-              <div class="step-row">
-                <div class="toggle-info">
-                  <span class="toggle-label">Preferred source language</span>
-                  <span class="toggle-desc">Used to pre-select languages in Search and deduplicate sources</span>
-                </div>
-                <input
-                  class="text-input"
-                  value={store.settings.preferredExtensionLang ?? ""}
-                  oninput={(e) => updateSettings({ preferredExtensionLang: e.currentTarget.value.trim().toLowerCase() })}
-                  placeholder="e.g. en"
-                  spellcheck="false"
-                  style="width:72px;text-align:center;text-transform:uppercase"
-                />
-              </div>
-            </div>
-          </div>
-        {:else if tab === "appearance"}
-          <div class="panel">
-            <div class="section">
-              <p class="section-title">Theme</p>
-              <div class="theme-grid">
-                {#each THEMES as theme}
-                  {@const active = (store.settings.theme ?? "dark") === theme.id}
-                  <button class="theme-card" class:active onclick={() => updateSettings({ theme: theme.id })} title={theme.description}>
-                    <div class="theme-preview">
-                      <div class="theme-preview-bg" style="background:{theme.swatches[0]}">
-                        <div class="theme-preview-sidebar" style="background:{theme.swatches[1]}"></div>
-                        <div class="theme-preview-content">
-                          <div class="theme-preview-accent" style="background:{theme.swatches[2]}"></div>
-                          <div class="theme-preview-text" style="background:{theme.swatches[3]}55"></div>
-                          <div class="theme-preview-text" style="background:{theme.swatches[3]}33;width:60%"></div>
-                        </div>
-                      </div>
-                    </div>
-                    <div class="theme-card-info">
-                      <span class="theme-card-label">{theme.label}</span>
-                      <span class="theme-card-desc">{theme.description}</span>
-                    </div>
-                    {#if active}<span class="theme-card-check">âœ“</span>{/if}
-                  </button>
-                {/each}
-                {#each store.settings.customThemes ?? [] as custom}
-                  {@const active = store.settings.theme === custom.id}
-                  <div class="theme-card custom-theme-card" class:active>
-                    <button
-                      class="custom-theme-select"
-                      onclick={() => updateSettings({ theme: custom.id })}
-                      title="Apply {custom.name}"
-                    >
-                      <div class="theme-preview">
-                        <div class="theme-preview-bg" style="background:{custom.tokens['bg-base']}">
-                          <div class="theme-preview-sidebar" style="background:{custom.tokens['bg-surface']}"></div>
-                          <div class="theme-preview-content">
-                            <div class="theme-preview-accent" style="background:{custom.tokens['accent']}"></div>
-                            <div class="theme-preview-text" style="background:{custom.tokens['text-primary']}55"></div>
-                            <div class="theme-preview-text" style="background:{custom.tokens['text-primary']}33;width:60%"></div>
-                          </div>
-                        </div>
-                      </div>
-                      <div class="theme-card-info">
-                        <span class="theme-card-label">{custom.name}</span>
-                        <span class="theme-card-desc custom-badge">Custom</span>
-                      </div>
-                    </button>
-                    <div class="custom-theme-actions">
-                      <button
-                        class="custom-theme-edit-btn"
-                        onclick={() => onOpenThemeEditor?.(custom.id)}
-                        title="Edit theme"
-                      >
-                        <Pencil size={10} />
-                      </button>
-                      <button
-                        class="custom-theme-delete-btn"
-                        onclick={() => {
-                          if (confirm(`Delete theme "${custom.name}"?`)) deleteCustomTheme(custom.id);
-                        }}
-                        title="Delete theme"
-                      >
-                        <Trash size={10} />
-                      </button>
-                    </div>
-                    {#if active}<span class="theme-card-check">âœ“</span>{/if}
+    </div>
+  </aside>
+
+  <div class="settings-workbench">
+    <aside class="settings-subnav" aria-label={`${currentGroup.label} settings sections`}>
+      <p class="settings-subnav__eyebrow">{currentGroup.label}</p>
+      <div class="settings-subnav__list">
+        {#each currentGroup.items as t}
+          <button
+            class="settings-subnav-btn"
+            class:is-active={tab === t.id}
+            type="button"
+            data-settings-autofocus={tab === t.id ? "true" : undefined}
+            onclick={() => openTab(t.id)}
+          >
+            <span class="settings-subnav-btn__icon"><t.icon size={16} weight="light" /></span>
+            <span class="settings-subnav-btn__label">{t.label}</span>
+          </button>
+        {/each}
+      </div>
+    </aside>
+
+    <section class="settings-pane-shell">
+      <header class="settings-pane-header">
+        <div>
+          <p class="settings-pane-header__eyebrow" id="settingsPaneGroupLabel">{currentGroup.label}</p>
+          <h2 class="settings-pane-header__title" id="settingsPaneTitle">{currentTabMeta.label}</h2>
+          <p class="settings-pane-header__desc" id="settingsPaneDesc">{currentTabMeta.desc}</p>
+        </div>
+      </header>
+
+      <div class="settings-pane-body content-body" bind:this={contentBodyEl} onscroll={rememberPaneScroll}>
+        <section
+          class="settings-pane"
+          class:is-active={tab === "general"}
+          data-settings-pane="general"
+          hidden={tab !== "general"}
+          aria-hidden={tab !== "general"}
+        >
+          <div class="settings-grid">
+            <div class="settings-card">
+              <p class="settings-card__title">Startup</p>
+              <div class="settings-card__stack">
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Launch into library</p>
+                    <p class="settings-mini-row__hint">Open the last active library section on startup.</p>
                   </div>
-                {/each}
-                <button
-                  class="theme-card new-theme-card"
-                  onclick={() => onOpenThemeEditor?.(null)}
-                  title="Create a custom theme"
-                >
-                  <div class="new-theme-icon">
-                    <Plus size={18} weight="light" />
-                  </div>
-                  <div class="theme-card-info">
-                    <span class="theme-card-label">New Theme</span>
-                    <span class="theme-card-desc">Create custom</span>
-                  </div>
-                </button>
-              </div>
-            </div>
-          </div>
-        {:else if tab === "reader"}
-          <div class="panel">
-            <div class="section">
-              <p class="section-title">Page Layout</p>
-              <div class="step-row">
-                <div class="toggle-info"><span class="toggle-label">Default layout</span><span class="toggle-desc">How chapters open by default</span></div>
-                <div class="select-wrap" id="page-style">
-                  <button class="select-btn" onclick={() => toggleSelect("page-style")}>
-                    <span>{pageStyleLabel(store.settings.pageStyle)}</span>
-                    <svg class="select-caret" class:open={selectOpen === "page-style"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
-                  </button>
-                  {#if selectOpen === "page-style"}
-                    <div class="select-menu">
-                      {#each [["single","Single page"],["longstrip","Long strip"]] as [v, l]}
-                        <button class="select-option" class:active={(store.settings.pageStyle === "double" ? "single" : store.settings.pageStyle) === v} onclick={() => { updateSettings({ pageStyle: v as Settings["pageStyle"] }); selectOpen = null; }}>{l}</button>
-                      {/each}
-                    </div>
-                  {/if}
-                </div>
-              </div>
-              <div class="step-row">
-                <div class="toggle-info"><span class="toggle-label">Reading direction</span><span class="toggle-desc">Left-to-right for most manga, right-to-left for Japanese</span></div>
-                <div class="select-wrap" id="reading-dir">
-                  <button class="select-btn" onclick={() => toggleSelect("reading-dir")}>
-                    <span>{readingDirectionLabel(store.settings.readingDirection)}</span>
-                    <svg class="select-caret" class:open={selectOpen === "reading-dir"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
-                  </button>
-                  {#if selectOpen === "reading-dir"}
-                    <div class="select-menu">
-                      {#each [["ltr","Left to right"],["rtl","Right to left"]] as [v, l]}
-                        <button class="select-option" class:active={store.settings.readingDirection === v} onclick={() => { updateSettings({ readingDirection: v as Settings["readingDirection"] }); selectOpen = null; }}>{l}</button>
-                      {/each}
-                    </div>
-                  {/if}
-                </div>
-              </div>
-              <label class="toggle-row">
-                <div class="toggle-info"><span class="toggle-label">Page gap</span></div>
-                <button role="switch" aria-checked={store.settings.pageGap} aria-label="Page gap" class="toggle" class:on={store.settings.pageGap} onclick={() => updateSettings({ pageGap: !store.settings.pageGap })}><span class="toggle-thumb"></span></button>
-              </label>
-              <label class="toggle-row">
-                <div class="toggle-info"><span class="toggle-label">Overlay bars</span></div>
-                <button role="switch" aria-checked={store.settings.overlayBars ?? false} aria-label="Overlay bars" class="toggle" class:on={store.settings.overlayBars ?? false} onclick={() => updateSettings({ overlayBars: !(store.settings.overlayBars ?? false) })}><span class="toggle-thumb"></span></button>
-              </label>
-            </div>
-            <div class="section">
-              <p class="section-title">Fit &amp; Zoom</p>
-              <div class="step-row">
-                <div class="toggle-info"><span class="toggle-label">Default fit mode</span></div>
-                <div class="select-wrap" id="fit-mode">
-                  <button class="select-btn" onclick={() => toggleSelect("fit-mode")}>
-                    <span>{fitModeLabel(store.settings.fitMode)}</span>
-                    <svg class="select-caret" class:open={selectOpen === "fit-mode"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
-                  </button>
-                  {#if selectOpen === "fit-mode"}
-                    <div class="select-menu">
-                      {#each [["width","Fit width"],["height","Fit height"],["screen","Fit screen"],["original","Original (1:1)"]] as [v, l]}
-                        <button class="select-option" class:active={(store.settings.fitMode ?? "width") === v} onclick={() => { updateSettings({ fitMode: v as FitMode }); selectOpen = null; }}>{l}</button>
-                      {/each}
-                    </div>
-                  {/if}
-                </div>
-              </div>
-              <div class="step-row">
-                <div class="toggle-info">
-                  <span class="toggle-label">Default zoom</span>
-                  <span class="toggle-desc">100% = fills the reader</span>
-                </div>
-                <div class="scale-row">
-                  <input type="range" min={10} max={400} step={5}
-                    value={Math.round((store.settings.readerZoom ?? 0.5) * 100)}
-                    oninput={(e) => updateSettings({ readerZoom: Number(e.currentTarget.value) / 100 })}
-                    class="scale-slider" />
-                  <input
-                    type="number" min={10} max={400} step={5}
-                    class="scale-val-input"
-                    value={Math.round((store.settings.readerZoom ?? 0.5) * 100)}
-                    oninput={(e) => {
-                      const n = parseInt(e.currentTarget.value, 10);
-                      if (!isNaN(n) && n >= 10 && n <= 400) updateSettings({ readerZoom: n / 100 });
-                    }}
-                    onblur={(e) => {
-                      const n = parseInt(e.currentTarget.value, 10);
-                      if (isNaN(n) || n < 10) { updateSettings({ readerZoom: 0.1 }); e.currentTarget.value = "10"; }
-                      else if (n > 400) { updateSettings({ readerZoom: 4.0 }); e.currentTarget.value = "400"; }
-                    }}
-                  />
-                  <span class="scale-pct">%</span>
-                  <button class="step-btn" onclick={() => updateSettings({ readerZoom: 0.5 })} disabled={(store.settings.readerZoom ?? 0.5) === 0.5} title="Reset to 100%">â†º</button>
-                </div>
-              </div>
-              <p class="scale-hint">
-                {#each [50, 75, 100, 125, 150, 200] as v}
-                  <button class="scale-preset"
-                    class:active={Math.round((store.settings.readerZoom ?? 0.5) * 100) === v}
-                    onclick={() => updateSettings({ readerZoom: v / 100 })}>{v}%</button>
-                {/each}
-              </p>
-              <label class="toggle-row">
-                <div class="toggle-info"><span class="toggle-label">Optimize contrast</span></div>
-                <button role="switch" aria-checked={store.settings.optimizeContrast} aria-label="Optimize contrast" class="toggle" class:on={store.settings.optimizeContrast} onclick={() => updateSettings({ optimizeContrast: !store.settings.optimizeContrast })}><span class="toggle-thumb"></span></button>
-              </label>
-            </div>
-            <div class="section">
-              <p class="section-title">Behaviour</p>
-              <label class="toggle-row">
-                <div class="toggle-info"><span class="toggle-label">Auto-mark read</span></div>
-                <button role="switch" aria-checked={store.settings.autoMarkRead} aria-label="Auto-mark chapters read" class="toggle" class:on={store.settings.autoMarkRead} onclick={() => updateSettings({ autoMarkRead: !store.settings.autoMarkRead })}><span class="toggle-thumb"></span></button>
-              </label>
-              <label class="toggle-row">
-                <div class="toggle-info"><span class="toggle-label">Auto-advance chapters</span></div>
-                <button role="switch" aria-checked={store.settings.autoNextChapter ?? false} aria-label="Auto-advance chapters" class="toggle" class:on={store.settings.autoNextChapter} onclick={() => updateSettings({ autoNextChapter: !(store.settings.autoNextChapter ?? false) })}><span class="toggle-thumb"></span></button>
-              </label>
-              {#if !(store.settings.autoNextChapter ?? false)}
-                <label class="toggle-row">
-                  <div class="toggle-info"><span class="toggle-label">Mark read when skipping</span></div>
-                  <button role="switch" aria-checked={store.settings.markReadOnNext ?? true} aria-label="Mark read when skipping" class="toggle" class:on={store.settings.markReadOnNext ?? true} onclick={() => updateSettings({ markReadOnNext: !(store.settings.markReadOnNext ?? true) })}><span class="toggle-thumb"></span></button>
-                </label>
-              {/if}
-              <label class="toggle-row">
-                <div class="toggle-info"><span class="toggle-label">Auto-bookmark</span><span class="toggle-desc">Automatically saves your page position as you read</span></div>
-                <button role="switch" aria-checked={store.settings.autoBookmark ?? true} aria-label="Enable auto-bookmark" class="toggle" class:on={store.settings.autoBookmark ?? true} onclick={() => {
-                    updateSettings({ autoBookmark: !(store.settings.autoBookmark ?? true) });
-                  }}><span class="toggle-thumb"></span></button>
-              </label>
-              <div class="step-row">
-                <div class="toggle-info"><span class="toggle-label">Pages to preload</span></div>
-                <div class="step-controls">
-                  <button class="step-btn" onclick={() => updateSettings({ preloadPages: Math.max(0, store.settings.preloadPages - 1) })} disabled={store.settings.preloadPages <= 0}>âˆ’</button>
-                  <span class="step-val">{store.settings.preloadPages}</span>
-                  <button class="step-btn" onclick={() => updateSettings({ preloadPages: Math.min(10, store.settings.preloadPages + 1) })} disabled={store.settings.preloadPages >= 10}>+</button>
-                </div>
-              </div>
-            </div>
-          </div>
-        {:else if tab === "library"}
-          <div class="panel">
-            <div class="section">
-              <p class="section-title">Shared display</p>
-              <div class="toggle-info" style="padding:0 var(--sp-3) var(--sp-3);">
-                <span class="toggle-desc">These controls apply to both Comics and Books in Library.</span>
-              </div>
-              <div class="setting-stack">
-                <div class="toggle-info">
-                  <span class="toggle-label">Layout</span>
-                </div>
-                <div class="library-segmented">
-                  {#each [["grid", "Grid"], ["compact_grid", "Compact grid"], ["list", "List"]] as [mode, label]}
-                    <button
-                      class="library-segment-btn"
-                      class:active={store.settings.libraryViewMode === mode}
-                      onclick={() => updateSettings({ libraryViewMode: mode as Settings["libraryViewMode"] })}
-                    >
-                      {label}
-                    </button>
-                  {/each}
-                </div>
-              </div>
-              <div class="setting-stack">
-                <div class="step-row">
-                  <div class="toggle-info">
-                    <span class="toggle-label">Items per row</span>
-                    <span class="toggle-desc">
-                      {store.settings.libraryPreferredGridColumns === "auto" ? "Auto" : store.settings.libraryPreferredGridColumns}
-                    </span>
-                  </div>
-                </div>
-                <div style="padding:0 var(--sp-3);">
-                  <LibraryDensityRail
-                    value={store.settings.libraryPreferredGridColumns}
-                    disabled={store.settings.libraryViewMode === "list"}
-                    onSelect={(value) => updateSettings({ libraryPreferredGridColumns: value })}
-                  />
-                </div>
-              </div>
-              <label class="toggle-row">
-                <div class="toggle-info">
-                  <span class="toggle-label">Show progress</span>
-                  <span class="toggle-desc">Hide progress gracefully when an item has none.</span>
-                </div>
-                <button role="switch" aria-checked={store.settings.libraryShowProgress} aria-label="Show progress" class="toggle" class:on={store.settings.libraryShowProgress} onclick={() => updateSettings({ libraryShowProgress: !store.settings.libraryShowProgress })}><span class="toggle-thumb"></span></button>
-              </label>
-              <label class="toggle-row">
-                <div class="toggle-info">
-                  <span class="toggle-label">Show outlines</span>
-                  <span class="toggle-desc">Focus, hover, and selection cues stay visible either way.</span>
-                </div>
-                <button role="switch" aria-checked={store.settings.libraryShowCardOutline} aria-label="Show outlines" class="toggle" class:on={store.settings.libraryShowCardOutline} onclick={() => updateSettings({ libraryShowCardOutline: !store.settings.libraryShowCardOutline })}><span class="toggle-thumb"></span></button>
-              </label>
-            </div>
-            <div class="section">
-              <p class="section-title">Books</p>
-              <div class="setting-stack">
-                <div class="toggle-info">
-                  <span class="toggle-label">Default Books type filter</span>
-                </div>
-                <div class="library-segmented">
-                  {#each BOOKS_TYPE_OPTIONS as option}
-                    <button
-                      class="library-segment-btn"
-                      class:active={store.settings.booksLibraryUi.typeFilter === option.id}
-                      onclick={() => updateSettings({
-                        booksLibraryUi: { ...store.settings.booksLibraryUi, typeFilter: option.id },
-                      })}
-                    >
-                      {option.label}
-                    </button>
-                  {/each}
-                </div>
-              </div>
-              <div class="step-row">
-                <div class="toggle-info"><span class="toggle-label">Default Books reading status</span></div>
-                <div class="select-wrap" id="books-status-filter">
-                  <button class="select-btn" onclick={() => toggleSelect("books-status-filter")}>
-                    <span>{BOOKS_FILTER_OPTIONS.find((option) => option.id === store.settings.booksLibraryUi.statusFilter)?.label ?? "All books"}</span>
-                    <svg class="select-caret" class:open={selectOpen === "books-status-filter"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
-                  </button>
-                  {#if selectOpen === "books-status-filter"}
-                    <div class="select-menu">
-                      {#each BOOKS_FILTER_OPTIONS as option}
-                        <button
-                          class="select-option"
-                          class:active={store.settings.booksLibraryUi.statusFilter === option.id}
-                          onclick={() => {
-                            updateSettings({
-                              booksLibraryUi: { ...store.settings.booksLibraryUi, statusFilter: option.id as BooksLibraryStatusFilter },
-                            });
-                            selectOpen = null;
-                          }}
-                        >
-                          {option.label}
-                        </button>
-                      {/each}
-                    </div>
-                  {/if}
-                </div>
-              </div>
-            </div>
-            <div class="section">
-              <p class="section-title">Library start</p>
-              <div class="library-segmented">
-                {#each LIBRARY_START_OPTIONS as option}
                   <button
-                    class="library-segment-btn"
-                    class:active={store.settings.defaultLibrarySection === option.id}
-                    onclick={() => updateSettings({ defaultLibrarySection: option.id })}
-                  >
-                    {option.label}
-                  </button>
-                {/each}
-              </div>
-            </div>
-            <div class="section">
-              <p class="section-title">Comics</p>
-              <label class="toggle-row">
-                <div class="toggle-info">
-                  <span class="toggle-label">Crop cover images</span>
-                  <span class="toggle-desc">Keeps Comics covers in cover mode while Books stays independent.</span>
+                    class="settings-toggle"
+                    class:is-on={store.settings.launchIntoLibrary}
+                    type="button"
+                    role="switch"
+                    aria-checked={store.settings.launchIntoLibrary}
+                    aria-label="Launch into library"
+                    onclick={() => updateSettings({ launchIntoLibrary: !store.settings.launchIntoLibrary })}
+                  ></button>
                 </div>
-                <button role="switch" aria-checked={store.settings.libraryCropCovers} aria-label="Crop cover images" class="toggle" class:on={store.settings.libraryCropCovers} onclick={() => updateSettings({ libraryCropCovers: !store.settings.libraryCropCovers })}><span class="toggle-thumb"></span></button>
-              </label>
-            </div>
-            <div class="section">
-              <p class="section-title">History</p>
-              <div class="step-row">
-                <div class="toggle-info"><span class="toggle-label">Reading history</span><span class="toggle-desc">{store.history.length} entries</span></div>
-                <button class="danger-btn" onclick={clearHistory} disabled={store.history.length === 0}>Clear</button>
-              </div>
-              <div class="step-row">
-                <div class="toggle-info">
-                  <span class="toggle-label">Wipe all data</span>
-                  <span class="toggle-desc">History, stats, pins, and manga links</span>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Auto-start local server</p>
+                    <p class="settings-mini-row__hint">Only when using the embedded desktop server.</p>
+                  </div>
+                  <button
+                    class="settings-toggle"
+                    class:is-on={store.settings.autoStartServer}
+                    type="button"
+                    role="switch"
+                    aria-checked={store.settings.autoStartServer}
+                    aria-label="Auto-start local server"
+                    onclick={() => updateSettings({ autoStartServer: !store.settings.autoStartServer })}
+                  ></button>
                 </div>
-                <button class="danger-btn" onclick={wipeAllData}>Wipe</button>
-              </div>
-            </div>
-          </div>
-        {:else if tab === "performance"}
-          <div class="panel">
-            <div class="section">
-              <p class="section-title">Render Limit</p>
-              <div class="step-row">
-                <div class="toggle-info">
-                  <span class="toggle-label">Items per page</span>
-                  <span class="toggle-desc">Lower = faster on large libraries</span>
-                </div>
-                <div class="step-controls">
-                  <button class="step-btn" onclick={() => updateSettings({ renderLimit: Math.max(12, (store.settings.renderLimit ?? 48) - 12) })} disabled={(store.settings.renderLimit ?? 48) <= 12}>âˆ’</button>
-                  <span class="step-val">{store.settings.renderLimit ?? 48}</span>
-                  <button class="step-btn" onclick={() => updateSettings({ renderLimit: Math.min(200, (store.settings.renderLimit ?? 48) + 12) })} disabled={(store.settings.renderLimit ?? 48) >= 200}>+</button>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Discord Rich Presence</p>
+                    <p class="settings-mini-row__hint">Show reading activity when supported.</p>
+                  </div>
+                  <button
+                    class="settings-toggle"
+                    class:is-on={store.settings.discordRpc}
+                    type="button"
+                    role="switch"
+                    aria-checked={store.settings.discordRpc}
+                    aria-label="Discord Rich Presence"
+                    onclick={() => updateSettings({ discordRpc: !store.settings.discordRpc })}
+                  ></button>
                 </div>
               </div>
-              <p class="scale-hint">
-                {#each [12, 24, 48, 96, 200] as v}
-                  <button class="scale-preset" class:active={(store.settings.renderLimit ?? 48) === v} onclick={() => updateSettings({ renderLimit: v })}>{v}</button>
-                {/each}
-              </p>
             </div>
-            <div class="section">
-              <p class="section-title">Rendering</p>
-              <label class="toggle-row">
-                <div class="toggle-info"><span class="toggle-label">GPU acceleration</span></div>
-                <button role="switch" aria-checked={store.settings.gpuAcceleration} aria-label="GPU acceleration" class="toggle" class:on={store.settings.gpuAcceleration} onclick={() => updateSettings({ gpuAcceleration: !store.settings.gpuAcceleration })}><span class="toggle-thumb"></span></button>
-              </label>
-            </div>
-            <div class="section">
-              <p class="section-title">Idle / Splash Screen</p>
-              <label class="toggle-row">
-                <div class="toggle-info"><span class="toggle-label">Animated card background</span></div>
-                <button role="switch" aria-checked={store.settings.splashCards ?? true} aria-label="Animated card background" class="toggle" class:on={store.settings.splashCards ?? true} onclick={() => updateSettings({ splashCards: !(store.settings.splashCards ?? true) })}><span class="toggle-thumb"></span></button>
-              </label>
-            </div>
-            <div class="section">
-              <p class="section-title">Interface</p>
-              <label class="toggle-row">
-                <div class="toggle-info"><span class="toggle-label">Compact sidebar</span></div>
-                <button role="switch" aria-checked={store.settings.compactSidebar} aria-label="Compact sidebar" class="toggle" class:on={store.settings.compactSidebar} onclick={() => updateSettings({ compactSidebar: !store.settings.compactSidebar })}><span class="toggle-thumb"></span></button>
-              </label>
-            </div>
-            <div class="section">
-              <p class="section-title">Session Cache</p>
-              <div class="step-row">
-                <div class="toggle-info">
-                  <span class="toggle-label">Cache entries</span>
-                  <span class="toggle-desc">In-memory, cleared on restart</span>
-                </div>
-                <div class="perf-stat-group">
-                  <span class="perf-stat">{perfSnapshot?.cacheEntries ?? 0} entries</span>
-                  <button class="kb-reset" onclick={refreshPerfMetrics} title="Refresh">â†º</button>
-                </div>
-              </div>
-              {#if perfSnapshot && perfSnapshot.cacheEntries > 0}
-                <div class="step-row">
-                  <div class="toggle-info"><span class="toggle-label">Oldest entry</span></div>
-                  <span class="perf-stat">{fmtAge(perfSnapshot.oldestEntryMs)}</span>
-                </div>
-                <div class="step-row">
-                  <div class="toggle-info"><span class="toggle-label">Newest entry</span></div>
-                  <span class="perf-stat">{fmtAge(perfSnapshot.newestEntryMs)}</span>
-                </div>
-                <div class="step-row">
-                  <div class="toggle-info">
-                    <span class="toggle-label">Cached keys</span>
-                    <span class="toggle-desc">{perfSnapshot.cacheKeys.join(", ")}</span>
+            <div class="settings-card">
+              <p class="settings-card__title">Profiles</p>
+              <div class="settings-card__stack">
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Active profile</p>
+                    <p class="settings-mini-row__hint">Local profile controls workspace, paths and session defaults.</p>
+                  </div>
+                  <div class="select-wrap" id="general-profile">
+                    <button class="select-btn" type="button" onclick={() => toggleSelect("general-profile")}>
+                      <span>{nextLaunchProfileSummary}</span>
+                      <svg class="select-caret" class:open={selectOpen === "general-profile"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
+                    </button>
+                    {#if selectOpen === "general-profile"}
+                      <div class="select-menu">
+                        {#each BUILTIN_LOCAL_PROFILES as profile}
+                          <button
+                            class="select-option"
+                            class:active={persistedDefaultProfileId === profile.id}
+                            type="button"
+                            onclick={() => {
+                              setDefaultLocalProfile(profile.id);
+                              selectOpen = null;
+                            }}
+                          >
+                            {profile.label} :{profile.port}
+                          </button>
+                        {/each}
+                      </div>
+                    {/if}
                   </div>
                 </div>
-              {/if}
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Idle timeout</p>
+                    <p class="settings-mini-row__hint">Pause background operations after inactivity.</p>
+                  </div>
+                  <div class="select-wrap" id="general-idle-timeout">
+                    <button class="select-btn" type="button" onclick={() => toggleSelect("general-idle-timeout")}>
+                      <span>{idleTimeoutLabel(store.settings.idleTimeoutMin)}</span>
+                      <svg class="select-caret" class:open={selectOpen === "general-idle-timeout"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
+                    </button>
+                    {#if selectOpen === "general-idle-timeout"}
+                      <div class="select-menu">
+                        {#each [["0","Never"],["1","1 minute"],["2","2 minutes"],["5","5 minutes"],["10","10 minutes"],["15","15 minutes"],["30","30 minutes"]] as [value, label]}
+                          <button
+                            class="select-option"
+                            class:active={String(store.settings.idleTimeoutMin ?? 5) === value}
+                            type="button"
+                            onclick={() => {
+                              updateSettings({ idleTimeoutMin: Number(value) });
+                              selectOpen = null;
+                            }}
+                          >
+                            {label}
+                          </button>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
+                </div>
+              </div>
+              <div class="settings-card__surface" style="margin-top:16px">
+                <div class="settings-card__head">
+                  <p class="settings-card__title">Desktop defaults</p>
+                </div>
+                <div class="settings-card__stack">
+                  <div class="settings-row settings-mini-row">
+                    <div class="settings-mini-row__body">
+                      <p class="settings-mini-row__label">Server URL</p>
+                      <p class="settings-mini-row__hint">
+                        {serverUrlManagedByProfile
+                          ? "Managed by the active profile for this session."
+                          : "Base URL of your Suwayomi instance."}
+                      </p>
+                    </div>
+                    <input
+                      class="settings-text-input"
+                      value={currentRuntimeServerUrl}
+                      oninput={(event) => {
+                        if (!serverUrlManagedByProfile) updateSettings({ serverUrl: event.currentTarget.value });
+                      }}
+                      placeholder="http://localhost:4567"
+                      spellcheck="false"
+                      readonly={serverUrlManagedByProfile}
+                    />
+                  </div>
+                  <div class="settings-row settings-mini-row">
+                    <div class="settings-mini-row__body">
+                      <p class="settings-mini-row__label">Preferred source language</p>
+                      <p class="settings-mini-row__hint">Used to preselect languages in Search and deduplicate sources.</p>
+                    </div>
+                    <input
+                      class="settings-text-input settings-text-input--short"
+                      value={store.settings.preferredExtensionLang ?? ""}
+                      oninput={(event) => updateSettings({ preferredExtensionLang: event.currentTarget.value.trim().toLowerCase() })}
+                      placeholder="en"
+                      spellcheck="false"
+                    />
+                  </div>
+                </div>
+                <div class="settings-card__footer settings-card__footer--split" style="margin-top:16px">
+                  <div class="settings-meta-card">
+                    <span class="settings-meta-card__label">Current session</span>
+                    <span class="settings-meta-card__value">{currentSessionProfileSummary}</span>
+                    <span class="settings-meta-card__hint">{currentRuntimeServerUrl}</span>
+                  </div>
+                  <div class="settings-meta-card">
+                    <span class="settings-meta-card__label">Next launch default</span>
+                    <span class="settings-meta-card__value">{nextLaunchProfileSummary}</span>
+                    <span class="settings-meta-card__hint">{nextLaunchProfileMeta?.serverUrl ?? currentRuntimeServerUrl}</span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
-        {:else if tab === "keybinds"}
-          <div class="panel">
-            <div class="section">
-              <div class="section-title-row">
-                <p class="section-title">Keyboard shortcuts</p>
-                <button class="sec-action-btn" onclick={resetKeybinds}>Reset all</button>
+        </section>
+        <section
+          class="settings-pane"
+          class:is-active={tab === "appearance"}
+          data-settings-pane="appearance"
+          hidden={tab !== "appearance"}
+          aria-hidden={tab !== "appearance"}
+        >
+          <div class="settings-grid">
+            <div class="settings-card settings-card--wide">
+              <p class="settings-card__title">Theme</p>
+              <div class="settings-theme-preview">
+                <div class="settings-theme-preview__glow"></div>
+                <div class="settings-theme-preview__topbar">
+                  <span class="settings-theme-preview__pill"></span>
+                  <span class="settings-theme-preview__dash"></span>
+                </div>
+                <div class="settings-theme-preview__grid">
+                  {#each Array(6) as _, index}
+                    <span class="settings-theme-preview__tile" style={`animation-delay:${index * 18}ms`}></span>
+                  {/each}
+                </div>
               </div>
-              <p class="kb-hint">Click a binding to rebind, then press the new key combination.</p>
-              <div class="kb-list">
+              <div class="settings-card__stack">
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Theme preset</p>
+                    <p class="settings-mini-row__hint">Choose the desktop surface palette.</p>
+                  </div>
+                  <div class="select-wrap" id="appearance-theme">
+                    <button class="select-btn" type="button" onclick={() => toggleSelect("appearance-theme")}>
+                      <span>{themeLabel(store.settings.theme)}</span>
+                      <svg class="select-caret" class:open={selectOpen === "appearance-theme"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
+                    </button>
+                    {#if selectOpen === "appearance-theme"}
+                      <div class="select-menu">
+                        {#each THEMES as theme}
+                          <button
+                            class="select-option"
+                            class:active={(store.settings.theme ?? "dark") === theme.id}
+                            type="button"
+                            onclick={() => {
+                              updateSettings({ theme: theme.id });
+                              selectOpen = null;
+                            }}
+                          >
+                            {theme.label}
+                          </button>
+                        {/each}
+                        {#each store.settings.customThemes ?? [] as custom}
+                          <button
+                            class="select-option"
+                            class:active={store.settings.theme === custom.id}
+                            type="button"
+                            onclick={() => {
+                              updateSettings({ theme: custom.id });
+                              selectOpen = null;
+                            }}
+                          >
+                            {custom.name}
+                          </button>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Custom theme editor</p>
+                    <p class="settings-mini-row__hint">Create or adjust custom Nocturne-derived palettes.</p>
+                  </div>
+                  <div class="settings-section-actions settings-inline-actions">
+                    <button class="n-btn n-btn--sm n-btn-ghost" type="button" title="Create a custom theme" onclick={() => onOpenThemeEditor?.(null)}>
+                      New theme
+                    </button>
+                    {#if (store.settings.customThemes ?? []).some((theme) => theme.id === store.settings.theme)}
+                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" title="Edit current theme" onclick={() => onOpenThemeEditor?.(store.settings.theme)}>
+                        Edit current
+                      </button>
+                    {/if}
+                  </div>
+                </div>
+                <!-- Mockup-only controls preserved until dedicated appearance behaviors exist. -->
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">OLED dark mode</p>
+                    <p class="settings-mini-row__hint">Pure black surfaces for high contrast displays.</p>
+                  </div>
+                  <button class="settings-toggle is-on" type="button" aria-disabled="true" aria-label="OLED dark mode" data-inert-control="settings-oled-mode"></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Accent intensity</p>
+                    <p class="settings-mini-row__hint">Tune the lavender highlight strength.</p>
+                  </div>
+                  <input class="settings-range" type="range" min="0" max="100" value="62" aria-disabled="true" data-inert-control="settings-accent-intensity" />
+                </div>
+              </div>
+            </div>
+            <div class="settings-card">
+              <p class="settings-card__title">Window chrome</p>
+              <div class="settings-card__stack">
+                <!-- Mockup-only controls preserved until shell-level chrome options are implemented. -->
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Compact topbar</p>
+                    <p class="settings-mini-row__hint">Reduce shell chrome height for dense layouts.</p>
+                  </div>
+                  <button class="settings-toggle" type="button" aria-disabled="true" aria-label="Compact topbar" data-inert-control="settings-compact-topbar"></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Sidebar glow</p>
+                    <p class="settings-mini-row__hint">Keep brand glow subtle in dark mode.</p>
+                  </div>
+                  <button class="settings-toggle is-on" type="button" aria-disabled="true" aria-label="Sidebar glow" data-inert-control="settings-sidebar-glow"></button>
+                </div>
+              </div>
+            </div>
+            <div class="settings-card">
+              <p class="settings-card__title">UI density</p>
+              <div class="settings-card__stack">
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Interface scale</p>
+                    <p class="settings-mini-row__hint">Desktop sizing for controls and labels.</p>
+                  </div>
+                  <div class="n-inline-segmented">
+                    <button class="n-inline-segment" class:is-selected={uiDensityMode(store.settings.uiZoom) === "compact"} type="button" onclick={() => applyUiDensity("compact")}>Compact</button>
+                    <button class="n-inline-segment" class:is-selected={uiDensityMode(store.settings.uiZoom) === "default"} type="button" onclick={() => applyUiDensity("default")}>Default</button>
+                    <button class="n-inline-segment" class:is-selected={uiDensityMode(store.settings.uiZoom) === "comfort"} type="button" onclick={() => applyUiDensity("comfort")}>Comfort</button>
+                  </div>
+                </div>
+                <!-- Mockup-only control preserved until card emphasis tuning exists as a first-class setting. -->
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Card emphasis</p>
+                    <p class="settings-mini-row__hint">Covers vs metadata balance.</p>
+                  </div>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" aria-disabled="true" data-inert-control="settings-card-emphasis">
+                    Balanced
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section
+          class="settings-pane"
+          class:is-active={tab === "reader"}
+          data-settings-pane="reader"
+          hidden={tab !== "reader"}
+          aria-hidden={tab !== "reader"}
+        >
+          <div class="settings-grid">
+            <div class="settings-card">
+              <p class="settings-card__title">Layout</p>
+              <div class="settings-card__stack">
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Page style</p>
+                    <p class="settings-mini-row__hint">How chapters open by default.</p>
+                  </div>
+                  <div class="n-inline-segmented">
+                    <button class="n-inline-segment" class:is-selected={store.settings.pageStyle === "single"} type="button" onclick={() => updateSettings({ pageStyle: "single" })}>Single</button>
+                    <button class="n-inline-segment" class:is-selected={store.settings.pageStyle === "double"} type="button" onclick={() => updateSettings({ pageStyle: "double" })}>Double</button>
+                    <button class="n-inline-segment" class:is-selected={store.settings.pageStyle === "longstrip"} type="button" onclick={() => updateSettings({ pageStyle: "longstrip" })}>Longstrip</button>
+                  </div>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Reading direction</p>
+                    <p class="settings-mini-row__hint">Left-to-right for most manga, right-to-left for Japanese.</p>
+                  </div>
+                  <div class="n-inline-segmented">
+                    <button class="n-inline-segment" class:is-selected={store.settings.readingDirection === "ltr"} type="button" onclick={() => updateSettings({ readingDirection: "ltr" })}>LTR</button>
+                    <button class="n-inline-segment" class:is-selected={store.settings.readingDirection === "rtl"} type="button" onclick={() => updateSettings({ readingDirection: "rtl" })}>RTL</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-card">
+              <p class="settings-card__title">Behavior</p>
+              <div class="settings-card__stack">
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Page gap</p>
+                    <p class="settings-mini-row__hint">Keep a slim spacer between reader pages.</p>
+                  </div>
+                  <button role="switch" aria-checked={store.settings.pageGap} aria-label="Page gap" class="settings-toggle" class:is-on={store.settings.pageGap} type="button" onclick={() => updateSettings({ pageGap: !store.settings.pageGap })}></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Overlay bars</p>
+                    <p class="settings-mini-row__hint">Keep top and bottom chrome docked over the page.</p>
+                  </div>
+                  <button role="switch" aria-checked={store.settings.overlayBars ?? false} aria-label="Overlay bars" class="settings-toggle" class:is-on={store.settings.overlayBars ?? false} type="button" onclick={() => updateSettings({ overlayBars: !(store.settings.overlayBars ?? false) })}></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Auto next chapter</p>
+                    <p class="settings-mini-row__hint">Continue automatically when the current chapter ends.</p>
+                  </div>
+                  <button role="switch" aria-checked={store.settings.autoNextChapter ?? false} aria-label="Auto next chapter" class="settings-toggle" class:is-on={store.settings.autoNextChapter ?? false} type="button" onclick={() => updateSettings({ autoNextChapter: !(store.settings.autoNextChapter ?? false) })}></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Mark read on next</p>
+                    <p class="settings-mini-row__hint">Apply read state when skipping manually.</p>
+                  </div>
+                  <button role="switch" aria-checked={store.settings.markReadOnNext ?? true} aria-label="Mark read on next" class="settings-toggle" class:is-on={store.settings.markReadOnNext ?? true} type="button" disabled={store.settings.autoNextChapter ?? false} onclick={() => updateSettings({ markReadOnNext: !(store.settings.markReadOnNext ?? true) })}></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Auto-bookmark</p>
+                    <p class="settings-mini-row__hint">Save your last page position as you read.</p>
+                  </div>
+                  <button role="switch" aria-checked={store.settings.autoBookmark ?? true} aria-label="Auto-bookmark" class="settings-toggle" class:is-on={store.settings.autoBookmark ?? true} type="button" onclick={() => updateSettings({ autoBookmark: !(store.settings.autoBookmark ?? true) })}></button>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-card settings-card--wide">
+              <p class="settings-card__title">Fit &amp; Zoom</p>
+              <div class="settings-card__stack">
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Default fit mode</p>
+                    <p class="settings-mini-row__hint">Choose how pages fill the reader when a chapter opens.</p>
+                  </div>
+                  <div class="select-wrap" id="fit-mode">
+                    <button class="select-btn" type="button" onclick={() => toggleSelect("fit-mode")}>
+                      <span>{fitModeLabel(store.settings.fitMode)}</span>
+                      <svg class="select-caret" class:open={selectOpen === "fit-mode"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
+                    </button>
+                    {#if selectOpen === "fit-mode"}
+                      <div class="select-menu">
+                        {#each [["width","Fit width"],["height","Fit height"],["screen","Fit screen"],["original","Original (1:1)"]] as [v, l]}
+                          <button class="select-option" class:active={(store.settings.fitMode ?? "width") === v} onclick={() => { updateSettings({ fitMode: v as FitMode }); selectOpen = null; }}>{l}</button>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
+                </div>
+                <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Default zoom</p>
+                    <p class="settings-mini-row__hint">100% fills the reader using the current fit mode.</p>
+                  </div>
+                  <div class="settings-zoom-controls">
+                    <div class="scale-row">
+                      <input type="range" min={10} max={400} step={5}
+                        value={Math.round((store.settings.readerZoom ?? 0.5) * 100)}
+                        oninput={(e) => updateSettings({ readerZoom: Number(e.currentTarget.value) / 100 })}
+                        class="scale-slider" />
+                      <input
+                        type="number" min={10} max={400} step={5}
+                        class="scale-val-input"
+                        value={Math.round((store.settings.readerZoom ?? 0.5) * 100)}
+                        oninput={(e) => {
+                          const n = parseInt(e.currentTarget.value, 10);
+                          if (!isNaN(n) && n >= 10 && n <= 400) updateSettings({ readerZoom: n / 100 });
+                        }}
+                        onblur={(e) => {
+                          const n = parseInt(e.currentTarget.value, 10);
+                          if (isNaN(n) || n < 10) { updateSettings({ readerZoom: 0.1 }); e.currentTarget.value = "10"; }
+                          else if (n > 400) { updateSettings({ readerZoom: 4.0 }); e.currentTarget.value = "400"; }
+                        }}
+                      />
+                      <span class="scale-pct">%</span>
+                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => updateSettings({ readerZoom: 0.5 })} disabled={(store.settings.readerZoom ?? 0.5) === 0.5} title="Reset to 100%">100%</button>
+                    </div>
+                    <div class="settings-chip-list settings-chip-list--presets">
+                      {#each [50, 75, 100, 125, 150, 200] as v}
+                        <button class="settings-chip" class:is-active={Math.round((store.settings.readerZoom ?? 0.5) * 100) === v} type="button" onclick={() => updateSettings({ readerZoom: v / 100 })}>{v}%</button>
+                      {/each}
+                    </div>
+                  </div>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Optimize contrast</p>
+                    <p class="settings-mini-row__hint">Enhance faint panels and low-contrast scans.</p>
+                  </div>
+                  <button role="switch" aria-checked={store.settings.optimizeContrast} aria-label="Optimize contrast" class="settings-toggle" class:is-on={store.settings.optimizeContrast} type="button" onclick={() => updateSettings({ optimizeContrast: !store.settings.optimizeContrast })}></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Pages to preload</p>
+                    <p class="settings-mini-row__hint">Keep upcoming pages warm in memory for faster turns.</p>
+                  </div>
+                  <div class="step-controls">
+                    <button class="step-btn" type="button" onclick={() => updateSettings({ preloadPages: Math.max(0, store.settings.preloadPages - 1) })} disabled={store.settings.preloadPages <= 0}>-</button>
+                    <span class="step-val">{store.settings.preloadPages}</span>
+                    <button class="step-btn" type="button" onclick={() => updateSettings({ preloadPages: Math.min(10, store.settings.preloadPages + 1) })} disabled={store.settings.preloadPages >= 10}>+</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section
+          class="settings-pane"
+          class:is-active={tab === "library"}
+          data-settings-pane="library"
+          hidden={tab !== "library"}
+          aria-hidden={tab !== "library"}
+        >
+          <div class="settings-grid">
+            <div class="settings-card">
+              <p class="settings-card__title">Display</p>
+              <div class="settings-card__stack">
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Default layout</p>
+                    <p class="settings-mini-row__hint">Shared card presentation for Comics and Books.</p>
+                  </div>
+                  <div class="n-inline-segmented">
+                    {#each [["grid", "Grid"], ["compact_grid", "Compact"], ["list", "List"]] as [mode, label]}
+                      <button class="n-inline-segment" class:is-selected={store.settings.libraryViewMode === mode} type="button" onclick={() => updateSettings({ libraryViewMode: mode as Settings["libraryViewMode"] })}>{label}</button>
+                    {/each}
+                  </div>
+                </div>
+                <div class="settings-row settings-mini-row settings-mini-row--stretch settings-mini-row--density">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Density</p>
+                    <p class="settings-mini-row__hint">Preferred items per row.</p>
+                  </div>
+                  <div
+                    class="settings-density-slider"
+                    class:is-disabled={store.settings.libraryViewMode === "list"}
+                    style={`--settings-density-progress:${getLibraryDensitySliderProgress(store.settings.libraryPreferredGridColumns)};`}
+                  >
+                    <div class="scale-row settings-density-slider__controls">
+                      <div class="settings-density-slider__track">
+                        <div class="settings-density-slider__line" aria-hidden="true"></div>
+                        <div class="settings-density-slider__steps" aria-hidden="true">
+                          {#each LIBRARY_DENSITY_OPTIONS as option}
+                            <span
+                              class="settings-density-slider__step"
+                              class:is-active={store.settings.libraryPreferredGridColumns === option}
+                            ></span>
+                          {/each}
+                        </div>
+                        <div class="settings-density-slider__knob" aria-hidden="true"></div>
+                        <input
+                          type="range"
+                          min="0"
+                          max={LIBRARY_DENSITY_OPTIONS.length - 1}
+                          step="1"
+                          value={getLibraryDensityOptionIndex(store.settings.libraryPreferredGridColumns)}
+                          oninput={handleLibraryDensitySliderInput}
+                          class="scale-slider settings-density-slider__range"
+                          disabled={store.settings.libraryViewMode === "list"}
+                          aria-label="Preferred items per row"
+                        />
+                      </div>
+                      <div class="settings-density-slider__readout" aria-hidden="true">
+                        {libraryDensityOptionLabel(store.settings.libraryPreferredGridColumns)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Library start</p>
+                    <p class="settings-mini-row__hint">Choose what opens first when you land in Library.</p>
+                  </div>
+                  <div class="n-inline-segmented">
+                    {#each LIBRARY_START_OPTIONS as option}
+                      <button class="n-inline-segment" class:is-selected={store.settings.defaultLibrarySection === option.id} type="button" onclick={() => updateSettings({ defaultLibrarySection: option.id })}>{option.label}</button>
+                    {/each}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-card">
+              <p class="settings-card__title">Metadata overlays</p>
+              <div class="settings-card__stack">
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Show progress</p>
+                    <p class="settings-mini-row__hint">Hide progress gracefully when an item has none.</p>
+                  </div>
+                  <button role="switch" aria-checked={store.settings.libraryShowProgress} aria-label="Show progress" class="settings-toggle" class:is-on={store.settings.libraryShowProgress} type="button" onclick={() => updateSettings({ libraryShowProgress: !store.settings.libraryShowProgress })}></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Show outlines</p>
+                    <p class="settings-mini-row__hint">Keep focus, hover, and selection cues visible.</p>
+                  </div>
+                  <button role="switch" aria-checked={store.settings.libraryShowCardOutline} aria-label="Show outlines" class="settings-toggle" class:is-on={store.settings.libraryShowCardOutline} type="button" onclick={() => updateSettings({ libraryShowCardOutline: !store.settings.libraryShowCardOutline })}></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Crop covers</p>
+                    <p class="settings-mini-row__hint">Keep Comics covers in cover mode while Books stays independent.</p>
+                  </div>
+                  <button role="switch" aria-checked={store.settings.libraryCropCovers} aria-label="Crop cover images" class="settings-toggle" class:is-on={store.settings.libraryCropCovers} type="button" onclick={() => updateSettings({ libraryCropCovers: !store.settings.libraryCropCovers })}></button>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-card">
+              <p class="settings-card__title">Books defaults</p>
+              <div class="settings-card__stack">
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Default Books type filter</p>
+                    <p class="settings-mini-row__hint">Choose which type opens first in the Books view.</p>
+                  </div>
+                  <div class="n-inline-segmented">
+                    {#each BOOKS_TYPE_OPTIONS as option}
+                      <button class="n-inline-segment" class:is-selected={store.settings.booksLibraryUi.typeFilter === option.id} type="button" onclick={() => updateSettings({ booksLibraryUi: { ...store.settings.booksLibraryUi, typeFilter: option.id as BooksLibraryTypeFilter } })}>{option.label}</button>
+                    {/each}
+                  </div>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Default Books reading status</p>
+                    <p class="settings-mini-row__hint">Choose which subset of your library opens first.</p>
+                  </div>
+                  <div class="select-wrap" id="books-status-filter">
+                    <button class="select-btn" type="button" onclick={() => toggleSelect("books-status-filter")}>
+                      <span>{BOOKS_FILTER_OPTIONS.find((option) => option.id === store.settings.booksLibraryUi.statusFilter)?.label ?? "All books"}</span>
+                      <svg class="select-caret" class:open={selectOpen === "books-status-filter"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
+                    </button>
+                    {#if selectOpen === "books-status-filter"}
+                      <div class="select-menu">
+                        {#each BOOKS_FILTER_OPTIONS as option}
+                          <button
+                            class="select-option"
+                            class:active={store.settings.booksLibraryUi.statusFilter === option.id}
+                            onclick={() => {
+                              updateSettings({
+                                booksLibraryUi: { ...store.settings.booksLibraryUi, statusFilter: option.id as BooksLibraryStatusFilter },
+                              });
+                              selectOpen = null;
+                            }}
+                          >
+                            {option.label}
+                          </button>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-card">
+              <p class="settings-card__title">History</p>
+              <div class="settings-card__stack">
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Reading history</p>
+                    <p class="settings-mini-row__hint">{store.history.length} entries saved for quick return.</p>
+                  </div>
+                  <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger" type="button" onclick={clearHistory} disabled={store.history.length === 0}>Clear</button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Wipe all data</p>
+                    <p class="settings-mini-row__hint">History, stats, pins, and manga links.</p>
+                  </div>
+                  <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger" type="button" onclick={wipeAllData}>Wipe</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section
+          class="settings-pane"
+          class:is-active={tab === "performance"}
+          data-settings-pane="performance"
+          hidden={tab !== "performance"}
+          aria-hidden={tab !== "performance"}
+        >
+          <div class="settings-grid">
+            <div class="settings-card">
+              <p class="settings-card__title">Rendering</p>
+              <div class="settings-card__stack">
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">GPU acceleration</p>
+                    <p class="settings-mini-row__hint">Use GPU compositing for smoother surfaces when available.</p>
+                  </div>
+                  <button role="switch" aria-checked={store.settings.gpuAcceleration} aria-label="GPU acceleration" class="settings-toggle" class:is-on={store.settings.gpuAcceleration} type="button" onclick={() => updateSettings({ gpuAcceleration: !store.settings.gpuAcceleration })}></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Render limit</p>
+                    <p class="settings-mini-row__hint">Lower values can feel faster on large libraries.</p>
+                  </div>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button">{renderLimitLabel(store.settings.renderLimit)}</button>
+                </div>
+                <div class="settings-chip-list settings-chip-list--presets">
+                  {#each [12, 24, 48, 96, 200] as v}
+                    <button class="settings-chip" class:is-active={(store.settings.renderLimit ?? 48) === v} type="button" onclick={() => updateSettings({ renderLimit: v })}>{v}</button>
+                  {/each}
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Animated splash cards</p>
+                    <p class="settings-mini-row__hint">Keep the splash card background in motion while idle.</p>
+                  </div>
+                  <button role="switch" aria-checked={store.settings.splashCards ?? true} aria-label="Animated splash cards" class="settings-toggle" class:is-on={store.settings.splashCards ?? true} type="button" onclick={() => updateSettings({ splashCards: !(store.settings.splashCards ?? true) })}></button>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-card">
+              <p class="settings-card__title">Diagnostics</p>
+              <div class="settings-card__stack">
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Compact sidebar</p>
+                    <p class="settings-mini-row__hint">Reduce rail spacing for denser navigation.</p>
+                  </div>
+                  <button role="switch" aria-checked={store.settings.compactSidebar} aria-label="Compact sidebar" class="settings-toggle" class:is-on={store.settings.compactSidebar} type="button" onclick={() => updateSettings({ compactSidebar: !store.settings.compactSidebar })}></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Refresh metrics</p>
+                    <p class="settings-mini-row__hint">Update CPU, memory, and renderer indicators.</p>
+                  </div>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={refreshPerfMetrics}>Refresh</button>
+                </div>
+              </div>
+              <div class="settings-card__surface" style="margin-top:16px">
+                <div class="settings-card__head">
+                  <p class="settings-card__title">Session cache</p>
+                </div>
+                <div class="settings-card__stack">
+                  <div class="settings-row settings-mini-row">
+                    <div class="settings-mini-row__body">
+                      <p class="settings-mini-row__label">Cache entries</p>
+                      <p class="settings-mini-row__hint">In-memory and cleared on restart.</p>
+                    </div>
+                    <div class="settings-stat-pill">
+                      <span>{perfSnapshot?.cacheEntries ?? 0} entries</span>
+                    </div>
+                  </div>
+                  {#if perfSnapshot && perfSnapshot.cacheEntries > 0}
+                    <div class="settings-row settings-mini-row">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">Oldest entry</p>
+                      </div>
+                      <span class="perf-stat">{fmtAge(perfSnapshot.oldestEntryMs)}</span>
+                    </div>
+                    <div class="settings-row settings-mini-row">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">Newest entry</p>
+                      </div>
+                      <span class="perf-stat">{fmtAge(perfSnapshot.newestEntryMs)}</span>
+                    </div>
+                    <div class="settings-row settings-mini-row">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">Cached keys</p>
+                        <p class="settings-mini-row__hint">{perfSnapshot.cacheKeys.join(", ")}</p>
+                      </div>
+                    </div>
+                  {/if}
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section
+          class="settings-pane"
+          class:is-active={tab === "keybinds"}
+          data-settings-pane="keybinds"
+          hidden={tab !== "keybinds"}
+          aria-hidden={tab !== "keybinds"}
+        >
+          <div class="settings-grid">
+            <div class="settings-card settings-card--wide">
+              <div class="settings-card__head">
+                <p class="settings-card__title">Keybinds</p>
+                <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={resetKeybinds}>Reset all</button>
+              </div>
+              <p class="settings-card__intro">Click a binding to rebind it, then press the new key combination.</p>
+              <div class="settings-card__stack">
                 {#each Object.keys(KEYBIND_LABELS) as key}
                   {@const k = key as keyof Keybinds}
                   {@const isListening = listeningKey === k}
                   {@const isDefault   = store.settings.keybinds[k] === DEFAULT_KEYBINDS[k]}
-                  <div class="kb-row">
-                    <span class="kb-label">{KEYBIND_LABELS[k]}</span>
-                    <div class="kb-right">
-                      <button class="kb-bind" class:listening={isListening} onclick={() => startListen(k)}>
-                        {isListening ? "Press keyâ€¦" : store.settings.keybinds[k]}
+                  <div class="settings-row settings-mini-row">
+                    <div class="settings-mini-row__body">
+                      <p class="settings-mini-row__label">{KEYBIND_LABELS[k]}</p>
+                      <p class="settings-mini-row__hint">Desktop shortcut</p>
+                    </div>
+                    <div class="settings-keybind-actions">
+                      <button class="n-btn n-btn--sm n-btn-ghost settings-value-pill" class:listening={isListening} type="button" onclick={() => startListen(k)}>
+                        {isListening ? "Press key..." : store.settings.keybinds[k]}
                       </button>
-                      <button class="kb-reset" onclick={() => updateSettings({ keybinds: { ...store.settings.keybinds, [k]: DEFAULT_KEYBINDS[k] } })} disabled={isDefault} title="Reset">â†º</button>
+                      <button class="n-btn n-btn--sm n-btn-ghost settings-mini-action" type="button" onclick={() => updateSettings({ keybinds: { ...store.settings.keybinds, [k]: DEFAULT_KEYBINDS[k] } })} disabled={isDefault} title="Reset">Reset</button>
                     </div>
                   </div>
                 {/each}
               </div>
             </div>
           </div>
-        {:else if tab === "storage"}
-          <div class="panel">
+        </section>
+        <section
+          class="settings-pane"
+          class:is-active={tab === "storage"}
+          data-settings-pane="storage"
+          hidden={tab !== "storage"}
+          aria-hidden={tab !== "storage"}
+        >
+          {#if shouldRenderPane("storage")}
+          <div class="settings-grid">
 
-            <!-- â”€â”€ Migration banner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
-            {#if migrateFrom && !isExternalServer}
-              <div class="migrate-banner">
-                <div class="migrate-banner-body">
-                  <span class="migrate-title">Manga found at previous path â€” move to new location?</span>
-                  <span class="migrate-paths">{migrateFrom} â†’ {migrateTo}</span>
-                  {#if migrateProgress && migrateProgress.total > 0}
-                    <div class="migrate-progress">
-                      <div class="migrate-progress-labels">
-                        <span class="migrate-current">{migrateProgress.current}</span>
-                        <span class="migrate-count">{migrateProgress.done} / {migrateProgress.total}</span>
-                      </div>
-                      <div class="migrate-bar"><div class="migrate-bar-fill" style="width:{Math.round((migrateProgress.done/migrateProgress.total)*100)}%"></div></div>
-                    </div>
-                  {/if}
-                  {#if migrateError}<span class="migrate-error">{migrateError}</span>{/if}
-                </div>
-                <div class="migrate-banner-actions">
-                  <button class="sec-action-btn sec-action-primary" onclick={startMigration} disabled={migrating}>
-                    {migrating ? (migrateProgress ? `Movingâ€¦ ${migrateProgress.done}/${migrateProgress.total}` : "Startingâ€¦") : "Move files"}
-                  </button>
-                  <button class="sec-action-btn" onclick={dismissMigration} disabled={migrating}>Skip</button>
-                </div>
+            <!-- Ã¢â€â‚¬Ã¢â€â‚¬ Migration banner Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ -->
+            <!-- Ã¢â€â‚¬Ã¢â€â‚¬ Disk Usage Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ -->
+            <div class="settings-card">
+              <div class="settings-card__head">
+                <p class="settings-card__title">Usage</p>
+                <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={fetchStorage} disabled={storageLoading}>
+                  {storageLoading ? "Refreshing..." : "Refresh"}
+                </button>
               </div>
-            {/if}
-
-            <!-- â”€â”€ Disk Usage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
-            <div class="section">
-              <div class="section-title-row"><p class="section-title">Disk Usage</p><button class="sec-action-btn" onclick={fetchStorage} disabled={storageLoading}>{storageLoading ? "â€¦" : "â†»"}</button></div>
-              {#if storageLoading}
-                <p class="storage-loading">Reading filesystemâ€¦</p>
-              {:else if storageError}
-                <p class="storage-loading" style="color:var(--color-error)">{storageError}</p>
+              {#if storageError}
+                <p class="settings-card__notice settings-card__notice--error">{storageError}</p>
               {:else if isExternalServer}
-                <p class="storage-loading">Disk usage is unavailable for external servers â€” filesystem access requires a local connection.</p>
-              {:else if multiStorageInfos.length > 0}
-                {#each multiStorageInfos as info}
-                  {@const limitGb    = store.settings.storageLimitGb ?? null}
-                  {@const limitBytes = limitGb !== null ? limitGb * 1024 ** 3 : null}
-                  {@const available  = info.manga_bytes + info.free_bytes}
-                  {@const cap        = limitBytes !== null ? Math.min(limitBytes, available) : available}
-                  {@const pct        = cap > 0 ? Math.min(100, (info.manga_bytes / cap) * 100) : 0}
-                  <div class="storage-bar-wrap">
-                    <div class="storage-bar-header">
-                      <span class="storage-bar-label">{info.label}</span>
-                      <span class="storage-bar-used">{fmtBytes(info.manga_bytes)} of {fmtBytes(cap)}</span>
-                    </div>
-                    <div class="storage-bar">
-                      <div class="storage-bar-fill" class:critical={pct > 90} class:warn={pct > 75 && pct <= 90} style="width:{pct}%"></div>
-                    </div>
-                    <div class="storage-bar-labels">
-                      <span class="storage-path-note" style="margin:0">{info.path}</span>
-                      <span class="storage-bar-free">{fmtBytes(info.free_bytes)} free</span>
-                    </div>
-                  </div>
-                {/each}
+                <p class="settings-card__notice settings-card__notice--info">Disk usage is unavailable for external servers because filesystem access requires a local runtime.</p>
               {:else}
-                <p class="storage-loading">No download path configured.</p>
-              {/if}
-            </div>
-
-            <!-- â”€â”€ Downloads path â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
-            <div class="section">
-              <p class="section-title">Downloads Path</p>
-              {#if isExternalServer}
-                <p class="toggle-desc" style="display:block;padding:0 var(--sp-3) var(--sp-2)">
-                  Connected to an external server. The path below is read from the server â€” changes here will update the server's config directly. Make sure the path is valid on the server's filesystem.
+                <div class="mb-3 flex items-baseline justify-between">
+                  <span class="settings-mini-row__label">Storage usage</span>
+                  <span class="settings-mini-row__hint" style="font-family:var(--font-mono)">{storageUsageSummary.usageLabel}</span>
+                </div>
+                <div class="storage-bar">
+                  <div class="storage-bar-fill" class:critical={storageUsageSummary.pct > 90} class:warn={storageUsageSummary.pct > 75 && storageUsageSummary.pct <= 90} style="width:{storageUsageSummary.pct}%"></div>
+                </div>
+                <p class="settings-card__intro" style="margin-top:16px">
+                  {store.settings.storageLimitGb === null
+                    ? "No limit is set yet. Use Advanced to define a warning threshold and extra scan paths."
+                    : `Warn when usage crosses ${store.settings.storageLimitGb} GB.`}
                 </p>
-              {/if}
-              <div class="path-row">
-                <input
-                  class="text-input path-input"
-                  class:path-input-error={!!pathsFieldError.dl}
-                  bind:value={downloadsPathInput}
-                  placeholder={isExternalServer ? "Server default" : (defaultDownloadsPath || "Default location")}
-                  spellcheck="false"
-                  onkeydown={(e) => e.key === "Enter" && savePaths()}
-                  oninput={() => { pathsFieldError = { ...pathsFieldError, dl: undefined }; }}
-                />
-                <div class="path-actions">
-                  {#if pathsFieldError.dl}
-                    <span class="path-field-error">{pathsFieldError.dl}</span>
-                    {#if !isExternalServer}
-                      <button class="sec-action-btn" onclick={async () => {
-                        try { await createDirectory(downloadsPathInput.trim()); pathsFieldError = { ...pathsFieldError, dl: undefined }; }
-                        catch (e: any) { pathsFieldError = { ...pathsFieldError, dl: e?.message ?? "Failed" }; }
-                      }}>Create</button>
-                    {/if}
-                  {/if}
-                  {#if pathsError}<span class="path-field-error">{pathsError}</span>{/if}
-                  <button class="sec-action-btn sec-action-primary" onclick={savePaths} disabled={pathsSaving}>
-                    {pathsSaved ? "Saved âœ“" : pathsSaving ? "Savingâ€¦" : "Save"}
+                <div class="settings-card__footer" style="margin-top:16px">
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={openStorageAdvanced}>
+                    {store.settings.storageLimitGb === null ? "Set limit" : "Edit limit"}
+                  </button>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={handleClearCache} disabled={clearing}>
+                    {cleared ? "Cleared" : clearing ? "Clearing..." : "Clean cache"}
+                  </button>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={openStorageBackupPanel}>
+                    Create backup
                   </button>
                 </div>
-              </div>
+              {/if}
             </div>
 
-            <!-- â”€â”€ Storage Limit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
-            <div class="section">
-              <p class="section-title">Storage Limit</p>
-              <div class="step-row">
-                <div class="toggle-info">
-                  <span class="toggle-label">Warn when limit is reached</span>
-                  <span class="toggle-desc">{store.settings.storageLimitGb === null ? "No limit set" : `Warn above ${store.settings.storageLimitGb} GB`}</span>
-                </div>
-                {#if store.settings.storageLimitGb === null}
-                  <button class="step-btn" style="width:auto;padding:0 var(--sp-3);font-size:var(--text-xs);letter-spacing:var(--tracking-wide)"
-                    onclick={() => updateSettings({ storageLimitGb: 10 })}>Set limit</button>
-                {:else}
-                  <div class="step-controls">
-                    <button class="step-btn" onclick={() => updateSettings({ storageLimitGb: Math.max(1, (store.settings.storageLimitGb ?? 10) - 1) })} disabled={(store.settings.storageLimitGb ?? 10) <= 1}>âˆ’</button>
-                    <input type="number" min="1" step="1" class="storage-limit-input" value={store.settings.storageLimitGb}
-                      oninput={(e) => { const n = parseFloat(e.currentTarget.value); if (!isNaN(n) && n > 0) updateSettings({ storageLimitGb: n }); }} />
-                    <span class="storage-limit-unit">GB</span>
-                    <button class="step-btn" onclick={() => updateSettings({ storageLimitGb: (store.settings.storageLimitGb ?? 10) + 1 })}>+</button>
-                    <button class="kb-reset" title="Remove limit" onclick={() => updateSettings({ storageLimitGb: null })}>â†º</button>
+            <!-- Ã¢â€â‚¬Ã¢â€â‚¬ Downloads path Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ -->
+            <div class="settings-card">
+              <p class="settings-card__title">Paths</p>
+              {#if isExternalServer}
+                <p class="settings-card__intro">Connected to an external server. Path changes here update the server config directly, so they must be valid on the remote filesystem.</p>
+              {/if}
+              <div class="settings-card__stack">
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Downloads path</p>
+                    <p class="settings-mini-row__hint" style="font-family:var(--font-mono)">{downloadsPathInput || defaultDownloadsPath || "Not configured"}</p>
                   </div>
-                {/if}
-              </div>
-            </div>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => browseSettingsPath("downloads")} disabled={isExternalServer}>Browse</button>
+                </div>
 
-            <!-- â”€â”€ Cache â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
-            <div class="section">
-              <p class="section-title">Cache</p>
-              <div class="step-row">
-                <div class="toggle-info"><span class="toggle-label">Image cache</span><span class="toggle-desc">Webview page image cache</span></div>
-                <button class="danger-btn" onclick={handleClearCache} disabled={clearing}>
-                  {cleared ? "Cleared" : clearing ? "Clearingâ€¦" : "Clear"}
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Local source path</p>
+                    <p class="settings-mini-row__hint" style="font-family:var(--font-mono)">{localSourcePathInput || "Optional"}</p>
+                  </div>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => browseSettingsPath("local")} disabled={isExternalServer}>Browse</button>
+                </div>
+              </div>
+              <div class="settings-card__footer" style="margin-top:16px">
+                {#if pathsError}
+                  <span class="settings-mini-row__hint" style="color:var(--color-error)">{pathsError}</span>
+                {:else if pathsSaved}
+                  <span class="settings-mini-row__hint" style="color:var(--accent-fg)">Paths saved.</span>
+                {:else}
+                  <span class="settings-mini-row__hint">Manual path edits and validation stay in Advanced.</span>
+                {/if}
+                <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={openStorageAdvanced}>
+                  Edit paths
                 </button>
               </div>
             </div>
 
-            <!-- â”€â”€ Advanced (collapsible) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
-            <div class="section" bind:this={backupSectionEl}>
-              <p class="section-title">Backup & Restore</p>
-              <p class="toggle-desc" style="padding:0 var(--sp-3) var(--sp-3);display:block">
+            <!-- Ã¢â€â‚¬Ã¢â€â‚¬ Storage Limit Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ -->
+            <!-- Ã¢â€â‚¬Ã¢â€â‚¬ Advanced (collapsible) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ -->
+            {#if advStorageOpen}
+            <div class="settings-card settings-card--wide" bind:this={backupSectionEl}>
+              <p class="settings-card__title">Backup & Restore</p>
+              <p class="settings-card__intro">
                 Unified Aethon backups now live here, while subsystem-only manga, novels, and Books flows remain available. Restore stays sandbox-first by default.
               </p>
-              <div class="backup-warning-block" style="margin:0 var(--sp-3) var(--sp-3)">
-                <span class="toggle-label">Export</span>
-                <span class="toggle-desc">Choose a unified backup or keep one subsystem isolated when that is safer.</span>
-                <div class="library-segmented" style="margin-top:var(--sp-2);flex-wrap:wrap">
+              <div class="settings-card__surface">
+                <div class="settings-card__head">
+                  <p class="settings-card__title">Export</p>
+                </div>
+                <p class="settings-card__intro">Choose a unified backup or keep one subsystem isolated when that is safer.</p>
+                <div class="settings-chip-list" style="margin-top:14px">
                   {#each [
                     ["unified", "Unified Aethon"],
                     ["manga", "Manga only"],
@@ -3053,8 +4097,9 @@
                     ["app", "App metadata"],
                   ] as [mode, label]}
                     <button
-                      class="library-segment-btn"
-                      class:active={backupExportMode === mode}
+                      class="settings-chip"
+                      class:is-active={backupExportMode === mode}
+                      type="button"
                       onclick={() => {
                         backupExportMode = mode as BackupExportMode;
                         backupSavedPath = null;
@@ -3064,56 +4109,56 @@
                     </button>
                   {/each}
                 </div>
-                {#if backupExportMode === "unified"}
-                  <div class="backup-suggestions" style="margin-top:var(--sp-3)">
-                    <label class="toggle-row">
-                      <div class="toggle-info">
-                        <span class="toggle-label">Include Manga</span>
-                        <span class="toggle-desc">Embeds the native .tachibk payload inside the unified .aethonbk file.</span>
+                <div class="settings-card__stack" style="margin-top:14px">
+                  {#if backupExportMode === "unified"}
+                    <div class="settings-row settings-mini-row">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">Include Manga</p>
+                        <p class="settings-mini-row__hint">Embeds the native .tachibk payload inside the unified .aethonbk file.</p>
                       </div>
-                      <button role="switch" aria-checked={backupUnifiedIncludeManga} aria-label="Include Manga" class="toggle" class:on={backupUnifiedIncludeManga} onclick={() => backupUnifiedIncludeManga = !backupUnifiedIncludeManga}><span class="toggle-thumb"></span></button>
-                    </label>
-                    <label class="toggle-row">
-                      <div class="toggle-info">
-                        <span class="toggle-label">Include Books</span>
-                        <span class="toggle-desc">Default is full EPUB/PDF files plus metadata, progress, bookmarks, and covers.</span>
-                      </div>
-                      <button role="switch" aria-checked={backupUnifiedIncludeBooks} aria-label="Include Books" class="toggle" class:on={backupUnifiedIncludeBooks} onclick={() => backupUnifiedIncludeBooks = !backupUnifiedIncludeBooks}><span class="toggle-thumb"></span></button>
-                    </label>
-                    <label class="toggle-row">
-                      <div class="toggle-info">
-                        <span class="toggle-label">Include Novels</span>
-                        <span class="toggle-desc">Exports repository-aware novel state without bundling plugin binaries.</span>
-                      </div>
-                      <button role="switch" aria-checked={backupUnifiedIncludeNovels} aria-label="Include Novels" class="toggle" class:on={backupUnifiedIncludeNovels} onclick={() => backupUnifiedIncludeNovels = !backupUnifiedIncludeNovels}><span class="toggle-thumb"></span></button>
-                    </label>
-                    <label class="toggle-row">
-                      <div class="toggle-info">
-                        <span class="toggle-label">Include app/profile metadata</span>
-                        <span class="toggle-desc">Optional and minimal. Carries only portable next-launch profile metadata.</span>
-                      </div>
-                      <button role="switch" aria-checked={backupUnifiedIncludeApp} aria-label="Include app metadata" class="toggle" class:on={backupUnifiedIncludeApp} onclick={() => backupUnifiedIncludeApp = !backupUnifiedIncludeApp}><span class="toggle-thumb"></span></button>
-                    </label>
-                  </div>
-                {:else if backupExportMode === "books"}
-                  <label class="toggle-row" style="margin-top:var(--sp-3)">
-                    <div class="toggle-info">
-                      <span class="toggle-label">Metadata-only mode</span>
-                      <span class="toggle-desc">Exports Books metadata without packaging EPUB/PDF files.</span>
+                      <button role="switch" aria-checked={backupUnifiedIncludeManga} aria-label="Include Manga" class="settings-toggle" class:is-on={backupUnifiedIncludeManga} type="button" onclick={() => backupUnifiedIncludeManga = !backupUnifiedIncludeManga}></button>
                     </div>
-                    <button role="switch" aria-checked={backupBooksOnlyMetadataOnly} aria-label="Books metadata only" class="toggle" class:on={backupBooksOnlyMetadataOnly} onclick={() => backupBooksOnlyMetadataOnly = !backupBooksOnlyMetadataOnly}><span class="toggle-thumb"></span></button>
-                  </label>
-                {:else if backupExportMode === "manga"}
-                  <span class="toggle-desc" style="display:block;margin-top:var(--sp-3)">Uses the native manga export flow and saves a .tachibk file.</span>
-                {:else if backupExportMode === "novels"}
-                  <span class="toggle-desc" style="display:block;margin-top:var(--sp-3)">Creates a single-payload .aethonbk with repository-aware novel metadata and progress.</span>
-                {:else if backupExportMode === "app"}
-                  <span class="toggle-desc" style="display:block;margin-top:var(--sp-3)">Exports portable profile metadata only. Machine-local settings are intentionally excluded.</span>
-                {/if}
-                <div class="step-row" style="align-items:flex-start;margin-top:var(--sp-3)">
-                  <div class="toggle-info">
-                    <span class="toggle-label">Save backup</span>
-                    <span class="toggle-desc">
+                    <div class="settings-row settings-mini-row">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">Include Books</p>
+                        <p class="settings-mini-row__hint">Default is full EPUB/PDF files plus metadata, progress, bookmarks, and covers.</p>
+                      </div>
+                      <button role="switch" aria-checked={backupUnifiedIncludeBooks} aria-label="Include Books" class="settings-toggle" class:is-on={backupUnifiedIncludeBooks} type="button" onclick={() => backupUnifiedIncludeBooks = !backupUnifiedIncludeBooks}></button>
+                    </div>
+                    <div class="settings-row settings-mini-row">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">Include Novels</p>
+                        <p class="settings-mini-row__hint">Exports repository-aware novel state without bundling plugin binaries.</p>
+                      </div>
+                      <button role="switch" aria-checked={backupUnifiedIncludeNovels} aria-label="Include Novels" class="settings-toggle" class:is-on={backupUnifiedIncludeNovels} type="button" onclick={() => backupUnifiedIncludeNovels = !backupUnifiedIncludeNovels}></button>
+                    </div>
+                    <div class="settings-row settings-mini-row">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">Include app/profile metadata</p>
+                        <p class="settings-mini-row__hint">Optional and minimal. Carries only portable next-launch profile metadata.</p>
+                      </div>
+                      <button role="switch" aria-checked={backupUnifiedIncludeApp} aria-label="Include app metadata" class="settings-toggle" class:is-on={backupUnifiedIncludeApp} type="button" onclick={() => backupUnifiedIncludeApp = !backupUnifiedIncludeApp}></button>
+                    </div>
+                  {:else if backupExportMode === "books"}
+                    <div class="settings-row settings-mini-row">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">Metadata-only mode</p>
+                        <p class="settings-mini-row__hint">Exports Books metadata without packaging EPUB/PDF files.</p>
+                      </div>
+                      <button role="switch" aria-checked={backupBooksOnlyMetadataOnly} aria-label="Books metadata only" class="settings-toggle" class:is-on={backupBooksOnlyMetadataOnly} type="button" onclick={() => backupBooksOnlyMetadataOnly = !backupBooksOnlyMetadataOnly}></button>
+                    </div>
+                  {:else if backupExportMode === "manga"}
+                    <p class="settings-card__intro">Uses the native manga export flow and saves a .tachibk file.</p>
+                  {:else if backupExportMode === "novels"}
+                    <p class="settings-card__intro">Creates a single-payload .aethonbk with repository-aware novel metadata and progress.</p>
+                  {:else if backupExportMode === "app"}
+                    <p class="settings-card__intro">Exports portable profile metadata only. Machine-local settings are intentionally excluded.</p>
+                  {/if}
+                </div>
+                <div class="settings-row settings-mini-row settings-mini-row--stretch" style="margin-top:14px">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Save backup</p>
+                    <p class="settings-mini-row__hint">
                       {#if backupExportMode === "unified"}
                         Produces one .aethonbk container with separated payloads.
                       {:else if backupExportMode === "manga"}
@@ -3121,111 +4166,124 @@
                       {:else}
                         Produces a single-payload .aethonbk backup for {backupPayloadKindLabel(backupExportMode)}.
                       {/if}
-                    </span>
+                    </p>
                     {#if backupSavedPath}
-                      <span class="toggle-desc" style="display:block;margin-top:4px;color:var(--accent-fg)">{backupSavedPath}</span>
+                      <p class="settings-mini-row__hint" style="color:var(--accent-fg)">{backupSavedPath}</p>
                     {/if}
                   </div>
-                  <button class="sec-action-btn sec-action-primary" onclick={exportBackup} disabled={backupExporting || backupValidating || backupRestoring}>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={exportBackup} disabled={backupExporting || backupValidating || backupRestoring}>
                     {backupExporting ? "Exporting..." : "Export backup"}
                   </button>
                 </div>
               </div>
-              <div class="backup-warning-block" style="margin:0 var(--sp-3)">
-                <span class="toggle-label">Import / Restore</span>
-                <span class="toggle-desc">Pick a backup file, inspect the summary, then choose where restore should run.</span>
-                <div class="step-row" style="align-items:flex-start;margin-top:var(--sp-2)">
-                  <div class="toggle-info">
-                    <span class="toggle-label">Selected file</span>
-                    <span class="toggle-desc">{backupSelectedFileLabel ?? "No backup selected yet."}</span>
+              <div class="settings-card__surface" style="margin-top:16px">
+                <div class="settings-card__head">
+                  <p class="settings-card__title">Import / Restore</p>
+                </div>
+                <p class="settings-card__intro">Pick a backup file, inspect the summary, then choose where restore should run.</p>
+                <div class="settings-row settings-mini-row settings-mini-row--stretch" style="margin-top:14px">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Selected file</p>
+                    <p class="settings-mini-row__hint">{backupSelectedFileLabel ?? "No backup selected yet."}</p>
                     {#if backupImportKind}
-                      <span class="toggle-desc" style="display:block;margin-top:4px">
+                      <p class="settings-mini-row__hint">
                         Detected format: {backupImportKind === "aethon" ? ".aethonbk" : "native manga backup"}
-                      </span>
+                      </p>
                     {/if}
                     {#if backupRestoreHandoffSession}
-                      <span class="toggle-desc" style="display:block;margin-top:4px;color:var(--accent-fg)">
+                      <p class="settings-mini-row__hint" style="color:var(--accent-fg)">
                         Restore handoff active. Review the plan here and confirm it in this target profile session.
-                      </span>
+                      </p>
                     {:else if backupRestoreSourceProfileId}
-                      <span class="toggle-desc" style="display:block;margin-top:4px;color:var(--text-secondary)">
+                      <p class="settings-mini-row__hint" style="color:var(--text-secondary)">
                         Origin session: {getLocalProfileMeta(backupRestoreSourceProfileId)?.label ?? backupRestoreSourceProfileId.toUpperCase()}
-                      </span>
+                      </p>
                     {/if}
                   </div>
-                  <button class="sec-action-btn" onclick={triggerBackupImport} disabled={backupExporting || backupValidating || backupRestoring}>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={triggerBackupImport} disabled={backupExporting || backupValidating || backupRestoring}>
                     {backupValidating ? "Inspecting..." : "Choose file"}
                   </button>
                 </div>
                 {#if backupImportKind === "aethon" && backupUnifiedPlan}
-                  <div class="backup-warning-block" style="margin:var(--sp-3) 0 0">
-                    <span class="toggle-label">Restore summary</span>
-                    <span class="toggle-desc">{backupUnifiedPlan.summary.summaryLabel}</span>
-                    <span class="toggle-desc">{backupUnifiedPlan.summary.summaryBody}</span>
-                    <span class="toggle-desc">Recommended default target: other local profile</span>
-                    <span class="toggle-desc">Blocked: {backupUnifiedBlockedCount} - Unsupported: {backupUnifiedUnsupportedCount} - Warning only: {backupUnifiedWarningCount}</span>
+                  <div class="settings-card__surface" style="margin-top:16px">
+                    <div class="settings-card__head">
+                      <p class="settings-card__title">Restore summary</p>
+                    </div>
+                    <p class="settings-card__intro">{backupUnifiedPlan.summary.summaryLabel}</p>
+                    <p class="settings-card__intro">{backupUnifiedPlan.summary.summaryBody}</p>
+                    <div class="settings-chip-list" style="margin-top:14px">
+                      <span class="settings-chip">Recommended: other local profile</span>
+                      <span class="settings-chip">Blocked: {backupUnifiedBlockedCount}</span>
+                      <span class="settings-chip">Unsupported: {backupUnifiedUnsupportedCount}</span>
+                      <span class="settings-chip">Warnings: {backupUnifiedWarningCount}</span>
+                    </div>
                     {#if backupUnifiedPlan.executionBlockedReason}
-                      <span class="toggle-desc" style="display:block;margin-top:var(--sp-2);color:var(--color-warning)">{backupUnifiedPlan.executionBlockedReason}</span>
+                      <p class="settings-card__notice settings-card__notice--error" style="margin-top:14px">{backupUnifiedPlan.executionBlockedReason}</p>
                     {/if}
                     {#if backupUnifiedPlan.containerIssues.length > 0}
-                      <div class="backup-suggestions" style="margin-top:var(--sp-2)">
+                      <div class="settings-card__stack" style="margin-top:14px">
                         {#each backupUnifiedPlan.containerIssues as issue}
-                          <div class="backup-suggestion-row">
-                            <div class="backup-suggestion-info">
-                              <span class="toggle-label">Container issue</span>
-                              <span class="toggle-desc">{issue.code} - {issue.message}</span>
+                          <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                            <div class="settings-mini-row__body">
+                              <p class="settings-mini-row__label">Container issue</p>
+                              <p class="settings-mini-row__hint">{issue.code} - {issue.message}</p>
                             </div>
                           </div>
                         {/each}
                       </div>
                     {/if}
-                    <div class="backup-suggestions" style="margin-top:var(--sp-2)">
+                    <div class="settings-card__stack" style="margin-top:14px">
                       {#each backupUnifiedPlan.payloads as payload}
-                        <div class="backup-suggestion-row" style="align-items:flex-start;gap:var(--sp-3)">
-                          {#if isPayloadExecutable(payload)}
-                            <input
-                              type="checkbox"
-                              checked={Boolean(backupUnifiedSelection[payload.kind])}
-                              onchange={(event) => {
-                                backupUnifiedSelection = {
-                                  ...backupUnifiedSelection,
-                                  [payload.kind]: event.currentTarget.checked,
-                                };
-                              }}
-                              disabled={!payload.canExecuteRestore || !payload.canRestoreNow || backupRestoring}
-                              style="margin-top:2px" />
-                          {:else}
-                            <span class="toggle-desc" style="min-width:66px;margin-top:2px">{payload.canExecuteRestore ? "Info" : "Preview"}</span>
-                          {/if}
-                          <div class="backup-suggestion-info">
-                            <span class="toggle-label">{backupPayloadKindLabel(payload.kind)} - {backupPayloadStatusLabel(payload.status)}</span>
-                            <span class="toggle-desc">{payload.summaryLabel}</span>
-                            <span class="toggle-desc">canRestoreNow: {payload.canRestoreNow ? "true" : "false"} - needsUserAction: {payload.needsUserAction ? "true" : "false"} - canExecuteRestore: {payload.canExecuteRestore ? "true" : "false"} - selectedByDefault: {payload.selectedByDefault ? "true" : "false"}</span>
+                        <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                          <div class="settings-mini-row__body">
+                            <p class="settings-mini-row__label">{backupPayloadKindLabel(payload.kind)} - {backupPayloadStatusLabel(payload.status)}</p>
+                            <p class="settings-mini-row__hint">{payload.summaryLabel}</p>
+                            <p class="settings-mini-row__hint">Ready now: {payload.canRestoreNow ? "Yes" : "No"} · Needs action: {payload.needsUserAction ? "Yes" : "No"} · Executable: {payload.canExecuteRestore ? "Yes" : "No"}</p>
                             {#if payload.availableRestoreModes.length > 0}
-                              <span class="toggle-desc">Restore modes: {payload.availableRestoreModes.join(", ")}{payload.defaultRestoreMode ? ` - default: ${payload.defaultRestoreMode}` : ""}</span>
+                              <p class="settings-mini-row__hint">Restore modes: {payload.availableRestoreModes.join(", ")}{payload.defaultRestoreMode ? ` · default: ${payload.defaultRestoreMode}` : ""}</p>
                             {/if}
                             {#if payload.reasons.length > 0}
                               {#each payload.reasons as reason}
-                                <span class="toggle-desc" style="display:block">Reason: {reason.code} - {reason.message}</span>
+                                <p class="settings-mini-row__hint">Reason: {reason.code} - {reason.message}</p>
                               {/each}
                             {/if}
                             {#if payload.warnings.length > 0}
                               {#each payload.warnings as warning}
-                                <span class="toggle-desc" style="display:block">Warning: {warning.code} - {warning.message}</span>
+                                <p class="settings-mini-row__hint">Warning: {warning.code} - {warning.message}</p>
                               {/each}
+                            {/if}
+                          </div>
+                          <div class="settings-section-actions settings-inline-actions">
+                            {#if isPayloadExecutable(payload)}
+                              <button
+                                class="settings-chip"
+                                class:is-active={Boolean(backupUnifiedSelection[payload.kind])}
+                                type="button"
+                                onclick={() => {
+                                  backupUnifiedSelection = {
+                                    ...backupUnifiedSelection,
+                                    [payload.kind]: !Boolean(backupUnifiedSelection[payload.kind]),
+                                  };
+                                }}
+                                disabled={!payload.canExecuteRestore || !payload.canRestoreNow || backupRestoring}
+                              >
+                                {backupUnifiedSelection[payload.kind] ? "Selected" : "Select"}
+                              </button>
+                            {:else}
+                              <span class="settings-chip">{payload.canExecuteRestore ? "Info" : "Preview"}</span>
                             {/if}
                           </div>
                         </div>
                       {/each}
                     </div>
                     {#if backupUnifiedPlan.topLevelSkipped.length > 0}
-                      <div class="backup-suggestions" style="margin-top:var(--sp-2)">
+                      <div class="settings-card__stack" style="margin-top:14px">
                         {#each backupUnifiedPlan.topLevelSkipped as skipped}
-                          <div class="backup-suggestion-row">
-                            <div class="backup-suggestion-info">
-                              <span class="toggle-label">{backupPayloadKindLabel(skipped.kind)} - {backupPayloadStatusLabel(skipped.status)}</span>
-                              <span class="toggle-desc">{skipped.summaryLabel}</span>
-                              <span class="toggle-desc">{skipped.reason}</span>
+                          <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                            <div class="settings-mini-row__body">
+                              <p class="settings-mini-row__label">{backupPayloadKindLabel(skipped.kind)} - {backupPayloadStatusLabel(skipped.status)}</p>
+                              <p class="settings-mini-row__hint">{skipped.summaryLabel}</p>
+                              <p class="settings-mini-row__hint">{skipped.reason}</p>
                             </div>
                           </div>
                         {/each}
@@ -3233,50 +4291,75 @@
                     {/if}
                   </div>
                 {:else if backupImportKind === "manga"}
-                  <div class="backup-warning-block" style="margin:var(--sp-3) 0 0">
-                    <span class="toggle-label">Manga restore path</span>
-                    <span class="toggle-desc">Native manga backups stay on the current Mihon-style restore flow. You can keep the restore sandboxed by handing it off to the other local profile first.</span>
+                  <div class="settings-card__surface" style="margin-top:16px">
+                    <div class="settings-card__head">
+                      <p class="settings-card__title">Manga restore path</p>
+                    </div>
+                    <p class="settings-card__intro">Native manga backups stay on the current Mihon-style restore flow. You can keep the restore sandboxed by handing it off to the other local profile first.</p>
                     {#if backupRestoreTargetMode === "other-local-profile" && otherLocalProfileMeta}
-                      <span class="toggle-desc" style="display:block;margin-top:6px">Aethon will relaunch into {otherLocalProfileMeta.label}, reopen this backup in Settings > Storage, and wait for confirmation there.</span>
+                      <p class="settings-card__intro">Aethon will relaunch into {otherLocalProfileMeta.label}, reopen this backup in Settings > Storage, and wait for confirmation there.</p>
                     {:else if backupRestoreTargetMode === "current-profile"}
-                      <span class="toggle-desc" style="display:block;margin-top:6px">Source reconciliation and restore readiness run in the current profile before restore is allowed.</span>
+                      <p class="settings-card__intro">Source reconciliation and restore readiness run in the current profile before restore is allowed.</p>
                     {/if}
                   </div>
                 {/if}
                 {#if backupImportKind}
-                  <div class="backup-warning-block" style="margin:var(--sp-3) 0 0">
-                    <span class="toggle-label">Restore target</span>
-                    <span class="toggle-desc">{backupCurrentTargetSummary}</span>
+                  <div class="settings-card__surface" style="margin-top:16px">
+                    <div class="settings-card__head">
+                      <p class="settings-card__title">Restore target</p>
+                    </div>
+                    <p class="settings-card__intro">{backupCurrentTargetSummary}</p>
                     {#if backupCanUseOtherProfileTarget}
-                      <div class="library-segmented" style="margin-top:var(--sp-2);flex-wrap:wrap">
-                        <button class="library-segment-btn" class:active={backupRestoreTargetMode === "other-local-profile"} onclick={() => { backupRestoreTargetMode = "other-local-profile"; backupRestoreCurrentProfileConfirmed = false; }}>
-                          {otherLocalProfileMeta ? `Restore into ${otherLocalProfileMeta.label} (Recommended)` : "Other local profile (Recommended)"}
+                      <div class="settings-chip-list" style="margin-top:14px">
+                        <button
+                          class="settings-chip"
+                          class:is-active={backupRestoreTargetMode === "other-local-profile"}
+                          type="button"
+                          onclick={() => {
+                            backupRestoreTargetMode = "other-local-profile";
+                            backupRestoreCurrentProfileConfirmed = false;
+                          }}
+                        >
+                          {otherLocalProfileMeta ? `Restore into ${otherLocalProfileMeta.label}` : "Other local profile"}
                         </button>
-                        <button class="library-segment-btn" class:active={backupRestoreTargetMode === "current-profile"} onclick={() => backupRestoreTargetMode = "current-profile"}>
-                          Current profile (Advanced)
+                        <button
+                          class="settings-chip"
+                          class:is-active={backupRestoreTargetMode === "current-profile"}
+                          type="button"
+                          onclick={() => (backupRestoreTargetMode = "current-profile")}
+                        >
+                          Current profile
                         </button>
                       </div>
                     {:else if backupRestoreHandoffSession}
-                      <span class="toggle-desc" style="display:block;margin-top:var(--sp-2)">This handoff is now scoped to the current profile session. Review the summary here and confirm to continue.</span>
+                      <p class="settings-card__intro" style="margin-top:14px">This handoff is now scoped to the current profile session. Review the summary here and confirm to continue.</p>
                     {:else}
-                      <span class="toggle-desc" style="display:block;margin-top:var(--sp-2)">Restore execution is only available when the current session is already running on TEST or MAIN.</span>
+                      <p class="settings-card__intro" style="margin-top:14px">Restore execution is only available when the current session is already running on TEST or MAIN.</p>
                     {/if}
                     {#if backupCurrentProfileGateRequired}
-                      <label class="toggle-row" style="margin-top:var(--sp-3)">
-                        <div class="toggle-info">
-                          <span class="toggle-label">Confirm current-profile restore</span>
-                          <span class="toggle-desc">This advanced path restores directly into {currentProfileMeta?.label ?? currentSessionProfileLabel} instead of the recommended sandbox target.</span>
+                      <div class="settings-row settings-mini-row settings-mini-row--stretch" style="margin-top:14px">
+                        <div class="settings-mini-row__body">
+                          <p class="settings-mini-row__label">Confirm current-profile restore</p>
+                          <p class="settings-mini-row__hint">This advanced path restores directly into {currentProfileMeta?.label ?? currentSessionProfileLabel} instead of the recommended sandbox target.</p>
                         </div>
-                        <button role="switch" aria-checked={backupRestoreCurrentProfileConfirmed} aria-label="Confirm current profile restore" class="toggle" class:on={backupRestoreCurrentProfileConfirmed} onclick={() => backupRestoreCurrentProfileConfirmed = !backupRestoreCurrentProfileConfirmed}><span class="toggle-thumb"></span></button>
-                      </label>
+                        <button
+                          role="switch"
+                          aria-checked={backupRestoreCurrentProfileConfirmed}
+                          aria-label="Confirm current profile restore"
+                          class="settings-toggle"
+                          class:is-on={backupRestoreCurrentProfileConfirmed}
+                          type="button"
+                          onclick={() => (backupRestoreCurrentProfileConfirmed = !backupRestoreCurrentProfileConfirmed)}
+                        ></button>
+                      </div>
                     {/if}
                     {#if backupResolvedExecutionBlockedReason}
-                      <span class="toggle-desc" style="display:block;margin-top:var(--sp-2);color:var(--color-warning)">{backupResolvedExecutionBlockedReason}</span>
+                      <p class="settings-card__notice settings-card__notice--error" style="margin-top:14px">{backupResolvedExecutionBlockedReason}</p>
                     {/if}
-                    <div class="step-row" style="align-items:flex-start;margin-top:var(--sp-3)">
-                      <div class="toggle-info">
-                        <span class="toggle-label">Restore action</span>
-                        <span class="toggle-desc">
+                    <div class="settings-row settings-mini-row settings-mini-row--stretch" style="margin-top:14px">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">Restore action</p>
+                        <p class="settings-mini-row__hint">
                           {#if backupRestoreTargetMode === "other-local-profile"}
                             The selected backup will be handed off to the inactive local profile and confirmed there before restore starts.
                           {:else if backupImportKind === "aethon"}
@@ -3284,207 +4367,87 @@
                           {:else}
                             Runs the proven manga restore path in the current profile after the current confirmation gate is satisfied.
                           {/if}
-                        </span>
+                        </p>
                         {#if backupRestoreStatus}
-                          <span class="toggle-desc" style="display:block;margin-top:4px">{backupRestoreStatus.state} - {backupRestoreStatus.mangaProgress}/{backupRestoreStatus.totalManga || 0} manga</span>
+                          <p class="settings-mini-row__hint">{backupRestoreStatus.state} - {backupRestoreStatus.mangaProgress}/{backupRestoreStatus.totalManga || 0} manga</p>
                         {/if}
                       </div>
-                      <div style="display:flex;gap:var(--sp-2);flex-wrap:wrap;justify-content:flex-end">
+                      <div class="settings-section-actions settings-inline-actions">
                         {#if backupImportKind === "manga" && backupRestoreTargetMode === "current-profile"}
-                          <button class="sec-action-btn" onclick={refreshBackupReadiness} disabled={!backupSelectedFile || backupValidating || backupRestoring}>
+                          <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={refreshBackupReadiness} disabled={!backupSelectedFile || backupValidating || backupRestoring}>
                             Refresh readiness
                           </button>
                         {/if}
-                        <button class="sec-action-btn sec-action-primary" onclick={executeSelectedRestore} disabled={backupExecuteDisabled}>
+                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={executeSelectedRestore} disabled={backupExecuteDisabled}>
                           {backupRestoreButtonLabel()}
                         </button>
                       </div>
                     </div>
                   </div>
                 {/if}
+                <input bind:this={backupFileInput} type="file" accept=".tachibk,.proto.gz,.proto,*/*" style="display:none" onchange={onBackupFileSelected} />
               </div>
-              {#if false}
-              {#if backupAuditPlan}
-                <div class="backup-warning-block" style="margin:0 var(--sp-3) var(--sp-3)">
-                  <span class="toggle-label">Unified backup audit (internal)</span>
-                  <span class="toggle-desc">{backupAuditPlan.summary.summaryLabel}</span>
-                  <span class="toggle-desc">{backupAuditPlan.summary.summaryBody}</span>
-                  <span class="toggle-desc">Default target: sandbox profile</span>
-                  {#if backupAuditPlan.recommendedSelection.length > 0}
-                    <span class="toggle-desc">Recommended selection: {backupAuditPlan.recommendedSelection.join(", ")}</span>
-                  {/if}
-                  {#if backupAuditPlan.containerIssues.length > 0}
-                    <div class="backup-suggestions">
-                      {#each backupAuditPlan.containerIssues as issue}
-                        <div class="backup-suggestion-row">
-                          <div class="backup-suggestion-info">
-                            <span class="toggle-label">Container issue</span>
-                            <span class="toggle-desc">{issue.code} • {issue.message}</span>
-                          </div>
-                        </div>
-                      {/each}
-                    </div>
-                  {/if}
-                  <div class="backup-suggestions">
-                    {#each backupAuditPlan.payloads as payload}
-                      <div class="backup-suggestion-row" style="align-items:flex-start;flex-direction:column">
-                        <div class="backup-suggestion-info">
-                          <span class="toggle-label">{payload.kind.toUpperCase()} • {payload.status}</span>
-                          <span class="toggle-desc">{payload.summaryLabel}</span>
-                          <span class="toggle-desc">canRestoreNow: {payload.canRestoreNow ? "true" : "false"} • needsUserAction: {payload.needsUserAction ? "true" : "false"} • selectedByDefault: {payload.selectedByDefault ? "true" : "false"}</span>
-                          {#if payload.availableRestoreModes.length > 0}
-                            <span class="toggle-desc">Restore modes: {payload.availableRestoreModes.join(", ")}{payload.defaultRestoreMode ? ` • default: ${payload.defaultRestoreMode}` : ""}</span>
-                          {/if}
-                        </div>
-                        {#if payload.reasons.length > 0}
-                          <div class="backup-suggestions" style="width:100%">
-                            {#each payload.reasons as reason}
-                              <div class="backup-suggestion-row">
-                                <div class="backup-suggestion-info">
-                                  <span class="toggle-label">Reason</span>
-                                  <span class="toggle-desc">{reason.code} • {reason.message}</span>
-                                </div>
-                              </div>
-                            {/each}
-                          </div>
-                        {/if}
-                        {#if payload.warnings.length > 0}
-                          <div class="backup-suggestions" style="width:100%">
-                            {#each payload.warnings as warning}
-                              <div class="backup-suggestion-row">
-                                <div class="backup-suggestion-info">
-                                  <span class="toggle-label">Warning</span>
-                                  <span class="toggle-desc">{warning.code} • {warning.message}</span>
-                                </div>
-                              </div>
-                            {/each}
-                          </div>
-                        {/if}
-                      </div>
-                    {/each}
-                    {#each backupAuditPlan.topLevelSkipped as skipped}
-                      <div class="backup-suggestion-row">
-                        <div class="backup-suggestion-info">
-                          <span class="toggle-label">{skipped.kind.toUpperCase()} • {skipped.status}</span>
-                          <span class="toggle-desc">{skipped.summaryLabel}</span>
-                          <span class="toggle-desc">{skipped.reason} • canRestoreNow: false • needsUserAction: false</span>
-                        </div>
-                      </div>
-                    {/each}
-                  </div>
-                </div>
-              {/if}
-              <input bind:this={backupFileInput} type="file" accept=".tachibk,.proto.gz,.proto,*/*" style="display:none" onchange={onBackupFileSelected} />
-              <div class="step-row" style="align-items:flex-start">
-                <div class="toggle-info">
-                  <span class="toggle-label">Export backup</span>
-                  <span class="toggle-desc">Create a Suwayomi backup and save it to your Downloads folder.</span>
-                  {#if backupSavedPath}
-                    <span class="toggle-desc" style="display:block;margin-top:4px;color:var(--accent-fg)">{backupSavedPath}</span>
-                  {/if}
-                </div>
-                <button class="sec-action-btn sec-action-primary" onclick={exportBackup} disabled={backupExporting || backupValidating || backupRestoring}>
-                  {backupExporting ? "ExportingÃ¢â‚¬Â¦" : "Export backup"}
-                </button>
-              </div>
-              <div class="step-row" style="align-items:flex-start">
-                <div class="toggle-info">
-                  <span class="toggle-label">Import backup</span>
-                  <span class="toggle-desc">Choose a Tachiyomi or Suwayomi backup, reconcile orphaned sources locally, then restore the reconciled payload into the current server.</span>
-                  {#if backupSelectedFile}
-                    <span class="toggle-desc" style="display:block;margin-top:4px;color:var(--text-secondary)">{backupSelectedFile.name}</span>
-                  {/if}
-                </div>
-                <div style="display:flex;flex-direction:column;align-items:flex-end;gap:var(--sp-2);flex-shrink:0">
-                  <div style="display:flex;gap:var(--sp-2)">
-                    <button class="sec-action-btn" onclick={triggerBackupImport} disabled={backupExporting || backupValidating || backupRestoring}>
-                      {backupValidating ? "Validating..." : "Choose file"}
-                    </button>
-                    <button class="sec-action-btn" onclick={refreshBackupReadiness} disabled={!backupSelectedFile || backupValidating || backupRestoring}>
-                      Refresh readiness
-                    </button>
-                    <button class="sec-action-btn sec-action-primary" onclick={restoreBackup} disabled={backupRestoreBlocked}>
-                      {backupRestoring ? "Restoring..." : "Restore backup"}
-                    </button>
-                  </div>
-                  {#if backupReadiness?.blocksRestore}
-                    <span class="toggle-desc" style="text-align:right;max-width:420px">
-                      {#if backupReadiness.requiresInstallCount > 0}
-                        Restore is gated until {backupReadiness.requiresInstallCount} reconciled source mapping{backupReadiness.requiresInstallCount === 1 ? "" : "s"} become usable on this server.
-                      {:else}
-                        Restore is gated because some reconciled targets are not available on this server yet.
-                      {/if}
-                    </span>
-                  {/if}
-                  {#if backupRestoreStatus}
-                    <span class="toggle-desc" style="text-align:right">
-                      {backupRestoreStatus.state} • {backupRestoreStatus.mangaProgress}/{backupRestoreStatus.totalManga || 0} manga
-                    </span>
-                  {/if}
-                </div>
-              </div>
-              {/if}
               {#if backupImportKind === "manga" && backupAnalysis && backupRestoreTargetMode === "current-profile"}
-                <div class="backup-validate">
-                  <div class="backup-validate-row">
-                    <span class="toggle-label">Reconciliation Summary</span>
-                    <span class="toggle-desc">
-                      {#if backupAnalysis.exactMatches.length === 0 && backupAnalysis.autoReconciled.length === 0 && backupAnalysis.needsReview.length === 0 && backupAnalysis.unresolved.length === 0}
-                        No source reconciliation work was needed.
-                      {:else}
-                        Aethon parsed this backup locally, resolved exact matches first, and then ran bounded source inference on the leftovers.
-                      {/if}
-                    </span>
+                <div class="settings-card__surface" style="margin-top:16px">
+                  <div class="settings-card__head">
+                    <p class="settings-card__title">Reconciliation summary</p>
                   </div>
+                  <p class="settings-card__intro">
+                    {#if backupAnalysis.exactMatches.length === 0 && backupAnalysis.autoReconciled.length === 0 && backupAnalysis.needsReview.length === 0 && backupAnalysis.unresolved.length === 0}
+                      No source reconciliation work was needed.
+                    {:else}
+                      Aethon parsed this backup locally, resolved exact matches first, and then ran bounded source inference on the leftovers.
+                    {/if}
+                  </p>
                   {#if backupReadiness}
-                    <div class="backup-warning-block">
-                      <span class="toggle-label">Restore readiness</span>
-                      <span class="toggle-desc">
-                        Ready now: {backupReadiness.readyNowCount} • Requires install: {backupReadiness.requiresInstallCount} • Unavailable: {backupReadiness.unavailableCount} • Unresolved: {backupReadiness.unresolvedCount}
-                      </span>
+                    <div class="settings-card__surface" style="margin-top:16px">
+                      <div class="settings-card__head">
+                        <p class="settings-card__title">Restore readiness</p>
+                      </div>
+                      <p class="settings-card__intro">
+                        Ready now: {backupReadiness.readyNowCount} · Requires install: {backupReadiness.requiresInstallCount} · Unavailable: {backupReadiness.unavailableCount} · Unresolved: {backupReadiness.unresolvedCount}
+                      </p>
                       {#if backupReadiness.requiresInstallCount > 0}
-                        <span class="toggle-desc">
-                          Restore is intentionally blocked until the required extensions are usable on this server.
-                        </span>
+                        <p class="settings-card__intro">Restore is intentionally blocked until the required extensions are usable on this server.</p>
                         {#if backupReadiness.installableExtensions.length > 0}
-                          <div style="display:flex;gap:var(--sp-2);flex-wrap:wrap;margin-top:var(--sp-2)">
+                          <div class="settings-section-actions settings-inline-actions" style="margin-top:12px;flex-wrap:wrap">
                             <button
-                              class="sec-action-btn sec-action-primary"
+                              class="n-btn n-btn--sm n-btn-ghost"
                               onclick={installRequiredRestoreExtensions}
                               disabled={backupRestoring || backupValidating || backupReadiness.installableExtensions.every((extension) => backupInstalling.has(extension.pkgName))}
                             >
                               Install required extensions
                             </button>
-                            <button class="sec-action-btn" onclick={() => openSearchSources("extensions", "repos")}>
+                            <button class="n-btn n-btn--sm n-btn-ghost" onclick={() => openSearchSources("extensions", "repos")}>
                               Open Extensions & Repos
                             </button>
                           </div>
                         {/if}
                       {/if}
                       {#if backupReadiness.unavailableCount > 0}
-                        <span class="toggle-desc">
-                          Some reconciled targets still have no installable extension candidate on this server. Restore stays blocked until those targets become available.
-                        </span>
+                        <p class="settings-card__intro">Some reconciled targets still have no installable extension candidate on this server. Restore stays blocked until those targets become available.</p>
                       {/if}
                     </div>
                   {/if}
                   {#if backupAnalysis.exactMatches.length > 0}
-                    <div class="backup-warning-block">
-                      <span class="toggle-label">Exact matches</span>
-                      <div class="backup-suggestions">
+                    <div class="settings-card__surface" style="margin-top:16px">
+                      <div class="settings-card__head">
+                        <p class="settings-card__title">Exact matches</p>
+                      </div>
+                      <div class="settings-card__stack">
                         {#each backupAnalysis.exactMatches as cluster}
-                          <div class="backup-suggestion-row">
-                            <div class="backup-suggestion-info">
-                              <span class="toggle-label">{cluster.sourceName}</span>
-                              <span class="toggle-desc">{cluster.selectedCandidate?.displayName} • {clusterConfidenceLabel(cluster)} • {clusterReasonLabel(cluster)}</span>
+                          <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                            <div class="settings-mini-row__body">
+                              <p class="settings-mini-row__label">{cluster.sourceName}</p>
+                              <p class="settings-mini-row__hint">{cluster.selectedCandidate?.displayName} · {clusterConfidenceLabel(cluster)} · {clusterReasonLabel(cluster)}</p>
                               {#if clusterReadinessDetail(cluster)}
-                                <span class="toggle-desc">{clusterReadinessLabel(cluster)} • {clusterReadinessDetail(cluster)}</span>
+                                <p class="settings-mini-row__hint">{clusterReadinessLabel(cluster)} · {clusterReadinessDetail(cluster)}</p>
                               {/if}
                             </div>
                             {#if cluster.selectedCandidate?.requiresInstall && extensionForPkg(cluster.selectedCandidate.extensionPkgName)}
                               <button
-                                class="sec-action-btn sec-action-primary"
-                                onclick={() => installMissingSourceExtension(extensionForPkg(cluster.selectedCandidate?.extensionPkgName)!)}
+                                class="n-btn n-btn--sm n-btn-ghost"
+                                onclick={() => installMissingSourceExtension(extensionForPkg(cluster.selectedCandidate!.extensionPkgName)!)}
                                 disabled={backupRestoring || backupValidating || backupInstalling.has(cluster.selectedCandidate.extensionPkgName!)}
                               >
                                 {backupInstalling.has(cluster.selectedCandidate.extensionPkgName!) ? "Installing..." : "Install"}
@@ -3496,22 +4459,24 @@
                     </div>
                   {/if}
                   {#if backupAnalysis.autoReconciled.length > 0}
-                    <div class="backup-warning-block">
-                      <span class="toggle-label">Auto-reconciled</span>
-                      <div class="backup-suggestions">
+                    <div class="settings-card__surface" style="margin-top:16px">
+                      <div class="settings-card__head">
+                        <p class="settings-card__title">Auto-reconciled</p>
+                      </div>
+                      <div class="settings-card__stack">
                         {#each backupAnalysis.autoReconciled as cluster}
-                          <div class="backup-suggestion-row">
-                            <div class="backup-suggestion-info">
-                              <span class="toggle-label">{cluster.sourceName}</span>
-                              <span class="toggle-desc">{cluster.selectedCandidate?.displayName} • {clusterConfidenceLabel(cluster)} • {clusterReasonLabel(cluster)}</span>
+                          <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                            <div class="settings-mini-row__body">
+                              <p class="settings-mini-row__label">{cluster.sourceName}</p>
+                              <p class="settings-mini-row__hint">{cluster.selectedCandidate?.displayName} · {clusterConfidenceLabel(cluster)} · {clusterReasonLabel(cluster)}</p>
                               {#if clusterReadinessDetail(cluster)}
-                                <span class="toggle-desc">{clusterReadinessLabel(cluster)} • {clusterReadinessDetail(cluster)}</span>
+                                <p class="settings-mini-row__hint">{clusterReadinessLabel(cluster)} · {clusterReadinessDetail(cluster)}</p>
                               {/if}
                             </div>
                             {#if cluster.selectedCandidate?.requiresInstall && extensionForPkg(cluster.selectedCandidate.extensionPkgName)}
                               <button
-                                class="sec-action-btn sec-action-primary"
-                                onclick={() => installMissingSourceExtension(extensionForPkg(cluster.selectedCandidate?.extensionPkgName)!)}
+                                class="n-btn n-btn--sm n-btn-ghost"
+                                onclick={() => installMissingSourceExtension(extensionForPkg(cluster.selectedCandidate!.extensionPkgName)!)}
                                 disabled={backupRestoring || backupValidating || backupInstalling.has(cluster.selectedCandidate.extensionPkgName!)}
                               >
                                 {backupInstalling.has(cluster.selectedCandidate.extensionPkgName!) ? "Installing..." : "Install"}
@@ -3523,46 +4488,52 @@
                     </div>
                   {/if}
                   {#if backupAnalysis.needsReview.length > 0}
-                    <div class="backup-warning-block">
-                      <span class="toggle-label">Needs review</span>
-                      <span class="toggle-desc">Only these ambiguous leftovers need your approval. Choose a candidate or explicitly skip the remap.</span>
-                      <div class="backup-suggestions">
+                    <div class="settings-card__surface" style="margin-top:16px">
+                      <div class="settings-card__head">
+                        <p class="settings-card__title">Needs review</p>
+                      </div>
+                      <p class="settings-card__intro">Only these ambiguous leftovers need your approval. Choose a candidate or explicitly skip the remap.</p>
+                      <div class="settings-card__stack">
                         {#each backupAnalysis.needsReview as cluster}
-                          <div class="backup-suggestion-row" style="align-items:flex-start;flex-direction:column">
-                            <div class="backup-suggestion-info">
-                              <span class="toggle-label">{cluster.sourceName}</span>
-                              <span class="toggle-desc">Backup source ID {cluster.orphanSourceId}</span>
-                              {#if cluster.sampleManga.length > 0}
-                                <span class="toggle-desc">Sample titles: {cluster.sampleManga.map((manga) => manga.title).join(", ")}</span>
-                              {/if}
+                          <div class="settings-card__surface">
+                            <div class="settings-card__head">
+                              <p class="settings-card__title">{cluster.sourceName}</p>
                             </div>
-                            <div class="backup-suggestions" style="width:100%">
+                            <p class="settings-card__intro">Backup source ID {cluster.orphanSourceId}</p>
+                            <div class="settings-card__stack">
+                              {#if cluster.sampleManga.length > 0}
+                                <p class="settings-card__intro">Sample titles: {cluster.sampleManga.map((manga) => manga.title).join(", ")}</p>
+                              {/if}
                               {#each cluster.candidates as candidate}
-                                <label class="backup-suggestion-row" style="width:100%;cursor:pointer">
-                                  <div class="backup-suggestion-info">
-                                    <span class="toggle-label">{candidate.displayName}</span>
-                                    <span class="toggle-desc">{Math.round(candidate.confidence * 100)}% • {candidate.evidenceSummary}</span>
+                                <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                                  <div class="settings-mini-row__body">
+                                    <p class="settings-mini-row__label">{candidate.displayName}</p>
+                                    <p class="settings-mini-row__hint">{Math.round(candidate.confidence * 100)}% · {candidate.evidenceSummary}</p>
                                   </div>
-                                  <input
-                                    type="radio"
-                                    name={`backup-cluster-${cluster.orphanSourceId}`}
-                                    checked={backupReviewSelections[cluster.orphanSourceId] === candidate.sourceId}
-                                    onchange={() => setBackupClusterSelection(cluster.orphanSourceId, candidate.sourceId)}
-                                  />
-                                </label>
-                              {/each}
-                              <label class="backup-suggestion-row" style="width:100%;cursor:pointer">
-                                <div class="backup-suggestion-info">
-                                  <span class="toggle-label">Skip remap</span>
-                                  <span class="toggle-desc">Keep this orphan source untouched in the reconciled restore payload.</span>
+                                  <button
+                                    class="settings-chip"
+                                    class:is-active={backupReviewSelections[cluster.orphanSourceId] === candidate.sourceId}
+                                    type="button"
+                                    onclick={() => setBackupClusterSelection(cluster.orphanSourceId, candidate.sourceId)}
+                                  >
+                                    {backupReviewSelections[cluster.orphanSourceId] === candidate.sourceId ? "Selected" : "Choose"}
+                                  </button>
                                 </div>
-                                <input
-                                  type="radio"
-                                  name={`backup-cluster-${cluster.orphanSourceId}`}
-                                  checked={backupReviewSelections[cluster.orphanSourceId] === "skip"}
-                                  onchange={() => setBackupClusterSelection(cluster.orphanSourceId, "skip")}
-                                />
-                              </label>
+                              {/each}
+                              <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                                <div class="settings-mini-row__body">
+                                  <p class="settings-mini-row__label">Skip remap</p>
+                                  <p class="settings-mini-row__hint">Keep this orphan source untouched in the reconciled restore payload.</p>
+                                </div>
+                                <button
+                                  class="settings-chip"
+                                  class:is-active={backupReviewSelections[cluster.orphanSourceId] === "skip"}
+                                  type="button"
+                                  onclick={() => setBackupClusterSelection(cluster.orphanSourceId, "skip")}
+                                >
+                                  {backupReviewSelections[cluster.orphanSourceId] === "skip" ? "Selected" : "Skip"}
+                                </button>
+                              </div>
                             </div>
                           </div>
                         {/each}
@@ -3570,34 +4541,40 @@
                     </div>
                   {/if}
                   {#if backupAnalysis.unresolved.length > 0}
-                    <div class="backup-warning-block">
-                      <span class="toggle-label">Unresolved</span>
-                      <span class="toggle-desc">These sources still could not be reconciled automatically. Restore can continue, but their original backup source IDs will stay untouched.</span>
-                      <span class="toggle-desc">{backupAnalysis.unresolved.map((cluster) => cluster.sourceName).join(", ")}</span>
+                    <div class="settings-card__surface" style="margin-top:16px">
+                      <div class="settings-card__head">
+                        <p class="settings-card__title">Unresolved</p>
+                      </div>
+                      <p class="settings-card__intro">These sources still could not be reconciled automatically. Restore can continue, but their original backup source IDs will stay untouched.</p>
+                      <p class="settings-card__intro">{backupAnalysis.unresolved.map((cluster) => cluster.sourceName).join(", ")}</p>
                     </div>
                   {/if}
                   {#if backupMissingTrackers.length > 0}
-                    <div class="backup-warning-block">
-                      <span class="toggle-label">Missing trackers</span>
-                      <span class="toggle-desc">{backupMissingTrackers.map((tracker) => tracker.name).join(", ")}</span>
+                    <div class="settings-card__surface" style="margin-top:16px">
+                      <div class="settings-card__head">
+                        <p class="settings-card__title">Missing trackers</p>
+                      </div>
+                      <p class="settings-card__intro">{backupMissingTrackers.map((tracker) => tracker.name).join(", ")}</p>
                     </div>
                   {/if}
                   {#if backupSuggestedExtensions.length > 0 || backupExtensionLookupLoading || backupExtensionLookupError}
-                    <div class="backup-warning-block">
-                      <span class="toggle-label">Extension recovery</span>
+                    <div class="settings-card__surface" style="margin-top:16px">
+                      <div class="settings-card__head">
+                        <p class="settings-card__title">Extension recovery</p>
+                      </div>
                       {#if backupExtensionLookupLoading}
-                        <span class="toggle-desc" style="display:block;margin-top:6px">Checking available extensions...</span>
+                        <p class="settings-card__intro">Checking available extensions...</p>
                       {:else if backupSuggestedExtensions.length > 0}
-                        <div class="backup-suggestions">
-                          <span class="toggle-desc">Aethon found matching extensions for leftovers that still depend on source installs.</span>
+                        <div class="settings-card__stack">
+                          <p class="settings-card__intro">Aethon found matching extensions for leftovers that still depend on source installs.</p>
                           {#each backupSuggestedExtensions as suggestion}
-                            <div class="backup-suggestion-row">
-                              <div class="backup-suggestion-info">
-                                <span class="toggle-label">{suggestion.extension.name}</span>
-                                <span class="toggle-desc">Matches backup source: {suggestion.missingSource.name} ({suggestion.matchedBy === "source-id" ? "matched by source id" : "matched by source name"})</span>
+                            <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                              <div class="settings-mini-row__body">
+                                <p class="settings-mini-row__label">{suggestion.extension.name}</p>
+                                <p class="settings-mini-row__hint">Matches backup source: {suggestion.missingSource.name} ({suggestion.matchedBy === "source-id" ? "matched by source id" : "matched by source name"})</p>
                               </div>
                               <button
-                                class="sec-action-btn sec-action-primary"
+                                class="n-btn n-btn--sm n-btn-ghost"
                                 onclick={() => installMissingSourceExtension(suggestion.extension)}
                                 disabled={backupRestoring || backupValidating || backupInstalling.has(suggestion.extension.pkgName)}
                               >
@@ -3607,28 +4584,30 @@
                           {/each}
                         </div>
                       {:else}
-                        <div class="backup-suggestions">
-                          <span class="toggle-desc">No confident installable matches were found for the remaining leftovers.</span>
-                          <button class="sec-action-btn" onclick={() => openSearchSources("extensions", "repos")}>
+                        <div class="settings-section-actions settings-inline-actions" style="margin-top:12px;flex-wrap:wrap">
+                          <p class="settings-card__intro" style="margin:0">No confident installable matches were found for the remaining leftovers.</p>
+                          <button class="n-btn n-btn--sm n-btn-ghost" onclick={() => openSearchSources("extensions", "repos")}>
                             Open Extensions & Repos
                           </button>
                         </div>
                       {/if}
                       {#if backupExtensionLookupError}
-                        <span class="toggle-desc" style="display:block;margin-top:6px;color:var(--color-error)">{backupExtensionLookupError}</span>
+                        <p class="settings-card__notice settings-card__notice--error" style="margin-top:12px">{backupExtensionLookupError}</p>
                       {/if}
                     </div>
                   {/if}
                   {#if backupAnalysis.warnings.length > 0}
-                    <div class="backup-warning-block">
-                      <span class="toggle-label">Warnings</span>
-                      <div class="backup-suggestions">
+                    <div class="settings-card__surface" style="margin-top:16px">
+                      <div class="settings-card__head">
+                        <p class="settings-card__title">Warnings</p>
+                      </div>
+                      <div class="settings-card__stack">
                         {#each backupAnalysis.warnings as warning}
-                          <div class="backup-suggestion-row">
-                            <div class="backup-suggestion-info">
-                              <span class="toggle-label">{warning.message}</span>
+                          <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                            <div class="settings-mini-row__body">
+                              <p class="settings-mini-row__label">{warning.message}</p>
                               {#if warning.details}
-                                <span class="toggle-desc">{warning.details}</span>
+                                <p class="settings-mini-row__hint">{warning.details}</p>
                               {/if}
                             </div>
                           </div>
@@ -3639,16 +4618,18 @@
                 </div>
               {/if}
               {#if backupRestoreResults}
-                <div class="backup-warning-block" style="margin:var(--sp-3) var(--sp-3) 0">
-                  <span class="toggle-label">Restore results</span>
-                  <div class="backup-suggestions" style="margin-top:var(--sp-2)">
+                <div class="settings-card__surface" style="margin-top:16px">
+                  <div class="settings-card__head">
+                    <p class="settings-card__title">Restore results</p>
+                  </div>
+                  <div class="settings-card__stack" style="margin-top:12px">
                     {#each backupRestoreResults as result}
-                      <div class="backup-suggestion-row">
-                        <div class="backup-suggestion-info">
-                          <span class="toggle-label">{backupPayloadKindLabel(result.kind)} - {backupPayloadStatusLabel(result.status)}</span>
-                          <span class="toggle-desc">{result.summary}</span>
+                      <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                        <div class="settings-mini-row__body">
+                          <p class="settings-mini-row__label">{backupPayloadKindLabel(result.kind)} - {backupPayloadStatusLabel(result.status)}</p>
+                          <p class="settings-mini-row__hint">{result.summary}</p>
                           {#if result.detail}
-                            <span class="toggle-desc">{result.detail}</span>
+                            <p class="settings-mini-row__hint">{result.detail}</p>
                           {/if}
                         </div>
                       </div>
@@ -3657,401 +4638,341 @@
                 </div>
               {/if}
               {#if backupError}
-                <p class="storage-loading" style="color:var(--color-error)">{backupError}</p>
+                <p class="settings-card__notice settings-card__notice--error" style="margin-top:16px">{backupError}</p>
               {/if}
             </div>
+            {/if}
 
-            <div class="section adv-section">
-              <button class="adv-toggle" onclick={() => advStorageOpen = !advStorageOpen}>
-                <span class="section-title" style="padding:0">Advanced</span>
-                <svg class="adv-caret" class:open={advStorageOpen} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
-              </button>
+            <div class="settings-card settings-card--wide">
+              <div class="settings-card__head">
+                <p class="settings-card__title">Advanced</p>
+                <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (advStorageOpen = !advStorageOpen)}>
+                  {advStorageOpen ? "Collapse" : "Expand"}
+                </button>
+              </div>
+              <p class="settings-card__intro">Limits, migration, extra scan directories and backup flows stay tucked here so the main shell keeps the approved composition.</p>
               {#if advStorageOpen}
-                <div class="adv-body">
-                  <!-- Local source -->
-                  <div class="step-row">
-                    <div class="toggle-info">
-                      <span class="toggle-label">Local source path</span>
-                      <span class="toggle-desc">Read manga already on disk without an extension. Leave blank if unused.</span>
-                    </div>
-                    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0">
-                      <div style="display:flex;align-items:center;gap:var(--sp-2)">
-                        <input class="text-input" style="width:200px;font-family:monospace;font-size:var(--text-xs);{pathsFieldError.loc?'border-color:var(--color-error)':''}"
-                          bind:value={localSourcePathInput} placeholder="Optional" spellcheck="false"
-                          onkeydown={(e) => e.key === "Enter" && savePaths()}
-                          oninput={() => { pathsFieldError = { ...pathsFieldError, loc: undefined }; }} />
-                        {#if pathsFieldError.loc && !isExternalServer}
-                          <button class="sec-action-btn" onclick={async () => {
-                            try { await createDirectory(localSourcePathInput.trim()); pathsFieldError = { ...pathsFieldError, loc: undefined }; }
-                            catch (e: any) { pathsFieldError = { ...pathsFieldError, loc: e?.message ?? "Failed" }; }
-                          }}>Create</button>
-                        {/if}
+                <div class="settings-card__surface" style="margin-top:16px">
+                  <div class="settings-card__head">
+                    <p class="settings-card__title">Path editor</p>
+                  </div>
+                  <div class="settings-card__stack">
+                    <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">Downloads path</p>
+                        <p class="settings-mini-row__hint">Manual edit for the main downloads directory.</p>
                       </div>
-                      {#if pathsFieldError.loc}<span style="font-family:var(--font-ui);font-size:10px;color:var(--color-error)">{pathsFieldError.loc}</span>{/if}
+                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => browseSettingsPath("downloads")} disabled={isExternalServer}>Browse</button>
+                    </div>
+                    <div class="settings-input-line settings-input-line--stack">
+                      <div class="settings-input-line">
+                        <input
+                          class="settings-text-input settings-input-line__grow"
+                          class:path-input-error={!!pathsFieldError.dl}
+                          bind:value={downloadsPathInput}
+                          placeholder={isExternalServer ? "Server default" : (defaultDownloadsPath || "Default location")}
+                          spellcheck="false"
+                          onkeydown={(event) => event.key === "Enter" && savePaths()}
+                          oninput={() => { pathsFieldError = { ...pathsFieldError, dl: undefined }; }}
+                        />
+                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={savePaths} disabled={pathsSaving}>
+                          {pathsSaved ? "Saved" : pathsSaving ? "Saving..." : "Save"}
+                        </button>
+                      </div>
+                      {#if pathsFieldError.dl}
+                        <span class="settings-input-line__error">{pathsFieldError.dl}</span>
+                      {/if}
+                    </div>
+                    <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">Local source path</p>
+                        <p class="settings-mini-row__hint">Optional directory for manga already present on disk.</p>
+                      </div>
+                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => browseSettingsPath("local")} disabled={isExternalServer}>Browse</button>
+                    </div>
+                    <div class="settings-input-line settings-input-line--stack">
+                      <div class="settings-input-line">
+                        <input
+                          class="settings-text-input settings-input-line__grow"
+                          class:path-input-error={!!pathsFieldError.loc}
+                          bind:value={localSourcePathInput}
+                          placeholder="Optional"
+                          spellcheck="false"
+                          onkeydown={(event) => event.key === "Enter" && savePaths()}
+                          oninput={() => { pathsFieldError = { ...pathsFieldError, loc: undefined }; }}
+                        />
+                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={savePaths} disabled={pathsSaving}>
+                          {pathsSaved ? "Saved" : pathsSaving ? "Saving..." : "Save"}
+                        </button>
+                      </div>
+                      {#if pathsFieldError.loc}
+                        <span class="settings-input-line__error">{pathsFieldError.loc}</span>
+                      {/if}
+                      {#if pathsError}
+                        <span class="settings-input-line__error">{pathsError}</span>
+                      {/if}
                     </div>
                   </div>
-                  <!-- Extra scan dirs -->
-                  {#each extraScanDirs as dir}
-                    <div class="step-row">
-                      <div class="toggle-info">
-                        <span class="toggle-label" style="font-family:monospace;font-size:var(--text-xs)">{dir}</span>
-                        <span class="toggle-desc">Extra scan directory</span>
+                </div>
+                {#if migrateFrom && !isExternalServer}
+                  <div class="settings-card__surface" style="margin-top:16px">
+                    <div class="settings-card__head">
+                      <p class="settings-card__title">Migration</p>
+                      <div class="settings-section-actions settings-inline-actions">
+                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={startMigration} disabled={migrating}>
+                          {migrating ? (migrateProgress ? `Moving ${migrateProgress.done}/${migrateProgress.total}` : "Starting...") : "Move files"}
+                        </button>
+                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={dismissMigration} disabled={migrating}>Skip</button>
                       </div>
-                      <button class="danger-btn" onclick={() => removeExtraScanDir(dir)}>Remove</button>
                     </div>
-                  {/each}
-                  <!-- Add extra dir -->
-                  <div class="step-row">
-                    <div class="toggle-info">
-                      <span class="toggle-label">Additional scan path</span>
-                      <span class="toggle-desc">Include an extra directory in disk usage readings</span>
+                    <p class="settings-card__intro">Manga was found at the previous downloads path. Move it now to keep the new location in sync with Aethon.</p>
+                    <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">Path change</p>
+                        <p class="settings-mini-row__hint" style="font-family:var(--font-mono)">{migrateFrom} ? {migrateTo}</p>
+                      </div>
+                      {#if migrateProgress && migrateProgress.total > 0}
+                        <span class="sec-status-pill">{migrateProgress.done}/{migrateProgress.total}</span>
+                      {/if}
                     </div>
-                    <div style="display:flex;gap:var(--sp-2);align-items:center;flex-shrink:0">
-                      <input class="text-input" style="width:200px;font-family:monospace;font-size:var(--text-xs)"
-                        bind:value={newScanDir} placeholder="/path/to/dir" spellcheck="false"
-                        onkeydown={(e) => e.key === "Enter" && addExtraScanDir()} />
-                      <button class="sec-action-btn" onclick={addExtraScanDir} disabled={!newScanDir.trim() || extraScanDirs.includes(newScanDir.trim())}>Add</button>
+                    {#if migrateProgress && migrateProgress.total > 0}
+                      <div class="storage-bar" style="margin-top:14px">
+                        <div class="storage-bar-fill" style="width:{Math.round((migrateProgress.done / migrateProgress.total) * 100)}%"></div>
+                      </div>
+                    {/if}
+                    {#if migrateError}
+                      <p class="settings-card__notice settings-card__notice--error" style="margin-top:14px">{migrateError}</p>
+                    {/if}
+                  </div>
+                {/if}
+                <div class="settings-card__surface" style="margin-top:16px">
+                  <div class="settings-card__head">
+                    <p class="settings-card__title">Usage guardrails</p>
+                  </div>
+                  <div class="settings-card__stack">
+                    <div class="settings-row settings-mini-row">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">Warn when limit is reached</p>
+                        <p class="settings-mini-row__hint">Set a soft threshold for local disk usage monitoring.</p>
+                      </div>
+                      <div class="settings-input-line" style="max-width:180px">
+                        <input
+                          class="settings-text-input settings-text-input--short"
+                          bind:value={storageLimitInput}
+                          inputmode="decimal"
+                          placeholder="GB"
+                          spellcheck="false"
+                          onkeydown={(event) => event.key === "Enter" && applyStorageLimit()}
+                        />
+                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={applyStorageLimit}>Save</button>
+                      </div>
                     </div>
                   </div>
-                  <!-- Save -->
-                  <div class="step-row" style="padding-top:0">
-                    <div class="toggle-info"></div>
-                    <button class="sec-action-btn sec-action-primary" onclick={savePaths} disabled={pathsSaving}>
-                      {pathsSaved ? "Saved âœ“" : pathsSaving ? "Savingâ€¦" : "Save"}
-                    </button>
+                </div>
+                <div class="settings-card__surface" style="margin-top:16px">
+                  <div class="settings-card__head">
+                    <p class="settings-card__title">Extra scan paths</p>
+                  </div>
+                  {#if extraScanDirs.length > 0}
+                    <div class="settings-card__stack">
+                      {#each extraScanDirs as dir}
+                        <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                          <div class="settings-mini-row__body">
+                            <p class="settings-mini-row__label" style="font-family:var(--font-mono)">{dir}</p>
+                            <p class="settings-mini-row__hint">Extra scan directory</p>
+                          </div>
+                          <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger" type="button" onclick={() => removeExtraScanDir(dir)}>Remove</button>
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
+                  <div class="settings-field-block" style="margin-top:16px">
+                    <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">Additional scan path</p>
+                        <p class="settings-mini-row__hint">Include an extra directory in disk usage readings.</p>
+                      </div>
+                    </div>
+                    <div class="settings-input-line">
+                      <input
+                        class="settings-text-input settings-input-line__grow"
+                        bind:value={newScanDir}
+                        placeholder="/path/to/dir"
+                        spellcheck="false"
+                        onkeydown={(event) => event.key === "Enter" && addExtraScanDir()}
+                      />
+                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={addExtraScanDir} disabled={!newScanDir.trim() || extraScanDirs.includes(newScanDir.trim())}>
+                        Add
+                      </button>
+                    </div>
                   </div>
                 </div>
               {/if}
             </div>
           </div>
-        {:else if tab === "folders"}
-          <div class="panel">
-            <div class="section">
-              <p class="section-title">Manage Categories</p>
-              <div class="setting-stack">
-                <div class="toggle-info">
-                  <span class="toggle-label">Category domain</span>
-                  <span class="toggle-desc">
-                    {categoryDomain === "comics"
-                      ? "Comics categories stay synced with Suwayomi and other clients."
-                      : "Books categories are stored locally in Aethon and stay separate from Comics."}
-                  </span>
+          {/if}
+        </section>
+        <section
+          class="settings-pane"
+          class:is-active={tab === "categories"}
+          data-settings-pane="categories"
+          hidden={tab !== "categories"}
+          aria-hidden={tab !== "categories"}
+        >
+          <div class="settings-grid">
+            <div class="settings-card settings-card--wide">
+              <p class="settings-card__title">Categories</p>
+              <div class="settings-chip-list">
+                {#each categoryPreviewChips as category}
+                  <span class="settings-chip">{category}</span>
+                {/each}
+                {#if categoryPreviewChips.length === 0}
+                  <span class="settings-chip settings-chip--empty">No categories yet</span>
+                {/if}
+              </div>
+              <div class="settings-card__stack">
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Comics categories</p>
+                    <p class="settings-mini-row__hint">Sync with the server and other clients.</p>
+                  </div>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => openCategoryManager("comics")}>Manage</button>
                 </div>
-                <div class="library-segmented">
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Books categories</p>
+                    <p class="settings-mini-row__hint">Local to desktop and separated from comics.</p>
+                  </div>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => openCategoryManager("books")}>Manage</button>
+                </div>
+              </div>
+              {#if categoriesDetailsPane}
+                <div class="settings-card__surface" style="margin-top:16px">
+                <div class="settings-card__head">
+                  <p class="settings-card__title">Manage {categoriesDetailsPane === "comics" ? "Comics" : "Books"} categories</p>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={closeCategoryManager}>Close</button>
+                </div>
+                <div class="n-inline-segmented">
                   {#each [
                     { id: "comics", label: "Comics" },
                     { id: "books", label: "Books" },
                   ] as option}
                     <button
-                      class="library-segment-btn"
-                      class:active={categoryDomain === option.id}
-                      onclick={() => {
-                        categoryDomain = option.id as "comics" | "books";
-                        editingId = null;
-                        editingName = "";
-                        newFolderName = "";
-                      }}
+                      class="n-inline-segment"
+                      class:is-selected={categoryDomain === option.id}
+                      type="button"
+                      onclick={() => openCategoryManager(option.id as "comics" | "books")}
                     >
                       {option.label}
                     </button>
                   {/each}
                 </div>
-              </div>
-              {#if categoryDomain === "comics"}
-                <p class="toggle-desc" style="padding:0 var(--sp-3) var(--sp-3);display:block">
-                  Categories are stored as Suwayomi categories. Changes sync across all clients.
+                <p class="settings-card__intro">
+                  {categoryDomain === "comics"
+                    ? "Comics categories stay synced with Suwayomi and other clients."
+                    : "Books categories are local to Aethon and stay separate from Comics."}
                 </p>
-                {#if catsError}
-                  <p class="toggle-desc" style="padding:0 var(--sp-3) var(--sp-2);color:var(--color-error);display:block">{catsError}</p>
+                {#if categoryDomain === "comics" && catsError}
+                  <p class="storage-loading" style="color:var(--color-error)">{catsError}</p>
                 {/if}
-              {:else}
-                <p class="toggle-desc" style="padding:0 var(--sp-3) var(--sp-3);display:block">
-                  Books categories are local to Aethon. They organize your library without changing Comics data.
-                </p>
-              {/if}
-              <div class="folder-create-row">
-                <input
-                  class="text-input"
-                  placeholder="New category name..."
-                  bind:value={newFolderName}
-                  onkeydown={(e) => e.key === "Enter" && createFolder()}
-                  style="flex:1;width:auto"
-                />
-                <button class="folder-create-btn" onclick={createFolder} disabled={!newFolderName.trim()}>
-                  <Plus size={13} weight="bold" /> Create
-                </button>
-              </div>
-              {#if categoryDomain === "comics"}
-                {#if catsLoading}
-                  <p class="storage-loading">Loading categories...</p>
-                {:else if store.categories.filter((c) => c.id !== 0).length === 0}
-                  <p class="storage-loading">No categories yet. Create one above.</p>
+                <div class="settings-card__footer settings-card__footer--editor">
+                  <div class="settings-input-line settings-input-line__grow">
+                    <input class="settings-text-input settings-input-line__grow" placeholder="New category name..." bind:value={newFolderName} onkeydown={(e) => e.key === "Enter" && createFolder()} />
+                  </div>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={createFolder} disabled={!newFolderName.trim()}><Plus size={13} weight="bold" /> Create</button>
+                </div>
+                {#if categoryDomain === "comics"}
+                  {#if catsLoading}
+                    <p class="storage-loading">Loading categories...</p>
+                  {:else if store.categories.filter((c) => c.id !== 0).length === 0}
+                    <p class="storage-loading">No categories yet. Create one above.</p>
+                  {:else}
+                    {@const displayCats = store.categories
+                      .filter((c) => c.id !== 0)
+                      .sort((a, b) => {
+                        const defaultId = store.settings.defaultLibraryCategoryId ?? null;
+                        if (a.id === defaultId) return -1;
+                        if (b.id === defaultId) return 1;
+                        return a.order - b.order;
+                      })}
+                    <div class="settings-card__stack" style="margin-top:16px">
+                      {#each displayCats as cat, i}
+                        <div class="settings-row settings-mini-row settings-mini-row--stretch settings-mini-row--category">
+                          {#if editingId === cat.id}
+                            <div class="settings-input-line settings-input-line__grow">
+                              <input class="settings-text-input settings-input-line__grow" bind:value={editingName} onkeydown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") editingId = null; }} onblur={commitEdit} use:focusInput />
+                            </div>
+                            <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" type="button" onclick={commitEdit} title="Save">Save</button>
+                          {:else}
+                            <div class="settings-mini-row__body">
+                              <p class="settings-mini-row__label">{cat.name}</p>
+                              <p class="settings-mini-row__hint">{cat.mangas?.nodes.length ?? 0} manga{(store.settings.defaultLibraryCategoryId ?? null) === cat.id ? " / default" : ""}{(store.settings.hiddenCategoryIds ?? []).includes(cat.id) ? " / hidden from Saved" : ""}</p>
+                            </div>
+                            <div class="settings-section-actions settings-inline-actions settings-inline-actions--dense">
+                              <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" class:folder-default-active={(store.settings.defaultLibraryCategoryId ?? null) === cat.id} type="button" onclick={() => updateSettings({ defaultLibraryCategoryId: (store.settings.defaultLibraryCategoryId ?? null) === cat.id ? null : cat.id })} title={(store.settings.defaultLibraryCategoryId ?? null) === cat.id ? "Remove as default category" : "Set as default category"}><Star size={13} weight={(store.settings.defaultLibraryCategoryId ?? null) === cat.id ? "fill" : "light"} /></button>
+                              <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" class:folder-hidden={(store.settings.hiddenCategoryIds ?? []).includes(cat.id)} type="button" onclick={() => toggleHiddenCategory(cat.id)} title={(store.settings.hiddenCategoryIds ?? []).includes(cat.id) ? "Show in Saved tab" : "Hide from Saved tab"}>{#if (store.settings.hiddenCategoryIds ?? []).includes(cat.id)}<EyeSlash size={13} weight="light" />{:else}<Eye size={13} weight="light" />{/if}</button>
+                              <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" type="button" onclick={() => moveCategory(cat.id, -1)} disabled={i === 0} title="Move up">Up</button>
+                              <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" type="button" onclick={() => moveCategory(cat.id, 1)} disabled={i === displayCats.length - 1} title="Move down">Down</button>
+                              <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" type="button" onclick={() => startEdit(cat.id, cat.name)} title="Rename"><Pencil size={12} weight="light" /></button>
+                              <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger settings-folder-action folder-delete" type="button" onclick={() => deleteFolder(cat.id)} title="Delete"><Trash size={12} weight="light" /></button>
+                            </div>
+                          {/if}
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
+                {:else if sortedBooksCategories.length === 0}
+                  <p class="storage-loading">No Books categories yet. Create one above.</p>
                 {:else}
-                  {@const displayCats = store.categories
-                    .filter((c) => c.id !== 0)
-                    .sort((a, b) => {
-                      const defaultId = store.settings.defaultLibraryCategoryId ?? null;
-                      if (a.id === defaultId) return -1;
-                      if (b.id === defaultId) return 1;
-                      return a.order - b.order;
-                    })}
-                  <div class="folder-list">
-                    {#each displayCats as cat, i}
-                      <div class="folder-row">
+                  <div class="settings-card__stack" style="margin-top:16px">
+                    {#each sortedBooksCategories as cat, i}
+                      <div class="settings-row settings-mini-row settings-mini-row--stretch settings-mini-row--category">
                         {#if editingId === cat.id}
-                          <input
-                            class="text-input"
-                            bind:value={editingName}
-                            onkeydown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") editingId = null; }}
-                            onblur={commitEdit}
-                            style="flex:1;width:auto"
-                            use:focusInput
-                          />
-                          <button class="kb-reset" onclick={commitEdit} title="Save">Save</button>
+                          <div class="settings-input-line settings-input-line__grow">
+                            <input class="settings-text-input settings-input-line__grow" bind:value={editingName} onkeydown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") editingId = null; }} onblur={commitEdit} use:focusInput />
+                          </div>
+                          <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" type="button" onclick={commitEdit} title="Save">Save</button>
                         {:else}
-                          <FolderSimple size={14} weight="light" style="color:var(--text-faint);flex-shrink:0" />
-                          <span class="folder-row-name">{cat.name}</span>
-                          <span class="folder-row-count">{cat.mangas?.nodes.length ?? 0} manga</span>
-                          <div class="folder-row-actions">
-                            <button
-                              class="kb-reset"
-                              class:folder-default-active={(store.settings.defaultLibraryCategoryId ?? null) === cat.id}
-                              onclick={() => updateSettings({ defaultLibraryCategoryId: (store.settings.defaultLibraryCategoryId ?? null) === cat.id ? null : cat.id })}
-                              title={(store.settings.defaultLibraryCategoryId ?? null) === cat.id ? "Remove as default category" : "Set as default category"}
-                            ><Star size={13} weight={(store.settings.defaultLibraryCategoryId ?? null) === cat.id ? "fill" : "light"} /></button>
-                            <button
-                              class="kb-reset"
-                              class:folder-hidden={(store.settings.hiddenCategoryIds ?? []).includes(cat.id)}
-                              onclick={() => toggleHiddenCategory(cat.id)}
-                              title={(store.settings.hiddenCategoryIds ?? []).includes(cat.id) ? "Show in Saved tab" : "Hide from Saved tab"}
-                            >{#if (store.settings.hiddenCategoryIds ?? []).includes(cat.id)}<EyeSlash size={13} weight="light" />{:else}<Eye size={13} weight="light" />{/if}</button>
-                            <button class="kb-reset" onclick={() => moveCategory(cat.id, -1)} disabled={i === 0} title="Move up">Up</button>
-                            <button class="kb-reset" onclick={() => moveCategory(cat.id, 1)} disabled={i === displayCats.length - 1} title="Move down">Down</button>
-                            <button class="kb-reset" onclick={() => startEdit(cat.id, cat.name)} title="Rename"><Pencil size={12} weight="light" /></button>
-                            <button class="kb-reset folder-delete" onclick={() => deleteFolder(cat.id)} title="Delete"><Trash size={12} weight="light" /></button>
+                          <div class="settings-mini-row__body">
+                            <p class="settings-mini-row__label">{cat.name}</p>
+                            <p class="settings-mini-row__hint">{booksCategoryCounts[cat.id] ?? 0} book</p>
+                          </div>
+                          <div class="settings-section-actions settings-inline-actions settings-inline-actions--dense">
+                            <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" type="button" onclick={() => moveCategory(cat.id, -1)} disabled={i === 0} title="Move up">Up</button>
+                            <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" type="button" onclick={() => moveCategory(cat.id, 1)} disabled={i === sortedBooksCategories.length - 1} title="Move down">Down</button>
+                            <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" type="button" onclick={() => startEdit(cat.id, cat.name)} title="Rename"><Pencil size={12} weight="light" /></button>
+                            <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger settings-folder-action folder-delete" type="button" onclick={() => deleteFolder(cat.id)} title="Delete"><Trash size={12} weight="light" /></button>
                           </div>
                         {/if}
                       </div>
                     {/each}
                   </div>
                 {/if}
-              {:else if sortedBooksCategories.length === 0}
-                <p class="storage-loading">No Books categories yet. Create one above.</p>
-              {:else}
-                <div class="folder-list">
-                  {#each sortedBooksCategories as cat, i}
-                    <div class="folder-row">
-                      {#if editingId === cat.id}
-                        <input
-                          class="text-input"
-                          bind:value={editingName}
-                          onkeydown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") editingId = null; }}
-                          onblur={commitEdit}
-                          style="flex:1;width:auto"
-                          use:focusInput
-                        />
-                        <button class="kb-reset" onclick={commitEdit} title="Save">Save</button>
-                      {:else}
-                        <FolderSimple size={14} weight="light" style="color:var(--text-faint);flex-shrink:0" />
-                        <span class="folder-row-name">{cat.name}</span>
-                        <span class="folder-row-count">{booksCategoryCounts[cat.id] ?? 0} book</span>
-                        <div class="folder-row-actions">
-                          <button class="kb-reset" onclick={() => moveCategory(cat.id, -1)} disabled={i === 0} title="Move up">Up</button>
-                          <button class="kb-reset" onclick={() => moveCategory(cat.id, 1)} disabled={i === sortedBooksCategories.length - 1} title="Move down">Down</button>
-                          <button class="kb-reset" onclick={() => startEdit(cat.id, cat.name)} title="Rename"><Pencil size={12} weight="light" /></button>
-                          <button class="kb-reset folder-delete" onclick={() => deleteFolder(cat.id)} title="Delete"><Trash size={12} weight="light" /></button>
-                        </div>
-                      {/if}
-                    </div>
-                  {/each}
-                </div>
-              {/if}
-              {#if flareEnabled}
-                <div class="step-row">
-                  <div class="toggle-info">
-                    <span class="toggle-label">URL</span>
-                    <span class="toggle-desc">Instance address</span>
-                  </div>
-                  <input class="text-input" bind:value={flareUrl} oninput={() => flareTestState = "idle"} placeholder="http://localhost:8191" autocomplete="off" spellcheck="false" />
-                </div>
-                <div class="step-row">
-                  <div class="toggle-info">
-                    <span class="toggle-label">Connection</span>
-                    <span class="toggle-desc">{flareStatusLabel() || "Check instance"}</span>
-                  </div>
-                  <div class="flare-inline-actions">
-                    <span class="sec-status-pill" class:sec-pill-on={flareTestState === "ready"}>{flareStatusLabel() || "Idle"}</span>
-                    <button class="sec-action-btn flare-action-compact" onclick={() => testFlareSolverr()} disabled={flareTestState === "testing" || secLoading}>
-                      {flareTestState === "testing" ? "Testing" : "Test"}
-                    </button>
-                    <button class="sec-action-btn sec-action-primary flare-action-compact" onclick={saveFlareSolverr} disabled={secLoading}>
-                      {secLoading ? "Saving" : secSaved === "flare" ? "Saved" : "Save"}
-                    </button>
-                  </div>
-                </div>
-                <div class="flare-card">
-                  <div class="flare-card-head">
-                    <button class="flare-card-toggle" aria-expanded={flareLocalOpen} onclick={() => (flareLocalOpen = !flareLocalOpen)}>
-                      <div class="flare-card-copy">
-                        <span class="toggle-label">Local</span>
-                        <span class="toggle-desc">{flareLocalStateLabel()}</span>
-                      </div>
-                      <div class="flare-card-meta">
-                        <span class="sec-status-pill" class:sec-pill-on={flareLocalStatus?.running}>{flareLocalStateLabel()}</span>
-                        <span class="flare-caret-wrap" class:flare-caret-open={flareLocalOpen}>
-                          <CaretDown size={14} weight="bold" />
-                        </span>
-                      </div>
-                    </button>
-                    <div class="flare-card-head-actions">
-                      {#if flareLocalStatus?.installed}
-                        {#if flareLocalStatus.running}
-                          <button class="sec-action-btn flare-action-compact" onclick={(event) => { event.stopPropagation(); stopFlareLocal(); }} disabled={flareLocalBusy}>Stop</button>
-                        {:else}
-                          <button class="sec-action-btn sec-action-primary flare-action-compact" onclick={(event) => { event.stopPropagation(); startFlareLocal(); }} disabled={flareLocalBusy}>Start</button>
-                        {/if}
-                      {/if}
-                    </div>
-                  </div>
-                  {#if flareLocalOpen}
-                    <div class="flare-card-body" transition:slide={{ duration: 180 }}>
-                      <div class="step-row flare-card-row">
-                        <div class="toggle-info">
-                          <span class="toggle-label">Start on app launch</span>
-                          <span class="toggle-desc">Open local FlareSolverr with Aethon</span>
-                        </div>
-                        <button
-                          role="switch"
-                          aria-checked={flareLocalAutoStart}
-                          aria-label="Start FlareSolverr on app launch"
-                          class="toggle"
-                          class:on={flareLocalAutoStart}
-                          onclick={() => setFlareLocalAutoStart(!flareLocalAutoStart)}
-                          disabled={!flareLocalStatus?.installed}
-                        ><span class="toggle-thumb"></span></button>
-                      </div>
-                      <div class="step-row flare-card-row">
-                        <div class="toggle-info">
-                          <span class="toggle-label">Install</span>
-                          <span class="toggle-desc">{flareLocalStatus?.path ?? "Not installed"}</span>
-                        </div>
-                        <div class="flare-inline-actions">
-                          <button class="sec-action-btn flare-action-compact" onclick={refreshFlareLocalStatus} disabled={flareLocalBusy}>Check</button>
-                          <button class="sec-action-btn flare-action-compact" onclick={openFlareLocalFolder} disabled={!flareLocalStatus?.installed}>Open folder</button>
-                          <button class="sec-action-btn flare-action-compact" onclick={openFlareLocalLogs} disabled={!flareLocalStatus?.installed}>View logs</button>
-                        </div>
-                      </div>
-                    </div>
-                  {/if}
-                </div>
-                <div class="flare-card">
-                  <div class="flare-card-head">
-                    <button class="flare-card-toggle" aria-expanded={flareDockerOpen} onclick={() => (flareDockerOpen = !flareDockerOpen)}>
-                      <div class="flare-card-copy">
-                        <span class="toggle-label">Docker</span>
-                        <span class="toggle-desc">{flareDockerStateLabel()}</span>
-                      </div>
-                      <div class="flare-card-meta">
-                        <span class="sec-status-pill" class:sec-pill-on={flareDockerStatus?.running}>{flareDockerStateLabel()}</span>
-                        <span class="flare-caret-wrap" class:flare-caret-open={flareDockerOpen}>
-                          <CaretDown size={14} weight="bold" />
-                        </span>
-                      </div>
-                    </button>
-                    <div class="flare-card-head-actions">
-                      {#if flareDockerStatus?.installed && flareDockerStatus?.daemon}
-                        {#if flareDockerStatus.running}
-                          <button class="sec-action-btn flare-action-compact" onclick={(event) => { event.stopPropagation(); stopFlareDocker(); }} disabled={flareDockerBusy}>Stop</button>
-                        {:else}
-                          <button class="sec-action-btn sec-action-primary flare-action-compact" onclick={(event) => { event.stopPropagation(); startFlareDocker(); }} disabled={flareDockerBusy}>Start</button>
-                        {/if}
-                      {/if}
-                    </div>
-                  </div>
-                  {#if flareDockerOpen}
-                    <div class="flare-card-body" transition:slide={{ duration: 180 }}>
-                      <div class="step-row flare-card-row">
-                        <div class="toggle-info">
-                          <span class="toggle-label">Status</span>
-                          <span class="toggle-desc">{flareDockerStatus?.message ?? flareDockerStateLabel()}</span>
-                        </div>
-                        <button class="sec-action-btn flare-action-compact" onclick={refreshFlareDockerStatus} disabled={flareDockerBusy}>Check</button>
-                      </div>
-                    </div>
-                  {/if}
-                </div>
-                <div class="flare-card">
-                  <div class="flare-card-head">
-                    <button class="flare-card-toggle" aria-expanded={flareAdvancedOpen} onclick={() => (flareAdvancedOpen = !flareAdvancedOpen)}>
-                      <div class="flare-card-copy">
-                        <span class="toggle-label">Advanced</span>
-                        <span class="toggle-desc">Timeout, session and fallback</span>
-                      </div>
-                      <div class="flare-card-meta">
-                        <span class="sec-status-pill">{flareTimeout}s • {flareTtl}m</span>
-                        <span class="flare-caret-wrap" class:flare-caret-open={flareAdvancedOpen}>
-                          <CaretDown size={14} weight="bold" />
-                        </span>
-                      </div>
-                    </button>
-                  </div>
-                  {#if flareAdvancedOpen}
-                    <div class="flare-card-body" transition:slide={{ duration: 180 }}>
-                      <div class="step-row flare-card-row">
-                        <div class="toggle-info">
-                          <span class="toggle-label">Timeout</span>
-                          <span class="toggle-desc">Max wait per request</span>
-                        </div>
-                        <div class="step-controls">
-                          <button class="step-btn" onclick={() => flareTimeout = Math.max(10, flareTimeout - 10)}>Ã¢Ë†â€™</button>
-                          <span class="step-val">{flareTimeout}s</span>
-                          <button class="step-btn" onclick={() => flareTimeout = Math.min(300, flareTimeout + 10)}>+</button>
-                        </div>
-                      </div>
-                      <div class="step-row flare-card-row">
-                        <div class="toggle-info">
-                          <span class="toggle-label">Session name</span>
-                          <span class="toggle-desc">Reuse browser session</span>
-                        </div>
-                        <input class="text-input flare-inline-input" bind:value={flareSession} placeholder="moku" autocomplete="off" spellcheck="false" />
-                      </div>
-                      <div class="step-row flare-card-row">
-                        <div class="toggle-info">
-                          <span class="toggle-label">Session TTL</span>
-                          <span class="toggle-desc">Refresh window</span>
-                        </div>
-                        <div class="step-controls">
-                          <button class="step-btn" onclick={() => flareTtl = Math.max(1, flareTtl - 1)}>Ã¢Ë†â€™</button>
-                          <span class="step-val">{flareTtl}m</span>
-                          <button class="step-btn" onclick={() => flareTtl = Math.min(60, flareTtl + 1)}>+</button>
-                        </div>
-                      </div>
-                      <label class="toggle-row flare-card-row">
-                        <div class="toggle-info">
-                          <span class="toggle-label">Response fallback</span>
-                          <span class="toggle-desc">Use solver response on failure</span>
-                        </div>
-                        <button role="switch" aria-checked={flareFallback} aria-label="Use as response fallback" class="toggle" class:on={flareFallback} onclick={() => flareFallback = !flareFallback}><span class="toggle-thumb"></span></button>
-                      </label>
-                    </div>
-                  {/if}
                 </div>
               {/if}
             </div>
           </div>
-        {:else if tab === "tracking"}
-          <div class="panel">
-            <div class="section">
-              <p class="section-title">Connected Trackers</p>
+        </section>
+        <section
+          class="settings-pane"
+          class:is-active={tab === "tracking"}
+          data-settings-pane="tracking"
+          hidden={tab !== "tracking"}
+          aria-hidden={tab !== "tracking"}
+        >
+          {#if shouldRenderPane("tracking")}
+          <div class="settings-grid">
+            <div class="settings-card">
+              <p class="settings-card__title">Connected services</p>
               {#if trackersError}
                 <div class="tracker-error">{trackersError}</div>
               {/if}
               {#if trackersLoading}
-                <p class="storage-loading">Loading trackersâ€¦</p>
+                <p class="storage-loading">Loading trackers...</p>
               {:else}
-                <div class="tracker-list">
+                <div class="settings-card__stack">
                   {#each trackers as tracker}
-                    <div class="tracker-row" class:tracker-row-active={tracker.isLoggedIn}>
+                    <div class="settings-row settings-mini-row settings-mini-row--tracker" class:tracker-row-active={tracker.isLoggedIn}>
                       <div class="tracker-identity">
                         <img src={thumbUrl(tracker.icon)} alt={tracker.name} class="tracker-logo" />
                         <div class="tracker-name-block">
@@ -4063,844 +4984,1014 @@
                       </div>
                       <div class="tracker-action">
                         {#if tracker.isLoggedIn}
-                          <div class="tracker-connected-btns">
-                            <button
-                              class="danger-btn"
-                              onclick={() => logoutTracker(tracker.id)}
-                              disabled={loggingOut === tracker.id}
-                            >
-                              {loggingOut === tracker.id ? "Disconnectingâ€¦" : "Disconnect"}
-                            </button>
-                          </div>
-                        {:else if oauthTrackerId === tracker.id}
-                          <div class="oauth-flow">
-                            <p class="oauth-hint">
-                              Browser opened {tracker.name} login â€” after authorising, copy the full callback URL and paste it below.
-                            </p>
-                            <input
-                              class="oauth-input"
-                              placeholder="https://suwayomi.org/tracker-oauth#access_token=â€¦"
-                              bind:value={oauthCallbackInput}
-                              onkeydown={(e) => { if (e.key === "Enter") submitOAuth(); if (e.key === "Escape") cancelOAuth(); }}
-                              use:focusEl
-                            />
-                            <div class="oauth-btns">
-                              <button class="step-btn" onclick={submitOAuth} disabled={oauthSubmitting || !oauthCallbackInput.trim()}>
-                                {oauthSubmitting ? "Connectingâ€¦" : "Connect"}
-                              </button>
-                              <button class="kb-reset" onclick={cancelOAuth}>Cancel</button>
-                            </div>
-                          </div>
-                        {:else if credsTrackerId === tracker.id}
-                          <div class="oauth-flow">
-                            <input
-                              class="oauth-input"
-                              placeholder="Username / Email"
-                              bind:value={credsUsername}
-                              onkeydown={(e) => e.key === "Escape" && cancelCredentials()}
-                              use:focusEl
-                            />
-                            <input
-                              class="oauth-input"
-                              type="password"
-                              placeholder="Password"
-                              bind:value={credsPassword}
-                              onkeydown={(e) => { if (e.key === "Enter") submitCredentials(); if (e.key === "Escape") cancelCredentials(); }}
-                            />
-                            <div class="oauth-btns">
-                              <button class="step-btn" onclick={submitCredentials} disabled={credsSubmitting || !credsUsername.trim() || !credsPassword.trim()}>
-                                {credsSubmitting ? "Connectingâ€¦" : "Connect"}
-                              </button>
-                              <button class="kb-reset" onclick={cancelCredentials}>Cancel</button>
-                            </div>
-                          </div>
+                          <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger" type="button" onclick={() => logoutTracker(tracker.id)} disabled={loggingOut === tracker.id}>
+                            {loggingOut === tracker.id ? "Disconnecting..." : "Disconnect"}
+                          </button>
                         {:else}
-                          <button
-                            class="step-btn"
-                            style="width:auto;padding:0 var(--sp-4)"
-                            onclick={() => usesOAuth(tracker) ? startOAuth(tracker) : startCredentials(tracker)}
-                          >
-                            {usesOAuth(tracker) ? "Connect via browser â†’" : "Connect"}
+                          <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => usesOAuth(tracker) ? startOAuth(tracker) : startCredentials(tracker)}>
+                            {usesOAuth(tracker) ? "Login" : "Connect"}
                           </button>
                         {/if}
                       </div>
                     </div>
                   {/each}
                 </div>
+                {#if activeTrackerDetail}
+                  <div class="settings-card__surface" style="margin-top:16px">
+                    <div class="settings-card__head">
+                      <p class="settings-card__title">{activeTrackerDetail.name}</p>
+                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={closeTrackerDetail}>Close</button>
+                    </div>
+                    {#if activeTrackerDetailMode === "oauth"}
+                      <p class="settings-card__intro">
+                        {oauthAutoCapturing
+                          ? "Finish login in the Tracker Login window. Aethon will connect automatically when the tracker redirects back."
+                          : "Aethon opens a tracker login window and captures the OAuth callback automatically. If your system blocks it, paste the redirected callback URL below."}
+                      </p>
+                      <div class="settings-card__stack">
+                        <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                          <div class="settings-mini-row__body">
+                            <p class="settings-mini-row__label">Callback URL</p>
+                            <p class="settings-mini-row__hint">Paste the full redirected URL or just the required callback token.</p>
+                          </div>
+                        </div>
+                        <input
+                          class="settings-text-input"
+                          placeholder="https://suwayomi.org/tracker-oauth#access_token=..."
+                          bind:value={oauthCallbackInput}
+                          onkeydown={(e) => { if (e.key === "Enter") submitOAuth(); if (e.key === "Escape") cancelOAuth(); }}
+                          use:focusEl
+                        />
+                      </div>
+                      <div class="settings-card__footer">
+                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={submitOAuth} disabled={oauthSubmitting || !oauthCallbackInput.trim()}>
+                          {oauthSubmitting ? "Connecting..." : "Connect"}
+                        </button>
+                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={cancelOAuth}>Cancel</button>
+                      </div>
+                    {:else if activeTrackerDetailMode === "credentials"}
+                      <p class="settings-card__intro">Credential-based trackers keep their login flow inside the same card instead of replacing the pane layout.</p>
+                      <div class="settings-card__stack">
+                        <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                          <div class="settings-mini-row__body">
+                            <p class="settings-mini-row__label">Username or email</p>
+                          </div>
+                        </div>
+                        <input
+                          class="settings-text-input"
+                          placeholder="Username / Email"
+                          bind:value={credsUsername}
+                          onkeydown={(e) => e.key === "Escape" && cancelCredentials()}
+                          use:focusEl
+                        />
+                        <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                          <div class="settings-mini-row__body">
+                            <p class="settings-mini-row__label">Password</p>
+                          </div>
+                        </div>
+                        <input
+                          class="settings-text-input"
+                          type="password"
+                          placeholder="Password"
+                          bind:value={credsPassword}
+                          onkeydown={(e) => { if (e.key === "Enter") submitCredentials(); if (e.key === "Escape") cancelCredentials(); }}
+                        />
+                      </div>
+                      <div class="settings-card__footer">
+                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={submitCredentials} disabled={credsSubmitting || !credsUsername.trim() || !credsPassword.trim()}>
+                          {credsSubmitting ? "Connecting..." : "Connect"}
+                        </button>
+                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={cancelCredentials}>Cancel</button>
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
               {/if}
             </div>
-          </div>
-        {:else if tab === "security"}
-          <div class="panel">
-            {#if secError}
-              <div class="sec-banner sec-banner-error">{secError}</div>
-            {/if}
-            <div class="section">
-              <div class="section-title-row">
-                <p class="section-title">Server Authentication</p>
-                <span class="sec-status-pill" class:sec-pill-on={store.settings.serverAuthEnabled}>
-                  {store.settings.serverAuthEnabled ? "Enabled" : "Disabled"}
-                </span>
-              </div>
-              <div class="step-row">
-                <div class="toggle-info">
-                  <span class="toggle-label">Username</span>
+
+            <div class="settings-card">
+              <p class="settings-card__title">Sync behavior</p>
+              <div class="settings-card__stack">
+                <!-- Mockup-only control preserved until tracker sync behavior is configurable from desktop settings. -->
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Update progress automatically</p>
+                    <p class="settings-mini-row__hint">Push chapter progress as you read.</p>
+                  </div>
+                  <button class="settings-toggle is-on" type="button" aria-disabled="true" aria-label="Update progress automatically" data-inert-control="settings-tracking-auto-progress"></button>
                 </div>
-                <input class="text-input" bind:value={authUsername} placeholder="Username" autocomplete="off" spellcheck="false" disabled={secLoading} />
-              </div>
-              <div class="step-row">
-                <div class="toggle-info">
-                  <span class="toggle-label">Password</span>
+                <!-- Mockup-only control preserved until tracker auth preference becomes a first-class setting. -->
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Prefer OAuth login</p>
+                    <p class="settings-mini-row__hint">Use browser auth when a tracker supports it.</p>
+                  </div>
+                  <button class="settings-toggle is-on" type="button" aria-disabled="true" aria-label="Prefer OAuth login" data-inert-control="settings-tracking-prefer-oauth"></button>
                 </div>
-                <div class="sec-field-wrap">
-                  <input class="text-input" type={showAuthPass ? "text" : "password"} bind:value={authPassword} placeholder="Password" autocomplete="off" spellcheck="false" disabled={secLoading} />
-                  <button class="sec-eye-btn" onclick={() => showAuthPass = !showAuthPass} title={showAuthPass ? "Hide password" : "Show password"} tabindex="-1">
-                    {#if showAuthPass}
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-                    {:else}
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                    {/if}
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Desktop sync pairing</p>
+                    <p class="settings-mini-row__hint">Reconnect trusted desktop sync sessions without leaving the settings shell.</p>
+                  </div>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (trackingSyncdOpen = !trackingSyncdOpen)}>
+                    {trackingSyncdOpen ? "Close" : "Manage"}
                   </button>
                 </div>
               </div>
-              <div class="step-row">
-                <div class="toggle-info"></div>
-                <div class="sec-btn-row">
-                  {#if store.settings.serverAuthEnabled}
-                    <button class="sec-action-btn sec-action-danger" onclick={disableAuth} disabled={secLoading}>
-                      {secLoading ? "Savingâ€¦" : "Disable"}
-                    </button>
-                  {/if}
-                  <button class="sec-action-btn sec-action-primary" onclick={enableAuth} disabled={secLoading || !authUsername.trim() || !authPassword.trim()}>
-                    {secLoading ? "Savingâ€¦" : secSaved === "auth" ? "Saved âœ“" : store.settings.serverAuthEnabled ? "Update" : "Enable"}
+              {#if trackingSyncdOpen}
+                <div class="settings-card__surface" style="margin-top:16px">
+                  <div class="settings-card__head">
+                    <p class="settings-card__title">Desktop sync pairing</p>
+                    <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (trackingSyncdOpen = false)}>Close</button>
+                  </div>
+                  <p class="settings-card__intro">Keep the sync runtime tucked inside the existing card so the top-level layout stays faithful to the approved mockup.</p>
+                  <div class="settings-card__embed">
+                    <SyncdConnectionPanel
+                      profileId={currentRuntimeProfileId}
+                      scopeLabel={currentSessionProfileSummary}
+                    />
+                  </div>
+                </div>
+              {/if}
+            </div>
+          </div>
+          {/if}
+        </section>
+        <section
+          class="settings-pane"
+          class:is-active={tab === "security"}
+          data-settings-pane="security"
+          hidden={tab !== "security"}
+          aria-hidden={tab !== "security"}
+        >
+          <div class="settings-grid">
+            {#if secError}
+              <div class="settings-card settings-card--wide">
+                <p class="settings-card__title">Security status</p>
+                <p class="settings-card__notice settings-card__notice--error">{secError}</p>
+              </div>
+            {/if}
+
+            <div class="settings-card">
+              <p class="settings-card__title">Security</p>
+              <div class="settings-card__stack">
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Require PIN on open</p>
+                    <p class="settings-mini-row__hint">
+                      {store.settings.appLockEnabled ? "PIN lock is active for launch and idle resume." : "Protect the shell when reopening the app."}
+                    </p>
+                  </div>
+                  <button
+                    class="settings-toggle"
+                    class:is-on={store.settings.appLockEnabled ?? false}
+                    type="button"
+                    role="switch"
+                    aria-checked={store.settings.appLockEnabled ?? false}
+                    aria-label="Require PIN on open"
+                    onclick={() => {
+                      updateSettings({ appLockEnabled: !(store.settings.appLockEnabled ?? false) });
+                      securityDetailPane = "pin";
+                    }}
+                  ></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">SOCKS proxy</p>
+                    <p class="settings-mini-row__hint">
+                      {socksEnabled ? `${socksHost || "Unset host"}:${socksPort || "1080"}` : "Disabled"}
+                    </p>
+                  </div>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (securityDetailPane = securityDetailPane === "socks" ? null : "socks")}>Edit</button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">FlareSolverr</p>
+                    <p class="settings-mini-row__hint">{flareEnabled ? (flareStatusLabel() || "Enabled") : "Disabled"}</p>
+                  </div>
+                  <button
+                    class="settings-toggle"
+                    class:is-on={flareEnabled}
+                    type="button"
+                    role="switch"
+                    aria-checked={flareEnabled}
+                    aria-label="Enable FlareSolverr"
+                    onclick={() => {
+                      flareEnabled = !flareEnabled;
+                      securityDetailPane = "flare";
+                    }}
+                  ></button>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-card">
+              <p class="settings-card__title">Authentication</p>
+              <div class="settings-card__stack">
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Server auth</p>
+                    <p class="settings-mini-row__hint">Require credentials for remote access.</p>
+                  </div>
+                  <div class="settings-section-actions settings-inline-actions">
+                    <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (securityDetailPane = securityDetailPane === "auth" ? null : "auth")}>Edit</button>
+                    <button
+                      class="settings-toggle"
+                      class:is-on={store.settings.serverAuthEnabled}
+                      type="button"
+                      role="switch"
+                      aria-checked={store.settings.serverAuthEnabled}
+                      aria-label="Enable server authentication"
+                      onclick={async () => {
+                        if (store.settings.serverAuthEnabled) {
+                          await disableAuth();
+                        } else {
+                          securityDetailPane = "auth";
+                        }
+                      }}
+                    ></button>
+                  </div>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Proxy mode</p>
+                    <p class="settings-mini-row__hint">Choose local, Docker, or custom instance routing.</p>
+                  </div>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (securityDetailPane = securityDetailPane === "flare" ? null : "flare")}>
+                    {flareDockerStatus?.running ? "Docker" : flareLocalStatus?.running ? "Local" : "Custom"}
+                  </button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Desktop sync pairing</p>
+                    <p class="settings-mini-row__hint">Trust, reconnect, or revoke profile-scoped desktop sync sessions.</p>
+                  </div>
+                  <button
+                    class="n-btn n-btn--sm n-btn-ghost"
+                    type="button"
+                    data-testid="settings-security-syncd-manage"
+                    onclick={() => (securityDetailPane = securityDetailPane === "syncd" ? null : "syncd")}
+                  >
+                    {securityDetailPane === "syncd" ? "Close" : "Manage"}
                   </button>
                 </div>
               </div>
               {#if store.settings.serverAuthEnabled}
-                <div class="sec-banner sec-banner-info">
-                  Images are proxied through Tauri when Basic Auth is active, which may reduce loading speed.
-                </div>
+                <p class="settings-card__notice settings-card__notice--info">Images are proxied through Tauri when Basic Auth is active, which may reduce loading speed.</p>
               {/if}
             </div>
-            <div class="section">
-              <div class="section-title-row">
-                <p class="section-title">App Lock</p>
-              </div>
-              <label class="toggle-row">
-                <div class="toggle-info">
-                  <span class="toggle-label">PIN lock</span>
-                  <span class="toggle-desc">Require a PIN on launch and after idle timeout</span>
+
+            {#if securityDetailPane === "syncd"}
+              <div class="settings-card settings-card--wide">
+                <div class="settings-card__head">
+                  <p class="settings-card__title">Desktop sync pairing</p>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (securityDetailPane = null)}>Close</button>
                 </div>
-                <button role="switch" aria-checked={store.settings.appLockEnabled ?? false} aria-label="Enable PIN lock" class="toggle" class:on={store.settings.appLockEnabled} onclick={() => updateSettings({ appLockEnabled: !store.settings.appLockEnabled })}><span class="toggle-thumb"></span></button>
-              </label>
-              {#if store.settings.appLockEnabled}
-                <div class="step-row">
-                  <div class="toggle-info">
-                    <span class="toggle-label">PIN</span>
-                    <span class="toggle-desc">4â€“8 digits</span>
+                <p class="settings-card__intro">Keep trusted desktop pairing controls inside Authentication so the top-level pane still matches the approved mockup.</p>
+                <div class="settings-card__embed">
+                  <SyncdConnectionPanel
+                    profileId={currentRuntimeProfileId}
+                    scopeLabel={currentSessionProfileSummary}
+                  />
+                </div>
+              </div>
+            {/if}
+
+            {#if securityDetailPane === "auth"}
+              <div class="settings-card settings-card--wide">
+                <div class="settings-card__head">
+                  <p class="settings-card__title">Server authentication</p>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (securityDetailPane = null)}>Close</button>
+                </div>
+                <div class="settings-card__stack">
+                  <div class="settings-field-block">
+                    <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">Username</p>
+                        <p class="settings-mini-row__hint">Used by remote clients when Basic Auth is enabled.</p>
+                      </div>
+                    </div>
+                    <div class="settings-input-line">
+                      <input class="settings-text-input settings-input-line__grow" bind:value={authUsername} placeholder="admin" spellcheck="false" onkeydown={(event) => event.key === "Enter" && enableAuth()} />
+                    </div>
                   </div>
-                  <div class="sec-pin-wrap">
-                    <div class="sec-pin-row">
-                      <input class="text-input sec-pin-input" type="password" inputmode="numeric" maxlength={8} value={pinInput}
-                        oninput={(e) => { pinInput = e.currentTarget.value.replace(/\D/g, "").slice(0, 8); pinError = ""; }}
-                        onkeydown={(e) => e.key === "Enter" && commitPin()} placeholder="â€¢â€¢â€¢â€¢" autocomplete="off" />
-                      <button class="sec-action-btn sec-action-primary"
-                        onclick={commitPin}
-                        disabled={pinInput.length > 0 && pinInput.length < 4}>
-                        {store.settings.appLockPin && pinInput === store.settings.appLockPin ? "Saved âœ“" : "Save"}
+                  <div class="settings-field-block">
+                    <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">Password</p>
+                        <p class="settings-mini-row__hint">Stored locally and sent to the server only when you save.</p>
+                      </div>
+                    </div>
+                    <div class="settings-input-line">
+                      <div class="sec-field-wrap settings-input-line__grow">
+                        <input
+                          class="settings-text-input settings-input-line__grow"
+                          type={showAuthPass ? "text" : "password"}
+                          bind:value={authPassword}
+                          placeholder="••••••••"
+                          autocomplete="new-password"
+                          onkeydown={(event) => event.key === "Enter" && enableAuth()}
+                        />
+                        <button class="sec-eye-btn" type="button" onclick={() => (showAuthPass = !showAuthPass)} title={showAuthPass ? "Hide password" : "Show password"}>
+                          {#if showAuthPass}
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                          {:else}
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                          {/if}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="settings-card__footer">
+                  {#if store.settings.serverAuthEnabled}
+                    <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger" type="button" onclick={disableAuth} disabled={secLoading}>{secLoading ? "Saving..." : "Disable"}</button>
+                  {/if}
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={enableAuth} disabled={secLoading || !authUsername.trim() || !authPassword.trim()}>{secLoading ? "Saving..." : secSaved === "auth" ? "Saved" : store.settings.serverAuthEnabled ? "Update" : "Enable"}</button>
+                </div>
+              </div>
+            {/if}
+
+            {#if securityDetailPane === "pin"}
+              <div class="settings-card settings-card--wide">
+                <div class="settings-card__head">
+                  <p class="settings-card__title">PIN lock</p>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (securityDetailPane = null)}>Close</button>
+                </div>
+                <div class="settings-card__stack">
+                  <div class="settings-row settings-mini-row">
+                    <div class="settings-mini-row__body">
+                      <p class="settings-mini-row__label">Require PIN on launch</p>
+                      <p class="settings-mini-row__hint">Prompt after startup and when returning from the idle splash.</p>
+                    </div>
+                    <button
+                      class="settings-toggle"
+                      class:is-on={store.settings.appLockEnabled ?? false}
+                      type="button"
+                      role="switch"
+                      aria-checked={store.settings.appLockEnabled ?? false}
+                      aria-label="Enable PIN lock"
+                      onclick={() => updateSettings({ appLockEnabled: !(store.settings.appLockEnabled ?? false) })}
+                    ></button>
+                  </div>
+                  <div class="settings-field-block">
+                    <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">PIN</p>
+                        <p class="settings-mini-row__hint">Use 4 to 8 digits. Leave empty to clear the stored PIN.</p>
+                      </div>
+                    </div>
+                    <div class="settings-input-line settings-input-line--stack">
+                      <div class="settings-input-line">
+                        <input class="settings-text-input sec-pin-input" type="password" inputmode="numeric" maxlength={8} value={pinInput} placeholder="••••" autocomplete="off" oninput={(event) => { pinInput = event.currentTarget.value.replace(/\D/g, "").slice(0, 8); pinError = ""; }} onkeydown={(event) => event.key === "Enter" && commitPin()} />
+                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={commitPin} disabled={pinInput.length > 0 && pinInput.length < 4}>{store.settings.appLockPin && pinInput === store.settings.appLockPin ? "Saved" : "Save"}</button>
+                      </div>
+                      {#if pinError}
+                        <span class="settings-input-line__error">{pinError}</span>
+                      {/if}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            {/if}
+            {#if securityDetailPane === "socks"}
+              <div class="settings-card settings-card--wide">
+                <div class="settings-card__head">
+                  <p class="settings-card__title">SOCKS proxy</p>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (securityDetailPane = null)}>Close</button>
+                </div>
+                <div class="settings-card__stack">
+                  <div class="settings-row settings-mini-row">
+                    <div class="settings-mini-row__body">
+                      <p class="settings-mini-row__label">Enable proxy</p>
+                      <p class="settings-mini-row__hint">Route Suwayomi traffic through SOCKS4 or SOCKS5.</p>
+                    </div>
+                    <button
+                      class="settings-toggle"
+                      class:is-on={socksEnabled}
+                      type="button"
+                      role="switch"
+                      aria-checked={socksEnabled}
+                      aria-label="Enable SOCKS proxy"
+                      onclick={() => (socksEnabled = !socksEnabled)}
+                    ></button>
+                  </div>
+
+                  <div class="settings-field-block">
+                    <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">Version</p>
+                        <p class="settings-mini-row__hint">Choose the protocol expected by your proxy endpoint.</p>
+                      </div>
+                    </div>
+                    <div class="n-inline-segmented">
+                      {#each [
+                        { id: 4, label: "SOCKS4" },
+                        { id: 5, label: "SOCKS5" },
+                      ] as option}
+                        <button
+                          class="n-inline-segment"
+                          class:is-selected={socksVersion === option.id}
+                          type="button"
+                          onclick={() => (socksVersion = option.id)}
+                        >
+                          {option.label}
+                        </button>
+                      {/each}
+                    </div>
+                  </div>
+
+                  <div class="settings-field-block">
+                    <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">Host</p>
+                        <p class="settings-mini-row__hint">Hostname or IP address of the proxy server.</p>
+                      </div>
+                    </div>
+                    <div class="settings-input-line">
+                      <input class="settings-text-input settings-input-line__grow" bind:value={socksHost} placeholder="127.0.0.1" spellcheck="false" onkeydown={(event) => event.key === "Enter" && saveSocksProxy()} />
+                    </div>
+                  </div>
+
+                  <div class="settings-field-block">
+                    <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">Port</p>
+                        <p class="settings-mini-row__hint">Default is 1080 for most local SOCKS bridges.</p>
+                      </div>
+                    </div>
+                    <div class="settings-input-line">
+                      <input class="settings-text-input settings-input-line__grow" bind:value={socksPort} inputmode="numeric" placeholder="1080" onkeydown={(event) => event.key === "Enter" && saveSocksProxy()} />
+                    </div>
+                  </div>
+
+                  <div class="settings-field-block">
+                    <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">Username</p>
+                        <p class="settings-mini-row__hint">Optional, only if your proxy requires auth.</p>
+                      </div>
+                    </div>
+                    <div class="settings-input-line">
+                      <input class="settings-text-input settings-input-line__grow" bind:value={socksUsername} placeholder="Optional" spellcheck="false" onkeydown={(event) => event.key === "Enter" && saveSocksProxy()} />
+                    </div>
+                  </div>
+
+                  <div class="settings-field-block">
+                    <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">Password</p>
+                        <p class="settings-mini-row__hint">Stored locally and applied only when you save.</p>
+                      </div>
+                    </div>
+                    <div class="settings-input-line">
+                      <div class="sec-field-wrap settings-input-line__grow">
+                        <input
+                          class="settings-text-input settings-input-line__grow"
+                          type={showSocksPass ? "text" : "password"}
+                          bind:value={socksPassword}
+                          placeholder="••••••••"
+                          autocomplete="new-password"
+                          onkeydown={(event) => event.key === "Enter" && saveSocksProxy()}
+                        />
+                        <button class="sec-eye-btn" type="button" onclick={() => (showSocksPass = !showSocksPass)} title={showSocksPass ? "Hide password" : "Show password"} aria-label={showSocksPass ? "Hide SOCKS proxy password" : "Show SOCKS proxy password"}>
+                          {#if showSocksPass}
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                          {:else}
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                          {/if}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="settings-card__footer">
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={saveSocksProxy} disabled={secLoading}>
+                    {secLoading ? "Saving..." : secSaved === "socks" ? "Saved" : "Save proxy"}
+                  </button>
+                </div>
+              </div>
+            {/if}
+            {#if securityDetailPane === "flare"}
+              <div class="settings-card settings-card--wide">
+                <div class="settings-card__head">
+                  <p class="settings-card__title">FlareSolverr</p>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (securityDetailPane = null)}>Close</button>
+                </div>
+                <div class="settings-card__stack">
+                  <div class="settings-row settings-mini-row">
+                    <div class="settings-mini-row__body">
+                      <p class="settings-mini-row__label">Enable FlareSolverr</p>
+                      <p class="settings-mini-row__hint">Bypass Cloudflare challenges for supported sources.</p>
+                    </div>
+                    <button
+                      class="settings-toggle"
+                      class:is-on={flareEnabled}
+                      type="button"
+                      role="switch"
+                      aria-checked={flareEnabled}
+                      aria-label="Enable FlareSolverr"
+                      onclick={() => (flareEnabled = !flareEnabled)}
+                    ></button>
+                  </div>
+
+                  <div class="settings-field-block">
+                    <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">URL</p>
+                        <p class="settings-mini-row__hint">Use a local, Docker, or custom FlareSolverr instance.</p>
+                      </div>
+                    </div>
+                    <div class="settings-input-line">
+                  <input class="settings-text-input settings-input-line__grow" bind:value={flareUrl} placeholder="http://127.0.0.1:8191" spellcheck="false" onkeydown={(event) => event.key === "Enter" && saveFlareSolverr()} />
+                    </div>
+                  </div>
+
+                  <div class="settings-row settings-mini-row">
+                    <div class="settings-mini-row__body">
+                      <p class="settings-mini-row__label">Connection</p>
+                      <p class="settings-mini-row__hint">{flareStatusLabel() || "Check the instance status before saving."}</p>
+                    </div>
+                    <div class="settings-section-actions settings-inline-actions">
+                      <span class="sec-status-pill" class:sec-pill-on={flareTestState === "ready"}>{flareStatusLabel() || "Idle"}</span>
+                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => testFlareSolverr()} disabled={flareTestState === "testing" || secLoading}>
+                        {flareTestState === "testing" ? "Testing..." : "Test"}
                       </button>
                     </div>
-                    {#if pinError}<span class="sec-pin-error">{pinError}</span>{/if}
                   </div>
-                </div>
-              {/if}
-            </div>
-            <div class="section">
-              <div class="section-title-row">
-                <p class="section-title">SOCKS Proxy</p>
-              </div>
-              <label class="toggle-row">
-                <div class="toggle-info">
-                  <span class="toggle-label">Enable SOCKS proxy</span>
-                  <span class="toggle-desc">Route Suwayomi traffic through a SOCKS4/5 proxy</span>
-                </div>
-                <button role="switch" aria-checked={socksEnabled} aria-label="Enable SOCKS proxy" class="toggle" class:on={socksEnabled} onclick={() => { socksEnabled = !socksEnabled; saveSocksProxy(); }}><span class="toggle-thumb"></span></button>
-              </label>
-              {#if socksEnabled}
-                <div class="step-row">
-                  <div class="toggle-info">
-                    <span class="toggle-label">Version</span>
-                  </div>
-                  <div class="select-wrap" id="socks-ver">
-                    <button class="select-btn" onclick={() => toggleSelect("socks-ver")}>
-                      <span>SOCKS{socksVersion}</span>
-                      <svg class="select-caret" class:open={selectOpen === "socks-ver"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
-                    </button>
-                    {#if selectOpen === "socks-ver"}
-                      <div class="select-menu">
-                        {#each [[4,"SOCKS4"],[5,"SOCKS5"]] as [v, l]}
-                          <button class="select-option" class:active={socksVersion === v} onclick={() => { socksVersion = v as number; selectOpen = null; }}>{l}</button>
-                        {/each}
+
+                  <div class="settings-card__surface">
+                    <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">Local instance</p>
+                        <p class="settings-mini-row__hint">{flareLocalStateLabel()}</p>
                       </div>
-                    {/if}
-                  </div>
-                </div>
-                <div class="step-row">
-                  <div class="toggle-info">
-                    <span class="toggle-label">Host</span>
-                  </div>
-                  <input class="text-input" bind:value={socksHost} placeholder="127.0.0.1" autocomplete="off" spellcheck="false" />
-                </div>
-                <div class="step-row">
-                  <div class="toggle-info">
-                    <span class="toggle-label">Port</span>
-                  </div>
-                  <input class="text-input sec-port-input" bind:value={socksPort} placeholder="1080" autocomplete="off" spellcheck="false" />
-                </div>
-                <div class="step-row">
-                  <div class="toggle-info">
-                    <span class="toggle-label">Username</span>
-                    <span class="toggle-desc">Optional</span>
-                  </div>
-                  <input class="text-input" bind:value={socksUsername} placeholder="Username" autocomplete="off" spellcheck="false" />
-                </div>
-                <div class="step-row">
-                  <div class="toggle-info">
-                    <span class="toggle-label">Password</span>
-                    <span class="toggle-desc">Optional</span>
-                  </div>
-                  <div class="sec-field-wrap">
-                    <input class="text-input" type={showSocksPass ? "text" : "password"} bind:value={socksPassword} placeholder="Password" autocomplete="off" spellcheck="false" />
-                    <button class="sec-eye-btn" onclick={() => showSocksPass = !showSocksPass} title={showSocksPass ? "Hide password" : "Show password"} tabindex="-1">
-                      {#if showSocksPass}
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-                      {:else}
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                      {/if}
-                    </button>
-                  </div>
-                </div>
-                <div class="step-row">
-                  <div class="toggle-info"></div>
-                  <button class="sec-action-btn sec-action-primary" onclick={saveSocksProxy} disabled={secLoading}>
-                    {secLoading ? "Savingâ€¦" : secSaved === "socks" ? "Saved âœ“" : "Save"}
-                  </button>
-                </div>
-              {/if}
-            </div>
-            <div class="section">
-              <div class="section-title-row">
-                <p class="section-title">FlareSolverr</p>
-              </div>
-              <label class="toggle-row">
-                <div class="toggle-info">
-                  <span class="toggle-label">Enable FlareSolverr</span>
-                  <span class="toggle-desc">Bypass Cloudflare challenges for sources that require it</span>
-                </div>
-                <button role="switch" aria-checked={flareEnabled} aria-label="Enable FlareSolverr" class="toggle" class:on={flareEnabled} onclick={() => { flareEnabled = !flareEnabled; saveFlareSolverr(); }}><span class="toggle-thumb"></span></button>
-              </label>
-              {#if false && flareEnabled}
-                <div class="step-row">
-                  <div class="toggle-info">
-                    <span class="toggle-label">URL</span>
-                    <span class="toggle-desc">FlareSolverr instance address</span>
-                  </div>
-                  <input class="text-input" bind:value={flareUrl} oninput={() => flareTestState = "idle"} placeholder="http://localhost:8191" autocomplete="off" spellcheck="false" />
-                </div>
-                <div class="step-row">
-                  <div class="toggle-info">
-                    <span class="toggle-label">Connection</span>
-                    <span class="toggle-desc">{flareStatusLabel() || "Check the instance"}</span>
-                  </div>
-                  <button class="sec-action-btn" onclick={() => testFlareSolverr()} disabled={flareTestState === "testing" || secLoading}>
-                    {flareTestState === "testing" ? "Testing" : flareTestState === "ready" ? "Ready" : "Test"}
-                  </button>
-                </div>
-                <div class="step-row">
-                  <div class="toggle-info">
-                    <span class="toggle-label">Timeout</span>
-                    <span class="toggle-desc">Max wait per request, in seconds</span>
-                  </div>
-                  <div class="step-controls">
-                    <button class="step-btn" onclick={() => flareTimeout = Math.max(10, flareTimeout - 10)}>âˆ’</button>
-                    <span class="step-val">{flareTimeout}s</span>
-                    <button class="step-btn" onclick={() => flareTimeout = Math.min(300, flareTimeout + 10)}>+</button>
-                  </div>
-                </div>
-                <div class="step-row">
-                  <div class="toggle-info">
-                    <span class="toggle-label">Session name</span>
-                    <span class="toggle-desc">Reuse browser session across requests</span>
-                  </div>
-                  <input class="text-input" bind:value={flareSession} placeholder="moku" autocomplete="off" spellcheck="false" />
-                </div>
-                <div class="step-row">
-                  <div class="toggle-info">
-                    <span class="toggle-label">Session TTL</span>
-                    <span class="toggle-desc">Minutes before session is refreshed</span>
-                  </div>
-                  <div class="step-controls">
-                    <button class="step-btn" onclick={() => flareTtl = Math.max(1, flareTtl - 1)}>âˆ’</button>
-                    <span class="step-val">{flareTtl}m</span>
-                    <button class="step-btn" onclick={() => flareTtl = Math.min(60, flareTtl + 1)}>+</button>
-                  </div>
-                </div>
-                <label class="toggle-row">
-                  <div class="toggle-info">
-                    <span class="toggle-label">Response fallback</span>
-                    <span class="toggle-desc">Use FlareSolverr's response when the direct request fails</span>
-                  </div>
-                  <button role="switch" aria-checked={flareFallback} aria-label="Use as response fallback" class="toggle" class:on={flareFallback} onclick={() => flareFallback = !flareFallback}><span class="toggle-thumb"></span></button>
-                </label>
-                <div class="step-row">
-                  <div class="toggle-info"></div>
-                  <button class="sec-action-btn sec-action-primary" onclick={saveFlareSolverr} disabled={secLoading}>
-                    {secLoading ? "Savingâ€¦" : secSaved === "flare" ? "Saved âœ“" : "Save"}
-                  </button>
-                </div>
-                <div class="step-row">
-                  <div class="toggle-info">
-                    <span class="toggle-label">Local</span>
-                    <span class="toggle-desc">
-                      {#if flareLocalBusy}
-                        Checking
-                      {:else if !flareLocalStatus?.installed}
-                        Not installed
-                      {:else if flareLocalStatus.running}
-                        Running
-                      {:else}
-                        Installed
-                      {/if}
-                    </span>
-                  </div>
-                  <div class="step-controls">
-                    <button class="sec-action-btn" onclick={refreshFlareLocalStatus} disabled={flareLocalBusy}>Check</button>
-                    {#if flareLocalStatus?.installed}
-                      {#if flareLocalStatus.running}
-                        <button class="sec-action-btn" onclick={stopFlareLocal} disabled={flareLocalBusy}>Stop</button>
-                      {:else}
-                        <button class="sec-action-btn sec-action-primary" onclick={startFlareLocal} disabled={flareLocalBusy}>Start</button>
-                      {/if}
-                    {/if}
-                  </div>
-                </div>
-                <div class="step-row">
-                  <div class="toggle-info">
-                    <span class="toggle-label">Docker</span>
-                    <span class="toggle-desc">
-                      {#if flareDockerBusy}
-                        Checking
-                      {:else if !flareDockerStatus?.installed}
-                        Docker not found
-                      {:else if !flareDockerStatus?.daemon}
-                        Docker unavailable
-                      {:else if flareDockerStatus.running}
-                        Running
-                      {:else}
-                        Available
-                      {/if}
-                    </span>
-                  </div>
-                  <div class="step-controls">
-                    <button class="sec-action-btn" onclick={refreshFlareDockerStatus} disabled={flareDockerBusy}>Check</button>
-                    {#if flareDockerStatus?.installed && flareDockerStatus?.daemon}
-                      {#if flareDockerStatus.running}
-                        <button class="sec-action-btn" onclick={stopFlareDocker} disabled={flareDockerBusy}>Stop</button>
-                      {:else}
-                        <button class="sec-action-btn sec-action-primary" onclick={startFlareDocker} disabled={flareDockerBusy}>Start</button>
-                      {/if}
-                    {/if}
-                  </div>
-                </div>
-              {/if}
-              {#if flareEnabled}
-                <div class="step-row">
-                  <div class="toggle-info">
-                    <span class="toggle-label">URL</span>
-                    <span class="toggle-desc">Instance address</span>
-                  </div>
-                  <input class="text-input" bind:value={flareUrl} oninput={() => flareTestState = "idle"} placeholder="http://localhost:8191" autocomplete="off" spellcheck="false" />
-                </div>
-                <div class="step-row">
-                  <div class="toggle-info">
-                    <span class="toggle-label">Connection</span>
-                    <span class="toggle-desc">{flareStatusLabel() || "Check instance"}</span>
-                  </div>
-                  <div class="flare-inline-actions">
-                    <span class="sec-status-pill" class:sec-pill-on={flareTestState === "ready"}>{flareStatusLabel() || "Idle"}</span>
-                    <button class="sec-action-btn flare-action-compact" onclick={() => testFlareSolverr()} disabled={flareTestState === "testing" || secLoading}>
-                      {flareTestState === "testing" ? "Testing" : "Test"}
-                    </button>
-                    <button class="sec-action-btn sec-action-primary flare-action-compact" onclick={saveFlareSolverr} disabled={secLoading}>
-                      {secLoading ? "Saving" : secSaved === "flare" ? "Saved" : "Save"}
-                    </button>
-                  </div>
-                </div>
-                <div class="flare-card">
-                  <div class="flare-card-head">
-                    <button class="flare-card-toggle" aria-expanded={flareLocalOpen} onclick={() => (flareLocalOpen = !flareLocalOpen)}>
-                      <div class="flare-card-copy">
-                        <span class="toggle-label">Local</span>
-                        <span class="toggle-desc">{flareLocalStateLabel()}</span>
-                      </div>
-                      <div class="flare-card-meta">
-                        <span class="sec-status-pill" class:sec-pill-on={flareLocalStatus?.running}>{flareLocalStateLabel()}</span>
-                        <span class="flare-caret-wrap" class:flare-caret-open={flareLocalOpen}>
-                          <CaretDown size={14} weight="bold" />
-                        </span>
-                      </div>
-                    </button>
-                    <div class="flare-card-head-actions">
-                      {#if flareLocalStatus?.installed}
-                        {#if flareLocalStatus.running}
-                          <button class="sec-action-btn flare-action-compact" onclick={(event) => { event.stopPropagation(); stopFlareLocal(); }} disabled={flareLocalBusy}>Stop</button>
-                        {:else}
-                          <button class="sec-action-btn sec-action-primary flare-action-compact" onclick={(event) => { event.stopPropagation(); startFlareLocal(); }} disabled={flareLocalBusy}>Start</button>
+                      <div class="settings-section-actions settings-inline-actions">
+                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={refreshFlareLocalStatus} disabled={flareLocalBusy}>Refresh</button>
+                        {#if flareLocalStatus?.installed}
+                          {#if flareLocalStatus.running}
+                            <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={stopFlareLocal} disabled={flareLocalBusy}>Stop</button>
+                          {:else}
+                            <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={startFlareLocal} disabled={flareLocalBusy}>Start</button>
+                          {/if}
                         {/if}
-                      {/if}
+                      </div>
+                    </div>
+                    <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">Start on app launch</p>
+                        <p class="settings-mini-row__hint">{flareLocalStatus?.path ?? "Install FlareSolverr locally to enable autostart."}</p>
+                      </div>
+                      <button
+                        class="settings-toggle"
+                        class:is-on={flareLocalAutoStart}
+                        type="button"
+                        role="switch"
+                        aria-checked={flareLocalAutoStart}
+                        aria-label="Start FlareSolverr on app launch"
+                        onclick={() => setFlareLocalAutoStart(!flareLocalAutoStart)}
+                        disabled={!flareLocalStatus?.installed}
+                      ></button>
                     </div>
                   </div>
-                  {#if flareLocalOpen}
-                    <div class="flare-card-body" transition:slide={{ duration: 180 }}>
-                      <div class="step-row flare-card-row">
-                        <div class="toggle-info">
-                          <span class="toggle-label">Start on app launch</span>
-                          <span class="toggle-desc">Open local FlareSolverr with Aethon</span>
+
+                  <div class="settings-card__surface">
+                    <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">Docker instance</p>
+                        <p class="settings-mini-row__hint">{flareDockerStateLabel()}</p>
+                      </div>
+                      <div class="settings-section-actions settings-inline-actions">
+                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={refreshFlareDockerStatus} disabled={flareDockerBusy}>Refresh</button>
+                        {#if flareDockerStatus?.installed && flareDockerStatus?.daemon}
+                          {#if flareDockerStatus.running}
+                            <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={stopFlareDocker} disabled={flareDockerBusy}>Stop</button>
+                          {:else}
+                            <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={startFlareDocker} disabled={flareDockerBusy}>Start</button>
+                          {/if}
+                        {/if}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="settings-card__surface">
+                    <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">Advanced</p>
+                        <p class="settings-mini-row__hint">Tune timeout, session reuse, and response fallback.</p>
+                      </div>
+                    </div>
+                    <div class="settings-card__stack">
+                      <div class="settings-row settings-mini-row">
+                        <div class="settings-mini-row__body">
+                          <p class="settings-mini-row__label">Timeout</p>
+                          <p class="settings-mini-row__hint">Maximum wait per request in seconds.</p>
+                        </div>
+                        <div class="step-controls">
+                          <button class="step-btn" type="button" onclick={() => (flareTimeout = Math.max(10, flareTimeout - 10))}>-</button>
+                          <span class="step-val">{flareTimeout}s</span>
+                          <button class="step-btn" type="button" onclick={() => (flareTimeout = Math.min(300, flareTimeout + 10))}>+</button>
+                        </div>
+                      </div>
+                      <div class="settings-field-block">
+                        <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                          <div class="settings-mini-row__body">
+                            <p class="settings-mini-row__label">Session name</p>
+                            <p class="settings-mini-row__hint">Reuse a named browser session between requests.</p>
+                          </div>
+                        </div>
+                        <div class="settings-input-line">
+                  <input class="settings-text-input settings-input-line__grow" bind:value={flareSession} placeholder="aethon" spellcheck="false" onkeydown={(event) => event.key === "Enter" && saveFlareSolverr()} />
+                        </div>
+                      </div>
+                      <div class="settings-row settings-mini-row">
+                        <div class="settings-mini-row__body">
+                          <p class="settings-mini-row__label">Session TTL</p>
+                          <p class="settings-mini-row__hint">Refresh the browser session after this many minutes.</p>
+                        </div>
+                        <div class="step-controls">
+                          <button class="step-btn" type="button" onclick={() => (flareTtl = Math.max(1, flareTtl - 1))}>-</button>
+                          <span class="step-val">{flareTtl}m</span>
+                          <button class="step-btn" type="button" onclick={() => (flareTtl = Math.min(60, flareTtl + 1))}>+</button>
+                        </div>
+                      </div>
+                      <div class="settings-row settings-mini-row">
+                        <div class="settings-mini-row__body">
+                          <p class="settings-mini-row__label">Response fallback</p>
+                          <p class="settings-mini-row__hint">Use FlareSolverr's response when direct requests fail.</p>
                         </div>
                         <button
+                          class="settings-toggle"
+                          class:is-on={flareFallback}
+                          type="button"
                           role="switch"
-                          aria-checked={flareLocalAutoStart}
-                          aria-label="Start FlareSolverr on app launch"
-                          class="toggle"
-                          class:on={flareLocalAutoStart}
-                          onclick={() => setFlareLocalAutoStart(!flareLocalAutoStart)}
-                          disabled={!flareLocalStatus?.installed}
-                        ><span class="toggle-thumb"></span></button>
+                          aria-checked={flareFallback}
+                          aria-label="Use FlareSolverr response as fallback"
+                          onclick={() => (flareFallback = !flareFallback)}
+                        ></button>
                       </div>
-                      <div class="step-row flare-card-row">
-                        <div class="toggle-info">
-                          <span class="toggle-label">Install</span>
-                          <span class="toggle-desc">{flareLocalStatus?.path ?? "Not installed"}</span>
-                        </div>
-                        <button class="sec-action-btn flare-action-compact" onclick={refreshFlareLocalStatus} disabled={flareLocalBusy}>Check</button>
-                      </div>
-                    </div>
-                  {/if}
-                </div>
-                <div class="flare-card">
-                  <div class="flare-card-head">
-                    <button class="flare-card-toggle" aria-expanded={flareDockerOpen} onclick={() => (flareDockerOpen = !flareDockerOpen)}>
-                      <div class="flare-card-copy">
-                        <span class="toggle-label">Docker</span>
-                        <span class="toggle-desc">{flareDockerStateLabel()}</span>
-                      </div>
-                      <div class="flare-card-meta">
-                        <span class="sec-status-pill" class:sec-pill-on={flareDockerStatus?.running}>{flareDockerStateLabel()}</span>
-                        <span class="flare-caret-wrap" class:flare-caret-open={flareDockerOpen}>
-                          <CaretDown size={14} weight="bold" />
-                        </span>
-                      </div>
-                    </button>
-                    <div class="flare-card-head-actions">
-                      {#if flareDockerStatus?.installed && flareDockerStatus?.daemon}
-                        {#if flareDockerStatus.running}
-                          <button class="sec-action-btn flare-action-compact" onclick={(event) => { event.stopPropagation(); stopFlareDocker(); }} disabled={flareDockerBusy}>Stop</button>
-                        {:else}
-                          <button class="sec-action-btn sec-action-primary flare-action-compact" onclick={(event) => { event.stopPropagation(); startFlareDocker(); }} disabled={flareDockerBusy}>Start</button>
-                        {/if}
-                      {/if}
                     </div>
                   </div>
-                  {#if flareDockerOpen}
-                    <div class="flare-card-body" transition:slide={{ duration: 180 }}>
-                      <div class="step-row flare-card-row">
-                        <div class="toggle-info">
-                          <span class="toggle-label">Status</span>
-                          <span class="toggle-desc">{flareDockerStatus?.message ?? flareDockerStateLabel()}</span>
-                        </div>
-                        <button class="sec-action-btn flare-action-compact" onclick={refreshFlareDockerStatus} disabled={flareDockerBusy}>Check</button>
-                      </div>
-                    </div>
-                  {/if}
                 </div>
-                <div class="flare-card">
-                  <div class="flare-card-head">
-                    <button class="flare-card-toggle" aria-expanded={flareAdvancedOpen} onclick={() => (flareAdvancedOpen = !flareAdvancedOpen)}>
-                      <div class="flare-card-copy">
-                        <span class="toggle-label">Advanced</span>
-                        <span class="toggle-desc">Timeout, session and fallback</span>
-                      </div>
-                      <div class="flare-card-meta">
-                        <span class="sec-status-pill">{flareTimeout}s • {flareTtl}m</span>
-                        <span class="flare-caret-wrap" class:flare-caret-open={flareAdvancedOpen}>
-                          <CaretDown size={14} weight="bold" />
-                        </span>
-                      </div>
-                    </button>
-                  </div>
-                  {#if flareAdvancedOpen}
-                    <div class="flare-card-body" transition:slide={{ duration: 180 }}>
-                      <div class="step-row flare-card-row">
-                        <div class="toggle-info">
-                          <span class="toggle-label">Timeout</span>
-                          <span class="toggle-desc">Max wait per request</span>
-                        </div>
-                        <div class="step-controls">
-                          <button class="step-btn" onclick={() => flareTimeout = Math.max(10, flareTimeout - 10)}>Ã¢Ë†â€™</button>
-                          <span class="step-val">{flareTimeout}s</span>
-                          <button class="step-btn" onclick={() => flareTimeout = Math.min(300, flareTimeout + 10)}>+</button>
-                        </div>
-                      </div>
-                      <div class="step-row flare-card-row">
-                        <div class="toggle-info">
-                          <span class="toggle-label">Session name</span>
-                          <span class="toggle-desc">Reuse browser session</span>
-                        </div>
-                        <input class="text-input flare-inline-input" bind:value={flareSession} placeholder="moku" autocomplete="off" spellcheck="false" />
-                      </div>
-                      <div class="step-row flare-card-row">
-                        <div class="toggle-info">
-                          <span class="toggle-label">Session TTL</span>
-                          <span class="toggle-desc">Refresh window</span>
-                        </div>
-                        <div class="step-controls">
-                          <button class="step-btn" onclick={() => flareTtl = Math.max(1, flareTtl - 1)}>Ã¢Ë†â€™</button>
-                          <span class="step-val">{flareTtl}m</span>
-                          <button class="step-btn" onclick={() => flareTtl = Math.min(60, flareTtl + 1)}>+</button>
-                        </div>
-                      </div>
-                      <label class="toggle-row flare-card-row">
-                        <div class="toggle-info">
-                          <span class="toggle-label">Response fallback</span>
-                          <span class="toggle-desc">Use solver response on failure</span>
-                        </div>
-                        <button role="switch" aria-checked={flareFallback} aria-label="Use as response fallback" class="toggle" class:on={flareFallback} onclick={() => flareFallback = !flareFallback}><span class="toggle-thumb"></span></button>
-                      </label>
-                    </div>
-                  {/if}
+                <div class="settings-card__footer">
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={saveFlareSolverr} disabled={secLoading}>
+                    {secLoading ? "Saving..." : secSaved === "flare" ? "Saved" : "Save FlareSolverr"}
+                  </button>
                 </div>
-              {/if}
-            </div>
+              </div>
+            {/if}
           </div>
-        {:else if tab === "content"}
-          <div class="panel">
-            <div class="section">
-              <p class="section-title">Content Filter</p>
-              <label class="toggle-row">
-                <div class="toggle-info"><span class="toggle-label">Show adult content</span><span class="toggle-desc">Sources and manga matching blocked tags are hidden when off</span></div>
-                <button role="switch" aria-checked={store.settings.showNsfw} aria-label="Show adult content" class="toggle" class:on={store.settings.showNsfw} onclick={() => updateSettings({ showNsfw: !store.settings.showNsfw })}><span class="toggle-thumb"></span></button>
-              </label>
+        </section>
+        <section
+          class="settings-pane"
+          class:is-active={tab === "content"}
+          data-settings-pane="content"
+          hidden={tab !== "content"}
+          aria-hidden={tab !== "content"}
+        >
+          <div class="settings-grid">
+            <div class="settings-card">
+              <p class="settings-card__title">Content filters</p>
+              <div class="settings-card__stack">
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Show adult content</p>
+                    <p class="settings-mini-row__hint">Allow titles and sources marked as adult or suggestive.</p>
+                  </div>
+                  <button role="switch" aria-checked={store.settings.showNsfw} aria-label="Show adult content" class="settings-toggle" class:is-on={store.settings.showNsfw} type="button" onclick={() => updateSettings({ showNsfw: !store.settings.showNsfw })}></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Filter by blocked tags</p>
+                    <p class="settings-mini-row__hint">Hide anything matching your personal blocked tag list.</p>
+                  </div>
+                  <button
+                    class="settings-toggle"
+                    class:is-on={store.settings.filterBlockedTags}
+                    type="button"
+                    role="switch"
+                    aria-checked={store.settings.filterBlockedTags}
+                    aria-label="Filter by blocked tags"
+                    onclick={() => updateSettings({ filterBlockedTags: !store.settings.filterBlockedTags })}
+                  ></button>
+                </div>
+              </div>
             </div>
-            <div class="section">
-              <p class="section-title">Blocked Genre Tags</p>
-              <p class="toggle-desc" style="padding:0 var(--sp-3) var(--sp-2);display:block">
-                Manga whose genres contain any of these substrings are filtered out. Case-insensitive, partial match.
-              </p>
-              <div class="content-tag-grid">
+
+            <div class="settings-card">
+              <p class="settings-card__title">Blocked tags</p>
+              <div class="settings-chip-list">
                 {#each (store.settings.nsfwFilteredTags ?? []) as tag}
-                  <span class="content-tag">
+                  <span class="settings-chip settings-chip--removable">
                     <Tag size={10} weight="light" />
                     {tag}
-                    <button class="content-tag-remove" onclick={() => removeTag(tag)} title="Remove tag">Ã—</button>
+                    <button class="content-tag-remove" type="button" onclick={() => removeTag(tag)} title="Remove tag">×</button>
                   </span>
                 {/each}
+                {#if (store.settings.nsfwFilteredTags ?? []).length === 0}
+                  <span class="settings-chip settings-chip--empty">No blocked tags</span>
+                {/if}
               </div>
-              <div class="content-tag-add">
+              <div class="settings-card__footer">
                 <input
-                  class="text-input"
-                  placeholder="Add tag substringâ€¦"
+                  class="settings-text-input"
+                  placeholder="Add tag substring..."
                   bind:value={newTagInput}
                   onkeydown={(e) => { if (e.key === "Enter") addTag(); }}
-                  style="flex:1;width:auto"
                 />
-                <button class="folder-create-btn" onclick={addTag} disabled={!newTagInput.trim()}>
-                  <Plus size={13} weight="bold" /> Add
-                </button>
-                <button class="kb-reset" onclick={resetTags} title="Reset to defaults" style="padding:0 var(--sp-3);font-size:var(--text-xs);color:var(--text-faint)">Reset</button>
+                <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={addTag} disabled={!newTagInput.trim()}>Add</button>
+                <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={resetTags}>Reset</button>
               </div>
             </div>
-            <div class="section">
-              <p class="section-title">Source Overrides</p>
-              <p class="toggle-desc" style="padding:0 var(--sp-3) var(--sp-2);display:block">
-                Allow lets a source through even if flagged NSFW. Block always hides it.
-              </p>
-              <div class="content-source-search-wrap">
-                <input class="text-input" placeholder="Filter sourcesâ€¦" bind:value={sourceSearch} style="width:100%" />
+
+            <div class="settings-card">
+              <p class="settings-card__title">Source rules</p>
+              <div class="settings-card__stack">
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Allowed sources</p>
+                    <p class="settings-mini-row__hint">Whitelist trusted catalogs.</p>
+                  </div>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => { contentSourceRulesMode = "allowed"; contentSourceRulesOpen = true; }}>Manage</button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Blocked sources</p>
+                    <p class="settings-mini-row__hint">Hide noisy or broken catalogs.</p>
+                  </div>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => { contentSourceRulesMode = "blocked"; contentSourceRulesOpen = true; }}>Manage</button>
+                </div>
               </div>
-              {#if contentSourcesLoading}
-                <p class="storage-loading">Loading sourcesâ€¦</p>
-              {:else if contentSources.length === 0}
-                <p class="storage-loading">No sources found â€” check your server connection.</p>
-              {:else}
-                <div class="content-source-list">
-                  {#each contentSourcesFiltered as group (group.name)}
-                    {@const ids = group.sources.map(s => s.id)}
-                    {@const allowed = store.settings.nsfwAllowedSourceIds ?? []}
-                    {@const blocked = store.settings.nsfwBlockedSourceIds ?? []}
-                    {@const isAllowed = ids.every(id => allowed.includes(id))}
-                    {@const isBlocked = ids.every(id => blocked.includes(id))}
-                    <div class="content-source-row" class:content-source-allowed={isAllowed} class:content-source-blocked={isBlocked}>
-                      <img src={thumbUrl(group.iconUrl)} alt="" class="content-source-icon" loading="lazy" decoding="async" />
-                      <div class="content-source-info">
-                        <span class="content-source-name">{group.name}</span>
-                        <span class="content-source-lang">{group.sources[0].isNsfw ? "NSFW Â· " : ""}{group.sources.length > 1 ? `${group.sources.length} languages` : group.sources[0].lang.toUpperCase()}</span>
-                      </div>
-                      <div class="content-source-actions">
-                        <button
-                          class="content-action-btn"
-                          class:content-action-active-allow={isAllowed}
-                          onclick={() => toggleSourceAllowed(ids)}
-                          title={isAllowed ? "Remove allow override" : "Allow this source through regardless of NSFW flag"}
-                        >Allow</button>
-                        <button
-                          class="content-action-btn"
-                          class:content-action-active-block={isBlocked}
-                          onclick={() => toggleSourceBlocked(ids)}
-                          title={isBlocked ? "Remove block override" : "Always block this source"}
-                        >Block</button>
-                      </div>
+              {#if contentSourceRulesOpen}
+                <div class="settings-card__surface" style="margin-top:16px">
+                  <div class="settings-card__head">
+                    <p class="settings-card__title">{contentSourceRulesMode === "allowed" ? "Allowed sources" : "Blocked sources"}</p>
+                    <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (contentSourceRulesOpen = false)}>Close</button>
+                  </div>
+                  <p class="settings-card__intro">Allow lets a source through even if flagged NSFW. Block always hides it.</p>
+                  <div class="content-source-search-wrap">
+                    <input class="settings-text-input" placeholder="Filter sources..." bind:value={sourceSearch} />
+                  </div>
+                  {#if contentSourcesLoading}
+                    <p class="storage-loading">Loading sources...</p>
+                  {:else if contentSources.length === 0}
+                    <p class="storage-loading">No sources found - check your server connection.</p>
+                  {:else}
+                    <div class="content-source-list">
+                      {#each contentSourcesFiltered as group (group.name)}
+                        {@const ids = group.sources.map((source) => source.id)}
+                        {@const allowed = store.settings.nsfwAllowedSourceIds ?? []}
+                        {@const blocked = store.settings.nsfwBlockedSourceIds ?? []}
+                        {@const isAllowed = ids.every((id) => allowed.includes(id))}
+                        {@const isBlocked = ids.every((id) => blocked.includes(id))}
+                        <div class="content-source-row" class:content-source-allowed={isAllowed} class:content-source-blocked={isBlocked}>
+                          <img src={thumbUrl(group.iconUrl)} alt="" class="content-source-icon" loading="lazy" decoding="async" />
+                          <div class="content-source-info">
+                            <span class="content-source-name">{group.name}</span>
+                            <span class="content-source-lang">{group.sources[0].isNsfw ? "NSFW · " : ""}{group.sources.length > 1 ? `${group.sources.length} languages` : group.sources[0].lang.toUpperCase()}</span>
+                          </div>
+                          <div class="content-source-actions">
+                            <button
+                              class="content-action-btn"
+                              class:content-action-active-allow={isAllowed}
+                              type="button"
+                              onclick={() => toggleSourceAllowed(ids)}
+                              title={isAllowed ? "Remove allow override" : "Allow this source through regardless of NSFW flag"}
+                            >Allow</button>
+                            <button
+                              class="content-action-btn"
+                              class:content-action-active-block={isBlocked}
+                              type="button"
+                              onclick={() => toggleSourceBlocked(ids)}
+                              title={isBlocked ? "Remove block override" : "Always block this source"}
+                            >Block</button>
+                          </div>
+                        </div>
+                      {/each}
                     </div>
-                  {/each}
+                  {/if}
                 </div>
               {/if}
             </div>
           </div>
-        {:else if tab === "about"}
-          <div class="panel">
-            <div class="section">
-              <p class="section-title">Aethon</p>
-              <div class="about-block">
-                <p class="about-line">A manga reader frontend for Suwayomi / Tachidesk.</p>
-                <p class="about-line" style="color:var(--text-faint);margin-top:var(--sp-2)">Built with Tauri + Svelte.</p>
-              </div>
-            </div>
-            <div class="section">
-              <p class="section-title">Version</p>
-              <div class="step-row">
-                <div class="toggle-info">
-                  <span class="toggle-label">Installed</span>
-                  <span class="toggle-desc">v{appVersion}</span>
+        </section>
+        <section
+          class="settings-pane"
+          class:is-active={tab === "about"}
+          data-settings-pane="about"
+          hidden={tab !== "about"}
+          aria-hidden={tab !== "about"}
+        >
+          <div class="settings-grid">
+            <div class="settings-card settings-card--wide">
+              <p class="settings-card__title">About</p>
+              <p class="settings-card__intro settings-card__intro--body">Aethon is a desktop manga and books frontend for Suwayomi-inspired reading workflows, adapted here into the Nocturne shell.</p>
+              <div class="settings-card__stack">
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Current build</p>
+                    <p class="settings-mini-row__hint">v{appVersion}</p>
+                  </div>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => { releasesError = null; loadReleases(); }} disabled={releasesLoading}>
+                    {releasesLoading ? "Loading..." : "Check updates"}
+                  </button>
                 </div>
-                <button class="step-btn" style="width:auto;padding:0 var(--sp-3);font-size:var(--text-xs);letter-spacing:var(--tracking-wide)"
-                  onclick={() => { releasesError = null; loadReleases(); }} disabled={releasesLoading}>
-                  {releasesLoading ? "Loadingâ€¦" : "Refresh"}
-                </button>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Release history</p>
+                    <p class="settings-mini-row__hint">Browse recent builds and changelogs without leaving the page shell.</p>
+                  </div>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (aboutReleasesOpen = !aboutReleasesOpen)}>
+                    {aboutReleasesOpen ? "Hide" : "Browse"}
+                  </button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">GitHub</p>
+                    <p class="settings-mini-row__hint">Project home and release notes.</p>
+                  </div>
+                  <a href="https://github.com/Youwes09/Moku" target="_blank" class="n-btn n-btn--sm n-btn-ghost">Open</a>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Discord</p>
+                    <p class="settings-mini-row__hint">Community support and announcements.</p>
+                  </div>
+                  <a href="https://discord.gg/Jq3pwuNqPp" target="_blank" class="n-btn n-btn--sm n-btn-ghost">Open</a>
+                </div>
               </div>
               {#if onLatestVersion}
-                <div class="step-row">
-                  <span class="toggle-desc" style="padding:0 var(--sp-3);color:var(--accent-fg)">âœ“ You're on the latest version.</span>
-                </div>
+                <p class="settings-card__notice settings-card__notice--success">You're on the latest version.</p>
               {/if}
               {#if updatePhase === "downloading" && IS_WINDOWS}
                 <div class="update-progress-wrap">
                   <div class="update-progress-bar">
-                    <div class="update-progress-fill"
-                      style="width:{dlTotal ? Math.round((dlBytes / dlTotal) * 100) : 0}%"></div>
+                    <div class="update-progress-fill" style="width:{dlTotal ? Math.round((dlBytes / dlTotal) * 100) : 0}%"></div>
                   </div>
                   <div class="update-progress-row">
-                    <span class="update-progress-label">Downloading {targetTag ?? "update"}â€¦</span>
+                    <span class="update-progress-label">Downloading {targetTag ?? "update"}...</span>
                     <span class="update-progress-val">{fmtProgress()}</span>
                   </div>
                 </div>
               {/if}
               {#if updatePhase === "ready"}
                 <div class="update-ready-row">
-                  <span class="update-ready-label">
-                    {targetTag} downloaded â€” restart to finish installing.
-                  </span>
-                  <button class="update-action-btn primary" onclick={restartNow}>Restart now</button>
-                  <button class="kb-reset" onclick={cancelUpdate} title="Dismiss">âœ•</button>
+                  <span class="update-ready-label">{targetTag} downloaded - restart to finish installing.</span>
+                  <button class="update-action-btn primary" type="button" onclick={restartNow}>Restart now</button>
+                  <button class="n-btn n-btn--sm n-btn-ghost settings-mini-action" type="button" onclick={cancelUpdate} title="Dismiss">Dismiss</button>
                 </div>
               {/if}
               {#if updatePhase === "error"}
                 <div class="update-error-row">
                   <span style="color:var(--color-error);font-family:var(--font-ui);font-size:var(--text-xs)">{updateError}</span>
-                  <button class="kb-reset" onclick={cancelUpdate}>Dismiss</button>
+                  <button class="n-btn n-btn--sm n-btn-ghost settings-mini-action" type="button" onclick={cancelUpdate}>Dismiss</button>
                 </div>
               {/if}
-            </div>
-            <div class="section">
-              <p class="section-title">Releases</p>
-              {#if releasesError}
-                <p class="storage-loading" style="color:var(--color-error)">{releasesError}</p>
-              {:else if releasesLoading}
-                <p class="storage-loading">Fetching releasesâ€¦</p>
-              {:else if releases.length === 0}
-                <p class="storage-loading">No releases found.</p>
-              {:else}
-                <div class="release-list-scroll">
-                  <div class="release-list">
-                  {#each releases as release}
-                    {@const isCurrent   = isCurrentVersion(release.tag_name)}
-                    {@const isExpanded  = expandedTag === release.tag_name}
-                    {@const isTarget    = targetTag === release.tag_name}
-                    {@const isInstalling = isTarget && updatePhase === "downloading"}
-                    <div class="release-row" class:current={isCurrent}>
-                      <div class="release-header">
-                        <div class="release-meta">
-                          <span class="release-tag">{release.tag_name}</span>
-                          {#if isCurrent}
-                            <span class="release-badge current-badge">installed</span>
-                          {/if}
-                          {#if release.published_at}
-                            <span class="release-date">{fmtDate(release.published_at)}</span>
+              {#if aboutReleasesOpen}
+              <div class="settings-card__surface" style="margin-top:16px">
+                <div class="settings-card__head">
+                  <p class="settings-card__title">Releases</p>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (aboutReleasesOpen = false)}>Close</button>
+                </div>
+                {#if releasesError}
+                  <p class="storage-loading" style="color:var(--color-error)">{releasesError}</p>
+                {:else if releasesLoading}
+                  <p class="storage-loading">Fetching releases...</p>
+                {:else if releases.length === 0}
+                  <p class="storage-loading">No releases found.</p>
+                {:else}
+                  <div class="release-list-scroll">
+                    <div class="release-list">
+                      {#each releases as release}
+                        {@const isCurrent = isCurrentVersion(release.tag_name)}
+                        {@const isExpanded = expandedTag === release.tag_name}
+                        {@const isTarget = targetTag === release.tag_name}
+                        {@const isInstalling = isTarget && updatePhase === "downloading"}
+                        <div class="release-row" class:current={isCurrent}>
+                          <div class="release-header">
+                            <div class="release-meta">
+                              <span class="release-tag">{release.tag_name}</span>
+                              {#if isCurrent}
+                                <span class="release-badge current-badge">installed</span>
+                              {/if}
+                              {#if release.published_at}
+                                <span class="release-date">{fmtDate(release.published_at)}</span>
+                              {/if}
+                            </div>
+                            <div class="release-actions">
+                              {#if release.body.trim()}
+                                <button class="release-changelog-btn" type="button" onclick={() => expandedTag = isExpanded ? null : release.tag_name}>{isExpanded ? "Hide" : "Changelog"}</button>
+                              {/if}
+                              {#if !isCurrent}
+                                {#if IS_WINDOWS}
+                                  <button class="update-action-btn" class:primary={!isInstalling} disabled={updatePhase === "downloading"} type="button" onclick={() => installUpdate(release)}>
+                                    {isInstalling ? "Downloading..." : "Install"}
+                                  </button>
+                                {:else}
+                                  <button class="update-action-btn" type="button" onclick={() => installUpdate(release)}>Open on GitHub</button>
+                                {/if}
+                              {/if}
+                            </div>
+                          </div>
+                          {#if isExpanded && release.body.trim()}
+                            <div class="release-body">
+                              <pre class="release-body-pre">{release.body.trim()}</pre>
+                            </div>
                           {/if}
                         </div>
-                        <div class="release-actions">
-                          {#if release.body.trim()}
-                            <button class="release-changelog-btn"
-                              onclick={() => expandedTag = isExpanded ? null : release.tag_name}>
-                              {isExpanded ? "Hide" : "Changelog"}
-                            </button>
-                          {/if}
-                          {#if !isCurrent}
-                            {#if IS_WINDOWS}
-                              <button class="update-action-btn"
-                                class:primary={!isInstalling}
-                                disabled={updatePhase === "downloading"}
-                                onclick={() => installUpdate(release)}>
-                                {isInstalling ? "Downloadingâ€¦" : "Install"}
-                              </button>
-                            {:else}
-                              <button class="update-action-btn"
-                                onclick={() => installUpdate(release)}>
-                                Open on GitHub
-                              </button>
-                            {/if}
-                          {/if}
-                        </div>
-                      </div>
-                      {#if isExpanded && release.body.trim()}
-                        <div class="release-body">
-                          <pre class="release-body-pre">{release.body.trim()}</pre>
-                        </div>
-                      {/if}
+                      {/each}
                     </div>
-                  {/each}
+                  </div>
+                {/if}
+              </div>
+              {/if}
+            </div>
+          </div>
+        </section>
+        <section
+          class="settings-pane"
+          class:is-active={tab === "devtools"}
+          data-settings-pane="devtools"
+          hidden={tab !== "devtools"}
+          aria-hidden={tab !== "devtools"}
+        >
+          <div class="settings-grid">
+            <div class="settings-card">
+              <p class="settings-card__title">Dev tools</p>
+              <div class="settings-card__stack">
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Preview idle screen</p>
+                    <p class="settings-mini-row__hint">Show the idle splash. Shortcut: Ctrl+Alt+Shift+S also triggers it.</p>
+                  </div>
+                  <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger" type="button" onclick={triggerSplash} style={splashTriggered ? "background:var(--accent-fg);color:var(--bg-base);border-color:var(--accent-fg);transition:all 0.15s ease" : ""}>
+                    Show idle
+                  </button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Open logs</p>
+                    <p class="settings-mini-row__hint">Inspect runtime output and diagnostics.</p>
+                  </div>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={openAppLogs}>Open</button>
+                </div>
+                <!-- Mockup-only control preserved until theme token inspector is promoted into a stable settings action. -->
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Inspect theme tokens</p>
+                    <p class="settings-mini-row__hint">Preview live Nocturne tokens and surface values.</p>
+                  </div>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" aria-disabled="true" data-inert-control="settings-inspect-theme-tokens">Inspect</button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Build mode</p>
+                    <p class="settings-mini-row__hint settings-mini-row__hint--mono">{import.meta.env.MODE}</p>
                   </div>
                 </div>
-              {/if}
+              </div>
             </div>
-            <div class="section">
-              <p class="section-title">Links</p>
-              <div class="about-block">
-                <a href="https://github.com/Youwes09/Moku" target="_blank" class="about-line" style="color:var(--accent-fg);text-decoration:none">GitHub â†’</a>
-                <a href="https://discord.gg/Jq3pwuNqPp" target="_blank" class="about-line" style="color:var(--accent-fg);text-decoration:none;margin-top:var(--sp-1)">Discord â†’</a>
+            <div class="settings-card settings-reset-card">
+              <p class="settings-card__title">Reset settings</p>
+              <p class="settings-card__intro settings-card__intro--body">Restore reader, library, shell, security, theme and content preferences to their default Nocturne values.</p>
+              <div class="settings-card__surface settings-reset-card__surface">
+                <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Reset all configs to default</p>
+                    <p class="settings-mini-row__hint">Saved library data, downloads and history stay intact. Only preferences and desktop settings are reset.</p>
+                  </div>
+                  <button class="n-btn n-btn--sm settings-reset-all-btn" type="button" onclick={resetAllSettingsToDefaults}>
+                    Reset all settings
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        {:else if tab === "devtools"}
-          <div class="panel">
-            <div class="section">
-              <p class="section-title">Splash Screen</p>
-              <div class="step-row">
-                <div class="toggle-info"><span class="toggle-label">Preview idle screen</span><span class="toggle-desc">Show the idle splash. Shortcut: Ctrl+Alt+Shift+S toggles it without mouse coordinates.</span></div>
-                <button class="danger-btn" onclick={triggerSplash}
-                  style={splashTriggered ? "background:var(--accent-fg);color:var(--bg-base);border-color:var(--accent-fg);transition:all 0.15s ease" : ""}>
-                  Show idle
-                </button>
-              </div>
-            </div>
-            <div class="section">
-              <p class="section-title">Build Info</p>
-              <div class="about-block">
-                <p class="about-line" style="font-family:monospace;font-size:11px;color:var(--text-faint)">Mode: {import.meta.env.MODE}</p>
-              </div>
-            </div>
-          </div>
-        {/if}
+        </section>
       </div>
-    </div>
+    </section>
   </div>
-</div>
-<script module lang="ts">
+</main>
+<script context="module" lang="ts">
   function focusInput(node: HTMLElement) { node.focus(); }
   function focusEl(node: HTMLElement) { setTimeout(() => node.focus(), 0); }
 </script>
 <style>
-  .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: var(--z-settings); display: flex; align-items: center; justify-content: center; animation: fadeIn 0.1s ease both; backdrop-filter: blur(4px); }
-  .modal { width: min(920px, calc(100vw - 48px)); height: min(640px, calc(100vh - 80px)); display: flex; background: var(--bg-surface); border: 1px solid var(--border-base); border-radius: var(--radius-xl); overflow: hidden; animation: scaleIn 0.15s ease both; box-shadow: 0 24px 64px rgba(0,0,0,0.6); }
-  .sidebar { width: 160px; flex-shrink: 0; background: var(--bg-base); border-right: 1px solid var(--border-dim); padding: var(--sp-5) var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-2); overflow-y: auto; }
-  .modal-title { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-faint); letter-spacing: var(--tracking-wider); text-transform: uppercase; padding: 0 var(--sp-2) var(--sp-3); }
-  .nav { display: flex; flex-direction: column; gap: 4px; }
-  .nav-item { display: flex; align-items: center; gap: var(--sp-2); padding: 8px 10px; border-radius: var(--radius-md); font-size: var(--text-sm); color: var(--text-muted); background: none; border: none; cursor: pointer; text-align: left; transition: background var(--t-fast), color var(--t-fast); width: 100%; }
-  .nav-item:hover { background: var(--bg-raised); color: var(--text-secondary); }
-  .nav-item.active { background: var(--accent-muted); color: var(--accent-fg); }
-  .nav-group-button { justify-content: flex-start; }
-  .content { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
-  .content-header { display: flex; align-items: center; justify-content: space-between; padding: var(--sp-5) var(--sp-6) var(--sp-4); border-bottom: 1px solid var(--border-dim); flex-shrink: 0; }
-  .content-title { font-size: var(--text-base); font-weight: var(--weight-medium); color: var(--text-secondary); }
-  .close-btn { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: var(--radius-sm); color: var(--text-faint); background: none; border: none; cursor: pointer; transition: color var(--t-base), background var(--t-base); }
-  .close-btn:hover { color: var(--text-muted); background: var(--bg-raised); }
-  .content-subnav {
-    display: flex;
-    flex-direction: column;
-    gap: var(--sp-3);
-    padding: var(--sp-4) var(--sp-6);
-    border-bottom: 1px solid var(--border-dim);
-    background: color-mix(in srgb, var(--bg-overlay) 35%, transparent);
-    flex-shrink: 0;
-  }
-  .subnav-label {
-    font-family: var(--font-ui);
-    font-size: 10px;
-    color: var(--text-faint);
-    letter-spacing: var(--tracking-wider);
-    text-transform: uppercase;
-    padding: 0 2px;
-  }
-  .subnav-list { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
-  .subnav-item {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-2);
-    padding: 7px 12px;
-    border-radius: var(--radius-full);
-    font-size: var(--text-sm);
-    color: var(--text-muted);
-    background: var(--bg-base);
-    border: 1px solid var(--border-dim);
-    cursor: pointer;
-    text-align: left;
-    transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
-  }
-  .subnav-item:hover { background: var(--bg-raised); color: var(--text-secondary); border-color: var(--border-strong); }
-  .subnav-item.active { background: var(--accent-muted); color: var(--accent-fg); border-color: var(--accent-dim); }
-  .content-body { flex: 1; overflow-y: auto; min-width: 0; }
-  .panel { display: flex; flex-direction: column; gap: var(--sp-1); padding: var(--sp-4) var(--sp-6); }
-  .section { display: flex; flex-direction: column; gap: 1px; border-bottom: 1px solid var(--border-dim); padding-bottom: var(--sp-4); margin-bottom: var(--sp-2); }
-  .section:last-child { border-bottom: none; }
-  .section-title { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-faint); letter-spacing: var(--tracking-wider); text-transform: uppercase; padding: var(--sp-3) var(--sp-3) var(--sp-2); }
-  .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: var(--sp-3); border-radius: var(--radius-md); cursor: default; transition: background var(--t-fast); }
-  .toggle-row:hover { background: var(--bg-raised); }
-  .toggle-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; margin-right: var(--sp-4); }
-  .toggle-label { font-size: var(--text-sm); color: var(--text-secondary); }
-  .toggle-desc { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); line-height: var(--leading-snug); }
-  .toggle { position: relative; width: 32px; height: 18px; border-radius: var(--radius-full); border: none; background: var(--bg-overlay); cursor: pointer; flex-shrink: 0; transition: background var(--t-base); border: 1px solid var(--border-strong); }
-  .toggle.on { background: var(--accent); border-color: var(--accent); }
-  .toggle-thumb { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--text-faint); transition: transform var(--t-base), background var(--t-base); }
-  .toggle.on .toggle-thumb { transform: translateX(14px); background: var(--bg-void); }
-  .step-row { display: flex; align-items: center; justify-content: space-between; padding: var(--sp-3); border-radius: var(--radius-md); transition: background var(--t-fast); gap: var(--sp-3); }
-  .step-row:hover { background: var(--bg-raised); }
   .step-controls { display: flex; align-items: center; gap: var(--sp-1); flex-shrink: 0; }
-  .step-btn { font-family: var(--font-ui); font-size: var(--text-sm); width: 26px; height: 26px; border-radius: var(--radius-sm); border: 1px solid var(--border-dim); background: none; color: var(--text-muted); cursor: pointer; transition: color var(--t-base), border-color var(--t-base); display: flex; align-items: center; justify-content: center; }
-  .step-btn:hover:not(:disabled) { color: var(--text-secondary); border-color: var(--border-strong); }
+  .step-btn { font-family: var(--font-ui); font-size: 12px; font-weight: 700; width: 30px; height: 30px; border-radius: 12px; border: 1px solid rgba(72, 69, 79, 0.16); background: rgba(255, 255, 255, 0.02); color: rgba(229, 226, 225, 0.82); cursor: pointer; transition: color var(--t-base), border-color var(--t-base), background var(--t-base), transform 100ms ease; display: flex; align-items: center; justify-content: center; }
+  .step-btn:hover:not(:disabled) { color: var(--n-on-surface); border-color: rgba(184, 167, 234, 0.18); background: rgba(184, 167, 234, 0.06); }
+  .step-btn:active:not(:disabled) { transform: scale(0.97); }
   .step-btn:disabled { opacity: 0.3; cursor: default; }
-  .step-val { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-secondary); letter-spacing: var(--tracking-wide); min-width: 40px; text-align: center; }
+  .step-val { font-family: var(--font-ui); font-size: 11px; color: rgba(202, 196, 208, 0.58); letter-spacing: 0.08em; min-width: 40px; text-align: center; text-transform: uppercase; }
   .select-wrap { position: relative; flex-shrink: 0; }
-  .select-btn { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--text-sm); color: var(--text-secondary); background: var(--bg-raised); border: 1px solid var(--border-dim); border-radius: var(--radius-md); padding: 5px 10px; cursor: pointer; min-width: 130px; transition: border-color var(--t-base); }
-  .select-btn:hover { border-color: var(--border-strong); }
+  .select-btn { display: flex; align-items: center; gap: var(--sp-2); min-height: 32px; font-size: 12px; font-weight: 600; color: var(--n-on-surface); background: rgba(21, 21, 25, 0.72); border: 1px solid rgba(72, 69, 79, 0.16); border-radius: 14px; padding: 0 12px; cursor: pointer; min-width: 130px; transition: border-color 140ms ease, background 140ms ease; }
+  .select-btn:hover { border-color: rgba(184, 167, 234, 0.18); background: rgba(28, 27, 27, 0.82); }
   .select-caret { color: var(--text-faint); transition: transform var(--t-base); flex-shrink: 0; margin-left: auto; }
   .select-caret.open { transform: rotate(180deg); }
   .select-menu { position: absolute; top: calc(100% + 4px); right: 0; min-width: 100%; background: var(--bg-raised); border: 1px solid var(--border-base); border-radius: var(--radius-md); padding: var(--sp-1); z-index: 200; box-shadow: 0 8px 24px rgba(0,0,0,0.4); animation: scaleIn 0.1s ease both; transform-origin: top right; }
   .select-option { display: block; width: 100%; padding: 6px var(--sp-3); border-radius: var(--radius-sm); font-size: var(--text-sm); color: var(--text-secondary); background: none; border: none; cursor: pointer; text-align: left; transition: background var(--t-fast), color var(--t-fast); }
   .select-option:hover { background: var(--bg-overlay); color: var(--text-primary); }
   .select-option.active { color: var(--accent-fg); background: var(--accent-muted); }
-  .text-input { background: var(--bg-raised); border: 1px solid var(--border-dim); border-radius: var(--radius-md); padding: 5px 10px; color: var(--text-primary); font-size: var(--text-sm); outline: none; width: 200px; transition: border-color var(--t-base); flex-shrink: 0; }
-  .text-input:focus { border-color: var(--border-strong); }
-  .danger-btn { font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); padding: 5px 12px; border-radius: var(--radius-md); border: 1px solid var(--color-error); background: none; color: var(--color-error); cursor: pointer; flex-shrink: 0; transition: background var(--t-base); }
-  .danger-btn:hover:not(:disabled) { background: var(--color-error-bg); }
-  .danger-btn:disabled { opacity: 0.3; cursor: default; }
   .scale-row { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-2) var(--sp-3); }
   .scale-slider { flex: 1; }
   .scale-val-input {
@@ -4909,145 +6000,41 @@
     background: var(--bg-raised); border: 1px solid var(--border-dim);
     border-radius: var(--radius-sm); outline: none;
     transition: border-color var(--t-base);
+    appearance: textfield;
     -moz-appearance: textfield;
   }
   .scale-val-input::-webkit-inner-spin-button,
   .scale-val-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
   .scale-val-input:focus { border-color: var(--border-strong); }
   .scale-pct { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-faint); margin-left: calc(var(--sp-1) * -1); }
-  .scale-hint { padding: 0 var(--sp-3) var(--sp-2); display: flex; gap: var(--sp-1); flex-wrap: wrap; }
-  .scale-preset { font-family: var(--font-ui); font-size: var(--text-2xs); padding: 2px 7px; border-radius: var(--radius-sm); border: 1px solid var(--border-dim); background: none; color: var(--text-faint); cursor: pointer; transition: color var(--t-base), border-color var(--t-base), background var(--t-base); }
-  .scale-preset:hover { color: var(--text-muted); border-color: var(--border-strong); }
-  .scale-preset.active { background: var(--accent-muted); border-color: var(--accent-dim); color: var(--accent-fg); }
-  .theme-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: var(--sp-3); padding: var(--sp-2) var(--sp-3); }
-  .theme-card { background: var(--bg-raised); border: 1px solid var(--border-dim); border-radius: var(--radius-lg); overflow: hidden; cursor: pointer; text-align: left; transition: border-color var(--t-base), box-shadow var(--t-base); position: relative; }
-  .theme-card:hover { border-color: var(--border-strong); }
-  .theme-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-  .theme-preview { height: 70px; overflow: hidden; }
-  .theme-preview-bg { width: 100%; height: 100%; display: flex; }
-  .theme-preview-sidebar { width: 20%; height: 100%; flex-shrink: 0; }
-  .theme-preview-content { flex: 1; padding: 8px 6px; display: flex; flex-direction: column; gap: 5px; }
-  .theme-preview-accent { height: 6px; width: 50%; border-radius: 3px; }
-  .theme-preview-text { height: 4px; width: 100%; border-radius: 2px; }
-  .theme-card-info { padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; }
-  .theme-card-label { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--text-secondary); }
-  .theme-card-desc { font-family: var(--font-ui); font-size: var(--text-2xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); }
-  .theme-card-check { position: absolute; top: 6px; right: 6px; font-size: 10px; color: var(--accent-fg); background: var(--accent-muted); border: 1px solid var(--accent-dim); border-radius: var(--radius-sm); padding: 1px 4px; }
-  .kb-hint { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); padding: 0 var(--sp-3) var(--sp-3); }
-  .kb-list { display: flex; flex-direction: column; gap: 1px; }
-  .kb-row { display: flex; align-items: center; justify-content: space-between; padding: var(--sp-2) var(--sp-3); border-radius: var(--radius-md); transition: background var(--t-fast); }
-  .kb-row:hover { background: var(--bg-raised); }
-  .kb-label { font-size: var(--text-sm); color: var(--text-secondary); flex: 1; }
-  .kb-right { display: flex; align-items: center; gap: var(--sp-2); }
-  .kb-bind { font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); padding: 4px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-dim); background: var(--bg-raised); color: var(--text-secondary); cursor: pointer; min-width: 90px; text-align: center; transition: border-color var(--t-base), color var(--t-base); }
-  .kb-bind:hover { border-color: var(--border-strong); }
-  .kb-bind.listening { border-color: var(--accent); color: var(--accent-fg); background: var(--accent-muted); animation: pulse 1s ease infinite; }
-  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.6 } }
-  .kb-reset { font-size: var(--text-sm); color: var(--text-faint); padding: 3px 6px; border-radius: var(--radius-sm); border: 1px solid transparent; transition: color var(--t-base), border-color var(--t-base), background var(--t-base); }
-  .kb-reset:hover:not(:disabled) { color: var(--text-muted); border-color: var(--border-dim); background: var(--bg-overlay); }
-  .kb-reset:disabled { opacity: 0.3; cursor: default; }
-  .storage-loading { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); padding: var(--sp-3); }
-  .storage-bar-wrap { padding: var(--sp-2) var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-2); }
-  .storage-bar-header { display: flex; justify-content: space-between; align-items: baseline; }
-  .storage-bar-label { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-muted); letter-spacing: var(--tracking-wide); }
-  .storage-bar { height: 6px; background: var(--bg-overlay); border-radius: var(--radius-full); overflow: hidden; }
-  .storage-bar-fill { height: 100%; background: var(--accent); border-radius: var(--radius-full); transition: width 0.4s ease; }
-  .storage-bar-fill.warn { background: #d97706; }
-  .storage-bar-fill.critical { background: var(--color-error); }
-  .storage-bar-labels { display: flex; justify-content: space-between; }
-  .storage-bar-used, .storage-bar-free { font-family: var(--font-ui); font-size: var(--text-2xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); }
-  .storage-legend { display: flex; flex-direction: column; gap: var(--sp-1); padding: 0 var(--sp-3); }
-  .storage-legend-row { display: flex; align-items: center; gap: var(--sp-2); }
-  .storage-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-  .storage-dot-manga { background: var(--accent); }
-  .storage-dot-free  { background: var(--bg-overlay); border: 1px solid var(--border-strong); }
-  .storage-dot-app   { background: var(--text-faint); }
-  .storage-legend-label { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-muted); flex: 1; }
-  .storage-legend-val   { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-secondary); }
-  .storage-path-note { font-family: var(--font-ui); font-size: var(--text-2xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); padding: var(--sp-2) var(--sp-3) 0; word-break: break-all; }
-
-  /* â”€â”€ Migration banner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-  .migrate-banner { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-4); margin: 0 0 var(--sp-2); padding: var(--sp-3) var(--sp-4); background: color-mix(in srgb, var(--color-info) 7%, transparent); border: 1px solid color-mix(in srgb, var(--color-info) 22%, transparent); border-radius: var(--radius-md); }
-  .migrate-banner-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
-  .migrate-title { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--color-info); letter-spacing: var(--tracking-wide); }
-  .migrate-paths { font-family: monospace; font-size: 10px; color: var(--text-faint); word-break: break-all; }
-  .migrate-error { font-size: var(--text-xs); color: var(--color-error); }
-  .migrate-progress { display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
-  .migrate-progress-labels { display: flex; justify-content: space-between; }
-  .migrate-current { font-family: monospace; font-size: 10px; color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%; }
-  .migrate-count { font-family: var(--font-ui); font-size: var(--text-2xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); flex-shrink: 0; }
-  .migrate-bar { height: 3px; background: var(--bg-overlay); border-radius: 2px; overflow: hidden; }
-  .migrate-bar-fill { height: 100%; background: var(--color-info); border-radius: 2px; transition: width 0.15s; }
-  .migrate-banner-actions { display: flex; flex-direction: column; gap: var(--sp-1); flex-shrink: 0; align-items: flex-end; }
-
-  /* â”€â”€ Downloads path row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-  .path-row { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3) var(--sp-3); }
-  .path-input { flex: 1; width: 0 !important; min-width: 0; font-family: monospace !important; font-size: var(--text-xs) !important; }
-  .path-input-error { border-color: var(--color-error) !important; }
-  .path-field-error { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--color-error); letter-spacing: var(--tracking-wide); white-space: nowrap; }
-  .path-actions { display: flex; align-items: center; gap: var(--sp-2); flex-shrink: 0; }
-
-  /* â”€â”€ Advanced collapsible â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-  .adv-section { padding-bottom: var(--sp-1); }
-  .adv-toggle { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: var(--sp-2) var(--sp-3); background: none; border: none; cursor: pointer; border-radius: var(--radius-md); transition: background var(--t-fast); }
-  .adv-toggle:hover { background: var(--bg-raised); }
-  .adv-caret { color: var(--text-faint); transition: transform var(--t-base); flex-shrink: 0; }
-  .adv-caret.open { transform: rotate(180deg); }
-  .adv-body { display: flex; flex-direction: column; gap: 1px; padding-top: var(--sp-1); }
-
-  /* â”€â”€ Releases scroll â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  .settings-mini-action,
+  .settings-folder-action {
+    min-height: 28px;
+    padding: 0 10px;
+    border-radius: 10px;
+    font-size: 11px;
+    line-height: 1;
+  }
+  .settings-inline-actions--dense {
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .settings-card__footer--editor {
+    align-items: center;
+  }
+  .settings-folder-action {
+    min-width: 28px;
+    padding: 0 8px;
+  }
+  .storage-loading { font-family: var(--font-ui); font-size: 12px; color: rgba(202, 196, 208, 0.48); letter-spacing: 0.02em; padding: 12px 14px; border-radius: 14px; border: 1px solid rgba(72, 69, 79, 0.12); background: rgba(255, 255, 255, 0.02); }
   .release-list-scroll { max-height: 336px; overflow-y: auto; padding: 0 var(--sp-1); scrollbar-width: thin; scrollbar-color: var(--border-base) transparent; }
   .release-list-scroll::-webkit-scrollbar { width: 4px; }
   .release-list-scroll::-webkit-scrollbar-track { background: transparent; }
   .release-list-scroll::-webkit-scrollbar-thumb { background: var(--border-base); border-radius: 2px; }
-  .setting-stack { display: flex; flex-direction: column; gap: var(--sp-2); padding: 0 var(--sp-3) var(--sp-3); }
-  .library-segmented { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
-  .library-segment-btn {
-    font-family: var(--font-ui);
-    font-size: var(--text-xs);
-    letter-spacing: var(--tracking-wide);
-    padding: 7px 12px;
-    border-radius: var(--radius-full);
-    border: 1px solid var(--border-dim);
-    background: var(--bg-raised);
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: border-color var(--t-base), color var(--t-base), background var(--t-base);
-  }
-  .library-segment-btn:hover { color: var(--text-secondary); border-color: var(--border-strong); }
-  .library-segment-btn.active { color: var(--accent-fg); background: var(--accent-muted); border-color: var(--accent-dim); }
-  .folder-create-row { display: flex; gap: var(--sp-2); padding: 0 var(--sp-3) var(--sp-3); }
-  .folder-create-btn { display: flex; align-items: center; gap: var(--sp-1); font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); padding: 5px 12px; border-radius: var(--radius-md); background: var(--accent-muted); color: var(--accent-fg); border: 1px solid var(--accent-dim); cursor: pointer; flex-shrink: 0; transition: filter var(--t-base); }
-  .folder-create-btn:hover:not(:disabled) { filter: brightness(1.1); }
-  .folder-create-btn:disabled { opacity: 0.4; cursor: default; }
-  .folder-list { display: flex; flex-direction: column; gap: 1px; padding: 0 var(--sp-3); }
-  .folder-row { display: flex; align-items: center; gap: var(--sp-2); padding: 8px var(--sp-2); border-radius: var(--radius-md); transition: background var(--t-fast); }
-  .folder-row:hover { background: var(--bg-raised); }
-  .folder-row-name { flex: 1; font-size: var(--text-sm); color: var(--text-secondary); }
-  .folder-row-count { font-family: var(--font-ui); font-size: var(--text-2xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); flex-shrink: 0; }
-  .folder-row-actions { display: flex; align-items: center; gap: var(--sp-1); margin-left: auto; }
-  .folder-tab-toggle { font-family: var(--font-ui); font-size: var(--text-2xs); letter-spacing: var(--tracking-wide); padding: 2px 7px; border-radius: var(--radius-sm); border: 1px solid var(--border-dim); background: none; color: var(--text-faint); cursor: pointer; flex-shrink: 0; transition: color var(--t-base), border-color var(--t-base), background var(--t-base); }
-  .folder-tab-toggle.on { background: var(--accent-muted); border-color: var(--accent-dim); color: var(--accent-fg); }
-  .folder-tab-toggle:hover { color: var(--text-muted); border-color: var(--border-strong); }
   .folder-delete:hover:not(:disabled) { color: var(--color-error) !important; }
   .folder-hidden { opacity: 0.35; }
   .folder-default-active { color: var(--accent-fg) !important; }
-  .about-block { padding: 0 var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-1); }
-  .about-line { font-size: var(--text-sm); color: var(--text-muted); line-height: var(--leading-base); }
-  .perf-stat-group { display: flex; align-items: center; gap: var(--sp-2); flex-shrink: 0; }
-  .perf-stat { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-secondary); letter-spacing: var(--tracking-wide); flex-shrink: 0; }
-  .storage-limit-input {
-    width: 64px; text-align: center;
-    background: var(--bg-raised); border: 1px solid var(--border-dim);
-    border-radius: var(--radius-sm); padding: 3px 6px;
-    color: var(--text-secondary); font-family: var(--font-ui); font-size: var(--text-xs);
-    outline: none; transition: border-color var(--t-base);
-    -moz-appearance: textfield;
-  }
-  .storage-limit-input::-webkit-inner-spin-button,
-  .storage-limit-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-  .storage-limit-input:focus { border-color: var(--border-strong); }
-  .storage-limit-unit { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); flex-shrink: 0; }
   .release-list { display: flex; flex-direction: column; gap: 1px; padding: 0 var(--sp-1); }
   .release-row {
     border-radius: var(--radius-md);
@@ -5109,9 +6096,6 @@
   }
   .update-ready-label { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--accent-fg); letter-spacing: var(--tracking-wide); flex: 1; }
   .update-error-row { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); }
-  .tracker-list { display: flex; flex-direction: column; gap: var(--sp-2); padding: 0 var(--sp-3); }
-  .tracker-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); padding: var(--sp-4); border-radius: var(--radius-md); border: 1px solid var(--border-dim); background: var(--bg-raised); transition: border-color var(--t-base); }
-  .tracker-row-active { border-color: var(--accent-dim); background: var(--accent-muted); }
   .tracker-identity { display: flex; align-items: center; gap: var(--sp-3); flex-shrink: 0; }
   .tracker-logo { width: 28px; height: 28px; border-radius: var(--radius-sm); object-fit: contain; flex-shrink: 0; }
   .tracker-name-block { display: flex; flex-direction: column; gap: 3px; }
@@ -5120,147 +6104,13 @@
   .tracker-status-pill.pill-on { border-color: var(--accent-dim); color: var(--accent-fg); background: var(--accent-muted); }
   .tracker-action { display: flex; flex-direction: column; align-items: flex-end; gap: var(--sp-2); flex: 1; min-width: 0; }
   .tracker-error { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--color-error); background: var(--color-error-bg); border: 1px solid var(--color-error); border-radius: var(--radius-sm); padding: 6px var(--sp-3); margin: 0 var(--sp-3) var(--sp-2); letter-spacing: var(--tracking-wide); }
-  .tracker-connected-btns { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; justify-content: flex-end; }
-  .oauth-flow { display: flex; flex-direction: column; gap: var(--sp-2); width: 100%; align-items: flex-end; }
-  .oauth-hint { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); line-height: var(--leading-snug); text-align: right; }
-  .oauth-hint strong { color: var(--text-secondary); font-weight: var(--weight-medium); }
-  .oauth-hint code { font-family: monospace; font-size: 10px; color: var(--text-muted); background: var(--bg-overlay); padding: 1px 4px; border-radius: 3px; }
-  .oauth-input { width: 100%; background: var(--bg-overlay); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 6px 10px; font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-secondary); outline: none; transition: border-color var(--t-base); }
-  .oauth-input:focus { border-color: var(--border-focus); }
-  .oauth-btns { display: flex; align-items: center; gap: var(--sp-2); }
-  .sec-banner { font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); padding: var(--sp-2) var(--sp-3); margin: 0 0 var(--sp-2); border-radius: var(--radius-sm); }
-  .sec-banner-error { color: var(--color-error); background: var(--color-error-bg); border: 1px solid var(--color-error); }
-  .sec-banner-info { color: var(--color-info); background: var(--color-info-bg); border: 1px solid color-mix(in srgb, var(--color-info) 55%, transparent); }
-  .section-title-row { display: flex; align-items: center; justify-content: space-between; padding: var(--sp-3) var(--sp-3) var(--sp-2); }
-  .section-title-row .section-title { padding: 0; }
   .sec-status-pill { font-family: var(--font-ui); font-size: var(--text-2xs); letter-spacing: var(--tracking-wider); text-transform: uppercase; padding: 2px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border-dim); color: var(--text-faint); background: var(--bg-overlay); flex-shrink: 0; cursor: default; }
   .sec-pill-on { border-color: var(--accent-dim); color: var(--accent-fg); background: var(--accent-muted); }
   .sec-field-wrap { position: relative; flex-shrink: 0; }
-  .sec-field-wrap .text-input { padding-right: 34px; }
   .sec-eye-btn { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); display: flex; align-items: center; justify-content: center; padding: 0; border: none; background: none; color: var(--text-faint); cursor: pointer; transition: color var(--t-base); }
   .sec-eye-btn:hover { color: var(--text-muted); }
-  .sec-btn-row { display: flex; align-items: center; gap: var(--sp-2); flex-shrink: 0; }
-  .sec-action-btn { font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); padding: 5px 14px; border-radius: var(--radius-md); border: 1px solid var(--border-dim); background: none; color: var(--text-muted); cursor: pointer; flex-shrink: 0; transition: color var(--t-base), border-color var(--t-base), background var(--t-base); }
-  .sec-action-btn:hover:not(:disabled) { color: var(--text-secondary); border-color: var(--border-strong); }
-  .sec-action-btn:disabled { opacity: 0.35; cursor: default; }
-  .sec-action-primary { background: var(--accent-muted); border-color: var(--accent-dim); color: var(--accent-fg); }
-  .sec-action-primary:hover:not(:disabled) { filter: brightness(1.1); }
-  .sec-action-danger { border-color: var(--color-error); color: var(--color-error); }
-  .sec-action-danger:hover:not(:disabled) { background: var(--color-error-bg); }
-  .flare-inline-actions { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; justify-content: flex-end; }
-  .flare-action-compact { min-width: 64px; padding: 4px 10px; border-radius: 999px; }
-  .flare-card {
-    margin: 0 var(--sp-3) var(--sp-2);
-    border: 1px solid var(--border-dim);
-    border-radius: 12px;
-    background: color-mix(in srgb, var(--bg-raised) 82%, transparent);
-    overflow: hidden;
-    transition: border-color var(--t-base), background var(--t-base), transform var(--t-base);
-  }
-  .flare-card:hover { border-color: var(--border-strong); background: var(--bg-raised); }
-  .flare-card-head {
-    display: flex;
-    align-items: stretch;
-    gap: var(--sp-2);
-    padding: var(--sp-2);
-  }
-  .flare-card-toggle {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--sp-3);
-    padding: 8px 10px;
-    border: none;
-    border-radius: 10px;
-    background: transparent;
-    color: inherit;
-    cursor: pointer;
-    transition: background var(--t-base), color var(--t-base);
-  }
-  .flare-card-toggle:hover { background: var(--bg-overlay); }
-  .flare-card-copy { min-width: 0; display: flex; flex-direction: column; gap: 3px; text-align: left; }
-  .flare-card-meta { display: flex; align-items: center; gap: var(--sp-2); flex-shrink: 0; color: var(--text-faint); }
-  .flare-card-head-actions { display: flex; align-items: center; gap: var(--sp-2); flex-shrink: 0; }
-  .flare-caret-wrap { display: inline-flex; transition: transform var(--t-base), color var(--t-base); }
-  .flare-caret-open { transform: rotate(180deg); }
-  .flare-card-body {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    padding: 0 var(--sp-2) var(--sp-2);
-  }
-  .flare-card-row {
-    margin: 0;
-    padding: 10px;
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--bg-overlay) 78%, transparent);
-  }
-  .flare-inline-input { width: 180px; max-width: 100%; }
-  .sec-pin-wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
-  .sec-pin-wrap .sec-pin-row { display: flex; align-items: center; gap: var(--sp-2); }
-  .sec-pin-input { width: 96px; text-align: center; letter-spacing: 0.25em; }
-  .sec-port-input { width: 88px; }
-  .sec-pin-error { font-family: var(--font-ui); font-size: var(--text-2xs); color: var(--color-error); letter-spacing: var(--tracking-wide); }
   @keyframes fadeIn  { from { opacity: 0 }           to { opacity: 1 } }
   @keyframes scaleIn { from { transform: scale(0.97); opacity: 0 } to { transform: scale(1); opacity: 1 } }
-  .custom-theme-card {
-    position: relative;
-    display: flex; flex-direction: column;
-    padding: 0; cursor: default;
-  }
-  .custom-theme-select {
-    flex: 1; text-align: left; cursor: pointer;
-    display: flex; flex-direction: column;
-    background: none; border: none; color: inherit;
-    font-family: inherit;
-  }
-  .custom-badge {
-    color: var(--accent-fg) !important;
-  }
-  .custom-theme-actions {
-    display: none;
-    position: absolute; top: 5px; left: 5px;
-    flex-direction: row; gap: 3px;
-    z-index: 1;
-  }
-  .custom-theme-card:hover .custom-theme-actions { display: flex; }
-  .custom-theme-edit-btn,
-  .custom-theme-delete-btn {
-    display: flex; align-items: center; justify-content: center;
-    width: 20px; height: 20px; border-radius: 3px;
-    font-size: 10px; cursor: pointer;
-    border: 1px solid var(--border-base);
-    background: var(--bg-overlay);
-    transition: background var(--t-base), color var(--t-base), border-color var(--t-base);
-  }
-  .custom-theme-edit-btn { color: var(--text-muted); }
-  .custom-theme-edit-btn:hover { color: var(--accent-fg); background: var(--accent-muted); border-color: var(--accent-dim); }
-  .custom-theme-delete-btn { color: var(--text-faint); }
-  .custom-theme-delete-btn:hover { color: var(--color-error); background: var(--color-error-bg); border-color: var(--color-error); }
-  .new-theme-card {
-    display: flex; flex-direction: column;
-    border-style: dashed !important;
-    border-color: var(--border-base) !important;
-    background: transparent !important;
-    transition: border-color var(--t-base), background var(--t-base) !important;
-  }
-  .new-theme-card:hover {
-    border-color: var(--accent-dim) !important;
-    background: var(--accent-muted) !important;
-  }
-  .new-theme-icon {
-    height: 70px; display: flex; align-items: center; justify-content: center;
-    color: var(--text-faint);
-    transition: color var(--t-base);
-  }
-  .new-theme-card:hover .new-theme-icon { color: var(--accent-fg); }
-  .content-tag-grid { display: flex; flex-wrap: wrap; gap: var(--sp-2); padding: 0 var(--sp-3) var(--sp-3); }
-  .content-tag { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); padding: 4px 8px 4px 7px; border-radius: var(--radius-full); border: 1px solid var(--border-base); background: var(--bg-raised); color: var(--text-secondary); }
-  .content-tag-remove { display: flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 50%; border: none; background: none; color: var(--text-faint); cursor: pointer; font-size: 14px; line-height: 1; padding: 0; margin-left: 1px; transition: color var(--t-fast), background var(--t-fast); }
-  .content-tag-remove:hover { color: var(--color-error); background: var(--color-error-bg); }
-  .content-tag-add { display: flex; align-items: center; gap: var(--sp-2); padding: 0 var(--sp-3); }
   .content-source-search-wrap { padding: 0 var(--sp-3) var(--sp-3); }
   .content-source-list { display: flex; flex-direction: column; gap: 2px; padding: 0 var(--sp-2); }
   .content-source-row { display: flex; align-items: center; gap: var(--sp-3); padding: 8px var(--sp-3); border-radius: var(--radius-md); border: 1px solid transparent; transition: background var(--t-fast), border-color var(--t-fast); }
@@ -5276,76 +6126,8 @@
   .content-action-btn:hover { color: var(--text-muted); border-color: var(--border-strong); background: var(--bg-overlay); }
   .content-action-active-allow { color: var(--color-success) !important; border-color: color-mix(in srgb, var(--color-success) 40%, transparent) !important; background: color-mix(in srgb, var(--color-success) 10%, transparent) !important; }
   .content-action-active-block  { color: var(--color-error)   !important; border-color: color-mix(in srgb, var(--color-error)   40%, transparent) !important; background: color-mix(in srgb, var(--color-error)   10%, transparent) !important; }
-  .profile-picker { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
-  .profile-option {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    border-radius: 999px;
-    border: 1px solid var(--border-base);
-    background: var(--bg-raised);
-    color: var(--text-faint);
-    font-family: var(--font-ui);
-    font-size: var(--text-2xs);
-    letter-spacing: var(--tracking-wide);
-    text-transform: uppercase;
-    cursor: pointer;
-    transition: color var(--t-base), border-color var(--t-base), background var(--t-base);
-  }
-  .profile-option:hover { color: var(--text-secondary); border-color: var(--border-strong); }
-  .profile-option.active {
-    color: var(--accent-fg);
-    border-color: var(--accent-dim);
-    background: var(--accent-muted);
-  }
-  .profile-option-label { font-weight: 600; }
-  .profile-option-meta { color: var(--text-faint); }
-  .profile-status-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: var(--sp-3);
-    padding: 0 var(--sp-3) var(--sp-3);
-  }
-  .profile-status-card {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 12px;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border-dim);
-    background: var(--bg-overlay);
-  }
-  .profile-status-label {
-    font-family: var(--font-ui);
-    font-size: var(--text-2xs);
-    letter-spacing: var(--tracking-wide);
-    text-transform: uppercase;
-    color: var(--text-faint);
-  }
-  .profile-status-value { font-size: var(--text-sm); color: var(--text-secondary); }
-  .profile-status-meta {
-    font-family: var(--font-ui);
-    font-size: var(--text-2xs);
-    letter-spacing: var(--tracking-wide);
-    color: var(--text-faint);
-    word-break: break-all;
-  }
-  .profile-note {
-    margin: 0 var(--sp-3) var(--sp-3);
-    padding: 10px 12px;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border-dim);
-    background: color-mix(in srgb, var(--bg-overlay) 88%, transparent);
-    font-family: var(--font-ui);
-    font-size: var(--text-2xs);
-    line-height: 1.6;
-    letter-spacing: var(--tracking-wide);
-    color: var(--text-faint);
-  }
-  .backup-validate { display: flex; flex-direction: column; gap: var(--sp-2); margin: 0 var(--sp-3) var(--sp-1); padding: var(--sp-3); border: 1px solid var(--border-dim); border-radius: var(--radius-md); background: var(--bg-overlay); }
-  .backup-validate-row, .backup-warning-block { display: flex; flex-direction: column; gap: 4px; }
-  .backup-suggestions { display: flex; flex-direction: column; gap: var(--sp-2); margin-top: var(--sp-2); }
-  .backup-suggestion-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border-dim); border-radius: var(--radius-md); background: var(--bg-raised); }
-  .backup-suggestion-info { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 </style>
+
+
+
+

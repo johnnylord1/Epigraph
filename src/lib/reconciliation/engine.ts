@@ -1,5 +1,5 @@
 import { gql } from "../client";
-import { FETCH_MANGA, FETCH_SOURCE_MANGA, GET_CHAPTERS } from "../queries";
+import { FETCH_MANGA, GET_CHAPTERS } from "../queries";
 import type { Extension, Manga, Source } from "../types";
 import { findMissingSourceExtensionSuggestions } from "../extensionSourceMap";
 import type {
@@ -16,6 +16,7 @@ import type {
   SourceInventoryEntry,
 } from "./types";
 import { fingerprintText } from "../backup/mihonBackup";
+import { fetchSourceMangaSearchWithFallback } from "../manga/sourceSearch";
 
 export const DEFAULT_INFERENCE_CONFIG: ClusterInferenceConfig = {
   maxSampledMangaPerCluster: 5,
@@ -154,14 +155,14 @@ async function searchSource(
   const cached = searchCache.get(cacheKey);
   if (cached) return cached;
 
-  const result = await gql<{ fetchSourceManga: { mangas: Manga[] } }>(
-    FETCH_SOURCE_MANGA,
-    { source: source.id, type: "SEARCH", page: 1, query: title },
+  const mangas = await fetchSourceMangaSearchWithFallback({
+    sourceId: source.id,
+    query: title,
     signal,
-  );
+  });
   const value: SearchCacheValue = {
     source,
-    results: result.fetchSourceManga.mangas.map((manga) => ({
+    results: mangas.map((manga) => ({
       id: manga.id,
       title: manga.title,
       thumbnailUrl: manga.thumbnailUrl,

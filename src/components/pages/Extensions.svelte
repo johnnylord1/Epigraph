@@ -33,6 +33,8 @@
   let savingRepos = $state(false);
   let setupState: SetupState | null = $state(null);
   let setupActionBusy = $state(false);
+  let renderVisible = $state(0);
+  const renderLimit = 48;
 
   function browseAvailableExtensions() {
     filter = "available";
@@ -187,6 +189,9 @@
       return { base, primary, variants: all.filter((v) => v.pkgName !== primary.pkgName) };
     });
   });
+  const visibleGroups = $derived(groups.slice(0, renderVisible));
+  const hasMore = $derived(groups.length > renderVisible);
+  const remainingCount = $derived(Math.max(0, groups.length - renderVisible));
   const updateCount = $derived(extensions.filter((e) => e.hasUpdate).length);
 
   const FILTERS: { id: Filter; label: string }[] = [
@@ -201,6 +206,30 @@
     next.has(base) ? next.delete(base) : next.add(base);
     expanded = next;
   }
+
+  function loadMore() {
+    renderVisible = Math.min(groups.length, renderVisible + renderLimit);
+  }
+
+  $effect(() => {
+    filter;
+    search;
+    loading;
+
+    if (loading) {
+      renderVisible = 0;
+      return;
+    }
+
+    renderVisible = Math.min(renderLimit, groups.length);
+  });
+
+  $effect(() => {
+    groups.length;
+    if (renderVisible > groups.length) {
+      renderVisible = groups.length;
+    }
+  });
 </script>
 
 <div class="root">
@@ -323,12 +352,12 @@
     </div>
   {:else}
     <div class="list">
-      {#each groups as { base, primary, variants }}
+      {#each visibleGroups as { base, primary, variants }}
         {@const isExpanded = expanded.has(base)}
         {@const hasVariants = variants.length > 0}
         <div class="group">
           <div class="row">
-            <img src={thumbUrl(primary.iconUrl)} alt={primary.name} class="icon" onerror={(e) => (e.target as HTMLImageElement).style.display = "none"} />
+            <img src={thumbUrl(primary.iconUrl)} alt={primary.name} class="icon" loading="lazy" decoding="async" fetchpriority="low" onerror={(e) => (e.target as HTMLImageElement).style.display = "none"} />
             <div class="info">
               <span class="name">{base}</span>
               <span class="meta"><span class="lang-tag">{primary.lang.toUpperCase()}</span> v{primary.versionName}</span>
@@ -377,6 +406,14 @@
           {/if}
         </div>
       {/each}
+      {#if hasMore}
+        <div class="load-more-row">
+          <button type="button" class="load-more-btn" onclick={loadMore}>
+            Show {Math.min(remainingCount, renderLimit)} more
+            <span class="load-more-count">({remainingCount} remaining)</span>
+          </button>
+        </div>
+      {/if}
     </div>
   {/if}
 </div>
@@ -428,6 +465,7 @@
   .row { display: flex; align-items: center; gap: var(--sp-3); padding: 8px var(--sp-3); border-radius: var(--radius-md); border: 1px solid transparent; transition: background var(--t-fast), border-color var(--t-fast); }
   .row:hover { background: var(--bg-raised); border-color: var(--border-dim); }
   .icon { width: 32px; height: 32px; border-radius: var(--radius-md); object-fit: cover; flex-shrink: 0; background: var(--bg-raised); }
+  .icon { contain: paint; }
   .info { flex: 1; display: flex; flex-direction: column; gap: 2px; overflow: hidden; min-width: 0; }
   .name { font-size: var(--text-base); font-weight: var(--weight-medium); color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .meta { display: flex; align-items: center; gap: var(--sp-2); font-family: var(--font-ui); font-size: var(--text-2xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); }
@@ -448,8 +486,116 @@
   .variant-version { font-family: var(--font-ui); font-size: var(--text-2xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); flex-shrink: 0; }
   .variant-actions { flex-shrink: 0; }
   .empty { display: flex; align-items: center; justify-content: center; flex: 1; color: var(--text-faint); font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); }
+  .load-more-row {
+    display: flex;
+    justify-content: center;
+    padding: var(--sp-4) 0 var(--sp-2);
+  }
+  .load-more-btn {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    font-family: var(--font-ui);
+    font-size: var(--text-xs);
+    letter-spacing: var(--tracking-wide);
+    padding: 6px 16px;
+    border-radius: var(--radius-full);
+    border: 1px solid var(--border-dim);
+    background: var(--bg-raised);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: color var(--t-base), border-color var(--t-base), background var(--t-base);
+  }
+  .load-more-btn:hover {
+    color: var(--accent-fg);
+    border-color: var(--accent-dim);
+    background: var(--accent-muted);
+  }
+  .load-more-count {
+    color: var(--text-faint);
+    font-size: var(--text-2xs);
+  }
+
+  .root {
+    border-radius: calc(24px * var(--n-hud-scale));
+    border: 1px solid rgba(255, 255, 255, 0.055);
+    background:
+      radial-gradient(circle at 16% 0%, rgba(184, 167, 234, 0.055), transparent 34%),
+      rgba(18, 18, 22, 0.7);
+  }
+  .header {
+    min-height: calc(58px * var(--n-hud-scale));
+    padding: calc(12px * var(--n-hud-scale)) calc(16px * var(--n-hud-scale));
+    border-bottom-color: rgba(255, 255, 255, 0.045);
+  }
+  .heading {
+    font-size: calc(10px * var(--n-hud-scale));
+    color: rgba(229, 226, 225, 0.46);
+  }
+  .tabs {
+    border-color: rgba(255, 255, 255, 0.055);
+    background: rgba(255, 255, 255, 0.025);
+  }
+  .tab.active {
+    background: rgba(184, 167, 234, 0.18);
+    border-color: rgba(184, 167, 234, 0.2);
+    color: var(--accent-fg);
+  }
+  .search {
+    height: calc(30px * var(--n-hud-scale));
+    border-color: rgba(255, 255, 255, 0.055);
+    background: rgba(27, 25, 34, 0.7);
+  }
+  .icon-btn {
+    border: 1px solid rgba(255, 255, 255, 0.045);
+    background: rgba(255, 255, 255, 0.018);
+  }
+  .icon-btn:hover:not(:disabled),
+  .icon-btn.active {
+    background: rgba(184, 167, 234, 0.12);
+    border-color: rgba(184, 167, 234, 0.16);
+  }
+  .list {
+    gap: calc(6px * var(--n-hud-scale));
+    padding: calc(14px * var(--n-hud-scale)) calc(16px * var(--n-hud-scale)) calc(18px * var(--n-hud-scale));
+  }
+  .group {
+    border: 1px solid rgba(255, 255, 255, 0.045);
+    border-radius: calc(16px * var(--n-hud-scale));
+    background: rgba(255, 255, 255, 0.018);
+    overflow: hidden;
+  }
+  .row {
+    min-height: calc(52px * var(--n-hud-scale));
+    padding: calc(8px * var(--n-hud-scale)) calc(12px * var(--n-hud-scale));
+  }
+  .row:hover {
+    background: rgba(184, 167, 234, 0.055);
+    border-color: transparent;
+  }
+  .icon {
+    width: calc(28px * var(--n-hud-scale));
+    height: calc(28px * var(--n-hud-scale));
+    border-radius: calc(8px * var(--n-hud-scale));
+  }
+  .name {
+    font-size: calc(12px * var(--n-hud-scale));
+  }
+  .action-btn,
+  .action-btn-dim,
+  .install-btn {
+    min-height: calc(28px * var(--n-hud-scale));
+    border-radius: calc(10px * var(--n-hud-scale));
+  }
+  .ext-panel {
+    margin: calc(10px * var(--n-hud-scale)) calc(16px * var(--n-hud-scale)) 0;
+    padding: calc(12px * var(--n-hud-scale));
+    border: 1px solid rgba(255, 255, 255, 0.055);
+    border-radius: calc(16px * var(--n-hud-scale));
+    background: rgba(255, 255, 255, 0.018);
+  }
 </style>
 
-<script module lang="ts">
+<script context="module" lang="ts">
   function focusOnMount(node: HTMLElement) { node.focus(); }
 </script>

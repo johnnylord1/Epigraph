@@ -1,0 +1,1483 @@
+/* ============================================================
+   AETHON NOCTURNE — Shared Design System
+   nocturne-base.css
+
+   Single source of truth for palette, component surfaces,
+   sidebar rail, topbar, buttons, segmented controls, popovers,
+   chips, scrollbar, and typography tokens.
+
+   Intended to be loaded alongside Tailwind CDN.
+   ============================================================ */
+
+/* ---- PALETTE TOKENS ---- */
+:root {
+  /* Backgrounds */
+  --n-bg:                    #131313;
+  --n-bg-top:                #15151a;
+  --n-surface:               #131313;
+  --n-surface-dim:           #131313;
+  --n-surface-container-lowest:  #0e0e0e;
+  --n-surface-container-low:     #1c1b1b;
+  --n-surface-container:         #201f1f;
+  --n-surface-container-high:    #2a2a2a;
+  --n-surface-container-highest: #353534;
+  --n-surface-bright:            #393939;
+  --n-surface-variant:           #353534;
+
+  /* Sidebar */
+  --n-sidebar-bg:            #1c1b1b;
+  --n-sidebar-width:         76px;
+
+  /* Accents */
+  --n-primary:               #d3c4ff;
+  --n-primary-container:     #b8a7ea;
+  --n-primary-fixed:         #e8ddff;
+  --n-primary-fixed-dim:     #cebdff;
+  --n-on-primary:            #352660;
+  --n-on-primary-container:  #483a74;
+  --n-on-primary-fixed:      #200f4a;
+  --n-surface-tint:          #cebdff;
+  --n-inverse-primary:       #645592;
+
+  /* Secondary */
+  --n-secondary:             #cbc2e0;
+  --n-secondary-container:   #4a435c;
+  --n-on-secondary:          #332d44;
+  --n-on-secondary-container:#bab1ce;
+
+  /* Tertiary */
+  --n-tertiary:              #dece71;
+  --n-tertiary-container:    #c1b259;
+
+  /* Error */
+  --n-error:                 #ffb4ab;
+  --n-error-container:       #93000a;
+  --n-on-error:              #690005;
+  --n-on-error-container:    #ffdad6;
+
+  /* Text */
+  --n-on-surface:            #e5e2e1;
+  --n-on-background:         #e5e2e1;
+  --n-on-surface-variant:    #cac4d0;
+  --n-outline:               #948f9a;
+  --n-outline-variant:       #48454f;
+
+  /* Semantic */
+  --n-line:                  rgba(202, 196, 208, 0.08);
+  --n-line-strong:           rgba(202, 196, 208, 0.14);
+
+  /* Gradients */
+  --n-gradient-primary:      linear-gradient(135deg, #b8a7ea 0%, #d3c4ff 100%);
+  --n-gradient-bg:           radial-gradient(circle at top center, rgba(184, 167, 234, 0.08), transparent 34%),
+                             linear-gradient(180deg, #15151a 0%, #131313 100%);
+
+  /* Motion */
+  --n-ease-out:              cubic-bezier(0.22, 1, 0.36, 1);
+  --n-ease-spring:           cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  --n-duration-fast:         140ms;
+  --n-duration-normal:       200ms;
+  --n-duration-slow:         300ms;
+
+  /* Topbar */
+  --n-topbar-height:         56px;
+
+  /* Popover */
+  --n-popover-width:         286px;
+  --n-popover-radius:        22px;
+  --n-popover-blur:          22px;
+}
+
+/* ---- GLOBAL RESETS ---- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Manrope', system-ui, sans-serif;
+  background: var(--n-gradient-bg);
+  color: var(--n-on-surface);
+  margin: 0;
+}
+
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+/* ---- SCROLLBAR ---- */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--n-bg); }
+::-webkit-scrollbar-thumb { background: var(--n-surface-container-high); border-radius: 10px; }
+::-webkit-scrollbar-thumb:hover { background: var(--n-surface-container-highest); }
+
+
+/* ============================================================
+   SIDEBAR RAIL — Floating Glass Dock
+   ============================================================ */
+.n-sidebar {
+  position: fixed;
+  left: 6px;
+  top: 14px;
+  bottom: 14px;
+  width: 62px;
+  background: rgba(30, 28, 40, 0.55);
+  backdrop-filter: blur(32px) saturate(180%);
+  border-radius: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 24px 0;
+  gap: 8px;
+  z-index: 60;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.n-sidebar > * {
+  position: relative;
+  z-index: 1;
+}
+
+.n-sidebar__brand {
+  position: relative;
+  width: 62px;
+  height: 62px;
+  margin-top: -12px;
+  margin-bottom: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Sombra na superfície (chão) distante da gota */
+.n-sidebar__brand::after {
+  content: '';
+  position: absolute;
+  bottom: 8px; /* Ajustado um pouco devido ao grande aumento do ícone */
+  left: 50%;
+  width: 32px; 
+  height: 5px;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 50%;
+  filter: blur(2px); /* Menos blur para ficar mais nítida */
+  animation: n-brand-floor-shadow 8s ease-in-out infinite;
+  z-index: 1;
+}
+
+.n-sidebar__brand img {
+  width: 120%; 
+  height: 120%;
+  max-width: none !important; /* IGNORA A TRAVA DO TAILWIND CSS DE MAX-WIDTH 100% */
+  object-fit: contain;
+  position: relative;
+  z-index: 2;
+  /* Uma única sombra hard (blur=0, opacity=1) direcional para evitar multiplicar os pixels semi-transparentes do PNG, criando um bevel/borda cortante perfeito. */
+  filter: drop-shadow(1px 1px 0px rgba(45, 41, 60, 1));
+  animation: n-brand-organic-float 14s ease-in-out infinite;
+}
+
+@keyframes n-brand-organic-float {
+  0%   { transform: translate(0px, 0px) rotate(0deg); }
+  22%  { transform: translate(0.5px, -3px) rotate(1.5deg); }
+  45%  { transform: translate(-1px, 1px) rotate(-1deg); }
+  70%  { transform: translate(1px, -4px) rotate(2deg); }
+  88%  { transform: translate(-0.5px, -1px) rotate(-0.5deg); }
+  100% { transform: translate(0px, 0px) rotate(0deg); }
+}
+
+@keyframes n-brand-floor-shadow {
+  0%   { transform: translateX(-50%) scale(1); opacity: 0.55; }
+  22%  { transform: translateX(-49%) scale(0.85); opacity: 0.4; } 
+  45%  { transform: translateX(-51%) scale(1.05); opacity: 0.65; }
+  70%  { transform: translateX(-48%) scale(0.80); opacity: 0.35; } 
+  88%  { transform: translateX(-50%) scale(0.95); opacity: 0.5; }
+  100% { transform: translateX(-50%) scale(1); opacity: 0.55; }
+}
+
+.n-sidebar__nav {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+}
+
+.n-sidebar__footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin-top: auto;
+}
+
+.n-sidebar-btn {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  border: none;
+  background: transparent;
+  color: rgba(229, 226, 225, 0.38);
+  cursor: pointer;
+  transition: background var(--n-duration-fast) ease,
+              color var(--n-duration-fast) ease,
+              transform var(--n-duration-fast) ease;
+  position: relative;
+}
+
+.n-sidebar-btn .n-icon {
+  font-family: 'Material Symbols Outlined';
+  font-size: 22px;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  transition: transform var(--n-duration-normal) var(--n-ease-spring), opacity var(--n-duration-normal) ease;
+  display: inline-block;
+}
+
+/* Icon Map based on Tooltip */
+.n-sidebar-btn[data-tooltip="Home"] .n-icon::before { content: 'home'; }
+.n-sidebar-btn[data-tooltip="Home"].is-active .n-icon::before { content: 'roofing'; }
+
+.n-sidebar-btn[data-tooltip="Library"] .n-icon::before { content: 'book_2'; }
+.n-sidebar-btn[data-tooltip="Library"].is-active .n-icon::before { content: 'menu_book'; }
+
+.n-sidebar-btn[data-tooltip="Browse"] .n-icon::before { content: 'explore'; }
+.n-sidebar-btn[data-tooltip="Browse"].is-active .n-icon::before { content: 'travel_explore'; }
+
+.n-sidebar-btn[data-tooltip="Downloads"] .n-icon::before { content: 'download'; }
+.n-sidebar-btn[data-tooltip="Downloads"].is-active .n-icon::before { content: 'cloud_download'; }
+
+.n-sidebar-btn[data-tooltip="Settings"] .n-icon::before { content: 'settings'; }
+.n-sidebar-btn[data-tooltip="Settings"].is-active .n-icon::before { content: 'admin_panel_settings'; }
+
+.n-sidebar-btn:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(229, 226, 225, 0.7);
+  transform: scale(1.06);
+}
+
+.n-sidebar-btn:active {
+  transform: scale(0.92);
+  transition-duration: 60ms;
+}
+
+.n-sidebar-btn.is-active {
+  color: var(--n-primary);
+  background: rgba(184, 167, 234, 0.08);
+  animation: n-glow-pulse 3s ease-in-out infinite;
+}
+
+@keyframes n-glow-pulse {
+  0%, 100% { filter: drop-shadow(0 0 4px rgba(184, 167, 234, 0.3)); }
+  50%      { filter: drop-shadow(0 0 8px rgba(184, 167, 234, 0.55)); }
+}
+
+/* Aggressive morph animation on active click */
+.n-sidebar-btn.is-active .n-icon {
+  animation: n-icon-morph 450ms var(--n-ease-spring) forwards;
+  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  filter: drop-shadow(0 0 6px rgba(184, 167, 234, 0.45));
+}
+
+@keyframes n-icon-morph {
+  0% { transform: scale(1) rotate(0deg); opacity: 1; }
+  45% { transform: scale(0.65) rotate(-15deg); opacity: 0.1; }
+  50% { transform: scale(0.5) rotate(15deg); opacity: 0; }
+  100% { transform: scale(1.1) rotate(0deg); opacity: 1; }
+}
+
+/* Tooltip on hover */
+.n-sidebar-btn::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%) translateX(-4px);
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: var(--n-surface-container-highest);
+  color: var(--n-on-surface);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms ease, transform 120ms ease;
+  z-index: 70;
+}
+
+.n-sidebar-btn:hover::after {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+
+
+/* ============================================================
+   BUTTONS — Standardized hierarchy
+   ============================================================ */
+
+/* Base Button */
+.n-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 12px;
+  font-family: inherit;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  transition: all var(--n-duration-normal) ease;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  outline: none;
+}
+.n-btn:active {
+  transform: scale(0.96);
+  transition-duration: 50ms;
+}
+
+/* Base sizes */
+.n-btn--sm {
+  height: 32px;
+  padding: 0 16px;
+  font-size: 10px;
+  border-radius: 8px;
+}
+.n-btn--md {
+  height: 40px;
+  padding: 0 20px;
+  font-size: 11px;
+}
+.n-btn--lg {
+  height: 48px;
+  padding: 0 24px;
+  font-size: 13px;
+  border-radius: 14px;
+}
+
+/* Primary */
+.n-btn-primary {
+  background: var(--n-gradient-primary);
+  color: var(--n-on-primary);
+  box-shadow: 0 4px 14px rgba(184, 167, 234, 0.15);
+}
+.n-btn-primary:hover {
+  filter: brightness(1.1);
+  box-shadow: 0 4px 20px rgba(184, 167, 234, 0.25);
+}
+
+/* Secondary */
+.n-btn-secondary {
+  background: var(--n-surface-container-high);
+  color: var(--n-on-surface);
+  border: 1px solid var(--n-line);
+}
+.n-btn-secondary:hover {
+  background: var(--n-surface-container-highest);
+  color: var(--n-on-surface);
+}
+
+/* Ghost */
+.n-btn-ghost {
+  color: var(--n-on-surface-variant);
+  border: 1px solid transparent;
+}
+.n-btn-ghost:hover {
+  color: var(--n-primary);
+  background: rgba(184, 167, 234, 0.05);
+}
+
+/* ============================================================
+   PILLS & CHIPS (Sub-navigation & Filters)
+   ============================================================ */
+.n-pill,
+.n-chip,
+.n-genre-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  padding: 0 16px;
+  border-radius: 9999px;
+  background: rgba(36, 33, 43, 0.6);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  color: var(--n-on-surface-variant);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  transition: all 250ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  cursor: pointer;
+  user-select: none;
+}
+
+.n-pill:hover,
+.n-chip:hover,
+.n-genre-chip:hover {
+  background: rgba(184, 167, 234, 0.08);
+  border-color: rgba(184, 167, 234, 0.2);
+  color: var(--n-primary-container);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+
+.n-pill.is-active,
+.n-chip.is-active,
+.n-genre-chip.is-active {
+  background: rgba(184, 167, 234, 0.12);
+  box-shadow: inset 0 0 0 1px var(--n-primary), 0 4px 16px rgba(184, 167, 234, 0.15);
+  color: var(--n-primary-container);
+  border-color: transparent;
+}
+
+/* ============================================================
+   SEGMENTED CONTROLS (Top Tabs)
+   ============================================================ */
+.n-segmented,
+.n-inline-segmented {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  background: rgba(36, 33, 43, 0.6);
+  backdrop-filter: blur(12px);
+  padding: 4px;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  gap: 4px;
+}
+
+/* removed legacy thumb hiding because we redesigned it globally */
+
+.n-segmented__btn,
+.n-inline-segment {
+  position: relative;
+  z-index: 2;
+  height: 32px;
+  padding: 0 20px;
+  border-radius: 9999px;
+  color: var(--n-on-surface-variant);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  transition: all 250ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  outline: none;
+}
+
+.n-segmented__btn:hover:not(.is-active, .is-selected),
+.n-inline-segment:hover:not(.is-active, .is-selected) {
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+}
+
+/* Active State text color change. The native sliding thumb handles the glowing background for n-segmented */
+.n-segmented__btn.is-active,
+.mini-slider-transparent.is-active {
+  background: transparent !important;
+  color: var(--n-on-primary);
+  box-shadow: none;
+  transform: none; 
+}
+
+/* For multi-item segmented controls without a sliding thumb (Grid/List/Compact) */
+.n-inline-segment.is-active,
+.n-inline-segment.is-selected {
+  background: var(--n-gradient-primary);
+  color: var(--n-on-primary);
+  box-shadow: 0 4px 14px rgba(184, 167, 234, 0.25);
+  transform: none; 
+}
+
+/* ============================================================
+   ICON BUTTONS
+   ============================================================ */
+.n-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--n-on-surface-variant);
+  transition: all 200ms ease;
+  cursor: pointer;
+}
+
+.n-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.n-icon-btn.is-active {
+  background: rgba(184, 167, 234, 0.1);
+  color: var(--n-primary-container);
+}
+
+
+/* ============================================================
+   TOPBAR — 56px sticky header
+   ============================================================ */
+.n-topbar {
+  position: fixed;
+  top: 0;
+  right: 0;
+  left: var(--n-sidebar-width);
+  height: var(--n-topbar-height);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 28px;
+  background: rgba(19, 19, 26, 0.78);
+  backdrop-filter: blur(32px) saturate(140%);
+  border-bottom: 1px solid transparent;
+  border-image: linear-gradient(90deg, transparent 5%, rgba(184, 167, 234, 0.08) 50%, transparent 95%) 1;
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.02), 0 2px 12px rgba(0, 0, 0, 0.15);
+  z-index: 50;
+}
+
+.n-topbar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent,
+      transparent 3px,
+      rgba(255, 255, 255, 0.004) 3px,
+      rgba(255, 255, 255, 0.004) 6px
+    );
+  pointer-events: none;
+}
+
+.n-topbar__left {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex: 1;
+}
+
+.n-topbar__center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+}
+
+.n-topbar__right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex: 1;
+}
+
+
+/* ============================================================
+   SEARCH BAR — Pill shape, expand-on-focus, detaching animation
+   ============================================================ */
+.n-search {
+  position: relative;
+  width: 300px; /* Pouco mais compacta por padrão */
+  height: 44px;
+  border-radius: 9999px; /* Fix crucial! Assim a sombra sai em formato de pílula e não num bloco retangular feio */
+  transition: width 350ms cubic-bezier(0.34, 1.56, 0.64, 1),
+              transform 350ms cubic-bezier(0.34, 1.56, 0.64, 1),
+              box-shadow 350ms ease,
+              background 350ms ease;
+  z-index: 52;
+  margin: 0 auto;
+}
+
+/* O "Desprender" da Topbar puro pelo CSS sem JavaScript! */
+.n-search:focus-within {
+  width: 380px; /* Não expandir demais pra não parecer uma barra genérica horizontal */
+  transform: translateY(12px) scale(1.03);
+  /* Sombra oval que levita */
+  box-shadow: 0 24px 60px rgba(0,0,0,0.7), 0 0 0 1px rgba(184, 167, 234, 0.5);
+}
+
+.n-search__icon {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: rgba(202, 196, 208, 0.35);
+  font-size: 17px;
+  pointer-events: none;
+  transition: color 220ms ease, opacity 220ms ease;
+}
+
+.n-search:focus-within .n-search__icon {
+  color: var(--n-primary-container);
+}
+
+.n-search__input {
+  appearance: none !important;
+  width: 100%;
+  height: 100%;
+  padding: 0 16px 0 42px;
+  border-radius: 9999px !important;
+  border: 1px solid rgba(202, 196, 208, 0.08) !important;
+  background: rgba(36, 33, 43, 0.8) !important;
+  color: var(--n-on-surface) !important;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  outline: none;
+  backdrop-filter: blur(8px);
+  transition: border-color 300ms ease,
+              background 300ms ease,
+              box-shadow 300ms ease;
+}
+
+.n-search__input::placeholder {
+  color: rgba(202, 196, 208, 0.4);
+  font-weight: 400;
+}
+
+/* Expanded / focused state - Detaching shadow */
+.n-search.is-expanded .n-search__input {
+  background: rgba(18, 17, 24, 0.96);
+  border-color: rgba(184, 167, 234, 0.3);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.8), 
+              0 0 30px rgba(184, 167, 234, 0.12);
+}
+
+/* Accent underline gone — replaced by subtle ring */
+.n-search__line {
+  display: none;
+}
+
+/* ---- Dim overlay when search is active ---- */
+.n-search-dim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 51;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 250ms ease;
+}
+
+.n-search-dim.is-active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+
+/* ============================================================
+   SEGMENTED CONTROL — Sliding Thumb Core Logic
+   ============================================================ */
+.n-segmented__thumb {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc(50% - 4px);
+  border-radius: 9999px;
+  background: var(--n-gradient-primary);
+  box-shadow: 0 4px 14px rgba(184, 167, 234, 0.4);
+  transition: transform 350ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  pointer-events: none;
+  z-index: 1; /* Below buttons */
+}
+
+/* Hardcoded shifts when data-active is set via JS */
+.n-segmented[data-active="books"] .n-segmented__thumb,
+.n-segmented[data-active="novels"] .n-segmented__thumb,
+.n-inline-segmented[data-active="or"] .n-segmented__thumb {
+  transform: translateX(100%);
+}
+
+
+/* ============================================================
+   ICON BUTTON — 36px round
+   ============================================================ */
+.n-icon-btn {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  border: 1px solid rgba(202, 196, 208, 0.06);
+  background: rgba(255, 255, 255, 0.02);
+  color: rgba(179, 172, 191, 0.85);
+  cursor: pointer;
+  transition: background var(--n-duration-fast) ease,
+              color var(--n-duration-fast) ease,
+              border-color var(--n-duration-fast) ease,
+              transform var(--n-duration-fast) ease;
+}
+
+.n-icon-btn .material-symbols-outlined {
+  font-size: 20px;
+}
+
+.n-icon-btn:hover {
+  color: var(--n-on-surface);
+  background: rgba(184, 167, 234, 0.06);
+  border-color: rgba(184, 167, 234, 0.12);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.n-icon-btn:active {
+  transform: scale(0.9);
+  transition-duration: 60ms;
+}
+
+.n-icon-btn.is-active {
+  color: var(--n-primary);
+  background: rgba(184, 167, 234, 0.1);
+  border-color: rgba(184, 167, 234, 0.16);
+}
+
+.n-icon-btn.is-active .material-symbols-outlined {
+  filter: drop-shadow(0 0 5px rgba(184, 167, 234, 0.4));
+}
+
+/* Toolbar cluster — icon buttons in a row, standardized */
+.n-toolbar-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(202, 196, 208, 0.04);
+  position: relative;
+  z-index: 30;
+}
+
+.n-toolbar-cluster .n-icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.n-toolbar-cluster .n-icon-btn .material-symbols-outlined {
+  font-size: 18px;
+}
+
+.n-toolbar-divider {
+  width: 1px;
+  height: 14px;
+  margin: 0 2px;
+  background: rgba(202, 196, 208, 0.06);
+  flex: 0 0 auto;
+}
+
+
+/* ============================================================
+   POPOVER — Floating panel, clean transient surface
+   ============================================================ */
+.n-popover {
+  position: absolute; /* Replaces JS calculations with native relative positioning */
+  top: calc(100% + 12px);
+  right: 0;
+  width: var(--n-popover-width, 240px);
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: rgba(22, 20, 27, 0.85); /* Deep glass */
+  box-shadow: 
+    0 32px 64px rgba(0, 0, 0, 0.7),
+    0 0 0 1px rgba(184, 167, 234, 0.08); /* Glow rim */
+  backdrop-filter: blur(24px) saturate(140%);
+  z-index: 200;
+
+  /* Hidden state */
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-8px) scale(0.96);
+  transform-origin: top right;
+  transition:
+    opacity 160ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    visibility 0s linear 200ms;
+}
+
+.n-popover.is-open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+  transition:
+    opacity 160ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    visibility 0s;
+}
+
+/* Subtle top highlight */
+.n-popover::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent 30%);
+  pointer-events: none;
+}
+
+.n-popover > * {
+  position: relative;
+  z-index: 1;
+}
+
+
+/* ---- Popover Panel ---- */
+.n-popover-panel {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.n-popover-panel.is-open {
+  display: flex;
+}
+
+.n-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 4px 2px;
+}
+
+.n-popover-title {
+  color: rgba(229, 226, 225, 0.7);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin: 0;
+}
+
+.n-popover-note {
+  color: rgba(167, 160, 184, 0.5);
+  font-size: 10px;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.n-popover-meta {
+  color: var(--n-primary-container);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(184, 167, 234, 0.06);
+}
+
+
+/* ---- Popover List ---- */
+.n-popover-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.n-popover-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: rgba(193, 184, 208, 0.8);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: background 120ms ease,
+              color 120ms ease,
+              border-color 120ms ease;
+}
+
+.n-popover-item:hover {
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--n-on-surface);
+}
+
+.n-popover-item:active {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.n-popover-item.is-selected {
+  background: rgba(184, 167, 234, 0.08);
+  color: #f0edf8;
+  border-color: rgba(184, 167, 234, 0.08);
+}
+
+.n-popover-item__check {
+  width: 14px;
+  color: var(--n-primary);
+  opacity: 0;
+  transition: opacity 120ms ease;
+  font-size: 14px;
+}
+
+.n-popover-item.is-selected .n-popover-item__check {
+  opacity: 1;
+}
+
+
+/* ---- Density Rail ---- */
+.n-density-rail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 5px;
+  border-radius: 16px;
+  border: 1px solid rgba(202, 196, 208, 0.05);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.01));
+}
+
+.n-density-chip {
+  min-width: 32px;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(202, 196, 208, 0.06);
+  background: rgba(255, 255, 255, 0.02);
+  color: #aca5bd;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background var(--n-duration-fast) ease,
+              color var(--n-duration-fast) ease,
+              border-color var(--n-duration-fast) ease,
+              transform var(--n-duration-fast) ease,
+              box-shadow var(--n-duration-fast) ease;
+}
+
+.n-density-chip:hover {
+  color: #efeaf8;
+  border-color: rgba(184, 167, 234, 0.1);
+  transform: translateY(-1px);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.15);
+}
+
+.n-density-chip.is-selected {
+  color: #f4efff;
+  background: linear-gradient(135deg, rgba(184, 167, 234, 0.14), rgba(184, 167, 234, 0.08));
+  border-color: rgba(184, 167, 234, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(211, 196, 255, 0.08), 0 0 10px rgba(184, 167, 234, 0.08);
+}
+
+/* ---- Density Slider (alternative to chips) ---- */
+.n-density-slider {
+  position: relative;
+  padding: 12px 8px 28px;
+}
+
+.n-density-slider input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(148, 143, 154, 0.12);
+  outline: none;
+  cursor: pointer;
+}
+
+.n-density-slider input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--n-gradient-primary);
+  box-shadow: 0 0 10px rgba(184, 167, 234, 0.4), 0 2px 6px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+  transition: transform 140ms ease, box-shadow 140ms ease;
+}
+
+.n-density-slider input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+  box-shadow: 0 0 16px rgba(184, 167, 234, 0.55), 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.n-density-slider__labels {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 2px;
+  margin-top: 8px;
+}
+
+.n-density-slider__labels span {
+  font-size: 9px;
+  font-weight: 700;
+  color: rgba(172, 165, 189, 0.5);
+  letter-spacing: 0.06em;
+}
+
+.n-density-slider__labels span.is-active {
+  color: var(--n-primary);
+}
+
+
+/* duplicate inline-segmented block removed */
+
+/* ---- Toggle Row ---- */
+.n-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 4px;
+  background: transparent;
+  border: none;
+}
+
+.n-toggle-label {
+  color: #d4d0dd;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* ---- Mini Switch Toggles ---- */
+.n-mini-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 9999px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.n-mini-switch::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc(50% - 6px); /* Perfect exact fit for identical items considering gap */
+  border-radius: 9999px;
+  background: var(--n-gradient-primary);
+  box-shadow: 0 4px 10px rgba(184, 167, 234, 0.3);
+  transition: transform 250ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  z-index: 1; /* Below buttons */
+}
+
+/* Pure CSS translation when second button is selected */
+.n-mini-switch:has(button:nth-child(2).is-selected)::before {
+  transform: translateX(100%) translateX(4px);
+}
+
+.n-mini-switch button {
+  position: relative;
+  z-index: 2;
+  min-width: 28px;
+  min-height: 20px;
+  padding: 0 8px;
+  border-radius: 9999px;
+  border: none;
+  background: transparent !important;
+  color: var(--n-on-surface-variant);
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 250ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: none !important;
+}
+
+.n-mini-switch button:hover:not(.is-selected) {
+  color: #fff;
+}
+
+.n-mini-switch button.is-selected {
+  color: #fff;
+}
+
+
+/* ============================================================
+   BUTTONS — Primary, Secondary, Ghost
+   ============================================================ */
+
+/* Primary CTA */
+.n-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 24px;
+  border-radius: 12px;
+  border: none;
+  background: var(--n-gradient-primary);
+  color: var(--n-on-primary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(184, 167, 234, 0.18);
+  transition: filter var(--n-duration-fast) ease,
+              transform var(--n-duration-fast) ease;
+}
+
+.n-btn-primary:hover {
+  filter: brightness(1.1);
+  box-shadow: 0 6px 20px rgba(184, 167, 234, 0.28);
+  transform: translateY(-1px);
+}
+
+.n-btn-primary:active {
+  transform: scale(0.95) translateY(0);
+  box-shadow: 0 2px 8px rgba(184, 167, 234, 0.15);
+  transition-duration: 60ms;
+}
+
+/* Secondary (outline) */
+.n-btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 20px;
+  border-radius: 12px;
+  border: 1px solid rgba(202, 196, 208, 0.12);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--n-on-surface-variant);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background var(--n-duration-fast) ease,
+              color var(--n-duration-fast) ease,
+              border-color var(--n-duration-fast) ease;
+}
+
+.n-btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--n-on-surface);
+  border-color: rgba(184, 167, 234, 0.14);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.n-btn-secondary:active {
+  transform: scale(0.96);
+  transition-duration: 60ms;
+}
+
+/* Ghost (text only, no border) */
+.n-btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: none;
+  background: transparent;
+  color: var(--n-on-surface-variant);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background var(--n-duration-fast) ease,
+              color var(--n-duration-fast) ease;
+}
+
+.n-btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--n-on-surface);
+}
+
+.n-btn-ghost:active {
+  transform: scale(0.95);
+  transition-duration: 60ms;
+}
+
+
+/* ============================================================
+   CHIPS — Status, Genre, Soft pills
+   ============================================================ */
+.n-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(202, 196, 208, 0.06);
+  background: rgba(35, 35, 42, 0.7);
+  backdrop-filter: blur(8px);
+  color: #c3bdd0;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 2px 6px rgba(0, 0, 0, 0.12);
+  transition: background var(--n-duration-fast) ease,
+              color var(--n-duration-fast) ease,
+              transform var(--n-duration-fast) ease,
+              box-shadow var(--n-duration-fast) ease,
+              border-color var(--n-duration-fast) ease;
+}
+
+.n-chip:hover {
+  background: rgba(42, 42, 51, 0.8);
+  color: #ece7f8;
+  border-color: rgba(184, 167, 234, 0.1);
+  transform: translateY(-2px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 6px 16px rgba(0, 0, 0, 0.18);
+}
+
+.n-chip:active {
+  transform: scale(0.95) translateY(0);
+  transition-duration: 60ms;
+}
+
+.n-chip.is-active {
+  background: linear-gradient(135deg, rgba(184, 167, 234, 0.2), rgba(211, 196, 255, 0.1));
+  color: #f0edf8;
+  border-color: rgba(211, 196, 255, 0.14);
+  box-shadow:
+    inset 0 0 0 1px rgba(211, 196, 255, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 0 14px rgba(184, 167, 234, 0.08),
+    0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+/* Soft pill (metadata) */
+.n-soft-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(26, 25, 34, 0.6);
+  backdrop-filter: blur(8px);
+  color: #b8b2c5;
+  border: 1px solid rgba(184, 167, 234, 0.06);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03), 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+/* Genre chip (smaller) */
+.n-genre-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 11px;
+  border-radius: 999px;
+  background: rgba(35, 35, 42, 0.5);
+  backdrop-filter: blur(6px);
+  color: #b8b2c5;
+  border: 1px solid rgba(202, 196, 208, 0.06);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03), 0 1px 4px rgba(0, 0, 0, 0.1);
+  transition: color var(--n-duration-fast) ease,
+             border-color var(--n-duration-fast) ease,
+             transform var(--n-duration-fast) ease,
+             box-shadow var(--n-duration-fast) ease;
+}
+
+.n-genre-chip:hover {
+  color: var(--n-on-surface);
+  border-color: rgba(184, 167, 234, 0.1);
+  transform: translateY(-1px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 3px 8px rgba(0, 0, 0, 0.15);
+}
+
+
+/* ============================================================
+   TYPOGRAPHY — Consistent scale
+   ============================================================ */
+.n-eyebrow {
+  color: var(--n-on-surface-variant);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  margin: 0;
+}
+
+.n-title-xl {
+  font-size: 2.2rem;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  color: var(--n-on-surface);
+  margin: 0;
+}
+
+.n-title-lg {
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--n-on-surface);
+  margin: 0;
+}
+
+.n-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--n-on-surface-variant);
+}
+
+
+/* ============================================================
+   LIBRARY-SPECIFIC — Card grid
+   ============================================================ */
+.n-library-card {
+  position: relative;
+  cursor: pointer;
+}
+
+.n-library-card__cover {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--n-surface-container);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+  transition: transform var(--n-duration-normal) ease,
+              filter var(--n-duration-normal) ease;
+}
+
+.n-library-card:hover .n-library-card__cover {
+  transform: scale(1.02);
+  filter: brightness(1.08);
+}
+
+.n-library-card__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Bottom gradient overlay */
+.n-library-card__cover::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 34%;
+  background: linear-gradient(180deg, transparent, rgba(12, 13, 18, 0.16) 40%, rgba(12, 13, 18, 0.65));
+  pointer-events: none;
+}
+
+/* Progress bar at bottom of cover */
+.n-library-card__progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 3px;
+  background: rgba(53, 53, 52, 0.5);
+  z-index: 2;
+}
+
+.n-library-card__progress-fill {
+  height: 100%;
+  background: var(--n-gradient-primary);
+  border-radius: 0 1px 0 0;
+}
+
+/* Badge */
+.n-library-card__badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  color: var(--n-primary);
+  font-size: 10px;
+  font-weight: 700;
+  z-index: 2;
+}
+
+/* Text block below cover */
+.n-library-card__info {
+  margin-top: 10px;
+}
+
+.n-library-card__title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--n-on-surface);
+  margin: 0;
+  transition: color var(--n-duration-fast) ease;
+}
+
+.n-library-card:hover .n-library-card__title {
+  color: var(--n-primary);
+}
+
+.n-library-card__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 4px;
+}
+
+.n-library-card__author,
+.n-library-card__vol {
+  font-size: 10px;
+  color: var(--n-on-surface-variant);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+
+/* ============================================================
+   CONTENT SHELL — Main area right of sidebar
+   ============================================================ */
+.n-shell {
+  margin-left: var(--n-sidebar-width);
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.n-content {
+  margin-top: var(--n-topbar-height);
+  flex: 1;
+  overflow-y: auto;
+}

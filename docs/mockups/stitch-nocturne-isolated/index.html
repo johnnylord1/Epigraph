@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Aethon Nocturne Stitch Screens</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f1015;
+      --panel: #161821;
+      --panel-2: #1d202b;
+      --line: rgba(212, 196, 255, 0.12);
+      --line-strong: rgba(212, 196, 255, 0.24);
+      --text: #ece8f7;
+      --muted: #a7a0bd;
+      --accent: #cdbdff;
+      --accent-soft: rgba(205, 189, 255, 0.1);
+      --shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+      --radius: 20px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Inter, system-ui, sans-serif;
+      background:
+        linear-gradient(180deg, #13141b 0%, #0f1015 100%);
+      color: var(--text);
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 28px 22px;
+      border-right: 1px solid var(--line);
+      background: rgba(11, 12, 17, 0.92);
+      backdrop-filter: blur(18px);
+    }
+
+    .brand {
+      margin-bottom: 28px;
+      padding-bottom: 22px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .eyebrow {
+      font-size: 11px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: -0.03em;
+    }
+
+    .brand p {
+      margin: 10px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .nav {
+      display: grid;
+      gap: 10px;
+    }
+
+    .nav a {
+      display: block;
+      padding: 12px 14px;
+      border-radius: 14px;
+      color: var(--muted);
+      text-decoration: none;
+      background: transparent;
+      border: 1px solid transparent;
+      transition: border-color 140ms ease, background 140ms ease, color 140ms ease, transform 140ms ease;
+    }
+
+    .nav a:hover,
+    .nav a:focus-visible {
+      color: var(--text);
+      border-color: var(--line);
+      background: rgba(255, 255, 255, 0.02);
+      transform: translateX(2px);
+      outline: none;
+    }
+
+    .main {
+      padding: 32px;
+    }
+
+    .hero {
+      display: grid;
+      gap: 12px;
+      padding: 28px 30px;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: linear-gradient(180deg, rgba(205, 189, 255, 0.06), rgba(205, 189, 255, 0.02));
+      box-shadow: var(--shadow);
+      margin-bottom: 24px;
+    }
+
+    .hero h2 {
+      margin: 0;
+      font-size: 28px;
+      letter-spacing: -0.03em;
+    }
+
+    .hero p {
+      margin: 0;
+      max-width: 780px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 22px;
+    }
+
+    .card {
+      display: grid;
+      gap: 16px;
+      padding: 18px;
+      border-radius: var(--radius);
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+      box-shadow: var(--shadow);
+    }
+
+    .card header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    .card h3 {
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: -0.02em;
+    }
+
+    .card p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 34px;
+      padding: 0 12px;
+      border-radius: 999px;
+      border: 1px solid var(--line-strong);
+      background: var(--accent-soft);
+      color: var(--text);
+      text-decoration: none;
+      font-size: 12px;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+
+    .preview {
+      overflow: hidden;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: #101116;
+    }
+
+    .preview img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    @media (max-width: 980px) {
+      .app {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        position: relative;
+        height: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .main {
+        padding: 22px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="eyebrow">Stitch Collection</div>
+        <h1>Aethon Nocturne</h1>
+        <p>Separate desktop screens generated with the same visual anchor: practical reader UI, graphite surfaces, lunar lavender accents, and TachiyomiJ2K / Mihon-inspired density.</p>
+      </div>
+
+      <nav class="nav">
+        <a href="#library">Library Archive</a>
+        <a href="#home">Home</a>
+        <a href="#browse">Browse</a>
+        <a href="#series">Series Detail</a>
+        <a href="#reader">Reader</a>
+        <a href="#novel">Novel Detail</a>
+        <a href="#downloads">Downloads</a>
+        <a href="#settings">Settings</a>
+      </nav>
+    </aside>
+
+    <main class="main">
+      <section class="hero">
+        <div class="eyebrow">Isolated Screens</div>
+        <h2>Separate pages, shared direction</h2>
+        <p>This set replaces the single overloaded board with isolated desktop screens that keep the same artistic language. The idea is to validate coherence first, then decide what deserves a local interactive pass or implementation in the real app.</p>
+      </section>
+
+      <section class="grid">
+        <article class="card" id="library">
+          <header>
+            <div>
+              <h3>Library Archive</h3>
+              <p>Reference screen for density, cover grid, control hierarchy and the overall Nocturne visual system.</p>
+            </div>
+            <div class="actions">
+              <a class="btn" href="./library-archive.html" target="_blank" rel="noreferrer">Open HTML</a>
+            </div>
+          </header>
+          <div class="preview"><img src="./library-archive.png" alt="Library Archive preview" /></div>
+        </article>
+
+        <article class="card" id="home">
+          <header>
+            <div>
+              <h3>Home</h3>
+              <p>Continue reading, pinned slots, stats and finished works without turning the dashboard into noise.</p>
+            </div>
+            <div class="actions">
+              <a class="btn" href="./home.html" target="_blank" rel="noreferrer">Open HTML</a>
+            </div>
+          </header>
+          <div class="preview"><img src="./home.png" alt="Home preview" /></div>
+        </article>
+
+        <article class="card" id="browse">
+          <header>
+            <div>
+              <h3>Browse</h3>
+              <p>Keyword, browse and source layers adapted into the same compact desktop archive style.</p>
+            </div>
+            <div class="actions">
+              <a class="btn" href="./browse.html" target="_blank" rel="noreferrer">Open HTML</a>
+            </div>
+          </header>
+          <div class="preview"><img src="./browse.png" alt="Browse preview" /></div>
+        </article>
+
+        <article class="card" id="series">
+          <header>
+            <div>
+              <h3>Series Detail</h3>
+              <p>Hero metadata, chapter management and collection actions for manga-heavy flows.</p>
+            </div>
+            <div class="actions">
+              <a class="btn" href="./series-detail.html" target="_blank" rel="noreferrer">Open HTML</a>
+            </div>
+          </header>
+          <div class="preview"><img src="./series-detail.png" alt="Series Detail preview" /></div>
+        </article>
+
+        <article class="card" id="reader">
+          <header>
+            <div>
+              <h3>Reader</h3>
+              <p>Desktop immersive reading canvas with compact top and bottom chrome, kept practical instead of sci-fi.</p>
+            </div>
+            <div class="actions">
+              <a class="btn" href="./reader.html" target="_blank" rel="noreferrer">Open HTML</a>
+            </div>
+          </header>
+          <div class="preview"><img src="./reader.png" alt="Reader preview" /></div>
+        </article>
+
+        <article class="card" id="novel">
+          <header>
+            <div>
+              <h3>Novel Detail</h3>
+              <p>Book-focused detail screen with progress, sections and highlights, clearly separated from manga flows.</p>
+            </div>
+            <div class="actions">
+              <a class="btn" href="./novel-detail.html" target="_blank" rel="noreferrer">Open HTML</a>
+            </div>
+          </header>
+          <div class="preview"><img src="./novel-detail.png" alt="Novel Detail preview" /></div>
+        </article>
+
+        <article class="card" id="downloads">
+          <header>
+            <div>
+              <h3>Downloads</h3>
+              <p>Queue-centric management with the same tonal hierarchy and dense desktop affordances.</p>
+            </div>
+            <div class="actions">
+              <a class="btn" href="./downloads.html" target="_blank" rel="noreferrer">Open HTML</a>
+            </div>
+          </header>
+          <div class="preview"><img src="./downloads.png" alt="Downloads preview" /></div>
+        </article>
+
+        <article class="card" id="settings">
+          <header>
+            <div>
+              <h3>Settings</h3>
+              <p>Compact preference rows and theme controls aligned with the same Nocturne system.</p>
+            </div>
+            <div class="actions">
+              <a class="btn" href="./settings.html" target="_blank" rel="noreferrer">Open HTML</a>
+            </div>
+          </header>
+          <div class="preview"><img src="./settings.png" alt="Settings preview" /></div>
+        </article>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
+
+

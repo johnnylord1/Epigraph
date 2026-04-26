@@ -19,7 +19,8 @@ describe("LibraryHeader", () => {
       },
     });
 
-    expect(screen.getByText("Library")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Comics/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Books/i })).toBeTruthy();
 
     await fireEvent.click(screen.getByRole("button", { name: /Books/i }));
 

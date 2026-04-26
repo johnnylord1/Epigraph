@@ -1,13 +1,29 @@
 import { gql } from "../client";
 import { fetchRepoEntries, type RepoExtensionEntry } from "../extensionSourceMap";
+import { loadNovelRepositoryState, type NovelRepositoryScopeInput } from "../novels/repositoryState";
 import { FETCH_EXTENSIONS, GET_SETTINGS, GET_SOURCES } from "../queries";
 import type { Extension, Source } from "../types";
-import type { AvailableExtensionEntry, ReconciliationWarning, RepoExtensionLookup, SourceInventoryEntry } from "./types";
+import type {
+  AvailableExtensionEntry,
+  ContentSourceInventoryEntry,
+  ReconciliationWarning,
+  RepoExtensionLookup,
+  SourceInventoryEntry,
+} from "./types";
 
 function dedupeSourceInventory(entries: SourceInventoryEntry[]): SourceInventoryEntry[] {
   const seen = new Map<string, SourceInventoryEntry>();
   for (const entry of entries) {
     const key = `${entry.kind}:${entry.sourceId}:${entry.lang}:${entry.displayName}`;
+    if (!seen.has(key)) seen.set(key, entry);
+  }
+  return [...seen.values()];
+}
+
+function dedupeContentSourceInventory(entries: ContentSourceInventoryEntry[]): ContentSourceInventoryEntry[] {
+  const seen = new Map<string, ContentSourceInventoryEntry>();
+  for (const entry of entries) {
+    const key = `${entry.contentKind}:${entry.kind}:${entry.sourceId}:${entry.lang}:${entry.displayName}`;
     if (!seen.has(key)) seen.set(key, entry);
   }
   return [...seen.values()];
@@ -91,5 +107,86 @@ export async function loadSourceInventory(): Promise<{
     availableExtensions,
     warnings,
     repoUrls,
+  };
+}
+
+export async function loadNovelSourceInventory(
+  scopeInput: NovelRepositoryScopeInput = {},
+): Promise<{
+  inventory: ContentSourceInventoryEntry[];
+  warnings: ReconciliationWarning[];
+}> {
+  const state = await loadNovelRepositoryState(scopeInput);
+  const repositoryById = new Map(state.repositories.map((entry) => [entry.id, entry] as const));
+
+  const installed = state.installedPlugins.flatMap<ContentSourceInventoryEntry>((plugin) => {
+    const catalog = state.catalogEntries.find((entry) => (
+      entry.repositoryId === plugin.repositoryId
+      && entry.pluginId === plugin.pluginId
+      && entry.version === plugin.version
+    )) ?? state.catalogEntries.find((entry) => entry.pluginId === plugin.pluginId);
+
+    if (!catalog) return [];
+
+    return [{
+      contentKind: "novel",
+      sourceId: plugin.pluginId,
+      name: catalog.name,
+      lang: catalog.lang,
+      displayName: catalog.name,
+      kind: "installed",
+      extensionPkgName: plugin.pluginId,
+      extensionName: catalog.name,
+      extensionInstalled: plugin.enabled,
+    }];
+  });
+
+  const repoEntries = state.catalogEntries.map<ContentSourceInventoryEntry>((entry) => ({
+    contentKind: "novel",
+    sourceId: entry.pluginId,
+    name: entry.name,
+    lang: entry.lang,
+    displayName: entry.name,
+    kind: "repo",
+    extensionPkgName: entry.pluginId,
+    extensionName: entry.name,
+    extensionInstalled: state.installedPlugins.some((plugin) => plugin.pluginId === entry.pluginId && plugin.enabled),
+  }));
+
+  const warnings: ReconciliationWarning[] = state.repositories
+    .filter((entry) => entry.enabled && entry.lastError)
+    .map((entry) => ({
+      kind: "repo_lookup_failed",
+      message: `Novel repository could not be checked: ${entry.url}`,
+      details: entry.lastError ?? undefined,
+    }));
+
+  return {
+    inventory: dedupeContentSourceInventory([
+      ...installed,
+      ...repoEntries.filter((entry) => repositoryById.has(state.catalogEntries.find((catalog) => catalog.pluginId === entry.sourceId)?.repositoryId ?? "")),
+    ]),
+    warnings,
+  };
+}
+
+export async function loadContentSourceInventory(
+  scopeInput: NovelRepositoryScopeInput = {},
+): Promise<{
+  inventory: ContentSourceInventoryEntry[];
+  availableExtensions: AvailableExtensionEntry[];
+  warnings: ReconciliationWarning[];
+  repoUrls: string[];
+}> {
+  const manga = await loadSourceInventory();
+  const novels = await loadNovelSourceInventory(scopeInput);
+  return {
+    inventory: dedupeContentSourceInventory([
+      ...manga.inventory.map((entry) => ({ ...entry, contentKind: "manga" as const })),
+      ...novels.inventory,
+    ]),
+    availableExtensions: manga.availableExtensions,
+    warnings: [...manga.warnings, ...novels.warnings],
+    repoUrls: manga.repoUrls,
   };
 }

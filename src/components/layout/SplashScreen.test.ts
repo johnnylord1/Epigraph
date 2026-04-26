@@ -43,7 +43,7 @@ describe("SplashScreen", () => {
     expect(onReady).toHaveBeenCalledTimes(1);
   });
 
-  test("showCards=false skips the animated canvas background", () => {
+  test("showCards=false skips the decorative starfield layers", () => {
     const { container } = render(SplashScreen, {
       props: {
         mode: "loading",
@@ -51,7 +51,8 @@ describe("SplashScreen", () => {
       },
     });
 
-    expect(container.querySelector("canvas")).toBeNull();
+    expect(container.querySelector(".manual-starfield")).toBeNull();
+    expect(container.querySelector(".orbit-layer")).toBeNull();
   });
 
   test("lock-enabled flow reveals the unlock path instead of auto-exiting", async () => {
@@ -77,5 +78,21 @@ describe("SplashScreen", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(screen.getByRole("button", { name: /submit pin/i })).toBeTruthy();
     expect(onReady).not.toHaveBeenCalled();
+  });
+
+  test("failure state exposes retry and bypass actions with alert semantics", () => {
+    render(SplashScreen, {
+      props: {
+        mode: "loading",
+        failed: true,
+        failureTitle: "Could not reach server",
+        failureDetail: "Aethon couldn't reach the selected local profile.",
+        showCards: false,
+      },
+    });
+
+    expect(screen.getByRole("alert")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /retry/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /enter app/i })).toBeTruthy();
   });
 });

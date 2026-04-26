@@ -1,3 +1,9 @@
+mod suwayomi_lan;
+pub mod syncd;
+mod syncd_desktop;
+mod syncd_replication;
+mod syncd_sidecar;
+
 use base64::Engine;
 use percent_encoding::percent_decode;
 use serde::{Deserialize, Serialize};
@@ -10,7 +16,7 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{mpsc, Mutex};
+use std::sync::{mpsc, Mutex, Once};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use sysinfo::{Disks, Pid, System};
 use tauri::http::{
@@ -28,6 +34,30 @@ use walkdir::WalkDir;
 use windows_sys::Win32::Storage::FileSystem::{
     MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
 };
+
+#[derive(Clone, Serialize)]
+struct TrackerOAuthCallbackPayload {
+    url: String,
+}
+
+fn is_tracker_oauth_callback(url: &Url) -> bool {
+    let host_matches = url
+        .host_str()
+        .map(|host| host.eq_ignore_ascii_case("suwayomi.org"))
+        .unwrap_or(false);
+    if !host_matches || url.path() != "/tracker-oauth" {
+        return false;
+    }
+
+    url.query_pairs()
+        .any(|(key, value)| matches!(key.as_ref(), "code" | "access_token") && !value.is_empty())
+        || url.fragment().is_some_and(|fragment| {
+            let params = url::form_urlencoded::parse(fragment.as_bytes());
+            params
+                .into_iter()
+                .any(|(key, value)| matches!(key.as_ref(), "code" | "access_token") && !value.is_empty())
+        })
+}
 
 const READER_WEBVIEW_INIT_SCRIPT: &str = r#"
 (() => {
@@ -144,6 +174,7 @@ const READER_WEBVIEW_INIT_SCRIPT: &str = r#"
   }).observe(document.documentElement, { childList: true, subtree: true });
 })();
 "#;
+const NOVEL_RUNTIME_HOST_LABEL: &str = "novel-runtime-host";
 
 struct RunningServer {
     child: CommandChild,
@@ -155,7 +186,7 @@ struct ServerState(Mutex<Option<RunningServer>>);
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct LaunchTargetInfo {
+pub(crate) struct LaunchTargetInfo {
     server_url_override: Option<String>,
     profile_label_override: Option<String>,
     server_auth_enabled_override: Option<bool>,
@@ -178,12 +209,33 @@ struct LaunchTargetInfo {
 
 struct LaunchTarget(LaunchTargetInfo);
 
+#[derive(Default, Clone, Debug)]
+struct AutomationLaunchOverrides {
+    local_app_data_dir: Option<PathBuf>,
+    syncd_port: Option<u16>,
+    syncd_bootstrap_ttl_seconds: Option<u64>,
+    webdriver_automation: bool,
+}
+
 #[derive(Serialize)]
 pub struct StorageInfo {
     manga_bytes: u64,
     total_bytes: u64,
     free_bytes: u64,
     path: String,
+}
+
+#[derive(Serialize)]
+struct RuntimeDiagnostics {
+    app_pid: u32,
+    app_memory_bytes: u64,
+    app_virtual_memory_bytes: u64,
+    app_cpu_percent: f32,
+    java_pid: Option<u32>,
+    java_memory_bytes: Option<u64>,
+    java_virtual_memory_bytes: Option<u64>,
+    total_processes: usize,
+    startup_diagnostics_enabled: bool,
 }
 
 #[derive(Serialize, Debug)]
@@ -206,6 +258,13 @@ impl LocalServerProfile {
             Self::Main => "main",
             Self::Test => "test",
         }
+    }
+}
+
+fn default_local_server_port(profile: LocalServerProfile) -> u16 {
+    match profile {
+        LocalServerProfile::Main => 4567,
+        LocalServerProfile::Test => 4667,
     }
 }
 
@@ -308,6 +367,49 @@ fn local_flaresolverr_tools_dir() -> PathBuf {
 
 fn local_flaresolverr_logs_dir() -> PathBuf {
     local_flaresolverr_tools_dir().join("logs")
+}
+
+fn app_logs_dir() -> PathBuf {
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")));
+    base.join("Aethon").join("logs")
+}
+
+#[cfg(all(debug_assertions, windows))]
+fn has_webview2_remote_debugging_flag(arguments: &str) -> bool {
+    arguments
+        .split_whitespace()
+        .any(|part| part.starts_with("--remote-debugging-port="))
+}
+
+#[cfg(all(debug_assertions, windows))]
+fn ensure_dev_webview2_debug_port() {
+    const CDP_FLAG: &str = "--remote-debugging-port=9223";
+    let mut existing = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap_or_default();
+    if has_webview2_remote_debugging_flag(&existing) {
+        return;
+    }
+
+    if existing.trim().is_empty() {
+        existing = CDP_FLAG.to_string();
+    } else {
+        existing.push(' ');
+        existing.push_str(CDP_FLAG);
+    }
+
+    std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", existing);
+}
+
+#[cfg(not(all(debug_assertions, windows)))]
+fn ensure_dev_webview2_debug_port() {}
+
+fn ensure_process_rustls_crypto_provider() {
+    static INSTALL_ONCE: Once = Once::new();
+
+    INSTALL_ONCE.call_once(|| {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    });
 }
 
 fn local_flaresolverr_stdout_log_path() -> PathBuf {
@@ -516,6 +618,29 @@ fn open_flaresolverr_local_logs() -> Result<(), String> {
 }
 
 #[tauri::command]
+fn open_app_logs() -> Result<(), String> {
+    let logs_dir = app_logs_dir();
+    if !logs_dir.exists() {
+        return Err("Logs unavailable".to_string());
+    }
+
+    let application_log = logs_dir.join("application.log");
+    if application_log.exists() {
+        Command::new("notepad.exe")
+            .arg(application_log)
+            .spawn()
+            .map_err(|err| err.to_string())?;
+        return Ok(());
+    }
+
+    Command::new("explorer.exe")
+        .arg(logs_dir)
+        .spawn()
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 async fn open_reader_webview(
     app: tauri::AppHandle,
     url: String,
@@ -592,12 +717,115 @@ async fn close_reader_webview(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn open_tracker_oauth_window(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    let parsed = url::Url::parse(url.trim()).map_err(|e| e.to_string())?;
+    let handle = app.clone();
+    let (tx, rx) = mpsc::channel::<Result<(), String>>();
+
+    app.run_on_main_thread(move || {
+        let result = (|| -> Result<(), String> {
+            let label = "tracker-oauth";
+
+            if let Some(window) = handle.get_webview_window(label) {
+                let _ = window.destroy();
+            }
+
+            let nav_handle = handle.clone();
+            let window = tauri::WebviewWindowBuilder::new(
+                &handle,
+                label,
+                tauri::WebviewUrl::External(parsed),
+            )
+            .title("Tracker Login")
+            .on_navigation(move |next_url| {
+                if is_tracker_oauth_callback(next_url) {
+                    let callback_url = next_url.to_string();
+                    let _ = nav_handle.emit(
+                        "tracker-oauth-callback",
+                        TrackerOAuthCallbackPayload { url: callback_url },
+                    );
+
+                    let close_handle = nav_handle.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(Duration::from_millis(250));
+                        if let Some(window) = close_handle.get_webview_window(label) {
+                            let _ = window.destroy();
+                        }
+                    });
+
+                    return false;
+                }
+
+                true
+            })
+            .inner_size(980.0, 760.0)
+            .min_inner_size(760.0, 600.0)
+            .resizable(true)
+            .focused(true)
+            .build()
+            .map_err(|e| e.to_string())?;
+
+            let app_handle = handle.clone();
+            window.on_window_event(move |event| {
+                if matches!(event, WindowEvent::Destroyed) {
+                    let _ = app_handle.emit("tracker-oauth-window-state", false);
+                }
+            });
+
+            handle
+                .emit("tracker-oauth-window-state", true)
+                .map_err(|e| e.to_string())
+        })();
+
+        let _ = tx.send(result);
+    })
+    .map_err(|e| e.to_string())?;
+
+    rx.recv().map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn reader_webview_is_open(app: tauri::AppHandle) -> Result<bool, String> {
     let handle = app.clone();
     let (tx, rx) = mpsc::channel::<bool>();
 
     app.run_on_main_thread(move || {
         let _ = tx.send(handle.get_webview_window("reader-webview").is_some());
+    })
+    .map_err(|e| e.to_string())?;
+
+    rx.recv().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn close_novel_runtime_host(app: tauri::AppHandle) -> Result<(), String> {
+    let handle = app.clone();
+    let (tx, rx) = mpsc::channel::<Result<(), String>>();
+
+    app.run_on_main_thread(move || {
+        let result = if let Some(window) = handle.get_webview_window(NOVEL_RUNTIME_HOST_LABEL) {
+            window.destroy().map_err(|e| e.to_string())
+        } else {
+            Ok(())
+        };
+        let _ = tx.send(result);
+    })
+    .map_err(|e| e.to_string())?;
+
+    rx.recv().map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn novel_runtime_host_is_open(app: tauri::AppHandle) -> Result<bool, String> {
+    let handle = app.clone();
+    let (tx, rx) = mpsc::channel::<bool>();
+
+    app.run_on_main_thread(move || {
+        let _ = tx.send(
+            handle
+                .get_webview_window(NOVEL_RUNTIME_HOST_LABEL)
+                .is_some(),
+        );
     })
     .map_err(|e| e.to_string())?;
 
@@ -612,6 +840,18 @@ fn books_data_dir() -> PathBuf {
         }
     }
     suwayomi_data_dir().join("books")
+}
+
+pub(crate) fn book_library_state_path() -> Result<PathBuf, String> {
+    let root = books_data_dir();
+    std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+    Ok(root.join("library-state.json"))
+}
+
+fn migration_journal_state_path() -> Result<PathBuf, String> {
+    let root = suwayomi_data_dir().join("migration");
+    std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+    Ok(root.join("journal-state.json"))
 }
 
 fn book_asset_content_type(path: &Path) -> &'static str {
@@ -785,14 +1025,15 @@ fn read_book_asset_bytes(
 ) -> Result<Vec<u8>, Response<Cow<'static, [u8]>>> {
     let mut file = fs::File::open(path)
         .map_err(|_| book_asset_error(StatusCode::NOT_FOUND, "Book asset could not be read."))?;
-    file.seek(SeekFrom::Start(start))
-        .map_err(|_| book_asset_error(StatusCode::INTERNAL_SERVER_ERROR, "Book asset seek failed."))?;
+    file.seek(SeekFrom::Start(start)).map_err(|_| {
+        book_asset_error(StatusCode::INTERNAL_SERVER_ERROR, "Book asset seek failed.")
+    })?;
 
     let mut bytes = Vec::new();
     let length = end.saturating_sub(start) + 1;
-    file.take(length)
-        .read_to_end(&mut bytes)
-        .map_err(|_| book_asset_error(StatusCode::INTERNAL_SERVER_ERROR, "Book asset read failed."))?;
+    file.take(length).read_to_end(&mut bytes).map_err(|_| {
+        book_asset_error(StatusCode::INTERNAL_SERVER_ERROR, "Book asset read failed.")
+    })?;
     Ok(bytes)
 }
 
@@ -966,10 +1207,7 @@ mod tests {
 
     #[test]
     fn writes_server_owner_atomically_without_leaving_tmp_file() {
-        let temp = std::env::temp_dir().join(format!(
-            "aethon-owner-atomic-{}",
-            std::process::id()
-        ));
+        let temp = std::env::temp_dir().join(format!("aethon-owner-atomic-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&temp);
         std::fs::create_dir_all(&temp).unwrap();
 
@@ -1017,8 +1255,8 @@ mod tests {
             restore_source_profile_override: None,
             attach_only_override: None,
         };
-        let main = resolve_local_server_target(&main_target, Some("http://127.0.0.1:4567"))
-            .unwrap();
+        let main =
+            resolve_local_server_target(&main_target, Some("http://127.0.0.1:4567")).unwrap();
         assert_eq!(main.profile.key(), "main");
         assert_eq!(main.port, 4567);
         assert!(!main.attach_only);
@@ -1043,8 +1281,8 @@ mod tests {
             restore_source_profile_override: None,
             attach_only_override: Some(true),
         };
-        let test = resolve_local_server_target(&test_target, Some("http://127.0.0.1:4667"))
-            .unwrap();
+        let test =
+            resolve_local_server_target(&test_target, Some("http://127.0.0.1:4667")).unwrap();
         assert_eq!(test.profile.key(), "test");
         assert_eq!(test.port, 4667);
         assert!(test.attach_only);
@@ -1073,13 +1311,23 @@ mod tests {
             attach_only_override: None,
         };
 
-        let main_root =
-            reconciliation_overlay_root_for_server_url(&launch_target, Some("http://127.0.0.1:4567"));
-        let test_root =
-            reconciliation_overlay_root_for_server_url(&launch_target, Some("http://127.0.0.1:4667"));
+        let main_root = reconciliation_overlay_root_for_server_url(
+            &launch_target,
+            Some("http://127.0.0.1:4567"),
+        );
+        let test_root = reconciliation_overlay_root_for_server_url(
+            &launch_target,
+            Some("http://127.0.0.1:4667"),
+        );
 
-        assert_eq!(main_root, local_server_profile_root(LocalServerProfile::Main));
-        assert_eq!(test_root, local_server_profile_root(LocalServerProfile::Test));
+        assert_eq!(
+            main_root,
+            local_server_profile_root(LocalServerProfile::Main)
+        );
+        assert_eq!(
+            test_root,
+            local_server_profile_root(LocalServerProfile::Test)
+        );
         assert_ne!(main_root, test_root);
     }
 
@@ -1112,11 +1360,80 @@ mod tests {
     }
 
     #[test]
-    fn validate_server_owner_rejects_dead_java_pid() {
-        let temp = std::env::temp_dir().join(format!(
-            "aethon-owner-validate-{}",
-            std::process::id()
+    fn automation_launch_overrides_parse_local_app_data_dir_and_syncd_port() {
+        let overrides = parse_automation_launch_overrides_from_args([
+            "--local-app-data-dir=C:\\Temp\\AethonHost",
+            "--syncd-port=4988",
+            "--syncd-bootstrap-ttl-seconds=9",
+            "--webdriver-automation",
+        ]);
+
+        assert_eq!(
+            overrides.local_app_data_dir,
+            Some(PathBuf::from("C:\\Temp\\AethonHost"))
+        );
+        assert_eq!(overrides.syncd_port, Some(4988));
+        assert_eq!(overrides.syncd_bootstrap_ttl_seconds, Some(9));
+        assert!(overrides.webdriver_automation);
+    }
+
+    #[test]
+    fn automation_launch_overrides_ignore_invalid_syncd_port() {
+        let overrides = parse_automation_launch_overrides_from_args([
+            "--local-app-data-dir=C:\\Temp\\AethonJoiner",
+            "--syncd-port=not-a-port",
+            "--syncd-bootstrap-ttl-seconds=still-bad",
+        ]);
+
+        assert_eq!(
+            overrides.local_app_data_dir,
+            Some(PathBuf::from("C:\\Temp\\AethonJoiner"))
+        );
+        assert_eq!(overrides.syncd_port, None);
+        assert_eq!(overrides.syncd_bootstrap_ttl_seconds, None);
+        assert!(!overrides.webdriver_automation);
+    }
+
+    #[test]
+    fn automation_launch_overrides_roaming_neighbor_is_deterministic() {
+        let local = PathBuf::from(r"C:\Temp\AethonHost\LocalAppData");
+        let roaming = automation_roaming_app_data_path(&local);
+
+        assert_eq!(roaming, PathBuf::from(r"C:\Temp\AethonHost\RoamingAppData"));
+    }
+
+    #[test]
+    fn automation_launch_overrides_local_server_roots_are_isolated_per_profile() {
+        let local = PathBuf::from(r"C:\Temp\AethonHost\LocalAppData");
+
+        assert_eq!(
+            automation_local_server_root(&local, LocalServerProfile::Main),
+            PathBuf::from(r"C:\Temp\AethonHost\LocalServerMain")
+        );
+        assert_eq!(
+            automation_local_server_root(&local, LocalServerProfile::Test),
+            PathBuf::from(r"C:\Temp\AethonHost\LocalServerTest")
+        );
+    }
+
+    #[cfg(all(debug_assertions, windows))]
+    #[test]
+    fn webview2_remote_debugging_flag_detection_is_generic() {
+        assert!(has_webview2_remote_debugging_flag(
+            "--enable-logging --remote-debugging-port=0 --test-type=webdriver"
         ));
+        assert!(has_webview2_remote_debugging_flag(
+            "--remote-debugging-port=9223"
+        ));
+        assert!(!has_webview2_remote_debugging_flag(
+            "--enable-logging --test-type=webdriver"
+        ));
+    }
+
+    #[test]
+    fn validate_server_owner_rejects_dead_java_pid() {
+        let temp =
+            std::env::temp_dir().join(format!("aethon-owner-validate-{}", std::process::id()));
         let target = LocalServerTarget {
             profile: LocalServerProfile::Test,
             root_dir: temp.clone(),
@@ -1147,16 +1464,22 @@ mod tests {
   TCP    127.0.0.1:4567         0.0.0.0:0              LISTENING       18756
   TCP    127.0.0.1:4667         0.0.0.0:0              LISTENING       16164
 "#;
-        assert_eq!(parse_windows_listener_pid_for_port(sample, 4567), Some(18756));
-        assert_eq!(parse_windows_listener_pid_for_port(sample, 4667), Some(16164));
+        assert_eq!(
+            parse_windows_listener_pid_for_port(sample, 4567),
+            Some(18756)
+        );
+        assert_eq!(
+            parse_windows_listener_pid_for_port(sample, 4667),
+            Some(16164)
+        );
         assert_eq!(parse_windows_listener_pid_for_port(sample, 9999), None);
     }
 
     #[test]
     fn rootdir_flag_matches_exact_profile_root_only() {
-        let test_flag = r"-Dsuwayomi.tachidesk.config.server.rootDir=C:\Users\jhow-\AppData\Roaming\aethon";
-        let main_flag =
-            r"-Dsuwayomi.tachidesk.config.server.rootDir=C:\Users\jhow-\AppData\Roaming\aethon-main";
+        let test_flag =
+            r"-Dsuwayomi.tachidesk.config.server.rootDir=C:\Users\jhow-\AppData\Roaming\aethon";
+        let main_flag = r"-Dsuwayomi.tachidesk.config.server.rootDir=C:\Users\jhow-\AppData\Roaming\aethon-main";
 
         assert!(rootdir_flag_matches_arg(test_flag, test_flag));
         assert!(rootdir_flag_matches_arg(main_flag, main_flag));
@@ -1195,11 +1518,7 @@ fn serve_book_asset(request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
 
     let (status, start, end) = match requested_range {
         Some((start, end)) => (StatusCode::PARTIAL_CONTENT, start, end),
-        None => (
-            StatusCode::OK,
-            0,
-            file_len.saturating_sub(1),
-        ),
+        None => (StatusCode::OK, 0, file_len.saturating_sub(1)),
     };
     let content_len = if file_len == 0 || end < start {
         0
@@ -1566,16 +1885,13 @@ fn listener_pid_for_port(port: u16) -> Option<u32> {
     #[cfg(unix)]
     {
         let output = Command::new("lsof")
-            .args([
-                "-nP",
-                &format!("-iTCP:{}", port),
-                "-sTCP:LISTEN",
-                "-t",
-            ])
+            .args(["-nP", &format!("-iTCP:{}", port), "-sTCP:LISTEN", "-t"])
             .output()
             .ok()?;
         let stdout = String::from_utf8_lossy(&output.stdout);
-        return stdout.lines().find_map(|line| line.trim().parse::<u32>().ok());
+        return stdout
+            .lines()
+            .find_map(|line| line.trim().parse::<u32>().ok());
     }
 
     #[allow(unreachable_code)]
@@ -1634,6 +1950,10 @@ fn backup_local_server_files(data_dir: &Path) -> std::io::Result<Option<PathBuf>
 }
 
 fn local_server_profile_root(profile: LocalServerProfile) -> PathBuf {
+    if let Some(override_path) = local_server_profile_root_override(profile) {
+        return override_path;
+    }
+
     match profile {
         LocalServerProfile::Test => suwayomi_data_dir(),
         LocalServerProfile::Main => {
@@ -1692,7 +2012,8 @@ fn resolve_local_server_target(
         .port_or_known_default()
         .ok_or_else(|| SpawnError::SpawnFailed("Local server URL is missing a port".to_string()))?;
 
-    let profile = if launch_target.profile_label_override.as_deref() == Some("MAIN") || port == 4567 {
+    let profile = if launch_target.profile_label_override.as_deref() == Some("MAIN") || port == 4567
+    {
         LocalServerProfile::Main
     } else {
         LocalServerProfile::Test
@@ -1720,7 +2041,12 @@ fn probe_local_server(server_url: &str, timeout: Duration) -> bool {
         None => return false,
     };
     let address = format!("{host}:{port}");
-    let Ok(socket_addr) = address.to_socket_addrs().ok().and_then(|mut addrs| addrs.next()).ok_or(()) else {
+    let Ok(socket_addr) = address
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut addrs| addrs.next())
+        .ok_or(())
+    else {
         return false;
     };
     let Ok(mut stream) = TcpStream::connect_timeout(&socket_addr, timeout) else {
@@ -1749,6 +2075,49 @@ fn probe_local_server(server_url: &str, timeout: Duration) -> bool {
 
     let response_head = String::from_utf8_lossy(&buffer[..read]);
     response_head.starts_with("HTTP/1.1 ") || response_head.starts_with("HTTP/1.0 ")
+}
+
+#[tauri::command]
+fn probe_server_health(server_url: String) -> bool {
+    probe_local_server(&server_url, Duration::from_millis(800))
+}
+
+#[tauri::command]
+fn get_runtime_diagnostics(app: tauri::AppHandle) -> RuntimeDiagnostics {
+    let mut system = System::new_all();
+    system.refresh_all();
+
+    let app_pid = std::process::id();
+    let app_process = system.process(Pid::from_u32(app_pid));
+    let app_memory_bytes = app_process.map(|process| process.memory()).unwrap_or(0);
+    let app_virtual_memory_bytes = app_process
+        .map(|process| process.virtual_memory())
+        .unwrap_or(0);
+    let app_cpu_percent = app_process.map(|process| process.cpu_usage()).unwrap_or(0.0);
+
+    let java_pid = {
+        let state = app.state::<ServerState>();
+        let guard = state.0.lock().unwrap();
+        guard.as_ref()
+            .and_then(|running| running.owner_path.parent().map(Path::to_path_buf))
+            .and_then(|root_dir| find_java_pid_for_rootdir(&root_dir))
+    };
+    let java_process = java_pid.and_then(|pid| system.process(Pid::from_u32(pid)));
+    let java_memory_bytes = java_process.map(|process: &sysinfo::Process| process.memory());
+    let java_virtual_memory_bytes =
+        java_process.map(|process: &sysinfo::Process| process.virtual_memory());
+
+    RuntimeDiagnostics {
+        app_pid,
+        app_memory_bytes,
+        app_virtual_memory_bytes,
+        app_cpu_percent,
+        java_pid,
+        java_memory_bytes,
+        java_virtual_memory_bytes,
+        total_processes: system.processes().len(),
+        startup_diagnostics_enabled: startup_diagnostics_enabled(),
+    }
 }
 
 #[cfg(windows)]
@@ -2008,6 +2377,92 @@ fn reconciliation_overlay_path_for_server_url(
     reconciliation_overlay_path_for_root(&root_dir)
 }
 
+fn local_server_profile_from_id(value: Option<&str>) -> Option<LocalServerProfile> {
+    match value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("main") => Some(LocalServerProfile::Main),
+        Some("test") => Some(LocalServerProfile::Test),
+        _ => None,
+    }
+}
+
+fn sha256_hex(value: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(value.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn novels_scope_root_for_target(
+    launch_target: &LaunchTargetInfo,
+    profile_id: Option<&str>,
+    server_url: Option<&str>,
+) -> PathBuf {
+    if let Some(profile) = local_server_profile_from_id(profile_id) {
+        return local_server_profile_root(profile);
+    }
+
+    if let Ok(target) = resolve_local_server_target(launch_target, server_url) {
+        return target.root_dir;
+    }
+
+    if let Some(server_url) = server_url.map(str::trim).filter(|value| !value.is_empty()) {
+        return suwayomi_data_dir()
+            .join("novels")
+            .join("remote-scopes")
+            .join(sha256_hex(server_url.trim_end_matches('/')));
+    }
+
+    local_server_profile_root(LocalServerProfile::Test)
+}
+
+fn novel_repository_state_path_for_target(
+    launch_target: &LaunchTargetInfo,
+    profile_id: Option<&str>,
+    server_url: Option<&str>,
+) -> Result<PathBuf, String> {
+    let root_dir = novels_scope_root_for_target(launch_target, profile_id, server_url);
+    let novels_dir = root_dir.join("novels");
+    std::fs::create_dir_all(&novels_dir).map_err(|err| err.to_string())?;
+    Ok(novels_dir.join("repositories-state.json"))
+}
+
+pub(crate) fn novel_source_classification_state_path_for_target(
+    launch_target: &LaunchTargetInfo,
+    profile_id: Option<&str>,
+    server_url: Option<&str>,
+) -> Result<PathBuf, String> {
+    let root_dir = novels_scope_root_for_target(launch_target, profile_id, server_url);
+    let novels_dir = root_dir.join("novels");
+    std::fs::create_dir_all(&novels_dir).map_err(|err| err.to_string())?;
+    Ok(novels_dir.join("source-classification-state.json"))
+}
+
+pub(crate) fn novel_library_state_path_for_target(
+    launch_target: &LaunchTargetInfo,
+    profile_id: Option<&str>,
+    server_url: Option<&str>,
+) -> Result<PathBuf, String> {
+    let root_dir = novels_scope_root_for_target(launch_target, profile_id, server_url);
+    let novels_dir = root_dir.join("novels");
+    std::fs::create_dir_all(&novels_dir).map_err(|err| err.to_string())?;
+    Ok(novels_dir.join("library-state.json"))
+}
+
+fn novels_storage_root_path_for_target(
+    launch_target: &LaunchTargetInfo,
+    profile_id: Option<&str>,
+    server_url: Option<&str>,
+) -> Result<PathBuf, String> {
+    let root_dir = novels_scope_root_for_target(launch_target, profile_id, server_url);
+    let novels_dir = root_dir.join("novels");
+    std::fs::create_dir_all(&novels_dir).map_err(|err| err.to_string())?;
+    Ok(novels_dir)
+}
+
 #[tauri::command]
 fn read_reconciliation_overlay(
     server_url: Option<String>,
@@ -2031,6 +2486,241 @@ fn write_reconciliation_overlay(
     let launch_target = app.state::<LaunchTarget>().0.clone();
     let path = reconciliation_overlay_path_for_server_url(&launch_target, server_url.as_deref())?;
     std::fs::write(path, contents).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn read_novel_repository_state(
+    profile_id: Option<String>,
+    server_url: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<Option<String>, String> {
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    let path = novel_repository_state_path_for_target(
+        &launch_target,
+        profile_id.as_deref(),
+        server_url.as_deref(),
+    )?;
+
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let text = std::fs::read_to_string(path).map_err(|err| err.to_string())?;
+    Ok(Some(text))
+}
+
+#[tauri::command]
+fn write_novel_repository_state(
+    contents: String,
+    profile_id: Option<String>,
+    server_url: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    let path = novel_repository_state_path_for_target(
+        &launch_target,
+        profile_id.as_deref(),
+        server_url.as_deref(),
+    )?;
+    std::fs::write(&path, contents).map_err(|err| err.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn read_novel_source_classification_state(
+    profile_id: Option<String>,
+    server_url: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<Option<String>, String> {
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    let path = novel_source_classification_state_path_for_target(
+        &launch_target,
+        profile_id.as_deref(),
+        server_url.as_deref(),
+    )?;
+
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let text = std::fs::read_to_string(path).map_err(|err| err.to_string())?;
+    Ok(Some(text))
+}
+
+#[tauri::command]
+fn write_novel_source_classification_state(
+    contents: String,
+    profile_id: Option<String>,
+    server_url: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    let path = novel_source_classification_state_path_for_target(
+        &launch_target,
+        profile_id.as_deref(),
+        server_url.as_deref(),
+    )?;
+    let previous_contents = fs::read_to_string(&path).ok();
+    std::fs::write(&path, contents).map_err(|err| err.to_string())?;
+    let next_contents = fs::read_to_string(&path).map_err(|err| err.to_string())?;
+    let notify_profile_id = profile_id.clone();
+    let notify_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = syncd_replication::notify_novel_source_classification_state_written(
+            &notify_app,
+            notify_profile_id.as_deref(),
+            previous_contents,
+            &next_contents,
+        )
+        .await
+        {
+            eprintln!("syncd replication novel classification notify failed: {error}");
+        }
+    });
+    Ok(path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn read_novel_library_state(
+    profile_id: Option<String>,
+    server_url: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<Option<String>, String> {
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    let path = novel_library_state_path_for_target(
+        &launch_target,
+        profile_id.as_deref(),
+        server_url.as_deref(),
+    )?;
+
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let text = std::fs::read_to_string(path).map_err(|err| err.to_string())?;
+    Ok(Some(text))
+}
+
+#[tauri::command]
+fn read_book_library_state() -> Result<Option<String>, String> {
+    let path = book_library_state_path()?;
+
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let text = std::fs::read_to_string(path).map_err(|err| err.to_string())?;
+    Ok(Some(text))
+}
+
+#[tauri::command]
+fn write_book_library_state(contents: String, app: tauri::AppHandle) -> Result<String, String> {
+    let path = book_library_state_path()?;
+    let previous_contents = fs::read_to_string(&path).ok();
+    std::fs::write(&path, contents).map_err(|err| err.to_string())?;
+    let next_contents = fs::read_to_string(&path).map_err(|err| err.to_string())?;
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) =
+            syncd_replication::notify_book_state_written(&app, previous_contents, &next_contents).await
+        {
+            eprintln!("syncd replication book notify failed: {error}");
+        }
+    });
+    Ok(path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn read_migration_journal_state() -> Result<Option<String>, String> {
+    let path = migration_journal_state_path()?;
+
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let text = std::fs::read_to_string(path).map_err(|err| err.to_string())?;
+    Ok(Some(text))
+}
+
+#[tauri::command]
+fn write_migration_journal_state(contents: String) -> Result<String, String> {
+    let path = migration_journal_state_path()?;
+    std::fs::write(&path, contents).map_err(|err| err.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn resolve_book_storage_root() -> Result<String, String> {
+    let root = books_data_dir();
+    std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+    Ok(root.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn write_novel_library_state(
+    contents: String,
+    profile_id: Option<String>,
+    server_url: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    let path = novel_library_state_path_for_target(
+        &launch_target,
+        profile_id.as_deref(),
+        server_url.as_deref(),
+    )?;
+    let previous_contents = fs::read_to_string(&path).ok();
+    std::fs::write(&path, contents).map_err(|err| err.to_string())?;
+    let next_contents = fs::read_to_string(&path).map_err(|err| err.to_string())?;
+    let notify_profile_id = profile_id.clone();
+    let notify_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = syncd_replication::notify_novel_state_written(
+            &notify_app,
+            notify_profile_id.as_deref(),
+            previous_contents,
+            &next_contents,
+        )
+        .await
+        {
+            eprintln!("syncd replication novel notify failed: {error}");
+        }
+    });
+    Ok(path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn resolve_novel_storage_root(
+    profile_id: Option<String>,
+    server_url: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    let path = novels_storage_root_path_for_target(
+        &launch_target,
+        profile_id.as_deref(),
+        server_url.as_deref(),
+    )?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn remove_novel_plugin_installation(
+    plugin_id: String,
+    profile_id: Option<String>,
+    server_url: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    let root = novels_storage_root_path_for_target(
+        &launch_target,
+        profile_id.as_deref(),
+        server_url.as_deref(),
+    )?;
+    let plugin_root = root.join("plugins").join(plugin_id.trim());
+    if plugin_root.exists() {
+        std::fs::remove_dir_all(plugin_root).map_err(|err| err.to_string())?;
+    }
+    Ok(())
 }
 
 fn kill_tachidesk(app: &tauri::AppHandle, server_url: Option<&str>) {
@@ -2085,15 +2775,22 @@ server.maxSourcesInParallel = 6
 server.extensionRepos = []
 "#;
 
-fn seed_server_conf(data_dir: &Path, port: u16) {
+fn seed_server_conf(data_dir: &Path, profile: LocalServerProfile, port: u16) {
     let conf_path = data_dir.join("server.conf");
+    let exposure_mode = suwayomi_lan::load_and_sanitize(data_dir, profile.key())
+        .unwrap_or(suwayomi_lan::LanExposureMode::LoopbackOnly);
+    let server_ip = format!("\"{}\"", suwayomi_lan::bind_host_for_mode(&exposure_mode));
 
     if !conf_path.exists() {
         if let Err(e) = std::fs::create_dir_all(data_dir) {
             eprintln!("Could not create Suwayomi data dir: {e}");
             return;
         }
-        let initial = patch_conf_key(DEFAULT_SERVER_CONF.to_string(), "server.port", &port.to_string());
+        let initial = patch_conf_key(
+            patch_conf_key(DEFAULT_SERVER_CONF.to_string(), "server.ip", &server_ip),
+            "server.port",
+            &port.to_string(),
+        );
         if let Err(e) = std::fs::write(&conf_path, initial) {
             eprintln!("Could not write server.conf: {e}");
         }
@@ -2114,9 +2811,10 @@ fn seed_server_conf(data_dir: &Path, port: u16) {
             "server.systemTrayEnabled",
             "false",
         ),
-        "server.port",
-        &port.to_string(),
+        "server.ip",
+        &server_ip,
     );
+    let patched = patch_conf_key(patched, "server.port", &port.to_string());
 
     let _ = std::fs::write(&conf_path, patched);
 }
@@ -2145,11 +2843,125 @@ fn patch_conf_key(text: String, key: &str, value: &str) -> String {
     out
 }
 
+fn sanitize_suwayomi_lan_state() {
+    for profile in [LocalServerProfile::Main, LocalServerProfile::Test] {
+        let root = local_server_profile_root(profile);
+        if !root.exists() {
+            continue;
+        }
+        seed_server_conf(&root, profile, default_local_server_port(profile));
+    }
+}
+
+fn local_server_profile_root_override(profile: LocalServerProfile) -> Option<PathBuf> {
+    let var_name = match profile {
+        LocalServerProfile::Main => "AETHON_LOCAL_SERVER_MAIN_ROOT",
+        LocalServerProfile::Test => "AETHON_LOCAL_SERVER_TEST_ROOT",
+    };
+    std::env::var_os(var_name).map(PathBuf::from)
+}
+
+fn maybe_start_phase_gate_temporary_lan_session() {
+    let Some(raw_profile) = std::env::var_os("AETHON_PHASE_GATE_TEMPORARY_LAN_PROFILE") else {
+        return;
+    };
+
+    let profile = match raw_profile.to_string_lossy().to_ascii_lowercase().as_str() {
+        "main" => LocalServerProfile::Main,
+        "test" => LocalServerProfile::Test,
+        other => {
+            eprintln!("Ignoring invalid AETHON_PHASE_GATE_TEMPORARY_LAN_PROFILE: {other}");
+            return;
+        }
+    };
+
+    let ttl_seconds = std::env::var("AETHON_PHASE_GATE_TEMPORARY_LAN_TTL_SECONDS")
+        .ok()
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .unwrap_or(60);
+    let advertised_host = std::env::var("AETHON_PHASE_GATE_TEMPORARY_LAN_HOST").ok();
+    let reason = std::env::var("AETHON_PHASE_GATE_TEMPORARY_LAN_REASON")
+        .unwrap_or_else(|_| "phase-gate".to_string());
+    let root = local_server_profile_root(profile);
+
+    if let Err(error) = suwayomi_lan::start_temporary_session(
+        &root,
+        profile.key(),
+        Duration::from_secs(ttl_seconds),
+        advertised_host,
+        reason,
+    ) {
+        eprintln!(
+            "Failed to start temporary Suwayomi LAN session for {}: {error}",
+            profile.key()
+        );
+    }
+}
+
+fn schedule_suwayomi_lan_session_watchers(app: &tauri::AppHandle) {
+    for profile in [LocalServerProfile::Main, LocalServerProfile::Test] {
+        let root = local_server_profile_root(profile);
+        let Ok(mode) = suwayomi_lan::load_and_sanitize(&root, profile.key()) else {
+            continue;
+        };
+        let suwayomi_lan::LanExposureMode::TemporarySession(session) = mode else {
+            continue;
+        };
+
+        let delay_ms = session.expires_at_ms.saturating_sub(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis(),
+        );
+        let sleep_ms = delay_ms.min(u128::from(u64::MAX)) as u64;
+        let app = app.clone();
+        let root = root.clone();
+        let server_url = format!("http://127.0.0.1:{}", default_local_server_port(profile));
+
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
+
+            let Ok(Some(current_session)) = suwayomi_lan::read_session(&root) else {
+                return;
+            };
+            if current_session != session {
+                return;
+            }
+            if current_session.expires_at_ms
+                > SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis()
+            {
+                return;
+            }
+
+            let _ = suwayomi_lan::clear_temporary_session(&root);
+            seed_server_conf(&root, profile, default_local_server_port(profile));
+            kill_tachidesk(&app, Some(&server_url));
+        });
+    }
+}
+
+fn clear_suwayomi_lan_state() {
+    for profile in [LocalServerProfile::Main, LocalServerProfile::Test] {
+        let root = local_server_profile_root(profile);
+        let _ = suwayomi_lan::clear_temporary_session(&root);
+        if root.exists() {
+            seed_server_conf(&root, profile, default_local_server_port(profile));
+        }
+    }
+}
+
 fn suwayomi_data_dir() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
-        dirs::data_dir()
-            .unwrap_or_else(|| PathBuf::from("C:\\ProgramData"))
+        std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                dirs::data_dir().unwrap_or_else(|| PathBuf::from("C:\\ProgramData"))
+            })
             .join("aethon")
     }
     #[cfg(target_os = "macos")]
@@ -2287,12 +3099,27 @@ fn command_event_preview(bytes: &[u8]) -> String {
     preview
 }
 
+fn startup_diagnostics_enabled() -> bool {
+    matches!(
+        std::env::var("AETHON_STARTUP_DIAGNOSTICS"),
+        Ok(value)
+            if matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+    )
+}
+
 fn spawn_main_startup_event_drain(
     mut rx: tauri::async_runtime::Receiver<CommandEvent>,
     diagnostic_log_path: PathBuf,
     java_pid: u32,
 ) {
     tauri::async_runtime::spawn(async move {
+        if !startup_diagnostics_enabled() {
+            while rx.recv().await.is_some() {}
+            return;
+        }
         append_timestamped_line(
             &diagnostic_log_path,
             &format!("[child {}] event drain started", java_pid),
@@ -2568,7 +3395,11 @@ fn resolve_server_binary(
 }
 
 #[tauri::command]
-fn spawn_server(binary: String, server_url: String, app: tauri::AppHandle) -> Result<(), SpawnError> {
+fn spawn_server(
+    binary: String,
+    server_url: String,
+    app: tauri::AppHandle,
+) -> Result<(), SpawnError> {
     {
         let state = app.state::<ServerState>();
         if state.0.lock().unwrap().is_some() {
@@ -2589,8 +3420,8 @@ fn spawn_server(binary: String, server_url: String, app: tauri::AppHandle) -> Re
     let owner_path = server_owner_path(&data_dir);
     let owner_tmp_path = server_owner_tmp_path(&data_dir);
     let spawn_lock_path = server_spawn_lock_path(&data_dir);
-    let main_startup_diagnostic_path = (target.profile == LocalServerProfile::Main)
-        .then(|| data_dir.join("main-app-driven-startup.log"));
+    let main_startup_diagnostic_path =
+        Some(data_dir.join(format!("{}-app-driven-startup.log", target.profile.key())));
 
     let log_path = data_dir.join("aethon-spawn.log");
     let _ = std::fs::create_dir_all(&data_dir);
@@ -2696,7 +3527,10 @@ fn spawn_server(binary: String, server_url: String, app: tauri::AppHandle) -> Re
         match read_server_owner(&owner_path) {
             Some(owner) => match validate_server_owner(&target, &owner) {
                 OwnerReuseDecision::Reusable => {
-                    do_log(&mut log, "[spawn_server] owner valid, reusing existing server");
+                    do_log(
+                        &mut log,
+                        "[spawn_server] owner valid, reusing existing server",
+                    );
                     let _ = std::fs::remove_file(&spawn_lock_path);
                     return Ok(());
                 }
@@ -2711,7 +3545,8 @@ fn spawn_server(binary: String, server_url: String, app: tauri::AppHandle) -> Re
                     );
                     let _ = std::fs::remove_file(&spawn_lock_path);
                     return Err(SpawnError::SpawnFailed(
-                        "Local server process is alive but not healthy. Stop it and retry.".to_string(),
+                        "Local server process is alive but not healthy. Stop it and retry."
+                            .to_string(),
                     ));
                 }
             },
@@ -2745,7 +3580,10 @@ fn spawn_server(binary: String, server_url: String, app: tauri::AppHandle) -> Re
             }
             do_log(
                 &mut log,
-                &format!("[spawn_server] reconstructed owner from existing Java pid {}", java_pid),
+                &format!(
+                    "[spawn_server] reconstructed owner from existing Java pid {}",
+                    java_pid
+                ),
             );
             let _ = std::fs::remove_file(&spawn_lock_path);
             return Ok(());
@@ -2767,7 +3605,10 @@ fn spawn_server(binary: String, server_url: String, app: tauri::AppHandle) -> Re
     match backup_local_server_files(&data_dir) {
         Ok(Some(backup_dir)) => do_log(
             &mut log,
-            &format!("[spawn_server] preflight backup created at {:?}", backup_dir),
+            &format!(
+                "[spawn_server] preflight backup created at {:?}",
+                backup_dir
+            ),
         ),
         Ok(None) => {}
         Err(err) => do_log(
@@ -2776,7 +3617,7 @@ fn spawn_server(binary: String, server_url: String, app: tauri::AppHandle) -> Re
         ),
     }
 
-    seed_server_conf(&data_dir, target.port);
+    seed_server_conf(&data_dir, target.profile, target.port);
     do_log(&mut log, "[spawn_server] server.conf seeded");
 
     let mut invocation = match resolve_server_binary(&binary, &app, &mut log) {
@@ -2885,7 +3726,10 @@ fn spawn_server(binary: String, server_url: String, app: tauri::AppHandle) -> Re
                     healthy = true;
                     do_log(
                         &mut log,
-                        &format!("[spawn_server] probe success after spawn on attempt {}", attempt),
+                        &format!(
+                            "[spawn_server] probe success after spawn on attempt {}",
+                            attempt
+                        ),
                     );
                     if let Some(diagnostic_log_path) = &main_startup_diagnostic_path {
                         append_timestamped_line(
@@ -3184,6 +4028,27 @@ fn parse_launch_target() -> LaunchTargetInfo {
     let mut restore_source_profile_override = None;
     let mut attach_only_override = None;
 
+    match std::env::var("AETHON_LAUNCH_PROFILE")
+        .ok()
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_uppercase())
+    {
+        Some(profile) if profile == "MAIN" => {
+            server_url_override = Some("http://127.0.0.1:4567".to_string());
+            profile_label_override = Some("MAIN".to_string());
+        }
+        Some(profile) if profile == "TEST" => {
+            server_url_override = Some("http://127.0.0.1:4667".to_string());
+            profile_label_override = Some("TEST".to_string());
+        }
+        Some(profile) if !profile.is_empty() => {
+            profile_label_override = Some(profile);
+        }
+        _ => {}
+    }
+
     for arg in std::env::args().skip(1) {
         if let Some(value) = arg.strip_prefix("--server-url=") {
             let trimmed = value.trim();
@@ -3352,6 +4217,98 @@ fn parse_launch_target() -> LaunchTargetInfo {
     }
 }
 
+fn parse_automation_launch_overrides() -> AutomationLaunchOverrides {
+    parse_automation_launch_overrides_from_args(std::env::args().skip(1))
+}
+
+fn automation_roaming_app_data_path(local_app_data_dir: &Path) -> PathBuf {
+    local_app_data_dir
+        .parent()
+        .map(|parent| parent.join("RoamingAppData"))
+        .unwrap_or_else(|| local_app_data_dir.join("RoamingAppData"))
+}
+
+fn automation_local_server_root(local_app_data_dir: &Path, profile: LocalServerProfile) -> PathBuf {
+    let sibling_name = match profile {
+        LocalServerProfile::Main => "LocalServerMain",
+        LocalServerProfile::Test => "LocalServerTest",
+    };
+
+    local_app_data_dir
+        .parent()
+        .map(|parent| parent.join(sibling_name))
+        .unwrap_or_else(|| local_app_data_dir.join(sibling_name))
+}
+
+fn parse_automation_launch_overrides_from_args<I, S>(args: I) -> AutomationLaunchOverrides
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut overrides = AutomationLaunchOverrides::default();
+
+    for arg in args {
+        let arg = arg.as_ref();
+        if let Some(value) = arg.strip_prefix("--local-app-data-dir=") {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                overrides.local_app_data_dir = Some(PathBuf::from(trimmed));
+            }
+            continue;
+        }
+
+        if let Some(value) = arg.strip_prefix("--syncd-port=") {
+            overrides.syncd_port = value.trim().parse::<u16>().ok();
+            continue;
+        }
+
+        if let Some(value) = arg.strip_prefix("--syncd-bootstrap-ttl-seconds=") {
+            overrides.syncd_bootstrap_ttl_seconds = value.trim().parse::<u64>().ok();
+            continue;
+        }
+
+        if arg == "--webdriver-automation" {
+            overrides.webdriver_automation = true;
+        }
+    }
+
+    overrides
+}
+
+fn apply_automation_launch_overrides() {
+    let overrides = parse_automation_launch_overrides();
+
+    if let Some(path) = overrides.local_app_data_dir {
+        let roaming_path = automation_roaming_app_data_path(&path);
+        std::env::set_var("LOCALAPPDATA", &path);
+        std::env::set_var("APPDATA", &roaming_path);
+        std::env::set_var(
+            "AETHON_LOCAL_SERVER_MAIN_ROOT",
+            automation_local_server_root(&path, LocalServerProfile::Main),
+        );
+        std::env::set_var(
+            "AETHON_LOCAL_SERVER_TEST_ROOT",
+            automation_local_server_root(&path, LocalServerProfile::Test),
+        );
+    }
+
+    if let Some(port) = overrides.syncd_port {
+        std::env::set_var("AETHON_SYNCD_PORT", port.to_string());
+    }
+
+    if let Some(ttl_seconds) = overrides.syncd_bootstrap_ttl_seconds {
+        std::env::set_var(
+            "AETHON_SYNCD_BOOTSTRAP_TTL_SECONDS",
+            ttl_seconds.to_string(),
+        );
+    }
+
+    if overrides.webdriver_automation {
+        std::env::set_var("TAURI_WEBVIEW_AUTOMATION", "true");
+        std::env::set_var("TAURI_AUTOMATION", "true");
+    }
+}
+
 #[tauri::command]
 fn get_launch_target(state: tauri::State<'_, LaunchTarget>) -> LaunchTargetInfo {
     state.0.clone()
@@ -3381,7 +4338,10 @@ fn record_media_audit_event(event: String) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    apply_automation_launch_overrides();
+    ensure_process_rustls_crypto_provider();
+    ensure_dev_webview2_debug_port();
+    let app = tauri::Builder::default()
         .register_uri_scheme_protocol("book", |_ctx, request| serve_book_asset(request))
         .plugin(tauri_plugin_drpc::init())
         .plugin(tauri_plugin_dialog::init())
@@ -3392,9 +4352,28 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(LaunchTarget(parse_launch_target()))
         .manage(ServerState(Mutex::new(None)))
+        .manage(syncd_desktop::SyncdDesktopState::default())
+        .manage(syncd_replication::SyncdReplicationState::default())
+        .manage(syncd_sidecar::SyncdState::default())
         .invoke_handler(tauri::generate_handler![
             get_launch_target,
             record_media_audit_event,
+            syncd_desktop::syncd_list_discovery_candidates,
+            syncd_desktop::syncd_start_host_pairing,
+            syncd_desktop::syncd_get_active_host_pairing,
+            syncd_desktop::syncd_connect_with_bootstrap,
+            syncd_desktop::syncd_host_decide_pairing,
+            syncd_desktop::syncd_list_persisted_sync_sessions,
+            syncd_desktop::syncd_revalidate_persisted_sync_sessions,
+            syncd_desktop::syncd_disconnect_persisted_session,
+            syncd_replication::syncd_get_replication_state,
+            syncd_replication::syncd_set_active_replication_session,
+            syncd_replication::syncd_pause_replication,
+            syncd_replication::syncd_resume_replication,
+            syncd_replication::syncd_force_replication_reconnect,
+            syncd_replication::syncd_get_session_catalog,
+            syncd_replication::syncd_revalidate_session,
+            syncd_replication::syncd_forget_persisted_session,
             get_storage_info,
             get_default_downloads_path,
             check_path_exists,
@@ -3403,9 +4382,25 @@ pub fn run() {
             migrate_downloads,
             read_reconciliation_overlay,
             write_reconciliation_overlay,
+            read_novel_repository_state,
+            write_novel_repository_state,
+            read_novel_source_classification_state,
+            write_novel_source_classification_state,
+            read_book_library_state,
+            write_book_library_state,
+            read_migration_journal_state,
+            write_migration_journal_state,
+            resolve_book_storage_root,
+            read_novel_library_state,
+            write_novel_library_state,
+            resolve_novel_storage_root,
+            remove_novel_plugin_installation,
             open_reader_webview,
+            open_tracker_oauth_window,
             close_reader_webview,
             reader_webview_is_open,
+            close_novel_runtime_host,
+            novel_runtime_host_is_open,
             read_file_base64,
             write_file_base64,
             compute_file_sha256,
@@ -3421,16 +4416,65 @@ pub fn run() {
             stop_flaresolverr_local,
             open_flaresolverr_local_folder,
             open_flaresolverr_local_logs,
+            open_app_logs,
             get_flaresolverr_docker_status,
             start_flaresolverr_docker,
             stop_flaresolverr_docker,
             list_releases,
             download_and_install_update,
+            probe_server_health,
+            get_runtime_diagnostics,
             restart_app,
             relaunch_with_args,
         ])
-        .setup(|_app| Ok(()))
+        .setup(|app| {
+            maybe_start_phase_gate_temporary_lan_session();
+            sanitize_suwayomi_lan_state();
+            schedule_suwayomi_lan_session_watchers(app.handle());
+            syncd_sidecar::maybe_install_exit_sentinel(app.handle());
+            {
+                let launch_target = app.state::<LaunchTarget>().0.clone();
+                let should_spawn_local_server =
+                    !launch_target.attach_only_override.unwrap_or(false)
+                        && matches!(
+                            launch_target.profile_label_override.as_deref(),
+                            Some("MAIN") | Some("TEST")
+                        )
+                        && matches!(
+                            launch_target.server_url_override.as_deref(),
+                            Some(url) if url.starts_with("http://127.0.0.1:") || url.starts_with("http://localhost:")
+                        );
+
+                if should_spawn_local_server {
+                    let app_handle = app.handle().clone();
+                    let server_url = launch_target
+                        .server_url_override
+                        .clone()
+                        .unwrap_or_else(|| "http://127.0.0.1:4567".to_string());
+                    std::thread::spawn(move || {
+                        let _ = spawn_server(String::new(), server_url, app_handle);
+                    });
+                }
+            }
+            tauri::async_runtime::block_on(syncd_sidecar::maybe_spawn_for_phase_gate(app.handle()))
+                .map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
+            tauri::async_runtime::block_on(syncd_replication::bootstrap_runtime(
+                app.handle().clone(),
+                app.state::<syncd_replication::SyncdReplicationState>()
+                    .inner()
+                    .clone(),
+            ))
+            .map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
+            Ok(())
+        })
         .on_window_event(|_window, _event| {})
-        .run(tauri::generate_context!())
-        .expect("error while running moku");
+        .build(tauri::generate_context!())
+        .expect("error while building moku");
+
+    app.run(|app_handle, event| {
+        syncd_sidecar::handle_run_event(app_handle, &event);
+        if matches!(event, tauri::RunEvent::Exit) {
+            clear_suwayomi_lan_state();
+        }
+    });
 }

@@ -37,9 +37,8 @@
   import { hasBookLocalAsset, MISSING_BOOK_ASSET_MESSAGE } from "../../lib/books/availability";
   import { presentBook } from "../../lib/books/presentation";
   import { mediaAuditEnabled, traceMediaAudit } from "../../lib/mediaAudit";
-  import {
-    removeBookAssets,
-  } from "../../lib/books/storage";
+  import { peekPersistedBookEntry, peekPersistedBookProgress } from "../../lib/books/libraryState";
+  import { removeBookAssets } from "../../lib/books/storage";
 
   const SECTIONS_PER_PAGE = 25;
 
@@ -56,9 +55,17 @@
   let sectionPage = $state(1);
   let detailsOpen = $state(false);
   let coverBroken = $state(false);
+  const booksLibraryReady = $derived(store.booksLibraryHydrated);
 
-  const activeBook = $derived(store.books.find((book) => book.id === store.activeBookId) ?? null);
-  const activeProgress = $derived(activeBook ? getBookProgress(activeBook.id) ?? null : null);
+  const activeBook = $derived(
+    (store.activeBookId && store.books.find((book) => book.id === store.activeBookId))
+    ?? (store.activeBookId ? peekPersistedBookEntry(store.activeBookId) : null),
+  );
+  const activeProgress = $derived(
+    activeBook
+      ? getBookProgress(activeBook.id) ?? peekPersistedBookProgress(activeBook.id)
+      : null,
+  );
   const activePresentation = $derived(activeBook ? presentBook(activeBook, activeProgress) : null);
   const detailSections = $derived(activeBook ? getBookSectionsSummary(activeBook) : []);
   const totalSectionCount = $derived(activePresentation?.sectionCount ?? (activeBook ? getBookSectionCount(activeBook) : 0));
@@ -588,6 +595,20 @@
       {/if}
     </div>
   </div>
+{:else if store.activeBookId && !booksLibraryReady}
+  <div class="root root--loading">
+    <div class="loading-shell">
+      <BookOpen size={28} weight="duotone" />
+      <p>Loading book library...</p>
+    </div>
+  </div>
+{:else if store.activeBookId}
+  <div class="root root--missing">
+    <div class="loading-shell">
+      <BookOpen size={28} weight="duotone" />
+      <p>Book could not be resolved yet.</p>
+    </div>
+  </div>
 {/if}
 
 <style>
@@ -596,6 +617,24 @@
     height: 100%;
     overflow: hidden;
     animation: fadeIn 0.14s ease both;
+  }
+
+  .root--loading,
+  .root--missing {
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-base);
+  }
+
+  .loading-shell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--sp-3);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    letter-spacing: var(--tracking-wide);
+    text-transform: uppercase;
   }
 
   .sidebar {

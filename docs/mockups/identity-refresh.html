@@ -1,0 +1,522 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aethon Identity Exploration</title>
+    <link rel="stylesheet" href="./identity-refresh.css" />
+  </head>
+  <body>
+    <div class="gallery-shell">
+      <header class="gallery-header">
+        <div>
+          <p class="eyebrow">Aethon / Identity Exploration</p>
+          <h1>Field Atlas</h1>
+          <p class="intro">
+            Same content-first reading app, reinterpreted as an editorial observatory:
+            bigger rhythm, softer panels, richer color temperature, and a stronger
+            sense of curated collection.
+          </p>
+        </div>
+        <div class="concept-pills">
+          <span>editorial dark mode</span>
+          <span>sage + amber accents</span>
+          <span>same core IA</span>
+          <span>higher visual hierarchy</span>
+        </div>
+      </header>
+
+      <section class="screen" id="home-screen">
+        <div class="screen-meta">
+          <p class="screen-kicker">Screen 01</p>
+          <h2>Home Dashboard</h2>
+          <p>Reading in progress becomes the centerpiece, with recent activity and stats orbiting around it.</p>
+        </div>
+
+        <div class="app-frame home-frame">
+          <aside class="sidebar">
+            <div class="sidebar-brand">
+              <div class="brand-mark-wrap">
+                <img src="../../src/assets/moku-icon.svg" alt="Aethon logo" class="brand-mark" />
+              </div>
+              <div>
+                <p class="sidebar-label">Aethon</p>
+                <p class="sidebar-sub">Field Atlas</p>
+              </div>
+            </div>
+
+            <nav class="nav-stack">
+              <button class="nav-pill nav-pill-active"><span>Home</span><small>Now reading</small></button>
+              <button class="nav-pill"><span>Library</span><small>Series and books</small></button>
+              <button class="nav-pill"><span>Browse</span><small>Discover sources</small></button>
+              <button class="nav-pill"><span>Downloads</span><small>Offline queue</small></button>
+            </nav>
+
+            <div class="sidebar-card">
+              <p class="panel-label">Session</p>
+              <div class="session-ring">
+                <div class="session-ring-core">
+                  <strong>48m</strong>
+                  <span>reading today</span>
+                </div>
+              </div>
+              <div class="stat-pair">
+                <div>
+                  <strong>6</strong>
+                  <span>chapters</span>
+                </div>
+                <div>
+                  <strong>3</strong>
+                  <span>series</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="sidebar-footer">
+              <p class="panel-label">Theme</p>
+              <div class="theme-swatch-row">
+                <span class="theme-swatch theme-swatch-primary"></span>
+                <span class="theme-swatch theme-swatch-secondary"></span>
+                <span class="theme-swatch theme-swatch-tertiary"></span>
+              </div>
+            </div>
+          </aside>
+
+          <main class="canvas">
+            <div class="topbar">
+              <div>
+                <p class="eyebrow">Reading Window</p>
+                <h3>Good evening, Joao</h3>
+              </div>
+              <div class="topbar-actions">
+                <div class="search-pill">Search series, tags, notes</div>
+                <button class="ghost-button">Sync 12 updates</button>
+              </div>
+            </div>
+
+            <section class="hero-card panel">
+              <div class="hero-copy">
+                <div class="hero-tags">
+                  <span>Reading</span>
+                  <span>Adventure</span>
+                  <span>After Hours</span>
+                </div>
+                <h2>The Horizon</h2>
+                <p class="hero-subtitle">Chapter 12 - The Boy and the Girl - Page 18</p>
+                <p class="hero-text">
+                  The dashboard shifts from sparse terminal minimalism to a cinematic, archival mood.
+                  It still highlights one active title, but gives the cover more breathing room and
+                  lets supporting data feel intentionally curated instead of merely placed.
+                </p>
+                <div class="hero-actions">
+                  <button class="primary-button">Resume Reading</button>
+                  <button class="ghost-button">Open Details</button>
+                </div>
+              </div>
+
+              <div class="hero-cover">
+                <div class="cover-art cover-horizon">
+                  <div class="cover-caption">
+                    <span>Field Copy</span>
+                    <strong>The Horizon</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div class="hero-rail">
+                <p class="panel-label">Up Next</p>
+                <div class="chapter-chip chapter-chip-active">
+                  <strong>Ch. 12</strong>
+                  <span>The Boy and the Girl</span>
+                </div>
+                <div class="chapter-chip">
+                  <strong>Ch. 13</strong>
+                  <span>Road of Glass</span>
+                </div>
+                <div class="chapter-chip">
+                  <strong>Ch. 14</strong>
+                  <span>Ashes and Floodlight</span>
+                </div>
+              </div>
+            </section>
+
+            <section class="home-grid">
+              <div class="panel recent-panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="panel-label">Recent Activity</p>
+                    <h4>Tonight's trail</h4>
+                  </div>
+                  <span class="subtle-link">Full history</span>
+                </div>
+
+                <div class="activity-list">
+                  <div class="activity-row">
+                    <div class="tiny-cover cover-northern"></div>
+                    <div>
+                      <strong>Legend of the Northern Blade</strong>
+                      <span>Chapter 7 - p.21 - just now</span>
+                    </div>
+                  </div>
+                  <div class="activity-row">
+                    <div class="tiny-cover cover-returner"></div>
+                    <div>
+                      <strong>A Returner's Magic Should Be Special</strong>
+                      <span>Chapter 14 - p.26 - 8h ago</span>
+                    </div>
+                  </div>
+                  <div class="activity-row">
+                    <div class="tiny-cover cover-horizon small"></div>
+                    <div>
+                      <strong>The Horizon</strong>
+                      <span>Chapter 12 - p.18 - 1d ago</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="panel stats-panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="panel-label">Reading Stats</p>
+                    <h4>Pace and rhythm</h4>
+                  </div>
+                </div>
+
+                <div class="stats-grid">
+                  <div class="metric-card">
+                    <span>Day streak</span>
+                    <strong>12</strong>
+                  </div>
+                  <div class="metric-card">
+                    <span>Read time</span>
+                    <strong>15h</strong>
+                  </div>
+                  <div class="metric-card">
+                    <span>Series started</span>
+                    <strong>8</strong>
+                  </div>
+                  <div class="metric-card metric-card-accent">
+                    <span>Completed</span>
+                    <strong>3</strong>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </main>
+        </div>
+      </section>
+
+      <section class="screen" id="library-screen">
+        <div class="screen-meta">
+          <p class="screen-kicker">Screen 02</p>
+          <h2>Library</h2>
+          <p>The shared library shell becomes more tactile: broader spacing, sculpted cards, and clearer collection hierarchy.</p>
+        </div>
+
+        <div class="app-frame library-frame">
+          <div class="library-header-block">
+            <div>
+              <p class="eyebrow">Collection View</p>
+              <h3>Library Atlas</h3>
+            </div>
+            <div class="topbar-actions">
+              <div class="chip-row">
+                <span class="inline-chip inline-chip-active">Comics</span>
+                <span class="inline-chip">Books</span>
+                <span class="inline-chip">Downloaded</span>
+              </div>
+              <div class="search-pill">Filter titles, folders, formats</div>
+            </div>
+          </div>
+
+          <div class="library-toolbar panel">
+            <div class="toolbar-cluster">
+              <span class="toolbar-label">Folders</span>
+              <div class="chip-row">
+                <span class="inline-chip inline-chip-active">All titles</span>
+                <span class="inline-chip">Quiet Hours</span>
+                <span class="inline-chip">Completed</span>
+                <span class="inline-chip">To Review</span>
+              </div>
+            </div>
+            <div class="toolbar-cluster">
+              <span class="toolbar-label">Density</span>
+              <div class="mode-toggle">
+                <span class="mode-toggle-active">Grid</span>
+                <span>Compact</span>
+                <span>List</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="library-layout">
+            <section class="panel shelf-panel">
+              <div class="panel-head">
+                <div>
+                  <p class="panel-label">Featured Shelf</p>
+                  <h4>Continue tonight</h4>
+                </div>
+                <span class="subtle-link">Pin slots</span>
+              </div>
+
+              <div class="featured-shelf">
+                <article class="shelf-card">
+                  <div class="shelf-cover cover-horizon"></div>
+                  <div class="shelf-copy">
+                    <strong>The Horizon</strong>
+                    <span>Reading - 78% complete</span>
+                  </div>
+                </article>
+                <article class="shelf-card">
+                  <div class="shelf-cover cover-returner"></div>
+                  <div class="shelf-copy">
+                    <strong>A Returner's Magic</strong>
+                    <span>Pinned - 42 unread</span>
+                  </div>
+                </article>
+                <article class="shelf-card">
+                  <div class="shelf-cover cover-northern"></div>
+                  <div class="shelf-copy">
+                    <strong>Northern Blade</strong>
+                    <span>Downloaded - 12 chapters</span>
+                  </div>
+                </article>
+              </div>
+            </section>
+
+            <section class="card-grid">
+              <article class="library-card panel">
+                <div class="library-cover cover-ember"></div>
+                <div class="library-copy">
+                  <div class="card-badges">
+                    <span>Manhwa</span>
+                    <span>Unread 6</span>
+                  </div>
+                  <h4>Ember District</h4>
+                  <p>Urban fantasy / procedural</p>
+                </div>
+              </article>
+
+              <article class="library-card panel">
+                <div class="library-cover cover-horizon"></div>
+                <div class="library-copy">
+                  <div class="card-badges">
+                    <span>Reading</span>
+                    <span>p.18</span>
+                  </div>
+                  <h4>The Horizon</h4>
+                  <p>Minimal literary drama</p>
+                </div>
+              </article>
+
+              <article class="library-card panel">
+                <div class="library-cover cover-codex"></div>
+                <div class="library-copy">
+                  <div class="card-badges">
+                    <span>EPUB</span>
+                    <span>Book</span>
+                  </div>
+                  <h4>Codex of Rain</h4>
+                  <p>Imported book / 12 sections read</p>
+                </div>
+              </article>
+
+              <article class="library-card panel">
+                <div class="library-cover cover-returner"></div>
+                <div class="library-copy">
+                  <div class="card-badges">
+                    <span>Pinned</span>
+                    <span>New arc</span>
+                  </div>
+                  <h4>A Returner's Magic</h4>
+                  <p>High-action academy fantasy</p>
+                </div>
+              </article>
+
+              <article class="library-card panel">
+                <div class="library-cover cover-vine"></div>
+                <div class="library-copy">
+                  <div class="card-badges">
+                    <span>Completed</span>
+                    <span>Collection</span>
+                  </div>
+                  <h4>Vine Cathedral</h4>
+                  <p>Finished / archived in Field Notes</p>
+                </div>
+              </article>
+
+              <article class="library-card panel">
+                <div class="library-cover cover-northern"></div>
+                <div class="library-copy">
+                  <div class="card-badges">
+                    <span>Downloaded</span>
+                    <span>12</span>
+                  </div>
+                  <h4>Northern Blade</h4>
+                  <p>Ready for offline reading</p>
+                </div>
+              </article>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen" id="detail-screen">
+        <div class="screen-meta">
+          <p class="screen-kicker">Screen 03</p>
+          <h2>Series Detail</h2>
+          <p>The detail overlay keeps the existing flow, but becomes more immersive and legible with stronger information grouping.</p>
+        </div>
+
+        <div class="app-frame detail-frame">
+          <aside class="detail-sidebar panel">
+            <div class="detail-cover cover-horizon large"></div>
+            <div class="detail-title-block">
+              <p class="eyebrow">Series Detail</p>
+              <h3>The Horizon</h3>
+              <span class="detail-author">JH - literary survival drama</span>
+            </div>
+
+            <div class="detail-actions">
+              <button class="primary-button">Resume Chapter 12</button>
+              <button class="ghost-button">Add to Field Notes</button>
+            </div>
+
+            <div class="detail-summary">
+              <div class="summary-row">
+                <span>Progress</span>
+                <strong>78%</strong>
+              </div>
+              <div class="progress-track">
+                <div class="progress-fill"></div>
+              </div>
+              <div class="summary-grid">
+                <div><span>Unread</span><strong>4</strong></div>
+                <div><span>Downloaded</span><strong>3</strong></div>
+                <div><span>Linked</span><strong>MAL</strong></div>
+                <div><span>Status</span><strong>Reading</strong></div>
+              </div>
+            </div>
+          </aside>
+
+          <main class="detail-main">
+            <div class="detail-hero panel">
+              <div class="detail-hero-copy">
+                <p class="panel-label">Overview</p>
+                <h4>Same series workflow, but with clearer anchors</h4>
+                <p>
+                  Chapters, metadata, trackers, and actions now sit in visibly separate surfaces.
+                  The page feels less like one continuous dark slab and more like a curated desk
+                  where each object has a role.
+                </p>
+              </div>
+              <div class="detail-note">
+                <span>Linked tracking</span>
+                <strong>Episode sync in 2 sources</strong>
+              </div>
+            </div>
+
+            <div class="detail-columns">
+              <section class="panel chapter-list-panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="panel-label">Chapters</p>
+                    <h4>Reading sequence</h4>
+                  </div>
+                  <span class="subtle-link">Sort by source</span>
+                </div>
+
+                <div class="chapter-list">
+                  <div class="chapter-row chapter-row-current">
+                    <div>
+                      <strong>12</strong>
+                      <span>Current</span>
+                    </div>
+                    <div class="chapter-copy">
+                      <strong>The Boy and the Girl</strong>
+                      <span>Last read at p.18 - 1 day ago</span>
+                    </div>
+                    <span class="chapter-status">Continue</span>
+                  </div>
+
+                  <div class="chapter-row">
+                    <div>
+                      <strong>13</strong>
+                      <span>Next</span>
+                    </div>
+                    <div class="chapter-copy">
+                      <strong>Road of Glass</strong>
+                      <span>Queued for download</span>
+                    </div>
+                    <span class="chapter-status chapter-status-muted">Queued</span>
+                  </div>
+
+                  <div class="chapter-row">
+                    <div>
+                      <strong>14</strong>
+                      <span>Unread</span>
+                    </div>
+                    <div class="chapter-copy">
+                      <strong>Ashes and Floodlight</strong>
+                      <span>Not downloaded yet</span>
+                    </div>
+                    <span class="chapter-status chapter-status-muted">Unread</span>
+                  </div>
+
+                  <div class="chapter-row chapter-row-read">
+                    <div>
+                      <strong>11</strong>
+                      <span>Read</span>
+                    </div>
+                    <div class="chapter-copy">
+                      <strong>Silent Bus Depot</strong>
+                      <span>Completed last session</span>
+                    </div>
+                    <span class="chapter-status chapter-status-muted">Read</span>
+                  </div>
+                </div>
+              </section>
+
+              <section class="side-stack">
+                <div class="panel tracker-panel">
+                  <div class="panel-head">
+                    <div>
+                      <p class="panel-label">Tracking</p>
+                      <h4>External status</h4>
+                    </div>
+                  </div>
+
+                  <div class="tracker-card">
+                    <span>MAL</span>
+                    <strong>12 / 16 logged</strong>
+                    <small>Synced 3 minutes ago</small>
+                  </div>
+                  <div class="tracker-card tracker-card-muted">
+                    <span>AniList</span>
+                    <strong>Monitoring enabled</strong>
+                    <small>Waiting for next read event</small>
+                  </div>
+                </div>
+
+                <div class="panel note-panel">
+                  <div class="panel-head">
+                    <div>
+                      <p class="panel-label">Curator Note</p>
+                      <h4>Visual direction</h4>
+                    </div>
+                  </div>
+
+                  <p class="note-text">
+                    This identity keeps your current calm, dark, premium feel, but swaps "terminal restraint"
+                    for "editorial archive". It should feel more collectible, more intentional, and easier to scan.
+                  </p>
+                </div>
+              </section>
+            </div>
+          </main>
+        </div>
+      </section>
+    </div>
+  </body>
+</html>

@@ -31,6 +31,12 @@ describe("LibraryToolbar", () => {
     render(LibraryToolbar, {
       props: {
         toolbar,
+        displaySettings: {
+          viewMode: "grid",
+          preferredColumns: "auto",
+          showProgress: true,
+          showOutline: true,
+        },
         sortDefaultMode: "recentlyAdded",
         sortDefaultDir: "desc",
         filterDefaultValue: "ALL",
@@ -47,16 +53,15 @@ describe("LibraryToolbar", () => {
     });
     expect(onSearchChange).toHaveBeenCalledWith("chrysalis");
 
-    const buttons = screen.getAllByRole("button");
-    await fireEvent.click(buttons[0]);
+    await fireEvent.click(screen.getByRole("button", { name: "Sort" }));
     await fireEvent.click(screen.getByRole("menuitem", { name: /A-Z/i }));
     expect(onSortModeChange).toHaveBeenCalledWith("az");
 
-    await fireEvent.click(buttons[1]);
+    await fireEvent.click(screen.getByRole("button", { name: "Filter" }));
     await fireEvent.click(screen.getByRole("menuitem", { name: /Finished/i }));
     expect(onFilterChange).toHaveBeenCalledWith("FINISHED");
 
-    await fireEvent.click(buttons[0]);
+    await fireEvent.click(screen.getByRole("button", { name: "Sort" }));
     await fireEvent.click(screen.getByRole("menuitem", { name: /Descending/i }));
     expect(onSortDirToggle).toHaveBeenCalled();
   });

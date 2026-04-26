@@ -1,7 +1,7 @@
 {
   "build": {
-    "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "pnpm dev"
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeDevCommand": "node ./node_modules/vite/bin/vite.js --host 127.0.0.1 --port 1420"
   },
   "app": {
     "windows": [
@@ -11,6 +11,8 @@
     ]
   },
   "bundle": {
-    "externalBin": []
+    "externalBin": [
+      "binaries/aethon-syncd"
+    ]
   }
 }

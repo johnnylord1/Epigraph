@@ -92,4 +92,66 @@ describe("ComicsLibraryBody", () => {
     await fireEvent.contextMenu(card);
     expect(await screen.findByText(/Select this manga/i)).toBeTruthy();
   });
+
+  test("renders clickable cards from manga data when the section vm omits card VMs", async () => {
+    const manga = {
+      id: 7,
+      title: "Returned From Reader",
+      thumbnailUrl: null,
+      inLibrary: true,
+      downloadCount: 0,
+      unreadCount: 3,
+      chapterCount: 10,
+      source: { id: "source-1", displayName: "Source One" },
+    } as Manga;
+
+    const vm: ComicsSectionVM = {
+      kind: "comics",
+      sectionTabs: [],
+      collections: [],
+      toolbar: {
+        searchValue: "",
+        searchPlaceholder: "Search",
+        sortMode: "az",
+        sortDir: "asc",
+        sortOptions: [],
+        filterValue: "ALL",
+        filterOptions: [],
+      },
+      loading: false,
+      error: null,
+      emptyMessage: "Empty",
+      cards: [],
+      selectionEnabled: true,
+      selectedIds: new Set(),
+      showBulkBar: false,
+    };
+
+    render(ComicsLibraryBody, {
+      props: {
+        vm,
+        mangas: [manga],
+        categories: [],
+        categoryMangaMap: new Map(),
+        renderLimit: 48,
+        viewKey: "library",
+        onRemoveFromLibrary: vi.fn(),
+        onAddToLibrary: vi.fn(),
+        onDeleteAllDownloads: vi.fn(),
+        onToggleCategory: vi.fn(),
+        onCreateAndAssign: vi.fn(),
+        onCreateCategory: vi.fn(),
+      },
+    });
+
+    const card = screen.getByRole("button", { name: /Returned From Reader/i });
+    expect(card.getAttribute("data-card-id")).toBe("comic:7");
+    expect(card.textContent).toContain("CH 3");
+    expect(card.textContent).toContain("Source One");
+    expect(card.textContent).toContain("Reading");
+    expect(card.textContent).not.toContain("Unknown");
+
+    await fireEvent.click(card);
+    expect(store.activeManga?.id).toBe(7);
+  });
 });

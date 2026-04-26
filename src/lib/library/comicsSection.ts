@@ -7,7 +7,12 @@ import type {
   LibrarySectionKind,
   LibrarySortOptionVM,
 } from "./contracts";
-import { buildCompletedLibraryIds, isMangaPublicationCompleted } from "./completion";
+import {
+  buildCompletedLibraryIds,
+  isMangaFinishedReading,
+  isMangaPublicationCompleted,
+  isSourceUnknownStatus,
+} from "./completion";
 import { getCategoryDisplayName, isCompletedCategory, normalizeCategories } from "./categories";
 import { dedupeMangaById, shouldHideNsfw } from "../util";
 import type { Category, Manga } from "../types";
@@ -51,6 +56,7 @@ export interface BuildComicsSectionInput {
   error: string | null;
   selectedIds?: Set<number>;
   showBulkBar?: boolean;
+  buildCards?: boolean;
 }
 
 export interface ComicsSectionState {
@@ -263,21 +269,86 @@ function buildComicsEmptyMessage(libraryFilter: LibraryFilter, profileLabel?: st
   return "No manga in this folder yet. Right-click manga anywhere to assign them.";
 }
 
-function buildComicsCardVms(mangas: Manga[], cropCovers: boolean, selectedIds: Set<number>) {
-  return mangas.map((manga) => ({
+function formatSourceStatusLabel(status: string | null | undefined): string | null {
+  const normalized = status?.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!normalized || isSourceUnknownStatus(normalized)) return null;
+  return normalized.toLowerCase().replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+export function buildComicsReadingStateLabel(
+  manga: Pick<Manga, "id" | "status" | "chapterCount" | "unreadCount">,
+  trackedCompletedIds: ReadonlySet<number> = new Set(),
+  trackedChapterTotalsByMangaId: ReadonlyMap<number, number> = new Map(),
+): string {
+  if (isMangaFinishedReading(manga, trackedCompletedIds, trackedChapterTotalsByMangaId)) return "Finished";
+
+  const publicationStatus = formatSourceStatusLabel(manga.status);
+  if (publicationStatus) return publicationStatus;
+
+  if ((manga.unreadCount ?? 0) > 0) return "Reading";
+  if ((manga.chapterCount ?? 0) > 0) return "Up to date";
+  return "Plan to read";
+}
+
+export function buildComicsLibraryCardVm(
+  manga: Manga,
+  options: {
+    cropCovers: boolean;
+    selectedIds?: ReadonlySet<number>;
+    trackedCompletedIds?: ReadonlySet<number>;
+    trackedChapterTotalsByMangaId?: ReadonlyMap<number, number>;
+  },
+) {
+  const unreadCount = Math.max(0, manga.unreadCount ?? 0);
+  const chapterCount = Math.max(0, manga.chapterCount ?? 0);
+  const readCount = chapterCount > 0 ? Math.max(0, chapterCount - unreadCount) : 0;
+
+  return {
     id: createComicLibraryCardId(manga.id),
     title: manga.title,
+    subtitle: manga.author ?? manga.source?.displayName ?? manga.source?.name ?? "",
     coverSrc: manga.thumbnailUrl ?? null,
-    coverFit: cropCovers ? "cover" as const : "contain" as const,
+    coverFit: options.cropCovers ? "cover" as const : "contain" as const,
     badges: [
-      ...(manga.downloadCount ? [{ kind: "download" as const, label: String(manga.downloadCount) }] : []),
-      ...(manga.unreadCount ? [{ kind: "unread" as const, label: String(manga.unreadCount) }] : []),
+      ...(unreadCount > 0 ? [{
+        kind: "unread" as const,
+        label: `CH ${unreadCount}`,
+      }] : []),
+      ...((manga.downloadCount ?? 0) > 0 && unreadCount === 0 ? [{
+        kind: "download" as const,
+        label: "Local",
+      }] : []),
     ],
-    metaChips: [],
-    progress: null,
+    metaChips: [
+      buildComicsReadingStateLabel(
+        manga,
+        options.trackedCompletedIds,
+        options.trackedChapterTotalsByMangaId,
+      ),
+    ],
+    progress: {
+      primaryLabel: String(readCount),
+      secondaryLabel: chapterCount > 0 ? `/ ${chapterCount} chapters` : undefined,
+      percent: chapterCount > 0 ? Math.max(0, Math.min(1, readCount / chapterCount)) : undefined,
+    },
     selectable: true,
-    selected: selectedIds.has(manga.id),
+    selected: options.selectedIds?.has(manga.id) ?? false,
     disabled: false,
+  };
+}
+
+function buildComicsCardVms(
+  mangas: Manga[],
+  cropCovers: boolean,
+  selectedIds: Set<number>,
+  trackedCompletedIds: ReadonlySet<number>,
+  trackedChapterTotalsByMangaId: ReadonlyMap<number, number>,
+) {
+  return mangas.map((manga) => buildComicsLibraryCardVm(manga, {
+    cropCovers,
+    selectedIds,
+    trackedCompletedIds,
+    trackedChapterTotalsByMangaId,
   }));
 }
 
@@ -318,7 +389,7 @@ export function buildComicsSectionState(input: BuildComicsSectionInput): ComicsS
     collections: buildComicsCollections(input, visibleCategories, counts),
     toolbar: {
       searchValue: input.search,
-      searchPlaceholder: "Search",
+      searchPlaceholder: "Search comics...",
       sortMode: input.sortMode,
       sortDir: input.sortDir,
       sortOptions: COMICS_SORT_OPTIONS,
@@ -328,7 +399,15 @@ export function buildComicsSectionState(input: BuildComicsSectionInput): ComicsS
     loading: input.loading,
     error: input.error,
     emptyMessage: buildComicsEmptyMessage(input.libraryFilter, input.profileLabel, input.mangas.length),
-    cards: buildComicsCardVms(filteredManga, input.settings.libraryCropCovers, selectedIds),
+    cards: input.buildCards === false
+      ? []
+      : buildComicsCardVms(
+          filteredManga,
+          input.settings.libraryCropCovers,
+          selectedIds,
+          input.trackedCompletedIds,
+          input.trackedChapterTotalsByMangaId,
+        ),
     selectionEnabled: true,
     selectedIds,
     showBulkBar: input.showBulkBar ?? false,

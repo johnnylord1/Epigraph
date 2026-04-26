@@ -1,494 +1,620 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import {
-    type SplashRenderAssets,
-    buildSplashCards,
-    buildSplashStamp,
-    buildSplashVignette,
-    createSplashRenderKey,
-    getCachedSplashRenderAssets,
-    setCachedSplashRenderAssets,
-    SPLASH_STAMP_BATCH_SIZE,
-  } from "../../lib/splashBackground";
   import { store } from "../../store/state.svelte";
-  import logoUrl from "../../assets/moku-icon-splash.svg";
+  import splashMarkUrl from "../../assets/aethon-splash-mark.png";
 
   interface Props {
-    mode?:          "loading" | "idle";
-    ringFull?:      boolean;
-    failed?:        boolean;
+    mode?: "loading" | "idle";
+    interactive?: boolean;
+    ringFull?: boolean;
+    failed?: boolean;
     notConfigured?: boolean;
-    failureTitle?:  string;
+    failureTitle?: string;
     failureDetail?: string;
-    statusText?:    string;
-    showCards?:     boolean;
-    showFps?:       boolean;
-    onReady?:       () => void;
-    onRetry?:       () => void;
-    onBypass?:      () => void;
-    onDismiss?:     () => void;
+    statusText?: string;
+    showCards?: boolean;
+    showFps?: boolean;
+    onReady?: () => void;
+    onRetry?: () => void;
+    onBypass?: () => void;
+    onDismiss?: () => void;
   }
 
-  let { mode = "loading", ringFull = false, failed = false, notConfigured = false,
-        failureTitle = "Could not reach server", failureDetail = "",
-        statusText = "Initializing server",
-        showCards = true, showFps = false, onReady, onRetry, onBypass, onDismiss }: Props = $props();
+  let {
+    mode = "loading",
+    interactive = true,
+    ringFull = false,
+    failed = false,
+    notConfigured = false,
+    failureTitle = "Could not reach server",
+    failureDetail = "",
+    statusText = "Initializing profile",
+    showCards = true,
+    showFps = false,
+    onReady,
+    onRetry,
+    onBypass,
+    onDismiss,
+  }: Props = $props();
+
+  type AmbientBandOptions = {
+    size: [number, number];
+    peak: [number, number];
+    base: [number, number];
+    life: [number, number];
+    drift: [number, number];
+    ray: [number, number];
+  };
+
+  type AmbientStarConfig = {
+    size: number;
+    x: number;
+    y: number;
+    dx: number;
+    dy: number;
+    moveDuration: number;
+    moveOffset: number;
+    life: number;
+    offset: number;
+    peak: number;
+    base: number;
+    ray: number;
+    spin: number;
+    rotation: number;
+  };
+
+  type OrbitConfig = {
+    size: number;
+    rx: number;
+    ry: number;
+    tilt: number;
+    phase: number;
+    speed: number;
+    depthPhase: number;
+    driftX: number;
+    driftY: number;
+    life: number;
+    offset: number;
+    peak: number;
+    minScale: number;
+    maxScale: number;
+    ray: number;
+  };
+
+  type MountedStar<T> = {
+    element: HTMLSpanElement;
+    config: T;
+  };
+
+  const EXIT_MS = 320;
+  const POST_READY_DWELL_MS = 180;
+  const PIN_REVEAL_MS = 400;
+
+  const ORBIT_CONFIGS: OrbitConfig[] = [
+    { size: 8.6, rx: 150, ry: 44, tilt: -24, phase: 0.2, speed: 0.00009, depthPhase: 0.6, driftX: 8, driftY: -4, life: 7_800, offset: 500, peak: 0.54, minScale: 0.2, maxScale: 1.02, ray: 0.62 },
+    { size: 6.2, rx: 76, ry: 158, tilt: 13, phase: 2.5, speed: -0.000069, depthPhase: -0.3, driftX: -7, driftY: 9, life: 12_500, offset: 4_200, peak: 0.36, minScale: 0.16, maxScale: 0.72, ray: 0.42 },
+    { size: 10.8, rx: 174, ry: 52, tilt: -55, phase: 1.15, speed: 0.000058, depthPhase: 1.5, driftX: 12, driftY: 6, life: 9_300, offset: 2_100, peak: 0.48, minScale: 0.22, maxScale: 1.12, ray: 0.72 },
+    { size: 7.4, rx: 92, ry: 136, tilt: 38, phase: 4.35, speed: -0.000082, depthPhase: 2.2, driftX: -9, driftY: 5, life: 14_200, offset: 8_200, peak: 0.4, minScale: 0.18, maxScale: 0.82, ray: 0.5 },
+    { size: 4.8, rx: 198, ry: 34, tilt: 17, phase: 5.7, speed: 0.000046, depthPhase: -1.15, driftX: 5, driftY: -9, life: 16_000, offset: 9_900, peak: 0.28, minScale: 0.13, maxScale: 0.55, ray: 0.32 },
+    { size: 6.8, rx: 61, ry: 176, tilt: -20, phase: 3.25, speed: 0.000078, depthPhase: 2.75, driftX: 12, driftY: 8, life: 10_400, offset: 6_600, peak: 0.35, minScale: 0.16, maxScale: 0.74, ray: 0.46 },
+    { size: 9.8, rx: 136, ry: 82, tilt: 63, phase: 4.9, speed: -0.000054, depthPhase: -2.2, driftX: -8, driftY: -5, life: 11_800, offset: 1_700, peak: 0.45, minScale: 0.2, maxScale: 1, ray: 0.66 },
+    { size: 4.2, rx: 208, ry: 60, tilt: -8, phase: 2, speed: 0.000036, depthPhase: 0.1, driftX: -4, driftY: 10, life: 18_500, offset: 12_100, peak: 0.24, minScale: 0.1, maxScale: 0.5, ray: 0.3 },
+    { size: 6.4, rx: 118, ry: 112, tilt: -68, phase: 5.05, speed: 0.000064, depthPhase: 1.85, driftX: 8, driftY: -12, life: 10_900, offset: 3_400, peak: 0.34, minScale: 0.15, maxScale: 0.7, ray: 0.4 },
+    { size: 5.6, rx: 154, ry: 104, tilt: 27, phase: 3.7, speed: -0.000041, depthPhase: -0.9, driftX: -12, driftY: 4, life: 15_300, offset: 10_700, peak: 0.31, minScale: 0.12, maxScale: 0.62, ray: 0.36 },
+  ];
 
   const lockEnabled = $derived(
-    store.settings.appLockEnabled && (store.settings.appLockPin?.length ?? 0) >= 4
+    store.settings.appLockEnabled && (store.settings.appLockPin?.length ?? 0) >= 4,
+  );
+  const pinLength = $derived(store.settings.appLockPin?.length ?? 4);
+  const canDismissIdle = $derived(mode === "idle" && !!onDismiss && !lockEnabled);
+
+  let splashRoot = $state<HTMLElement | null>(null);
+  let starfieldEl = $state<HTMLDivElement | null>(null);
+  let orbitBackEl = $state<HTMLDivElement | null>(null);
+  let orbitFrontEl = $state<HTMLDivElement | null>(null);
+  let pinEntry = $state("");
+  let pinShake = $state(false);
+  let pinUnlocked = $state(false);
+  let pinVisible = $state(false);
+  let exiting = $state(false);
+  let retryAnnouncement = $state("");
+  let fpsText = $state("");
+  let exitLock = false;
+
+  function mulberry32(seed: number) {
+    return function next() {
+      let t = seed += 0x6d2b79f5;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function clamp(value: number, min: number, max: number) {
+    return Math.min(max, Math.max(min, value));
+  }
+
+  function easeOutCubic(value: number) {
+    return 1 - Math.pow(1 - clamp(value, 0, 1), 3);
+  }
+
+  function randomBetween(next: () => number, min: number, max: number) {
+    return min + next() * (max - min);
+  }
+
+  function sparkleLife(
+    timestamp: number,
+    duration: number,
+    offset: number,
+    attack: number,
+    hold: number,
+    decay: number,
+  ) {
+    const phase = ((timestamp + offset) % duration) / duration;
+    const start = 0.48;
+    const local = phase >= start ? phase - start : phase + 1 - start;
+    if (local > attack + hold + decay) return 0;
+    if (local < attack) return easeOutCubic(local / attack);
+    if (local < attack + hold) return 1;
+    const release = (local - attack - hold) / decay;
+    return Math.pow(1 - release, 1.85);
+  }
+
+  function createStarElement(className: "ambient-star" | "orbit-star", size: number) {
+    const element = document.createElement("span");
+    element.className = className;
+    element.style.setProperty("--size", `${size.toFixed(2)}px`);
+    element.innerHTML = `
+      <span class="star-ray-x"></span>
+      <span class="star-ray-y"></span>
+      <span class="star-core"></span>
+      <span class="star-dust"></span>
+    `;
+    return element;
+  }
+
+  function createAmbientBand(count: number, options: AmbientBandOptions, next: () => number): AmbientStarConfig[] {
+    return Array.from({ length: count }, () => {
+      const drift = randomBetween(next, options.drift[0], options.drift[1]);
+      const direction = randomBetween(next, 0, Math.PI * 2);
+      return {
+        size: randomBetween(next, options.size[0], options.size[1]),
+        x: randomBetween(next, 4, 96),
+        y: randomBetween(next, 6, 93),
+        dx: Math.cos(direction) * drift,
+        dy: Math.sin(direction) * drift,
+        moveDuration: randomBetween(next, 90_000, 240_000),
+        moveOffset: randomBetween(next, 0, 240_000),
+        life: randomBetween(next, options.life[0], options.life[1]),
+        offset: randomBetween(next, 0, options.life[1]),
+        peak: randomBetween(next, options.peak[0], options.peak[1]),
+        base: randomBetween(next, options.base[0], options.base[1]),
+        ray: randomBetween(next, options.ray[0], options.ray[1]),
+        spin: randomBetween(next, -0.00018, 0.00018),
+        rotation: randomBetween(next, -Math.PI, Math.PI),
+      };
+    });
+  }
+
+  function updateAmbientStars(stars: MountedStar<AmbientStarConfig>[], timestamp: number) {
+    for (const { element, config } of stars) {
+      const move = ((timestamp + config.moveOffset) % config.moveDuration) / config.moveDuration;
+      const driftEase = move < 0.82 ? move / 0.82 : 1 - (move - 0.82) / 0.18;
+      const x = config.dx * driftEase;
+      const y = config.dy * driftEase;
+      const life = sparkleLife(timestamp, config.life, config.offset, 0.06, 0.16, 0.42);
+      const opacity = config.base + life * config.peak;
+      const scale = 0.62 + life * 0.55;
+      const rotate = config.rotation + timestamp * config.spin;
+
+      element.style.opacity = opacity.toFixed(3);
+      element.style.transform = `translate3d(${x.toFixed(2)}px, ${y.toFixed(2)}px, 0) rotate(${rotate.toFixed(3)}rad) scale3d(${scale.toFixed(3)}, ${scale.toFixed(3)}, 1)`;
+      element.style.setProperty("--core", (0.42 + life * 0.58).toFixed(3));
+      element.style.setProperty("--ray", (life * config.ray).toFixed(3));
+      element.style.setProperty("--dust", (life * 0.1).toFixed(3));
+      element.style.setProperty("--ray-x", (0.55 + life * 0.8).toFixed(3));
+      element.style.setProperty("--ray-y", (0.65 + life * 1.05).toFixed(3));
+    }
+  }
+
+  function projectOrbit(config: OrbitConfig, timestamp: number) {
+    const angle = config.phase + timestamp * config.speed;
+    const tilt = (config.tilt * Math.PI) / 180;
+    const rx = config.rx * (1 + Math.sin(angle * 1.73 + config.phase) * 0.045);
+    const ry = config.ry * (1 + Math.cos(angle * 1.29 - config.depthPhase) * 0.065);
+    const localX = Math.cos(angle) * rx + Math.sin(angle * 0.37 + config.phase) * config.driftX;
+    const localY = Math.sin(angle) * ry + Math.cos(angle * 0.61 - config.phase) * config.driftY;
+    const x = localX * Math.cos(tilt) - localY * Math.sin(tilt);
+    const y = localX * Math.sin(tilt) + localY * Math.cos(tilt);
+    const depth = clamp(
+      Math.sin(angle + config.depthPhase) * 0.74
+        + Math.cos(angle * 1.8 + config.phase) * 0.16
+        + Math.sin(timestamp * 0.000044 + config.depthPhase) * 0.1,
+      -1,
+      1,
+    );
+    const depth01 = (depth + 1) / 2;
+    const front = depth > -0.06;
+    const life = sparkleLife(timestamp, config.life, config.offset, 0.08, 0.12, 0.46);
+    const presence = front ? 0.34 + depth01 * 0.66 : 0.04 + depth01 * 0.24;
+    const opacity = life * config.peak * presence;
+    const scale = (config.minScale + depth01 * (config.maxScale - config.minScale)) * (front ? 1 : 0.68);
+    const rotate = angle * 0.62 + tilt + Math.sin(timestamp * 0.00024 + config.phase) * 0.22;
+    const material = life * (front ? 1 : 0.44);
+
+    return {
+      x,
+      y,
+      front,
+      opacity,
+      scale,
+      rotate,
+      core: 0.34 + material * (front ? 0.58 : 0.26),
+      ray: material * config.ray * (front ? 0.78 : 0.28),
+      dust: material * 0.12,
+      rayX: 0.62 + material * 0.7,
+      rayY: 0.72 + material * 1.05,
+    };
+  }
+
+  function updateOrbitStars(
+    stars: MountedStar<OrbitConfig>[],
+    orbitBack: HTMLDivElement,
+    orbitFront: HTMLDivElement,
+    timestamp: number,
+  ) {
+    for (const { element, config } of stars) {
+      const projected = projectOrbit(config, timestamp);
+      const parent = projected.front ? orbitFront : orbitBack;
+      if (element.parentElement !== parent) {
+        parent.append(element);
+      }
+
+      element.style.opacity = projected.opacity.toFixed(3);
+      element.style.transform = `translate3d(calc(-50% + ${projected.x.toFixed(2)}px), calc(-50% + ${projected.y.toFixed(2)}px), 0) rotate(${projected.rotate.toFixed(3)}rad) scale3d(${projected.scale.toFixed(3)}, ${projected.scale.toFixed(3)}, 1)`;
+      element.style.setProperty("--core", projected.core.toFixed(3));
+      element.style.setProperty("--ray", projected.ray.toFixed(3));
+      element.style.setProperty("--dust", projected.dust.toFixed(3));
+      element.style.setProperty("--ray-x", projected.rayX.toFixed(3));
+      element.style.setProperty("--ray-y", projected.rayY.toFixed(3));
+    }
+  }
+
+  const visualState = $derived.by(() => {
+    if (failed || notConfigured) return "error";
+    if (mode === "idle") return lockEnabled && !pinUnlocked ? "pin" : "idle";
+    if (ringFull) {
+      if (lockEnabled && !pinUnlocked) return pinVisible ? "pin" : "loading";
+      return "idle";
+    }
+    return "loading";
+  });
+
+  const loadingLabel = $derived(ringFull ? "Ready" : statusText);
+  const failureLabel = $derived(
+    notConfigured
+      ? (failureTitle || "Server not configured")
+      : (failureTitle || "Connection interrupted"),
+  );
+  const politeAnnouncement = $derived.by(() => {
+    if (retryAnnouncement) return retryAnnouncement;
+    if (failed || notConfigured) return "";
+    if (visualState === "pin") return "PIN required";
+    if (visualState === "idle") return "Ready";
+    return loadingLabel;
+  });
+  const assertiveAnnouncement = $derived(
+    failed || notConfigured
+      ? `${failureLabel}${failureDetail ? `. ${failureDetail}` : ""}`
+      : "",
   );
 
-  let pinEntry    = $state("");
-  let pinShake    = $state(false);
-  let pinUnlocked = $state(false);
-  let pinVisible  = $state(false);
-  let splashRoot  = $state<HTMLDivElement | null>(null);
+  function triggerExit(callback?: () => void) {
+    if (exitLock) return;
+    exitLock = true;
+    exiting = true;
+    window.setTimeout(() => callback?.(), EXIT_MS);
+  }
 
-  const canDismissIdle = $derived(mode === "idle" && !!onDismiss && !lockEnabled);
+  function clearPinShakeLater() {
+    window.setTimeout(() => {
+      pinShake = false;
+    }, 500);
+  }
 
   function submitPin() {
     if (pinEntry === store.settings.appLockPin) {
       pinUnlocked = true;
-      pinEntry    = "";
-      if (mode === "idle") triggerExit(onDismiss);
-    } else {
-      pinShake = true;
-      pinEntry  = "";
-      setTimeout(() => pinShake = false, 500);
+      pinEntry = "";
+      if (mode === "idle") {
+        triggerExit(onDismiss);
+      } else {
+        triggerExit(onReady);
+      }
+      return;
+    }
+
+    pinShake = true;
+    pinEntry = "";
+    clearPinShakeLater();
+  }
+
+  function handlePinKeydown(event: KeyboardEvent) {
+    if (event.key === "Enter") {
+      submitPin();
+      return;
+    }
+    if (event.key === "Backspace") {
+      pinEntry = pinEntry.slice(0, -1);
+      return;
+    }
+    if (/^\d$/.test(event.key)) {
+      pinEntry = (pinEntry + event.key).slice(0, 8);
+      if (pinEntry.length >= pinLength) {
+        submitPin();
+      }
     }
   }
 
-  function onPinKey(e: KeyboardEvent) {
-    if (e.key === "Enter") { submitPin(); return; }
-    if (e.key === "Backspace") { pinEntry = pinEntry.slice(0, -1); return; }
-    if (/^\d$/.test(e.key)) {
-      pinEntry = (pinEntry + e.key).slice(0, 8);
-      if (pinEntry.length >= (store.settings.appLockPin?.length ?? 4)) submitPin();
-    }
+  function handleRetry() {
+    retryAnnouncement = "Retrying connection";
+    onRetry?.();
   }
 
-  function handleRetry()  { onRetry?.();  }
-  function handleBypass() { onBypass?.(); }
+  function handleBypass() {
+    onBypass?.();
+  }
+
   function dismissIdle() {
     if (!canDismissIdle) return;
     triggerExit(onDismiss);
   }
+
   function handleIdleKeydown(event: KeyboardEvent) {
     if (!canDismissIdle) return;
     if (["Shift", "Control", "Alt", "Meta", "CapsLock", "Tab"].includes(event.key)) return;
     dismissIdle();
   }
 
-  const EXIT_MS = 320;
-  const PHASE1_TARGET = 0.85;
-  const PHASE1_MS     = 3000;
-  const PHASE2_TARGET = 0.95;
-  const PHASE2_MS     = 10000;
-  const POST_RING_DWELL_MS = 180;
-
-  let dots     = $state("");
-  let ringProg = $state(0.025);
-  let exiting  = $state(false);
-  let exitLock = false;
-  let cardsReady = $state(false);
-
-  let fpsEl = $state<HTMLSpanElement | undefined>(undefined);
-
-  function triggerExit(cb?: () => void) {
-    if (exitLock) return;
-    exitLock = true;
-    exiting  = true;
-    setTimeout(() => cb?.(), EXIT_MS);
-  }
-
-  let animFrame: number;
-  let animStart: number | null = null;
-  let animPhase = 1;
-
-  function animateRing(ts: number) {
-    if (exitLock) return;
-    if (animStart === null) animStart = ts;
-    const elapsed = ts - animStart;
-
-    if (animPhase === 1) {
-      const t = Math.min(elapsed / PHASE1_MS, 1);
-      const eased = 1 - Math.pow(1 - t, 3);
-      ringProg = 0.025 + eased * (PHASE1_TARGET - 0.025);
-      if (t >= 1) { animPhase = 2; animStart = ts; }
-    } else if (animPhase === 2) {
-      const t = Math.min(elapsed / PHASE2_MS, 1);
-      const eased = 1 - Math.pow(1 - t, 4);
-      ringProg = PHASE1_TARGET + eased * (PHASE2_TARGET - PHASE1_TARGET);
-    }
-
-    animFrame = requestAnimationFrame(animateRing);
-  }
-
   $effect(() => {
-    if (mode === "loading" && !failed && !notConfigured) {
-      animFrame = requestAnimationFrame(animateRing);
-      return () => cancelAnimationFrame(animFrame);
-    }
+    if (!retryAnnouncement) return;
+    const timeout = window.setTimeout(() => {
+      retryAnnouncement = "";
+    }, 1400);
+    return () => window.clearTimeout(timeout);
   });
 
   $effect(() => {
-    if (ringFull) {
-      cancelAnimationFrame(animFrame);
-      ringProg = 1;
-      if (lockEnabled && !pinUnlocked) {
-        setTimeout(() => { pinVisible = true; }, 400);
-      } else {
-        setTimeout(() => triggerExit(onReady), POST_RING_DWELL_MS);
+    const needsPin =
+      (mode === "idle" && lockEnabled && !pinUnlocked) ||
+      (mode === "loading" && lockEnabled && ringFull && !pinUnlocked);
+
+    if (!needsPin) {
+      pinVisible = false;
+      return;
+    }
+
+    if (mode === "idle") {
+      pinVisible = true;
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      pinVisible = true;
+    }, PIN_REVEAL_MS);
+
+    return () => window.clearTimeout(timeout);
+  });
+
+  $effect(() => {
+    if (visualState !== "pin") return;
+    window.addEventListener("keydown", handlePinKeydown);
+    return () => window.removeEventListener("keydown", handlePinKeydown);
+  });
+
+  $effect(() => {
+    if (mode !== "loading" || !ringFull || failed || notConfigured) return;
+    if (lockEnabled && !pinUnlocked) return;
+
+    const timeout = window.setTimeout(() => {
+      triggerExit(onReady);
+    }, POST_READY_DWELL_MS);
+
+    return () => window.clearTimeout(timeout);
+  });
+
+  $effect(() => {
+    if (!canDismissIdle) return;
+
+    const timeout = window.setTimeout(() => {
+      splashRoot?.focus();
+    }, 50);
+
+    window.addEventListener("keydown", handleIdleKeydown);
+
+    return () => {
+      window.clearTimeout(timeout);
+      window.removeEventListener("keydown", handleIdleKeydown);
+    };
+  });
+
+  $effect(() => {
+    if (mode === "idle" || !showCards || !starfieldEl || !orbitBackEl || !orbitFrontEl) {
+      fpsText = "";
+      return;
+    }
+
+    const random = mulberry32(0xa37a0e);
+    const ambientConfigs = [
+      ...createAmbientBand(56, { size: [1.2, 3.2], peak: [0.08, 0.3], base: [0, 0.035], life: [10_000, 32_000], drift: [3, 16], ray: [0.18, 0.42] }, random),
+      ...createAmbientBand(22, { size: [3.4, 6.2], peak: [0.14, 0.46], base: [0, 0.025], life: [18_000, 44_000], drift: [5, 24], ray: [0.28, 0.62] }, random),
+      ...createAmbientBand(7, { size: [6.4, 9.4], peak: [0.16, 0.36], base: [0, 0.018], life: [30_000, 62_000], drift: [4, 18], ray: [0.34, 0.72] }, random),
+    ];
+
+    const ambientStars: MountedStar<AmbientStarConfig>[] = ambientConfigs.map((config) => {
+      const element = createStarElement("ambient-star", config.size);
+      element.style.setProperty("--x", `${config.x.toFixed(2)}%`);
+      element.style.setProperty("--y", `${config.y.toFixed(2)}%`);
+      starfieldEl.append(element);
+      return { element, config };
+    });
+
+    const orbitStars: MountedStar<OrbitConfig>[] = ORBIT_CONFIGS.map((config) => {
+      const element = createStarElement("orbit-star", config.size);
+      orbitBackEl.append(element);
+      return { element, config };
+    });
+
+    let animationFrame = 0;
+    let lastFrame = 0;
+    let fpsLast = performance.now();
+    let fpsFrames = 0;
+
+    const animate = (timestamp: number) => {
+      if (timestamp - lastFrame > 32) {
+        updateAmbientStars(ambientStars, timestamp);
+        updateOrbitStars(orbitStars, orbitBackEl, orbitFrontEl, timestamp);
+        lastFrame = timestamp;
+
+        if (showFps) {
+          fpsFrames += 1;
+          if (timestamp - fpsLast >= 500) {
+            fpsText = `${Math.round(fpsFrames / ((timestamp - fpsLast) / 1000))} fps`;
+            fpsFrames = 0;
+            fpsLast = timestamp;
+          }
+        }
       }
-    }
-  });
+      animationFrame = requestAnimationFrame(animate);
+    };
 
-  const dotsInterval = setInterval(() => {
-    dots = dots.length >= 3 ? "" : dots + ".";
-  }, 420);
+    animationFrame = requestAnimationFrame(animate);
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      fpsText = "";
+      for (const { element } of ambientStars) {
+        element.remove();
+      }
+      for (const { element } of orbitStars) {
+        element.remove();
+      }
+    };
+  });
 
   onMount(() => {
-    let firstPaintRaf = requestAnimationFrame(() => {
-      firstPaintRaf = requestAnimationFrame(() => {
+    let mountedRaf = requestAnimationFrame(() => {
+      mountedRaf = requestAnimationFrame(() => {
         window.dispatchEvent(new CustomEvent("aethon:splash-mounted"));
       });
     });
 
-    const cancelFirstPaintSignal = () => cancelAnimationFrame(firstPaintRaf);
-
-    if (canDismissIdle) {
-      const handler = () => dismissIdle();
-      const keyHandler = (event: KeyboardEvent) => handleIdleKeydown(event);
-      const t = setTimeout(() => {
-        splashRoot?.focus();
-        window.addEventListener("keydown", keyHandler);
-        window.addEventListener("mousedown", handler);
-        window.addEventListener("touchstart", handler);
-      }, 50);
-      return () => {
-        cancelFirstPaintSignal();
-        clearTimeout(t);
-        clearInterval(dotsInterval);
-        window.removeEventListener("keydown", keyHandler);
-        window.removeEventListener("mousedown", handler);
-        window.removeEventListener("touchstart", handler);
-      };
-    }
     return () => {
-      cancelFirstPaintSignal();
-      clearInterval(dotsInterval);
+      window.cancelAnimationFrame(mountedRaf);
     };
   });
-
-  function drawFrame(
-    ctx: CanvasRenderingContext2D,
-    t: number,
-    assets: SplashRenderAssets,
-  ) {
-    const { cssW, cssH, dpr, cards, trigs, stamps, vignette } = assets;
-    const physW = Math.round(cssW * dpr);
-    const physH = Math.round(cssH * dpr);
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, physW, physH);
-    for (let i = 0; i < cards.length; i++) {
-      const c = cards[i];
-      const p = ((t / c.cycleSec) + c.phase) % 1;
-      const alpha = p < 0.07 ? (p / 0.07) * c.alpha : p > 0.86 ? ((1 - p) / 0.14) * c.alpha : c.alpha;
-      if (alpha < 0.005) continue;
-      const cy = c.yStart - p * c.travel;
-      const tg = trigs[i];
-      const delta = tg.tiltRad * p;
-      const cos = tg.cosA * Math.cos(delta) - tg.sinA * Math.sin(delta);
-      const sin = tg.sinA * Math.cos(delta) + tg.cosA * Math.sin(delta);
-      ctx.globalAlpha = alpha;
-      ctx.setTransform(cos * dpr, sin * dpr, -sin * dpr, cos * dpr, c.cx * dpr, cy * dpr);
-      const stamp = stamps[i];
-      ctx.drawImage(stamp.canvas, -stamp.width / 2, -stamp.height / 2, stamp.width, stamp.height);
-    }
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.globalAlpha = 1;
-    ctx.drawImage(vignette, 0, 0, physW, physH);
-  }
-
-  let fps = 0, fpsFrames = 0, fpsLast = 0;
-  function tickFps(now: number) {
-    fpsFrames++;
-    if (now - fpsLast >= 500) {
-      fps = Math.round(fpsFrames / ((now - fpsLast) / 1000));
-      fpsFrames = 0; fpsLast = now;
-      if (fpsEl) fpsEl.textContent = `${fps} fps`;
-    }
-  }
-
-  function mountCanvas(el: HTMLCanvasElement) {
-    const ctx = el.getContext("2d");
-    if (!ctx) return;
-
-    interface CanvasMeasurement {
-      cssW: number;
-      cssH: number;
-      dpr: number;
-      key: string;
-    }
-
-    let live: SplashRenderAssets | null = null;
-    let destroyed = false;
-    let activeGeneration = 0;
-    let lastKey = "";
-    let frameRaf = 0;
-    let measureRaf = 0;
-    let buildRaf = 0;
-
-    function measureCanvas(): CanvasMeasurement {
-      const cssW = Math.max(1, el.clientWidth || Math.round(el.getBoundingClientRect().width));
-      const cssH = Math.max(1, el.clientHeight || Math.round(el.getBoundingClientRect().height));
-      const dpr = Math.max(window.devicePixelRatio || 1, 1);
-      el.width = Math.round(cssW * dpr);
-      el.height = Math.round(cssH * dpr);
-      return { cssW, cssH, dpr, key: createSplashRenderKey(cssW, cssH, dpr) };
-    }
-
-    function scheduleBuild() {
-      if (destroyed || measureRaf) return;
-      measureRaf = requestAnimationFrame(() => {
-        measureRaf = 0;
-        if (destroyed) return;
-
-        const measured = measureCanvas();
-        if (measured.key === lastKey && live) return;
-        lastKey = measured.key;
-
-        const cached = getCachedSplashRenderAssets(measured.key);
-        if (cached) {
-          live = cached;
-          cardsReady = true;
-          return;
-        }
-
-        const generation = ++activeGeneration;
-        if (!live) cardsReady = false;
-
-        const { cards, trigs } = buildSplashCards(measured.cssW, measured.cssH);
-        const stamps = new Array(cards.length);
-        const vignette = buildSplashVignette(measured.cssW, measured.cssH, measured.dpr);
-        let index = 0;
-
-        const buildBatch = () => {
-          if (destroyed || generation !== activeGeneration) return;
-
-          const end = Math.min(index + SPLASH_STAMP_BATCH_SIZE, cards.length);
-          for (; index < end; index++) {
-            stamps[index] = buildSplashStamp(cards[index], measured.dpr);
-          }
-
-          if (index < cards.length) {
-            buildRaf = requestAnimationFrame(buildBatch);
-            return;
-          }
-
-          const assets: SplashRenderAssets = {
-            key: measured.key,
-            cssW: measured.cssW,
-            cssH: measured.cssH,
-            dpr: measured.dpr,
-            cards,
-            trigs,
-            stamps,
-            vignette,
-          };
-          setCachedSplashRenderAssets(measured.key, assets);
-
-          if (destroyed || generation !== activeGeneration) return;
-          live = assets;
-          cardsReady = true;
-        };
-
-        buildRaf = requestAnimationFrame(buildBatch);
-      });
-    }
-
-    const ro = new ResizeObserver(() => scheduleBuild());
-    ro.observe(el);
-    scheduleBuild();
-
-    let t0 = -1;
-    function frame(now: number) {
-      frameRaf = requestAnimationFrame(frame);
-      if (!live) return;
-      if ((window.devicePixelRatio || 1) !== live.dpr) scheduleBuild();
-      if (t0 < 0) t0 = now;
-      if (showFps) tickFps(now);
-      drawFrame(ctx, (now - t0) / 1000, live);
-    }
-    frameRaf = requestAnimationFrame(frame);
-
-    return () => {
-      destroyed = true;
-      activeGeneration += 1;
-      if (frameRaf) cancelAnimationFrame(frameRaf);
-      if (measureRaf) cancelAnimationFrame(measureRaf);
-      if (buildRaf) cancelAnimationFrame(buildRaf);
-      ro.disconnect();
-    };
-  }
-
-  $effect(() => {
-    const needsPin =
-      (mode === "idle" && lockEnabled) ||
-      (mode === "loading" && lockEnabled && ringFull && !pinUnlocked);
-    if (!needsPin) return;
-    window.addEventListener("keydown", onPinKey);
-    return () => window.removeEventListener("keydown", onPinKey);
-  });
-
-  $effect(() => {
-    if (pinUnlocked && mode !== "idle") {
-      triggerExit(onReady);
-    }
-  });
-
-  const ringR    = $derived(70);
-  const ringPad  = $derived(12);
-  const ringSize = $derived((ringR + ringPad) * 2);
-  const ringC    = $derived(ringR + ringPad);
-  const ringCirc = $derived(2 * Math.PI * ringR);
-  const ringArc  = $derived(ringCirc * Math.min(Math.max(ringProg, 0.025), 0.999));
-  const ringTop  = $derived(-((ringSize - 140) / 2));
-  const ringLeft = $derived(-((ringSize - 140) / 2));
 </script>
 
-<div
-  class="splash"
-  class:exiting
-  bind:this={splashRoot}
-  style="cursor: {canDismissIdle ? 'pointer' : 'default'}"
-  role={canDismissIdle ? "button" : undefined}
-  tabindex={canDismissIdle ? 0 : undefined}
-  onclick={dismissIdle}
-  onpointerdown={dismissIdle}
-  onkeydown={handleIdleKeydown}
->
+{#snippet SplashContent()}
+  <div class="aethon-splash__sr" aria-live="polite" aria-atomic="true">{politeAnnouncement}</div>
+  {#if assertiveAnnouncement}
+    <div class="aethon-splash__sr" role="alert">{assertiveAnnouncement}</div>
+  {/if}
+
+  {#if showFps && fpsText}
+    <span class="aethon-splash__fps">{fpsText}</span>
+  {/if}
+
   {#if showCards}
-    <canvas class="cards-canvas" class:cards-ready={cardsReady} style="position:absolute;inset:0;pointer-events:none;width:100%;height:100%" use:mountCanvas></canvas>
-    {#if showFps}
-      <span bind:this={fpsEl} style="position:absolute;top:8px;right:8px;font-family:var(--font-ui);font-size:10px;color:var(--text-faint);z-index:2;pointer-events:none"></span>
+    <div class="manual-starfield" bind:this={starfieldEl} aria-hidden="true"></div>
+  {/if}
+
+  <i class="corner tl" aria-hidden="true"></i>
+  <i class="corner tr" aria-hidden="true"></i>
+  <i class="corner br" aria-hidden="true"></i>
+  <i class="corner bl" aria-hidden="true"></i>
+
+  <div class="identity" aria-hidden="true">
+    {#if showCards}
+      <div class="orbit-layer back" bind:this={orbitBackEl}></div>
     {/if}
-  {/if}
 
-  {#if mode === "idle" && lockEnabled}
-    <div style="z-index:1;display:flex;flex-direction:column;align-items:center;gap:var(--sp-6)">
-      <div style="position:relative;width:96px;height:96px">
-        <div class="logo-glow"></div>
-        <img src={logoUrl} alt="Aethon" class="logo-breathe" style="width:96px;height:96px;border-radius:22px;display:block;position:relative" />
-      </div>
-      <div class="pin-block">
-        <div class="pin-dots" class:pin-shake={pinShake}>
-          {#each Array(store.settings.appLockPin?.length ?? 4) as _, i}
-            <div class="pin-dot" class:pin-dot-filled={i < pinEntry.length}></div>
-          {/each}
-        </div>
-        <button class="pin-submit-btn" onclick={submitPin} tabindex="-1" aria-label="Submit PIN">Unlock</button>
-      </div>
+    <img class="brand-mark" src={splashMarkUrl} alt="" />
+
+    {#if showCards}
+      <div class="orbit-layer front" bind:this={orbitFrontEl}></div>
+    {/if}
+  </div>
+
+  <div class="state-dock" aria-label="Splash state">
+    <div class="state loading">
+      <div class="state-value">{loadingLabel}</div>
+      <div class="line" aria-hidden="true"><span></span></div>
     </div>
 
-  {:else if mode === "idle"}
-    <div style="z-index:1;display:flex;flex-direction:column;align-items:center">
-      <div style="position:relative;width:128px;height:128px;margin-bottom:32px">
-        <div class="logo-glow"></div>
-        <img src={logoUrl} alt="Aethon" class="logo-breathe" style="width:128px;height:128px;border-radius:28px;display:block;position:relative" />
-      </div>
-      <p class="hint">click or press any key to continue</p>
-    </div>
-
-  {:else}
-    <div style="position:relative;width:140px;height:140px;margin-bottom:20px;z-index:1">
-      {#if !failed && !notConfigured}
-        <svg width={ringSize} height={ringSize}
-          class="loading-ring"
-          class:ring-hide={lockEnabled && pinVisible}
-          style="position:absolute;pointer-events:none;top:{ringTop}px;left:{ringLeft}px">
-          <circle cx={ringC} cy={ringC} r={ringR} fill="none" stroke="var(--border-base)" stroke-width="2" />
-          <circle cx={ringC} cy={ringC} r={ringR} fill="none" stroke="var(--accent)" stroke-width="2"
-            stroke-linecap="round"
-            stroke-dasharray="{ringArc} {ringCirc}"
-            transform="rotate(-90 {ringC} {ringC})"
-            style="transition: stroke-dasharray 0.4s cubic-bezier(0.4,0,0.2,1)" />
-        </svg>
-      {/if}
-      <img src={logoUrl} alt="Aethon" style="width:140px;height:140px;border-radius:32px;display:block" />
-    </div>
-    <p class="title-label">aethon</p>
-
-    <div class="bottom-area" style="z-index:1">
-      <div class="status-slot" class:status-slot-hide={lockEnabled && pinVisible}>
-        {#if failed || notConfigured}
-          <div class="error-box">
-            <p class="error-label">
-              {notConfigured ? failureTitle || "Server not configured" : failureTitle || "Could not reach server"}
-            </p>
-            {#if failureDetail}
-              <p class="error-detail">{failureDetail}</p>
-            {/if}
-            <div class="error-actions">
-              <button class="err-btn" onclick={handleRetry}>Retry</button>
-              <button class="err-btn err-btn--primary" onclick={handleBypass}>Enter app</button>
-            </div>
-          </div>
-        {:else}
-          <p class="status-text">{ringFull ? "" : `${statusText}${dots}`}</p>
-        {/if}
-      </div>
-
-      {#if lockEnabled}
-        <div class="pin-slot" class:pin-slot-visible={pinVisible}>
-          <div class="pin-dots" class:pin-shake={pinShake}>
-            {#each Array(store.settings.appLockPin?.length ?? 4) as _, i}
-              <div class="pin-dot" class:pin-dot-filled={i < pinEntry.length}></div>
-            {/each}
-          </div>
-          <button class="pin-submit-btn" onclick={submitPin} tabindex="-1" aria-label="Submit PIN">Unlock</button>
-        </div>
+    <div class="state idle">
+      <div class="state-value">Ready</div>
+      <div class="line" aria-hidden="true"></div>
+      {#if canDismissIdle}
+        <div class="aethon-splash__hint">Press any key</div>
       {/if}
     </div>
-  {/if}
-</div>
 
-<style>
-  .splash { position: fixed; inset: 0; z-index: 9999; background: var(--bg-base); overflow: hidden; display: flex; flex-direction: column; align-items: center; justify-content: center; animation: spIn 0.35s cubic-bezier(0,0,0.2,1) both; }
-  .splash.exiting { animation: spOut 320ms cubic-bezier(0.4,0,1,1) both; }
-  @keyframes spIn  { from { opacity:0; transform:scale(1.015) } to { opacity:1; transform:scale(1) } }
-  @keyframes spOut { from { opacity:1; transform:scale(1) }     to { opacity:0; transform:scale(0.96) } }
-  @keyframes logoBreathe { 0%,100% { transform:scale(1);    filter:drop-shadow(0 0 0px rgba(255,255,255,0)) } 50% { transform:scale(1.04); filter:drop-shadow(0 0 18px rgba(255,255,255,0.12)) } }
-  @keyframes hintFade { 0%,100% { opacity:0.35 } 50% { opacity:0.7 } }
-  .logo-glow { position: absolute; inset: -20px; border-radius: 50%; background: radial-gradient(circle, rgba(255,255,255,0.06) 0%, transparent 70%); animation: logoBreathe 4s ease-in-out infinite; }
-  .logo-breathe { animation: logoBreathe 4s ease-in-out infinite; }
-  .hint { font-family: var(--font-ui); font-size: 10px; color: var(--text-faint); letter-spacing: 0.22em; text-transform: uppercase; margin: 0; user-select: none; animation: hintFade 3.5s ease-in-out infinite; }
-  .title-label { font-family: var(--font-ui); font-size: 11px; font-weight: 500; letter-spacing: 0.26em; text-transform: uppercase; color: var(--text-secondary); margin: 0 0 8px; z-index: 1; user-select: none; }
-  .error-box { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 16px 20px; border-radius: var(--radius-lg); background: var(--bg-surface); border: 1px solid var(--border-base); min-width: 200px; text-align: center; animation: errIn 0.25s cubic-bezier(0,0,0.2,1) both; }
-  @keyframes errIn { from { opacity:0; transform:translateY(4px) } to { opacity:1; transform:translateY(0) } }
-  .error-label { font-family: var(--font-ui); font-size: 11px; font-weight: 500; color: var(--text-muted); letter-spacing: 0.06em; margin: 0; }
-  .error-detail { max-width: 280px; margin: -4px 0 0; font-family: var(--font-ui); font-size: 10px; line-height: 1.5; color: var(--text-faint); letter-spacing: 0.04em; }
-  .error-actions { display: flex; gap: 6px; }
-  .err-btn { padding: 5px 14px; border-radius: var(--radius-md); border: 1px solid var(--border-base); background: transparent; color: var(--text-muted); cursor: pointer; font-family: var(--font-ui); font-size: 11px; letter-spacing: 0.04em; transition: border-color 0.15s, color 0.15s; }
-  .err-btn:hover { border-color: var(--border-strong); color: var(--text-secondary); }
-  .err-btn--primary { border-color: var(--accent-dim); color: var(--accent-fg); background: var(--accent-muted); }
-  .err-btn--primary:hover { border-color: var(--accent); color: var(--accent-bright); }
+    <div class="state pin">
+      <div class="state-value">PIN Required</div>
+      <div class="dots pin-dots" class:is-shake={pinShake} aria-hidden="true">
+        {#each Array(pinLength) as _, index}
+          <i class="pin-dot" class:is-filled={index < pinEntry.length}></i>
+        {/each}
+      </div>
+      <button
+        type="button"
+        class="aethon-splash__hidden-submit"
+        tabindex="-1"
+        aria-label="Submit PIN"
+        onclick={submitPin}
+      >
+        Unlock
+      </button>
+    </div>
 
-  .bottom-area { display: flex; align-items: center; justify-content: center; min-height: 48px; position: relative; }
-  .status-slot { display: flex; align-items: center; justify-content: center; transition: opacity 0.35s ease; position: absolute; }
-  .status-slot-hide { opacity: 0; pointer-events: none; }
-  .status-text { font-family: var(--font-ui); font-size: 10px; color: var(--text-faint); letter-spacing: 0.12em; margin: 0; min-width: 160px; text-align: center; }
-  .loading-ring { transition: opacity 0.5s ease; }
-  .ring-hide { opacity: 0; }
-  .cards-canvas { opacity: 0; transition: opacity 180ms ease; }
-  .cards-canvas.cards-ready { opacity: 1; }
-  .pin-slot { display: flex; flex-direction: column; align-items: center; gap: var(--sp-3); position: absolute; opacity: 0; transform: translateY(4px); transition: opacity 0.4s ease, transform 0.4s ease; pointer-events: none; }
-  .pin-slot-visible { opacity: 1; transform: translateY(0); pointer-events: auto; }
-  .pin-block { display: flex; flex-direction: column; align-items: center; gap: var(--sp-3); position: relative; }
-  .pin-dots { display: flex; gap: 12px; align-items: center; }
-  .pin-dot { width: 10px; height: 10px; border-radius: 50%; border: 1px solid var(--border-strong); background: transparent; transition: background 0.12s, border-color 0.12s; }
-  .pin-dot-filled { background: var(--accent); border-color: var(--accent); }
-  @keyframes pinShake { 0%,100% { transform:translateX(0) } 20%,60% { transform:translateX(-6px) } 40%,80% { transform:translateX(6px) } }
-  .pin-shake { animation: pinShake 0.42s ease; }
-  .pin-submit-btn { opacity: 0; width: 1px; height: 1px; overflow: hidden; padding: 0; border: none; background: none; cursor: pointer; pointer-events: auto; position: absolute; }
-</style>
+    <div class="state error">
+      <div class="state-value">{failureLabel}</div>
+      {#if failureDetail}
+        <div>{failureDetail}</div>
+      {/if}
+      <div class="error-actions">
+        <button type="button" class="error-action" onclick={handleRetry}>Retry</button>
+        <button type="button" class="error-action error-action--primary" onclick={handleBypass}>Enter app</button>
+      </div>
+    </div>
+  </div>
+{/snippet}
+
+{#if canDismissIdle}
+  <button
+    type="button"
+    class="aethon-port--splash splash-stage"
+    class:is-exiting={exiting}
+    data-state={visualState}
+    style:pointer-events={interactive ? "auto" : "none"}
+    bind:this={splashRoot}
+    aria-label="Dismiss splash screen"
+    onclick={dismissIdle}
+    onkeydown={handleIdleKeydown}
+  >
+    {@render SplashContent()}
+  </button>
+{:else}
+  <div
+    class="aethon-port--splash splash-stage"
+    class:is-exiting={exiting}
+    data-state={visualState}
+    style:pointer-events={interactive ? "auto" : "none"}
+    bind:this={splashRoot}
+    aria-label="Aethon splash screen"
+  >
+    {@render SplashContent()}
+  </div>
+{/if}

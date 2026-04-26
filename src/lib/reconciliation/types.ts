@@ -1,4 +1,19 @@
 import type { Extension, Source } from "../types";
+import type { MigrationCandidate, MigrationContentKind, MigrationSession, MigratableLibraryItem } from "../migration/types";
+
+export type ContentKind = MigrationContentKind;
+
+export interface ContentSourceInventoryEntry {
+  contentKind: ContentKind;
+  sourceId: string;
+  name: string;
+  lang: string;
+  displayName: string;
+  kind: "installed" | "repo";
+  extensionPkgName: string | null;
+  extensionName: string | null;
+  extensionInstalled: boolean;
+}
 
 export interface ParsedBackupSource {
   sourceId: string;
@@ -189,3 +204,9 @@ export interface RepoExtensionLookup {
 export interface AvailableExtensionEntry extends Extension {
   repoSources: RepoExtensionLookup[];
 }
+
+export type {
+  MigratableLibraryItem,
+  MigrationCandidate,
+  MigrationSession,
+};

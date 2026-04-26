@@ -7,3 +7,4 @@
 - Preserve upstream Apache-2.0 license files and attribution.
 - When asked to implement, use: Goal / Context / Constraints / Done When.
 - Do not rewrite stable systems unless explicitly instructed.
+- Use the managed runtime entry points described in `docs/runtime-session-policy.md`; do not open raw gates for routine UI inspection.

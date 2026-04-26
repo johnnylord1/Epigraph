@@ -457,7 +457,7 @@
 
 {/if}
 
-<script module lang="ts">
+<script context="module" lang="ts">
   function focusAction(node: HTMLElement) { node.focus(); }
 </script>
 

@@ -4,24 +4,25 @@
   import { listen } from "@tauri-apps/api/event";
   import { getVersion } from "@tauri-apps/api/app";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
   import { gql, gqlUpload } from "./lib/client";
   import { getServerTargetInfo } from "./lib/serverTarget";
+  import ReaderPage from "./components/reader/Reader.svelte";
   import {
     DEFAULT_LOCAL_PROFILE_ID,
     type LocalProfileId,
-    normalizeLocalProfileId,
-    normalizeServerUrl,
-    resolveSessionProfile,
+    normalizeLocalProfileId as normalizeLocalProfileIdFromSession,
+    normalizeServerUrl as normalizeServerUrlFromSession,
+    resolveSessionProfile as resolveSessionProfileFromLocalProfiles,
     type LaunchTargetProfileOverrides,
   } from "./lib/localProfiles";
   import {
     GET_CHAPTERS,
+    GET_CATEGORIES,
     GET_DOWNLOAD_STATUS,
     GET_LIBRARY,
+    GET_LIBRARY_TRACKING_SUMMARY,
     GET_RESTORE_STATUS,
-    GET_EXTENSIONS,
-    GET_SETTINGS,
-    GET_SOURCES,
     GET_TRACKERS,
     RESTORE_BACKUP,
     UPDATE_EXTENSION,
@@ -31,15 +32,23 @@
     addToast,
     openBookReader,
     replaceBooksState,
+    upsertBook,
+    updateSettings,
     setActiveDownloads,
     setActiveBookId,
+    setLibraryBootstrap,
+    setCategories,
     setLibrarySection,
+    setLibraryMangaSnapshot,
+    setLibraryTrackingSummarySnapshot,
+    refreshAppReadingStateFromPersistence,
     setRuntimeSettingsTab,
     setSettingsOpen,
     DEFAULT_HUD_THEME_TOKENS,
     THEME_MOTION_VARS,
   } from "./store/state.svelte";
   import { readFileAsArrayBuffer } from "./lib/books/storage";
+  import { importLocalBookFile } from "./lib/books/importFile";
   import { buildAethonRestorePlan, type AethonRestorePlan, type AethonRestorePlannerRuntime } from "./lib/backup/aethonRestorePlanner";
   import type { BackupLaunchIntent } from "./lib/backup/backupRollout";
   import { restoreAethonBooksPayload } from "./lib/backup/booksBackup";
@@ -51,17 +60,24 @@
   import { buildReconciledBackupFile } from "./lib/reconciliation/restore";
   import { loadSourceInventory } from "./lib/reconciliation/sourceInventory";
   import { initRpc, setIdle, clearReading, destroyRpc } from "./lib/discord";
-  import type { Chapter, DownloadStatus, DownloadQueueItem, Extension, Manga, Source, Tracker } from "./lib/types";
+  import { cache, CACHE_GROUPS, CACHE_KEYS, DEFAULT_TTL_MS } from "./lib/cache";
+  import { normalizeCategories } from "./lib/library/categories";
+  import { loadNovelRepositoryState } from "./lib/novels/repositoryState";
+  import {
+    listenSyncdReplicationError,
+    listenSyncdReplicationState,
+    type TrackerCompletionTracker,
+    type SyncdReplicationSnapshot,
+  } from "./lib/syncdDesktop";
+  import { createBooksCategory, sortBooksCategories } from "./lib/library/domainCategories";
+  import type { Category, Chapter, DownloadStatus, DownloadQueueItem, Manga, Tracker } from "./lib/types";
+  import type { ActiveDownload } from "./store/state.svelte";
   import { traceMediaAudit } from "./lib/mediaAudit";
-  import Layout       from "./components/layout/Layout.svelte";
-  import Reader       from "./components/reader/Reader.svelte";
-  import BookReader   from "./components/reader/BookReader.svelte";
-  import Settings     from "./components/settings/Settings.svelte";
-  import ThemeEditor  from "./components/settings/ThemeEditor.svelte";
-  import TitleBar     from "./components/layout/TitleBar.svelte";
+  import { getImageCacheStats, trimImageCache } from "./lib/imageCache";
   import Toaster      from "./components/layout/Toaster.svelte";
   import SplashScreen from "./components/layout/SplashScreen.svelte";
-  import MangaPreview from "./components/shared/MangaPreview.svelte";
+  import Layout from "./components/layout/Layout.svelte";
+  import { NOVEL_RUNTIME_HOST_LABEL } from "./lib/novels/runtimeHost";
 
   let themeStyleEl: HTMLStyleElement | null = null;
 
@@ -106,6 +122,44 @@
 
   let themeEditorOpen   = $state(false);
   let themeEditorEditId = $state<string | null>(null);
+  const activeReaderChapter = $derived(store.activeChapter);
+  const activeReaderChapterId = $derived(store.activeChapter?.id ?? null);
+  const readerRenderKey = $derived(activeReaderChapterId === null ? null : `${activeReaderChapterId}:${store.readerSessionId}`);
+
+  type LazyModule = { default: any };
+  type LazyKey =
+    | "novelRuntimeHost"
+    | "bookReader"
+    | "novelDetail"
+    | "novelReader"
+    | "themeEditor"
+    | "mangaPreview";
+
+  const lazyLoaders: Record<LazyKey, () => Promise<LazyModule>> = {
+    novelRuntimeHost: () => import("./components/novels/NovelRuntimeHost.svelte"),
+    bookReader: () => import("./components/reader/BookReader.svelte"),
+    novelDetail: () => import("./components/pages/NovelDetail.svelte"),
+    novelReader: () => import("./components/reader/NovelReader.svelte"),
+    themeEditor: () => import("./components/settings/ThemeEditor.svelte"),
+    mangaPreview: () => import("./components/shared/MangaPreview.svelte"),
+  };
+
+  let NovelRuntimeHostComponent = $state<any>(null);
+  let BookReaderComponent = $state<any>(null);
+  let NovelDetailComponent = $state<any>(null);
+  let NovelReaderComponent = $state<any>(null);
+  let ThemeEditorComponent = $state<any>(null);
+  let MangaPreviewComponent = $state<any>(null);
+  const lazyComponentPromises = new Map<LazyKey, Promise<any>>();
+
+  async function ensureLazyComponent(key: LazyKey) {
+    let pending = lazyComponentPromises.get(key);
+    if (!pending) {
+      pending = lazyLoaders[key]().then((module) => module.default);
+      lazyComponentPromises.set(key, pending);
+    }
+    return pending;
+  }
 
   function openThemeEditor(id?: string | null) {
     themeEditorEditId = id ?? null;
@@ -118,22 +172,72 @@
   }
 
   const MAX_ATTEMPTS = 10;
-  const win = getCurrentWindow();
+  let win: Window | null = null;
+  let isNovelRuntimeHostWindow = $state(false);
+
 
   let serverProbeOk = $state(false);
   let shellReady    = $state(false);
   let startupSplashVisible = $state(true);
+  let startupLandingApplied = $state(false);
   let failed        = $state(false);
   let notConfigured = $state(false);
   let startupFailureTitle = $state("Could not reach server");
   let startupFailureDetail = $state("Aethon couldn't reach the selected local profile.");
   let startupStatusText = $state("Initializing profile");
   let idle          = $state(false);
+  let uiMotionActive = $state(true);
   let devSplash     = $state(false);
+  let bootReadyNotified = false;
+  let lastSyncdRevalidatedProfileId = $state<string | null>(null);
+  let syncdRevalidationInFlightProfileId = $state<string | null>(null);
+  const showIdleSplash = $derived(
+    idle
+      && lockEnabled
+      && !store.activeChapter
+      && !store.activeBookReaderId
+      && store.navPage !== "downloads",
+  );
 
   let platformScale = $state(1.0);
   let _appliedZoom = -1;
   let _vhRafId: number | null = null;
+  let uiMotionIdleTimer: ReturnType<typeof window.setTimeout> | null = null;
+  const HUD_BASE_WIDTH = 1440;
+  const HUD_BASE_HEIGHT = 900;
+  const HUD_MIN_SCALE = 0.82;
+  const HUD_MAX_SCALE = 1.08;
+
+  function computeHudScale(uiZoom: number) {
+    const visualWidth = window.innerWidth / uiZoom;
+    const visualHeight = window.innerHeight / uiZoom;
+    const scale = Math.min(visualWidth / HUD_BASE_WIDTH, visualHeight / HUD_BASE_HEIGHT);
+    return Math.min(HUD_MAX_SCALE, Math.max(HUD_MIN_SCALE, scale));
+  }
+
+  function scheduleViewportMetrics(uiZoom = store.settings.uiZoom ?? 1.0) {
+    if (_vhRafId !== null) cancelAnimationFrame(_vhRafId);
+    _vhRafId = requestAnimationFrame(() => {
+      _vhRafId = null;
+      const visualWidth = window.innerWidth / uiZoom;
+      const visualHeight = window.innerHeight / uiZoom;
+      const hudScaleNumeric = computeHudScale(uiZoom);
+      const shellVisualWidth = Math.max(320, visualWidth - (88 * hudScaleNumeric));
+      const hudScale = hudScaleNumeric.toFixed(4);
+      const contentScale = (1 + (hudScaleNumeric - 1) * 0.6).toFixed(4);
+      const resolutionTier =
+        shellVisualWidth <= 760 ? "compact" :
+        shellVisualWidth <= 1220 ? "cozy" :
+        "full";
+      document.documentElement.style.setProperty("--visual-vh", `${visualHeight}px`);
+      document.documentElement.style.setProperty("--visual-vw", `${visualWidth}px`);
+      document.documentElement.style.setProperty("--app-shell-visual-width", `${shellVisualWidth}px`);
+      document.documentElement.style.setProperty("--hud-scale", hudScale);
+      document.documentElement.style.setProperty("--n-hud-scale", hudScale);
+      document.documentElement.style.setProperty("--app-resolution-scale", contentScale);
+      document.documentElement.setAttribute("data-app-resolution-tier", resolutionTier);
+    });
+  }
 
   function applyZoom() {
     const uiZoom = store.settings.uiZoom ?? 1.0;
@@ -144,18 +248,174 @@
     document.documentElement.style.setProperty("--ui-zoom", String(uiZoom));
     document.documentElement.style.setProperty("--ui-scale", String(uiZoom));
     document.documentElement.style.zoom = `${pct}%`;
-
-    if (_vhRafId !== null) cancelAnimationFrame(_vhRafId);
-    _vhRafId = requestAnimationFrame(() => {
-      _vhRafId = null;
-      document.documentElement.style.setProperty("--visual-vh", `${window.innerHeight / uiZoom}px`);
-    });
+    scheduleViewportMetrics(uiZoom);
   }
+
+  $effect(() => {
+    const isReaderSurface = !!store.activeChapter || !!store.activeBookReaderId || !!store.activeNovelReader;
+    document.body.dataset.appShellMode = isReaderSurface ? "reader" : "standard";
+    return () => {
+      delete document.body.dataset.appShellMode;
+    };
+  });
+
+  $effect(() => {
+    if (isNovelRuntimeHostWindow && !NovelRuntimeHostComponent) {
+      void ensureLazyComponent("novelRuntimeHost").then((component) => {
+        if (component) NovelRuntimeHostComponent = component;
+      });
+    }
+  });
+
+  $effect(() => {
+    if (store.activeBookReaderId && !BookReaderComponent) {
+      void ensureLazyComponent("bookReader").then((component) => {
+        if (component) BookReaderComponent = component;
+      });
+    }
+  });
+
+  $effect(() => {
+    if (store.activeNovelReader && !NovelReaderComponent) {
+      void ensureLazyComponent("novelReader").then((component) => {
+        if (component) NovelReaderComponent = component;
+      });
+    }
+  });
+
+  $effect(() => {
+    if (store.activeNovelDetail && !NovelDetailComponent) {
+      void ensureLazyComponent("novelDetail").then((component) => {
+        if (component) NovelDetailComponent = component;
+      });
+    }
+  });
+
+  $effect(() => {
+    if (themeEditorOpen && !ThemeEditorComponent) {
+      void ensureLazyComponent("themeEditor").then((component) => {
+        if (component) ThemeEditorComponent = component;
+      });
+    }
+  });
+
+  $effect(() => {
+    if (!MangaPreviewComponent) {
+      void ensureLazyComponent("mangaPreview").then((component) => {
+        if (component) MangaPreviewComponent = component;
+      });
+    }
+  });
 
   let prevQueue: DownloadQueueItem[] = [];
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
-  let pollInterval: ReturnType<typeof setInterval>;
+  let pollInterval: ReturnType<typeof setInterval> | null = null;
   let unlistenDownload: (() => void) | undefined;
+  let unlistenSyncdReplicationState: (() => void) | undefined;
+  let unlistenSyncdReplicationError: (() => void) | undefined;
+  let syncdListenersAttached = false;
+  let syncdListenersPromise: Promise<void> | null = null;
+  const syncdAppliedMarks = new Map<string, number>();
+  let pageHidden = $state(false);
+  let bootStartedAt = Date.now();
+  let shellReadyAt = $state<number | null>(null);
+  let lastDownloadEventAt = $state(Date.now());
+  let libraryBootstrapScopeKey: string | null = null;
+  let libraryBootstrapInFlight: Promise<void> | null = null;
+
+  type RuntimeDiagnosticsSnapshot = {
+    bootMs: number | null;
+    shellReady: boolean;
+    navPage: string;
+    pageHidden: boolean;
+    activeDownloads: number;
+    lastDownloadEventAgeMs: number;
+    imageCache: ReturnType<typeof getImageCacheStats>;
+  };
+
+  type RuntimeDiagnosticsBridge = {
+    getSnapshot: () => RuntimeDiagnosticsSnapshot;
+    getBackendSnapshot: () => Promise<unknown>;
+  };
+
+  function getRuntimeDiagnosticsSnapshot(): RuntimeDiagnosticsSnapshot {
+    return {
+      bootMs: shellReadyAt === null ? null : Math.max(0, shellReadyAt - bootStartedAt),
+      shellReady,
+      navPage: store.navPage,
+      pageHidden,
+      activeDownloads: store.activeDownloads.length,
+      lastDownloadEventAgeMs: Math.max(0, Date.now() - lastDownloadEventAt),
+      imageCache: getImageCacheStats(),
+    };
+  }
+
+  function preloadLibrarySnapshot() {
+    if (!store.runtimeResolvedLocalProfileId || !store.runtimeServerUrl) return null;
+
+    const scopeKey = `${store.runtimeResolvedLocalProfileId}::${store.runtimeServerUrl}`;
+    if (libraryBootstrapScopeKey === scopeKey && libraryBootstrapInFlight) {
+      return libraryBootstrapInFlight;
+    }
+    if (
+      libraryBootstrapScopeKey === scopeKey
+      && store.libraryBootstrapScopeKey === scopeKey
+      && store.libraryBootstrapStatus === "ready"
+      && store.libraryMangaSnapshot.length > 0
+      && store.categories.length > 0
+    ) {
+      return null;
+    }
+
+    libraryBootstrapScopeKey = scopeKey;
+    setLibraryBootstrap("loading", scopeKey);
+    libraryBootstrapInFlight = (async () => {
+      const [mangas, categories, trackingSummary] = await Promise.all([
+        cache.get(
+          CACHE_KEYS.LIBRARY,
+          () => gql<{ mangas: { nodes: Manga[] } }>(GET_LIBRARY).then((d) => d.mangas.nodes),
+          DEFAULT_TTL_MS,
+          CACHE_GROUPS.LIBRARY,
+        ),
+        cache.get(
+          CACHE_KEYS.CATEGORIES,
+          () => gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES).then((d) => normalizeCategories(d.categories.nodes)),
+          DEFAULT_TTL_MS,
+          CACHE_GROUPS.LIBRARY,
+        ),
+        cache.get(
+          CACHE_KEYS.LIBRARY_TRACKING_SUMMARY,
+          () => gql(GET_LIBRARY_TRACKING_SUMMARY).then((data: any) => data.trackers.nodes as TrackerCompletionTracker[]),
+          DEFAULT_TTL_MS,
+          CACHE_GROUPS.LIBRARY,
+        ),
+      ]);
+
+      setLibraryMangaSnapshot(mangas.map((manga: any) => ({
+        ...manga,
+        chapterCount: manga.chapters?.totalCount ?? manga.chapterCount ?? 0,
+      })));
+      setCategories(normalizeCategories(categories));
+      setLibraryTrackingSummarySnapshot(trackingSummary);
+      setLibraryBootstrap("ready", scopeKey, trackingSummary);
+    })()
+      .catch((error) => {
+        console.error("Library preload failed:", error);
+        setLibraryBootstrap("error", scopeKey);
+      })
+      .finally(() => {
+        libraryBootstrapInFlight = null;
+      });
+
+    return libraryBootstrapInFlight;
+  }
+
+  function updateRuntimeDiagnosticsBridge() {
+    (globalThis as typeof globalThis & { __AETHON_DIAGNOSTICS__?: RuntimeDiagnosticsBridge }).__AETHON_DIAGNOSTICS__ = {
+      getSnapshot: getRuntimeDiagnosticsSnapshot,
+      getBackendSnapshot: () => invoke("get_runtime_diagnostics"),
+    };
+  }
 
   type AethonAuditBridge = {
     showSplash: () => void;
@@ -178,7 +438,60 @@
       activeBookReaderId: string | null;
       settingsOpen: boolean;
       splashVisible: boolean;
+      profileId: string | null;
+      serverUrl: string | null;
     };
+    getSyncdPanelDiagnostics: () => {
+      panelReady: string | null;
+      hostStatus: string | null;
+      hostStatusLive: string | null;
+      hostStartStage: string | null;
+      hostError: string | null;
+      panelError: string | null;
+      hostBundleLength: number;
+      connectStatus: string | null;
+      connectError: string | null;
+      connectStateText: string | null;
+      persistedCount: number;
+    };
+    readNovelLibraryPersistence: () => Promise<{
+      storageRoot: string | null;
+      rawState: string | null;
+      state: unknown;
+    }>;
+    readBookLibraryPersistence: () => Promise<{
+      storageRoot: string | null;
+      rawState: string | null;
+      state: unknown;
+    }>;
+    importBookFromPath: (sourcePath: string) => Promise<{
+      id: string;
+      title: string;
+      subtype: string;
+      categoryId: string;
+    } | null>;
+    mutateSyncdAuditBookFixture: (input?: {
+      mode?: "progress" | "bookmark" | "clear_bookmarks";
+      marker?: string | null;
+      progressPercent?: number | null;
+    }) => Promise<{
+      bookId: string;
+      progressPercent: number | null;
+      bookmarkLabel: string | null;
+      bookmarkCount: number;
+    }>;
+    mutateSyncdAuditNovelFixture: (input?: {
+      mode?: "progress" | "bookmark" | "clear_bookmarks";
+      marker?: string | null;
+      progressPercent?: number | null;
+    }) => Promise<{
+      profileId: string | null;
+      novelId: string;
+      chapterId: string;
+      progressPercent: number | null;
+      bookmarkLabel: string | null;
+      bookmarkCount: number;
+    }>;
     enableMediaAudit: () => void;
     disableMediaAudit: () => void;
   };
@@ -221,6 +534,19 @@
   function openAuditBooksLibrary() {
     openAuditLibrary();
     setLibrarySection("books");
+  }
+
+  function applyStartupLandingPage() {
+    if (startupLandingApplied) return;
+    startupLandingApplied = true;
+    if (!store.settings.launchIntoLibrary) return;
+
+    store.setNavPage("library");
+    if (store.settings.defaultLibrarySection === "books") {
+      setLibrarySection("books");
+    } else if (store.settings.defaultLibrarySection === "comics") {
+      setLibrarySection("comics");
+    }
   }
 
   async function resolveAuditFirstManga(mangaId?: number | null): Promise<Manga | null> {
@@ -296,6 +622,312 @@
       activeBookReaderId: store.activeBookReaderId,
       settingsOpen: store.settingsOpen,
       splashVisible: devSplash || startupSplashVisible,
+      profileId: normalizeLocalProfileIdFromSession(store.runtimeResolvedLocalProfileId),
+      serverUrl: normalizeServerUrlFromSession(store.runtimeServerUrl),
+    };
+  }
+
+  function getSyncdPanelDiagnostics() {
+    const textByTestId = (testId: string): string | null => {
+      const node = document.querySelector<HTMLElement>(`[data-testid="${testId}"]`);
+      return node?.innerText?.trim() || node?.textContent?.trim() || null;
+    };
+
+    const valueLengthByTestId = (testId: string): number => {
+      const node = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-testid="${testId}"]`);
+      return typeof node?.value === "string" ? node.value.trim().length : 0;
+    };
+
+    return {
+      panelReady: document.querySelector("[data-testid='syncd-panel-grid']")?.getAttribute("data-panel-ready") ?? null,
+      hostStatus: textByTestId("syncd-host-status"),
+      hostStatusLive: textByTestId("syncd-host-status-live"),
+      hostStartStage: textByTestId("syncd-host-start-stage"),
+      hostError: textByTestId("syncd-host-error"),
+      panelError: textByTestId("syncd-panel-error"),
+      hostBundleLength: valueLengthByTestId("syncd-bootstrap-bundle-host"),
+      connectStatus: textByTestId("syncd-connect-status"),
+      connectError: textByTestId("syncd-connect-error"),
+      connectStateText: textByTestId("syncd-connect-state"),
+      persistedCount: document.querySelectorAll("[data-testid='syncd-persisted-session-item']").length,
+    };
+  }
+
+  const AUDIT_SYNCD_BOOK_ID = "audit-sync-book";
+  const AUDIT_SYNCD_NOVEL_SOURCE_ID = "audit-sync-source";
+  const AUDIT_SYNCD_NOVEL_PATH = "/audit-sync-novel";
+  const AUDIT_SYNCD_NOVEL_CHAPTER_PATH = "/chapter-1";
+
+  function resolveAuditSyncScope() {
+    const profileId = normalizeLocalProfileIdFromSession(store.runtimeResolvedLocalProfileId);
+    const serverUrl = normalizeServerUrlFromSession(store.runtimeResolvedLocalProfileMeta?.serverUrl ?? store.runtimeServerUrl);
+    return { profileId, serverUrl };
+  }
+
+  async function readAuditNovelLibraryPersistence() {
+    const scope = {
+      profileId: normalizeLocalProfileIdFromSession(store.runtimeResolvedLocalProfileId),
+      serverUrl: normalizeServerUrlFromSession(store.runtimeServerUrl),
+    };
+    const [{ reloadNovelLibraryState }, rawState, storageRoot] = await Promise.all([
+      import("./lib/novels/libraryState"),
+      invoke<string | null>("read_novel_library_state", scope).catch(() => null),
+      invoke<string>("resolve_novel_storage_root", scope).catch(() => null),
+    ]);
+
+    return {
+      storageRoot,
+      rawState,
+      state: await reloadNovelLibraryState(scope),
+    };
+  }
+
+  async function readAuditBookLibraryPersistence() {
+    const [{ reloadBookLibraryState }, rawState, storageRoot] = await Promise.all([
+      import("./lib/books/libraryState"),
+      invoke<string | null>("read_book_library_state").catch(() => null),
+      invoke<string>("resolve_book_storage_root").catch(() => null),
+    ]);
+
+    return {
+      storageRoot,
+      rawState,
+      state: await reloadBookLibraryState(),
+    };
+  }
+
+  async function importAuditBookFromPath(sourcePath: string) {
+    const imported = await importLocalBookFile(sourcePath, { existingBooks: store.books });
+    upsertBook(imported.entry);
+
+    const category = store.settings.booksCategories.find((entry) => entry.name === "Audit Shelf")
+      ?? createBooksCategory(store.settings.booksCategories, "Audit Shelf");
+
+    const booksCategories = sortBooksCategories([
+      ...store.settings.booksCategories.filter((entry) => entry.id !== category.id),
+      category,
+    ]);
+    const previousAssignments = store.settings.booksCategoryAssignments[imported.entry.id] ?? [];
+    const booksCategoryAssignments = {
+      ...store.settings.booksCategoryAssignments,
+      [imported.entry.id]: Array.from(new Set([...previousAssignments, category.id])),
+    };
+
+    updateSettings({
+      booksCategories,
+      booksCategoryAssignments,
+      booksLibraryUi: {
+        ...store.settings.booksLibraryUi,
+        activeCategoryId: category.id,
+        typeFilter: imported.entry.subtype,
+        search: imported.entry.title,
+      },
+    });
+
+    return {
+      id: imported.entry.id,
+      title: imported.entry.title,
+      subtype: imported.entry.subtype,
+      categoryId: category.id,
+    };
+  }
+
+  async function mutateSyncdAuditBookFixture(input?: {
+    mode?: "progress" | "bookmark" | "clear_bookmarks";
+    marker?: string | null;
+    progressPercent?: number | null;
+  }) {
+    const { reloadBookLibraryState, saveBookLibraryState } = await import("./lib/books/libraryState");
+    const mode = input?.mode ?? "progress";
+    const marker = input?.marker?.trim() || "audit";
+    const now = Date.now();
+    const progressPercent = typeof input?.progressPercent === "number"
+      ? Math.max(0, Math.min(1, input.progressPercent))
+      : 0.5;
+
+    const state = await reloadBookLibraryState();
+    const books = state.books.some((entry) => entry.id === AUDIT_SYNCD_BOOK_ID)
+      ? state.books
+      : [
+          ...state.books,
+          {
+            id: AUDIT_SYNCD_BOOK_ID,
+            title: "Audit Sync Book",
+            author: "Aethon",
+            description: "Automation-only sync replication fixture.",
+            coverPath: null,
+            subtype: "epub" as const,
+            createdAt: now,
+            updatedAt: now,
+            importPath: "audit://sync-book.epub",
+            assetPath: "audit://sync-book.epub",
+            sectionCount: 1,
+          },
+        ];
+
+    let bookProgress = state.bookProgress.filter((entry) => entry.bookId !== AUDIT_SYNCD_BOOK_ID);
+    let bookBookmarks = state.bookBookmarks.filter((entry) => !(entry.bookId === AUDIT_SYNCD_BOOK_ID && entry.location === "audit-sync-bookmark"));
+
+    if (mode === "progress") {
+      bookProgress = [
+        ...bookProgress,
+        {
+          bookId: AUDIT_SYNCD_BOOK_ID,
+          location: `audit-progress-${marker}`,
+          href: `/audit/${marker}`,
+          progressPercent,
+          lastReadAt: now,
+          pageIndex: 1,
+          totalPages: 10,
+          sectionLabel: `Audit ${marker}`,
+          renderer: "epub" as const,
+        },
+      ];
+    } else if (mode === "bookmark") {
+      bookBookmarks = [
+        ...bookBookmarks,
+        {
+          bookId: AUDIT_SYNCD_BOOK_ID,
+          location: "audit-sync-bookmark",
+          href: `/audit/bookmark/${marker}`,
+          pageIndex: 1,
+          progressPercent,
+          label: `Audit bookmark ${marker}`,
+          savedAt: now,
+        },
+      ];
+    }
+
+    const saved = await saveBookLibraryState({
+      ...state,
+      books,
+      bookProgress,
+      bookBookmarks,
+      updatedAtMs: now,
+    });
+
+    return {
+      bookId: AUDIT_SYNCD_BOOK_ID,
+      progressPercent: mode === "progress" ? progressPercent : null,
+      bookmarkLabel: mode === "bookmark" ? `Audit bookmark ${marker}` : null,
+      bookmarkCount: saved.bookBookmarks.filter((entry) => entry.bookId === AUDIT_SYNCD_BOOK_ID).length,
+    };
+  }
+
+  async function mutateSyncdAuditNovelFixture(input?: {
+    mode?: "progress" | "bookmark" | "clear_bookmarks";
+    marker?: string | null;
+    progressPercent?: number | null;
+  }) {
+    const scope = resolveAuditSyncScope();
+    if (!scope.profileId) {
+      throw new Error("No active local profile is available for the syncd novel audit fixture.");
+    }
+
+    const {
+      reloadNovelLibraryState,
+      saveNovelLibraryState,
+      upsertNovelInLibrary,
+      markNovelChapterRead,
+    } = await import("./lib/novels/libraryState");
+    const {
+      createNovelLibraryId,
+      createNovelChapterId,
+    } = await import("./lib/novels/domain");
+
+    const mode = input?.mode ?? "progress";
+    const marker = input?.marker?.trim() || "audit";
+    const now = Date.now();
+    const requestedProgressPercent = typeof input?.progressPercent === "number"
+      ? Math.max(0, Math.min(1, input.progressPercent))
+      : 1;
+
+    const novelId = createNovelLibraryId(AUDIT_SYNCD_NOVEL_SOURCE_ID, AUDIT_SYNCD_NOVEL_PATH);
+    const chapterId = createNovelChapterId(novelId, AUDIT_SYNCD_NOVEL_CHAPTER_PATH);
+    const chapterTitle = "Audit Chapter 1";
+
+    let state = await reloadNovelLibraryState(scope);
+    state = upsertNovelInLibrary(state, {
+      id: novelId,
+      sourceId: AUDIT_SYNCD_NOVEL_SOURCE_ID,
+      title: "Audit Sync Novel",
+      path: AUDIT_SYNCD_NOVEL_PATH,
+      coverUrl: null,
+      author: "Aethon",
+      description: "Automation-only sync replication fixture.",
+      status: "ongoing",
+      tags: ["audit", "syncd"],
+      chapterCount: 1,
+      chapters: [
+        {
+          id: chapterId,
+          novelId,
+          path: AUDIT_SYNCD_NOVEL_CHAPTER_PATH,
+          title: chapterTitle,
+          order: 1,
+          releaseTime: null,
+          unread: true,
+        },
+      ],
+      source: {
+        repositoryUrl: "https://audit.invalid/repo",
+        repositoryName: "Audit Repository",
+        pluginId: "audit-sync-plugin",
+        pluginName: "Audit Sync Plugin",
+        pluginVersion: "1.0.0",
+        sourceId: AUDIT_SYNCD_NOVEL_SOURCE_ID,
+        sourceName: "Audit Source",
+        lang: "en",
+      },
+    });
+
+    if (mode === "progress") {
+      state = markNovelChapterRead(state, {
+        novelId,
+        chapterId,
+        chapterTitle,
+      });
+      if (requestedProgressPercent < 1) {
+        state = {
+          ...state,
+          progress: state.progress.map((entry) => entry.novelId === novelId
+            ? { ...entry, progressPercent: requestedProgressPercent, updatedAt: now }
+            : entry),
+          updatedAtMs: now,
+        };
+      }
+    } else if (mode === "bookmark") {
+      state = {
+        ...state,
+        bookmarks: [
+          ...state.bookmarks.filter((entry) => !(entry.novelId === novelId && entry.locator === "audit-sync-novel-bookmark")),
+          {
+            novelId,
+            chapterId,
+            chapterTitle,
+            locator: "audit-sync-novel-bookmark",
+            label: `Audit novel bookmark ${marker}`,
+            savedAt: now,
+          },
+        ],
+        updatedAtMs: now,
+      };
+    } else {
+      state = {
+        ...state,
+        bookmarks: state.bookmarks.filter((entry) => !(entry.novelId === novelId && entry.locator === "audit-sync-novel-bookmark")),
+        updatedAtMs: now,
+      };
+    }
+
+    const saved = await saveNovelLibraryState(state, scope);
+    return {
+      profileId: scope.profileId,
+      novelId,
+      chapterId,
+      progressPercent: mode === "progress" ? requestedProgressPercent : null,
+      bookmarkLabel: mode === "bookmark" ? `Audit novel bookmark ${marker}` : null,
+      bookmarkCount: saved.bookmarks.filter((entry) => entry.novelId === novelId).length,
     };
   }
 
@@ -323,6 +955,12 @@
       openFirstBook: openAuditFirstBook,
       openFirstBookReader: openAuditFirstBookReader,
       getState: getAuditState,
+      getSyncdPanelDiagnostics,
+      readNovelLibraryPersistence: readAuditNovelLibraryPersistence,
+      readBookLibraryPersistence: readAuditBookLibraryPersistence,
+      importBookFromPath: importAuditBookFromPath,
+      mutateSyncdAuditBookFixture,
+      mutateSyncdAuditNovelFixture,
       enableMediaAudit,
       disableMediaAudit,
     };
@@ -414,17 +1052,34 @@
     }
   }
 
+  function mergePausedDownloads(next: ActiveDownload[]): ActiveDownload[] {
+    const merged = new Map<number, ActiveDownload>();
+    next.forEach((item) => merged.set(item.chapterId, item));
+    store.pausedDownloads.forEach((item) => {
+      if (!merged.has(item.chapterId)) {
+        merged.set(item.chapterId, {
+          chapterId: item.chapterId,
+          mangaId: item.mangaId,
+          progress: item.progress,
+          state: "PAUSED",
+        });
+      }
+    });
+    return Array.from(merged.values());
+  }
+
   function applyQueue(next: DownloadQueueItem[]) {
-    detectCompletions(prevQueue, next);
-    prevQueue = next;
-    setActiveDownloads(next.map(item => ({
-      chapterId: item.chapter.id, mangaId: item.chapter.mangaId, progress: item.progress, state: item.state,
-    })));
+      detectCompletions(prevQueue, next);
+      prevQueue = next;
+      setActiveDownloads(mergePausedDownloads(next.map(item => ({
+        chapterId: item.chapter.id, mangaId: item.chapter.mangaId, progress: item.progress, state: item.state,
+      }))));
   }
 
   function resetIdle() {
     if (idleTimer) clearTimeout(idleTimer);
     if (idle) return;
+    if (store.navPage === "downloads") return;
     const ms = (store.settings.idleTimeoutMin ?? 5) * 60 * 1000;
     if (ms === 0) return;
     idleTimer = setTimeout(() => idle = true, ms);
@@ -432,11 +1087,50 @@
 
   const idleEvents = ["mousemove", "mousedown", "keydown", "touchstart", "wheel"] as const;
 
+  function scheduleUiMotionPause() {
+    if (uiMotionIdleTimer) {
+      clearTimeout(uiMotionIdleTimer);
+      uiMotionIdleTimer = null;
+    }
+
+    uiMotionActive = true;
+    if (pageHidden) return;
+
+    uiMotionIdleTimer = window.setTimeout(() => {
+      if (!pageHidden) {
+        uiMotionActive = false;
+      }
+    }, 20_000);
+  }
+
   $effect(() => {
     if (!shellReady) return;
+    if (store.navPage === "downloads") {
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
+      }
+      idle = false;
+      scheduleUiMotionPause();
+      return;
+    }
+    const handleFocus = () => {
+      scheduleUiMotionPause();
+    };
     idleEvents.forEach(e => window.addEventListener(e, resetIdle, { passive: true }));
+    idleEvents.forEach(e => window.addEventListener(e, scheduleUiMotionPause, { passive: true }));
+    window.addEventListener("focus", handleFocus, { passive: true });
     resetIdle();
-    return () => idleEvents.forEach(e => window.removeEventListener(e, resetIdle));
+    scheduleUiMotionPause();
+    return () => {
+      idleEvents.forEach(e => window.removeEventListener(e, resetIdle));
+      idleEvents.forEach(e => window.removeEventListener(e, scheduleUiMotionPause));
+      window.removeEventListener("focus", handleFocus);
+      if (uiMotionIdleTimer) {
+        clearTimeout(uiMotionIdleTimer);
+        uiMotionIdleTimer = null;
+      }
+    };
   });
 
   $effect(() => {
@@ -448,9 +1142,26 @@
     if (!shellReady) return;
     const poll = () => gql<{ downloadStatus: DownloadStatus }>(GET_DOWNLOAD_STATUS)
       .then(d => applyQueue(d.downloadStatus.queue)).catch(console.error);
+    const activeDownloadCount = store.activeDownloads.length;
+    const intervalMs =
+      store.navPage === "downloads" ? 2000 :
+      pageHidden ? 30000 :
+      activeDownloadCount > 0 ? 12000 :
+      0;
+    if (intervalMs <= 0) return;
     poll();
-    pollInterval = setInterval(poll, 2000);
-    return () => clearInterval(pollInterval);
+    pollInterval = setInterval(() => {
+      const shouldPollAggressively = store.navPage === "downloads";
+      const eventAgeMs = Date.now() - lastDownloadEventAt;
+      if (!shouldPollAggressively && eventAgeMs < 5000 && store.activeDownloads.length > 0) {
+        return;
+      }
+      void poll();
+    }, intervalMs);
+    return () => {
+      if (pollInterval) clearInterval(pollInterval);
+      pollInterval = null;
+    };
   });
 
   async function checkForUpdateSilently() {
@@ -548,11 +1259,11 @@
     pendingRestoreMangaBackupPath = launchTarget?.restoreMangaBackupOverride ?? null;
     pendingRestoreAethonBackupPath = launchTarget?.restoreAethonBackupOverride ?? null;
     pendingRestoreHandoff = Boolean(launchTarget?.restoreHandoffOverride);
-    pendingRestoreSourceProfileId = normalizeLocalProfileId(launchTarget?.restoreSourceProfileOverride);
+    pendingRestoreSourceProfileId = normalizeLocalProfileIdFromSession(launchTarget?.restoreSourceProfileOverride);
     runtimeAttachOnly = Boolean(launchTarget?.attachOnlyOverride);
     (window as AethonAuditWindow).__aethonMediaAudit = Boolean(launchTarget?.auditOpenOverride);
 
-    const resolved = resolveSessionProfile(
+    const resolved = resolveSessionProfileFromLocalProfiles(
       launchTarget,
       store.settings.defaultLocalProfileId,
       store.settings.serverUrl,
@@ -566,7 +1277,14 @@
     store.runtimeServerUrl = resolved.effectiveServerUrl;
     store.runtimeServerLabel = resolved.displayLabel;
 
-    if (!resolved.isOverrideSession && normalizeLocalProfileId(store.settings.defaultLocalProfileId) == null) {
+    if (resolved.isOverrideSession && !resolved.attachOnly && resolved.profileId) {
+      updateSettings({
+      defaultLocalProfileId: resolved.profileId,
+        serverUrl: resolved.effectiveServerUrl,
+      });
+    }
+
+    if (!resolved.isOverrideSession && normalizeLocalProfileIdFromSession(store.settings.defaultLocalProfileId) == null) {
       store.settings = { ...store.settings, defaultLocalProfileId: DEFAULT_LOCAL_PROFILE_ID };
     }
 
@@ -583,9 +1301,9 @@
   }
 
   function getProbeBases(): string[] {
-    const primary = normalizeServerUrl(
-      store.runtimeResolvedLocalProfileMeta?.serverUrl
-      ?? store.runtimeServerUrl
+    const primary = normalizeServerUrlFromSession(
+      store.runtimeServerUrl
+      ?? store.runtimeResolvedLocalProfileMeta?.serverUrl
       ?? store.settings.serverUrl
     );
     return primary ? [primary] : [];
@@ -623,7 +1341,7 @@
         issues: restored.issues.map((issue) => ({
           code: issue.code,
           bookId: issue.bookId ?? null,
-          archivePath: issue.archivePath ?? null,
+          path: issue.path ?? null,
         })),
         bookPaths: restored.books.map((book) => ({
           id: book.id,
@@ -712,20 +1430,17 @@
   }
 
   async function loadNovelAuditRuntimeState(): Promise<AethonNovelRuntimeState> {
-    const [settingsData, extensionsData, sourcesData] = await Promise.all([
-      gql<{ settings: { extensionRepos: string[] } }>(GET_SETTINGS),
-      gql<{ extensions: { nodes: Extension[] } }>(GET_EXTENSIONS),
-      gql<{ sources: { nodes: Source[] } }>(GET_SOURCES),
-    ]);
+    const state = await loadNovelRepositoryState({
+      profileId: store.runtimeResolvedLocalProfileId,
+      serverUrl: store.runtimeResolvedLocalProfileMeta?.serverUrl ?? store.runtimeServerUrl,
+    });
 
     return {
-      repositoryUrls: settingsData.settings.extensionRepos ?? [],
-      installedPluginIds: (extensionsData.extensions.nodes ?? [])
-        .filter((extension) => extension.isInstalled)
-        .map((extension) => extension.pkgName),
-      availableSourceIds: (sourcesData.sources.nodes ?? [])
-        .map((source) => source.id)
-        .filter((sourceId) => sourceId !== "0"),
+      repositoryUrls: state.repositories.map((repository) => repository.normalizedUrl),
+      installedPluginIds: state.installedPlugins
+        .filter((plugin) => plugin.enabled)
+        .map((plugin) => plugin.pluginId),
+      availableSourceIds: [...new Set(state.catalogEntries.map((entry) => entry.pluginId))],
     };
   }
 
@@ -816,7 +1531,7 @@
 
       addToast({
         kind: plan.hasBlockedPayloads || plan.hasUnsupportedPayloads
-          ? "warning"
+          ? "error"
           : plan.recommendedSelection.length > 0
             ? "success"
             : "info",
@@ -909,7 +1624,7 @@
 
       const hasBlocked = restored.summary.restoredNeedsRepositoryCount > 0 || restored.summary.restoredNeedsPluginCount > 0;
       const toastKind = hasBlocked
-        ? "warning"
+        ? "error"
         : restored.summary.restoredMetadataOnlyCount > 0
           ? "info"
           : "success";
@@ -1090,32 +1805,28 @@
   function startProbe() {
     cancelProbe = false;
     failed      = false;
+    shellReadyAt = null;
+    bootStartedAt = Date.now();
     setStartupStatusCopy();
     let tries   = 0;
 
     async function probe() {
       if (cancelProbe) return;
       tries++;
-      const s = store.settings;
-      const auth: Record<string, string> = s.serverAuthEnabled && s.serverAuthUser && s.serverAuthPass
-        ? { Authorization: `Basic ${btoa(`${s.serverAuthUser.trim()}:${s.serverAuthPass.trim()}`)}` }
-        : {};
 
       for (const base of getProbeBases()) {
         try {
-          const res = await fetch(`${base}/api/graphql`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...auth },
-            body: JSON.stringify({ query: "{ __typename }" }),
-            signal: AbortSignal.timeout(2000),
-          });
-          if (res.ok && !cancelProbe) {
-            failed = false;
-            serverProbeOk = true;
-            shellReady = true;
-            await applyPendingAuditAethonBackupPlan().catch((error) => {
-              console.warn("Unified backup planning audit failed:", error);
-            });
+          const healthy = await invoke<boolean>("probe_server_health", { serverUrl: base });
+          if (healthy && !cancelProbe) {
+              failed = false;
+              serverProbeOk = true;
+              shellReady = true;
+              shellReadyAt = Date.now();
+              startupSplashVisible = false;
+              applyStartupLandingPage();
+              await applyPendingAuditAethonBackupPlan().catch((error) => {
+                console.warn("Unified backup planning audit failed:", error);
+              });
             await applyPendingAuditBooksRestore().catch((error) => {
               console.warn("Books restore audit failed:", error);
             });
@@ -1125,8 +1836,8 @@
             await applyPendingAuditNovelsRestore().catch((error) => {
               console.warn("Novels restore audit failed:", error);
             });
-            applyPendingRestoreLaunchIntent();
-            if (pendingAuditOpen) {
+              applyPendingRestoreLaunchIntent();
+              if (pendingAuditOpen) {
               const target = pendingAuditOpen;
               const auditMangaId = pendingAuditMangaId;
               const auditChapterId = pendingAuditChapterId;
@@ -1161,105 +1872,342 @@
             ? `This session is attach-only, and the ${activeProfileLabel()} profile was not reachable on ${store.runtimeServerUrl ?? "its expected local server"}.`
             : `Aethon couldn't reach the ${activeProfileLabel()} profile on ${store.runtimeServerUrl ?? "its expected local server"}.`;
         }
-        setTimeout(probe, 2000);
+        setTimeout(probe, 4000);
         return;
       }
-      if (!cancelProbe) setTimeout(probe, 750);
+      if (!cancelProbe) setTimeout(probe, 1000);
     }
 
-    setTimeout(probe, 800);
+    setTimeout(probe, 1250);
   }
 
-  onMount(async () => {
-    document.addEventListener("contextmenu", e => e.preventDefault());
-    const launchTarget = await invoke<LaunchTargetInfo>("get_launch_target").catch(() => null);
-    applyLaunchTarget(launchTarget);
-
-    const initialTarget = getServerTargetInfo();
-    document.title = `Aethon [${initialTarget.title}]`;
-    await win.setTitle(`Aethon [${initialTarget.title}]`).catch(() => {});
-    installAuditBridge();
-    window.addEventListener("keydown", handleAuditShortcut, true);
-
-    platformScale = await invoke<number>("get_platform_ui_scale").catch(() => 1.0);
-    applyZoom();
-
-    store.isFullscreen = await win.isFullscreen();
-
-    const unlistenResize = await win.onResized(async () => {
-      store.isFullscreen = await win.isFullscreen();
-    });
-
-    const unlistenScale = await win.onScaleChanged(async (event) => {
-      platformScale = event.payload.scaleFactor;
-      applyZoom();
-    });
-
-    const effectiveServerUrl = normalizeServerUrl(store.runtimeServerUrl ?? store.settings.serverUrl)
-      ?? store.runtimeResolvedLocalProfileMeta?.serverUrl
-      ?? "http://127.0.0.1:4667";
-    let shouldAutoStartServer = false;
+  onMount(() => {
     try {
-      const parsed = new URL(effectiveServerUrl);
-      const host = parsed.hostname.toLowerCase();
-      const isLoopback = host === "127.0.0.1" || host === "localhost";
-      shouldAutoStartServer = store.settings.autoStartServer && isLoopback && !runtimeAttachOnly;
-    } catch {
-      shouldAutoStartServer = false;
+      win = getCurrentWindow();
+    } catch (error) {
+      console.warn("Unable to access current window during startup:", error);
+      win = null;
     }
 
-    if (store.settings.flareSolverrLocalAutoStart) {
-      invoke("start_flaresolverr_local").catch(() => {});
+    try {
+      isNovelRuntimeHostWindow = getCurrentWebviewWindow().label === NOVEL_RUNTIME_HOST_LABEL;
+    } catch (error) {
+      console.warn("Unable to inspect current webview during startup:", error);
+      isNovelRuntimeHostWindow = false;
     }
 
-    if (shouldAutoStartServer) {
-      invoke<void>("spawn_server", {
-        binary: store.settings.serverBinary,
-        serverUrl: effectiveServerUrl,
-      }).catch((err: any) => {
-        if (err?.kind === "NotConfigured") {
-          notConfigured = true;
-          startupFailureTitle = `Server not configured for ${activeProfileLabel()} profile`;
-          startupFailureDetail = "Set up a local Suwayomi server before booting this profile.";
-        } else if (err?.kind === "AttachOnlyTarget") {
-          console.info("Attach-only target skipped local server spawn.");
-        } else {
-          startupFailureTitle = `Could not start ${activeProfileLabel()} profile`;
-          startupFailureDetail = err?.message ?? "The selected profile did not complete a healthy local boot.";
-          console.warn("Could not start server:", err);
+    if (isNovelRuntimeHostWindow) {
+      startupSplashVisible = false;
+      shellReady = false;
+      return () => {};
+    }
+
+    const handleVisibilityChange = () => {
+      pageHidden = document.hidden;
+      uiMotionActive = !pageHidden;
+      if (pageHidden) {
+        trimImageCache();
+      }
+      scheduleUiMotionPause();
+      updateRuntimeDiagnosticsBridge();
+    };
+    pageHidden = document.hidden;
+    uiMotionActive = !pageHidden;
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("storage", refreshAppReadingStateFromPersistence, { passive: true });
+
+    let cancelled = false;
+    let unlistenResize = () => {};
+    let unlistenScale = () => {};
+    let probeStarted = false;
+    async function handleReplicationState(payload: SyncdReplicationSnapshot) {
+      if (!payload.lastAppliedAtMs || payload.lastAppliedScopes.length === 0) return;
+      if (syncdAppliedMarks.get(payload.localProfileId) === payload.lastAppliedAtMs) return;
+      syncdAppliedMarks.set(payload.localProfileId, payload.lastAppliedAtMs);
+
+      if (payload.lastAppliedScopes.includes("books:global")) {
+        try {
+          const { reloadBookLibraryState } = await import("./lib/books/libraryState");
+          const next = await reloadBookLibraryState();
+          replaceBooksState({
+            books: next.books,
+            bookProgress: next.bookProgress,
+            bookBookmarks: next.bookBookmarks,
+            booksCategories: next.booksCategories,
+            booksCategoryAssignments: next.booksCategoryAssignments,
+            booksLibraryUi: next.booksLibraryUi,
+          });
+        } catch (error) {
+          console.warn("Failed to refresh books after syncd replication apply:", error);
         }
-      });
+      }
+
+      if (payload.lastAppliedScopes.some((scope) => scope.startsWith("novels:profile:"))) {
+        const currentProfileId =
+          normalizeLocalProfileIdFromSession(store.runtimeResolvedLocalProfileId)
+          ?? normalizeLocalProfileIdFromSession(store.settings.defaultLocalProfileId);
+        if (currentProfileId && payload.localProfileId === currentProfileId) {
+          try {
+            const { reloadNovelLibraryState } = await import("./lib/novels/libraryState");
+            await reloadNovelLibraryState({ profileId: currentProfileId });
+            const { reloadNovelSourceClassificationState } = await import("./lib/novels/sourceClassificationState");
+            await reloadNovelSourceClassificationState({ profileId: currentProfileId });
+          } catch (error) {
+            console.warn("Failed to refresh novels after syncd replication apply:", error);
+          }
+          store.bumpContentSetupVersion();
+        }
+      }
     }
+    const ensureProbeStarted = () => {
+      if (probeStarted || cancelled) return;
+      probeStarted = true;
+      startProbe();
+    };
+    document.addEventListener("contextmenu", e => e.preventDefault());
+    ensureProbeStarted();
+    void (async () => {
+      const launchTarget = await invoke<LaunchTargetInfo>("get_launch_target").catch(() => null);
+      if (cancelled) return;
+      applyLaunchTarget(launchTarget);
 
-    startProbe();
+      const initialTarget = getServerTargetInfo();
+      document.title = `Aethon [${initialTarget.title}]`;
+      if (win) {
+        await win.setTitle(`Aethon [${initialTarget.title}]`).catch(() => {});
+      }
+      if (cancelled) return;
+      installAuditBridge();
+      window.addEventListener("keydown", handleAuditShortcut, true);
 
-    type P = { chapterId: number; mangaId: number; progress: number }[];
-    unlistenDownload = await listen<P>("download-progress", e => { setActiveDownloads(e.payload); });
+      platformScale = await invoke<number>("get_platform_ui_scale").catch(() => 1.0);
+      if (cancelled) return;
+      applyZoom();
+
+      store.isFullscreen = win ? await win.isFullscreen().catch(() => false) : false;
+      if (cancelled) return;
+
+      const resizeUnlisten = win
+        ? await win.onResized(async () => {
+            store.isFullscreen = win ? await win.isFullscreen().catch(() => store.isFullscreen) : store.isFullscreen;
+            scheduleViewportMetrics();
+          }).catch((error) => {
+            console.warn("Window resize listener failed during startup:", error);
+            return () => {};
+          })
+        : () => {};
+      if (cancelled) {
+        resizeUnlisten();
+        return;
+      }
+      unlistenResize = resizeUnlisten;
+
+      const scaleUnlisten = win
+        ? await win.onScaleChanged(async (event) => {
+            platformScale = event.payload.scaleFactor;
+            applyZoom();
+          }).catch((error) => {
+            console.warn("Window scale listener failed during startup:", error);
+            return () => {};
+          })
+        : () => {};
+      if (cancelled) {
+        scaleUnlisten();
+        return;
+      }
+      unlistenScale = scaleUnlisten;
+
+        const effectiveServerUrl = normalizeServerUrlFromSession(store.runtimeServerUrl ?? store.settings.serverUrl)
+          ?? store.runtimeResolvedLocalProfileMeta?.serverUrl
+          ?? "http://127.0.0.1:4667";
+        let shouldAutoStartServer = false;
+        try {
+          const parsed = new URL(effectiveServerUrl);
+          const host = parsed.hostname.toLowerCase();
+          const isLoopback = host === "127.0.0.1" || host === "localhost";
+          const launchProfile = (store.runtimeServerLabel ?? launchTarget?.profileLabelOverride ?? "").trim().toUpperCase();
+          shouldAutoStartServer =
+            !runtimeAttachOnly &&
+            (launchProfile === "MAIN" || (isLoopback && store.settings.autoStartServer));
+        } catch {
+          shouldAutoStartServer = false;
+        }
+
+      if (store.settings.flareSolverrLocalAutoStart) {
+        invoke("start_flaresolverr_local").catch(() => {});
+      }
+
+      if (shouldAutoStartServer) {
+        invoke<void>("spawn_server", {
+          binary: store.settings.serverBinary,
+          serverUrl: effectiveServerUrl,
+        }).catch((err: any) => {
+          if (err?.kind === "NotConfigured") {
+            notConfigured = true;
+            startupFailureTitle = `Server not configured for ${activeProfileLabel()} profile`;
+            startupFailureDetail = "Set up a local Suwayomi server before booting this profile.";
+          } else if (err?.kind === "AttachOnlyTarget") {
+            console.info("Attach-only target skipped local server spawn.");
+          } else {
+            startupFailureTitle = `Could not start ${activeProfileLabel()} profile`;
+            startupFailureDetail = err?.message ?? "The selected profile did not complete a healthy local boot.";
+            console.warn("Could not start server:", err);
+          }
+        });
+      }
+
+      ensureProbeStarted();
+
+      type P = { chapterId: number; mangaId: number; progress: number }[];
+        const downloadUnlisten = await listen<P>("download-progress", e => {
+          lastDownloadEventAt = Date.now();
+          setActiveDownloads(mergePausedDownloads(e.payload));
+        }).catch((error) => {
+        console.warn("Download progress listener failed during startup:", error);
+        return () => {};
+      });
+      if (cancelled) {
+        downloadUnlisten();
+        return;
+      }
+      unlistenDownload = downloadUnlisten;
+    })().catch((error) => {
+      console.error("App startup bootstrap failed before profile probe settled:", error);
+      if (!cancelled) {
+        ensureProbeStarted();
+      }
+    });
 
     return () => {
+      cancelled = true;
       cancelProbe = true;
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("storage", refreshAppReadingStateFromPersistence);
       unlistenResize();
       unlistenScale();
       destroyRpc();
       if (idleTimer) clearTimeout(idleTimer);
       if (pollInterval) clearInterval(pollInterval);
       unlistenDownload?.();
+      unlistenSyncdReplicationState?.();
+      unlistenSyncdReplicationError?.();
       window.removeEventListener("keydown", handleAuditShortcut, true);
       uninstallAuditBridge();
+      delete (globalThis as typeof globalThis & { __AETHON_DIAGNOSTICS__?: unknown }).__AETHON_DIAGNOSTICS__;
     };
+  });
+
+  $effect(() => {
+    updateRuntimeDiagnosticsBridge();
+  });
+
+  $effect(() => {
+    if (!shellReady || isNovelRuntimeHostWindow) {
+      return;
+    }
+
+    const shouldListenToSyncdReplication =
+      store.navPage === "settings" ||
+      store.librarySection === "books" ||
+      !!store.activeBookReaderId ||
+      !!store.activeNovelReader ||
+      !!store.activeNovelDetail;
+
+    if (shouldListenToSyncdReplication) {
+      if (!syncdListenersAttached && !syncdListenersPromise) {
+        syncdListenersPromise = (async () => {
+          const replicationStateUnlisten = await listenSyncdReplicationState((payload) => {
+            void handleReplicationState(payload);
+          }).catch((error) => {
+            console.warn("syncd replication state listener failed during startup:", error);
+            return () => {};
+          });
+          if (replicationStateUnlisten) {
+            unlistenSyncdReplicationState = replicationStateUnlisten;
+          }
+
+          const replicationErrorUnlisten = await listenSyncdReplicationError((payload) => {
+            console.warn("syncd replication runtime warning:", payload);
+          }).catch((error) => {
+            console.warn("syncd replication error listener failed during startup:", error);
+            return () => {};
+          });
+          if (replicationErrorUnlisten) {
+            unlistenSyncdReplicationError = replicationErrorUnlisten;
+          }
+
+          syncdListenersAttached = true;
+        })().finally(() => {
+          syncdListenersPromise = null;
+        });
+      }
+    } else {
+      unlistenSyncdReplicationState?.();
+      unlistenSyncdReplicationError?.();
+      unlistenSyncdReplicationState = undefined;
+      unlistenSyncdReplicationError = undefined;
+      syncdListenersAttached = false;
+    }
   });
 
   $effect(() => {
     const target = getServerTargetInfo();
     const title = `Aethon [${target.title}]`;
     document.title = title;
-    void win.setTitle(title).catch(() => {});
+    if (win) {
+      void win.setTitle(title).catch(() => {});
+    }
   });
 
   $effect(() => {
     if (!shellReady) return;
     const timer = setTimeout(checkForUpdateSilently, 5_000);
     return () => clearTimeout(timer);
+  });
+
+  $effect(() => {
+    if (!shellReady || isNovelRuntimeHostWindow) return;
+    if (store.navPage !== "home" && store.navPage !== "library") return;
+    if (!store.runtimeResolvedLocalProfileId || !store.runtimeServerUrl) return;
+    void preloadLibrarySnapshot();
+  });
+
+  $effect(() => {
+    if (!shellReady) return;
+    if (store.navPage !== "home") return;
+  });
+
+  $effect(() => {
+    document.documentElement.dataset.aethonMotion = uiMotionActive ? "active" : "idle";
+    document.body.dataset.aethonMotion = uiMotionActive ? "active" : "idle";
+  });
+
+  $effect(() => {
+    if (isNovelRuntimeHostWindow || !shellReady) return;
+
+    const profileId =
+          normalizeLocalProfileIdFromSession(store.runtimeResolvedLocalProfileId)
+          ?? normalizeLocalProfileIdFromSession(store.settings.defaultLocalProfileId);
+
+    if (!profileId) return;
+    if (lastSyncdRevalidatedProfileId === profileId) return;
+    if (syncdRevalidationInFlightProfileId === profileId) return;
+
+    syncdRevalidationInFlightProfileId = profileId;
+    void invoke("syncd_revalidate_persisted_sync_sessions", { profileId })
+      .then(() => {
+        if (syncdRevalidationInFlightProfileId === profileId) {
+          lastSyncdRevalidatedProfileId = profileId;
+        }
+      })
+      .catch((error) => {
+        console.warn("syncd desktop session revalidation failed:", error);
+      })
+      .finally(() => {
+        if (syncdRevalidationInFlightProfileId === profileId) {
+          syncdRevalidationInFlightProfileId = null;
+        }
+      });
   });
 
   $effect(() => {
@@ -1301,6 +2249,7 @@
     notConfigured = false;
     serverProbeOk = false;
     shellReady    = false;
+    startupLandingApplied = false;
     startupSplashVisible = true;
     setStartupStatusCopy();
     startProbe();
@@ -1312,45 +2261,128 @@
     shellReady    = true;
     startupSplashVisible = false;
   }
-</script>
 
-{#if shellReady}
-  <div id="app-shell" class="root">
-    {#if idle && !store.activeChapter && !store.activeBookReaderId}
-      <SplashScreen mode="idle" showCards={store.settings.splashCards ?? true}
-        onDismiss={() => { idle = false; resetIdle(); }} />
+  $effect(() => {
+    if (isNovelRuntimeHostWindow || bootReadyNotified || !shellReady) {
+      return;
+    }
+
+    bootReadyNotified = true;
+    if (!failed && !notConfigured) {
+      startupSplashVisible = false;
+    }
+    queueMicrotask(() => {
+      window.dispatchEvent(new CustomEvent("aethon:boot-ready"));
+    });
+  });
+  </script>
+
+  {#if isNovelRuntimeHostWindow}
+    {#if NovelRuntimeHostComponent}
+      {@const NovelRuntimeHostView = NovelRuntimeHostComponent}
+      <NovelRuntimeHostView />
+    {:else}
+      <SplashScreen mode="idle" showCards={store.settings.splashCards ?? true} />
     {/if}
-    {#if !store.activeChapter && !store.activeBookReaderId}<TitleBar />{/if}
-    <div class="content">
-      {#if store.activeChapter}<Reader />{:else if store.activeBookReaderId}<BookReader />{:else}<Layout />{/if}
+  {:else}
+    <div id="app-shell" class="root aethon-app-shell" class:aethon-motion-idle={!uiMotionActive}>
+      {#if showIdleSplash}
+        <SplashScreen mode="idle" showCards={store.settings.splashCards ?? true}
+          onDismiss={() => { idle = false; resetIdle(); }} />
+      {/if}
+      <div class="content">
+        {#if activeReaderChapter}
+          {#key readerRenderKey}
+            <ReaderPage />
+          {/key}
+        {:else if store.activeBookReaderId}
+          {#if BookReaderComponent}
+            {@const BookReaderView = BookReaderComponent}
+            <BookReaderView />
+          {:else}
+            <div class="page-loading" aria-busy="true" aria-live="polite">Loading book...</div>
+          {/if}
+        {:else if store.activeNovelReader}
+          {#if NovelReaderComponent}
+            {@const NovelReaderView = NovelReaderComponent}
+            <NovelReaderView />
+          {:else}
+            <div class="page-loading" aria-busy="true" aria-live="polite">Loading novel...</div>
+          {/if}
+        {:else if store.activeNovelDetail}
+          {#if NovelDetailComponent}
+            {@const NovelDetailView = NovelDetailComponent}
+            <NovelDetailView />
+          {:else}
+            <div class="page-loading" aria-busy="true" aria-live="polite">Loading details...</div>
+          {/if}
+        {:else if store.navPage === "settings" || store.navPage === "home" || store.navPage === "library" || store.navPage === "search" || store.navPage === "downloads"}
+          <Layout
+            onOpenThemeEditor={openThemeEditor}
+            {backupAuditPlan}
+            {backupRestoreLaunchIntent}
+          />
+        {:else}
+          <Layout
+            onOpenThemeEditor={openThemeEditor}
+            {backupAuditPlan}
+            {backupRestoreLaunchIntent}
+          />
+        {/if}
+      </div>
+      <div class="aethon-search-dim-layer" aria-hidden="true"></div>
+      {#if themeEditorOpen}
+        {#if ThemeEditorComponent}
+          {@const ThemeEditorView = ThemeEditorComponent}
+          <ThemeEditorView
+            bind:editingId={themeEditorEditId}
+            onClose={closeThemeEditor}
+          />
+        {/if}
+      {/if}
+      {#if MangaPreviewComponent}
+        {@const MangaPreviewView = MangaPreviewComponent}
+        <MangaPreviewView />
+      {/if}
+      <Toaster />
     </div>
-    {#if store.settingsOpen}<Settings onOpenThemeEditor={openThemeEditor} backupAuditPlan={backupAuditPlan} backupRestoreLaunchIntent={backupRestoreLaunchIntent} />{/if}
-    {#if themeEditorOpen}
-      <ThemeEditor
-        bind:editingId={themeEditorEditId}
-        onClose={closeThemeEditor}
-      />
-    {/if}
-    <MangaPreview />
-    <Toaster />
-  </div>
-{/if}
 
-{#if devSplash}
-  <SplashScreen mode="idle" showFps showCards={store.settings.splashCards ?? true}
-    onDismiss={() => setTimeout(() => devSplash = false, 340)} />
-{:else if startupSplashVisible}
-  <SplashScreen mode="loading" ringFull={serverProbeOk} {failed} {notConfigured}
-    failureTitle={startupFailureTitle}
-    failureDetail={startupFailureDetail}
-    statusText={startupStatusText}
-    showCards={store.settings.splashCards ?? true}
-    onReady={() => startupSplashVisible = false}
-    onRetry={handleRetry}
-    onBypass={handleBypass} />
+  {#if devSplash}
+    <SplashScreen mode="idle" showFps showCards={store.settings.splashCards ?? true}
+      onDismiss={() => setTimeout(() => devSplash = false, 340)} />
+  {:else if startupSplashVisible}
+    <SplashScreen mode="loading" interactive={!shellReady} ringFull={serverProbeOk} {failed} {notConfigured}
+      failureTitle={startupFailureTitle}
+      failureDetail={startupFailureDetail}
+      statusText={startupStatusText}
+      showCards={store.settings.splashCards ?? true}
+      onReady={() => startupSplashVisible = false}
+      onRetry={handleRetry}
+      onBypass={handleBypass} />
+  {/if}
 {/if}
 
 <style>
-  .root { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
-  .content { flex: 1; overflow: hidden; }
+  .root {
+    position: relative;
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg-void);
+  }
+
+  .content {
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .page-loading {
+    display: grid;
+    place-items: center;
+    min-height: 100%;
+    color: var(--n-text-muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
 </style>

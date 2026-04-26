@@ -33,7 +33,7 @@
 - If profile selection grows later, prefer startup-time flows before any runtime server handoff ideas
 
 ## Deferred / Research Tracks
-- Sync / Suwayomi multi-device architecture is still a research track and has not been merged into the runtime plan
+- Sync / Suwayomi multi-device architecture research is now superseded by the closed syncd implementation; future work should build on the existing sync foundation instead of reopening backend contracts by default
 - Docker-managed FlareSolverr is still optional and should remain secondary to the local/external flow
 - Bundling FlareSolverr inside Aethon is explicitly deferred
 

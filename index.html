@@ -11,11 +11,15 @@
         height: 100%;
         margin: 0;
         overflow: hidden;
-        background: #090d0b;
+        background:
+          linear-gradient(145deg, rgba(13, 12, 22, 0.74), rgba(4, 4, 8, 0.88) 46%, rgba(4, 4, 8, 0.96)),
+          linear-gradient(35deg, rgba(43, 35, 76, 0.072), transparent 38%, rgba(112, 96, 176, 0.038) 72%, transparent),
+          repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.009) 0 1px, transparent 1px 5px),
+          #030306;
       }
 
       body {
-        color: #d8ded9;
+        color: rgba(239, 234, 255, 0.88);
       }
 
       #boot-splash {
@@ -25,8 +29,10 @@
         display: grid;
         place-items: center;
         background:
-          radial-gradient(circle at 50% 45%, rgba(45, 122, 95, 0.12), transparent 19rem),
-          #090d0b;
+          linear-gradient(145deg, rgba(13, 12, 22, 0.74), rgba(4, 4, 8, 0.88) 46%, rgba(4, 4, 8, 0.96)),
+          linear-gradient(35deg, rgba(43, 35, 76, 0.072), transparent 38%, rgba(112, 96, 176, 0.038) 72%, transparent),
+          repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.009) 0 1px, transparent 1px 5px),
+          #030306;
         opacity: 1;
         transition: opacity 180ms ease;
         pointer-events: none;
@@ -36,22 +42,172 @@
         opacity: 0;
       }
 
-      #boot-splash svg {
-        width: 112px;
-        height: 112px;
-        filter: drop-shadow(0 0 18px rgba(45, 122, 95, 0.16));
+      .boot-splash__stage {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        display: grid;
+        place-items: center;
+        overflow: hidden;
+      }
+
+      .boot-splash__identity {
+        position: relative;
+        width: min(470px, 54vw);
+        height: min(470px, 54vw);
+        display: grid;
+        place-items: center;
+        transform: translateY(-64px);
+      }
+
+      .boot-splash__mark {
+        width: 68%;
+        height: 68%;
+        object-fit: contain;
+        filter:
+          drop-shadow(0 0 12px rgba(218, 209, 255, 0.08))
+          drop-shadow(0 0 34px rgba(139, 119, 224, 0.065))
+          drop-shadow(0 0 70px rgba(64, 54, 125, 0.05));
+      }
+
+      .boot-splash__dock {
+        position: absolute;
+        left: 50%;
+        top: calc(50% + 88px);
+        transform: translateX(-50%);
+        width: min(320px, calc(100% - 96px));
+        display: grid;
+        place-items: center;
+        gap: 7px;
+        color: rgba(239, 234, 255, 0.3);
+        font-size: 10px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        text-align: center;
+      }
+
+      .boot-splash__value {
+        color: rgba(239, 234, 255, 0.72);
+        letter-spacing: 0.16em;
+      }
+
+      .boot-splash__line {
+        height: 1px;
+        width: 100%;
+        max-width: 240px;
+        overflow: hidden;
+        background: linear-gradient(90deg, transparent, rgba(239, 234, 255, 0.14), transparent);
+      }
+
+      .boot-splash__line::after {
+        content: "";
+        display: block;
+        width: 46%;
+        height: 100%;
+        background: linear-gradient(90deg, transparent, rgba(239, 234, 255, 0.78), transparent);
+        animation: boot-splash-shimmer 1.55s ease-in-out infinite;
+      }
+
+      .boot-splash__corner {
+        position: absolute;
+        width: 7px;
+        height: 7px;
+        opacity: 0.18;
+      }
+
+      .boot-splash__corner::before,
+      .boot-splash__corner::after {
+        content: "";
+        position: absolute;
+        background: rgba(239, 234, 255, 0.7);
+      }
+
+      .boot-splash__corner::before {
+        width: 7px;
+        height: 1px;
+      }
+
+      .boot-splash__corner::after {
+        width: 1px;
+        height: 7px;
+      }
+
+      .boot-splash__corner--tl { left: 18px; top: 18px; }
+      .boot-splash__corner--tr { right: 18px; top: 18px; transform: rotate(90deg); }
+      .boot-splash__corner--br { right: 18px; bottom: 18px; transform: rotate(180deg); }
+      .boot-splash__corner--bl { left: 18px; bottom: 18px; transform: rotate(270deg); }
+
+      @keyframes boot-splash-shimmer {
+        from { transform: translateX(-110%); }
+        to { transform: translateX(250%); }
       }
     </style>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@200;300;400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:wght@400;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Zilla+Slab:wght@400;500;600&display=swap" rel="stylesheet">
   </head>
   <body>
     <div id="boot-splash" aria-hidden="true">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-        <g transform="translate(256,265) rotate(7) scale(0.098,-0.098) translate(-5000,-4800)" fill="#2d7a5f" stroke="none">
-          <path d="M4908 6615 c-597 -629 -935 -1264 -934 -1755 0 -508 195 -778 790 -1098 l194 -104 22 -114 c33 -164 76 -271 140 -347 80 -94 106 -62 77 94 -47 255 43 443 294 613 797 539 714 1392 -250 2551 -230 278 -224 275 -333 160z m52 -945 c0 -472 -8 -850 -17 -850 -36 0 -693 703 -692 740 2 48 167 321 309 509 175 233 359 451 380 451 13 0 20 -304 20 -850z m183 775 c120 -126 357 -447 356 -482 0 -18 -47 -83 -105 -144 -57 -61 -151 -163 -208 -225 -151 -166 -146 -180 -146 406 0 286 7 520 16 520 9 0 48 -34 87 -75z m541 -750 c86 -150 196 -391 196 -430 0 -8 -25 -42 -55 -75 -31 -33 -149 -163 -264 -290 -339 -374 -480 -520 -501 -520 -13 0 -20 167 -20 465 l1 465 151 170 c83 94 193 217 244 275 122 138 137 135 248 -60z m-1098 -633 l374 -378 0 -462 c0 -254 -5 -462 -11 -462 -6 0 -55 23 -110 50 l-99 51 0 208 c0 259 -11 288 -176 457 -196 200 -188 199 -326 62 l-117 -116 -35 79 c-71 161 -39 569 64 816 42 100 20 116 436 -305z m1349 23 c109 -390 -87 -848 -475 -1111 -207 -139 -305 -262 -338 -420 -7 -31 -21 -56 -32 -56 -36 -1 -46 86 -48 405 l-2 313 123 137 c68 75 214 236 325 357 454 493 421 466 447 375z m-1292 -785 c12 -29 15 -118 7 -215 l-14 -166 -73 44 c-174 104 -403 341 -403 416 0 15 47 70 105 123 l104 98 127 -125 c70 -69 136 -147 147 -175z"/>
-        </g>
-      </svg>
+      <div class="boot-splash__stage">
+        <i class="boot-splash__corner boot-splash__corner--tl"></i>
+        <i class="boot-splash__corner boot-splash__corner--tr"></i>
+        <i class="boot-splash__corner boot-splash__corner--br"></i>
+        <i class="boot-splash__corner boot-splash__corner--bl"></i>
+        <div class="boot-splash__identity">
+          <img class="boot-splash__mark" src="/src/assets/aethon-splash-mark.png" alt="" />
+        </div>
+        <div class="boot-splash__dock">
+          <div class="boot-splash__value">Initializing profile</div>
+          <div class="boot-splash__line"></div>
+        </div>
+      </div>
     </div>
     <div id="app"></div>
+    <script>
+      (() => {
+        const bootSplash = document.getElementById("boot-splash");
+        if (!bootSplash) return;
+
+        let dismissed = false;
+        let fallbackTimer = null;
+        let observer = null;
+
+        const dismiss = () => {
+          if (dismissed) return;
+          dismissed = true;
+          if (fallbackTimer !== null) {
+            window.clearTimeout(fallbackTimer);
+            fallbackTimer = null;
+          }
+          if (observer) {
+            observer.disconnect();
+            observer = null;
+          }
+          bootSplash.classList.add("boot-splash--gone");
+          window.setTimeout(() => bootSplash.remove(), 220);
+        };
+
+        const checkForAppShell = () => {
+          if (dismissed) return;
+          if (document.getElementById("app-shell")) {
+            dismiss();
+          }
+        };
+
+        if ("MutationObserver" in window) {
+          observer = new MutationObserver(() => checkForAppShell());
+          observer.observe(document.documentElement, {
+            childList: true,
+            subtree: true,
+          });
+        }
+
+        window.addEventListener("aethon:boot-ready", checkForAppShell, { once: true });
+        checkForAppShell();
+        fallbackTimer = window.setTimeout(dismiss, 30000);
+      })();
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

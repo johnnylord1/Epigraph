@@ -44,6 +44,7 @@ export interface AethonNovelSourceIdentity {
 export interface AethonNovelEntry {
   id: string;
   title: string;
+  path: string;
   author?: string | null;
   description?: string | null;
   coverUrl?: string | null;
@@ -83,8 +84,19 @@ export interface AethonNovelHistoryEntry {
   readAt: number;
 }
 
+export interface AethonNovelChapterEntry {
+  id: string;
+  novelId: string;
+  path: string;
+  title: string;
+  order: number;
+  releaseTime: number | null;
+  unread: boolean;
+}
+
 export interface AethonNovelsSnapshot {
   entries: AethonNovelEntry[];
+  chapters: AethonNovelChapterEntry[];
   progress: AethonNovelProgressEntry[];
   bookmarks: AethonNovelBookmarkEntry[];
   history: AethonNovelHistoryEntry[];
@@ -96,6 +108,7 @@ interface NovelsPayloadFile {
   version: 1;
   exportMode: AethonNovelsExportMode;
   entries: AethonNovelEntry[];
+  chapters: AethonNovelChapterEntry[];
   progress: AethonNovelProgressEntry[];
   bookmarks: AethonNovelBookmarkEntry[];
   history: AethonNovelHistoryEntry[];
@@ -232,10 +245,12 @@ function normalizeSourceIdentity(source: AethonNovelSourceIdentity | null | unde
 function normalizeEntry(entry: AethonNovelEntry, index: number): AethonNovelEntry {
   const id = normalizeText(entry?.id) ?? `novel-${index + 1}`;
   const title = normalizeText(entry?.title) ?? `Novel ${index + 1}`;
+  const path = normalizeText(entry?.path) ?? normalizeText(entry?.externalUrl) ?? `/${id}`;
 
   return {
     id,
     title,
+    path,
     author: normalizeText(entry?.author),
     description: normalizeText(entry?.description),
     coverUrl: normalizeText(entry?.coverUrl),
@@ -284,9 +299,26 @@ function normalizeHistoryEntry(entry: AethonNovelHistoryEntry): AethonNovelHisto
   };
 }
 
+function normalizeChapterEntry(entry: AethonNovelChapterEntry): AethonNovelChapterEntry {
+  return {
+    id: normalizeText(entry?.id) ?? "",
+    novelId: normalizeText(entry?.novelId) ?? "",
+    path: normalizeText(entry?.path) ?? "",
+    title: normalizeText(entry?.title) ?? "",
+    order: typeof entry?.order === "number" ? entry.order : 0,
+    releaseTime: typeof entry?.releaseTime === "number" ? entry.releaseTime : null,
+    unread: entry?.unread !== false,
+  };
+}
+
 export function normalizeAethonNovelsSnapshot(snapshot: AethonNovelsSnapshot): AethonNovelsSnapshot {
   return {
     entries: Array.isArray(snapshot.entries) ? snapshot.entries.map((entry, index) => normalizeEntry(entry, index)) : [],
+    chapters: Array.isArray(snapshot.chapters)
+      ? snapshot.chapters
+        .map((entry) => normalizeChapterEntry(entry))
+        .filter((entry) => entry.id && entry.novelId && entry.path && entry.title)
+      : [],
     progress: Array.isArray(snapshot.progress)
       ? snapshot.progress.map((entry) => normalizeProgress(entry)).filter((entry) => entry.novelId)
       : [],
@@ -318,6 +350,7 @@ function toPayloadFile(snapshot: AethonNovelsSnapshot, exportMode: AethonNovelsE
     version: 1,
     exportMode,
     entries: snapshot.entries,
+    chapters: snapshot.chapters,
     progress: snapshot.progress,
     bookmarks: snapshot.bookmarks,
     history: snapshot.history,
@@ -346,6 +379,7 @@ export async function buildAethonNovelsPayload(
       metadata: {
       schemaVersion: 1,
       entryCount: normalizedSnapshot.entries.length,
+      chapterCount: normalizedSnapshot.chapters.length,
       progressCount: normalizedSnapshot.progress.length,
       bookmarkCount: normalizedSnapshot.bookmarks.length,
       historyCount: normalizedSnapshot.history.length,
@@ -424,6 +458,7 @@ export async function parseAethonNovelsPayload(
     exportMode: parsed.exportMode === "metadata-only" ? "metadata-only" : "repository-aware",
     snapshot: normalizeAethonNovelsSnapshot({
       entries: parsed.entries,
+      chapters: Array.isArray(parsed.chapters) ? parsed.chapters : [],
       progress: Array.isArray(parsed.progress) ? parsed.progress : [],
       bookmarks: Array.isArray(parsed.bookmarks) ? parsed.bookmarks : [],
       history: Array.isArray(parsed.history) ? parsed.history : [],

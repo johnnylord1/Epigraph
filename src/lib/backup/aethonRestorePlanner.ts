@@ -170,12 +170,14 @@ interface BooksCategoriesFile {
   version: 1;
   categories: unknown[];
   assignments: Record<string, string[]>;
+  ui?: unknown;
 }
 
 interface NovelsPayloadFile {
   version: 1;
   exportMode: AethonNovelsExportMode;
   entries: AethonNovelsSnapshot["entries"];
+  chapters: AethonNovelsSnapshot["chapters"];
   progress: AethonNovelsSnapshot["progress"];
   bookmarks: AethonNovelsSnapshot["bookmarks"];
   history: AethonNovelsSnapshot["history"];
@@ -236,7 +238,7 @@ function flagsForStatus(status: AethonRestorePayloadStatus): {
 }
 
 function canExecuteRestoreForPayloadKind(kind: string): boolean {
-  return kind === "manga" || kind === "books" || kind === "novels";
+  return kind === "manga" || kind === "books" || kind === "novels" || kind === "app";
 }
 
 function defaultRestoreModeForPayload(
@@ -738,6 +740,7 @@ export async function planAethonNovelsRestore(
   const classified = classifyAethonNovelsSnapshot(
     normalizeAethonNovelsSnapshot({
       entries: rawPayload.entries,
+      chapters: Array.isArray(rawPayload.chapters) ? rawPayload.chapters : [],
       progress: Array.isArray(rawPayload.progress) ? rawPayload.progress : [],
       bookmarks: Array.isArray(rawPayload.bookmarks) ? rawPayload.bookmarks : [],
       history: Array.isArray(rawPayload.history) ? rawPayload.history : [],
@@ -792,6 +795,7 @@ export async function planAethonNovelsRestore(
     metadata: {
       exportMode,
       entryCount: classified.summary.totalEntries,
+      chapterCount: Array.isArray(rawPayload.chapters) ? rawPayload.chapters.length : 0,
       restoredUsableCount: classified.summary.restoredUsableCount,
       restoredNeedsRepositoryCount: classified.summary.restoredNeedsRepositoryCount,
       restoredNeedsPluginCount: classified.summary.restoredNeedsPluginCount,
@@ -858,7 +862,7 @@ export async function planAethonAppRestore(
   }
 
   const defaultLocalProfileId = normalizeLocalProfileId(rawPayload.defaultLocalProfileId);
-  if (rawPayload.version !== 1 || !defaultLocalProfileId) {
+  if ((rawPayload.version !== 1 && rawPayload.version !== 2) || !defaultLocalProfileId) {
     return finalizePayloadPlan({
       kind: "app",
       present: true,
@@ -878,11 +882,19 @@ export async function planAethonAppRestore(
     status: "warning-only",
     defaultRestoreMode,
     availableRestoreModes,
-    summaryLabel: "App payload contains portable profile metadata only",
+    summaryLabel: rawPayload.version >= 2
+      ? "App payload contains portable profile metadata and reading state"
+      : "App payload contains portable profile metadata",
     reasons: [],
-    warnings: [toReason("portable-metadata-only", "App payload is portable metadata only and is not auto-applied in this phase.")],
+    warnings: [toReason(
+      "portable-metadata-only",
+      rawPayload.version >= 2
+        ? "App payload restores portable profile metadata and reading state into the current session."
+        : "App payload restores portable profile metadata into the current session.",
+    )],
     metadata: {
       defaultLocalProfileId,
+      version: rawPayload.version,
     },
   });
 }

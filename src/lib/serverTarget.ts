@@ -22,8 +22,8 @@ function normalizeUrl(raw: string | null | undefined): string {
 
 export function getEffectiveServerUrl(): string {
   return normalizeUrl(
-    store.runtimeResolvedLocalProfileMeta?.serverUrl
-      ?? store.runtimeServerUrl
+    store.runtimeServerUrl
+      ?? store.runtimeResolvedLocalProfileMeta?.serverUrl
       ?? store.settings.serverUrl
   );
 }

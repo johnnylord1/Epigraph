@@ -9,6 +9,7 @@
 - FlareSolverr external assist + local process management + app-launch autostart: implemented and validated on the main `4667` flow
 - Local Suwayomi spawn/ownership hardening: implemented on the active `TEST :4667` path and runtime-audited
 - Local profile selection (`TEST` / `MAIN`) with next-launch semantics: implemented and runtime-audited
+- Syncd desktop-to-desktop pairing and reconnect flow: complete, including native automated proof
 
 ## Cross-Chat Consolidated Snapshot
 - Closed and aligned across the current desktop milestone:
@@ -21,15 +22,28 @@
   - FlareSolverr local/external assist plus local process controls
   - local server ownership hardening and profile isolation
   - next-launch `Profile` selection for built-in `TEST` / `MAIN`
+  - syncd desktop integration:
+    - discovery
+    - bootstrap
+    - live pairing
+    - local-only host approval/rejection
+    - approved-session persistence
+    - reconnect/revalidation
+    - desktop QR render/save/import/decode
+    - native two-instance automation proof
 - Still intentionally open:
   - sandboxed recovery of the pre-corruption library data
   - optional FlareSolverr install/update UX
-  - sync / Suwayomi multi-device architecture research
+  - future product work that builds on top of the closed sync foundation
+
+## Milestone Status
+- **Splash Screen Port (`SplashScreen.svelte`)**: COMPLETED. Full Nocturne aesthetics and state machine restored. Tests pass.
+- **Settings Screen Shell (`Settings.svelte`)**: COMPLETED. Global `n-shell`, topbar, sidebar, and Svelte component `<style>` block correctly implement Nocturne tokens.
+- **Settings Screen Panes**: IN PROGRESS. Requires methodical DOM mapping per settings category.
 
 ## Current Blockers
 - Download UX is cleaner, but source-side failures can still happen independently of Aethon
 - The current FlareSolverr block does not yet include a full in-app install/update pipeline
-- Sync / Suwayomi backend architecture is still a research track, not an implementation blocker for the current desktop UI/runtime work
 - Recovery of the pre-corruption library data is still pending and remains deliberately separate from runtime hardening
 - Books reader/runtime has no current merge blocker; the remaining very-large-EPUB progress-label roughness is polish only
 
@@ -106,10 +120,25 @@
     - `final-detail-reader-detail.log`
     - `final-pdf-open-resume.log`
   - remaining roughness is limited to non-blocking progress-label polish on very large EPUBs
+- Syncd closure baseline:
+  - discovery stack closed
+  - advertised/effective origin resolution closed
+  - mDNS provider closed
+  - manual origin fallback closed
+  - bootstrap session flow closed
+  - live pairing status flow closed
+  - local-only host approval/rejection route closed
+  - desktop-owned sync client in `src-tauri` closed
+  - Settings > Security host/connect UI closed
+  - approved-session local persistence closed
+  - reconnect/revalidation on restart closed
+  - desktop QR render/save/import/decode closed
+  - native two-instance automation closed with six passing scenarios
+  - no further syncd backend surface should be added unless a reproduced product bug proves a real missing backend step
 
 ## Parallel Agent Notes
 - I did not find separate repo artifacts or standalone code/doc commits attributable to other subagents in the workspace
-- The parallel agent work on sync / Suwayomi architecture remains research context only and is not currently materialized as code or docs in this repo
+- Historical parallel-agent sync research is now superseded by the closed syncd implementation and native proof
 
 ## Reference Docs
 - Historical refactor detail: [`docs/LIBRARY_SHARED_SHELL_REFACTOR.md`](docs/LIBRARY_SHARED_SHELL_REFACTOR.md)

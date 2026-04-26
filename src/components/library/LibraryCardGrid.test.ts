@@ -61,4 +61,31 @@ describe("LibraryCardGrid", () => {
     await fireEvent.keyDown(second, { key: " " });
     expect(onOpen).toHaveBeenCalledWith("book:2", expect.any(KeyboardEvent));
   });
+
+  test("applies explicit items-per-row density to the grid style", () => {
+    const items: LibraryCardVM[] = [{
+      id: "comic:1",
+      title: "Density Card",
+      subtitle: undefined,
+      coverSrc: null,
+      coverFit: "cover",
+      badges: [],
+      metaChips: [],
+      progress: null,
+      selectable: true,
+      selected: false,
+      disabled: false,
+    }];
+
+    const { container } = render(LibraryCardGrid, {
+      props: {
+        items,
+        viewMode: "grid",
+        effectiveColumns: 4,
+      },
+    });
+
+    const grid = container.querySelector(".grid");
+    expect(grid?.getAttribute("style")).toContain("--library-columns: 4");
+  });
 });

@@ -4,8 +4,8 @@ import { traceMediaAudit } from "./mediaAudit";
 
 type HttpModule = typeof import("@tauri-apps/plugin-http");
 
-const MAX_CACHE_ENTRIES = 120;
-const MAX_CACHE_BYTES = 256 * 1024 * 1024;
+const MAX_CACHE_ENTRIES = 48;
+const MAX_CACHE_BYTES = 96 * 1024 * 1024;
 
 type MediaAuditEvent = {
   event: string;
@@ -34,6 +34,15 @@ type CacheEntry = {
 export type ResolvedMediaLease = {
   resolvedUrl: string;
   release: () => void;
+};
+
+export type ImageCacheStats = {
+  entryCount: number;
+  inflightCount: number;
+  totalCachedBytes: number;
+  activeLeaseCount: number;
+  maxEntries: number;
+  maxBytes: number;
 };
 
 const blobCache = new Map<string, CacheEntry>();
@@ -294,6 +303,26 @@ export function resetImageCache(): void {
   }
   blobCache.clear();
   totalCachedBytes = 0;
+}
+
+export function trimImageCache(forceAll = false): void {
+  evictInactiveEntries(forceAll);
+}
+
+export function getImageCacheStats(): ImageCacheStats {
+  let activeLeaseCount = 0;
+  for (const entry of blobCache.values()) {
+    activeLeaseCount += entry.refCount;
+  }
+
+  return {
+    entryCount: blobCache.size,
+    inflightCount: inflight.size,
+    totalCachedBytes,
+    activeLeaseCount,
+    maxEntries: MAX_CACHE_ENTRIES,
+    maxBytes: MAX_CACHE_BYTES,
+  };
 }
 
 export const resolvedImage: Action<HTMLImageElement, string | null | undefined> = (node, initialUrl) => {

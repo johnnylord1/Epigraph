@@ -2,6 +2,7 @@
   import { ArrowLeft, MagnifyingGlass, ArrowLeft as Prev, ArrowRight as Next, BookmarkSimple, FolderSimplePlus, Folder } from "phosphor-svelte";
   import { gql, thumbUrl } from "../../lib/client";
   import { FETCH_SOURCE_MANGA, UPDATE_MANGA, GET_CATEGORIES, CREATE_CATEGORY, UPDATE_MANGA_CATEGORIES } from "../../lib/queries";
+  import { fetchSourceMangaSearchWithFallback } from "../../lib/manga/sourceSearch";
   import { store, setActiveSource, setActiveManga, setNavPage } from "../../store/state.svelte";
   import type { Manga, Category } from "../../lib/types";
   import ContextMenu, { type MenuEntry } from "../shared/ContextMenu.svelte";
@@ -22,9 +23,22 @@
   async function fetchMangas(type: BrowseType, p: number, q: string) {
     if (!store.activeSource) return;
     loading = true; mangas = [];
-    gql<{ fetchSourceManga: { mangas: Manga[]; hasNextPage: boolean } }>(
-      FETCH_SOURCE_MANGA, { source: store.activeSource.id, type, page: p, query: q || null }
-    ).then((d) => { mangas = d.fetchSourceManga.mangas; hasNextPage = d.fetchSourceManga.hasNextPage; })
+    const request = type === "SEARCH"
+      ? fetchSourceMangaSearchWithFallback({
+          sourceId: store.activeSource.id,
+          query: q,
+        }).then((nextMangas) => ({
+          fetchSourceManga: {
+            mangas: nextMangas,
+            hasNextPage: false,
+          },
+        }))
+      : gql<{ fetchSourceManga: { mangas: Manga[]; hasNextPage: boolean } }>(
+          FETCH_SOURCE_MANGA,
+          { source: store.activeSource.id, type, page: p, query: q || null },
+        );
+
+    request.then((d) => { mangas = d.fetchSourceManga.mangas; hasNextPage = d.fetchSourceManga.hasNextPage; })
      .catch(console.error)
      .finally(() => loading = false);
   }

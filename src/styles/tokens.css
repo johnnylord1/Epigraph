@@ -5,6 +5,7 @@
 
 :root {
   /* Backgrounds — near-black, layered by elevation */
+  --app-resolution-scale: 1;
   --bg-void:      #080808;
   --bg-base:      #0c0c0c;
   --bg-surface:   #101010;
@@ -49,15 +50,15 @@
   --font-sans:    "DM Sans", ui-sans-serif, system-ui, sans-serif;
 
   /* Type scale */
-  --text-2xs: 10px;
-  --text-xs:  11px;
-  --text-sm:  12px;
-  --text-base: 13px;
-  --text-md:  14px;
-  --text-lg:  15px;
-  --text-xl:  17px;
-  --text-2xl: 20px;
-  --text-3xl: 24px;
+  --text-2xs: calc(10px * var(--app-resolution-scale));
+  --text-xs:  calc(11px * var(--app-resolution-scale));
+  --text-sm:  calc(12px * var(--app-resolution-scale));
+  --text-base: calc(13px * var(--app-resolution-scale));
+  --text-md:  calc(14px * var(--app-resolution-scale));
+  --text-lg:  calc(15px * var(--app-resolution-scale));
+  --text-xl:  calc(17px * var(--app-resolution-scale));
+  --text-2xl: calc(20px * var(--app-resolution-scale));
+  --text-3xl: calc(24px * var(--app-resolution-scale));
 
   /* Weight */
   --weight-normal: 400;
@@ -77,26 +78,26 @@
   --tracking-wider:   0.1em;
 
   /* Spacing */
-  --sp-1:  4px;
-  --sp-2:  8px;
-  --sp-3:  12px;
-  --sp-4:  16px;
-  --sp-5:  20px;
-  --sp-6:  24px;
-  --sp-8:  32px;
-  --sp-10: 40px;
+  --sp-1:  calc(4px * var(--app-resolution-scale));
+  --sp-2:  calc(8px * var(--app-resolution-scale));
+  --sp-3:  calc(12px * var(--app-resolution-scale));
+  --sp-4:  calc(16px * var(--app-resolution-scale));
+  --sp-5:  calc(20px * var(--app-resolution-scale));
+  --sp-6:  calc(24px * var(--app-resolution-scale));
+  --sp-8:  calc(32px * var(--app-resolution-scale));
+  --sp-10: calc(40px * var(--app-resolution-scale));
 
   /* Radius */
-  --radius-sm:   3px;
-  --radius-md:   5px;
-  --radius-lg:   7px;
-  --radius-xl:   10px;
-  --radius-2xl:  14px;
+  --radius-sm:   calc(3px * var(--app-resolution-scale));
+  --radius-md:   calc(5px * var(--app-resolution-scale));
+  --radius-lg:   calc(7px * var(--app-resolution-scale));
+  --radius-xl:   calc(10px * var(--app-resolution-scale));
+  --radius-2xl:  calc(14px * var(--app-resolution-scale));
   --radius-full: 9999px;
 
   /* HUD system */
-  --hud-control-height:        30px;
-  --hud-icon-button-size:      30px;
+  --hud-control-height:        calc(30px * var(--app-resolution-scale));
+  --hud-icon-button-size:      calc(30px * var(--app-resolution-scale));
   --hud-control-radius:        var(--radius-md);
   --hud-chip-radius:           var(--radius-full);
   --hud-popover-radius:        var(--radius-md);
@@ -104,12 +105,12 @@
   --hud-toast-radius:          var(--radius-lg);
   --hud-chapter-row-radius:    var(--radius-md);
   --hud-surface-opacity:       1;
-  --hud-sidebar-width:         52px;
+  --hud-sidebar-width:         calc(52px * var(--app-resolution-scale));
   --hud-toolbar-gap:           var(--sp-2);
   --hud-reader-chrome-opacity: 1;
   --hud-selection-bg:          var(--accent-muted);
   --hud-selection-border:      var(--accent-dim);
-  --hud-progress-height:       3px;
+  --hud-progress-height:       calc(3px * var(--app-resolution-scale));
 
   /* Sidebar */
   --sidebar-width: var(--hud-sidebar-width);

@@ -6,9 +6,16 @@ import type {
   LocalProfileMeta,
   RuntimeProfileResolutionSource,
 } from "../lib/localProfiles";
+import { normalizeLocalProfileId, normalizeServerUrl } from "../lib/localProfiles";
 import type { BookBookmarkEntry, BookEntry, BookProgress } from "../lib/books/types";
 import { BookAssetResolver } from "../lib/books/assets";
 import { reconcileBookIdentityState } from "../lib/books/identity";
+import {
+  canUseDesktopBookStorage,
+  loadBookLibraryState,
+  peekBookLibraryState,
+  saveBookLibraryState,
+} from "../lib/books/libraryState";
 import {
   createBookBookmark,
   mergeBookProgress,
@@ -16,17 +23,19 @@ import {
   normalizeBookProgress,
 } from "../lib/books/progress";
 import { isCompletedCategory } from "../lib/library/categories";
+import type { TrackerCompletionTracker } from "../lib/library/completion";
 import type { LibraryPreferredGridColumns, LibraryViewMode } from "../lib/libraryDisplay";
 import type { MangaReaderPreference } from "../lib/reader/scanlator";
+import type { ActiveNovelDetailState, ActiveNovelReaderState } from "../lib/novels/domain";
 
 export type PageStyle        = "single" | "double" | "longstrip" | "fade";
 export type FitMode          = "width" | "height" | "screen" | "original";
 export type LibraryFilter    = "all" | "library" | "downloaded" | string;
 export type LibrarySection   = "comics" | "books";
-export type NavPage          = "home" | "library" | "search" | "downloads";
+export type NavPage          = "home" | "library" | "search" | "downloads" | "settings";
 export type SearchHubTab     = "keyword" | "browse" | "sources";
 export type SearchBrowseTab  = "featured" | "tags";
-export type SearchSourcesPane = "browse" | "extensions";
+export type SearchSourcesPane = "browse" | "extensions" | "novels";
 export type ReadingDirection = "ltr" | "rtl";
 export type ChapterSortDir   = "desc" | "asc";
 export type ChapterSortMode  = "source" | "chapterNumber" | "uploadDate";
@@ -41,6 +50,7 @@ export type LibrarySortMode =
   | "latestUploaded";
 
 export type LibrarySortDir = "asc" | "desc";
+export type LibraryBootstrapStatus = "idle" | "loading" | "ready" | "error";
 
 export type LibraryStatusFilter =
   | "ALL"
@@ -88,6 +98,7 @@ export interface BooksRestoreHydrationInput {
   bookBookmarks: BookBookmarkEntry[];
   booksCategories?: BooksCategory[];
   booksCategoryAssignments?: Record<string, string[]>;
+  booksLibraryUi?: BooksLibraryUiState;
 }
 export type BuiltinTheme     = "dark" | "high-contrast" | "light" | "light-contrast" | "midnight" | "warm" | "nocturne";
 export type Theme            = BuiltinTheme | string; // custom themes have string IDs like "custom:abc123"
@@ -338,7 +349,18 @@ export interface ActiveDownload {
   chapterId: number;
   mangaId:   number;
   progress:  number;
-  state?:    "QUEUED" | "DOWNLOADING" | "FINISHED" | "ERROR";
+  state?:    "QUEUED" | "DOWNLOADING" | "FINISHED" | "ERROR" | "PAUSED";
+}
+
+export interface PausedDownloadItem {
+  chapterId: number;
+  mangaId: number;
+  progress: number;
+  chapterName: string;
+  pageCount: number;
+  mangaTitle: string;
+  thumbnailUrl: string;
+  order: number;
 }
 
 
@@ -346,6 +368,7 @@ export interface Settings {
   pageStyle:               PageStyle;
   readingDirection:        ReadingDirection;
   fitMode:                 FitMode;
+  launchIntoLibrary:       boolean;
   /**
    * Reader zoom level — unitless float multiplier relative to the viewer
    * container width. 1.0 = image fills the viewer, 1.5 = 150%, 0.8 = 80%.
@@ -361,6 +384,7 @@ export interface Settings {
   libraryCropCovers:       boolean;
   libraryPageSize:         number;
   showNsfw:                boolean;
+  filterBlockedTags:       boolean;
   discordRpc:              boolean;
   chapterSortDir:          ChapterSortDir;
   chapterSortMode:         ChapterSortMode;
@@ -418,10 +442,12 @@ export interface Settings {
   mangaReaderPrefs:        Record<string, MangaReaderPreference>;
   /**
    * Content filtering — managed via the Content tab in Settings.
-   * nsfwFilteredTags:      substrings matched against genre tags (case-insensitive).
+   * adultContentTags:      internal adult/suggestive substrings used when showNsfw is disabled.
+   * nsfwFilteredTags:      user-blocked substrings matched against genre tags (case-insensitive).
    * nsfwAllowedSourceIds:  sources explicitly permitted even though isNsfw = true.
    * nsfwBlockedSourceIds:  sources always blocked regardless of tag content.
    */
+  adultContentTags:      string[];
   nsfwFilteredTags:      string[];
   nsfwAllowedSourceIds:  string[];
   nsfwBlockedSourceIds:  string[];
@@ -452,6 +478,7 @@ export const DEFAULT_SETTINGS: Settings = {
   pageStyle:              "longstrip",
   readingDirection:       "ltr",
   fitMode:                "width",
+  launchIntoLibrary:      false,
   readerZoom:             1.0,
   pageGap:                true,
   optimizeContrast:       false,
@@ -462,6 +489,7 @@ export const DEFAULT_SETTINGS: Settings = {
   libraryCropCovers:      true,
   libraryPageSize:        48,
   showNsfw:               false,
+  filterBlockedTags:      true,
   discordRpc:             false,
   chapterSortDir:         "desc",
   chapterSortMode:        "source",
@@ -469,8 +497,8 @@ export const DEFAULT_SETTINGS: Settings = {
   uiZoom:                 1.0,
   compactSidebar:         false,
   gpuAcceleration:        true,
-  defaultLocalProfileId:  "test",
-  serverUrl:              "http://127.0.0.1:4667",
+  defaultLocalProfileId:  "main",
+  serverUrl:              "http://127.0.0.1:4567",
   serverBinary:           "",
   autoStartServer:        true,
   preferredExtensionLang: "en",
@@ -511,7 +539,8 @@ export const DEFAULT_SETTINGS: Settings = {
   booksCategories:         [],
   booksCategoryAssignments: {},
   mangaReaderPrefs:        {},
-  nsfwFilteredTags:      ["adult", "mature", "hentai", "ecchi", "erotic", "pornograph", "18+", "smut", "lemon", "explicit", "sexual violence"],
+  adultContentTags:      ["adult", "mature", "hentai", "suggestive", "erotic", "pornograph", "18+", "smut", "lemon", "explicit", "sexual violence"],
+  nsfwFilteredTags:      [],
   nsfwAllowedSourceIds:  [],
   nsfwBlockedSourceIds:  [],
   libraryTabSort:         {},
@@ -534,6 +563,31 @@ export const DEFAULT_SETTINGS: Settings = {
   serverLocalSourcePath:  "",
 };
 
+const LEGACY_DEFAULT_BLOCKED_TAGS = [
+  ["adult", "mature", "hentai", "ecchi", "erotic", "pornograph", "18+", "smut", "lemon", "explicit", "sexual violence"],
+  ["adult", "mature", "hentai", "erotic", "pornograph", "18+", "smut", "lemon", "explicit", "sexual violence"],
+];
+
+function normalizeBlockedTags(value: unknown): string[] {
+  if (!Array.isArray(value)) return DEFAULT_SETTINGS.nsfwFilteredTags;
+  const tags = value
+    .filter((tag): tag is string => typeof tag === "string")
+    .map((tag) => tag.trim().toLowerCase())
+    .filter(Boolean);
+  const legacy = LEGACY_DEFAULT_BLOCKED_TAGS.some((legacyTags) =>
+    legacyTags.length === tags.length && legacyTags.every((tag, index) => tag === tags[index]),
+  );
+  return legacy ? [] : [...new Set(tags)];
+}
+
+function cloneDefaultSettings(): Settings {
+  if (typeof structuredClone === "function") {
+    return structuredClone(DEFAULT_SETTINGS);
+  }
+
+  return JSON.parse(JSON.stringify(DEFAULT_SETTINGS)) as Settings;
+}
+
 // ── Persistence ───────────────────────────────────────────────────────────────
 
 const STORE_VERSION = 7;
@@ -554,6 +608,23 @@ function loadPersisted(): any {
   } catch {
     return null;
   }
+}
+
+function readPersistedAppReadingSnapshot(): {
+  history: HistoryEntry[];
+  readLog: ReadLogEntry[];
+  readingStats: ReadingStats;
+} {
+  const data = loadPersisted() ?? {};
+  return {
+    history: Array.isArray(data.history)
+      ? data.history
+      : [],
+    readLog: Array.isArray(data.readLog)
+      ? data.readLog
+      : [],
+    readingStats: mergeStats(data),
+  };
 }
 
 function persist(patch: Record<string, unknown>) {
@@ -585,35 +656,12 @@ const saved = (() => {
 })();
 
 function mergeSettings(saved: any): Settings {
-  const savedBooksUi = saved?.settings?.booksLibraryUi ?? {};
-  const legacyCollection = savedBooksUi.collection;
-  const legacyReadFilter = savedBooksUi.readFilter;
-  const normalizedStatus = (() => {
-    const raw = String(savedBooksUi.statusFilter ?? legacyReadFilter ?? "all").toLowerCase();
-    if (raw === "unopened") return "unopened";
-    if (raw === "in_progress") return "in_progress";
-    if (raw === "finished") return "finished";
-    if (raw === "all_books") return "all";
-    return "all";
-  })() as BooksLibraryStatusFilter;
-  const normalizedType = (() => {
-    const raw = String(savedBooksUi.typeFilter ?? legacyCollection ?? "all").toLowerCase();
-    if (raw === "epub") return "epub";
-    if (raw === "pdf") return "pdf";
-    if (raw === "sources") return "sources";
-    return "all";
-  })() as BooksLibraryTypeFilter;
-  const savedBooksCategories = Array.isArray(saved?.settings?.booksCategories)
-    ? saved.settings.booksCategories
-        .map((entry: any, index: number) => ({
-          id: typeof entry?.id === "string" && entry.id.trim() ? entry.id : `books-cat-${index + 1}`,
-          name: typeof entry?.name === "string" && entry.name.trim() ? entry.name.trim() : `Category ${index + 1}`,
-          order: typeof entry?.order === "number" ? entry.order : index + 1,
-        }))
-        .sort((left: BooksCategory, right: BooksCategory) => left.order - right.order)
-    : [];
-  const savedBooksCategoryAssignments = saved?.settings?.booksCategoryAssignments ?? {};
+  const savedBooksLibraryState = peekBookLibraryState();
   const savedMangaReaderPrefs = saved?.settings?.mangaReaderPrefs ?? {};
+  const savedDefaultProfileId = normalizeLocalProfileId(saved?.settings?.defaultLocalProfileId);
+  const savedServerUrl = normalizeServerUrl(saved?.settings?.serverUrl);
+  const coercedDefaultProfileId = savedDefaultProfileId === "test" ? "main" : savedDefaultProfileId ?? DEFAULT_SETTINGS.defaultLocalProfileId;
+  const coercedServerUrl = savedServerUrl === "http://127.0.0.1:4667" ? "http://127.0.0.1:4567" : savedServerUrl ?? DEFAULT_SETTINGS.serverUrl;
 
   return {
     ...DEFAULT_SETTINGS,
@@ -623,17 +671,8 @@ function mergeSettings(saved: any): Settings {
     mangaLinks:   saved?.settings?.mangaLinks ?? {},
     customThemes: saved?.settings?.customThemes ?? [],
     hiddenCategoryIds: saved?.settings?.hiddenCategoryIds ?? [],
-    booksCategories: savedBooksCategories,
-    booksCategoryAssignments: typeof savedBooksCategoryAssignments === "object" && savedBooksCategoryAssignments
-      ? Object.fromEntries(
-          Object.entries(savedBooksCategoryAssignments).map(([bookId, ids]) => [
-            bookId,
-            Array.isArray(ids)
-              ? [...new Set(ids.filter((id): id is string => typeof id === "string" && id.trim().length > 0))]
-              : [],
-          ]),
-        )
-      : {},
+    booksCategories: savedBooksLibraryState.booksCategories,
+    booksCategoryAssignments: savedBooksLibraryState.booksCategoryAssignments,
     mangaReaderPrefs: typeof savedMangaReaderPrefs === "object" && savedMangaReaderPrefs
       ? Object.fromEntries(
           Object.entries(savedMangaReaderPrefs).map(([mangaId, value]) => {
@@ -651,23 +690,60 @@ function mergeSettings(saved: any): Settings {
     libraryTabSort:    saved?.settings?.libraryTabSort    ?? {},
     libraryTabStatus:  saved?.settings?.libraryTabStatus  ?? {},
     booksLibraryUi: {
-      ...DEFAULT_SETTINGS.booksLibraryUi,
-      ...savedBooksUi,
-      activeCategoryId:
-        typeof savedBooksUi.activeCategoryId === "string" && savedBooksUi.activeCategoryId.trim()
-          ? savedBooksUi.activeCategoryId
-          : null,
-      typeFilter: normalizedType,
-      statusFilter: normalizedStatus,
+      ...savedBooksLibraryState.booksLibraryUi,
     },
-    nsfwFilteredTags:     saved?.settings?.nsfwFilteredTags     ?? ["adult", "mature", "hentai", "ecchi", "erotic", "pornograph", "18+", "smut", "lemon", "explicit", "sexual violence"],
+    defaultLocalProfileId: coercedDefaultProfileId,
+    serverUrl:             coercedServerUrl,
+    launchIntoLibrary:    saved?.settings?.launchIntoLibrary ?? DEFAULT_SETTINGS.launchIntoLibrary,
+    filterBlockedTags:    saved?.settings?.filterBlockedTags ?? DEFAULT_SETTINGS.filterBlockedTags,
+    adultContentTags:     saved?.settings?.adultContentTags     ?? DEFAULT_SETTINGS.adultContentTags,
+    nsfwFilteredTags:     normalizeBlockedTags(saved?.settings?.nsfwFilteredTags),
     nsfwAllowedSourceIds: saved?.settings?.nsfwAllowedSourceIds ?? [],
     nsfwBlockedSourceIds: saved?.settings?.nsfwBlockedSourceIds ?? [],
   };
 }
 
+function sanitizeSettingsForPersistence(settings: Settings): Partial<Settings> {
+  const next = { ...settings } as Partial<Settings>;
+  delete next.booksCategories;
+  delete next.booksCategoryAssignments;
+  delete next.booksLibraryUi;
+  return next;
+}
+
 function mergeStats(saved: any): ReadingStats {
   return { ...DEFAULT_READING_STATS, ...saved?.readingStats };
+}
+
+function normalizeLoadedHistoryEntry(entry: any): HistoryEntry | null {
+  if (!entry || typeof entry !== "object") return null;
+  const mangaId = Number(entry.mangaId);
+  const chapterId = Number(entry.chapterId);
+  const readAt = Number(entry.readAt);
+  if (!Number.isFinite(mangaId) || !Number.isFinite(chapterId) || !Number.isFinite(readAt)) return null;
+  return {
+    mangaId,
+    mangaTitle: String(entry.mangaTitle ?? ""),
+    thumbnailUrl: String(entry.thumbnailUrl ?? ""),
+    chapterId,
+    chapterName: String(entry.chapterName ?? ""),
+    readAt,
+  };
+}
+
+function normalizeLoadedReadLogEntry(entry: any): ReadLogEntry | null {
+  if (!entry || typeof entry !== "object") return null;
+  const mangaId = Number(entry.mangaId);
+  const chapterId = Number(entry.chapterId);
+  const readAt = Number(entry.readAt);
+  const minutes = Number(entry.minutes);
+  if (!Number.isFinite(mangaId) || !Number.isFinite(chapterId) || !Number.isFinite(readAt) || !Number.isFinite(minutes)) return null;
+  return {
+    mangaId,
+    chapterId,
+    readAt,
+    minutes,
+  };
 }
 
 function todayStr(): string {
@@ -678,9 +754,25 @@ function todayStr(): string {
 const genId = () => Math.random().toString(36).slice(2, 10);
 
 function normalizeNavPage(savedNavPage: unknown): NavPage {
-  if (savedNavPage === "library" || savedNavPage === "search" || savedNavPage === "downloads") return savedNavPage;
+  if (savedNavPage === "library" || savedNavPage === "search" || savedNavPage === "downloads" || savedNavPage === "settings") return savedNavPage;
   if (savedNavPage === "explore" || savedNavPage === "extensions" || savedNavPage === "sources") return "search";
   return "home";
+}
+
+function normalizePrimaryNavPage(savedNavPage: unknown): Exclude<NavPage, "settings"> {
+  const normalized = normalizeNavPage(savedNavPage);
+  return normalized === "settings" ? "home" : normalized;
+}
+
+function clearSearchEngagedBodyClasses() {
+  if (typeof document === "undefined") return;
+  document.body.classList.remove(
+    "aethon-settings-search-engaged",
+    "aethon-home-search-engaged",
+    "aethon-library-search-engaged",
+    "aethon-browse-search-engaged",
+    "aethon-downloads-search-engaged",
+  );
 }
 
 function normalizeLibrarySection(savedLibrarySection: unknown): LibrarySection {
@@ -719,21 +811,24 @@ function normalizeLoadedBookBookmark(bookmark: any): BookBookmarkEntry {
   return normalizeBookBookmark(bookmark);
 }
 
+const savedBookLibraryState = peekBookLibraryState();
 const reconciledSavedBooks = reconcileBookIdentityState(
-  (saved?.books ?? []).map(normalizeLoadedBook),
-  (saved?.bookProgress ?? []).map(normalizeLoadedBookProgress),
+  savedBookLibraryState.books.map(normalizeLoadedBook),
+  savedBookLibraryState.bookProgress.map(normalizeLoadedBookProgress),
 );
 
 // ── Store ─────────────────────────────────────────────────────────────────────
 
 class Store {
+  private navigationListeners = new Set<() => void>();
   navPage:           NavPage          = $state(normalizeNavPage(saved?.navPage));
+  lastPrimaryNavPage: Exclude<NavPage, "settings"> = $state(normalizePrimaryNavPage(saved?.navPage));
   librarySection:    LibrarySection   = $state(normalizeLibrarySection(saved?.librarySection));
   libraryFilter:     LibraryFilter    = $state("library");
   history:           HistoryEntry[]   = $state(saved?.history       ?? []);
   books:             BookEntry[]      = $state(reconciledSavedBooks.books);
   bookProgress:      BookProgress[]   = $state(reconciledSavedBooks.bookProgress);
-  bookBookmarks:     BookBookmarkEntry[] = $state((saved?.bookBookmarks ?? []).map(normalizeLoadedBookBookmark));
+  bookBookmarks:     BookBookmarkEntry[] = $state(savedBookLibraryState.bookBookmarks.map(normalizeLoadedBookBookmark));
   /**
    * readLog — append-only, never deduped. Every chapter completion/progress
    * event lands here. This is the authoritative source for all reading stats.
@@ -759,12 +854,14 @@ class Store {
   activeManga:       Manga | null     = $state(null);
   activeBookId:      string | null    = $state(null);
   activeBookReaderId:string | null    = $state(null);
+  activeNovelDetail: ActiveNovelDetailState | null = $state(null);
+  activeNovelReader: ActiveNovelReaderState | null = $state(null);
   previewManga:      Manga | null     = $state(null);
   activeSource:      Source | null    = $state(null);
   pageUrls:          string[]         = $state([]);
   pageNumber:        number           = $state(1);
   libraryTagFilter:  string[]         = $state([]);
-  settingsOpen:      boolean          = $state(false);
+  settingsOpen:      boolean          = $state(normalizeNavPage(saved?.navPage) === "settings");
   runtimeSettingsTab: RuntimeSettingsTab | null = $state(null);
   homePanelHint:     "history" | null = $state(null);
   searchTabHint:     SearchHubTab | null = $state(null);
@@ -777,6 +874,7 @@ class Store {
   libraryVisibleCount: number         = $state(0);
   libraryReturnToMangaId: number | null = $state(null);
   activeDownloads:   ActiveDownload[] = $state([]);
+  pausedDownloads:   PausedDownloadItem[] = $state([]);
   toasts:            Toast[]          = $state([]);
   activeChapter:     Chapter | null   = $state(null);
   activeChapterList: Chapter[]        = $state([]);
@@ -791,6 +889,10 @@ class Store {
   runtimeServerLabel:string | null    = $state(null);
   private bookCanonicalMigrationTask: Promise<number> | null = null;
   private bookCanonicalMigrationQueued = false;
+  private booksStateHydrated = !canUseDesktopBookStorage();
+  booksLibraryHydrated: boolean = $state(!canUseDesktopBookStorage());
+  private booksStatePersistQueued = false;
+  private booksStatePersistRunning = false;
 
   // ── Shared category list ──────────────────────────────────────────────────
   // Single source of truth for the category list, shared between Library and
@@ -798,6 +900,9 @@ class Store {
   // No pub/sub or guard flags needed — both components share this $state ref.
   categories: Category[] = $state([]);
   libraryMangaSnapshot: Manga[] = $state([]);
+  libraryBootstrapStatus: LibraryBootstrapStatus = $state("idle");
+  libraryBootstrapScopeKey: string | null = $state(null);
+  libraryTrackingSummarySnapshot: TrackerCompletionTracker[] = $state([]);
 
   // ── Discover session cache ────────────────────────────────────────────────
   // Survives navigation within a session but is never persisted to localStorage.
@@ -813,16 +918,101 @@ class Store {
         $effect(() => { persist({ librarySection: this.librarySection }); });
         $effect(() => { persist({ libraryFilter: this.libraryFilter }); });
         $effect(() => { persist({ history:       this.history       }); });
-        $effect(() => { persist({ books:         this.books.map(BookAssetResolver.toPersistedBookEntry) }); });
-        $effect(() => { persist({ bookProgress:  this.bookProgress  }); });
-        $effect(() => { persist({ bookBookmarks: this.bookBookmarks }); });
         $effect(() => { persist({ readLog:       this.readLog       }); });
       $effect(() => { persist({ bookmarks:     this.bookmarks     }); });
       $effect(() => { persist({ readingStats:  this.readingStats  }); });
-      $effect(() => { persist({ settings:      this.settings      }); });
+      $effect(() => { persist({ settings:      sanitizeSettingsForPersistence(this.settings) }); });
+      $effect(() => {
+        this.books;
+        this.bookProgress;
+        this.bookBookmarks;
+        this.settings.booksCategories;
+        this.settings.booksCategoryAssignments;
+        this.settings.booksLibraryUi;
+        this.queuePersistBooksLibraryState();
+      });
     });
 
+    void this.hydrateBookLibraryState();
     this.queueCanonicalBookMigration();
+  }
+
+  subscribeNavigation(listener: () => void) {
+    this.navigationListeners.add(listener);
+    return () => {
+      this.navigationListeners.delete(listener);
+    };
+  }
+
+  private emitNavigationChange() {
+    for (const listener of this.navigationListeners) {
+      try {
+        listener();
+      } catch (error) {
+        console.error("navigation listener failed:", error);
+      }
+    }
+  }
+
+  private async hydrateBookLibraryState() {
+    try {
+      const snapshot = await loadBookLibraryState();
+      const validBookIds = new Set(snapshot.books.map((book) => book.id));
+
+      this.books = snapshot.books;
+      this.bookProgress = snapshot.bookProgress;
+      this.bookBookmarks = snapshot.bookBookmarks.filter((bookmark) => validBookIds.has(bookmark.bookId));
+      this.settings = {
+        ...this.settings,
+        booksCategories: snapshot.booksCategories,
+        booksCategoryAssignments: snapshot.booksCategoryAssignments,
+        booksLibraryUi: snapshot.booksLibraryUi,
+      };
+
+      if (this.activeBookId && !validBookIds.has(this.activeBookId)) {
+        this.activeBookId = null;
+      }
+      if (this.activeBookReaderId && !validBookIds.has(this.activeBookReaderId)) {
+        this.activeBookReaderId = null;
+      }
+    } finally {
+      this.booksStateHydrated = true;
+      this.booksLibraryHydrated = true;
+      this.queueCanonicalBookMigration();
+    }
+  }
+
+  private queuePersistBooksLibraryState() {
+    if (!this.booksStateHydrated) return;
+    this.booksStatePersistQueued = true;
+    if (this.booksStatePersistRunning) return;
+
+    queueMicrotask(() => {
+      void this.flushPersistBooksLibraryState();
+    });
+  }
+
+  private async flushPersistBooksLibraryState() {
+    if (this.booksStatePersistRunning) return;
+    this.booksStatePersistRunning = true;
+
+    try {
+      while (this.booksStatePersistQueued) {
+        this.booksStatePersistQueued = false;
+        await saveBookLibraryState({
+          version: 1 as const,
+          books: this.books.map(BookAssetResolver.toPersistedBookEntry),
+          bookProgress: this.bookProgress,
+          bookBookmarks: this.bookBookmarks,
+          booksCategories: this.settings.booksCategories,
+          booksCategoryAssignments: this.settings.booksCategoryAssignments,
+          booksLibraryUi: this.settings.booksLibraryUi,
+          updatedAtMs: Date.now(),
+        });
+      }
+    } finally {
+      this.booksStatePersistRunning = false;
+    }
   }
 
   queueCanonicalBookMigration() {
@@ -875,10 +1065,22 @@ class Store {
     // context for Discord RPC (setReading) and any other manga-aware logic.
     // Callers that already set store.activeManga directly may omit this arg.
     if (manga) this.activeManga = manga;
+    const resolvedManga = manga ?? this.activeManga;
+    if (resolvedManga && resolvedManga.id === chapter.mangaId) {
+      this.addHistory({
+        mangaId: resolvedManga.id,
+        mangaTitle: resolvedManga.title,
+        thumbnailUrl: resolvedManga.thumbnailUrl,
+        chapterId: chapter.id,
+        chapterName: chapter.name,
+        readAt: Date.now(),
+      }, false);
+    }
     this.activeChapter     = chapter;
     this.activeChapterList = chapterList;
     this.pageUrls          = [];
     this.pageNumber        = 1;
+    this.readerSessionId  += 1;
   }
 
   closeReader() {
@@ -957,17 +1159,18 @@ class Store {
       lastStreakDate    = today;
     }
 
-    this.readingStats = {
-      totalChaptersRead: uniqueChapters.size,
-      totalMangaRead:    uniqueManga.size,
-      totalMinutesRead:  totalMinutes,
-      firstReadAt:       this.readingStats.firstReadAt === 0 ? entry.readAt : this.readingStats.firstReadAt,
-      lastReadAt:        entry.readAt,
-      currentStreakDays,
-      longestStreakDays,
-      lastStreakDate,
-    };
-  }
+      this.readingStats = {
+        totalChaptersRead: uniqueChapters.size,
+        totalMangaRead:    uniqueManga.size,
+        totalMinutesRead:  totalMinutes,
+        firstReadAt:       this.readingStats.firstReadAt === 0 ? entry.readAt : this.readingStats.firstReadAt,
+        lastReadAt:        entry.readAt,
+        currentStreakDays,
+        longestStreakDays,
+        lastStreakDate,
+      };
+      bumpContentSetupVersion();
+    }
 
   /**
    * Add or update a bookmark for the given chapter/page. Only one bookmark
@@ -994,7 +1197,7 @@ class Store {
     return this.bookmarks.find(b => b.chapterId === chapterId);
   }
 
-  clearHistory()                        { this.history = []; this.readLog = []; }
+  clearHistory()                        { this.history = []; this.readLog = []; bumpContentSetupVersion(); }
   clearHistoryForManga(mangaId: number) {
     this.history = this.history.filter(x => x.mangaId !== mangaId);
     this.readLog  = this.readLog.filter(x => x.mangaId !== mangaId);
@@ -1002,13 +1205,14 @@ class Store {
     const uniqueChapters = new Set(this.readLog.map(e => e.chapterId));
     const uniqueManga    = new Set(this.readLog.map(e => e.mangaId));
     const totalMinutes   = this.readLog.reduce((sum, e) => sum + e.minutes, 0);
-    this.readingStats = {
-      ...this.readingStats,
-      totalChaptersRead: uniqueChapters.size,
-      totalMangaRead:    uniqueManga.size,
-      totalMinutesRead:  totalMinutes,
-    };
-  }
+      this.readingStats = {
+        ...this.readingStats,
+        totalChaptersRead: uniqueChapters.size,
+        totalMangaRead:    uniqueManga.size,
+        totalMinutesRead:  totalMinutes,
+      };
+      bumpContentSetupVersion();
+    }
 
   upsertBook(entry: BookEntry) {
     const currentBooks = this.books.filter(book => book.id !== entry.id);
@@ -1028,15 +1232,17 @@ class Store {
   }
 
   setBookProgress(next: BookProgress) {
-    const idx = this.bookProgress.findIndex(progress => progress.bookId === next.bookId);
-    if (idx >= 0) {
-      const progress = [...this.bookProgress];
-      progress[idx] = mergeBookProgress(progress[idx], next);
-      this.bookProgress = progress;
-      return;
+      const idx = this.bookProgress.findIndex(progress => progress.bookId === next.bookId);
+      if (idx >= 0) {
+        const progress = [...this.bookProgress];
+        progress[idx] = mergeBookProgress(progress[idx], next);
+        this.bookProgress = progress;
+        bumpContentSetupVersion();
+        return;
+      }
+      this.bookProgress = [...this.bookProgress, normalizeBookProgress(next)];
+      bumpContentSetupVersion();
     }
-    this.bookProgress = [...this.bookProgress, normalizeBookProgress(next)];
-  }
 
   getBookProgress(bookId: string): BookProgress | undefined {
     return this.bookProgress.find(progress => progress.bookId === bookId);
@@ -1085,6 +1291,28 @@ class Store {
             ]),
           )
         : {},
+      booksLibraryUi: snapshot.booksLibraryUi && typeof snapshot.booksLibraryUi === "object"
+        ? {
+            activeCategoryId: typeof snapshot.booksLibraryUi.activeCategoryId === "string"
+              ? snapshot.booksLibraryUi.activeCategoryId
+              : null,
+            typeFilter: snapshot.booksLibraryUi.typeFilter === "epub" || snapshot.booksLibraryUi.typeFilter === "pdf" || snapshot.booksLibraryUi.typeFilter === "sources"
+              ? snapshot.booksLibraryUi.typeFilter
+              : "all",
+            statusFilter: snapshot.booksLibraryUi.statusFilter === "unopened" || snapshot.booksLibraryUi.statusFilter === "in_progress" || snapshot.booksLibraryUi.statusFilter === "finished"
+              ? snapshot.booksLibraryUi.statusFilter
+              : "all",
+            search: typeof snapshot.booksLibraryUi.search === "string" ? snapshot.booksLibraryUi.search : "",
+            sortMode: snapshot.booksLibraryUi.sortMode === "az"
+              || snapshot.booksLibraryUi.sortMode === "author"
+              || snapshot.booksLibraryUi.sortMode === "recentlyAdded"
+              || snapshot.booksLibraryUi.sortMode === "recentlyRead"
+              || snapshot.booksLibraryUi.sortMode === "sectionCount"
+              ? snapshot.booksLibraryUi.sortMode
+              : "recentlyAdded",
+            sortDir: snapshot.booksLibraryUi.sortDir === "asc" ? "asc" : "desc",
+          }
+        : this.settings.booksLibraryUi,
     };
 
     if (this.activeBookId && !validBookIds.has(this.activeBookId)) {
@@ -1095,6 +1323,29 @@ class Store {
     }
 
     this.queueCanonicalBookMigration();
+  }
+
+  replaceAppReadingState(snapshot: {
+    history?: HistoryEntry[];
+    readLog?: ReadLogEntry[];
+    readingStats?: ReadingStats;
+  }) {
+    this.history = Array.isArray(snapshot.history)
+      ? snapshot.history
+          .map((entry) => normalizeLoadedHistoryEntry(entry))
+          .filter((entry): entry is HistoryEntry => Boolean(entry))
+          .sort((left, right) => right.readAt - left.readAt)
+          .slice(0, 300)
+      : [];
+    this.readLog = Array.isArray(snapshot.readLog)
+      ? snapshot.readLog
+          .map((entry) => normalizeLoadedReadLogEntry(entry))
+          .filter((entry): entry is ReadLogEntry => Boolean(entry))
+          .sort((left, right) => left.readAt - right.readAt)
+          .slice(-5000)
+      : [];
+    this.readingStats = mergeStats({ readingStats: snapshot.readingStats ?? DEFAULT_READING_STATS });
+    bumpContentSetupVersion();
   }
 
   wipeAllData() {
@@ -1143,8 +1394,36 @@ class Store {
     cache.set(CACHE_KEYS.CATEGORIES, cats, CACHE_GROUPS.LIBRARY);
   }
   setLibraryMangaSnapshot(next: Manga[])       { this.libraryMangaSnapshot = next; }
-  setActiveDownloads(next: ActiveDownload[])     { this.activeDownloads  = next; }
-  setNavPage(next: NavPage)                      { this.navPage          = next; this.settingsOpen = false; if (next !== "library") { this.activeBookId = null; this.activeBookReaderId = null; } }
+  setLibraryBootstrap(status: LibraryBootstrapStatus, scopeKey: string | null, trackingSummary: TrackerCompletionTracker[] | null = null) {
+    this.libraryBootstrapStatus = status;
+    this.libraryBootstrapScopeKey = scopeKey;
+    if (trackingSummary !== null) this.libraryTrackingSummarySnapshot = trackingSummary;
+  }
+  setLibraryTrackingSummarySnapshot(next: TrackerCompletionTracker[]) {
+    this.libraryTrackingSummarySnapshot = next;
+    cache.set(CACHE_KEYS.LIBRARY_TRACKING_SUMMARY, next, CACHE_GROUPS.LIBRARY);
+  }
+  setActiveDownloads(next: ActiveDownload[])     { this.activeDownloads  = next; bumpContentSetupVersion(); }
+  setPausedDownloads(next: PausedDownloadItem[]) { this.pausedDownloads = next; }
+  setNavPage(next: NavPage) {
+    if (next !== "settings") this.lastPrimaryNavPage = next;
+    clearSearchEngagedBodyClasses();
+    this.navPage = next;
+    this.settingsOpen = next === "settings";
+    this.activeManga = null;
+    this.activeBookId = null;
+    this.activeBookReaderId = null;
+    this.activeNovelDetail = null;
+    this.activeNovelReader = null;
+    this.activeChapter = null;
+    this.activeChapterList = [];
+    this.activeSource = null;
+    this.emitNavigationChange();
+  }
+
+  closeNovelReader() {
+    this.activeNovelReader = null;
+  }
   setHomePanelHint(next: "history" | null)      { this.homePanelHint    = next; }
   setSearchTabHint(next: SearchHubTab | null)   { this.searchTabHint    = next; }
   setSearchBrowseHint(next: SearchBrowseTab | null) { this.searchBrowseHint = next; }
@@ -1157,25 +1436,70 @@ class Store {
   setLibrarySection(next: LibrarySection)      {
     this.librarySection = next;
     if (next === "books") this.activeManga = null;
-    else { this.activeBookId = null; this.activeBookReaderId = null; }
+    else {
+      this.activeBookId = null;
+      this.activeBookReaderId = null;
+      this.activeNovelDetail = null;
+      this.activeNovelReader = null;
+    }
   }
   setLibraryFilter(next: LibraryFilter)          { this.libraryFilter    = next; }
   setGenreFilter(next: string)                   { this.genreFilter      = next; }
   setSearchPrefill(next: string)                 { this.searchPrefill    = next; }
-  setActiveManga(next: Manga | null)             { this.activeManga      = next; if (next) { this.activeBookId = null; this.activeBookReaderId = null; } }
+  setActiveManga(next: Manga | null)             {
+    this.activeManga = next;
+    if (next) {
+      this.activeBookId = null;
+      this.activeBookReaderId = null;
+      this.activeNovelDetail = null;
+      this.activeNovelReader = null;
+    }
+  }
   setActiveBookId(next: string | null)           {
     this.activeBookId = next;
-    if (next) this.activeManga = null;
+    if (next) {
+      this.activeManga = null;
+      this.activeNovelDetail = null;
+      this.activeNovelReader = null;
+    }
+  }
+  setActiveNovelDetail(next: ActiveNovelDetailState | null) {
+    this.activeNovelDetail = next;
+    if (next) {
+      this.activeManga = null;
+      this.activeBookId = null;
+    }
+  }
+  setActiveNovelReader(next: ActiveNovelReaderState | null) {
+    this.activeNovelReader = next;
+    if (next) {
+      this.activeManga = null;
+      this.activeBookId = null;
+      this.activeBookReaderId = null;
+    }
   }
   setPreviewManga(next: Manga | null)            { this.previewManga     = next; }
   setActiveSource(next: Source | null)           { this.activeSource     = next; }
   setPageUrls(next: string[])                    { this.pageUrls         = next; }
   setPageNumber(next: number)                    { this.pageNumber       = next; }
   setLibraryTagFilter(next: string[])            { this.libraryTagFilter = next; }
-  setSettingsOpen(next: boolean)                 { this.settingsOpen     = next; }
+  setSettingsOpen(next: boolean) {
+    if (next) {
+      if (this.navPage !== "settings") this.lastPrimaryNavPage = this.navPage;
+      this.navPage = "settings";
+      this.settingsOpen = true;
+      this.emitNavigationChange();
+      return;
+    }
+
+    this.settingsOpen = false;
+    if (this.navPage === "settings") this.navPage = this.lastPrimaryNavPage;
+    this.emitNavigationChange();
+  }
   setRuntimeSettingsTab(next: RuntimeSettingsTab | null) { this.runtimeSettingsTab = next; }
   setExtensionsPanelHint(next: "repos" | null)   { this.extensionsPanelHint = next; }
   updateSettings(patch: Partial<Settings>)       { this.settings = { ...this.settings, ...patch }; }
+  resetSettings()                                { this.settings = cloneDefaultSettings(); }
   resetKeybinds()                                { this.settings = { ...this.settings, keybinds: DEFAULT_KEYBINDS }; }
 
 
@@ -1346,6 +1670,7 @@ class Store {
     this.searchBrowseHint = null;
     this.searchSourcesPaneHint = null;
     this.homePanelHint = null;
+    this.emitNavigationChange();
   }
 
   openSearchBrowseFeatured(genre?: string | null) {
@@ -1357,6 +1682,7 @@ class Store {
     this.homePanelHint = null;
     this.activeSource = null;
     if (genre) this.genreFilter = genre;
+    this.emitNavigationChange();
   }
 
   openSearchBrowseTags() {
@@ -1367,6 +1693,7 @@ class Store {
     this.searchSourcesPaneHint = null;
     this.homePanelHint = null;
     this.activeSource = null;
+    this.emitNavigationChange();
   }
 
   openSearchSources(panel: SearchSourcesPane = "browse", repoPanel: "repos" | null = null) {
@@ -1377,18 +1704,32 @@ class Store {
     this.searchSourcesPaneHint = panel;
     this.extensionsPanelHint = repoPanel;
     this.homePanelHint = null;
+    this.emitNavigationChange();
   }
 
   openHomeDashboard() {
+    clearSearchEngagedBodyClasses();
     this.navPage = "home";
     this.settingsOpen = false;
     this.homePanelHint = null;
+    this.activeManga = null;
+    this.activeBookId = null;
+    this.activeBookReaderId = null;
+    this.activeNovelDetail = null;
+    this.activeNovelReader = null;
+    this.activeChapter = null;
+    this.activeChapterList = [];
+    this.activeSource = null;
+    this.genreFilter = "";
+    this.libraryFilter = "library";
+    this.emitNavigationChange();
   }
 
   openHomeHistory() {
     this.navPage = "home";
     this.settingsOpen = false;
     this.homePanelHint = "history";
+    this.emitNavigationChange();
   }
 }
 
@@ -1408,6 +1749,16 @@ export function getBookProgress(bookId: string)                         { return
 export function addBookBookmark(entry: Omit<BookBookmarkEntry, "savedAt">, label?: string) { store.addBookBookmark(entry, label); }
 export function removeBookBookmark(bookId: string)                      { store.removeBookBookmark(bookId); }
 export function replaceBooksState(snapshot: BooksRestoreHydrationInput) { store.replaceBooksState(snapshot); }
+export function replaceAppReadingState(snapshot: {
+  history?: HistoryEntry[];
+  readLog?: ReadLogEntry[];
+  readingStats?: ReadingStats;
+}) {
+  store.replaceAppReadingState(snapshot);
+}
+export function refreshAppReadingStateFromPersistence() {
+  store.replaceAppReadingState(readPersistedAppReadingSnapshot());
+}
 export function wipeAllData()                                            { store.wipeAllData(); }
 export function linkManga(idA: number, idB: number)                      { store.linkManga(idA, idB); }
 export function unlinkManga(idA: number, idB: number)                    { store.unlinkManga(idA, idB); }
@@ -1417,7 +1768,14 @@ export function addToast(toast: Omit<Toast, "id">)                       { store
 export function dismissToast(id: string)                                 { store.dismissToast(id); }
 export function setCategories(cats: Category[])                           { store.setCategories(cats); }
 export function setLibraryMangaSnapshot(next: Manga[])                    { store.setLibraryMangaSnapshot(next); }
+export function setLibraryBootstrap(status: LibraryBootstrapStatus, scopeKey: string | null, trackingSummary: TrackerCompletionTracker[] | null = null) {
+  store.setLibraryBootstrap(status, scopeKey, trackingSummary);
+}
+export function setLibraryTrackingSummarySnapshot(next: TrackerCompletionTracker[]) {
+  store.setLibraryTrackingSummarySnapshot(next);
+}
 export function setActiveDownloads(next: ActiveDownload[])               { store.setActiveDownloads(next); }
+export function setPausedDownloads(next: PausedDownloadItem[])           { store.setPausedDownloads(next); }
 export function setNavPage(next: NavPage)                                { store.setNavPage(next); }
 export function setLibrarySection(next: LibrarySection)                  { store.setLibrarySection(next); }
 export function setLibraryFilter(next: LibraryFilter)                    { store.setLibraryFilter(next); }
@@ -1427,6 +1785,9 @@ export function setActiveManga(next: Manga | null)                       { store
 export function setActiveBookId(next: string | null)                     { store.setActiveBookId(next); }
 export function openBookReader(bookId: string)                           { store.openBookReader(bookId); }
 export function closeBookReader()                                        { store.closeBookReader(); }
+export function setActiveNovelDetail(next: ActiveNovelDetailState | null) { store.setActiveNovelDetail(next); }
+export function setActiveNovelReader(next: ActiveNovelReaderState | null) { store.setActiveNovelReader(next); }
+export function closeNovelReader()                                       { store.closeNovelReader(); }
 export function setPreviewManga(next: Manga | null)                      { store.setPreviewManga(next); }
 export function setActiveSource(next: Source | null)                     { store.setActiveSource(next); }
 export function setPageUrls(next: string[])                              { store.setPageUrls(next); }
@@ -1445,6 +1806,7 @@ export function setLibraryVisibleCount(next: number)                     { store
 export function setLibraryReturnToMangaId(next: number | null)           { store.setLibraryReturnToMangaId(next); }
 export function setExtensionsPanelHint(next: "repos" | null)             { store.setExtensionsPanelHint(next); }
 export function updateSettings(patch: Partial<Settings>)                 { store.updateSettings(patch); }
+export function resetSettings()                                          { store.resetSettings(); }
 export function resetKeybinds()                                          { store.resetKeybinds(); }
 export function clearDiscoverCache()                                       { store.clearDiscoverCache(); }
 export function addBookmark(entry: Omit<BookmarkEntry, "savedAt">, label?: string) { store.addBookmark(entry, label); }

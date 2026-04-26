@@ -35,24 +35,45 @@
   let suppressNextClick = false;
 
   const showOverlayBadges = $derived(viewMode !== "list");
+  const primaryGridBadge = $derived(
+    viewMode !== "list"
+      ? vm.badges.find((badge) => badge.kind === "unread")
+        ?? vm.badges.find((badge) => badge.kind === "status")
+        ?? vm.badges.find((badge) => badge.kind === "download")
+        ?? null
+      : null,
+  );
   const topLeftBadges = $derived(
-    showOverlayBadges
+    showOverlayBadges && viewMode === "list"
       ? vm.badges
           .filter((badge) => badge.kind === "unread" || badge.kind === "download")
           .sort((left) => (left.kind === "unread" ? -1 : 1))
       : [],
   );
   const topRightBadges = $derived(
-    showOverlayBadges ? vm.badges.filter((badge) => badge.kind === "status") : [],
+    showOverlayBadges && viewMode === "list"
+      ? vm.badges.filter((badge) => badge.kind === "status")
+      : [],
   );
   const bottomLeftBadges = $derived(
-    showOverlayBadges ? vm.badges.filter((badge) => badge.kind === "subtype") : [],
+    showOverlayBadges && viewMode === "list" ? vm.badges.filter((badge) => badge.kind === "subtype") : [],
   );
+
+  function formatGridStateLabel(label: string, _kind: string): string {
+    return label;
+  }
+
+  function visibleGridStatusLabel(label: string | undefined): string | null {
+    const normalized = label?.trim();
+    if (!normalized || normalized.toLowerCase() === "unknown") return null;
+    return normalized;
+  }
 </script>
 
 <button
   type="button"
   class="card"
+  class:n-library-card={viewMode !== "list"}
   class:card-compact={viewMode === "compact_grid"}
   class:card-list={viewMode === "list"}
   class:card-outline-off={!showOutline}
@@ -80,7 +101,7 @@
   onpointerleave={onPointerLeave ? ((event) => onPointerLeave(vm.id, event)) : undefined}
   aria-label={vm.title}
 >
-  <div class="cover-wrap">
+  <div class="cover-wrap" class:n-library-card__cover={viewMode !== "list"}>
     {#if vm.coverSrc}
       <img
         class="cover"
@@ -102,24 +123,27 @@
       </div>
     {/if}
 
+    {#if viewMode !== "list" && primaryGridBadge}
+      <span class="n-library-card__badge">{formatGridStateLabel(primaryGridBadge.label, primaryGridBadge.kind)}</span>
+    {/if}
     {#if topLeftBadges.length}
       <div class="badge-cluster badge-cluster-top-left">
         {#each topLeftBadges as badge, index (badge.kind + badge.label + index)}
-          <span class={`badge badge-${badge.kind}`}>{badge.label}</span>
+          <span class={`badge badge-${badge.kind} n-library-card__badge`}>{formatGridStateLabel(badge.label, badge.kind)}</span>
         {/each}
       </div>
     {/if}
     {#if topRightBadges.length}
       <div class="badge-cluster badge-cluster-top-right">
         {#each topRightBadges as badge, index (badge.kind + badge.label + index)}
-          <span class={`badge badge-${badge.kind}`}>{badge.label}</span>
+          <span class={`badge badge-${badge.kind} n-library-card__badge`}>{formatGridStateLabel(badge.label, badge.kind)}</span>
         {/each}
       </div>
     {/if}
     {#if bottomLeftBadges.length}
       <div class="badge-cluster badge-cluster-bottom-left">
         {#each bottomLeftBadges as badge, index (badge.kind + badge.label + index)}
-          <span class={`badge badge-${badge.kind}`}>{badge.label}</span>
+          <span class={`badge badge-${badge.kind} n-library-card__badge`}>{formatGridStateLabel(badge.label, badge.kind)}</span>
         {/each}
       </div>
     {/if}
@@ -137,9 +161,18 @@
     {/if}
   </div>
 
-  <div class="card-copy">
-    <p class="title">{vm.title}</p>
-    {#if vm.subtitle}
+  <div class="card-copy" class:n-library-card__info={viewMode !== "list"}>
+    <p class="title" class:n-library-card__title={viewMode !== "list"}>{vm.title}</p>
+    {#if viewMode !== "list"}
+      <div class="n-library-card__meta" aria-hidden={!vm.subtitle && !vm.progress?.primaryLabel}>
+        {#if vm.subtitle}
+          <span class="n-library-card__author">{vm.subtitle}</span>
+        {/if}
+        {#if visibleGridStatusLabel(vm.metaChips[0])}
+          <span class="n-library-card__vol">{visibleGridStatusLabel(vm.metaChips[0])}</span>
+        {/if}
+      </div>
+    {:else if vm.subtitle}
       <p class="subtitle">{vm.subtitle}</p>
     {/if}
     {#if viewMode === "list" && vm.badges.length}
@@ -149,14 +182,14 @@
         {/each}
       </div>
     {/if}
-    {#if vm.metaChips.length}
+    {#if viewMode === "list" && vm.metaChips.length}
       <div class="meta-row">
         {#each vm.metaChips as chip}
           <span class="meta-chip">{chip}</span>
         {/each}
       </div>
     {/if}
-    {#if showProgress && vm.progress}
+    {#if viewMode === "list" && showProgress && vm.progress}
       <div class="progress-block">
         <span class="progress-primary">{vm.progress.primaryLabel}</span>
         {#if vm.progress.secondaryLabel}
@@ -187,6 +220,16 @@
     transition: background var(--t-base), border-color var(--t-base);
   }
 
+  .card.n-library-card {
+    gap: calc(7px * var(--n-hud-scale, 1));
+    border-radius: 0;
+    transition: transform 160ms ease, filter 160ms ease;
+  }
+
+  .card.n-library-card:hover {
+    transform: translateY(-2px);
+  }
+
   .card-list {
     display: grid;
     grid-template-columns: 86px minmax(0, 1fr);
@@ -203,6 +246,10 @@
 
   .card:hover .cover {
     filter: brightness(1.07);
+  }
+
+  .card.n-library-card:hover .cover {
+    filter: brightness(1.06) saturate(1.04);
   }
 
   .card-list:hover {
@@ -248,6 +295,13 @@
     display: flex;
     align-items: center;
     justify-content: center;
+  }
+
+  .cover-wrap.n-library-card__cover {
+    border-radius: calc(16px * var(--n-hud-scale, 1));
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
   }
 
   .card-list .cover-wrap {
@@ -322,6 +376,43 @@
     border-radius: var(--radius-sm);
   }
 
+  .badge.n-library-card__badge {
+    min-width: auto;
+    min-height: calc(20px * var(--n-hud-scale, 1));
+    height: calc(20px * var(--n-hud-scale, 1));
+    padding: 0 calc(7px * var(--n-hud-scale, 1));
+    border-radius: 9999px;
+    background: rgba(36, 33, 43, 0.9);
+    border: 1px solid rgba(184, 167, 234, 0.12);
+    color: var(--n-primary, var(--accent-fg));
+    font-family: var(--font-ui);
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.18);
+  }
+
+  .n-library-card__cover > .n-library-card__badge {
+    position: absolute;
+    top: var(--sp-2);
+    right: var(--sp-2);
+    display: inline-flex;
+    align-items: center;
+    min-height: calc(20px * var(--n-hud-scale, 1));
+    padding: 0 calc(7px * var(--n-hud-scale, 1));
+    border-radius: 9999px;
+    background: rgba(36, 33, 43, 0.9);
+    border: 1px solid rgba(184, 167, 234, 0.12);
+    color: var(--n-primary, var(--accent-fg));
+    font-family: var(--font-ui);
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.18);
+  }
+
   .badge-unread {
     background: color-mix(in srgb, var(--accent-muted) 32%, var(--bg-void));
     color: color-mix(in srgb, var(--accent-fg) 78%, var(--text-primary));
@@ -386,6 +477,11 @@
     min-width: 0;
   }
 
+  .card-copy.n-library-card__info {
+    gap: 3px;
+    margin-top: 0;
+  }
+
   .card-list .card-copy {
     margin-top: 0;
     justify-content: center;
@@ -409,6 +505,15 @@
     transition: color var(--t-base);
   }
 
+  .title.n-library-card__title {
+    min-height: calc(var(--leading-snug) * 2em);
+    color: rgba(255, 255, 255, 0.92);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-medium);
+    line-height: var(--leading-snug);
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+  }
+
   .card-list .title {
     min-height: 0;
     -webkit-line-clamp: 1;
@@ -427,6 +532,38 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .subtitle.n-library-card__author {
+    font-size: 9px;
+    letter-spacing: var(--tracking-wide);
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.45);
+  }
+
+  .n-library-card__meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-2);
+    min-width: 0;
+  }
+
+  .n-library-card__author,
+  .n-library-card__vol {
+    font-family: var(--font-ui);
+    font-size: 9px;
+    letter-spacing: var(--tracking-wide);
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.45);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .n-library-card__vol {
+    color: rgba(255, 255, 255, 0.7);
+    flex-shrink: 0;
   }
 
   .card-compact .subtitle,

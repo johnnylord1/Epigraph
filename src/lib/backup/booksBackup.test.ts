@@ -61,6 +61,14 @@ const sampleSnapshot: AethonBooksSnapshot = {
   booksCategoryAssignments: {
     "epub-alpha": ["favorites"],
   },
+  booksLibraryUi: {
+    activeCategoryId: "favorites",
+    typeFilter: "epub",
+    statusFilter: "in_progress",
+    search: "alpha",
+    sortMode: "recentlyRead",
+    sortDir: "asc",
+  },
 };
 
 const SAMPLE_COVER_SVG = `<?xml version="1.0" encoding="UTF-8"?>
@@ -356,6 +364,7 @@ describe("books backup payload", () => {
     expect(restored.bookProgress[0]?.bookId).toBe("epub-alpha");
     expect(restored.bookBookmarks[0]?.bookId).toBe("epub-alpha");
     expect(restored.booksCategoryAssignments["epub-alpha"]).toEqual(["favorites"]);
+    expect(restored.booksLibraryUi).toEqual(sampleSnapshot.booksLibraryUi);
     expect(writeManagedBookAsset).toHaveBeenCalledTimes(1);
     expect(writeManagedBookCover).toHaveBeenCalledTimes(1);
   });
