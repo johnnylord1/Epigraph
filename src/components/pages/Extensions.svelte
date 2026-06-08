@@ -6,6 +6,7 @@
   import { store, addToast, bumpContentSetupVersion, setExtensionsPanelHint } from "../../store/state.svelte";
   import type { Extension } from "../../lib/types";
   import SetupStatusCard from "../shared/SetupStatusCard.svelte";
+  import NocturneState from "../shared/NocturneState.svelte";
   import { detectSetupState, type SetupState } from "../../lib/setupState";
   import { ensureExtensionRepo, RECOMMENDED_EXTENSION_REPO } from "../../lib/defaultRepos";
 
@@ -291,7 +292,16 @@
           {:else}Install{/if}
         </button>
       </div>
-      {#if installError}<div class="panel-error">{installError}</div>{/if}
+      {#if installError}
+        <NocturneState
+          layout="compact"
+          tone="danger"
+          icon="info"
+          eyebrow="Install"
+          title="Could not install extension"
+          body={installError}
+        />
+      {/if}
     </div>
   {/if}
 
@@ -302,10 +312,10 @@
         <button class="icon-btn" onclick={() => panel = null}><X size={14} weight="light" /></button>
       </div>
       {#if reposLoading}
-        <div class="repo-loading"><CircleNotch size={14} weight="light" class="anim-spin" style="color:var(--text-faint)" /></div>
+        <NocturneState layout="compact" tone="info" icon="retry" eyebrow="Repositories" title="Loading repositories" />
       {:else}
         {#if repos.length === 0}
-          <div class="repo-empty">No extension repositories are configured yet. Add a repository URL before extensions can appear here.</div>
+          <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Repositories" title="No repositories configured" body="Add a repository URL before extensions can appear here." />
         {:else}
           <div class="repo-list">
             {#each repos as url}
@@ -327,7 +337,16 @@
             {#if savingRepos}<CircleNotch size={13} weight="light" class="anim-spin" />{:else}Add{/if}
           </button>
         </div>
-        {#if repoError}<div class="panel-error">{repoError}</div>{/if}
+        {#if repoError}
+          <NocturneState
+            layout="compact"
+            tone="danger"
+            icon="info"
+            eyebrow="Repository"
+            title="Could not save repository"
+            body={repoError}
+          />
+        {/if}
       {/if}
     </div>
   {/if}
@@ -335,20 +354,35 @@
 
 
   {#if loading}
-    <div class="empty"><CircleNotch size={16} weight="light" class="anim-spin" style="color:var(--text-faint)" /></div>
+    <div class="empty">
+      <NocturneState layout="center" tone="info" icon="retry" eyebrow="Extensions" title="Loading extensions" />
+    </div>
   {:else if groups.length === 0}
     <div class="empty">
-      {#if setupState?.kind === "server_offline"}
-        Suwayomi is offline, so extensions can’t load right now.
-      {:else if setupState?.kind === "no_extension_repos"}
-        Add an extension repository to start listing available extensions.
-      {:else if setupState?.kind === "no_installed_extensions" && filter === "installed"}
-        The repository is configured, but no content extension is installed yet. Switch to Available and install one to unlock sources and search.
-      {:else if setupState?.kind === "no_usable_sources"}
-        Extensions are present, but Aethon still has no usable sources.
-      {:else}
-        No extensions found.
-      {/if}
+      <NocturneState
+        layout="center"
+        tone={setupState?.kind === "server_offline" ? "danger" : "info"}
+        icon={setupState?.kind === "server_offline" ? "plug" : "search"}
+        eyebrow="Extensions"
+        title={setupState?.kind === "server_offline"
+          ? "Suwayomi is offline"
+          : setupState?.kind === "no_extension_repos"
+            ? "No extension repository"
+            : setupState?.kind === "no_installed_extensions" && filter === "installed"
+              ? "No extensions installed"
+              : setupState?.kind === "no_usable_sources"
+                ? "No usable sources"
+                : "No extensions found"}
+        body={setupState?.kind === "server_offline"
+          ? "Start or reconnect Suwayomi to load extensions."
+          : setupState?.kind === "no_extension_repos"
+            ? "Add an extension repository to start listing available extensions."
+            : setupState?.kind === "no_installed_extensions" && filter === "installed"
+              ? "Switch to Available and install one to unlock sources and search."
+              : setupState?.kind === "no_usable_sources"
+                ? "Extensions are present, but Aethon still has no source available for this view."
+                : "Try another filter or refresh the extension list."}
+      />
     </div>
   {:else}
     <div class="list">
@@ -433,7 +467,6 @@
   .ext-panel { display: flex; flex-direction: column; gap: var(--sp-2); padding: 0 var(--sp-6) var(--sp-3); flex-shrink: 0; animation: fadeIn 0.1s ease both; }
   .panel-header { display: flex; align-items: center; justify-content: space-between; }
   .panel-title { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-muted); letter-spacing: var(--tracking-wide); }
-  .panel-error { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--color-error); letter-spacing: var(--tracking-wide); padding: 0 2px; }
   .ext-row { display: flex; gap: var(--sp-2); }
   .ext-input { flex: 1; background: var(--bg-raised); border: 1px solid var(--border-strong); border-radius: var(--radius-md); padding: 6px var(--sp-3); color: var(--text-primary); font-size: var(--text-sm); outline: none; transition: border-color var(--t-base); }
   .ext-input:focus { border-color: var(--border-focus); }
@@ -444,7 +477,6 @@
   .install-btn:disabled { opacity: 0.5; cursor: default; }
   .install-btn.success { background: rgba(107,143,107,0.2); border-color: var(--accent-fg); color: var(--accent-fg); }
   .repo-loading { display: flex; align-items: center; justify-content: center; padding: var(--sp-3); }
-  .repo-empty { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); padding: var(--sp-1) 2px; }
   .repo-list { display: flex; flex-direction: column; gap: 2px; }
   .repo-row { display: flex; align-items: center; gap: var(--sp-2); padding: 5px var(--sp-2); border-radius: var(--radius-md); background: var(--bg-raised); border: 1px solid var(--border-dim); }
   .repo-url { flex: 1; font-size: var(--text-2xs); color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -485,7 +517,7 @@
   .variant-name { flex: 1; font-size: var(--text-sm); color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .variant-version { font-family: var(--font-ui); font-size: var(--text-2xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); flex-shrink: 0; }
   .variant-actions { flex-shrink: 0; }
-  .empty { display: flex; align-items: center; justify-content: center; flex: 1; color: var(--text-faint); font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); }
+  .empty { display: flex; align-items: center; justify-content: center; flex: 1; min-height: 220px; color: var(--text-faint); }
   .load-more-row {
     display: flex;
     justify-content: center;

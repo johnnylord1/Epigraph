@@ -43,8 +43,8 @@
   let pausingItems = $state(new Set<number>());
   let resumingItems = $state(new Set<number>());
   let itemOrder = $state(new Map<number, number>());
-  let pollTimer: ReturnType<typeof setInterval> | null = null;
-  let storageTimer: ReturnType<typeof setInterval> | null = null;
+  let pollTimer: ReturnType<typeof setTimeout> | null = null;
+  let storageTimer: ReturnType<typeof setTimeout> | null = null;
   let storageInfo: StorageInfo | null = $state(null);
   let speedSample: ProgressSample | null = $state(null);
   let observedSpeedPerSecond = $state<number | null>(null);
@@ -183,6 +183,39 @@
     }
   }
 
+  function clearDownloadTimers() {
+    if (pollTimer) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+    if (storageTimer) {
+      clearTimeout(storageTimer);
+      storageTimer = null;
+    }
+  }
+
+  function nextStatusPollDelay() {
+    const liveQueue = status?.queue ?? [];
+    const hasActiveWork = liveQueue.some((item) => item.state === "DOWNLOADING" || item.state === "QUEUED");
+    return hasActiveWork || store.pausedDownloads.length > 0 ? 2000 : 8000;
+  }
+
+  function scheduleStatusPoll(delayMs = nextStatusPollDelay()) {
+    if (pollTimer) clearTimeout(pollTimer);
+    pollTimer = setTimeout(async () => {
+      await loadStatus();
+      scheduleStatusPoll();
+    }, delayMs);
+  }
+
+  function scheduleStoragePoll(delayMs = 30000) {
+    if (storageTimer) clearTimeout(storageTimer);
+    storageTimer = setTimeout(async () => {
+      await loadStorageInfo();
+      scheduleStoragePoll();
+    }, delayMs);
+  }
+
   onMount(() => {
     const onKeydown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -198,17 +231,14 @@
     window.addEventListener("keydown", onKeydown);
     void loadStatus();
     void loadStorageInfo();
-    pollTimer = setInterval(() => {
-      void loadStatus();
-    }, 2000);
-    storageTimer = setInterval(loadStorageInfo, 10000);
+    scheduleStatusPoll(2000);
+    scheduleStoragePoll();
 
     return () => {
       clearTimeout(initialLoadGuard);
       window.removeEventListener("keydown", onKeydown);
       document.body.classList.remove("aethon-downloads-search-engaged");
-      if (pollTimer) clearInterval(pollTimer);
-      if (storageTimer) clearInterval(storageTimer);
+      clearDownloadTimers();
     };
   });
 
@@ -763,7 +793,6 @@
     flex-direction: column;
   }
 
-  .downloads-topbar,
   .downloads-scroll {
     position: relative;
     z-index: 1;
@@ -786,17 +815,6 @@
 
   .downloads-topbar-shell :global(.n-topbar::before) {
     pointer-events: none;
-  }
-
-  .downloads-topbar__actions {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-
-  .downloads-topbar__search {
-    position: relative;
-    z-index: 62;
   }
 
   .downloads-scroll {

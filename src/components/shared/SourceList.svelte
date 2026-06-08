@@ -5,6 +5,7 @@
   import { GET_SOURCES } from "../../lib/queries";
   import { store } from "../../store/state.svelte";
   import type { Source } from "../../lib/types";
+  import NocturneState from "./NocturneState.svelte";
 
   let sources:  Source[]   = $state([]);
   let loading              = $state(true);
@@ -66,7 +67,7 @@
   {#if loading}
     <div class="empty"><CircleNotch size={16} weight="light" class="anim-spin" style="color:var(--text-faint)" /></div>
   {:else if groups.length === 0}
-    <div class="empty">No sources found.</div>
+    <NocturneState layout="center" tone="info" icon="search" eyebrow="Sources" title="No sources found" body="Try another language filter or check your installed extensions." />
   {:else}
     <div class="list">
       {#each groups as g}

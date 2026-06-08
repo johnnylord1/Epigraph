@@ -10,6 +10,7 @@
   } from "../../lib/queries";
   import { addToast, setActiveManga, setNavPage } from "../../store/state.svelte";
   import type { Tracker, TrackRecord } from "../../lib/types";
+  import NocturneState from "../shared/NocturneState.svelte";
 
   // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -299,28 +300,45 @@
 
     {#if loading}
       <div class="state-center">
-        <CircleNotch size={22} weight="light" class="anim-spin" style="color:var(--text-faint)" />
-        <span class="state-label">Loading tracking data…</span>
+        <NocturneState layout="center" tone="info" icon="retry" eyebrow="Tracking" title="Loading tracking data" />
       </div>
 
     {:else if error}
       <div class="state-center">
-        <p class="state-error">{error}</p>
-        <button class="retry-btn" onclick={load}>Retry</button>
+        <NocturneState
+          layout="center"
+          tone="danger"
+          icon="warning"
+          eyebrow="Tracking"
+          title="Could not load tracking data"
+          body={error}
+          actions={[{ label: "Retry", kind: "primary", icon: "retry", onClick: load }]}
+        />
       </div>
 
     {:else if loggedInTrackers.length === 0}
       <div class="state-center">
-        <p class="state-text">No trackers connected.</p>
-        <p class="state-hint">Go to Settings → Tracking to log in to AniList, MAL, or others.</p>
+        <NocturneState
+          layout="center"
+          tone="info"
+          icon="plug"
+          eyebrow="Tracking"
+          title="No trackers connected"
+          body="Go to Settings -> Tracking to log in to AniList, MAL, or others."
+        />
       </div>
 
     {:else if filtered.length === 0}
       <div class="state-center">
-        <p class="state-text">{searchQuery || statusFilter !== "all" ? "No results match your filters." : "Nothing tracked yet."}</p>
-        {#if searchQuery || statusFilter !== "all"}
-          <button class="retry-btn" onclick={() => { searchQuery = ""; statusFilter = "all"; }}>Clear filters</button>
-        {/if}
+        <NocturneState
+          layout="center"
+          tone="info"
+          icon="search"
+          eyebrow="Tracking"
+          title={searchQuery || statusFilter !== "all" ? "No results match your filters" : "Nothing tracked yet"}
+          body={searchQuery || statusFilter !== "all" ? "Clear the current filters to return to your full tracker list." : "Tracked entries will appear here after you link a series."}
+          actions={searchQuery || statusFilter !== "all" ? [{ label: "Clear filters", kind: "primary", icon: "retry", onClick: () => { searchQuery = ""; statusFilter = "all"; } }] : []}
+        />
       </div>
 
     {:else}
@@ -534,13 +552,7 @@
 
   /* ── States ─────────────────────────────────────────────────────────────── */
   .state-center { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--sp-3); height: 100%; padding: var(--sp-10); text-align: center; }
-  .state-label { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); }
-  .state-text  { font-size: var(--text-sm); color: var(--text-muted); }
   .state-hint  { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); }
-  .state-error { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--color-error); letter-spacing: var(--tracking-wide); }
-  .retry-btn { font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); padding: 6px 16px; border-radius: var(--radius-md); border: 1px solid var(--border-strong); background: none; color: var(--text-muted); cursor: pointer; transition: color var(--t-base), border-color var(--t-base); }
-  .retry-btn:hover { color: var(--accent-fg); border-color: var(--accent-dim); }
-
   /* ── Records list ───────────────────────────────────────────────────────── */
   .records-list { display: flex; flex-direction: column; gap: var(--sp-2); }
 

@@ -21,6 +21,7 @@
     searchInstalledNovelSource,
     shutdownInstalledNovelSourcesRuntime,
   } from "../../lib/novels/sources";
+  import NocturneState from "../shared/NocturneState.svelte";
 
   let loadingSources = $state(true);
   let loadingResults = $state(false);
@@ -224,9 +225,20 @@
 <div class="splitRoot">
   <div class="splitSidebar">
     {#if loadingSources}
-      <div class="splitLoading">Loading sources...</div>
+      <div class="splitEmpty">
+        <NocturneState layout="compact" tone="info" icon="retry" eyebrow="Novel sources" title="Loading sources" />
+      </div>
     {:else if sources.length === 0}
-      <div class="splitEmpty">Install and trust at least one LNReader novel extension in Settings first.</div>
+      <div class="splitEmpty">
+        <NocturneState
+          layout="compact"
+          tone="info"
+          icon="plug"
+          eyebrow="Novel sources"
+          title="No trusted sources"
+          body="Install and trust at least one LNReader novel extension in Settings first."
+        />
+      </div>
     {:else}
       <div class="splitList">
         {#each sources as source (source.pluginId)}
@@ -261,9 +273,14 @@
   <div class="splitContent">
     {#if !activeSource}
       <div class="empty">
-        <BookOpen size={32} weight="duotone" />
-        <p class="emptyText">Browse a source</p>
-        <p class="emptyHint">Select a source to see its popular titles, or search within it.</p>
+        <NocturneState
+          layout="center"
+          tone="info"
+          icon="books"
+          eyebrow="Novel sources"
+          title="Browse a source"
+          body="Select a source to see its popular titles, or search within it."
+        />
       </div>
     {:else}
       <div class="splitContentHeader">
@@ -300,21 +317,21 @@
       </div>
 
       {#if panelError}
-        <div class="splitEmpty splitEmptyError">
-          <strong>{sourceFailurePresentation?.title ?? "Source request failed"}</strong>
-          <span>{sourceFailurePresentation?.body ?? panelError}</span>
-          <div class="splitErrorActions">
-            {#if sourceFailurePresentation?.primaryAction === "browse"}
-              <button class="mini-btn" type="button" onclick={runBrowse} disabled={loadingResults}>Browse instead</button>
-            {:else if sourceFailurePresentation?.primaryAction === "retry-search"}
-              <button class="mini-btn" type="button" onclick={runSearch} disabled={loadingResults || !submittedQuery}>Retry search</button>
-            {/if}
-            {#if sourceFailurePresentation?.secondaryAction === "browse"}
-              <button class="mini-btn" type="button" onclick={runBrowse} disabled={loadingResults}>Browse instead</button>
-            {:else if sourceFailurePresentation?.secondaryAction === "retry-search"}
-              <button class="mini-btn" type="button" onclick={runSearch} disabled={loadingResults || !submittedQuery}>Retry search</button>
-            {/if}
-          </div>
+        <div class="splitEmpty splitEmptyError splitEmptyError--nocturne">
+          <NocturneState
+            layout="compact"
+            tone="danger"
+            icon="warning"
+            eyebrow="Source request"
+            title={sourceFailurePresentation?.title ?? "Source request failed"}
+            body={sourceFailurePresentation?.body ?? panelError}
+            actions={[
+              ...(sourceFailurePresentation?.primaryAction === "browse" ? [{ label: "Browse instead", kind: "primary" as const, icon: "books" as const, disabled: loadingResults, onClick: runBrowse }] : []),
+              ...(sourceFailurePresentation?.primaryAction === "retry-search" ? [{ label: "Retry search", kind: "primary" as const, icon: "retry" as const, disabled: loadingResults || !submittedQuery, onClick: runSearch }] : []),
+              ...(sourceFailurePresentation?.secondaryAction === "browse" ? [{ label: "Browse instead", kind: "secondary" as const, icon: "books" as const, disabled: loadingResults, onClick: runBrowse }] : []),
+              ...(sourceFailurePresentation?.secondaryAction === "retry-search" ? [{ label: "Retry search", kind: "secondary" as const, icon: "retry" as const, disabled: loadingResults || !submittedQuery, onClick: runSearch }] : []),
+            ]}
+          />
           <NovelSourceStatusDetails
             pluginName={activeSource.name}
             record={activeSourceClassification}
@@ -323,11 +340,15 @@
           />
         </div>
       {:else if openingDetailPath}
-        <div class="splitLoading">Opening novel details...</div>
+        <div class="splitEmpty">
+          <NocturneState layout="compact" tone="info" icon="books" eyebrow="Novel sources" title="Opening novel details" />
+        </div>
       {/if}
 
       {#if loadingResults}
-        <div class="splitLoading">Loading...</div>
+        <div class="splitEmpty">
+          <NocturneState layout="center" tone="info" icon="retry" eyebrow="Novel sources" title="Loading titles" />
+        </div>
       {:else if results.length > 0}
         <div class="tagGrid">
           {#each results as result (result.path)}
@@ -351,14 +372,16 @@
         </div>
       {:else}
         <div class="empty">
-          <p class="emptyText">
-            {submittedQuery ? `No results for "${submittedQuery}"` : "Browse or search this source"}
-          </p>
-          <p class="emptyHint">
-            {submittedQuery
+          <NocturneState
+            layout="center"
+            tone="info"
+            icon="search"
+            eyebrow="Novel sources"
+            title={submittedQuery ? `No results for "${submittedQuery}"` : "Browse or search this source"}
+            body={submittedQuery
               ? "This source may search better with shorter terms, fewer spaces, or no accents. Aethon already retries normalized variations automatically."
               : "Use Browse for popular titles or Search for a specific novel."}
-          </p>
+          />
         </div>
       {/if}
     {/if}
@@ -402,8 +425,7 @@
 
   .splitContentHeader,
   .sourceBrowseBar,
-  .splitSourceTitle,
-  .splitErrorActions {
+  .splitSourceTitle {
     display: flex;
     align-items: center;
     gap: var(--sp-2);
@@ -555,7 +577,6 @@
   }
 
   .coverFallback,
-  .splitLoading,
   .splitEmpty {
     display: flex;
     align-items: center;
@@ -569,7 +590,6 @@
     gap: var(--sp-2);
   }
 
-  .splitLoading,
   .splitEmpty {
     flex: 1;
     text-align: center;
@@ -577,8 +597,6 @@
   }
 
   .cardTitle,
-  .emptyText,
-  .emptyHint,
   .sourceLang,
   .inLibBadge {
     font-family: var(--font-ui);
@@ -595,20 +613,11 @@
     transition: color var(--t-base);
   }
 
-  .splitLoading,
   .splitEmptyError {
     color: var(--color-error);
     align-items: flex-start;
     justify-content: flex-start;
     text-align: left;
-  }
-
-  .splitErrorActions {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-2);
-    flex-wrap: wrap;
-    margin-top: var(--sp-1);
   }
 
   .clearBtn,

@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { BookOpen } from "phosphor-svelte";
   import { computeLibraryLayout, type LibraryPreferredGridColumns, type LibraryViewMode } from "../../lib/libraryDisplay";
   import type { NovelShelfCard } from "../../lib/novels/libraryShelf";
+  import NocturneState from "../shared/NocturneState.svelte";
   import LibraryCardGrid from "./LibraryCardGrid.svelte";
 
   type Props = {
@@ -54,8 +54,14 @@
 <div class="content" bind:this={contentEl}>
   {#if cards.length === 0}
     <div class="center novels-empty">
-      <BookOpen size={28} weight="duotone" />
-      <span>{emptyMessage}</span>
+      <NocturneState
+        layout="center"
+        tone="info"
+        icon="books"
+        eyebrow="Library"
+        title="No novels here yet"
+        body={emptyMessage}
+      />
     </div>
   {:else}
     <LibraryCardGrid

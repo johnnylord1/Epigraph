@@ -104,34 +104,42 @@
 
 <style>
   .menu {
-    position: fixed; z-index: 200;
-    background: var(--bg-raised);
-    border: 1px solid var(--border-base);
-    border-radius: var(--radius-lg);
-    padding: var(--sp-1); min-width: 190px;
-    box-shadow: 0 0 0 1px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.35), 0 16px 40px rgba(0,0,0,0.25);
-    animation: scaleIn 0.1s ease both;
+    position: fixed;
+    z-index: 200;
+    min-width: 204px;
+    padding: 7px;
+    border: 1px solid rgba(92, 88, 103, 0.42);
+    border-radius: 14px;
+    background: rgba(21, 20, 25, 0.98);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.035),
+      0 18px 48px rgba(0,0,0,0.48);
+    backdrop-filter: blur(18px) saturate(120%);
+    animation: scaleIn 0.12s ease both;
     transform-origin: top left;
   }
   .item {
-    display: flex; align-items: center; gap: var(--sp-2);
-    width: 100%; padding: 5px var(--sp-2);
-    border-radius: var(--radius-md);
-    font-size: var(--text-sm); color: var(--text-secondary);
+    display: flex; align-items: center; gap: 9px;
+    width: 100%; min-height: 34px; padding: 0 10px;
+    border-radius: 10px;
+    color: rgba(202, 196, 208, 0.76);
+    font: 700 11px/1 "Manrope", "Inter", system-ui, sans-serif;
+    letter-spacing: 0.03em;
     text-align: left; cursor: pointer;
-    transition: background var(--t-fast), color var(--t-fast);
+    transition: background 140ms ease, color 140ms ease, transform 140ms ease;
     background: none; border: none; outline: none;
   }
-  .item:hover:not(.disabled), .item.focused:not(.disabled) { background: var(--bg-overlay); color: var(--text-primary); }
-  .item.danger { color: var(--color-error); }
-  .item.danger:hover:not(.disabled), .item.danger.focused:not(.disabled) { background: var(--color-error-bg); }
+  .item:hover:not(.disabled), .item.focused:not(.disabled) { background: rgba(201, 181, 255, 0.12); color: #e8e4eb; }
+  .item:active:not(.disabled) { transform: scale(0.985); }
+  .item.danger { color: #ff9f9f; }
+  .item.danger:hover:not(.disabled), .item.danger.focused:not(.disabled) { background: rgba(255, 159, 159, 0.12); }
   .item.disabled { opacity: 0.3; cursor: default; pointer-events: none; }
   .icon {
     display: flex; align-items: center; justify-content: center;
     width: 18px; height: 18px; flex-shrink: 0;
-    color: var(--text-faint); border-radius: var(--radius-sm);
+    color: rgba(202, 196, 208, 0.48); border-radius: 6px;
   }
-  .icon-danger { color: var(--color-error); opacity: 0.7; }
+  .icon-danger { color: #ff9f9f; opacity: 0.78; }
   .label { flex: 1; line-height: 1.3; }
-  .sep { height: 1px; background: var(--border-dim); margin: 3px var(--sp-1); }
+  .sep { height: 1px; background: rgba(202, 196, 208, 0.075); margin: 6px 2px; }
 </style>

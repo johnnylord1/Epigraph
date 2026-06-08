@@ -106,7 +106,7 @@ function buildTypeCounts(
   const epub = categoryScopedBooks.filter((book) => book.subtype === "epub").length;
   const pdf = categoryScopedBooks.filter((book) => book.subtype === "pdf").length;
   return {
-    all: categoryScopedBooks.length,
+    all: categoryScopedBooks.length + sourceCount,
     epub,
     pdf,
     sources: sourceCount,
@@ -186,9 +186,9 @@ function buildBooksEmptyMessage(
   filteredBooks: BookEntry[],
 ): string {
   if (input.typeFilter === "sources" && input.books.length >= 0) {
-    return "No books from sources yet.";
+    return "No source novels in this profile library yet.";
   }
-  if (input.books.length === 0) {
+  if (input.books.length === 0 && (input.sourceCount ?? 0) === 0) {
     if (input.profileLabel) {
       return `This ${input.profileLabel} profile has no imported books yet. Drag EPUB or PDF files here to import them.`;
     }

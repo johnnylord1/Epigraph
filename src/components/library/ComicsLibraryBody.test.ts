@@ -154,4 +154,68 @@ describe("ComicsLibraryBody", () => {
     await fireEvent.click(card);
     expect(store.activeManga?.id).toBe(7);
   });
+
+  test("renders comics in pages and loads the next page on demand", async () => {
+    const mangas = Array.from({ length: 5 }, (_, index) => ({
+      id: index + 1,
+      title: `Paged Manga ${index + 1}`,
+      thumbnailUrl: null,
+      inLibrary: true,
+      unreadCount: index + 1,
+      chapterCount: 10,
+      source: { id: "source-1", displayName: "Source One" },
+    })) as Manga[];
+
+    const vm: ComicsSectionVM = {
+      kind: "comics",
+      sectionTabs: [],
+      collections: [],
+      toolbar: {
+        searchValue: "",
+        searchPlaceholder: "Search",
+        sortMode: "az",
+        sortDir: "asc",
+        sortOptions: [],
+        filterValue: "ALL",
+        filterOptions: [],
+      },
+      loading: false,
+      error: null,
+      emptyMessage: "Empty",
+      cards: [],
+      selectionEnabled: true,
+      selectedIds: new Set(),
+      showBulkBar: false,
+    };
+
+    render(ComicsLibraryBody, {
+      props: {
+        vm,
+        mangas,
+        categories: [],
+        categoryMangaMap: new Map(),
+        renderLimit: 2,
+        viewKey: "library",
+        onRemoveFromLibrary: vi.fn(),
+        onAddToLibrary: vi.fn(),
+        onDeleteAllDownloads: vi.fn(),
+        onToggleCategory: vi.fn(),
+        onCreateAndAssign: vi.fn(),
+        onCreateCategory: vi.fn(),
+      },
+    });
+
+    expect(screen.getByRole("button", { name: /Paged Manga 1/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Paged Manga 2/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Paged Manga 3/i })).toBeNull();
+
+    await fireEvent.click(screen.getByRole("button", { name: /Load 2 more/i }));
+
+    expect(screen.getByRole("button", { name: /Paged Manga 3/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Paged Manga 4/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Paged Manga 5/i })).toBeNull();
+
+    await fireEvent.click(screen.getByRole("button", { name: /Paged Manga 3/i }));
+    expect(store.activeManga?.id).toBe(3);
+  });
 });

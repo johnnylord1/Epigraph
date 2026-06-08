@@ -43,13 +43,20 @@
   import { ensureExtensionRepo, RECOMMENDED_EXTENSION_REPO } from "../../lib/defaultRepos";
   import { detectSetupState, type SetupState } from "../../lib/setupState";
   import { mockSettingsStore, type MockExtensionSettingsPatch } from "../../store/mockSettingsStore";
+  import NocturneState from "../shared/NocturneState.svelte";
   import SetupStatusCard from "../shared/SetupStatusCard.svelte";
   import ExtensionSettingsPanel from "./ExtensionSettingsPanel.svelte";
 
   type Filter = "installed" | "available" | "updates" | "all";
   type UtilityPanel = null | "apk" | "repos" | "novelRepos";
 
-  let { contentType = "manga" }: { contentType?: "manga" | "novels" } = $props();
+  let {
+    contentType = "manga",
+    topbarSearch = null,
+  }: {
+    contentType?: "manga" | "novels";
+    topbarSearch?: string | null;
+  } = $props();
 
   const FILTERS: { id: Filter; label: string }[] = [
     { id: "installed", label: "Installed" },
@@ -116,8 +123,10 @@
   const updateCount = $derived(extensions.filter((extension) => extension.hasUpdate).length);
   const updateAllLabel = $derived(updateCount > 0 ? `Update all (${updateCount})` : "Update all");
 
+  const effectiveSearch = $derived(topbarSearch ?? search);
+
   const filtered = $derived(extensions.filter((extension) => {
-    const query = search.trim().toLowerCase();
+    const query = effectiveSearch.trim().toLowerCase();
     const matchesSearch =
       !query ||
       extension.name.toLowerCase().includes(query) ||
@@ -786,7 +795,14 @@
         {#if novelRepositoryState}
           <div class="repoList compactRepoList">
             {#if novelRepositoryState.repositories.length === 0}
-              <p class="repoEmpty">No novel repositories configured yet.</p>
+              <NocturneState
+                layout="compact"
+                tone="info"
+                icon="folder"
+                eyebrow="Novel repositories"
+                title="No repositories configured"
+                body="Add the official LNReader feed or paste a trusted plugin index URL."
+              />
             {:else}
               {#each novelRepositoryState.repositories as repo}
                 {@const repoState = deriveNovelRepositoryUiState(repo)}
@@ -829,7 +845,9 @@
               Official
             </button>
           </div>
-          {#if repoError}<p class="panelError">{repoError}</p>{/if}
+          {#if repoError}
+            <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Repository error" title="Could not update repositories" body={repoError} />
+          {/if}
         {/if}
         </section>
       </div>
@@ -868,7 +886,9 @@
               {/if}
             </button>
           </div>
-          {#if installError}<p class="panelError">{installError}</p>{/if}
+          {#if installError}
+            <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Install error" title="Could not install this package" body={installError} />
+          {/if}
         </section>
       </div>
     {/if}
@@ -888,7 +908,14 @@
           <div class="loadingInline"><CircleNotch size={15} weight="bold" class="anim-spin" /></div>
         {:else}
           {#if repos.length === 0}
-            <p class="repoEmpty">No extension repositories are configured yet.</p>
+            <NocturneState
+              layout="compact"
+              tone="info"
+              icon="folder"
+              eyebrow="Manga repositories"
+              title="No repositories configured"
+              body="Add a Tachiyomi extension index to make sources available."
+            />
           {:else}
             <div class="repoList compactRepoList">
               {#each repos as repo}
@@ -919,7 +946,9 @@
               {#if savingRepos}<CircleNotch size={13} weight="bold" class="anim-spin" />{:else}Add{/if}
             </button>
           </div>
-          {#if repoError}<p class="panelError">{repoError}</p>{/if}
+          {#if repoError}
+            <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Repository error" title="Could not update repositories" body={repoError} />
+          {/if}
         {/if}
         </section>
       </div>
@@ -930,9 +959,15 @@
         <CircleNotch size={18} weight="bold" class="anim-spin" />
       </div>
     {:else if groups.length === 0}
-      <div class="emptyState">
-        <p>No {sourceNoun} found.</p>
-        <span>{isNovelMode ? "Try refreshing novel sources or check your installed novel plugins." : "Try another filter, search term, or refresh your repositories."}</span>
+      <div class="emptyState emptyState--panel">
+        <NocturneState
+          layout="center"
+          tone="info"
+          icon="search"
+          eyebrow="Sources"
+          title={`No ${sourceNoun} found`}
+          body={isNovelMode ? "Try refreshing novel sources or check your installed novel plugins." : "Try another filter, search term, or refresh your repositories."}
+        />
       </div>
     {:else}
       <div class="extensionList">
@@ -1403,16 +1438,6 @@
     border-color: rgba(255, 148, 148, 0.18);
   }
 
-  .panelError,
-  .repoEmpty {
-    color: rgba(202, 196, 208, 0.56);
-    font-size: 12px;
-  }
-
-  .panelError {
-    color: rgba(255, 148, 148, 0.82);
-  }
-
   .repoList {
     display: grid;
     gap: 6px;
@@ -1812,15 +1837,6 @@
     gap: 8px;
     color: rgba(202, 196, 208, 0.5);
     text-align: center;
-  }
-
-  .emptyState p {
-    color: rgba(229, 226, 225, 0.78);
-    font-weight: 800;
-  }
-
-  .emptyState span {
-    font-size: 12px;
   }
 
   @media (max-width: 980px) {

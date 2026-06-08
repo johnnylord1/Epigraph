@@ -183,6 +183,8 @@ import Settings from "./Settings.svelte";
 function resetSettingsStore() {
   store.settings = {
     ...DEFAULT_SETTINGS,
+    defaultLocalProfileId: "test",
+    serverUrl: "http://127.0.0.1:4667",
     customThemes: [],
     booksCategories: [],
     booksCategoryAssignments: {},
@@ -191,6 +193,13 @@ function resetSettingsStore() {
   store.lastPrimaryNavPage = "home";
   store.settingsOpen = true;
   store.runtimeSettingsTab = null;
+  store.runtimeResolvedLocalProfileId = null;
+  store.runtimeResolvedLocalProfileMeta = null;
+  store.runtimeProfileResolutionSource = null;
+  store.runtimeLaunchProfileOverride = null;
+  store.runtimeIsOverrideSession = false;
+  store.runtimeServerUrl = "http://127.0.0.1:4667";
+  store.runtimeServerLabel = "CUSTOM";
   store.categories = [];
 }
 

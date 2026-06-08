@@ -26,6 +26,9 @@ export interface NovelSourceSearchResult {
   title: string;
   path: string;
   coverUrl: string | null;
+  rating?: number | null;
+  ratingMax?: number | null;
+  ratingLabel?: string | null;
 }
 
 export interface NovelDetailChapter {
@@ -123,4 +126,3 @@ export function createNovelLibraryId(sourceId: string, novelPath: string): strin
 export function createNovelChapterId(novelId: string, chapterPath: string): string {
   return `chapter:${novelId}:${encodeURIComponent(chapterPath)}`;
 }
-

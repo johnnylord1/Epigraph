@@ -1,12 +1,13 @@
 <script lang="ts">
-  import { onDestroy, onMount, untrack } from "svelte";
+  import { onDestroy, onMount, tick, untrack } from "svelte";
   import { gql, thumbUrl } from "../../lib/client";
-  import { GET_SOURCES, FETCH_SOURCE_MANGA, GET_TRACKERS, SEARCH_TRACKER } from "../../lib/queries";
+  import { GET_SOURCES, FETCH_SOURCE_MANGA, GET_TRACKERS, SEARCH_TRACKER, GET_LIBRARY, GET_ALL_TRACKER_RECORDS } from "../../lib/queries";
   import { fetchSourceMangaSearchWithFallback } from "../../lib/manga/sourceSearch";
   import { cache, CACHE_KEYS, getPageSet } from "../../lib/cache";
   import { dedupeSources, dedupeMangaById, dedupeMangaByTitle, shouldHideNsfw, shouldHideSource } from "../../lib/util";
-  import { store, updateSettings, setSearchPrefill, setPreviewManga, setExtensionsPanelHint, addToast, setSearchTabHint, setSearchBrowseHint, setSearchSourcesPaneHint, setSearchVisibilityDismissed, setActiveNovelDetail } from "../../store/state.svelte";
-  import type { Manga, Source, Tracker, TrackSearch } from "../../lib/types";
+  import { store, updateSettings, setSearchPrefill, setPreviewManga, setExtensionsPanelHint, addToast, setSearchTabHint, setSearchBrowseHint, setSearchSourcesPaneHint, setActiveNovelDetail, setActiveBookId, setActiveManga, setNavPage } from "../../store/state.svelte";
+  import type { Manga, Source, Tracker, TrackRecord, TrackSearch } from "../../lib/types";
+  import NocturneState from "../shared/NocturneState.svelte";
   import SetupStatusCard from "../shared/SetupStatusCard.svelte";
   import SourcesView from "./SourcesView.svelte";
   import { detectSetupState, type SetupState } from "../../lib/setupState";
@@ -14,8 +15,30 @@
   import AppTopbar from "../layout/AppTopbar.svelte";
   import WindowControlsInline from "../layout/WindowControlsInline.svelte";
   import { browseInstalledNovelSource, loadTrustedInstalledNovelSources, readInstalledNovelDetails, searchInstalledNovelSource, shutdownInstalledNovelSourcesRuntime } from "../../lib/novels/sources";
-  import { createNovelLibraryId, type InstalledNovelSourceDescriptor, type NovelSourceSearchResult } from "../../lib/novels/domain";
+  import { createNovelLibraryId, type InstalledNovelSourceDescriptor, type NovelDetailRecord, type NovelSourceSearchResult } from "../../lib/novels/domain";
   import { isNovelInLibrary, loadNovelLibraryState, peekNovelLibraryState } from "../../lib/novels/libraryState";
+  import {
+    getHardcoverUserBooks,
+    hardcoverBookToProvider,
+    hardcoverRecordToRecommendationCandidate,
+    hardcoverRecordToTasteProfileSeed,
+    loadHardcoverState,
+    matchHardcoverBook,
+    searchHardcoverBooks,
+    type HardcoverBookSearchResult,
+    type HardcoverNovelTrackRecord,
+  } from "../../lib/novels/hardcover";
+  import {
+    buildSearchRecommendations,
+    mangaToRecommendationCandidate,
+    novelSourceResultToRecommendationCandidate,
+    recommendationTitleKey,
+    recommendationTrackerRemoteKey,
+    type RecommendationCandidate,
+    type RecommendationItem,
+    type RecommendationProviderSignal,
+    type TasteProfileSeedItem,
+  } from "../../lib/recommendations";
 
   type SearchTab  = "keyword" | "browse" | "source";
   type BrowseTab  = "featured" | "tag";
@@ -29,6 +52,13 @@
     error:   string | null;
   }
 
+  interface NovelSourceResult {
+    source: InstalledNovelSourceDescriptor;
+    novels: NovelSourceSearchResult[];
+    loading: boolean;
+    error: string | null;
+  }
+
   interface BrowseSourceEntry {
     id: string;
     name: string;
@@ -36,7 +66,7 @@
     lang: string;
     iconUrl: string | null;
     isNsfw: boolean;
-    contentKind: "manga" | "novels";
+    contentKind: "manga" | "novels" | "hardcover";
     mangaSource?: Source;
     novelSource?: InstalledNovelSourceDescriptor;
   }
@@ -55,6 +85,33 @@
   }
 
   const CONCURRENCY = 6;
+  const SEARCH_SEED_SOURCE_LIMIT_MANGA = 8;
+  const SEARCH_SEED_SOURCE_LIMIT_NOVELS = 6;
+  const SEARCH_RECOMMENDATION_BASE_LIMIT = 18;
+  const SEARCH_RECOMMENDATION_LIMIT_STEP = 7;
+  const SEARCH_RECOMMENDATION_MAX_LIMIT = 420;
+  const SEARCH_RECOMMENDATION_MIN_SECTION_FILL = 6;
+  const SEARCH_RECOMMENDATION_AUTOFILL_TARGET = 56;
+  const SEARCH_RECOMMENDATION_AUTOFILL_PAGE_LIMIT = 16;
+  const SEARCH_RECOMMENDATION_PER_SOURCE_CAP = 60;
+  const SEARCH_RECOMMENDATION_SEED_CAP = 420;
+  const SEARCH_RECOMMENDATION_SCROLL_THROTTLE_MS = 160;
+  const SEARCH_RECOMMENDATION_DUPLICATE_PAGE_RETRY_LIMIT = 18;
+  const TRACKER_SCORE_ENRICHMENT_LIMIT = 32;
+  const TRACKER_SCORE_BATCH_SIZE = 12;
+  const TRACKER_SCORE_MAL_FALLBACK_LIMIT = 8;
+  const HARDCOVER_SCORE_ENRICHMENT_LIMIT = 3;
+  const HARDCOVER_SCORE_ENRICHMENT_CONCURRENCY = 2;
+  const HARDCOVER_SCORE_ENRICHMENT_TIMEOUT_MS = 750;
+  const HARDCOVER_DISCOVERY_QUERY_LIMIT = 5;
+  const HARDCOVER_DISCOVERY_RESULTS_PER_QUERY = 7;
+  const HARDCOVER_DISCOVERY_TIMEOUT_MS = 950;
+  const NOVEL_SOURCE_REQUEST_TIMEOUT_MS = 850;
+  const NOVEL_DETAIL_ENRICHMENT_LIMIT = 3;
+  const NOVEL_DETAIL_ENRICHMENT_CONCURRENCY = 1;
+  const NOVEL_DETAIL_ENRICHMENT_TIMEOUT_MS = 850;
+  const trackerScoreSearchCache = new Map<string, TrackSearch[]>();
+  const hardcoverScoreSearchCache = new Map<string, RecommendationProviderSignal | null>();
 
   const COMMON_GENRES = [
     "Action","Adventure","Comedy","Drama","Fantasy","Romance",
@@ -110,6 +167,147 @@
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, items.length) }, worker));
   }
 
+  async function runConcurrentLimited<T>(
+    items: T[],
+    limit: number,
+    fn: (item: T) => Promise<void>,
+    signal: AbortSignal,
+  ): Promise<void> {
+    let i = 0;
+    async function worker() {
+      while (i < items.length) {
+        if (signal.aborted) return;
+        const item = items[i++];
+        await fn(item).catch(() => {});
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  }
+
+  function withSoftTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+    return new Promise((resolve) => {
+      let settled = false;
+      const timer = window.setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        resolve(fallback);
+      }, timeoutMs);
+      promise.then((value) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        resolve(value);
+      }).catch(() => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        resolve(fallback);
+      });
+    });
+  }
+
+  function normalizeBrowseSourceName(value: string) {
+    return value
+      .toLowerCase()
+      .replace(/\s*\([^)]*\)\s*/g, " ")
+      .replace(/\b(novel|novels|source|sources|lnreader|extension)\b/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function interleaveNovelRecommendationSources(sources: BrowseSourceEntry[]) {
+    const buckets = new Map<string, BrowseSourceEntry[]>();
+    for (const source of sources) {
+      if (!source.novelSource) continue;
+      const nameKey = normalizeBrowseSourceName(source.displayName || source.name) || source.id;
+      const bucket = buckets.get(nameKey) ?? [];
+      bucket.push(source);
+      buckets.set(nameKey, bucket);
+    }
+
+    const preferredLanguageRank = (source: BrowseSourceEntry) => {
+      if (src_selectedLang !== "all") return source.lang === src_selectedLang ? 0 : 1;
+      if (source.lang === preferredLang) return 0;
+      if (source.lang === "en") return 1;
+      if (source.lang === "pt" || source.lang === "pt-BR") return 2;
+      return 3;
+    };
+
+    for (const bucket of buckets.values()) {
+      bucket.sort((left, right) =>
+        (preferredLanguageRank(left) - preferredLanguageRank(right))
+        || left.displayName.localeCompare(right.displayName)
+        || left.id.localeCompare(right.id),
+      );
+    }
+
+    const orderedBuckets = [...buckets.entries()]
+      .sort((a, b) => {
+        const left = a[1][0];
+        const right = b[1][0];
+        if (!left || !right) return 0;
+        return (preferredLanguageRank(left) - preferredLanguageRank(right))
+          || a[0].localeCompare(b[0]);
+      })
+      .map(([, bucket]) => bucket);
+
+    const interleaved: BrowseSourceEntry[] = [];
+    let added = true;
+    while (added) {
+      added = false;
+      for (const bucket of orderedBuckets) {
+        const next = bucket.shift();
+        if (!next) continue;
+        interleaved.push(next);
+        added = true;
+      }
+    }
+    return interleaved;
+  }
+
+  function novelRecommendationFallbackTerms() {
+    const genericTerms = ["fantasy", "romance", "adventure", "action"];
+    const profileTerms = activeContentType === "novels"
+      ? searchNovelProfileOnly.topTags
+        .map((tag) => formatTasteTag(tag).trim())
+        .filter((tag) => tag.length > 2)
+        .filter((tag) => !["book", "novel", "webnovel", "epub", "pdf", "hardcover"].includes(tag.toLowerCase()))
+      : [];
+    const seen = new Set<string>();
+    const terms: string[] = [];
+    for (const term of [...profileTerms, ...genericTerms]) {
+      const key = term.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      terms.push(term);
+      if (terms.length >= 4) break;
+    }
+    return terms;
+  }
+
+  function novelSourceLocalizedFallbackTerms(source: BrowseSourceEntry, baseTerms: string[]) {
+    const lang = `${source.lang} ${source.name} ${source.displayName}`.toLowerCase();
+    const localized = lang.includes("portugu")
+      || lang.includes("pt")
+      || lang.includes("br")
+      ? ["fantasia", "romance", "ação", "aventura"]
+      : lang.includes("中文") || lang.includes("汉语") || lang.includes("漢語") || lang.includes("chinese")
+        ? ["玄幻", "都市", "仙侠", "奇幻"]
+        : [];
+    const seen = new Set<string>();
+    const terms: string[] = [];
+    for (const term of [...localized, ...baseTerms]) {
+      const normalized = term.trim();
+      if (!normalized) continue;
+      const key = normalized.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      terms.push(normalized);
+      if (terms.length >= 5) break;
+    }
+    return terms;
+  }
+
   function matchesAllTags(m: Manga, tags: string[]): boolean {
     const genres = (m.genre ?? []).map((g: string) => g.toLowerCase());
     return tags.every((tag) =>
@@ -137,7 +335,7 @@
       mangas(filter: $filter, first: $first, offset: $offset, orderBy: IN_LIBRARY_AT, orderByType: DESC) {
         nodes {
           id title thumbnailUrl inLibrary genre status
-          source { id displayName }
+          source { id name lang displayName }
         }
         pageInfo { hasNextPage }
         totalCount
@@ -147,7 +345,7 @@
 
   let browseTab: BrowseTab = $state("featured");
   let activeContentType = $state<"manga" | "novels">("manga");
-  let activeBrowseTab = $state<SearchTab>("browse");
+  let activeBrowseTab = $state<SearchTab>("keyword");
   let browseSearchFocused = $state(false);
   let searchQuery = $state("");
   let selectedSource = $state("");
@@ -188,8 +386,58 @@
   let trackerCatalogPage = $state(1);
   let trackerCatalogLoadedKey = $state("");
   let trackerCatalogError = $state("");
+  let searchTrackerScoreResults = $state<TrackSearch[]>([]);
+  let searchTrackerTrendingResults = $state<TrackSearch[]>([]);
+  let searchTrackerTrendingLoading = $state(false);
+  let searchTrackerTrendingKey = $state("");
+  let searchTrackerTrendingPage = $state(2);
+  let searchTrackerScoreLoading = $state(false);
+  let searchTrackerScoreKey = $state("");
+  let searchTrackerScoreAbortCtrl: AbortController | null = null;
   let pendingPrefill         = $state("");
   let novelLibraryState = $state(safePeekNovelLibraryState());
+  let searchLibraryManga: Manga[] = $state(store.libraryMangaSnapshot ?? []);
+  let searchTrackRecordsByMangaId: Map<number, TrackRecord[]> = $state(new Map());
+  let searchTrackRecords: TrackRecord[] = $state([]);
+  let searchTrackerSeedItems: TasteProfileSeedItem[] = $state([]);
+  let searchTrackerRecordCandidates: RecommendationCandidate[] = $state([]);
+  let searchSourceSeedResults: Manga[] = $state([]);
+  let searchFreshSourceSeedResults: Manga[] = $state([]);
+  let searchSourceSeedFetchedAt: number | null = $state(null);
+  let searchNovelSourceSeedResults: NovelSourceSearchResult[] = $state([]);
+  let searchHardcoverRecords: HardcoverNovelTrackRecord[] = $state([]);
+  let searchHardcoverDiscoveryResults: RecommendationCandidate[] = $state([]);
+  let searchHardcoverDiscoveryLoading = $state(false);
+  let searchHardcoverDiscoveryKey = $state("");
+  let searchHardcoverDiscoveryRun = 0;
+  let searchHardcoverScoreResults: Map<string, RecommendationProviderSignal> = $state(new Map());
+  let searchHardcoverScoreLoading = $state(false);
+  let searchHardcoverScoreKey = $state("");
+  let searchHardcoverScoreRun = 0;
+  let searchNovelDetailTagsByKey: Map<string, string[]> = $state(new Map());
+  let searchNovelDetailUpdatedAtByKey: Map<string, number> = $state(new Map());
+  let searchNovelDetailTagsKey = $state("");
+  let searchNovelDetailTagsRun = 0;
+  let searchSourceSeedLoading = $state(false);
+  let searchSourceSeedKey = $state("");
+  let searchSourceSeedAbortCtrl: AbortController | null = null;
+  let searchMangaSeedAutofillKey = $state("");
+  let searchMangaSeedAutofillPage = $state(1);
+  let searchMangaSeedAutofillLoading = $state(false);
+  let searchMangaSeedAutofillExhausted = $state(false);
+  let searchNovelSeedAutofillKey = $state("");
+  let searchNovelSeedAutofillPage = $state(1);
+  let searchNovelSeedAutofillLoading = $state(false);
+  let searchNovelSeedAutofillExhausted = $state(false);
+  let searchIncludeLibrary = $state(false);
+  let failedSearchCoverKeys: Set<string> = $state(new Set());
+  let searchRecommendationVisibleLimits: Map<string, number> = $state(new Map());
+  let searchRecommendationMoreLoadingKeys: Set<string> = $state(new Set());
+  let searchRecommendationMoreExhaustedKeys: Set<string> = $state(new Set());
+  let searchRecommendationMorePages: Map<string, number> = $state(new Map());
+  let searchRecommendationMoreTriggeredAt: Map<string, number> = $state(new Map());
+  let searchRecommendationMoreRequestedWidths: Map<string, number> = $state(new Map());
+  let searchRecommendationSectionOrder: Map<string, string[]> = $state(new Map());
 
   refreshSetupState();
 
@@ -231,7 +479,11 @@
   function selectContentType(next: "manga" | "novels") {
     if (activeContentType === next) return;
     activeContentType = next;
-    resetContentTypeScopedState();
+    resetContentTypeTransientState();
+    if (activeBrowseTab === "keyword" && kw_submitted) {
+      const hasCachedResults = next === "novels" ? kw_novelResults.length > 0 : kw_results.length > 0;
+      if (!hasCachedResults) void kwDoSearch(kw_submitted);
+    }
   }
 
   function resetSourceBrowseState() {
@@ -248,49 +500,131 @@
     src_loadingBrowse = false;
   }
 
-  function resetContentTypeScopedState() {
-    resetSourceBrowseState();
-    discoverAbortCtrl?.abort();
+  function resetSearchRecommendationSeedState() {
+    searchSourceSeedAbortCtrl?.abort();
+    searchSourceSeedAbortCtrl = null;
+    searchSourceSeedResults = [];
+    searchFreshSourceSeedResults = [];
+    searchNovelSourceSeedResults = [];
+    searchNovelDetailTagsByKey = new Map();
+    searchNovelDetailUpdatedAtByKey = new Map();
+    searchNovelDetailTagsKey = "";
+    searchSourceSeedKey = "";
+    searchSourceSeedLoading = false;
+    searchTrackerTrendingResults = [];
+    searchTrackerTrendingLoading = false;
+    searchTrackerTrendingKey = "";
+    searchTrackerTrendingPage = 2;
+    searchMangaSeedAutofillKey = "";
+    searchMangaSeedAutofillPage = 1;
+    searchMangaSeedAutofillLoading = false;
+    searchMangaSeedAutofillExhausted = false;
+    searchNovelSeedAutofillKey = "";
+    searchNovelSeedAutofillPage = 1;
+    searchNovelSeedAutofillLoading = false;
+    searchNovelSeedAutofillExhausted = false;
+    searchRecommendationVisibleLimits = new Map();
+    searchRecommendationMoreLoadingKeys = new Set();
+    searchRecommendationMoreExhaustedKeys = new Set();
+    searchRecommendationMorePages = new Map();
+    searchRecommendationMoreTriggeredAt = new Map();
+    searchRecommendationMoreRequestedWidths = new Map();
+    searchRecommendationSectionOrder = new Map();
+  }
+
+  function resetContentTypeTransientState() {
+    src_abortCtrl?.abort();
+    src_activeSource = null;
+    src_activeNovelSource = null;
+    src_browseQuery = "";
+    src_submitted = "";
+    src_loadingBrowse = false;
+    selectedSource = "";
     discoverSelectedSource = "";
     discoverSelectedTracker = null;
-    resetTrackerCatalogState();
-    discoverLoadedKey = "";
     discoverMangaResults = [];
     discoverNovelResults = [];
+    discoverLoadedKey = "";
     discoverError = "";
-    discoverLoading = false;
     discoverCurrentPage = 1;
     discoverHasNextPage = false;
+    discoverLoading = false;
     discoverLoadingMore = false;
-    src_selectedLang = "all";
     catalogSourcePickerOpen = false;
     catalogLanguagePickerOpen = false;
-    tag_searchSources = false;
-    tag_sourceResults = [];
-    tag_srcNextPage = new Map();
+    catalogTrackingPickerOpen = false;
     tag_loadingSourceSearch = false;
     tag_loadingMoreSource = false;
-    void shutdownInstalledNovelSourcesRuntime().catch(() => {});
+    if (searchSourceSeedLoading) {
+      searchSourceSeedAbortCtrl?.abort();
+      searchSourceSeedAbortCtrl = null;
+      searchSourceSeedLoading = false;
+      searchSourceSeedKey = "";
+    }
+    searchMangaSeedAutofillKey = "";
+    searchMangaSeedAutofillPage = 1;
+    searchMangaSeedAutofillLoading = false;
+    searchMangaSeedAutofillExhausted = false;
+    searchNovelSeedAutofillKey = "";
+    searchNovelSeedAutofillPage = 1;
+    searchNovelSeedAutofillLoading = false;
+    searchNovelSeedAutofillExhausted = false;
+    searchTrackerTrendingResults = [];
+    searchTrackerTrendingLoading = false;
+    searchTrackerTrendingKey = "";
+    searchTrackerTrendingPage = 2;
   }
 
   function selectBrowseTab(next: SearchTab) {
     activeBrowseTab = next;
+    if (next === "keyword") {
+      searchQuery = kw_query || kw_submitted;
+    } else if (next === "browse") {
+      searchQuery = tag_tagFilter;
+    } else {
+      searchQuery = "";
+    }
     if (next === "browse") {
       resetSourceBrowseState();
     }
   }
 
   function handleSearch(query: string) {
-    searchQuery = query;
     const normalized = query.trim();
+    searchQuery = normalized;
 
-    if (activeBrowseTab === "browse") {
-      if (!normalized) return;
-        activeBrowseTab = "keyword";
+    if (activeBrowseTab === "keyword") {
+      kw_query = normalized;
+      if (normalized) kwDoSearch(normalized);
+      return;
     }
 
-    kw_query = normalized;
-    if (normalized) kwDoSearch(normalized);
+    if (activeBrowseTab === "browse") {
+      tag_tagFilter = normalized;
+      return;
+    }
+
+    searchQuery = normalized;
+  }
+
+  function handleTopbarSearchInput(query: string) {
+    if (activeBrowseTab === "keyword") {
+      kw_query = query;
+      if (!query.trim()) {
+        kw_abortCtrl?.abort();
+        kw_submitted = "";
+        kw_results = [];
+        kw_novelResults = [];
+      }
+      return;
+    }
+
+    if (activeBrowseTab === "browse") {
+      tag_tagFilter = query;
+      return;
+    }
+
+    searchQuery = query;
   }
 
   function handleBrowseSearchFocus() {
@@ -408,6 +742,104 @@
     }
   }
 
+  async function refreshSearchProfileLibrary() {
+    const snapshot = Array.isArray(store.libraryMangaSnapshot) ? store.libraryMangaSnapshot : [];
+    if (snapshot.length > 0) {
+      searchLibraryManga = snapshot;
+      return;
+    }
+
+    try {
+      const data = await gql<{ mangas?: { nodes?: Manga[] } }>(GET_LIBRARY);
+      searchLibraryManga = (data.mangas?.nodes ?? []).map((manga: any) => ({
+        ...manga,
+        chapterCount: manga.chapters?.totalCount ?? manga.chapterCount ?? 0,
+      }));
+      store.setLibraryMangaSnapshot(searchLibraryManga);
+    } catch (error) {
+      console.error(error);
+      searchLibraryManga = [];
+    }
+  }
+
+  async function refreshSearchTrackRecords() {
+    try {
+      const data = await gql<{
+        trackers: {
+          nodes: Array<BrowseTrackerEntry & {
+            trackRecords?: { nodes: Array<TrackRecord & { manga?: Manga | null }> };
+          }>;
+        };
+      }>(GET_ALL_TRACKER_RECORDS);
+
+      const byMangaId = new Map<number, TrackRecord[]>();
+      const candidateByMangaId = new Map<number, RecommendationCandidate>();
+      const allRecords: TrackRecord[] = [];
+      const trackerSeeds: TasteProfileSeedItem[] = [];
+      for (const tracker of data.trackers.nodes ?? []) {
+        for (const record of tracker.trackRecords?.nodes ?? []) {
+          const normalizedRecord: TrackRecord = {
+            ...record,
+            trackerId: record.trackerId ?? tracker.id,
+            remoteId: record.remoteId ?? "",
+            score: Number.isFinite(record.score) ? record.score : 0,
+            displayScore: record.displayScore ?? "",
+            startDate: record.startDate ?? null,
+            finishDate: record.finishDate ?? null,
+          };
+          allRecords.push(normalizedRecord);
+          trackerSeeds.push(trackRecordToTasteProfileSeed(normalizedRecord, record.manga ?? null, tracker));
+
+          const mangaId = record.manga?.id;
+          if (typeof mangaId !== "number") continue;
+          const next = byMangaId.get(mangaId) ?? [];
+          next.push(normalizedRecord);
+          byMangaId.set(mangaId, next);
+
+          if (!record.manga?.inLibrary) {
+            candidateByMangaId.set(mangaId, trackerRecordToRecommendationCandidate(normalizedRecord, record.manga, tracker));
+          }
+        }
+      }
+      searchTrackRecordsByMangaId = byMangaId;
+      searchTrackRecords = allRecords;
+      searchTrackerSeedItems = trackerSeeds;
+      searchTrackerRecordCandidates = [...candidateByMangaId.values()];
+    } catch (error) {
+      console.error(error);
+      searchTrackRecordsByMangaId = new Map();
+      searchTrackRecords = [];
+      searchTrackerSeedItems = [];
+      searchTrackerRecordCandidates = [];
+    }
+  }
+
+  async function refreshSearchHardcoverRecords() {
+    const scopeInput = {
+      profileId: store.runtimeResolvedLocalProfileId,
+      serverUrl: store.runtimeServerUrl,
+    };
+    let state;
+    try {
+      state = loadHardcoverState(scopeInput);
+    } catch (error) {
+      console.warn("Could not read Hardcover cache for search recommendations.", error);
+      searchHardcoverRecords = [];
+      return;
+    }
+    if (!state.auth.connected) {
+      searchHardcoverRecords = state.records;
+      return;
+    }
+
+    try {
+      searchHardcoverRecords = await getHardcoverUserBooks(scopeInput);
+    } catch (error) {
+      console.warn("Could not refresh Hardcover user books; using cached novel tracking.", error);
+      searchHardcoverRecords = state.records;
+    }
+  }
+
   $effect(() => {
     store.contentSetupVersion;
     store.runtimeResolvedLocalProfileId;
@@ -416,6 +848,9 @@
       refreshSetupState();
       refreshSources();
       refreshTrackers();
+      refreshSearchProfileLibrary();
+      refreshSearchTrackRecords();
+      refreshSearchHardcoverRecords();
       loadNovelLibraryState({
         profileId: store.runtimeResolvedLocalProfileId,
         serverUrl: store.runtimeServerUrl,
@@ -431,9 +866,8 @@
   let kw_query        = $state("");
   let kw_submitted    = $state("");
   let kw_results:     SourceResult[] = $state([]);
-  let kw_showAdvanced = $state(false);
+  let kw_novelResults: NovelSourceResult[] = $state([]);
   let kw_selectedLangs: Set<string>  = $state(new Set());
-  let kw_inputEl:     HTMLInputElement | null = $state(null);
   let kw_abortCtrl:   AbortController | null  = null;
 
   $effect(() => {
@@ -463,10 +897,23 @@
     return filtered;
   }
 
+  function kwGetVisibleNovelSources(): InstalledNovelSourceDescriptor[] {
+    let filtered = allNovelSources.filter((source) => source.enabled);
+    const hasSelectedNovelLang = filtered.some((source) => kw_selectedLangs.has(source.lang));
+    if (kw_selectedLangs.size > 0 && hasSelectedNovelLang) {
+      filtered = filtered.filter((source) => kw_selectedLangs.has(source.lang));
+    }
+    return filtered;
+  }
+
   async function kwDoSearch(q: string) {
     if (setupState?.kind && setupState.kind !== "ready") return;
     const trimmed = q.trim();
     if (!trimmed) return;
+    if (activeContentType === "novels") {
+      await kwDoNovelSearch(trimmed);
+      return;
+    }
     const visible = kwGetVisibleSources();
     if (!visible.length) return;
     kw_abortCtrl?.abort();
@@ -474,6 +921,7 @@
     kw_abortCtrl = ctrl;
     kw_submitted = trimmed;
     kw_results   = visible.map((src) => ({ source: src, mangas: [], loading: true, error: null }));
+    kw_novelResults = [];
     await runConcurrent(visible, async (src) => {
       if (ctrl.signal.aborted) return;
       try {
@@ -483,7 +931,10 @@
           signal: ctrl.signal,
         });
         if (ctrl.signal.aborted) return;
-        const visibleMangas = mangas.filter((m) => !shouldHideNsfw(m, store.settings));
+        const visibleMangas = withMangaSourceMetadata(
+          mangas.filter((m) => !shouldHideNsfw(m, store.settings)),
+          src,
+        );
         kw_results = kw_results.map((r) =>
           r.source.id === src.id ? { ...r, mangas: visibleMangas, loading: false } : r,
         );
@@ -496,61 +947,46 @@
     }, ctrl.signal);
   }
 
-  function kwToggleLang(lang: string) {
-    const next = new Set(kw_selectedLangs);
-    if (next.has(lang)) { if (next.size === 1) return; next.delete(lang); }
-    else next.add(lang);
-    kw_selectedLangs = next;
+  async function kwDoNovelSearch(trimmed: string) {
+    const visible = kwGetVisibleNovelSources();
+    kw_abortCtrl?.abort();
+    const ctrl = new AbortController();
+    kw_abortCtrl = ctrl;
+    kw_submitted = trimmed;
+    kw_results = [];
+    if (!visible.length) {
+      kw_novelResults = [];
+      return;
+    }
+    kw_novelResults = visible.map((source) => ({ source, novels: [], loading: true, error: null }));
+    await runConcurrent(visible, async (source) => {
+      if (ctrl.signal.aborted) return;
+      try {
+        const novels = await searchInstalledNovelSource({
+          profileId: store.runtimeResolvedLocalProfileId,
+          serverUrl: store.runtimeServerUrl,
+        }, source.pluginId, trimmed, 1);
+        if (ctrl.signal.aborted) return;
+        kw_novelResults = kw_novelResults.map((result) =>
+          result.source.pluginId === source.pluginId ? { ...result, novels, loading: false } : result,
+        );
+      } catch (error: any) {
+        if (ctrl.signal.aborted || error?.name === "AbortError") return;
+        kw_novelResults = kw_novelResults.map((result) =>
+          result.source.pluginId === source.pluginId ? { ...result, loading: false, error: error.message ?? "Error" } : result,
+        );
+      }
+    }, ctrl.signal);
   }
 
-  const kw_visibleCount = $derived(kwGetVisibleSources().length);
   const kw_hasResults   = $derived(kw_results.some((r) => r.mangas.length > 0));
-  const kw_allDone      = $derived(kw_results.length > 0 && kw_results.every((r) => !r.loading));
-  const setupReady      = $derived.by(() => setupState != null && setupState.kind === "ready");
-  const installedContentExtensionCount = $derived.by(() => setupState?.installedContentExtensionCount ?? 0);
-  const kw_contentVisibleSources = $derived(allSources.filter((source) => !shouldHideSource(source, store.settings)));
-  const kw_hiddenByContentCount = $derived(Math.max(0, allSources.length - kw_contentVisibleSources.length));
-  const kw_hiddenByLanguageCount = $derived(kw_contentVisibleSources.filter((source) => !kw_selectedLangs.has(source.lang)).length);
-  const kw_hasVisibilityMismatch = $derived(
-    setupReady
-    && installedContentExtensionCount > 0
-    && (kw_hiddenByContentCount > 0 || kw_hiddenByLanguageCount > 0 || kw_visibleCount < installedContentExtensionCount),
+  const kw_hasNovelResults = $derived(kw_novelResults.some((r) => r.novels.length > 0));
+  const kw_allDone      = $derived(
+    activeContentType === "novels"
+      ? kw_novelResults.length > 0 && kw_novelResults.every((r) => !r.loading)
+      : kw_results.length > 0 && kw_results.every((r) => !r.loading),
   );
-  const kw_visibilitySummary = $derived.by(() => {
-    if (!kw_hasVisibilityMismatch) return null;
-
-    const languageCount = kw_selectedLangs.size;
-    const likelyCause = kw_hiddenByContentCount > 0 && kw_hiddenByLanguageCount > 0
-      ? "Current language and content visibility rules are hiding part of the installed source set."
-      : kw_hiddenByContentCount > 0
-        ? "Current content visibility rules are hiding part of the installed source set."
-        : kw_hiddenByLanguageCount > 0
-          ? "Current language selection is hiding part of the installed source set."
-          : "Some installed extensions may not currently appear as visible sources here.";
-
-    return {
-      title: "Installed extensions and visible sources are different counts",
-      body: `You have ${installedContentExtensionCount} installed content extension${installedContentExtensionCount !== 1 ? "s" : ""}, but only ${kw_visibleCount} source${kw_visibleCount !== 1 ? "s are" : " is"} visible for this search view. ${likelyCause}`,
-      detail: kw_hiddenByContentCount > 0 && kw_hiddenByLanguageCount > 0
-        ? `${kw_hiddenByContentCount} source${kw_hiddenByContentCount !== 1 ? "s are" : " is"} hidden by current content visibility, and ${kw_hiddenByLanguageCount} more ${kw_hiddenByLanguageCount !== 1 ? "are" : "is"} outside the ${languageCount} selected language${languageCount !== 1 ? "s" : ""}.`
-        : kw_hiddenByContentCount > 0
-          ? `${kw_hiddenByContentCount} source${kw_hiddenByContentCount !== 1 ? "s are" : " is"} hidden by current content visibility.`
-          : kw_hiddenByLanguageCount > 0
-            ? `${kw_hiddenByLanguageCount} source${kw_hiddenByLanguageCount !== 1 ? "s are" : " is"} outside the ${languageCount} selected language${languageCount !== 1 ? "s" : ""}.`
-            : "One extension can expose zero, one, or many sources, so these counts will not always match exactly.",
-    };
-  });
-  const kw_showVisibilitySummary = $derived(!!kw_visibilitySummary && !store.searchVisibilityDismissed);
-
-  function openSearchVisibilityFilters() {
-    activeBrowseTab = "keyword";
-    kw_showAdvanced = true;
-    kw_inputEl?.focus();
-  }
-
-  function dismissSearchVisibilitySummary() {
-    setSearchVisibilityDismissed(true);
-  }
+  const kw_contentVisibleSources = $derived(allSources.filter((source) => !shouldHideSource(source, store.settings)));
 
   let tag_activeTags:       string[] = $state([]);
   let tag_tagMode:          TagMode  = $state("AND");
@@ -592,6 +1028,1219 @@
   ), store.settings.mangaLinks));
   const tag_totalVisible  = $derived(tag_mergedResults.length);
   const tag_sourceHasMore = $derived(tag_searchSources && [...tag_srcNextPage.values()].some((p) => p > 0));
+
+  const searchFallbackCandidates: RecommendationCandidate[] = [
+    makeFallbackCandidate("A Returner's Magic Should Be Special", ["Action", "Fantasy", "Regression"], "manga", "https://lh3.googleusercontent.com/aida-public/AB6AXuDYXs83Kw7tM_YZ4Z7DQ1wI_8yfsRvwNQZbkp9vBgnG20lmsGqRSDw4Rfpg_uSkIdNdMBEwxRsSpEcq-_o-xwd9QmPiTIPIcwUbO7k9yfwTKB7tJ1iE0_0gZa5wJLQcPuivhj9_1yaWk2uwzQsN4ew7vVwMjdAAFD27231M40yv_8pL-t3z_24BYoYUWNyl0eSNHSECipCGDUEvMS00OZg9iLXQZkAYb3bKjuyONj3oFbJLJr3k7awUPIvF6rqsWDGP-EM10Ej9VU4", 0.87, 0.72),
+    makeFallbackCandidate("The Beginning After the End", ["Action", "Fantasy", "Reincarnation"], "manhwa", "https://lh3.googleusercontent.com/aida-public/AB6AXuBkieSfCi7cZtbEQoZ3OCmtxNtWmbg-fla9hAK2lmx24CveX9qgthQox0F5Us_3l9ftd8-6JdCp0ragSXMDp-zT3jxMy_XbCFjEfw1eZ46oMYf3wR-z3-Qo8rQ0T1G-YmRb-npZLso-zptml2SBoIVLbtjE0ICuQFFygS-GIXxctUKPexMcUs2qBlaET7N_BUe2AtSxYmzLJ_cUvgzaRL6D03kKYkIC7Nb891T0YC_5HAkI32ObGD-HV-hX7bCRdpBv16D5oJ0MWWQ", 0.85, 0.8),
+    makeFallbackCandidate("Solo Leveling", ["Action", "Dungeon", "Progression"], "manhwa", "https://lh3.googleusercontent.com/aida-public/AB6AXuCotnl4-ZqJJO75AQby_NTbNPiKXUVmDK-DnXHYAJ-WMm3fsCoSkB4b0yhFFRGsgbhWRpTmfy1UZLBnFusEyNycpgNKlZrNd0z4SA--HxVFDxAQDpScbWvAJPVPMsjnKHg4bklQu1ZN0iHKlZn8jNivMNwS3b1I8adXcuMsouAvISfiFYVEjBesnBmw7XYrKg0tJTcwDw4_u_6BZvE14-HMFP9pDJgigpXR2eKdNOOZoB-upkFNweeqaWY4th6aQsNDKO-IhAnNmyA", 0.83, 0.92),
+    makeFallbackCandidate("Omniscient Reader's Viewpoint", ["Action", "Mystery", "Regression"], "manhwa", "https://lh3.googleusercontent.com/aida-public/AB6AXuCAdKiWKcUA0CqpT0OZxS_L0Hc-C3NrtJcziaZqPIDPn79qXLbmIy3SrdEbK2qAoi8Y3Bh3fXSzKVKZeNxDZ2n-a8UjSmisLbsQ5mWPrtl260ZtO0c_4TA1bc-sW70kyRiubYBvBeH8OIjbthrJOZKiuDJg0_Rg9S3C9ss0tS53hSompLHWoOGLqsrcjh4IplGmK6JWSitOyy9yudB-e0g7DxAT5nbxOeBb2K8u9ZiIYrdNJQW4T3Q0uz4DvzWBrZS8EimPvzc287Y", 0.86, 0.86),
+    makeFallbackCandidate("Return of the Mount Hua Sect", ["Action", "Martial Arts", "Regression"], "manhwa", "https://lh3.googleusercontent.com/aida-public/AB6AXuCVcnwyahABwgNKK5aVNk54Hn8Pwjc8Z-xosURylm0UU9oqVEYEJ7_lS7K27KpEB2OrsQEIzD-01UuqYGphUEsRTwDJJMHzg5psdto5vRcMjt_oSJZNGxAGtgZpmmHRfVTPnRpuSJuOrmW_EyYCdF6R5Gf_vZpM4cdNIq784Sj-FQD4xLbW5A_9MEKlaLwcj3PkJ9TMYaMRgEsiihQigG9IaLY04aHa_YWzqdeVbEj5CqZLfXeI8PUSG9Jpr_XdchcT4b-8PZ-j7yI", 0.84, 0.76),
+    makeFallbackCandidate("Frieren Beyond Journey's End", ["Fantasy", "Adventure", "Slice of Life"], "manga", "https://lh3.googleusercontent.com/aida-public/AB6AXuC_-T33cnj7eyf6Y0_ufVew7JJp1EtRSD5qL7dfG-8srrSuFGjZBVBiedoDFjVMmqLEqZqcovzkuuLycKuATwqfUTuPqr4rDrNk1_A-fMNpPAaRo9dfgpanzrUqOl1di6zjL55IlwqFBZpvU7-FFYxRrjNXud_re0E1eUU-PaquIqk4Nbt2UDGGJmoMXLPjGeRAPOPrJN44pJk5RtGaFdRCqMzWKIK_q5Eki1IDbwTKdntT9J0t42UaOuhJmG8EZa-Hu-OcsVaBelU", 0.81, 0.36),
+    makeFallbackCandidate("Vagabond", ["Historical", "Martial Arts", "Seinen"], "manga", "https://lh3.googleusercontent.com/aida-public/AB6AXuCNzuwHTnUkbUR3TGIgHNyRDX1XOOuGWu7sPNbEYYfkc8hN0VSeR5jsQgf_uIzS_1KvMwGN1LbTKIS-CMoyqguU8oapUsKGL8Zk2h5TnlmhalLfCt7GNlg_EPEwGuKOeZuxfk_y2Mh8dflZJ9-k_QdFT9I-K41-u5BsI3TkBEB5xy_t9IcSzMUOuH25q7HQRb9n-p1j6qH4FUrmg8txZ0UCRew3BcyIi6J2R72WlPWaOGzvWQ9eG9O9m3lbNF0jCXq1Z5ftLQ50F8s", 0.9, 0.22),
+    makeFallbackCandidate("Monster", ["Mystery", "Psychological", "Seinen"], "manga", "https://lh3.googleusercontent.com/aida-public/AB6AXuDvlXvAPmD_YsRB6QKgR663fq2mYeW4x1Xz5NXZ6vzyEwzPj_fDr4_5dr5mMyp3VdiWwcIw1pkgBacP-YrGP_9uR0B6WpRq2FLrNDIjquEh-8ZkygP5h1BsvV58OjvjipXn9OFI4P9R5pCQggoFWusahHTvxvY64yo4S2ympvS0XMDkB7eTaZ9gy5tbDx5M41Q20YVbF7y8E2FBDpViJhp4citSkj9YU8Wpa70-m20hPiij5UxrwJ5w4YU0wHGxAqNg51lx3qjZnX8", 0.88, 0.2),
+    makeFallbackCandidate("Lord of the Mysteries", ["Mystery", "Fantasy", "Progression"], "novel", "https://lh3.googleusercontent.com/aida-public/AB6AXuChEAKCeRq0CvkaGb6xFlIJ0cip1D9s1jB-TbS_93qUxxjolXUXjNAxop8XMZ_J3Vv_vWlsP-EZYqvU0dgFNoMBt-VponmxURMsId7QxosU8MePUlbFZJixA_SXdaB4ocYgC4yBVJG9UZI4cCrpRxrv816AeILt8VpIXeJ9HjOS8_WTjufDUMvVdwfDeERSR3Scqxv-4lo8lnzJ9XQKJfrmCJCU47ibBzvUiFlszCsqOSLntwMTdAYHUCpEBzzwYdPqtIcfXPVCgLA", 0.86, 0.55),
+  ];
+
+  const searchFallbackSeeds = searchFallbackCandidates.map((candidate, index) => ({
+    id: `seed:${candidate.id}`,
+    title: candidate.title,
+    tags: candidate.tags,
+    contentType: candidate.contentType,
+    sourceId: candidate.providers[0]?.providerId ?? "mockup",
+    userRating: index < 5 ? 8.5 : null,
+    userRatingMax: 10,
+    implicitWeight: index < 5 ? 0.8 : 0.35,
+    status: index < 5 ? "reading" as const : "completed" as const,
+  }));
+
+  const searchSourceMangaPool = $derived.by(() => balanceMangaBySource(
+    dedupeMangaByTitle(
+      dedupeMangaById([
+        ...searchSourceSeedResults,
+        ...searchFreshSourceSeedResults,
+      ]),
+      store.settings.mangaLinks,
+    ).filter(shouldShowCatalogManga),
+  ));
+
+  const searchFreshSourceMangaCandidates = $derived.by(() =>
+    searchFreshSourceSeedResults.map((manga) => {
+      const candidate = mangaToRecommendationCandidate(manga, { nowMs: searchSourceSeedFetchedAt ?? undefined });
+      return {
+        ...candidate,
+        updatedAtMs: searchSourceSeedFetchedAt,
+        providers: candidate.providers.map((provider) => provider.kind === "source"
+          ? {
+              ...provider,
+              recency: { value: 1, confidence: 0.72, method: "source-latest-feed" },
+            }
+          : provider),
+      };
+    }),
+  );
+
+  const searchNovelSourceById = $derived.by(() =>
+    new Map(allNovelSources.map((source) => [source.pluginId, source])),
+  );
+
+  const searchNovelSourcePool = $derived.by(() => balanceNovelSourceResults(dedupeNovelSourceResults([
+    ...searchNovelSourceSeedResults,
+  ])));
+
+  const searchHardcoverProviderByTitleKey = $derived.by(() => {
+    const providers = new Map<string, RecommendationProviderSignal>();
+    for (const record of searchHardcoverRecords) {
+      const candidate = hardcoverRecordToRecommendationCandidate(record);
+      const provider = candidate.providers.find((entry) => entry.providerId === "hardcover");
+      if (provider) providers.set(recommendationTitleKey(record.title, "novel"), provider);
+    }
+    for (const [key, provider] of searchHardcoverScoreResults) {
+      providers.set(key, provider);
+    }
+    return providers;
+  });
+
+  const searchNovelSourceCandidates = $derived.by(() =>
+    searchNovelSourcePool.map((result) => {
+      const candidate = novelSourceResultToRecommendationCandidate(result, searchNovelSourceById.get(result.sourceId));
+      const hardcoverProvider = searchHardcoverProviderByTitleKey.get(recommendationTitleKey(result.title, "novel"));
+      const detailTags = searchNovelDetailTagsByKey.get(novelSourceResultKey(result)) ?? [];
+      const detailUpdatedAtMs = searchNovelDetailUpdatedAtByKey.get(novelSourceResultKey(result));
+      return {
+        ...candidate,
+        tags: mergeRecommendationTags(candidate.tags, detailTags),
+        updatedAtMs: detailUpdatedAtMs ?? candidate.updatedAtMs,
+        providers: hardcoverProvider ? [...candidate.providers, hardcoverProvider] : candidate.providers,
+        inLibrary: novelLibraryState ? isNovelInLibrary(novelLibraryState, createNovelLibraryId(result.sourceId, result.path)) : false,
+      };
+    }),
+  );
+
+  const searchHardcoverCandidateResults = $derived.by(() =>
+    searchHardcoverRecords.map(hardcoverRecordToRecommendationCandidate),
+  );
+
+  const searchHardcoverSeedItems = $derived.by(() =>
+    searchHardcoverRecords.map(hardcoverRecordToTasteProfileSeed),
+  );
+
+  const searchBookProgressById = $derived.by(() =>
+    new Map((store.bookProgress ?? []).map((progress) => [progress.bookId, progress])),
+  );
+
+  const searchNovelProfileOnly = $derived.by(() => buildSearchRecommendations({
+    libraryNovels: novelLibraryState?.entries ?? [],
+    libraryBooks: store.books ?? [],
+    progressByBookId: searchBookProgressById,
+    extraSeeds: searchHardcoverSeedItems,
+  }, {
+    includeInLibrary: true,
+    includeNsfw: includeNsfwSources,
+    blockedTags: store.settings.filterBlockedTags ? store.settings.nsfwFilteredTags ?? [] : [],
+    limitPerSection: SEARCH_RECOMMENDATION_MAX_LIMIT,
+  }).profile);
+
+  const searchHardcoverDiscoveryQueries = $derived.by(() => {
+    if (activeContentType !== "novels") return [];
+    const tags = searchNovelProfileOnly.topTags
+      .map((tag) => formatTasteTag(tag).trim())
+      .filter((tag) => tag.length > 2)
+      .filter((tag) => !["book", "novel", "webnovel", "epub", "pdf", "hardcover"].includes(tag.toLowerCase()));
+    const queries = tags.slice(0, HARDCOVER_DISCOVERY_QUERY_LIMIT).map((tag) => `${tag} novel`);
+    if (queries.length === 0) queries.push("popular fantasy novel", "popular web novel");
+    return queries.slice(0, HARDCOVER_DISCOVERY_QUERY_LIMIT);
+  });
+
+  const searchHardcoverScoreTitles = $derived.by(() => {
+    if (activeContentType !== "novels") return [];
+    const state = loadHardcoverState({
+      profileId: store.runtimeResolvedLocalProfileId,
+      serverUrl: store.runtimeServerUrl,
+    });
+    if (!state.auth.connected) return [];
+    const seen = new Set<string>();
+    for (const record of searchHardcoverRecords) {
+      seen.add(recommendationTitleKey(record.title, "novel"));
+    }
+    return dedupeScoreTitles(searchNovelSourcePool.map((result) => result.title?.trim()))
+      .filter((title): title is string => Boolean(title))
+      .filter((title) => {
+        const key = recommendationTitleKey(title, "novel");
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, HARDCOVER_SCORE_ENRICHMENT_LIMIT);
+  });
+
+  const searchHardcoverScoreExpectedKey = $derived.by(() => JSON.stringify({
+    titles: searchHardcoverScoreTitles,
+    profile: store.runtimeResolvedLocalProfileId,
+    server: store.runtimeServerUrl,
+  }));
+
+  const searchHardcoverDiscoveryExpectedKey = $derived.by(() => JSON.stringify({
+    queries: searchHardcoverDiscoveryQueries,
+    profile: store.runtimeResolvedLocalProfileId,
+    server: store.runtimeServerUrl,
+    includeNsfw: includeNsfwSources,
+  }));
+
+  $effect(() => {
+    if (activeContentType !== "novels" || activeBrowseTab !== "keyword" || kw_submitted) return;
+    if (searchHardcoverDiscoveryExpectedKey === searchHardcoverDiscoveryKey) return;
+    untrack(() => {
+      void refreshSearchHardcoverDiscovery(searchHardcoverDiscoveryExpectedKey, searchHardcoverDiscoveryQueries);
+    });
+  });
+
+  $effect(() => {
+    if (activeContentType !== "novels") return;
+    if (searchHardcoverScoreExpectedKey === searchHardcoverScoreKey) return;
+    untrack(() => {
+      void refreshSearchHardcoverScores(searchHardcoverScoreExpectedKey, searchHardcoverScoreTitles);
+    });
+  });
+
+  const searchTrackerScoreTitles = $derived.by(() => {
+    if (activeContentType !== "manga") return [];
+    const seen = new Set<string>();
+    return dedupeScoreTitles(searchSourceMangaPool.map((manga) => manga.title?.trim()))
+      .filter((title): title is string => Boolean(title))
+      .filter((title) => {
+        const key = recommendationTitleKey(title, "manga");
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, TRACKER_SCORE_ENRICHMENT_LIMIT);
+  });
+
+  const searchScoreTrackers = $derived.by(() =>
+    allTrackers.filter((tracker) => {
+      const provider = trackerProviderKind(tracker);
+      return provider === "anilist" || provider === "mal";
+    }),
+  );
+
+  function usableSearchTrackers(trackers = searchScoreTrackers) {
+    return trackers
+      .filter((tracker) => {
+        const provider = trackerProviderKind(tracker);
+        return provider === "anilist" || provider === "mal";
+      })
+      .slice(0, 2);
+  }
+
+  const searchTrackerScoreExpectedKey = $derived.by(() => JSON.stringify({
+      titles: searchTrackerScoreTitles,
+      trackers: searchScoreTrackers.map((tracker) => tracker.id),
+      nsfw: includeNsfwSources,
+  }));
+
+  $effect(() => {
+    if (activeContentType !== "manga") return;
+    if (searchTrackerScoreExpectedKey === searchTrackerScoreKey) return;
+    untrack(() => {
+      void refreshSearchTrackerScores(searchTrackerScoreExpectedKey, searchTrackerScoreTitles, searchScoreTrackers);
+    });
+  });
+
+  const searchTrackerTrendingExpectedKey = $derived.by(() => JSON.stringify({
+    contentType: activeContentType,
+    tab: activeBrowseTab,
+    submitted: Boolean(kw_submitted),
+    trackers: searchScoreTrackers.map((tracker) => tracker.id),
+    nsfw: includeNsfwSources,
+  }));
+
+  $effect(() => {
+    if (activeContentType !== "manga" || activeBrowseTab !== "keyword" || kw_submitted) return;
+    if (searchTrackerTrendingExpectedKey === searchTrackerTrendingKey) return;
+    untrack(() => {
+      void refreshSearchTrackerTrendingFeed(searchTrackerTrendingExpectedKey, searchScoreTrackers);
+    });
+  });
+
+  const searchTrackerScoreReady = $derived.by(() => {
+    if (activeContentType !== "manga") return true;
+    if (searchTrackerScoreTitles.length === 0) return true;
+    if (searchScoreTrackers.length === 0) return true;
+    return searchTrackerScoreKey === searchTrackerScoreExpectedKey && !searchTrackerScoreLoading;
+  });
+
+  const searchKnownTitleKeys = $derived.by(() => {
+    const keys = new Set<string>();
+    for (const manga of searchLibraryManga) {
+      addKnownComicRecommendationTitle(keys, manga.title);
+    }
+    const books = Array.isArray(store.books) ? store.books : [];
+    for (const book of books) {
+      addKnownRecommendationTitle(keys, book.title, "book");
+    }
+    for (const record of searchTrackRecords) {
+      addKnownComicRecommendationTitle(keys, record.title);
+    }
+    for (const novel of novelLibraryState?.entries ?? []) {
+      addKnownRecommendationTitle(keys, novel.title, "novel");
+    }
+    for (const record of searchHardcoverRecords) {
+      addKnownRecommendationTitle(keys, record.title, "novel");
+    }
+    return keys;
+  });
+
+  const searchKnownProviderKeys = $derived.by(() => {
+    const keys = new Set<string>();
+    for (const record of searchTrackRecords) {
+      const key = recommendationTrackerRemoteKey(record.trackerId, record.remoteId);
+      if (key) keys.add(key);
+    }
+    for (const record of searchHardcoverRecords) {
+      const key = recommendationTrackerRemoteKey("hardcover", record.bookId);
+      if (key) keys.add(key);
+    }
+    return keys;
+  });
+
+  const searchMangaByCandidateId = $derived.by(() => new Map(
+    dedupeMangaById([
+      ...searchLibraryManga,
+      ...searchSourceMangaPool,
+    ])
+      .map((manga) => [`manga:${manga.id}`, manga]),
+  ));
+
+  const searchNovelByCandidateId = $derived.by(() => new Map(
+    (novelLibraryState?.entries ?? []).map((entry) => [`novel:${entry.id}`, entry]),
+  ));
+
+  const searchNovelSourceByCandidateId = $derived.by(() => new Map(
+    searchNovelSourcePool.map((result) => [
+      `novel-source:${result.sourceId}:${encodeURIComponent(result.path)}`,
+      result,
+    ]),
+  ));
+
+  const searchBookByCandidateId = $derived.by(() => new Map(
+    (store.books ?? []).map((entry) => [`book:${entry.id}`, entry]),
+  ));
+
+  const searchFallbackNovelCandidates = $derived(searchFallbackCandidates.filter((candidate) =>
+    candidate.contentType === "novel" || candidate.contentType === "book",
+  ));
+
+  const searchFallbackNovelSeeds = $derived(searchFallbackSeeds.filter((seed) =>
+    seed.contentType === "novel" || seed.contentType === "book",
+  ));
+
+  const searchHasLiveMangaRecommendationData = $derived.by(() =>
+    searchSourceMangaPool.length > 0
+      || trackerCatalogResults.length > 0
+      || searchTrackerTrendingResults.length > 0
+      || searchTrackerScoreResults.length > 0
+      || searchTrackerRecordCandidates.length > 0,
+  );
+
+  const searchHasLiveNovelRecommendationData = $derived.by(() =>
+    searchNovelSourceCandidates.length > 0
+      || searchHardcoverCandidateResults.length > 0
+      || searchHardcoverDiscoveryResults.length > 0,
+  );
+
+  const searchRecommendationResult = $derived.by(() => {
+    if (activeContentType === "novels") {
+      return buildSearchRecommendations({
+        libraryNovels: novelLibraryState?.entries ?? [],
+        libraryBooks: store.books ?? [],
+        progressByBookId: searchBookProgressById,
+        extraCandidates: searchHasLiveNovelRecommendationData
+          ? [...searchNovelSourceCandidates, ...searchHardcoverDiscoveryResults, ...searchHardcoverCandidateResults]
+          : [],
+        extraSeeds: searchHasLiveNovelRecommendationData ? searchHardcoverSeedItems : [],
+      }, {
+        includeInLibrary: searchIncludeLibrary,
+        knownTitleKeys: searchKnownTitleKeys,
+        knownProviderKeys: searchKnownProviderKeys,
+        includeNsfw: includeNsfwSources,
+        blockedTags: store.settings.filterBlockedTags ? store.settings.nsfwFilteredTags ?? [] : [],
+        limitPerSection: SEARCH_RECOMMENDATION_MAX_LIMIT,
+      });
+    }
+
+    return buildSearchRecommendations({
+      libraryManga: searchLibraryManga,
+      sourceResults: searchSourceMangaPool,
+      trackerResults: dedupeTrackSearches([...searchTrackerTrendingResults, ...trackerCatalogResults, ...searchTrackerScoreResults]),
+      trackers: allTrackers,
+      trackRecordsByMangaId: searchTrackRecordsByMangaId,
+      extraCandidates: searchHasLiveMangaRecommendationData
+        ? [...searchTrackerRecordCandidates, ...searchFreshSourceMangaCandidates]
+        : [],
+      extraSeeds: searchHasLiveMangaRecommendationData ? searchTrackerSeedItems : [],
+    }, {
+      includeInLibrary: searchIncludeLibrary,
+      knownTitleKeys: searchKnownTitleKeys,
+      knownProviderKeys: searchKnownProviderKeys,
+      includeNsfw: includeNsfwSources,
+      blockedTags: store.settings.filterBlockedTags ? store.settings.nsfwFilteredTags ?? [] : [],
+      limitPerSection: SEARCH_RECOMMENDATION_MAX_LIMIT,
+    });
+  });
+
+  const searchRecommendationCompositionKey = $derived.by(() => JSON.stringify({
+    contentType: activeContentType,
+    includeLibrary: searchIncludeLibrary,
+    profile: [...searchRecommendationResult.profile.contentTypeWeights.entries()],
+    sourceScope: searchRecommendationSourcePool.slice(0, activeContentType === "novels" ? SEARCH_SEED_SOURCE_LIMIT_NOVELS : SEARCH_SEED_SOURCE_LIMIT_MANGA).map((source) => source.id),
+    lang: src_selectedLang,
+    nsfw: includeNsfwSources,
+  }));
+
+  $effect(() => {
+    searchRecommendationCompositionKey;
+    untrack(() => {
+      searchRecommendationSectionOrder = new Map();
+      searchRecommendationVisibleLimits = new Map();
+      searchRecommendationMoreRequestedWidths = new Map();
+    });
+  });
+
+  $effect(() => {
+    const nextOrders = new Map(untrack(() => searchRecommendationSectionOrder));
+    for (const section of searchRecommendationResult.sections) {
+      const key = searchRecommendationMoreKey(section.key);
+      const availableIds = section.items.map((item) => item.candidate.id);
+      const availableSet = new Set(availableIds);
+      const previous = nextOrders.get(key) ?? [];
+      const kept = previous.filter((id) => availableSet.has(id));
+      const keptSet = new Set(kept);
+      const appended = availableIds.filter((id) => !keptSet.has(id));
+      nextOrders.set(key, [...kept, ...appended]);
+    }
+    untrack(() => {
+      searchRecommendationSectionOrder = nextOrders;
+    });
+  });
+
+  const searchRecommendationSections = $derived.by(() => {
+    const visibleRecommendationIds = new Set<string>();
+    return searchRecommendationResult.sections.map((section) => {
+      const itemById = new Map(section.items.map((item) => [item.candidate.id, item]));
+      const orderedItems = (searchRecommendationSectionOrder.get(searchRecommendationMoreKey(section.key)) ?? [])
+        .map((id) => itemById.get(id))
+        .filter((item): item is RecommendationItem => Boolean(item));
+      const baseItems = orderedItems.length > 0 ? orderedItems : section.items;
+      const uniqueItems = baseItems.filter((item) => !visibleRecommendationIds.has(item.candidate.id));
+      const items = uniqueItems.length >= Math.min(SEARCH_RECOMMENDATION_MIN_SECTION_FILL, baseItems.length)
+        ? uniqueItems
+        : baseItems;
+      const visibleItems = items.slice(0, searchRecommendationVisibleLimit(section.key));
+      if (visibleItems.length > 0) {
+        for (const item of visibleItems) visibleRecommendationIds.add(item.candidate.id);
+      }
+      return {
+        ...section,
+        items: visibleItems,
+      };
+    });
+  });
+
+  const searchRecommendationItems = $derived.by(() =>
+    searchRecommendationSections.flatMap((section) => section.items),
+  );
+
+  const searchDisplayedRecommendationCount = $derived(searchRecommendationItems.length);
+
+  const searchHasAnyRecommendationCandidates = $derived.by(() =>
+    activeContentType === "novels"
+      ? searchHasLiveNovelRecommendationData
+      : searchHasLiveMangaRecommendationData,
+  );
+
+  const searchRecommendationHydrating = $derived.by(() => {
+    if (activeBrowseTab !== "keyword" || kw_submitted) return false;
+    if (searchDisplayedRecommendationCount > 0) return false;
+    if (activeContentType === "novels") {
+      const waitingForNovelSeeds = searchSourceSeedLoading
+        || loadingSources
+        || (searchRecommendationSourcePool.length > 0 && !searchSourceSeedKey && searchNovelSourcePool.length === 0);
+      return waitingForNovelSeeds;
+    }
+
+    const waitingForMangaSeeds = searchSourceSeedLoading
+      || loadingSources
+      || loadingTrackers
+      || searchTrackerTrendingLoading
+      || (searchRecommendationSourcePool.length > 0 && !searchSourceSeedKey && searchSourceMangaPool.length === 0);
+    return waitingForMangaSeeds;
+  });
+
+  $effect(() => {
+    if (activeContentType !== "manga" || activeBrowseTab !== "keyword" || kw_submitted) return;
+    if (searchRecommendationHydrating || searchSourceSeedLoading || searchMangaSeedAutofillLoading || searchMangaSeedAutofillExhausted) return;
+    const underfilledSection = searchRecommendationSections.find((section) =>
+      (section.key === "highConfidence" || section.key === "trendingNearYourTaste")
+      && section.items.length > 0
+      && section.items.length < SEARCH_RECOMMENDATION_MIN_SECTION_FILL
+    );
+    const needsCandidateDepth = searchSourceMangaPool.length > 0
+      && searchSourceMangaPool.length < SEARCH_RECOMMENDATION_AUTOFILL_TARGET;
+    if (!underfilledSection && !needsCandidateDepth) return;
+    const key = [
+      "search-source-seeds",
+      activeContentType,
+      includeNsfwSources ? "nsfw" : "safe",
+      src_selectedLang,
+      searchRecommendationSourcePool.map((source) => source.id).join(","),
+    ].join("|");
+    window.setTimeout(() => {
+      if (activeContentType !== "manga" || activeBrowseTab !== "keyword" || kw_submitted) return;
+      if (searchSourceSeedLoading || searchMangaSeedAutofillLoading || searchMangaSeedAutofillExhausted) return;
+      void loadMangaSearchSeedAutofill(key);
+    }, 280);
+  });
+
+  $effect(() => {
+    if (activeContentType !== "novels" || activeBrowseTab !== "keyword" || kw_submitted) return;
+    if (searchRecommendationHydrating || searchSourceSeedLoading || searchNovelSeedAutofillLoading || searchNovelSeedAutofillExhausted) return;
+    const underfilled = searchDisplayedRecommendationCount === 0
+      || searchRecommendationSections.some((section) =>
+        (section.key === "highConfidence" || section.key === "trendingNearYourTaste" || section.key === "freshInYourSources")
+        && section.items.length > 0
+        && section.items.length < SEARCH_RECOMMENDATION_MIN_SECTION_FILL,
+      );
+    const needsCandidateDepth = searchNovelSourcePool.length > 0
+      && searchNovelSourcePool.length < SEARCH_RECOMMENDATION_AUTOFILL_TARGET;
+    if (!underfilled && !needsCandidateDepth) return;
+    const key = [
+      "search-source-seeds",
+      activeContentType,
+      includeNsfwSources ? "nsfw" : "safe",
+      src_selectedLang,
+      searchRecommendationSourcePool.map((source) => source.id).join(","),
+    ].join("|");
+    window.setTimeout(() => {
+      if (activeContentType !== "novels" || activeBrowseTab !== "keyword" || kw_submitted) return;
+      if (searchSourceSeedLoading || searchNovelSeedAutofillLoading || searchNovelSeedAutofillExhausted) return;
+      void loadNovelSearchSeedAutofill(key);
+    }, 360);
+  });
+
+  const searchHeroStatusText = $derived.by(() => {
+    if (searchRecommendationHydrating) {
+      return activeContentType === "novels"
+        ? "Collecting LNReader candidates and Hardcover ratings before ranking."
+        : "Collecting source candidates and tracker scores before ranking.";
+    }
+    if (!searchHasAnyRecommendationCandidates) {
+      return activeContentType === "novels"
+        ? "No LNReader source data is available yet."
+        : "No Suwayomi source data is available yet.";
+    }
+    return `${searchDisplayedRecommendationCount} recommendations from ${activeContentType === "novels" ? "LNReader sources and your prose library profile" : "installed sources, synced trackers, and your library profile"}.`;
+  });
+
+  const searchEmptyStateMessage = $derived.by(() => {
+    if (setupState?.kind && setupState.kind !== "ready") {
+      return setupState.kind === "server_offline"
+        ? "Suwayomi is offline. Connect the server to load recommendations."
+        : "Finish setup to load recommendations from your sources.";
+    }
+    if (searchRecommendationHydrating) return "";
+    if (!searchHasAnyRecommendationCandidates) {
+      return activeContentType === "novels"
+        ? "No LNReader source returned novels yet. Check installed novel sources or try again."
+        : "No Suwayomi source or tracker returned manga yet. Check the server and installed sources.";
+    }
+    if (searchDisplayedRecommendationCount === 0) {
+      return searchIncludeLibrary
+        ? "No recommendations match the current filters."
+        : "No new recommendations remain after filtering your library and tracker titles.";
+    }
+    return "";
+  });
+
+  const searchNovelItems = $derived.by(() => searchRecommendationItems
+    .filter((item) => item.candidate.contentType === "novel" || item.candidate.contentType === "book")
+    .slice(0, 3));
+
+  const searchCandidateTags = $derived.by(() => {
+    const counts = new Map<string, number>();
+    for (const item of searchRecommendationItems) {
+      for (const tag of item.candidate.tags) {
+        const normalized = tag.trim();
+        if (!normalized) continue;
+        counts.set(normalized, (counts.get(normalized) ?? 0) + 1);
+      }
+    }
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([tag]) => tag);
+  });
+
+  const searchTasteTags = $derived.by(() =>
+    searchRecommendationResult.profile.topTags.slice(0, 6).map(formatTasteTag),
+  );
+
+  const searchDiversityValue = $derived.by(() => {
+    const items = searchRecommendationItems;
+    if (!items.length) return 50;
+    const divergent = items.filter((item) => item.breakdown.diversityBucket === "divergent").length;
+    const adjacent = items.filter((item) => item.breakdown.diversityBucket === "adjacent").length;
+    return Math.round(Math.min(100, Math.max(18, ((divergent * 1.2 + adjacent * 0.65) / items.length) * 100)));
+  });
+
+  const searchInsightLines = $derived.by(() => {
+    const tags = searchTasteTags.slice(0, 2).join(" and ").toLowerCase();
+    const trackerBacked = searchRecommendationItems.filter((item) => item.badge).length;
+    const hardcoverBacked = searchRecommendationItems.filter((item) =>
+      item.candidate.providers.some((provider) => provider.providerId === "hardcover" && provider.score),
+    ).length;
+    const sourceBacked = searchRecommendationItems.filter((item) => item.candidate.providers.some((provider) => provider.kind === "source")).length;
+    const providerLine = activeContentType === "novels"
+      ? `${sourceBacked} pick${sourceBacked !== 1 ? "s" : ""} are available from installed LNReader sources.`
+      : `${sourceBacked} pick${sourceBacked !== 1 ? "s" : ""} are currently available from installed sources.`;
+    return [
+      tags ? `Strongest profile signal: ${tags}.` : "Profile is still warming up from your library and trackers.",
+      activeContentType === "novels"
+        ? `${hardcoverBacked} recommendation${hardcoverBacked !== 1 ? "s" : ""} include Hardcover ratings.`
+        : `${trackerBacked} recommendation${trackerBacked !== 1 ? "s" : ""} include synced tracker scores.`,
+      providerLine,
+    ];
+  });
+
+  function addKnownRecommendationTitle(
+    keys: Set<string>,
+    title: string | null | undefined,
+    contentType: RecommendationCandidate["contentType"],
+  ) {
+    if (!title?.trim()) return;
+    const key = recommendationTitleKey(title, contentType);
+    if (!key.endsWith(":")) keys.add(key);
+  }
+
+  function addKnownComicRecommendationTitle(keys: Set<string>, title: string | null | undefined) {
+    addKnownRecommendationTitle(keys, title, "manga");
+    addKnownRecommendationTitle(keys, title, "manhwa");
+    addKnownRecommendationTitle(keys, title, "manhua");
+  }
+
+  function makeFallbackCandidate(
+    title: string,
+    tags: string[],
+    contentType: RecommendationCandidate["contentType"],
+    coverUrl: string,
+    score: number,
+    trending: number,
+  ): RecommendationCandidate {
+    return {
+      id: `fallback:${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+      title,
+      tags,
+      contentType,
+      coverUrl,
+      status: contentType === "novel" ? "ONGOING" : "ONGOING",
+      inLibrary: false,
+      safety: "safe",
+      providers: [
+        {
+          providerId: "mockup-source",
+          providerName: contentType === "novel" ? "WebNovel" : "Flame Comics",
+          kind: "source",
+          availability: { value: 0.88, confidence: 0.7, method: "mockup" },
+        },
+        {
+          providerId: score >= 0.85 ? "anilist" : "mal",
+          providerName: score >= 0.85 ? "AniList" : "MAL",
+          kind: "tracker",
+          iconKey: score >= 0.85 ? "AL" : "MAL",
+          score: { value: score, confidence: 0.72, method: "mockup" },
+          trending: { value: trending, confidence: 0.58, method: "mockup" },
+        },
+      ],
+    };
+  }
+
+  function trackerRecordToRecommendationCandidate(
+    record: TrackRecord,
+    manga: Manga,
+    tracker: BrowseTrackerEntry,
+  ): RecommendationCandidate {
+    const scoreMax = record.score > 10 ? 100 : 10;
+    const normalizedScore = scoreMax > 0 ? Math.max(0, Math.min(1, record.score / scoreMax)) : 0;
+    const timestamp = trackRecordTimestamp(record.finishDate) ?? trackRecordTimestamp(record.startDate);
+    const trackerName = tracker.name || `Tracker ${tracker.id}`;
+    return {
+      id: `manga:${manga.id}`,
+      title: manga.title || record.title,
+      coverUrl: manga.thumbnailUrl,
+      alternativeTitles: record.title && record.title !== manga.title ? [record.title] : [],
+      tags: manga.genre ?? [],
+      contentType: inferMangaRecommendationContentType(manga, record.title),
+      status: manga.status ?? null,
+      inLibrary: false,
+      safety: inferRecommendationSafety(manga.genre ?? []),
+      updatedAtMs: timestamp,
+      providers: [
+        {
+          providerId: String(tracker.id),
+          providerName: trackerName,
+          kind: "tracker",
+          remoteId: record.remoteId,
+          iconKey: trackerIconKey(trackerName),
+          score: normalizedScore > 0 ? { value: normalizedScore, confidence: 0.9, method: `track-record/${scoreMax}`, sourceValue: record.displayScore || String(record.score) } : undefined,
+        },
+        ...(manga.source ? [{
+          providerId: String(manga.source.id),
+          providerName: manga.source.displayName ?? "Source",
+          kind: "source" as const,
+          availability: { value: 0.72, confidence: 0.52, method: "linked-source" },
+        }] : []),
+      ],
+    };
+  }
+
+  function trackRecordToTasteProfileSeed(
+    record: TrackRecord,
+    manga: Manga | null | undefined,
+    tracker: BrowseTrackerEntry,
+  ): TasteProfileSeedItem {
+    return {
+      id: `tracker:${record.trackerId}:${record.remoteId || record.id}`,
+      title: manga?.title || record.title,
+      tags: manga?.genre ?? [],
+      contentType: inferMangaRecommendationContentType(manga, record.title),
+      sourceId: `tracker:${tracker.id}`,
+      userRating: record.score > 0 ? record.score : null,
+      userRatingMax: record.score > 10 ? 100 : 10,
+      implicitWeight: record.score > 0 ? null : 0.42,
+      status: trackRecordSeedStatus(record),
+    };
+  }
+
+  function trackRecordSeedStatus(record: TrackRecord): TasteProfileSeedItem["status"] {
+    if (record.finishDate || (record.totalChapters > 0 && record.lastChapterRead >= record.totalChapters)) return "completed";
+    if (record.lastChapterRead > 0) return "reading";
+    if (record.status < 0) return "dropped";
+    return "planning";
+  }
+
+  function inferMangaRecommendationContentType(
+    manga: Manga | null | undefined,
+    fallbackTitle = "",
+  ): RecommendationCandidate["contentType"] {
+    const haystack = [
+      fallbackTitle,
+      manga?.title,
+      manga?.source?.displayName,
+      manga?.source?.name,
+      ...(manga?.genre ?? []),
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    if (haystack.includes("manhua") || haystack.includes("chinese")) return "manhua";
+    if (
+      haystack.includes("manhwa")
+      || haystack.includes("korean")
+      || haystack.includes("webtoon")
+      || haystack.includes("asura")
+      || haystack.includes("flame")
+      || haystack.includes("reaper")
+      || haystack.includes("void scans")
+      || haystack.includes("mangakakalot")
+      || haystack.includes("manganato")
+    ) return "manhwa";
+    const sourceLangType = inferComicTypeFromLanguage(manga?.source?.lang);
+    if (sourceLangType) return sourceLangType;
+    return "manga";
+  }
+
+  function inferComicTypeFromLanguage(language: string | null | undefined): RecommendationCandidate["contentType"] | null {
+    const normalized = language?.trim().toLowerCase().replace("_", "-") ?? "";
+    if (!normalized) return null;
+    if (normalized === "kr" || normalized === "ko" || normalized.startsWith("ko-") || normalized.includes("korean")) {
+      return "manhwa";
+    }
+    if (
+      normalized === "cn"
+      || normalized === "zh"
+      || normalized.startsWith("zh-")
+      || normalized.includes("chinese")
+    ) {
+      return "manhua";
+    }
+    if (normalized === "jp" || normalized === "ja" || normalized.startsWith("ja-") || normalized.includes("japanese")) {
+      return "manga";
+    }
+    return null;
+  }
+
+  function withMangaSourceMetadata(mangas: Manga[], source: Source | BrowseSourceEntry): Manga[] {
+    return mangas.map((manga) => {
+      const mangaSource = "mangaSource" in source ? source.mangaSource : source;
+      const id = manga.source?.id ?? mangaSource?.id ?? source.id;
+      const name = manga.source?.name ?? mangaSource?.name ?? source.name;
+      const displayName = manga.source?.displayName ?? mangaSource?.displayName ?? source.displayName;
+      const lang = manga.source?.lang ?? mangaSource?.lang ?? source.lang;
+      return {
+        ...manga,
+        source: {
+          id,
+          name,
+          displayName,
+          lang,
+        },
+      };
+    });
+  }
+
+  function trackRecordTimestamp(value: string | null | undefined) {
+    if (!value || value === "0") return null;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric) && numeric > 0) return numeric;
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function trackerIconKey(name: string) {
+    const normalized = name.toLowerCase();
+    if (normalized.includes("anilist")) return "anilist";
+    if (normalized.includes("myanimelist") || normalized === "mal") return "myanimelist";
+    return "tracker";
+  }
+
+  function inferRecommendationSafety(tags: string[]): RecommendationCandidate["safety"] {
+    const normalized = tags.join(" ").toLowerCase();
+    if (normalized.includes("hentai") || normalized.includes("pornographic")) return "explicit";
+    if (normalized.includes("adult") || normalized.includes("erotica")) return "adult";
+    if (normalized.includes("suggestive") || normalized.includes("ecchi")) return "suggestive";
+    return "safe";
+  }
+
+  function formatTasteTag(tag: string) {
+    return tag
+      .split(/[\s_-]+/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
+  }
+
+  function recommendationBadge(item: RecommendationItem) {
+    if (activeContentType === "novels") {
+      const hardcoverScore = item.candidate.providers
+        .find((provider) => provider.providerId === "hardcover" && provider.score && provider.score.confidence > 0)
+        ?.score;
+      if (hardcoverScore && hardcoverScore.value > 0) {
+        return `HC ${formatHardcoverBadgeScore(hardcoverScore.value)}`;
+      }
+      const sourceScore = item.candidate.providers
+        .filter((provider) => provider.kind === "source" && provider.score && provider.score.confidence > 0)
+        .map((provider) => ({ provider, score: provider.score! }))
+        .sort((a, b) => b.score.confidence - a.score.confidence)[0];
+      if (sourceScore) {
+        return `SRC ${formatSourceBadgeScore(sourceScore.score.value)}`;
+      }
+      return null;
+    }
+
+    if (item.badge) {
+      const key = item.badge.iconKeys[0]?.toUpperCase().includes("MAL") ? "MAL" : item.badge.iconKeys[0]?.toUpperCase().includes("ANI") ? "AL" : "SYNC";
+      return `${key} ${item.badge.displayScore}`;
+    }
+    return null;
+  }
+
+  function formatSourceBadgeScore(value: number) {
+    return (Math.round(value * 100) / 10).toFixed(1);
+  }
+
+  function formatHardcoverBadgeScore(value: number) {
+    return (Math.round(value * 50) / 10).toFixed(1);
+  }
+
+  function recommendationProviderLabel(item: RecommendationItem) {
+    const provider = item.candidate.providers.find((entry) => entry.kind === "source") ?? item.candidate.providers[0];
+    return provider?.providerName ?? "Aethon";
+  }
+
+  function recommendationStatusLabel(item: RecommendationItem) {
+    return item.candidate.status?.replace(/_/g, " ") ?? (item.candidate.inLibrary ? "In library" : "Ongoing");
+  }
+
+  function scrollSearchSection(sectionKey: string, direction: -1 | 1) {
+    const row = document.querySelector<HTMLElement>(`[data-search-row="${sectionKey}"]`);
+    if (!row) return;
+    row.scrollBy({
+      left: direction * Math.max(320, row.clientWidth * 0.78),
+      behavior: "smooth",
+    });
+    if (direction > 0) {
+      window.setTimeout(() => {
+        if (row.scrollLeft + row.clientWidth >= row.scrollWidth - 128) {
+          requestSearchSectionMore(sectionKey, row);
+        }
+      }, 240);
+    }
+  }
+
+  function advanceSearchSection(sectionKey: string) {
+    scrollSearchSection(sectionKey, 1);
+  }
+
+  function searchCoverKey(candidate: RecommendationCandidate) {
+    return `${candidate.id}:${candidate.coverUrl ?? ""}`;
+  }
+
+  function hasSearchCover(candidate: RecommendationCandidate) {
+    return Boolean(candidate.coverUrl?.trim()) && !failedSearchCoverKeys.has(searchCoverKey(candidate));
+  }
+
+  function markSearchCoverFailed(candidate: RecommendationCandidate) {
+    if (!candidate.coverUrl?.trim()) return;
+    failedSearchCoverKeys = new Set([...failedSearchCoverKeys, searchCoverKey(candidate)]);
+  }
+
+  function searchRecommendationMoreKey(sectionKey: string) {
+    const sourceIds = searchRecommendationSourcePool
+      .slice(0, activeContentType === "novels" ? SEARCH_SEED_SOURCE_LIMIT_NOVELS : SEARCH_SEED_SOURCE_LIMIT_MANGA)
+      .map((source) => source.id)
+      .join(",");
+    return [
+      "search-more",
+      activeContentType,
+      sectionKey,
+      searchIncludeLibrary ? "include-known" : "new-only",
+      includeNsfwSources ? "nsfw" : "safe",
+      src_selectedLang,
+      sourceIds,
+    ].join("|");
+  }
+
+  function searchRecommendationVisibleLimit(sectionKey: string) {
+    return searchRecommendationVisibleLimits.get(searchRecommendationMoreKey(sectionKey)) ?? SEARCH_RECOMMENDATION_BASE_LIMIT;
+  }
+
+  function setSearchRecommendationVisibleLimit(sectionKey: string, limit: number) {
+    const key = searchRecommendationMoreKey(sectionKey);
+    searchRecommendationVisibleLimits = new Map([
+      ...searchRecommendationVisibleLimits,
+      [key, Math.min(SEARCH_RECOMMENDATION_MAX_LIMIT, Math.max(SEARCH_RECOMMENDATION_BASE_LIMIT, limit))],
+    ]);
+  }
+
+  function canLoadSearchSectionMore(sectionKey: string) {
+    const key = searchRecommendationMoreKey(sectionKey);
+    return activeBrowseTab === "keyword"
+      && !kw_submitted
+      && !discoverFocusedTracker
+      && searchRecommendationSourcePool.length > 0
+      && !searchRecommendationMoreLoadingKeys.has(key)
+      && !searchRecommendationMoreExhaustedKeys.has(key);
+  }
+
+  function sectionFetchType(sectionKey: string): "POPULAR" | "LATEST" {
+    return sectionKey === "freshInYourSources" ? "LATEST" : "POPULAR";
+  }
+
+  function requestSearchSectionMore(sectionKey: string, row: HTMLElement) {
+    const key = searchRecommendationMoreKey(sectionKey);
+    const fullSection = searchRecommendationResult.sections.find((section) => section.key === sectionKey);
+    const visibleLimit = searchRecommendationVisibleLimit(sectionKey);
+    const hasHiddenItems = Boolean(fullSection && visibleLimit < fullSection.items.length);
+    if (!hasHiddenItems && searchRecommendationMoreExhaustedKeys.has(key)) return;
+    searchRecommendationMoreRequestedWidths = new Map([
+      ...searchRecommendationMoreRequestedWidths,
+      [key, row.scrollWidth],
+    ]);
+    void loadMoreSearchRecommendations(sectionKey);
+  }
+
+  function handleSearchRailScroll(sectionKey: string, event: Event) {
+    const row = event.currentTarget as HTMLElement;
+    if (row.scrollLeft + row.clientWidth < row.scrollWidth - 96) return;
+    requestSearchSectionMore(sectionKey, row);
+  }
+
+  async function loadMoreSearchRecommendations(sectionKey: string) {
+    if (activeBrowseTab !== "keyword" || kw_submitted || discoverFocusedTracker) return;
+    const key = searchRecommendationMoreKey(sectionKey);
+    if (searchRecommendationMoreLoadingKeys.has(key)) return;
+    const now = Date.now();
+    if (now - (searchRecommendationMoreTriggeredAt.get(key) ?? 0) < SEARCH_RECOMMENDATION_SCROLL_THROTTLE_MS) return;
+    searchRecommendationMoreTriggeredAt = new Map([...searchRecommendationMoreTriggeredAt, [key, now]]);
+
+    const currentLimit = searchRecommendationVisibleLimit(sectionKey);
+    const fullSection = searchRecommendationResult.sections.find((section) => section.key === sectionKey);
+    const nextLimit = Math.min(SEARCH_RECOMMENDATION_MAX_LIMIT, currentLimit + SEARCH_RECOMMENDATION_LIMIT_STEP);
+    const startingSectionCount = fullSection?.items.length ?? 0;
+
+    if (fullSection && currentLimit < fullSection.items.length) {
+      setSearchRecommendationVisibleLimit(sectionKey, nextLimit);
+      return;
+    }
+
+    if (searchRecommendationMoreExhaustedKeys.has(key)) {
+      return;
+    }
+
+    if (activeContentType === "manga" && sectionKey === "trendingNearYourTaste") {
+      setSearchRecommendationVisibleLimit(sectionKey, nextLimit);
+      void loadSearchTrackerTrendingMore();
+      return;
+    }
+
+    if (activeContentType === "manga" && sectionKey === "highConfidence") {
+      setSearchRecommendationVisibleLimit(sectionKey, nextLimit);
+      void prefetchHighConfidenceSearchRecommendations(key);
+      return;
+    }
+
+    const page = (searchRecommendationMorePages.get(key) ?? 1) + 1;
+    const request = searchRecommendationSourceRequest(page);
+    const sources = request.sources;
+    if (sources.length === 0) return;
+    searchRecommendationMoreLoadingKeys = new Set([...searchRecommendationMoreLoadingKeys, key]);
+
+    try {
+      if (activeContentType === "novels") {
+        const scopeInput = {
+          profileId: store.runtimeResolvedLocalProfileId,
+          serverUrl: store.runtimeServerUrl,
+        };
+        const fallbackTerms = novelRecommendationFallbackTerms();
+        const maxAttempts = 4;
+        let attemptPage = page;
+        let loadedAnyIncoming = false;
+        let addedVisibleItems = false;
+
+        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+          const attemptRequest = searchRecommendationSourceRequest(attemptPage);
+          const attemptSources = attemptRequest.sources;
+          if (attemptSources.length === 0) break;
+          const previousCount = searchNovelSourceSeedResults.length;
+          const settled = await Promise.allSettled(attemptSources.map(async (entry) => {
+            if (!entry.novelSource) return [] as NovelSourceSearchResult[];
+            return fetchNovelRecommendationSourcePage(entry, attemptRequest.sourcePage, scopeInput, fallbackTerms);
+          }));
+          const incoming = settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+          searchRecommendationMorePages = new Map([...searchRecommendationMorePages, [key, attemptPage]]);
+          if (incoming.length === 0) {
+            attemptPage += 1;
+            continue;
+          }
+
+          loadedAnyIncoming = true;
+          const nextResults = balanceNovelSourceResults(dedupeNovelSourceResults([
+            ...searchNovelSourceSeedResults,
+            ...incoming,
+          ])).slice(0, SEARCH_RECOMMENDATION_SEED_CAP);
+          searchNovelSourceSeedResults = nextResults;
+          await tick();
+
+          const updatedCount = searchRecommendationResult.sections.find((section) => section.key === sectionKey)?.items.length ?? 0;
+          if (nextResults.length > previousCount || updatedCount > startingSectionCount) {
+            addedVisibleItems = true;
+            break;
+          }
+          attemptPage += 1;
+        }
+
+        if (!loadedAnyIncoming || !addedVisibleItems) {
+          if ((searchRecommendationMorePages.get(key) ?? page) >= SEARCH_RECOMMENDATION_DUPLICATE_PAGE_RETRY_LIMIT) {
+            searchRecommendationMoreExhaustedKeys = new Set([...searchRecommendationMoreExhaustedKeys, key]);
+          }
+          if (!addedVisibleItems) return;
+        }
+      } else {
+        const fetchType = sectionFetchType(sectionKey);
+        const maxAttempts = sectionKey === "highConfidence" ? 1 : 4;
+        let attemptPage = page;
+        let addedVisibleItems = false;
+        let loadedAnyIncoming = false;
+        const startingSourceSeedCount = searchSourceSeedResults.length;
+        const startingFreshSeedCount = searchFreshSourceSeedResults.length;
+
+        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+          const attemptRequest = searchRecommendationSourceRequest(attemptPage);
+          const attemptSources = attemptRequest.sources;
+          if (attemptSources.length === 0) break;
+
+          const settled = await Promise.allSettled(attemptSources.map(async (entry) => {
+            if (!entry.mangaSource) return [] as Manga[];
+            const data = await gql<{ fetchSourceManga: { mangas: Manga[] } }>(
+              FETCH_SOURCE_MANGA,
+              { source: entry.mangaSource.id, type: fetchType, page: attemptRequest.sourcePage, query: null },
+            );
+            return withMangaSourceMetadata(
+              data.fetchSourceManga.mangas.filter((manga) => !shouldHideNsfw(manga, browseVisibilitySettings)),
+              entry,
+            );
+          }));
+          const incoming = settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+          if (incoming.length === 0) {
+            searchRecommendationMorePages = new Map([...searchRecommendationMorePages, [key, attemptPage]]);
+            attemptPage += 1;
+            continue;
+          }
+          loadedAnyIncoming = true;
+          if (sectionKey === "highConfidence") {
+            void loadSearchTrackerScoresForTitles(incoming.map((manga) => manga.title));
+          }
+
+          const nextSectionResults = balanceMangaBySource(dedupeMangaByTitle(
+            dedupeMangaById([
+              ...(fetchType === "LATEST" ? searchFreshSourceSeedResults : searchSourceSeedResults),
+              ...incoming,
+            ]),
+            store.settings.mangaLinks,
+          )).slice(0, SEARCH_RECOMMENDATION_SEED_CAP);
+          const nextCombinedResults = balanceMangaBySource(dedupeMangaByTitle(
+            dedupeMangaById([
+              ...searchSourceSeedResults,
+              ...(fetchType === "LATEST" ? nextSectionResults : incoming),
+            ]),
+            store.settings.mangaLinks,
+          )).slice(0, SEARCH_RECOMMENDATION_SEED_CAP);
+          if (fetchType === "LATEST") {
+            searchFreshSourceSeedResults = nextSectionResults;
+          }
+          searchSourceSeedResults = nextCombinedResults;
+          searchSourceSeedFetchedAt = searchSourceSeedFetchedAt ?? Date.now();
+          searchRecommendationMorePages = new Map([...searchRecommendationMorePages, [key, attemptPage]]);
+          await tick();
+
+          const updatedCount = searchRecommendationResult.sections.find((section) => section.key === sectionKey)?.items.length ?? 0;
+          const grewCandidatePool = fetchType === "LATEST"
+            ? searchFreshSourceSeedResults.length > startingFreshSeedCount
+            : searchSourceSeedResults.length > startingSourceSeedCount;
+          if (grewCandidatePool || updatedCount > startingSectionCount) {
+            addedVisibleItems = true;
+            break;
+          }
+          attemptPage += 1;
+        }
+
+        if (!loadedAnyIncoming || !addedVisibleItems) {
+          if ((searchRecommendationMorePages.get(key) ?? page) >= SEARCH_RECOMMENDATION_DUPLICATE_PAGE_RETRY_LIMIT) {
+            searchRecommendationMoreExhaustedKeys = new Set([...searchRecommendationMoreExhaustedKeys, key]);
+          }
+          if (loadedAnyIncoming && sectionKey === "highConfidence") {
+            setSearchRecommendationVisibleLimit(sectionKey, nextLimit);
+          }
+          if (!addedVisibleItems) return;
+        }
+      }
+
+      setSearchRecommendationVisibleLimit(sectionKey, nextLimit);
+    } catch (error) {
+      console.warn("Could not load more search recommendations.", error);
+    } finally {
+      searchRecommendationMoreLoadingKeys = new Set([...searchRecommendationMoreLoadingKeys].filter((entry) => entry !== key));
+    }
+  }
+
+  async function prefetchHighConfidenceSearchRecommendations(key: string) {
+    if (searchRecommendationMoreLoadingKeys.has(key)) return;
+    const page = (searchRecommendationMorePages.get(key) ?? 1) + 1;
+    const request = searchRecommendationSourceRequest(page);
+    const sources = request.sources;
+    if (sources.length === 0) return;
+
+    searchRecommendationMoreLoadingKeys = new Set([...searchRecommendationMoreLoadingKeys, key]);
+    try {
+      const settled = await Promise.allSettled(sources.map(async (entry) => {
+        if (!entry.mangaSource) return [] as Manga[];
+        const data = await gql<{ fetchSourceManga: { mangas: Manga[] } }>(
+          FETCH_SOURCE_MANGA,
+          { source: entry.mangaSource.id, type: "POPULAR", page: request.sourcePage, query: null },
+        );
+        return withMangaSourceMetadata(
+          data.fetchSourceManga.mangas.filter((manga) => !shouldHideNsfw(manga, browseVisibilitySettings)),
+          entry,
+        );
+      }));
+      const incoming = settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+      searchRecommendationMorePages = new Map([...searchRecommendationMorePages, [key, page]]);
+      if (incoming.length === 0) {
+        if (page >= SEARCH_RECOMMENDATION_DUPLICATE_PAGE_RETRY_LIMIT) {
+          searchRecommendationMoreExhaustedKeys = new Set([...searchRecommendationMoreExhaustedKeys, key]);
+        }
+        return;
+      }
+
+      searchSourceSeedResults = balanceMangaBySource(dedupeMangaByTitle(
+        dedupeMangaById([...searchSourceSeedResults, ...incoming]),
+        store.settings.mangaLinks,
+      )).slice(0, SEARCH_RECOMMENDATION_SEED_CAP);
+      searchSourceSeedFetchedAt = searchSourceSeedFetchedAt ?? Date.now();
+      void loadSearchTrackerScoresForTitles(incoming.map((manga) => manga.title));
+    } catch (error) {
+      console.warn("Could not prefetch high-confidence recommendations.", error);
+    } finally {
+      searchRecommendationMoreLoadingKeys = new Set([...searchRecommendationMoreLoadingKeys].filter((entry) => entry !== key));
+    }
+  }
+
+  async function openSearchRecommendation(item: RecommendationItem) {
+    const manga = searchMangaByCandidateId.get(item.candidate.id);
+    if (manga) {
+      if (manga.inLibrary) {
+        setNavPage("library");
+        setActiveManga(manga);
+      } else {
+        setPreviewManga(manga);
+      }
+      return;
+    }
+
+    const novel = searchNovelByCandidateId.get(item.candidate.id);
+    if (novel && novelLibraryState) {
+      const chapters = novelLibraryState.chapters
+        .filter((chapter) => chapter.novelId === novel.id)
+        .sort((a, b) => a.order - b.order)
+        .map((chapter) => ({ ...chapter, id: chapter.id, novelId: novel.id }));
+      setActiveNovelDetail({
+        novel: {
+          ...novel,
+          sourceId: novel.source.id,
+          chapters,
+        },
+        inLibrary: true,
+      });
+      return;
+    }
+
+    const novelSourceResult = searchNovelSourceByCandidateId.get(item.candidate.id);
+    if (novelSourceResult) {
+      const source = searchNovelSourceById.get(novelSourceResult.sourceId);
+      if (!source) return;
+      await openNovelSourceResult(source, novelSourceResult);
+      return;
+    }
+
+    const book = searchBookByCandidateId.get(item.candidate.id);
+    if (book) {
+      setNavPage("library");
+      setActiveBookId(book.id);
+      return;
+    }
+
+    const sourceProvider = item.candidate.providers.find((provider) => provider.kind === "source");
+    if (sourceProvider) {
+      activeBrowseTab = "source";
+      src_browseQuery = item.candidate.title;
+      src_submitted = "";
+      addToast({ kind: "info", title: "Open it from its source", body: "Search is ready in Sources for this recommendation." });
+      return;
+    }
+
+    kw_query = item.candidate.title;
+    activeBrowseTab = "keyword";
+    void kwDoSearch(item.candidate.title);
+  }
 
   $effect(() => {
     const _activeTags = tag_activeTags;
@@ -680,10 +2329,10 @@
       ps.add(1);
       tag_srcNextPage.set(src.id, result.hasNextPage ? 2 : -1);
       tag_srcNextPage = new Map(tag_srcNextPage);
-      const matching = (activeTags.length > 1
+      const matching = withMangaSourceMetadata((activeTags.length > 1
         ? result.mangas.filter((m) => matchesAllTags(m, activeTags))
         : result.mangas
-      ).filter((m) => !shouldHideNsfw(m, store.settings));
+      ).filter((m) => !shouldHideNsfw(m, store.settings)), src);
       if (matching.length > 0) {
         tag_sourceResults = dedupeMangaByTitle(dedupeMangaById([...tag_sourceResults, ...matching]), store.settings.mangaLinks);
         tag_loadingSourceSearch = false;
@@ -746,10 +2395,10 @@
         ps.add(page);
         tag_srcNextPage.set(src.id, result.hasNextPage ? page + 1 : -1);
         tag_srcNextPage = new Map(tag_srcNextPage);
-        const matching = (tag_activeTags.length > 1
+        const matching = withMangaSourceMetadata((tag_activeTags.length > 1
           ? result.mangas.filter((m) => matchesAllTags(m, tag_activeTags))
           : result.mangas
-        ).filter((m) => !shouldHideNsfw(m, store.settings));
+        ).filter((m) => !shouldHideNsfw(m, store.settings)), src);
         if (matching.length > 0) {
           tag_sourceResults = dedupeMangaByTitle(dedupeMangaById([...tag_sourceResults, ...matching]), store.settings.mangaLinks);
         }
@@ -828,11 +2477,6 @@
   const browseVisibilitySettings = $derived(
     includeNsfwSources ? { ...store.settings, showNsfw: true } : store.settings,
   );
-  const browseHiddenBySafetyCount = $derived(
-    allSources.filter((source) => shouldHideSource(source, store.settings)).length,
-  );
-  const showBrowseVisibilityCard = $derived(!includeNsfwSources && browseHiddenBySafetyCount > 0);
-
   function toggleIncludeNsfwSources() {
     const nextShowNsfw = !store.settings.showNsfw;
     updateSettings({ showNsfw: nextShowNsfw });
@@ -879,7 +2523,8 @@
   );
 
   const src_novelSources = $derived.by(() =>
-    allNovelSources.map((source) => ({
+    [
+      ...allNovelSources.filter((source) => source.enabled).map((source) => ({
       id: source.pluginId,
       name: source.name,
       displayName: source.name,
@@ -888,7 +2533,17 @@
       isNsfw: false,
       contentKind: "novels" as const,
       novelSource: source,
-    })),
+      })),
+      {
+        id: "hardcover",
+        name: "Hardcover",
+        displayName: "Hardcover",
+        lang: "all",
+        iconUrl: "https://hardcover.app/favicon.ico",
+        isNsfw: false,
+        contentKind: "hardcover" as const,
+      },
+    ],
   );
 
   const src_catalogSources = $derived(
@@ -909,14 +2564,14 @@
 
   const src_visibleSources = $derived.by(() => {
     let sources = activeContentType === "novels"
-      ? src_novelSources.filter((entry) => entry.contentKind === "novels")
+      ? src_novelSources.filter((entry) => entry.contentKind === "novels" || entry.contentKind === "hardcover")
       : src_mangaSources.filter((entry) =>
           entry.contentKind === "manga"
           && entry.mangaSource
           && !shouldHideSource(entry.mangaSource, browseVisibilitySettings),
         );
     if (src_selectedLang !== "all") {
-      return sources.filter((s) => s.lang === src_selectedLang);
+      return sources.filter((s) => s.lang === src_selectedLang || s.contentKind === "hardcover");
     }
     const map = new Map<string, BrowseSourceEntry>();
     for (const source of sources) {
@@ -945,6 +2600,597 @@
       ...src_visibleSources.filter((source) => source.id !== discoverFocusedSource.id),
     ].slice(0, limit);
   });
+  const searchRecommendationSourcePool = $derived.by(() => {
+    if (activeBrowseTab === "keyword" && activeContentType === "novels") {
+      const sources = src_novelSources.filter((source) =>
+        source.contentKind === "novels"
+        && source.novelSource
+        && (src_selectedLang === "all" || source.lang === src_selectedLang),
+      );
+      return interleaveNovelRecommendationSources(sources);
+    }
+
+    const sources = activeBrowseTab === "keyword"
+      ? src_visibleSources.filter((source) => source.contentKind !== "hardcover")
+      : src_visibleSources;
+    if (activeBrowseTab === "keyword" || !discoverFocusedSource) return sources;
+    return [
+      discoverFocusedSource,
+      ...sources.filter((source) => source.id !== discoverFocusedSource.id),
+    ];
+  });
+
+  function searchRecommendationSourceRequest(logicalPage: number) {
+    const batchSize = activeContentType === "novels" ? SEARCH_SEED_SOURCE_LIMIT_NOVELS : SEARCH_SEED_SOURCE_LIMIT_MANGA;
+    const pool = searchRecommendationSourcePool;
+    if (pool.length <= batchSize) {
+      return { sources: pool, sourcePage: Math.max(1, logicalPage) };
+    }
+
+    const batchCount = Math.ceil(pool.length / batchSize);
+    const safePage = Math.max(1, logicalPage);
+    const batchIndex = (safePage - 1) % batchCount;
+    const sourcePage = Math.floor((safePage - 1) / batchCount) + 1;
+    const start = batchIndex * batchSize;
+    return {
+      sources: pool.slice(start, start + batchSize),
+      sourcePage,
+    };
+  }
+
+  async function refreshSearchSourceSeeds(key: string, sources: BrowseSourceEntry[]) {
+    searchSourceSeedAbortCtrl?.abort();
+    const ctrl = new AbortController();
+    const visibilitySettings = browseVisibilitySettings;
+    const mangaLinks = store.settings.mangaLinks;
+    untrack(() => {
+      searchSourceSeedAbortCtrl = ctrl;
+      searchSourceSeedKey = key;
+      searchSourceSeedLoading = true;
+      searchSourceSeedFetchedAt = Date.now();
+      searchFreshSourceSeedResults = [];
+      searchMangaSeedAutofillKey = key;
+      searchMangaSeedAutofillPage = 1;
+      searchMangaSeedAutofillLoading = false;
+      searchMangaSeedAutofillExhausted = false;
+    });
+    const fallbackTerms = ["action", "fantasy", "adventure", "romance"];
+
+    try {
+      let collected: Manga[] = [];
+      const publishPartial = (incoming: Manga[]) => {
+        if (searchSourceSeedKey !== key || ctrl.signal.aborted || incoming.length === 0) return;
+        collected = balanceMangaBySource(dedupeMangaByTitle(
+          dedupeMangaById([...collected, ...incoming]),
+          mangaLinks,
+        )).slice(0, SEARCH_RECOMMENDATION_SEED_CAP);
+        untrack(() => {
+          searchSourceSeedResults = collected;
+        });
+      };
+
+      const settled = await Promise.allSettled(sources.map(async (entry) => {
+        if (!entry.mangaSource || ctrl.signal.aborted) return [] as Manga[];
+        try {
+          const data = await gql<{ fetchSourceManga: { mangas: Manga[] } }>(
+            FETCH_SOURCE_MANGA,
+            { source: entry.mangaSource.id, type: "POPULAR", page: 1, query: null },
+            ctrl.signal,
+          );
+          const popular = withMangaSourceMetadata(
+            data.fetchSourceManga.mangas.filter((manga) => !shouldHideNsfw(manga, visibilitySettings)),
+            entry,
+          );
+          if (popular.length > 0) {
+            publishPartial(popular);
+            return popular;
+          }
+        } catch (error) {
+          if (ctrl.signal.aborted) return [] as Manga[];
+          console.warn(`Search recommendations could not load popular titles for ${entry.displayName}; trying keyword fallback.`, error);
+        }
+
+        for (const term of fallbackTerms) {
+          if (ctrl.signal.aborted) return [] as Manga[];
+          const fallback = await fetchSourceMangaSearchWithFallback({
+            sourceId: entry.mangaSource.id,
+            query: term,
+            signal: ctrl.signal,
+          });
+          const visible = withMangaSourceMetadata(
+            fallback.filter((manga) => !shouldHideNsfw(manga, visibilitySettings)),
+            entry,
+          );
+          if (visible.length > 0) {
+            publishPartial(visible);
+            return visible;
+          }
+        }
+
+        return [] as Manga[];
+      }));
+
+      if (searchSourceSeedKey !== key || ctrl.signal.aborted) return;
+      const incoming = settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+      const nextResults = balanceMangaBySource(dedupeMangaByTitle(
+        dedupeMangaById([...collected, ...incoming]),
+        mangaLinks,
+      )).slice(0, SEARCH_RECOMMENDATION_SEED_CAP);
+      untrack(() => {
+        searchSourceSeedResults = nextResults;
+      });
+
+      const latestSources = sources;
+      const latestSettled = await Promise.allSettled(latestSources.map(async (entry) => {
+        if (!entry.mangaSource || ctrl.signal.aborted) return [] as Manga[];
+        const data = await gql<{ fetchSourceManga: { mangas: Manga[] } }>(
+          FETCH_SOURCE_MANGA,
+          { source: entry.mangaSource.id, type: "LATEST", page: 1, query: null },
+          ctrl.signal,
+        );
+        return withMangaSourceMetadata(
+          data.fetchSourceManga.mangas.filter((manga) => !shouldHideNsfw(manga, visibilitySettings)),
+          entry,
+        );
+      }));
+      if (searchSourceSeedKey !== key || ctrl.signal.aborted) return;
+      const latestIncoming = latestSettled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+      const nextFreshResults = balanceMangaBySource(dedupeMangaByTitle(
+        dedupeMangaById(latestIncoming),
+        mangaLinks,
+      )).slice(0, SEARCH_RECOMMENDATION_SEED_CAP);
+      const nextCombinedResults = balanceMangaBySource(dedupeMangaByTitle(
+        dedupeMangaById([...nextResults, ...nextFreshResults]),
+        mangaLinks,
+      )).slice(0, SEARCH_RECOMMENDATION_SEED_CAP);
+      untrack(() => {
+        searchFreshSourceSeedResults = nextFreshResults;
+        searchSourceSeedResults = nextCombinedResults;
+      });
+    } catch (error) {
+      if (searchSourceSeedKey !== key || ctrl.signal.aborted) return;
+      console.error(error);
+      untrack(() => {
+        searchSourceSeedResults = [];
+        searchFreshSourceSeedResults = [];
+      });
+    } finally {
+      if (searchSourceSeedKey === key && searchSourceSeedAbortCtrl === ctrl) {
+        untrack(() => {
+          searchSourceSeedLoading = false;
+        });
+      }
+    }
+  }
+
+  async function loadMangaSearchSeedAutofill(key: string) {
+    if (activeContentType !== "manga" || activeBrowseTab !== "keyword" || kw_submitted || discoverFocusedTracker) return;
+    if (searchSourceSeedLoading || searchMangaSeedAutofillLoading || searchMangaSeedAutofillExhausted) return;
+
+    if (searchMangaSeedAutofillKey !== key) {
+      searchMangaSeedAutofillKey = key;
+      searchMangaSeedAutofillPage = 1;
+      searchMangaSeedAutofillExhausted = false;
+    }
+
+    const nextPage = searchMangaSeedAutofillPage + 1;
+    if (nextPage > SEARCH_RECOMMENDATION_AUTOFILL_PAGE_LIMIT) {
+      searchMangaSeedAutofillExhausted = true;
+      return;
+    }
+
+    const request = searchRecommendationSourceRequest(nextPage);
+    const sources = request.sources;
+    if (sources.length === 0) {
+      searchMangaSeedAutofillExhausted = true;
+      return;
+    }
+
+    const visibilitySettings = browseVisibilitySettings;
+    const mangaLinks = store.settings.mangaLinks;
+    const fallbackTerms = ["action", "fantasy", "adventure", "romance"];
+    const previousSeedCount = searchSourceSeedResults.length;
+    const previousFreshCount = searchFreshSourceSeedResults.length;
+    searchMangaSeedAutofillLoading = true;
+
+    const fetchSourcePage = async (entry: BrowseSourceEntry, type: "POPULAR" | "LATEST") => {
+      if (!entry.mangaSource) return [] as Manga[];
+      try {
+        const data = await gql<{ fetchSourceManga: { mangas: Manga[] } }>(
+          FETCH_SOURCE_MANGA,
+          { source: entry.mangaSource.id, type, page: request.sourcePage, query: null },
+        );
+        const visible = withMangaSourceMetadata(
+          data.fetchSourceManga.mangas.filter((manga) => !shouldHideNsfw(manga, visibilitySettings)),
+          entry,
+        );
+        if (visible.length > 0 || type === "LATEST") return visible;
+      } catch (error) {
+        console.warn(`Search recommendations could not load ${type.toLowerCase()} page ${request.sourcePage} for ${entry.displayName}.`, error);
+      }
+
+      if (type === "LATEST") return [] as Manga[];
+      for (const term of fallbackTerms) {
+        const fallback = await fetchSourceMangaSearchWithFallback({
+          sourceId: entry.mangaSource.id,
+          query: term,
+        });
+        const visible = withMangaSourceMetadata(
+          fallback.filter((manga) => !shouldHideNsfw(manga, visibilitySettings)),
+          entry,
+        );
+        if (visible.length > 0) return visible;
+      }
+
+      return [] as Manga[];
+    };
+
+    try {
+      const [popularSettled, latestSettled] = await Promise.all([
+        Promise.allSettled(sources.map((entry) => fetchSourcePage(entry, "POPULAR"))),
+        Promise.allSettled(sources.map((entry) => fetchSourcePage(entry, "LATEST"))),
+      ]);
+      if (searchMangaSeedAutofillKey !== key) return;
+
+      const popularIncoming = popularSettled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+      const latestIncoming = latestSettled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+      if (popularIncoming.length === 0 && latestIncoming.length === 0) {
+        searchMangaSeedAutofillPage = nextPage;
+        if (nextPage >= SEARCH_RECOMMENDATION_DUPLICATE_PAGE_RETRY_LIMIT) {
+          searchMangaSeedAutofillExhausted = true;
+        }
+        return;
+      }
+
+      const nextFreshResults = balanceMangaBySource(dedupeMangaByTitle(
+        dedupeMangaById([...searchFreshSourceSeedResults, ...latestIncoming]),
+        mangaLinks,
+      )).slice(0, SEARCH_RECOMMENDATION_SEED_CAP);
+      const nextSeedResults = balanceMangaBySource(dedupeMangaByTitle(
+        dedupeMangaById([...searchSourceSeedResults, ...popularIncoming, ...nextFreshResults]),
+        mangaLinks,
+      )).slice(0, SEARCH_RECOMMENDATION_SEED_CAP);
+
+      searchFreshSourceSeedResults = nextFreshResults;
+      searchSourceSeedResults = nextSeedResults;
+      searchSourceSeedFetchedAt = searchSourceSeedFetchedAt ?? Date.now();
+      searchMangaSeedAutofillPage = nextPage;
+
+      if (nextSeedResults.length <= previousSeedCount && nextFreshResults.length <= previousFreshCount) {
+        if (nextPage >= SEARCH_RECOMMENDATION_DUPLICATE_PAGE_RETRY_LIMIT) {
+          searchMangaSeedAutofillExhausted = true;
+        }
+      }
+    } catch (error) {
+      console.warn("Could not autofill manga search recommendations.", error);
+      searchMangaSeedAutofillPage = nextPage;
+    } finally {
+      searchMangaSeedAutofillLoading = false;
+    }
+  }
+
+  async function fetchNovelRecommendationSourcePage(
+    entry: BrowseSourceEntry,
+    pageNo: number,
+    scopeInput: { profileId: string | null; serverUrl: string | null },
+    fallbackTerms: string[],
+  ): Promise<NovelSourceSearchResult[]> {
+    if (!entry.novelSource) return [];
+    const popular = await withSoftTimeout(
+      browseInstalledNovelSource(scopeInput, entry.novelSource.pluginId, pageNo),
+      NOVEL_SOURCE_REQUEST_TIMEOUT_MS,
+      [] as NovelSourceSearchResult[],
+    );
+    let collected = dedupeNovelSourceResults(popular);
+    if (collected.length >= SEARCH_RECOMMENDATION_LIMIT_STEP) return collected;
+
+    if (pageNo === 1) {
+      const nextPageSettled = await Promise.allSettled([2, 3].map((nextPage) =>
+        withSoftTimeout(
+          browseInstalledNovelSource(scopeInput, entry.novelSource!.pluginId, nextPage),
+          NOVEL_SOURCE_REQUEST_TIMEOUT_MS,
+          [] as NovelSourceSearchResult[],
+        ),
+      ));
+      collected = dedupeNovelSourceResults([
+        ...collected,
+        ...nextPageSettled.flatMap((result) => result.status === "fulfilled" ? result.value : []),
+      ]);
+      if (collected.length >= SEARCH_RECOMMENDATION_LIMIT_STEP) return collected;
+    }
+
+    const terms = novelSourceLocalizedFallbackTerms(entry, fallbackTerms);
+    const fallbackSettled = await Promise.allSettled(terms.map((term) =>
+      withSoftTimeout(
+        searchInstalledNovelSource(scopeInput, entry.novelSource!.pluginId, term, pageNo),
+        NOVEL_SOURCE_REQUEST_TIMEOUT_MS,
+        [] as NovelSourceSearchResult[],
+      ),
+    ));
+    const fallbackResults = fallbackSettled.flatMap((result) =>
+      result.status === "fulfilled" ? result.value : [],
+    );
+    return dedupeNovelSourceResults([
+      ...collected,
+      ...fallbackResults,
+    ]).slice(0, Math.max(SEARCH_RECOMMENDATION_LIMIT_STEP, collected.length));
+  }
+
+  async function loadNovelSearchSeedAutofill(key: string) {
+    if (activeContentType !== "novels" || activeBrowseTab !== "keyword" || kw_submitted || discoverFocusedTracker) return;
+    if (searchSourceSeedLoading || searchNovelSeedAutofillLoading || searchNovelSeedAutofillExhausted) return;
+
+    if (searchNovelSeedAutofillKey !== key) {
+      searchNovelSeedAutofillKey = key;
+      searchNovelSeedAutofillPage = 1;
+      searchNovelSeedAutofillExhausted = false;
+    }
+
+    const nextPage = searchNovelSeedAutofillPage + 1;
+    if (nextPage > SEARCH_RECOMMENDATION_AUTOFILL_PAGE_LIMIT) {
+      searchNovelSeedAutofillExhausted = true;
+      return;
+    }
+
+    const request = searchRecommendationSourceRequest(nextPage);
+    const sources = request.sources;
+    if (sources.length === 0) {
+      searchNovelSeedAutofillExhausted = true;
+      return;
+    }
+
+    const scopeInput = {
+      profileId: store.runtimeResolvedLocalProfileId,
+      serverUrl: store.runtimeServerUrl,
+    };
+    const fallbackTerms = novelRecommendationFallbackTerms();
+    const previousCount = searchNovelSourceSeedResults.length;
+    searchNovelSeedAutofillLoading = true;
+
+    const fetchNovelSourcePage = (entry: BrowseSourceEntry) =>
+      fetchNovelRecommendationSourcePage(entry, request.sourcePage, scopeInput, fallbackTerms);
+
+    try {
+      const settled = await Promise.allSettled(sources.map(fetchNovelSourcePage));
+      if (searchNovelSeedAutofillKey !== key) return;
+      const incoming = settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+      searchNovelSeedAutofillPage = nextPage;
+
+      if (incoming.length === 0) {
+        if (nextPage >= SEARCH_RECOMMENDATION_DUPLICATE_PAGE_RETRY_LIMIT) {
+          searchNovelSeedAutofillExhausted = true;
+        }
+        return;
+      }
+
+      const nextResults = balanceNovelSourceResults(dedupeNovelSourceResults([
+        ...searchNovelSourceSeedResults,
+        ...incoming,
+      ])).slice(0, SEARCH_RECOMMENDATION_SEED_CAP);
+      searchNovelSourceSeedResults = nextResults;
+
+      if (nextResults.length <= previousCount && nextPage >= SEARCH_RECOMMENDATION_DUPLICATE_PAGE_RETRY_LIMIT) {
+        searchNovelSeedAutofillExhausted = true;
+      }
+    } catch (error) {
+      console.warn("Could not autofill novel search recommendations.", error);
+      searchNovelSeedAutofillPage = nextPage;
+    } finally {
+      searchNovelSeedAutofillLoading = false;
+    }
+  }
+
+  async function refreshSearchNovelSourceSeeds(key: string, sources: BrowseSourceEntry[]) {
+    searchSourceSeedAbortCtrl?.abort();
+    const ctrl = new AbortController();
+    untrack(() => {
+      searchSourceSeedAbortCtrl = ctrl;
+      searchSourceSeedKey = key;
+      searchSourceSeedLoading = true;
+    });
+    const fallbackTerms = novelRecommendationFallbackTerms();
+    const scopeInput = {
+      profileId: store.runtimeResolvedLocalProfileId,
+      serverUrl: store.runtimeServerUrl,
+    };
+
+    try {
+      let collected: NovelSourceSearchResult[] = [];
+      const publishPartial = (incoming: NovelSourceSearchResult[]) => {
+        if (searchSourceSeedKey !== key || ctrl.signal.aborted || incoming.length === 0) return;
+        collected = balanceNovelSourceResults(dedupeNovelSourceResults([
+          ...collected,
+          ...incoming,
+        ])).slice(0, SEARCH_RECOMMENDATION_SEED_CAP);
+        untrack(() => {
+          searchNovelSourceSeedResults = collected;
+          searchSourceSeedLoading = false;
+        });
+      };
+
+      const incoming: NovelSourceSearchResult[] = [];
+      for (let start = 0; start < sources.length; start += SEARCH_SEED_SOURCE_LIMIT_NOVELS) {
+        if (searchSourceSeedKey !== key || ctrl.signal.aborted) return;
+        const batch = sources.slice(start, start + SEARCH_SEED_SOURCE_LIMIT_NOVELS);
+        const settled = await Promise.allSettled(batch.map(async (entry) => {
+          if (!entry.novelSource || ctrl.signal.aborted) return [] as NovelSourceSearchResult[];
+          const popular = await fetchNovelRecommendationSourcePage(entry, 1, scopeInput, fallbackTerms);
+          if (ctrl.signal.aborted) return [] as NovelSourceSearchResult[];
+          if (popular.length > 0) {
+            publishPartial(popular);
+            return popular;
+          }
+
+          return [] as NovelSourceSearchResult[];
+        }));
+        incoming.push(...settled.flatMap((result) => result.status === "fulfilled" ? result.value : []));
+        if (incoming.length >= SEARCH_RECOMMENDATION_SEED_CAP) break;
+      }
+
+      if (searchSourceSeedKey !== key || ctrl.signal.aborted) return;
+      if (incoming.length === 0) {
+        for (let start = 0; start < sources.length; start += SEARCH_SEED_SOURCE_LIMIT_NOVELS) {
+          if (searchSourceSeedKey !== key || ctrl.signal.aborted) return;
+          const batch = sources.slice(start, start + SEARCH_SEED_SOURCE_LIMIT_NOVELS);
+          const fallbackSettled = await Promise.allSettled(batch.map(async (entry) => {
+            if (!entry.novelSource || ctrl.signal.aborted) return [] as NovelSourceSearchResult[];
+            const sourceFallbacks: NovelSourceSearchResult[] = [];
+            for (const term of fallbackTerms) {
+              if (ctrl.signal.aborted) return sourceFallbacks;
+              const fallback = await withSoftTimeout(
+                searchInstalledNovelSource(scopeInput, entry.novelSource.pluginId, term, 1),
+                NOVEL_SOURCE_REQUEST_TIMEOUT_MS,
+                [] as NovelSourceSearchResult[],
+              );
+              if (fallback.length > 0) {
+                sourceFallbacks.push(...fallback);
+                publishPartial(fallback);
+              }
+              if (sourceFallbacks.length >= SEARCH_RECOMMENDATION_LIMIT_STEP) break;
+            }
+            return sourceFallbacks;
+          }));
+          incoming.push(...fallbackSettled.flatMap((result) => result.status === "fulfilled" ? result.value : []));
+          if (incoming.length > 0) break;
+        }
+      }
+      untrack(() => {
+        searchNovelSourceSeedResults = balanceNovelSourceResults(dedupeNovelSourceResults([
+          ...collected,
+          ...incoming,
+        ])).slice(0, SEARCH_RECOMMENDATION_SEED_CAP);
+      });
+    } catch (error) {
+      if (searchSourceSeedKey !== key || ctrl.signal.aborted) return;
+      console.error(error);
+      untrack(() => {
+        searchNovelSourceSeedResults = [];
+      });
+    } finally {
+      if (searchSourceSeedKey === key && searchSourceSeedAbortCtrl === ctrl) {
+        untrack(() => {
+          searchSourceSeedLoading = false;
+        });
+      }
+    }
+  }
+
+  function novelDetailTags(detail: NovelDetailRecord) {
+    return mergeRecommendationTags(detail.tags ?? [], [
+      detail.status ?? "",
+    ]);
+  }
+
+  function novelDetailUpdatedAtMs(detail: NovelDetailRecord) {
+    const chapterTimes = (detail.chapters ?? [])
+      .map((chapter) => normalizeTimestampMs(chapter.releaseTime))
+      .filter((value): value is number => Number.isFinite(value ?? NaN) && (value ?? 0) > 0);
+    return Math.max(0, ...chapterTimes) || null;
+  }
+
+  function normalizeTimestampMs(value: number | null | undefined) {
+    if (!Number.isFinite(value ?? NaN) || !value) return null;
+    return value < 1_000_000_000_000 ? value * 1000 : value;
+  }
+
+  async function refreshSearchNovelDetailTags(key: string, results: NovelSourceSearchResult[]) {
+    const runId = ++searchNovelDetailTagsRun;
+    const missing = results.filter((result) => !searchNovelDetailTagsByKey.has(novelSourceResultKey(result)));
+    if (missing.length === 0) {
+      searchNovelDetailTagsKey = key;
+      return;
+    }
+
+    searchNovelDetailTagsKey = key;
+    const scopeInput = {
+      profileId: store.runtimeResolvedLocalProfileId,
+      serverUrl: store.runtimeServerUrl,
+    };
+    const ctrl = new AbortController();
+    const nextTags = new Map<string, string[]>();
+    const nextUpdatedAt = new Map<string, number>();
+    await runConcurrentLimited(missing, NOVEL_DETAIL_ENRICHMENT_CONCURRENCY, async (result) => {
+      if (searchNovelDetailTagsRun !== runId) {
+        ctrl.abort();
+        return;
+      }
+      const source = searchNovelSourceById.get(result.sourceId);
+      if (!source) return;
+      const detail = await withSoftTimeout(
+        readInstalledNovelDetails(scopeInput, source.pluginId, result.path, {
+          title: result.title,
+          coverUrl: result.coverUrl,
+        }),
+        NOVEL_DETAIL_ENRICHMENT_TIMEOUT_MS,
+        null as NovelDetailRecord | null,
+      );
+      if (!detail || searchNovelDetailTagsRun !== runId) return;
+      const tags = novelDetailTags(detail);
+      const updatedAtMs = novelDetailUpdatedAtMs(detail);
+      const resultKey = novelSourceResultKey(result);
+      if (tags.length > 0) nextTags.set(resultKey, tags);
+      if (updatedAtMs) nextUpdatedAt.set(resultKey, updatedAtMs);
+    }, ctrl.signal);
+    if (searchNovelDetailTagsRun !== runId) return;
+    if (nextTags.size > 0) {
+      searchNovelDetailTagsByKey = new Map([
+        ...searchNovelDetailTagsByKey,
+        ...nextTags,
+      ]);
+    }
+    if (nextUpdatedAt.size > 0) {
+      searchNovelDetailUpdatedAtByKey = new Map([
+        ...searchNovelDetailUpdatedAtByKey,
+        ...nextUpdatedAt,
+      ]);
+    }
+  }
+
+  $effect(() => {
+    const key = [
+      "search-source-seeds",
+      activeContentType,
+      includeNsfwSources ? "nsfw" : "safe",
+      src_selectedLang,
+      searchRecommendationSourcePool.map((source) => source.id).join(","),
+    ].join("|");
+
+    if (activeBrowseTab !== "keyword" || kw_submitted || discoverFocusedTracker) return;
+    const seedSources = activeContentType === "novels"
+      ? searchRecommendationSourcePool.slice(0, SEARCH_SEED_SOURCE_LIMIT_NOVELS * 2)
+      : searchRecommendationSourceRequest(1).sources;
+    if (seedSources.length === 0) {
+      untrack(() => {
+        resetSearchRecommendationSeedState();
+      });
+      return;
+    }
+    if (searchSourceSeedKey === key || searchSourceSeedLoading) return;
+    window.setTimeout(() => {
+      if (activeContentType === "novels") {
+        void refreshSearchNovelSourceSeeds(key, seedSources);
+      } else {
+        void refreshSearchSourceSeeds(key, seedSources);
+      }
+    }, activeContentType === "novels" ? 220 : 80);
+  });
+
+  $effect(() => {
+    if (activeContentType !== "novels" || activeBrowseTab !== "keyword" || kw_submitted) return;
+    const candidates = searchNovelSourcePool.slice(0, NOVEL_DETAIL_ENRICHMENT_LIMIT);
+    if (candidates.length === 0) return;
+    const key = [
+      "novel-detail-tags",
+      store.runtimeResolvedLocalProfileId,
+      store.runtimeServerUrl,
+      ...candidates.map(novelSourceResultKey),
+    ].join("|");
+    if (key === searchNovelDetailTagsKey) return;
+    window.setTimeout(() => {
+      void refreshSearchNovelDetailTags(key, candidates);
+    }, 1800);
+  });
+
   const discoverResultCount = $derived(
     discoverFocusedTracker
       ? trackerCatalogResults.length
@@ -987,12 +3233,113 @@
     const seen = new Set<string>();
     const next: TrackSearch[] = [];
     for (const item of items) {
-      const key = item.remoteId || `${item.trackerId}:${item.title.toLowerCase()}`;
+      const key = item.remoteId ? `${item.trackerId}:${item.remoteId}` : `${item.trackerId}:${item.title.toLowerCase()}`;
       if (seen.has(key)) continue;
       seen.add(key);
       next.push(item);
     }
     return next;
+  }
+
+  function dedupeNovelSourceResults(items: NovelSourceSearchResult[]) {
+    const seen = new Set<string>();
+    const next: NovelSourceSearchResult[] = [];
+    for (const item of items) {
+      const key = item.sourceId && item.path
+        ? `${item.sourceId}:${item.path}`
+        : item.title.toLowerCase().trim();
+      if (!key) continue;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      next.push(item);
+    }
+    return next;
+  }
+
+  function novelSourceResultKey(result: NovelSourceSearchResult) {
+    return `${result.sourceId}:${result.path}`;
+  }
+
+  function mergeRecommendationTags(primary: string[], secondary: string[]) {
+    const seen = new Set<string>();
+    const tags: string[] = [];
+    for (const tag of [...primary, ...secondary]) {
+      const normalized = tag.trim();
+      if (!normalized) continue;
+      const key = normalized.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      tags.push(normalized);
+    }
+    return tags;
+  }
+
+  function dedupeScoreTitles(items: Array<string | null | undefined>) {
+    const seen = new Set<string>();
+    const titles: string[] = [];
+    for (const item of items) {
+      const title = item?.trim();
+      if (!title) continue;
+      const key = recommendationTitleKey(title, "manga");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      titles.push(title);
+    }
+    return titles;
+  }
+
+  function mangaRecommendationSourceKey(manga: Manga) {
+    return String(manga.source?.id ?? manga.source?.displayName ?? manga.source?.name ?? "unknown");
+  }
+
+  function balanceMangaBySource(items: Manga[], perSourceCap = SEARCH_RECOMMENDATION_PER_SOURCE_CAP) {
+    const buckets = new Map<string, Manga[]>();
+    for (const item of items) {
+      const key = mangaRecommendationSourceKey(item);
+      const bucket = buckets.get(key) ?? [];
+      if (bucket.length < perSourceCap) bucket.push(item);
+      buckets.set(key, bucket);
+    }
+
+    const balanced: Manga[] = [];
+    let added = true;
+    while (added) {
+      added = false;
+      for (const bucket of buckets.values()) {
+        const next = bucket.shift();
+        if (!next) continue;
+        balanced.push(next);
+        added = true;
+      }
+    }
+    return balanced;
+  }
+
+  function novelRecommendationSourceKey(result: NovelSourceSearchResult) {
+    return String(result.sourceId || "unknown");
+  }
+
+  function balanceNovelSourceResults(items: NovelSourceSearchResult[], perSourceCap = SEARCH_RECOMMENDATION_PER_SOURCE_CAP) {
+    const buckets = new Map<string, NovelSourceSearchResult[]>();
+    for (const item of items) {
+      const key = novelRecommendationSourceKey(item);
+      const bucket = buckets.get(key) ?? [];
+      if (bucket.length < perSourceCap) bucket.push(item);
+      buckets.set(key, bucket);
+    }
+
+    const balanced: NovelSourceSearchResult[] = [];
+    let added = true;
+    while (added) {
+      added = false;
+      for (const bucket of buckets.values()) {
+        const next = bucket.shift();
+        if (!next) continue;
+        balanced.push(next);
+        added = true;
+      }
+    }
+    return balanced;
   }
 
   function trackerProviderKind(tracker: BrowseTrackerEntry) {
@@ -1008,6 +3355,88 @@
     return ["TRENDING_DESC", "POPULARITY_DESC"];
   }
 
+  function trackerScoreSearchKey(tracker: BrowseTrackerEntry, title: string, contentType: "manga" | "novel" = "manga") {
+    return `${tracker.id}:${recommendationTitleKey(title, contentType)}`;
+  }
+
+  function comparableRecommendationTitle(title: string) {
+    return recommendationTitleKey(title, "manga")
+      .replace(/^comic:/, "")
+      .replace(/\b(the|a|an)\b/g, "")
+      .replace(/\s+/g, "");
+  }
+
+  function trackerTitleMatchScore(queryTitle: string, resultTitle: string | null | undefined) {
+    const query = comparableRecommendationTitle(queryTitle);
+    const result = comparableRecommendationTitle(resultTitle ?? "");
+    if (!query || !result) return 0;
+    if (query === result) return 1;
+    if (query.length >= 10 && result.length >= 10 && (query.includes(result) || result.includes(query))) return 0.82;
+    return 0;
+  }
+
+  function bestTrackerTitleMatch<T extends { title: string }>(title: string, results: T[]) {
+    return results
+      .map((result) => ({ result, score: trackerTitleMatchScore(title, result.title) }))
+      .filter((entry) => entry.score >= 0.8)
+      .sort((a, b) => b.score - a.score)[0]?.result ?? null;
+  }
+
+  function mapAniListMediaToTrackSearch(item: any, tracker: BrowseTrackerEntry, sourceTitle?: string, forceNovel = false): TrackSearch {
+    return {
+      id: Number(item.id),
+      trackerId: tracker.id,
+      remoteId: String(item.id),
+      title: sourceTitle || item.title?.english || item.title?.romaji || item.title?.native || "Untitled",
+      coverUrl: item.coverImage?.extraLarge ?? item.coverImage?.large ?? null,
+      summary: null,
+      publishingStatus: item.status ?? null,
+      publishingType: forceNovel ? "NOVEL" : inferAniListPublishingType(item),
+      score: item.averageScore ?? item.meanScore ?? null,
+      scoreMax: 100,
+      popularity: item.popularity ?? null,
+      trending: item.trending ?? null,
+      genres: item.genres ?? null,
+      startDate: item.startDate?.year
+        ? `${item.startDate.year}-${String(item.startDate.month ?? 1).padStart(2, "0")}-${String(item.startDate.day ?? 1).padStart(2, "0")}`
+        : null,
+      totalChapters: item.chapters ?? 0,
+      trackingUrl: item.siteUrl ?? null,
+    };
+  }
+
+  function inferAniListPublishingType(item: any) {
+    const country = String(item?.countryOfOrigin ?? "").toUpperCase();
+    if (country === "KR") return "MANHWA";
+    if (country === "CN") return "MANHUA";
+    if (country === "JP") return "MANGA";
+    return item?.format ?? null;
+  }
+
+  function mapMalMediaToTrackSearch(item: any, tracker: BrowseTrackerEntry, sourceTitle?: string, forceNovel = false): TrackSearch {
+    return {
+      id: Number(item.mal_id),
+      trackerId: tracker.id,
+      remoteId: String(item.mal_id),
+      title: sourceTitle || item.title_english || item.title || item.title_japanese || "Untitled",
+      coverUrl: item.images?.webp?.large_image_url ?? item.images?.jpg?.large_image_url ?? item.images?.jpg?.image_url ?? null,
+      summary: item.synopsis ?? null,
+      publishingStatus: item.status ?? null,
+      publishingType: forceNovel ? "NOVEL" : item.type ?? null,
+      score: item.score ?? null,
+      scoreMax: 10,
+      rank: item.rank ?? null,
+      popularity: item.members ?? item.scored_by ?? null,
+      trending: item.scored_by ?? null,
+      genres: [...(item.genres ?? []), ...(item.themes ?? []), ...(item.demographics ?? [])]
+        .map((entry: any) => entry?.name)
+        .filter(Boolean),
+      startDate: item.published?.from ?? null,
+      totalChapters: item.chapters ?? 0,
+      trackingUrl: item.url ?? `https://myanimelist.net/manga/${item.mal_id}`,
+    };
+  }
+
   async function fetchAniListTrackerCatalog(tracker: BrowseTrackerEntry, page: number) {
     const adultFilter = includeNsfwSources ? "" : ", isAdult: false";
     const query = `
@@ -1020,7 +3449,13 @@
             siteUrl
             status
             format
+            countryOfOrigin
             chapters
+            averageScore
+            meanScore
+            popularity
+            trending
+            genres
             startDate { year month day }
           }
         }
@@ -1041,21 +3476,7 @@
     if (!response.ok) throw new Error(`AniList catalog failed (${response.status})`);
     const data = await response.json();
     const media = data?.data?.Page?.media ?? [];
-    return media.map((item: any) => ({
-      id: Number(item.id),
-      trackerId: tracker.id,
-      remoteId: String(item.id),
-      title: item.title?.english ?? item.title?.romaji ?? item.title?.native ?? "Untitled",
-      coverUrl: item.coverImage?.extraLarge ?? item.coverImage?.large ?? null,
-      summary: null,
-      publishingStatus: item.status ?? null,
-      publishingType: item.format ?? null,
-      startDate: item.startDate?.year
-        ? `${item.startDate.year}-${String(item.startDate.month ?? 1).padStart(2, "0")}-${String(item.startDate.day ?? 1).padStart(2, "0")}`
-        : null,
-      totalChapters: item.chapters ?? 0,
-      trackingUrl: item.siteUrl ?? null,
-    })) as TrackSearch[];
+    return media.map((item: any) => mapAniListMediaToTrackSearch(item, tracker)) as TrackSearch[];
   }
 
   async function fetchMalTrackerCatalog(tracker: BrowseTrackerEntry, page: number) {
@@ -1066,19 +3487,64 @@
     if (!response.ok) throw new Error(`MyAnimeList catalog failed (${response.status})`);
     const data = await response.json();
     const items = (data?.data ?? []).filter((item: any) => item.mal_id && item.type !== "Anime");
-    return items.map((item: any) => ({
-      id: Number(item.mal_id),
-      trackerId: tracker.id,
-      remoteId: String(item.mal_id),
-      title: item.title_english ?? item.title ?? item.title_japanese ?? "Untitled",
-      coverUrl: item.images?.webp?.large_image_url ?? item.images?.jpg?.large_image_url ?? item.images?.jpg?.image_url ?? null,
-      summary: item.synopsis ?? null,
-      publishingStatus: item.status ?? null,
-      publishingType: item.type ?? null,
-      startDate: item.published?.from ?? null,
-      totalChapters: item.chapters ?? 0,
-      trackingUrl: item.url ?? `https://myanimelist.net/manga/${item.mal_id}`,
-    })) as TrackSearch[];
+    return items.map((item: any) => mapMalMediaToTrackSearch(item, tracker)) as TrackSearch[];
+  }
+
+  async function fetchSearchTrendingAniListCatalog(tracker: BrowseTrackerEntry, page: number) {
+    const adultFilter = includeNsfwSources ? "" : ", isAdult: false";
+    const query = `
+      query SearchTrendingTrackerCatalog($page: Int!, $perPage: Int!) {
+        Page(page: $page, perPage: $perPage) {
+          media(type: MANGA, sort: [TRENDING_DESC, POPULARITY_DESC]${adultFilter}) {
+            id
+            title { romaji english native }
+            coverImage { large extraLarge }
+            siteUrl
+            status
+            format
+            countryOfOrigin
+            chapters
+            averageScore
+            meanScore
+            popularity
+            trending
+            genres
+            startDate { year month day }
+          }
+        }
+      }
+    `;
+    const response = await fetch("https://graphql.anilist.co", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({
+        query,
+        variables: {
+          page,
+          perPage: TRACKER_CATALOG_PAGE_SIZE,
+        },
+      }),
+    });
+    if (!response.ok) throw new Error(`AniList trending catalog failed (${response.status})`);
+    const data = await response.json();
+    const media = data?.data?.Page?.media ?? [];
+    return media.map((item: any) => mapAniListMediaToTrackSearch(item, tracker)) as TrackSearch[];
+  }
+
+  async function fetchSearchTrendingMalCatalog(tracker: BrowseTrackerEntry, page: number) {
+    const url = `https://api.jikan.moe/v4/top/manga?page=${page}&limit=${TRACKER_CATALOG_PAGE_SIZE}`;
+    const response = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!response.ok) throw new Error(`MyAnimeList trending catalog failed (${response.status})`);
+    const data = await response.json();
+    const items = (data?.data ?? []).filter((item: any) => item.mal_id && item.type !== "Anime");
+    return items.map((item: any) => mapMalMediaToTrackSearch(item, tracker)) as TrackSearch[];
+  }
+
+  async function fetchSearchTrendingTrackerCatalog(tracker: BrowseTrackerEntry, page: number) {
+    const provider = trackerProviderKind(tracker);
+    if (provider === "anilist") return fetchSearchTrendingAniListCatalog(tracker, page);
+    if (provider === "mal") return fetchSearchTrendingMalCatalog(tracker, page);
+    return [] as TrackSearch[];
   }
 
   async function fetchGenericTrackerCatalog(tracker: BrowseTrackerEntry, page: number) {
@@ -1088,6 +3554,456 @@
       { trackerId: tracker.id, query: page === 1 ? query : `${query} ${page}` },
     );
     return d.searchTracker.trackSearches ?? [];
+  }
+
+  async function fetchAniListTrackerScoreByTitle(tracker: BrowseTrackerEntry, title: string, signal: AbortSignal) {
+    const adultFilter = includeNsfwSources ? "" : ", isAdult: false";
+    const query = `
+      query SearchTrackerScore($search: String!) {
+        Page(page: 1, perPage: 5) {
+          media(type: MANGA, search: $search${adultFilter}) {
+            id
+            title { romaji english native }
+            coverImage { large extraLarge }
+            siteUrl
+            status
+            format
+            countryOfOrigin
+            chapters
+            averageScore
+            meanScore
+            popularity
+            trending
+            genres
+            startDate { year month day }
+          }
+        }
+      }
+    `;
+    const response = await fetch("https://graphql.anilist.co", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ query, variables: { search: title } }),
+      signal,
+    });
+    if (!response.ok) return [];
+    const data = await response.json();
+    const media = data?.data?.Page?.media ?? [];
+    const candidates = media.map((item: any) => ({
+      item,
+      title: item.title?.english ?? item.title?.romaji ?? item.title?.native ?? "",
+    }));
+    const match = bestTrackerTitleMatch(title, candidates)
+      ?? candidates.find((candidate) => candidate.item.averageScore != null || candidate.item.meanScore != null)
+      ?? candidates[0]
+      ?? null;
+    if (!match) return [];
+    return [mapAniListMediaToTrackSearch(match.item, tracker, title, activeContentType === "novels")];
+  }
+
+  async function fetchAniListTrackerScoresByTitles(tracker: BrowseTrackerEntry, titles: string[], signal: AbortSignal) {
+    const contentType = activeContentType === "novels" ? "novel" : "manga";
+    const forceNovel = contentType === "novel";
+    const missingTitles = titles.filter((title) => !trackerScoreSearchCache.has(trackerScoreSearchKey(tracker, title, contentType)));
+    if (missingTitles.length === 0) {
+      return titles.flatMap((title) => trackerScoreSearchCache.get(trackerScoreSearchKey(tracker, title, contentType)) ?? []);
+    }
+
+    const adultFilter = includeNsfwSources ? "" : ", isAdult: false";
+    for (let start = 0; start < missingTitles.length; start += TRACKER_SCORE_BATCH_SIZE) {
+      if (signal.aborted) break;
+      const chunk = missingTitles.slice(start, start + TRACKER_SCORE_BATCH_SIZE);
+      const variableDefs = chunk.map((_, index) => `$search${index}: String!`).join(", ");
+      const pages = chunk.map((_, index) => `
+        q${index}: Page(page: 1, perPage: 5) {
+          media(type: MANGA, search: $search${index}${adultFilter}) {
+            id
+            title { romaji english native }
+            coverImage { large extraLarge }
+            siteUrl
+            status
+            format
+            countryOfOrigin
+            chapters
+            averageScore
+            meanScore
+            popularity
+            trending
+            genres
+            startDate { year month day }
+          }
+        }
+      `).join("\n");
+      const query = `query SearchTrackerScores(${variableDefs}) { ${pages} }`;
+      const variables = Object.fromEntries(chunk.map((title, index) => [`search${index}`, title]));
+      try {
+        const response = await fetch("https://graphql.anilist.co", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ query, variables }),
+          signal,
+        });
+        if (!response.ok) {
+          for (const title of chunk) trackerScoreSearchCache.set(trackerScoreSearchKey(tracker, title, contentType), []);
+          continue;
+        }
+        const data = await response.json();
+        chunk.forEach((title, index) => {
+          const media = data?.data?.[`q${index}`]?.media ?? [];
+          const candidates = media.map((item: any) => ({
+            item,
+            title: item.title?.english ?? item.title?.romaji ?? item.title?.native ?? "",
+          }));
+          const match = bestTrackerTitleMatch(title, candidates)
+            ?? candidates.find((candidate) => candidate.item.averageScore != null || candidate.item.meanScore != null)
+            ?? candidates[0]
+            ?? null;
+          const results = match ? [mapAniListMediaToTrackSearch(match.item, tracker, title, forceNovel)] : [];
+          trackerScoreSearchCache.set(trackerScoreSearchKey(tracker, title, contentType), results);
+        });
+      } catch {
+        for (const title of chunk) {
+          if (!trackerScoreSearchCache.has(trackerScoreSearchKey(tracker, title, contentType))) {
+            trackerScoreSearchCache.set(trackerScoreSearchKey(tracker, title, contentType), []);
+          }
+        }
+      }
+    }
+
+    return titles.flatMap((title) => trackerScoreSearchCache.get(trackerScoreSearchKey(tracker, title, contentType)) ?? []);
+  }
+
+  async function fetchMalTrackerScoreByTitle(tracker: BrowseTrackerEntry, title: string, signal: AbortSignal) {
+    const url = `https://api.jikan.moe/v4/manga?q=${encodeURIComponent(title)}&limit=5`;
+    const response = await fetch(url, { headers: { Accept: "application/json" }, signal });
+    if (!response.ok) return [];
+    const data = await response.json();
+    const items = (data?.data ?? []).filter((item: any) => item.mal_id && item.type !== "Anime");
+    const candidates = items.map((item: any) => ({
+      item,
+      title: item.title_english ?? item.title ?? item.title_japanese ?? "",
+    }));
+    const match = bestTrackerTitleMatch(title, candidates)
+      ?? candidates.find((candidate) => candidate.item.score != null)
+      ?? candidates[0]
+      ?? null;
+    if (!match) return [];
+    return [mapMalMediaToTrackSearch(match.item, tracker, title, activeContentType === "novels")];
+  }
+
+  async function fetchTrackerScoreByTitle(tracker: BrowseTrackerEntry, title: string, signal: AbortSignal) {
+    const cacheKey = trackerScoreSearchKey(tracker, title, activeContentType === "novels" ? "novel" : "manga");
+    const cached = trackerScoreSearchCache.get(cacheKey);
+    if (cached) return cached;
+
+    let results: TrackSearch[] = [];
+    const provider = trackerProviderKind(tracker);
+    if (provider === "anilist") {
+      results = await fetchAniListTrackerScoreByTitle(tracker, title, signal).catch(() => []);
+    } else if (provider === "mal") {
+      results = await fetchMalTrackerScoreByTitle(tracker, title, signal).catch(() => []);
+    }
+
+    trackerScoreSearchCache.set(cacheKey, results);
+    return results;
+  }
+
+  async function refreshSearchHardcoverScores(key: string, titles: string[]) {
+    const scopeInput = {
+      profileId: store.runtimeResolvedLocalProfileId,
+      serverUrl: store.runtimeServerUrl,
+    };
+    const state = loadHardcoverState(scopeInput);
+    const runId = ++searchHardcoverScoreRun;
+    untrack(() => {
+      searchHardcoverScoreKey = key;
+      searchHardcoverScoreLoading = true;
+    });
+
+    if (!state.auth.connected || titles.length === 0) {
+      searchHardcoverScoreResults = new Map();
+      searchHardcoverScoreLoading = false;
+      return;
+    }
+
+    const providers = new Map<string, RecommendationProviderSignal>();
+    const ctrl = new AbortController();
+    try {
+      await runConcurrentLimited(titles, HARDCOVER_SCORE_ENRICHMENT_CONCURRENCY, async (title) => {
+        if (searchHardcoverScoreRun !== runId || searchHardcoverScoreKey !== key) return;
+        const titleKey = recommendationTitleKey(title, "novel");
+        if (hardcoverScoreSearchCache.has(titleKey)) {
+          const cached = hardcoverScoreSearchCache.get(titleKey);
+          if (cached) providers.set(titleKey, cached);
+          return;
+        }
+
+        const results = await withSoftTimeout(
+          searchHardcoverBooks(scopeInput, title, 5).catch(() => []),
+          HARDCOVER_SCORE_ENRICHMENT_TIMEOUT_MS,
+          [],
+        );
+        const match = matchHardcoverBook(title, results);
+        const provider = match && match.rating ? hardcoverBookToProvider(match) : null;
+        hardcoverScoreSearchCache.set(titleKey, provider);
+        if (provider) providers.set(titleKey, provider);
+      }, ctrl.signal);
+
+      if (searchHardcoverScoreRun !== runId || searchHardcoverScoreKey !== key) return;
+      searchHardcoverScoreResults = providers;
+    } finally {
+      if (searchHardcoverScoreRun === runId && searchHardcoverScoreKey === key) {
+        searchHardcoverScoreLoading = false;
+      }
+    }
+  }
+
+  function hardcoverBookToRecommendationCandidate(
+    book: HardcoverBookSearchResult,
+    queryTags: string[],
+  ): RecommendationCandidate {
+    const provider = hardcoverBookToProvider(book);
+    const ratingConfidence = book.rating == null ? 0 : 0.84;
+    const popularityValue = book.ratingsCount && book.ratingsCount > 0
+      ? Math.min(1, Math.log10(book.ratingsCount + 1) / 5)
+      : 0.38;
+    return {
+      id: `hardcover-discovery:${book.id}`,
+      title: book.title,
+      alternativeTitles: book.authors,
+      coverUrl: book.coverUrl,
+      tags: mergeRecommendationTags(["novel", "book", "hardcover", ...book.genres, ...book.tags, ...book.moods], queryTags),
+      contentType: "book",
+      status: book.releaseYear ? String(book.releaseYear) : null,
+      inLibrary: false,
+      safety: "safe",
+      publishedAtMs: book.releaseYear ? new Date(book.releaseYear, 0, 1).getTime() : null,
+      providers: [{
+        ...provider,
+        score: provider.score ?? {
+          value: book.rating ? Math.min(1, book.rating / 5) : 0,
+          confidence: ratingConfidence,
+          method: "hardcover-rating",
+        },
+        popularity: {
+          value: popularityValue,
+          confidence: book.ratingsCount ? 0.72 : 0.32,
+          sourceValue: book.ratingsCount ? `${book.ratingsCount} ratings` : undefined,
+          method: "hardcover-ratings-count",
+        },
+        trending: {
+          value: Math.max(0.18, Math.min(0.74, popularityValue * 0.72)),
+          confidence: book.ratingsCount ? 0.42 : 0.18,
+          method: "hardcover-discovery",
+        },
+      }, {
+        providerId: "hardcover-catalog",
+        providerName: "Hardcover",
+        kind: "source",
+        remoteId: String(book.id),
+        availability: { value: 0.76, confidence: 0.62, method: "hardcover-catalog" },
+        recency: book.releaseYear ? undefined : { value: 0.18, confidence: 0.16, method: "hardcover-catalog" },
+      }],
+    };
+  }
+
+  async function refreshSearchHardcoverDiscovery(key: string, queries: string[]) {
+    const scopeInput = {
+      profileId: store.runtimeResolvedLocalProfileId,
+      serverUrl: store.runtimeServerUrl,
+    };
+    const state = loadHardcoverState(scopeInput);
+    const runId = ++searchHardcoverDiscoveryRun;
+    untrack(() => {
+      searchHardcoverDiscoveryKey = key;
+      searchHardcoverDiscoveryLoading = true;
+    });
+
+    if (!state.auth.connected || queries.length === 0) {
+      searchHardcoverDiscoveryResults = [];
+      searchHardcoverDiscoveryLoading = false;
+      return;
+    }
+
+    const byId = new Map<number, RecommendationCandidate>();
+    const ctrl = new AbortController();
+    try {
+      await runConcurrentLimited(queries, 2, async (query) => {
+        if (searchHardcoverDiscoveryRun !== runId || searchHardcoverDiscoveryKey !== key) return;
+        const queryTags = query
+          .split(/\s+/)
+          .map((part) => part.trim())
+          .filter((part) => part.length > 2 && part.toLowerCase() !== "novel");
+        const books = await withSoftTimeout((async () => {
+          const weighted = await searchHardcoverBooks(scopeInput, query, HARDCOVER_DISCOVERY_RESULTS_PER_QUERY, 1, {
+            fields: "genres,tags,moods,series_names,title,subtitle,description,author_names",
+            weights: "18,14,9,5,4,3,1,1",
+            sort: "rating:desc",
+            cacheGroup: "recommendation-discovery",
+          }).catch(() => []);
+          if (weighted.length > 0) return weighted;
+          return searchHardcoverBooks(scopeInput, query, HARDCOVER_DISCOVERY_RESULTS_PER_QUERY, 1, {
+            cacheGroup: "recommendation-discovery-fallback",
+          }).catch(() => []);
+        })(), HARDCOVER_DISCOVERY_TIMEOUT_MS, []);
+        for (const book of books) {
+          if (searchHardcoverDiscoveryRun !== runId || searchHardcoverDiscoveryKey !== key) return;
+          if (byId.has(book.id)) continue;
+          byId.set(book.id, hardcoverBookToRecommendationCandidate(book, queryTags));
+        }
+        if (byId.size > 0 && searchHardcoverDiscoveryRun === runId && searchHardcoverDiscoveryKey === key) {
+          searchHardcoverDiscoveryResults = [...byId.values()];
+        }
+      }, ctrl.signal);
+
+      if (searchHardcoverDiscoveryRun !== runId || searchHardcoverDiscoveryKey !== key) return;
+      searchHardcoverDiscoveryResults = [...byId.values()];
+    } finally {
+      if (searchHardcoverDiscoveryRun === runId && searchHardcoverDiscoveryKey === key) {
+        searchHardcoverDiscoveryLoading = false;
+      }
+    }
+  }
+
+  async function refreshSearchTrackerScores(key: string, titles: string[], trackers: BrowseTrackerEntry[]) {
+    searchTrackerScoreAbortCtrl?.abort();
+    const ctrl = new AbortController();
+    untrack(() => {
+      searchTrackerScoreAbortCtrl = ctrl;
+      searchTrackerScoreKey = key;
+      searchTrackerScoreLoading = true;
+    });
+
+    const usableTrackers = trackers.filter((tracker) => {
+      const provider = trackerProviderKind(tracker);
+      return provider === "anilist" || provider === "mal";
+    });
+
+    if (titles.length === 0 || usableTrackers.length === 0) {
+      searchTrackerScoreResults = [];
+      searchTrackerScoreLoading = false;
+      return;
+    }
+
+    const collected: TrackSearch[] = [];
+
+    try {
+      for (const tracker of usableTrackers) {
+        if (ctrl.signal.aborted || searchTrackerScoreKey !== key) return;
+        const provider = trackerProviderKind(tracker);
+        if (provider === "anilist") {
+          collected.push(...await fetchAniListTrackerScoresByTitles(tracker, titles, ctrl.signal));
+          continue;
+        }
+
+        const coveredTitles = new Set(collected.map((result) => recommendationTitleKey(result.title, "manga")));
+        const fallbackTitles = titles
+          .filter((title) => !coveredTitles.has(recommendationTitleKey(title, "manga")))
+          .slice(0, TRACKER_SCORE_MAL_FALLBACK_LIMIT);
+        for (const title of fallbackTitles) {
+          if (ctrl.signal.aborted || searchTrackerScoreKey !== key) return;
+          collected.push(...await fetchTrackerScoreByTitle(tracker, title, ctrl.signal));
+        }
+      }
+      if (ctrl.signal.aborted || searchTrackerScoreKey !== key) return;
+      searchTrackerScoreResults = dedupeTrackSearches(collected);
+    } finally {
+      if (searchTrackerScoreKey === key) searchTrackerScoreLoading = false;
+    }
+  }
+
+  async function loadSearchTrackerScoresForTitles(titles: string[]) {
+    const cleanedTitles = dedupeScoreTitles(titles).slice(0, TRACKER_SCORE_BATCH_SIZE);
+    const usableTrackers = usableSearchTrackers(searchScoreTrackers);
+    if (cleanedTitles.length === 0 || usableTrackers.length === 0) return false;
+
+    const ctrl = new AbortController();
+    const collected: TrackSearch[] = [];
+    for (const tracker of usableTrackers) {
+      const provider = trackerProviderKind(tracker);
+      if (provider === "anilist") {
+        collected.push(...await fetchAniListTrackerScoresByTitles(tracker, cleanedTitles, ctrl.signal));
+        continue;
+      }
+
+      const coveredTitles = new Set(collected.map((result) => recommendationTitleKey(result.title, "manga")));
+      const fallbackTitles = cleanedTitles
+        .filter((title) => !coveredTitles.has(recommendationTitleKey(title, "manga")))
+        .slice(0, TRACKER_SCORE_MAL_FALLBACK_LIMIT);
+      for (const title of fallbackTitles) {
+        collected.push(...await fetchTrackerScoreByTitle(tracker, title, ctrl.signal));
+      }
+    }
+
+    if (collected.length === 0) return false;
+    searchTrackerScoreResults = dedupeTrackSearches([...searchTrackerScoreResults, ...collected]);
+    return true;
+  }
+
+  async function refreshSearchTrackerTrendingFeed(key: string, trackers: BrowseTrackerEntry[]) {
+    searchTrackerTrendingKey = key;
+    searchTrackerTrendingLoading = true;
+    const usableTrackers = usableSearchTrackers(trackers);
+
+    if (usableTrackers.length === 0) {
+      searchTrackerTrendingResults = [];
+      searchTrackerTrendingLoading = false;
+      return;
+    }
+
+    try {
+      const requests = usableTrackers.flatMap((tracker) => [
+        fetchSearchTrendingTrackerCatalog(tracker, 1).catch(() => [] as TrackSearch[]),
+        fetchSearchTrendingTrackerCatalog(tracker, 2).catch(() => [] as TrackSearch[]),
+      ]);
+      const results = (await Promise.all(requests)).flat();
+      if (searchTrackerTrendingKey !== key) return;
+      searchTrackerTrendingResults = dedupeTrackSearches(results);
+      searchTrackerTrendingPage = 2;
+      window.setTimeout(() => {
+        if (searchTrackerTrendingKey === key) void prefetchSearchTrackerTrendingPages(3, 2);
+      }, 250);
+    } finally {
+      if (searchTrackerTrendingKey === key) {
+        searchTrackerTrendingLoading = false;
+      }
+    }
+  }
+
+  async function loadSearchTrackerTrendingMore() {
+    const usableTrackers = usableSearchTrackers(searchScoreTrackers);
+    if (usableTrackers.length === 0 || searchTrackerTrendingLoading) return false;
+
+    searchTrackerTrendingLoading = true;
+    const nextPage = searchTrackerTrendingPage + 1;
+    try {
+      const results = (await Promise.all(
+        usableTrackers.map((tracker) =>
+          fetchSearchTrendingTrackerCatalog(tracker, nextPage).catch(() => [] as TrackSearch[]),
+        ),
+      )).flat();
+      if (results.length === 0) return false;
+      searchTrackerTrendingResults = dedupeTrackSearches([...searchTrackerTrendingResults, ...results]);
+      searchTrackerTrendingPage = nextPage;
+      return true;
+    } finally {
+      searchTrackerTrendingLoading = false;
+    }
+  }
+
+  async function prefetchSearchTrackerTrendingPages(startPage: number, pageCount: number) {
+    const usableTrackers = usableSearchTrackers(searchScoreTrackers);
+    if (usableTrackers.length === 0) return;
+    const expectedKey = searchTrackerTrendingKey;
+    const pages = Array.from({ length: pageCount }, (_, index) => startPage + index);
+    const results = (await Promise.all(pages.flatMap((page) =>
+      usableTrackers.map((tracker) =>
+        fetchSearchTrendingTrackerCatalog(tracker, page).catch(() => [] as TrackSearch[]),
+      ),
+    ))).flat();
+    if (searchTrackerTrendingKey !== expectedKey || results.length === 0) return;
+    searchTrackerTrendingResults = dedupeTrackSearches([...searchTrackerTrendingResults, ...results]);
+    searchTrackerTrendingPage = Math.max(searchTrackerTrendingPage, startPage + pageCount - 1);
   }
 
   async function fetchTrackerCatalogPage(tracker: BrowseTrackerEntry, page: number) {
@@ -1165,6 +4081,13 @@
         if (discoverLoadedKey !== key) return;
         discoverNovelResults = results.slice(0, 48);
         discoverHasNextPage = results.length > 0;
+        const failures = settled.filter((result) => result.status === "rejected");
+        if (discoverNovelResults.length === 0 && failures.length > 0) {
+          const firstFailure = failures[0] as PromiseRejectedResult;
+          discoverError = firstFailure.reason instanceof Error
+            ? firstFailure.reason.message
+            : "Could not load novel source discovery results.";
+        }
         return;
       }
 
@@ -1180,7 +4103,10 @@
             { source: entry.mangaSource.id, type: fetchType, page: 1, query: null },
             ctrl.signal,
           );
-          const popular = d.fetchSourceManga.mangas.filter((m) => !shouldHideNsfw(m, browseVisibilitySettings));
+          const popular = withMangaSourceMetadata(
+            d.fetchSourceManga.mangas.filter((m) => !shouldHideNsfw(m, browseVisibilitySettings)),
+            entry,
+          );
           if (popular.length > 0) {
             return popular;
           }
@@ -1196,7 +4122,10 @@
             query: term,
             signal: ctrl.signal,
           });
-          const visible = fallback.filter((m) => !shouldHideNsfw(m, browseVisibilitySettings));
+          const visible = withMangaSourceMetadata(
+            fallback.filter((m) => !shouldHideNsfw(m, browseVisibilitySettings)),
+            entry,
+          );
           if (visible.length > 0) {
             return visible;
           }
@@ -1259,7 +4188,10 @@
           { source: entry.mangaSource.id, type: fetchType, page, query: null },
         );
         return {
-          mangas: d.fetchSourceManga.mangas.filter((m) => !shouldHideNsfw(m, browseVisibilitySettings)),
+          mangas: withMangaSourceMetadata(
+            d.fetchSourceManga.mangas.filter((m) => !shouldHideNsfw(m, browseVisibilitySettings)),
+            entry,
+          ),
           hasNextPage: d.fetchSourceManga.hasNextPage,
         };
       }));
@@ -1320,6 +4252,12 @@
   });
 
   $effect(() => {
+    if (activeBrowseTab === "keyword" && searchQuery !== kw_query) {
+      kw_query = searchQuery;
+    }
+  });
+
+  $effect(() => {
     if (tag_tagMode !== genreMode) {
       genreMode = tag_tagMode;
     }
@@ -1346,7 +4284,10 @@
         FETCH_SOURCE_MANGA, { source: src.id, type, page, query: q ?? null }, ctrl.signal,
       );
       if (ctrl.signal.aborted) return;
-      const incoming = d.fetchSourceManga.mangas.filter((m) => !shouldHideNsfw(m, browseVisibilitySettings));
+      const incoming = withMangaSourceMetadata(
+        d.fetchSourceManga.mangas.filter((m) => !shouldHideNsfw(m, browseVisibilitySettings)),
+        src,
+      );
       src_browseResults = page === 1 ? incoming : [...src_browseResults, ...incoming];
       src_hasNextPage = d.fetchSourceManga.hasNextPage;
       src_currentPage = page;
@@ -1435,12 +4376,16 @@
 
   async function srcOpenNovelDetail(result: NovelSourceSearchResult) {
     if (!src_activeNovelSource) return;
+    await openNovelSourceResult(src_activeNovelSource, result);
+  }
+
+  async function openNovelSourceResult(source: InstalledNovelSourceDescriptor, result: NovelSourceSearchResult) {
     src_openingNovelPath = result.path;
     try {
       const detail = await readInstalledNovelDetails({
         profileId: store.runtimeResolvedLocalProfileId,
         serverUrl: store.runtimeServerUrl,
-      }, src_activeNovelSource.pluginId, result.path, {
+      }, source.pluginId, result.path, {
         title: result.title,
         coverUrl: result.coverUrl,
       });
@@ -1471,6 +4416,8 @@
     tag_abortLocal?.abort();
     tag_abortSource?.abort();
     src_abortCtrl?.abort();
+    searchTrackerScoreAbortCtrl?.abort();
+    searchSourceSeedAbortCtrl?.abort();
     void shutdownInstalledNovelSourcesRuntime();
     document.body.classList.remove("aethon-browse-search-engaged");
   });
@@ -1507,7 +4454,14 @@
           <input
             bind:value={searchQuery}
             class="n-search__input"
-            placeholder={activeContentType === "novels" ? "Search installed novel sources..." : "Search sources..."}
+            placeholder={activeBrowseTab === "keyword"
+              ? "Search manga, novels, authors..."
+              : activeBrowseTab === "browse"
+                ? "Filter Discover..."
+                : activeContentType === "novels"
+                  ? "Search novel sources..."
+                  : "Search extensions..."}
+            oninput={(event) => handleTopbarSearchInput((event.currentTarget as HTMLInputElement).value)}
             onfocus={handleBrowseSearchFocus}
             onblur={handleBrowseSearchBlur}
             onkeydown={(event) => event.key === "Enter" && handleSearch(searchQuery)}
@@ -1550,130 +4504,187 @@
   {/if}
 
   {#if activeBrowseTab === "keyword"}
-    <div class="keywordBar">
-      <div class="searchBar">
-        <svg width="14" height="14" viewBox="0 0 256 256" fill="currentColor" class="searchIcon" aria-hidden="true">
-          <path d="M229.66,218.34l-50.07-50.07a88,88,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.31ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"/>
-        </svg>
-        
-        <input
-          bind:this={kw_inputEl}
-          bind:value={kw_query}
-          use:focusOnMount
-          class="searchInput"
-          placeholder="Search across sources…"
-          onkeydown={(e) => e.key === "Enter" && kwDoSearch(kw_query)}
-        />
-        {#if kw_query}
-          <button
-            class="clearBtn"
-            title="Clear"
-            onclick={() => { kw_query = ""; kw_inputEl?.focus(); }}
-          >×</button>
-        {/if}
-        {#if hasMultipleLangs}
-          <button
-            class="advancedBtn"
-            class:advancedBtnActive={kw_showAdvanced}
-            title="Language & filter options"
-            onclick={() => (kw_showAdvanced = !kw_showAdvanced)}
-          >
-            
-            <svg width="13" height="13" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
-              <path d="M40,88H73a32,32,0,0,0,62,0h81a8,8,0,0,0,0-16H135a32,32,0,0,0-62,0H40a8,8,0,0,0,0,16Zm64-24A16,16,0,1,1,88,80,16,16,0,0,1,104,64ZM216,168H183a32,32,0,0,0-62,0H40a8,8,0,0,0,0,16h81a32,32,0,0,0,62,0h33a8,8,0,0,0,0-16Zm-64,24a16,16,0,1,1,16-16A16,16,0,0,1,152,192Z"/>
-            </svg>
-          </button>
-        {/if}
-        <button
-          class="searchBtn"
-          onclick={() => kwDoSearch(kw_query)}
-          disabled={!kw_query.trim() || loadingSources || setupLoading || !setupReady}
-        >
-          {#if loadingSources}
-            <svg width="13" height="13" viewBox="0 0 256 256" fill="currentColor" class="anim-spin" aria-hidden="true">
-              <path d="M232,128a104,104,0,0,1-208,0c0-41,23.81-78.36,60.66-95.27a8,8,0,0,1,6.68,14.54C60.15,61.59,40,93.27,40,128a88,88,0,0,0,176,0c0-34.73-20.15-66.41-51.34-80.73a8,8,0,0,1,6.68-14.54C208.19,49.64,232,87,232,128Z"/>
-            </svg>
-          {:else}
-            Search
-          {/if}
-        </button>
-      </div>
-
-      {#if hasMultipleLangs && kw_showAdvanced}
-        <div class="advancedPanel">
-          <div class="advancedHeader">
-            <span class="advancedTitle">Languages</span>
-            <div class="advancedActions">
-              <button class="advancedLink" onclick={() => (kw_selectedLangs = new Set(availableLangs))}>All</button>
-              <button class="advancedLink" onclick={() => (kw_selectedLangs = new Set([preferredLang]))}>Reset</button>
-            </div>
-          </div>
-          <div class="langGrid">
-            {#each availableLangs as lang (lang)}
-              <button
-                class="langChip"
-                class:langChipActive={kw_selectedLangs.has(lang)}
-                onclick={() => kwToggleLang(lang)}
-              >
-                {lang === preferredLang ? `${lang.toUpperCase()} ★` : lang.toUpperCase()}
-              </button>
-            {/each}
-          </div>
-          <div class="advancedDivider"></div>
-          <div class="advancedFooter">
-            Searching <strong>{kw_visibleCount}</strong> source{kw_visibleCount !== 1 ? "s" : ""}
-          </div>
-        </div>
-      {/if}
-
-      {#if kw_showVisibilitySummary && kw_visibilitySummary}
-        <section class="visibilityCard">
-          <div class="visibilityCopy">
-            <p class="visibilityLabel">Source visibility</p>
-            <h2 class="visibilityTitle">{kw_visibilitySummary.title}</h2>
-            <p class="visibilityBody">{kw_visibilitySummary.body}</p>
-            <p class="visibilityNote">{kw_visibilitySummary.detail}</p>
-          </div>
-          <div class="visibilityActions">
-            <button class="visibilityBtn" onclick={openSearchVisibilityFilters}>
-              Review language filters
-            </button>
-            <button class="visibilityBtn visibilityBtnSecondary" onclick={() => (activeBrowseTab = "source")}>
-              Open Sources tab
-            </button>
-            <button class="visibilityBtn visibilityBtnGhost" onclick={dismissSearchVisibilitySummary}>
-              Dismiss
-            </button>
-          </div>
-        </section>
-      {/if}
-    </div>
-
     {#if !kw_submitted}
-      <div class="empty">
-        <svg width="36" height="36" viewBox="0 0 256 256" fill="currentColor" class="emptyIcon" aria-hidden="true">
-          <path d="M229.66,218.34l-50.07-50.07a88,88,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.31ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"/>
-        </svg>
-        <p class="emptyText">Search across sources</p>
-        <p class="emptyHint">
-          {#if hasMultipleLangs}
-            {kw_visibleCount} source{kw_visibleCount !== 1 ? "s" : ""} · {kw_selectedLangs.size} language{kw_selectedLangs.size !== 1 ? "s" : ""}
+      <section class="searchLanding">
+        <div class="searchCanvas">
+          <main class="searchMainColumn">
+          <div class="searchHeroCopy">
+            <span class="n-eyebrow">Search</span>
+            <h2>Find something to read</h2>
+            <p>{searchHeroStatusText}</p>
+          </div>
+
+          {#if searchRecommendationHydrating}
+            <NocturneState
+              layout="compact"
+              tone="info"
+              icon="retry"
+              eyebrow="Search status"
+              title="Preparing recommendations"
+              body={searchHeroStatusText}
+            />
+          {:else if searchEmptyStateMessage}
+            <NocturneState
+              layout="compact"
+              tone={setupState?.kind === "server_offline" ? "danger" : "info"}
+              icon={setupState?.kind === "server_offline" ? "plug" : "info"}
+              eyebrow="Search status"
+              title="Recommendations unavailable"
+              body={searchEmptyStateMessage}
+            />
           {:else}
-            {kw_visibleCount} source{kw_visibleCount !== 1 ? "s" : ""}
+            {#each searchRecommendationSections as section (section.key)}
+              <section class="searchRecommendationSection">
+                <div class="searchRecommendationHeader">
+                  <div>
+                    <span class="searchSectionIcon material-symbols-outlined" aria-hidden="true">
+                      {section.key === "outsideYourUsualReads" ? "explore" : section.key === "freshInYourSources" ? "local_fire_department" : "star"}
+                    </span>
+                    <h3>{section.title}</h3>
+                    <p>{section.reason}</p>
+                  </div>
+                  {#if section.items.length > 0 || canLoadSearchSectionMore(section.key)}
+                    <div class="searchRailControls" aria-label={`${section.title} carousel controls`}>
+                      <button type="button" aria-label={`Scroll ${section.title} left`} onclick={() => scrollSearchSection(section.key, -1)}>
+                        <span class="material-symbols-outlined" aria-hidden="true">chevron_left</span>
+                      </button>
+                      <button type="button" aria-label={`Scroll ${section.title} right`} onclick={() => section.items.length > 0 ? advanceSearchSection(section.key) : loadMoreSearchRecommendations(section.key)}>
+                        <span class="material-symbols-outlined" aria-hidden="true">chevron_right</span>
+                      </button>
+                    </div>
+                  {/if}
+                </div>
+                {#if section.items.length > 0}
+                  <div class="searchRecommendationRow" data-search-row={section.key} onscroll={(event) => handleSearchRailScroll(section.key, event)}>
+                    {#each section.items as item (item.candidate.id)}
+                      {@const badge = recommendationBadge(item)}
+                      <button
+                        class="n-library-card"
+                        onclick={() => openSearchRecommendation(item)}
+                      >
+                        <div class="n-library-card__cover">
+                          {#if hasSearchCover(item.candidate)}
+                            <img
+                              src={thumbUrl(item.candidate.coverUrl)}
+                              alt={item.candidate.title}
+                              loading="lazy"
+                              decoding="async"
+                              fetchpriority="low"
+                              onerror={() => markSearchCoverFailed(item.candidate)}
+                            />
+                          {:else}
+                            <div class="searchCoverPlaceholder" aria-hidden="true">
+                              <span>{item.candidate.title}</span>
+                            </div>
+                          {/if}
+                          {#if badge}
+                            <span class="searchTrackerBadge">{badge}</span>
+                          {/if}
+                        </div>
+                        <div class="n-library-card__info">
+                          <p class="n-library-card__title">{item.candidate.title}</p>
+                          <div class="n-library-card__meta">
+                            <span class="n-library-card__author">{recommendationProviderLabel(item)}</span>
+                            <span class="n-library-card__vol">{recommendationStatusLabel(item)}</span>
+                          </div>
+                        </div>
+                      </button>
+                    {/each}
+                  </div>
+                {:else}
+                  <NocturneState
+                    layout="compact"
+                    tone="info"
+                    icon="search"
+                    eyebrow={section.title}
+                    title="No matching picks yet"
+                    body={`No new matches in this category after filtering your ${activeContentType === "novels" ? "saved novels and local books" : "library and tracker titles"}.`}
+                  />
+                {/if}
+              </section>
+            {/each}
+
           {/if}
-        </p>
-        {#if hasMultipleLangs && !kw_showAdvanced}
-          <button class="advancedLinkStandalone" onclick={() => (kw_showAdvanced = true)}>
-            <svg width="12" height="12" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
-              <path d="M40,88H73a32,32,0,0,0,62,0h81a8,8,0,0,0,0-16H135a32,32,0,0,0-62,0H40a8,8,0,0,0,0,16Zm64-24A16,16,0,1,1,88,80,16,16,0,0,1,104,64ZM216,168H183a32,32,0,0,0-62,0H40a8,8,0,0,0,0,16h81a32,32,0,0,0,62,0h33a8,8,0,0,0,0-16Zm-64,24a16,16,0,1,1,16-16A16,16,0,0,1,152,192Z"/>
-            </svg>
-            Adjust language filters
-          </button>
-        {/if}
-      </div>
+          </main>
+
+          <aside class="searchInsightPanel">
+            <section class="searchInsightCard searchTasteCard">
+              <div class="searchPanelTitle">
+                <span>Taste profile</span>
+                <span class="material-symbols-outlined" aria-hidden="true">info</span>
+              </div>
+              <p class="searchPanelLabel">Top genres</p>
+              <div class="searchTastePills">
+                {#if searchTasteTags.length > 0}
+                  {#each searchTasteTags as tag (tag)}
+                    <span>{tag}</span>
+                  {/each}
+                {:else}
+                  <span class="is-muted">No library genres yet</span>
+                {/if}
+              </div>
+
+              <div class="searchKnownToggle">
+                <button
+                  class="browseToggleRow searchPanelToggle"
+                  class:is-active={searchIncludeLibrary}
+                  type="button"
+                  aria-pressed={searchIncludeLibrary}
+                  onclick={() => (searchIncludeLibrary = !searchIncludeLibrary)}
+                >
+                  <span>{activeContentType === "novels" ? "Include saved prose titles" : "Include library/tracker titles"}</span>
+                  <span class="browseSwitch" aria-hidden="true"></span>
+                </button>
+                <p>{searchIncludeLibrary ? "Known titles can appear for comparison." : activeContentType === "novels" ? "Only novels outside your saved novels and local books are shown." : "Only titles outside your local and tracker libraries are shown."}</p>
+              </div>
+
+              <div class="searchDiversity">
+                <div class="searchDiversityHeader">
+                  <span>Diversity</span>
+                </div>
+                <div class="searchDiversityTrack">
+                  <span style={`width:${searchDiversityValue}%`}></span>
+                  <i style={`left:${searchDiversityValue}%`}></i>
+                </div>
+                <div class="searchDiversityLabels">
+                  <span>Focused</span>
+                  <span>Balanced</span>
+                  <span>Diverse</span>
+                </div>
+              </div>
+
+              <div class="searchDivergentNote">
+                <span class="material-symbols-outlined" aria-hidden="true">diversity_2</span>
+                <p>Includes a few divergent picks to avoid loops.</p>
+              </div>
+
+              <div class="searchInsights">
+                <div class="searchPanelTitle">
+                  <span>Insights</span>
+                  <span class="material-symbols-outlined" aria-hidden="true">info</span>
+                </div>
+                {#each searchInsightLines as insight (insight)}
+                  <p><span class="material-symbols-outlined" aria-hidden="true">adjust</span>{insight}</p>
+                {/each}
+              </div>
+
+              <button class="searchInsightsButton" type="button">
+                <span class="material-symbols-outlined" aria-hidden="true">bar_chart</span>
+                View full insights
+              </button>
+            </section>
+          </aside>
+        </div>
+      </section>
     {:else}
       <div class="results">
-        {#if kw_results.length === 0}
+        {#if activeContentType === "novels" && kw_novelResults.length === 0}
+          <div class="empty">
+            <svg width="20" height="20" viewBox="0 0 256 256" fill="currentColor" class="anim-spin" style="color:var(--text-faint)" aria-hidden="true">
+              <path d="M232,128a104,104,0,0,1-208,0c0-41,23.81-78.36,60.66-95.27a8,8,0,0,1,6.68,14.54C60.15,61.59,40,93.27,40,128a88,88,0,0,0,176,0c0-34.73-20.15-66.41-51.34-80.73a8,8,0,0,1,6.68-14.54C208.19,49.64,232,87,232,128Z"/>
+            </svg>
+          </div>
+        {:else if activeContentType === "manga" && kw_results.length === 0}
           <div class="empty">
             <svg width="20" height="20" viewBox="0 0 256 256" fill="currentColor" class="anim-spin" style="color:var(--text-faint)" aria-hidden="true">
               <path d="M232,128a104,104,0,0,1-208,0c0-41,23.81-78.36,60.66-95.27a8,8,0,0,1,6.68,14.54C60.15,61.59,40,93.27,40,128a88,88,0,0,0,176,0c0-34.73-20.15-66.41-51.34-80.73a8,8,0,0,1,6.68-14.54C208.19,49.64,232,87,232,128Z"/>
@@ -1681,6 +4692,79 @@
           </div>
         {/if}
 
+        {#if activeContentType === "novels"}
+          {#each kw_novelResults.filter((r) => r.novels.length > 0 || r.loading || r.error) as { source, novels, loading, error } (source.pluginId)}
+            <div class="sourceSection">
+              <div class="sourceHeader">
+                {#if source.iconUrl}
+                  <img
+                    src={thumbUrl(source.iconUrl)}
+                    alt={source.name}
+                    class="sourceIcon"
+                    loading="lazy"
+                    decoding="async"
+                    onerror={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                  />
+                {/if}
+                <span class="sourceName">{source.name}</span>
+                {#if hasMultipleLangs}
+                  <span class="sourceLang">{source.lang.toUpperCase()}</span>
+                {/if}
+                {#if loading}
+                  <svg width="12" height="12" viewBox="0 0 256 256" fill="currentColor" class="anim-spin" style="color:var(--text-faint);margin-left:auto" aria-hidden="true">
+                    <path d="M232,128a104,104,0,0,1-208,0c0-41,23.81-78.36,60.66-95.27a8,8,0,0,1,6.68,14.54C60.15,61.59,40,93.27,40,128a88,88,0,0,0,176,0c0-34.73-20.15-66.41-51.34-80.73a8,8,0,0,1,6.68-14.54C208.19,49.64,232,87,232,128Z"/>
+                  </svg>
+                {:else if novels.length > 0}
+                  <span class="resultCount">{novels.length} results</span>
+                {/if}
+              </div>
+
+              {#if error}
+                <NocturneState
+                  layout="compact"
+                  tone="warning"
+                  icon="warning"
+                  eyebrow="Source"
+                  title="Could not load this novel source"
+                  body={error}
+                />
+              {:else if loading}
+                <div class="sourceRow">
+                  {#each Array(4) as _, i (i)}
+                    <div class="skCard">
+                      <div class="skeleton skCover"></div>
+                      <div class="skeleton skTitle"></div>
+                    </div>
+                  {/each}
+                </div>
+              {:else if novels.length > 0}
+                <div class="sourceRow">
+                  {#each novels.slice(0, (store.settings.renderLimit ?? 48)) as result (`${result.sourceId}:${result.path}`)}
+                    <button class="n-library-card" disabled={src_openingNovelPath !== null} onclick={() => openNovelSourceResult(source, result)}>
+                      <div class="n-library-card__cover">
+                        {#if result.coverUrl}
+                          <img src={thumbUrl(result.coverUrl)} alt={result.title} loading="lazy" decoding="async" />
+                        {:else}
+                          <div class="coverFallback">Book</div>
+                        {/if}
+                        {#if novelLibraryState && isNovelInLibrary(novelLibraryState, createNovelLibraryId(result.sourceId, result.path))}
+                          <span class="n-library-card__badge">In Library</span>
+                        {/if}
+                      </div>
+                      <div class="n-library-card__info">
+                        <p class="n-library-card__title">{result.title}</p>
+                        <div class="n-library-card__meta">
+                          <span class="n-library-card__author">{source.name}</span>
+                          <span class="n-library-card__vol">{src_openingNovelPath === result.path ? "Opening..." : source.lang.toUpperCase()}</span>
+                        </div>
+                      </div>
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/each}
+        {:else}
         {#each kw_results.filter((r) => r.mangas.length > 0 || r.loading || r.error) as { source, mangas, loading, error } (source.id)}
           <div class="sourceSection">
             <div class="sourceHeader">
@@ -1706,7 +4790,14 @@
             </div>
 
             {#if error}
-              <p class="sourceError">{error}</p>
+              <NocturneState
+                layout="compact"
+                tone="warning"
+                icon="warning"
+                eyebrow="Source"
+                title="Could not load this manga source"
+                body={error}
+              />
             {:else if loading}
               
               <div class="sourceRow">
@@ -1743,12 +4834,17 @@
             {/if}
           </div>
         {/each}
+        {/if}
 
-        {#if kw_allDone && !kw_hasResults}
-          <div class="empty">
-            <p class="emptyText">No results for "{kw_submitted}"</p>
-            <p class="emptyHint">Try a different spelling or fewer words</p>
-          </div>
+        {#if kw_allDone && (activeContentType === "novels" ? !kw_hasNovelResults : !kw_hasResults)}
+          <NocturneState
+            layout="center"
+            tone="info"
+            icon="search"
+            eyebrow="Keyword search"
+            title={`No results for "${kw_submitted}"`}
+            body="Try a different spelling, fewer words, or another source."
+          />
         {/if}
       </div>
     {/if}
@@ -1890,7 +4986,7 @@
             placeholder="Filter genres..."
           />
           {#if tag_tagFilter}
-            <button class="splitSearchClear" title="Clear" onclick={() => (tag_tagFilter = "")}>×</button>
+            <button class="splitSearchClear" title="Clear" onclick={() => (tag_tagFilter = "")}>x</button>
           {/if}
             </div>
             <div class="catalogTagList">
@@ -1901,7 +4997,7 @@
               onclick={() => tagToggleTag(tag)}
             >
               <span>{tag}</span>
-              {#if tag_activeTags.includes(tag)}<span class="tagCheckMark">✓</span>{/if}
+              {#if tag_activeTags.includes(tag)}<span class="tagCheckMark material-symbols-outlined" aria-hidden="true">check</span>{/if}
             </button>
           {/each}
           {#if tag_filteredGenres.length === 0}
@@ -1911,15 +5007,6 @@
           </div>
         </section>
 
-        {#if showBrowseVisibilityCard}
-          <div class="browseVisibility">
-            <span class="material-symbols-outlined browseVisibilityIcon" aria-hidden="true">visibility_off</span>
-            <div>
-              <p class="browseVisibilityLabel">Visibility Filter</p>
-              <p class="browseVisibilityBody">Some titles hidden by safety preferences.</p>
-            </div>
-          </div>
-        {/if}
       </div>
 
       
@@ -1971,11 +5058,11 @@
               <input
                 bind:value={src_browseQuery}
                 class="searchInput"
-                placeholder={src_activeSource ? `Search ${src_activeSource.displayName}…` : src_activeNovelSource ? `Search ${src_activeNovelSource.name}…` : "Search source…"}
+                placeholder={src_activeSource ? `Search ${src_activeSource.displayName}...` : src_activeNovelSource ? `Search ${src_activeNovelSource.name}...` : "Search source..."}
                 onkeydown={(e) => e.key === "Enter" && srcHandleSearch()}
               />
               {#if src_submitted}
-                <button class="clearBtn" title="Clear search" onclick={srcClearSearch}>×</button>
+                <button class="clearBtn" title="Clear search" onclick={srcClearSearch}>x</button>
               {/if}
             </div>
             <button
@@ -2026,7 +5113,7 @@
                     src_currentPage + 1,
                   )}
                 >
-                  {#if src_loadingBrowse}Loading…{:else}Load more{/if}
+                  {#if src_loadingBrowse}Loading...{:else}Load more{/if}
                 </button>
               </div>
             {/if}
@@ -2038,7 +5125,7 @@
                     {#if result.coverUrl}
                       <img src={thumbUrl(result.coverUrl)} alt={result.title} loading="lazy" decoding="async" />
                     {:else}
-                      <div class="coverFallback">📘</div>
+                      <div class="coverFallback">Book</div>
                     {/if}
                     {#if novelLibraryState && isNovelInLibrary(novelLibraryState, createNovelLibraryId(result.sourceId, result.path))}
                       <span class="n-library-card__badge">In Library</span>
@@ -2048,7 +5135,7 @@
                     <p class="n-library-card__title">{result.title}</p>
                     <div class="n-library-card__meta">
                       <span class="n-library-card__author">{src_activeNovelSource.name}</span>
-                      <span class="n-library-card__vol">{src_openingNovelPath === result.path ? "Opening…" : src_activeNovelSource.lang.toUpperCase()}</span>
+                      <span class="n-library-card__vol">{src_openingNovelPath === result.path ? "Opening..." : src_activeNovelSource.lang.toUpperCase()}</span>
                     </div>
                   </div>
                 </button>
@@ -2066,16 +5153,19 @@
                     src_currentPage + 1,
                   )}
                 >
-                  {#if src_loadingBrowse}Loading…{:else}Load more{/if}
+                  {#if src_loadingBrowse}Loading...{:else}Load more{/if}
                 </button>
               </div>
             {/if}
           {:else if !src_loadingBrowse}
-            <div class="empty">
-              <p class="emptyText">
-                {src_submitted ? `No results for "${src_submitted}"` : "No results"}
-              </p>
-            </div>
+            <NocturneState
+              layout="center"
+              tone="info"
+              icon="search"
+              eyebrow="Source search"
+              title={src_submitted ? `No results for "${src_submitted}"` : "No results"}
+              body="Try another source, language, or search term."
+            />
           {/if}
         {:else}
           <section class="discoverPanel">
@@ -2088,7 +5178,7 @@
                   {:else if discoverFocusedTracker}
                     {discoverFocusedTracker.name} - {catalogFeed === "latest" ? "Latest" : catalogFeed === "popular" ? "Popular" : "All"} - Manga catalog
                   {:else}
-                  {discoverSourceLabel} · {catalogFeed === "latest" ? "Latest" : catalogFeed === "popular" ? "Popular" : "All"} · {activeContentType === "novels" ? "Novels" : "Manga"}
+                  {discoverSourceLabel} - {catalogFeed === "latest" ? "Latest" : catalogFeed === "popular" ? "Popular" : "All"} - {activeContentType === "novels" ? "Novels" : "Manga"}
                   {/if}
                 </p>
               </div>
@@ -2150,10 +5240,14 @@
                 {/if}
               </div>
             {:else if tag_hasActiveTags}
-              <div class="empty">
-                <p class="emptyText">Nothing found for this Discover view</p>
-                <p class="emptyHint">Try another genre, source, or language.</p>
-              </div>
+              <NocturneState
+                layout="center"
+                tone="info"
+                icon="search"
+                eyebrow="Discover"
+                title="Nothing found for this view"
+                body="Try another genre, source, or language."
+              />
             {:else if discoverFocusedTracker && trackerCatalogResults.length > 0}
               <div class="tagGrid" onscroll={handleCatalogGridScroll}>
                 {#each trackerCatalogResults as item (`${item.trackerId}:${item.remoteId}`)}
@@ -2181,15 +5275,23 @@
                 {/if}
               </div>
             {:else if discoverFocusedTracker && trackerCatalogError}
-              <div class="empty">
-                <p class="emptyText">Could not load tracker catalog</p>
-                <p class="emptyHint">{trackerCatalogError}</p>
-              </div>
+              <NocturneState
+                layout="center"
+                tone="danger"
+                icon="warning"
+                eyebrow="Tracker catalog"
+                title="Could not load tracker catalog"
+                body={trackerCatalogError}
+              />
             {:else if discoverFocusedTracker}
-              <div class="empty">
-                <p class="emptyText">No reading titles found</p>
-                <p class="emptyHint">Try Popular, Latest, or another connected tracker.</p>
-              </div>
+              <NocturneState
+                layout="center"
+                tone="info"
+                icon="books"
+                eyebrow="Tracker catalog"
+                title="No reading titles found"
+                body="Try Popular, Latest, or another connected tracker."
+              />
             {:else if discoverLoading && discoverResultCount === 0}
               <div class="tagGrid" onscroll={handleCatalogGridScroll}>
                 {#each Array(18) as _, i (i)}
@@ -2200,10 +5302,14 @@
                 {/each}
               </div>
             {:else if discoverError}
-              <div class="empty">
-                <p class="emptyText">Could not load Discover</p>
-                <p class="emptyHint">{discoverError}</p>
-              </div>
+              <NocturneState
+                layout="center"
+                tone="danger"
+                icon="warning"
+                eyebrow="Discover"
+                title="Could not load Discover"
+                body={discoverError}
+              />
             {:else if activeContentType === "novels" && discoverNovelResults.length > 0}
               <div class="tagGrid" onscroll={handleCatalogGridScroll}>
                 {#each discoverNovelResults as result (`${result.sourceId}:${result.path}`)}
@@ -2257,10 +5363,14 @@
                 {/if}
               </div>
             {:else}
-              <div class="empty">
-                <p class="emptyText">Nothing found for this Discover view</p>
-                <p class="emptyHint">Try another source, language, or switch to Search for a keyword lookup.</p>
-              </div>
+              <NocturneState
+                layout="center"
+                tone="info"
+                icon="search"
+                eyebrow="Discover"
+                title="Nothing found for this view"
+                body="Try another source, language, or switch to Search for a keyword lookup."
+              />
             {/if}
           </section>
         {/if}
@@ -2271,7 +5381,7 @@
 
   {:else if activeBrowseTab === "source"}
     <div class="browseShell">
-      <SourcesView contentType={activeContentType} />
+      <SourcesView contentType={activeContentType} topbarSearch={searchQuery} />
     </div>
   {/if}
 </div>
@@ -2289,7 +5399,7 @@
     display: grid;
     grid-template-columns:
       minmax(0, 1fr)
-      minmax(calc(380px * var(--n-hud-scale)), calc(640px * var(--n-hud-scale)))
+      minmax(0, min(calc(640px * var(--n-hud-scale)), 44vw))
       minmax(0, 1fr);
     align-items: center;
     gap: calc(16px * var(--n-hud-scale));
@@ -2345,8 +5455,12 @@
     border-bottom: 1px solid var(--n-primary);
   }
   .setup-banner {
-    padding: var(--sp-3) var(--sp-4) 0;
+    padding: 12px clamp(28px, 3vw, 56px) 0;
     flex-shrink: 0;
+  }
+  .setup-banner :global(.n-state) {
+    max-width: 1120px;
+    margin: 0 auto;
   }
   .catalogSidebar {
     width: calc(230px * var(--n-hud-scale));
@@ -2378,78 +5492,23 @@
     display: flex;
     flex-wrap: wrap;
   }
-  .browseVisibility {
-    margin-top: auto;
-    display: flex;
-    align-items: flex-start;
-    gap: var(--sp-2);
-    padding: var(--sp-3);
-    border-radius: var(--radius-lg);
-    border: 1px solid rgba(255, 180, 171, 0.12);
-    background: rgba(255, 180, 171, 0.04);
-  }
-  .browseVisibilityIcon {
-    color: rgba(255, 180, 171, 0.7);
-    font-size: 18px;
-    margin-top: 1px;
-  }
-  .browseVisibilityLabel {
-    font-family: var(--font-ui);
-    font-size: 9px;
-    font-weight: 800;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: rgba(255, 180, 171, 0.84);
-  }
-  .browseVisibilityBody {
-    margin-top: 2px;
-    font-family: var(--font-ui);
-    font-size: 9px;
-    line-height: 1.45;
-    color: rgba(229, 226, 225, 0.48);
-  }
-  .tab {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    font-family: var(--font-ui);
-    font-size: var(--text-2xs);
-    letter-spacing: var(--tracking-wide);
-    text-transform: uppercase;
-    padding: 4px 10px;
-    border-radius: var(--radius-sm);
-    background: none;
-    border: 1px solid transparent;
-    color: var(--text-faint);
-    cursor: pointer;
-    transition: background var(--t-base), color var(--t-base);
-    white-space: nowrap;
-  }
-  .tab:hover { color: var(--text-muted); }
-  .tabActive {
-    background: var(--accent-muted);
-    color: var(--accent-fg);
-    border: 1px solid var(--accent-dim);
-  }
-  .tabActive:hover { color: var(--accent-fg); }
-  .keywordBar {
-    padding: var(--sp-3) var(--sp-4);
-    flex-shrink: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--sp-2);
-  }
   .searchBar {
     display: flex;
     align-items: center;
     gap: var(--sp-2);
-    background: var(--bg-raised);
-    border: 1px solid var(--border-dim);
-    border-radius: var(--radius-md);
-    padding: 0 var(--sp-3) 0 var(--sp-2);
-    transition: border-color var(--t-base);
+    min-height: 40px;
+    background: rgba(23, 22, 30, 0.78);
+    border: 1px solid rgba(255, 255, 255, 0.065);
+    border-radius: 10px;
+    padding: 0 12px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+    transition: border-color var(--t-base), background var(--t-base), box-shadow var(--t-base);
   }
-  .searchBar:focus-within { border-color: var(--border-strong); }
+  .searchBar:focus-within {
+    border-color: rgba(184, 167, 234, 0.36);
+    background: rgba(29, 27, 38, 0.92);
+    box-shadow: 0 0 0 3px rgba(184, 167, 234, 0.08);
+  }
   .searchIcon { color: var(--text-faint); flex-shrink: 0; }
   .searchInput {
     flex: 1;
@@ -2472,128 +5531,484 @@
     transition: color var(--t-base);
   }
   .clearBtn:hover { color: var(--text-muted); }
-  .advancedBtn {
+  .searchBtn {
+    font-family: var(--font-ui);
+    font-size: 10px;
+    font-weight: 820;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    min-height: 40px;
+    padding: 0 18px;
+    border-radius: 10px;
+    background: linear-gradient(180deg, rgba(207, 187, 255, 0.96), rgba(152, 126, 219, 0.9));
+    color: rgba(35, 25, 60, 0.96);
+    border: 1px solid rgba(229, 219, 255, 0.2);
+    cursor: pointer;
+    flex-shrink: 0;
     display: flex;
+    align-items: center;
+    gap: var(--sp-1);
+    box-shadow: 0 10px 24px rgba(150, 121, 228, 0.18);
+    transition: transform var(--t-base), filter var(--t-base), opacity var(--t-base);
+  }
+  .searchBtn:hover:not(:disabled) {
+    filter: brightness(1.06);
+    transform: translateY(-1px);
+  }
+  .searchBtn:disabled {
+    opacity: 0.38;
+    cursor: default;
+    filter: grayscale(0.35);
+    box-shadow: none;
+  }
+  .searchLanding {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: clamp(24px, 2.9vw, 52px) clamp(22px, 2.7vw, 46px) 48px;
+    background:
+      radial-gradient(circle at 18% 22%, rgba(184, 167, 234, 0.1), transparent 34%),
+      radial-gradient(circle at 72% 18%, rgba(100, 145, 255, 0.06), transparent 30%);
+    scrollbar-width: thin;
+    scrollbar-color: rgba(184, 167, 234, 0.32) transparent;
+  }
+  .searchCanvas {
+    --search-card-width: clamp(158px, 9.2vw, 180px);
+    --search-card-gap: clamp(15px, 0.95vw, 17px);
+    --search-rail-width: calc((var(--search-card-width) * 7) + (var(--search-card-gap) * 6));
+    --search-panel-width: clamp(286px, 18vw, 328px);
+    display: grid;
+    grid-template-columns: minmax(0, var(--search-rail-width)) minmax(var(--search-panel-width), 1fr);
+    gap: clamp(14px, 1.2vw, 22px);
+    align-items: start;
+    justify-content: start;
+  }
+  .searchMainColumn {
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: clamp(22px, 2vw, 30px);
+  }
+  .searchHeroCopy {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+    max-width: 680px;
+    margin-bottom: 2px;
+  }
+  .searchHeroCopy h2,
+  .searchRecommendationHeader h3 {
+    margin: 0;
+    color: rgba(238, 235, 242, 0.92);
+    font-weight: 760;
+    letter-spacing: 0;
+  }
+  .searchHeroCopy h2 {
+    font-size: 26px;
+    line-height: 1.08;
+  }
+  .searchHeroCopy p,
+  .searchRecommendationHeader p {
+    margin: 0;
+    color: rgba(229, 226, 225, 0.52);
+    line-height: 1.45;
+  }
+  .searchHeroCopy p {
+    font-size: 13px;
+    max-width: 660px;
+  }
+  .searchRecommendationSection {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+  .searchRecommendationHeader {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 14px;
+    width: min(100%, var(--search-rail-width));
+    min-width: 0;
+  }
+  .searchRecommendationHeader > div {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr);
+    column-gap: 8px;
+    align-items: center;
+  }
+  .searchRecommendationHeader h3 {
+    font-size: 16px;
+    line-height: 1.1;
+  }
+  .searchRecommendationHeader p {
+    grid-column: 2;
+    margin-top: 3px;
+    font-size: 12px;
+  }
+  .searchRailControls {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    align-self: center;
+    flex-shrink: 0;
+  }
+  .searchRailControls button {
+    display: inline-flex;
     align-items: center;
     justify-content: center;
     width: 28px;
     height: 28px;
-    border-radius: var(--radius-sm);
-    background: none;
-    border: none;
-    color: var(--text-faint);
-    flex-shrink: 0;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: rgba(218, 207, 255, 0.68);
     cursor: pointer;
-    transition: color var(--t-base), background var(--t-base);
+    transition: background var(--t-base), color var(--t-base), transform var(--t-base);
   }
-  .advancedBtn:hover { color: var(--text-muted); background: var(--bg-overlay); }
-  .advancedBtnActive { color: var(--accent-fg); background: var(--accent-muted); }
-  .advancedBtnActive:hover { color: var(--accent-fg); background: var(--accent-muted); }
-  .searchBtn {
-    font-family: var(--font-ui);
-    font-size: var(--text-xs);
-    letter-spacing: var(--tracking-wide);
-    padding: 6px 12px;
-    border-radius: var(--radius-md);
-    background: var(--accent-muted);
-    color: var(--accent-fg);
-    border: 1px solid var(--accent-dim);
-    cursor: pointer;
-    flex-shrink: 0;
-    display: flex;
+  .searchRailControls button:hover {
+    color: rgba(238, 235, 242, 0.94);
+    background: rgba(184, 167, 234, 0.08);
+    transform: translateY(-1px);
+  }
+  .searchRailControls button:active {
+    transform: translateY(0);
+  }
+  .searchRailControls .material-symbols-outlined {
+    font-size: 20px;
+  }
+  .searchSectionIcon {
+    color: rgba(188, 166, 255, 0.96);
+    font-size: 18px;
+  }
+  .searchTrackerBadge,
+  .searchTastePills span {
+    display: inline-flex;
     align-items: center;
-    gap: var(--sp-1);
-    transition: filter var(--t-base);
+    min-height: 20px;
+    padding: 0 8px;
+    border: 1px solid rgba(184, 167, 234, 0.2);
+    border-radius: 999px;
+    background: rgba(184, 167, 234, 0.1);
+    color: rgba(218, 207, 255, 0.88);
+    font-family: var(--font-ui);
+    font-size: 10px;
+    font-weight: 780;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
-  .searchBtn:hover:not(:disabled) { filter: brightness(1.1); }
-  .searchBtn:disabled { opacity: 0.4; cursor: default; }
-  .advancedPanel {
-    background: var(--bg-raised);
-    border: 1px solid var(--border-dim);
-    border-radius: var(--radius-md);
-    padding: var(--sp-3);
+  .searchRecommendationRow {
+    display: flex;
+    gap: var(--search-card-gap);
+    width: min(100%, var(--search-rail-width));
+    max-width: 100%;
+    box-sizing: border-box;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    scroll-padding-inline: 2px clamp(28px, 2vw, 44px);
+    padding: 2px clamp(26px, 1.7vw, 36px) 12px 0;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(184, 167, 234, 0.24) transparent;
+  }
+  .searchRecommendationRow::-webkit-scrollbar {
+    height: 7px;
+  }
+  .searchRecommendationRow::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .searchRecommendationRow::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: rgba(184, 167, 234, 0.2);
+  }
+  .searchRecommendationRow .n-library-card {
+    flex: 0 0 var(--search-card-width);
+    width: var(--search-card-width);
+    min-width: 0;
+    scroll-snap-align: start;
+  }
+  .searchRecommendationRow .n-library-card__cover {
+    aspect-ratio: 0.7;
+  }
+  .searchRecommendationRow .n-library-card__title {
+    min-height: 36px;
+    line-height: 1.16;
+    overflow-wrap: anywhere;
+  }
+  .searchRecommendationRow .n-library-card__meta {
+    min-width: 0;
+  }
+  .searchRecommendationRow .n-library-card__author,
+  .searchRecommendationRow .n-library-card__vol {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .searchTrackerBadge {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    min-height: 18px;
+    padding: 0 7px;
+    border-radius: 8px;
+    background: rgba(20, 18, 28, 0.82);
+    backdrop-filter: blur(8px);
+  }
+  .searchCoverPlaceholder {
+    display: flex;
+    align-items: flex-end;
+    width: 100%;
+    height: 100%;
+    padding: 18px 14px;
+    box-sizing: border-box;
+    border-radius: inherit;
+    background:
+      radial-gradient(circle at 28% 18%, rgba(184, 167, 234, 0.2), transparent 32%),
+      linear-gradient(180deg, rgba(36, 33, 45, 0.92), rgba(21, 20, 27, 0.96));
+    position: relative;
+    overflow: hidden;
+  }
+  .searchCoverPlaceholder::after {
+    content: "";
+    position: absolute;
+    left: 13%;
+    right: 18%;
+    bottom: 16%;
+    height: 8px;
+    border-radius: 999px;
+    background: rgba(184, 167, 234, 0.14);
+    box-shadow:
+      0 -18px 0 rgba(255, 255, 255, 0.045),
+      34px -36px 0 rgba(255, 255, 255, 0.035);
+  }
+  .searchCoverPlaceholder span {
+    position: relative;
+    z-index: 1;
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    color: rgba(238, 235, 242, 0.9);
+    font-size: 13px;
+    font-weight: 780;
+    line-height: 1.15;
+    text-align: left;
+  }
+  .searchInsightPanel {
+    position: sticky;
+    top: 18px;
     display: flex;
     flex-direction: column;
-    gap: var(--sp-2);
-    animation: fadeIn 0.1s ease both;
+    gap: 14px;
+    justify-self: center;
+    width: var(--search-panel-width);
+    min-width: 0;
   }
-  .advancedHeader {
+  .searchInsightCard {
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 22px 22px 20px;
+    border: 1px solid rgba(255, 255, 255, 0.055);
+    border-radius: 12px;
+    background:
+      linear-gradient(180deg, rgba(27, 25, 36, 0.9), rgba(16, 16, 22, 0.92));
+    box-shadow:
+      0 16px 42px rgba(0, 0, 0, 0.24),
+      inset 0 1px 0 rgba(255, 255, 255, 0.025);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: geometricPrecision;
+  }
+  .searchPanelTitle,
+  .searchDiversityHeader,
+  .searchDiversityLabels {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 10px;
+    font-family: var(--font-sans);
   }
-  .advancedTitle {
-    font-family: var(--font-ui);
-    font-size: var(--text-2xs);
-    color: var(--text-faint);
-    letter-spacing: var(--tracking-wider);
+  .searchPanelTitle {
+    color: rgba(207, 199, 226, 0.68);
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.09em;
     text-transform: uppercase;
   }
-  .advancedActions { display: flex; gap: var(--sp-1); }
-  .advancedLink {
-    font-family: var(--font-ui);
-    font-size: var(--text-2xs);
-    letter-spacing: var(--tracking-wide);
-    color: var(--accent-fg);
-    background: none;
-    border: none;
-    padding: 0;
-    cursor: pointer;
-    opacity: 0.7;
-    transition: opacity var(--t-base);
+  .searchPanelTitle .material-symbols-outlined {
+    font-size: 14px;
+    color: rgba(207, 199, 226, 0.42);
   }
-  .advancedLink:hover { opacity: 1; }
-  .langGrid {
+  .searchPanelLabel {
+    margin: 24px 0 0;
+    color: rgba(229, 226, 225, 0.6);
+    font-size: 13px;
+    font-weight: 680;
+  }
+  .searchTastePills {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px 12px;
+    margin-top: 12px;
+    padding-bottom: 4px;
+  }
+  .searchTastePills span {
+    min-width: 0;
+    max-width: 100%;
+    min-height: auto;
+    padding: 0 0 0 10px;
+    border: 0;
+    border-left: 2px solid rgba(184, 167, 234, 0.42);
+    border-radius: 0;
+    background: transparent;
+    color: rgba(218, 207, 255, 0.74);
+    font-family: var(--font-sans);
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .searchKnownToggle {
     display: flex;
-    flex-wrap: wrap;
-    gap: var(--sp-1);
+    flex-direction: column;
+    gap: 7px;
+    margin-top: 24px;
+    padding-top: 18px;
+    border-top: 1px solid rgba(255, 255, 255, 0.045);
   }
-  .langChip {
-    font-family: var(--font-ui);
-    font-size: var(--text-2xs);
-    letter-spacing: var(--tracking-wide);
-    padding: 3px 8px;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border-dim);
-    background: none;
-    color: var(--text-faint);
-    cursor: pointer;
-    transition: color var(--t-base), border-color var(--t-base), background var(--t-base);
+  .searchPanelToggle {
+    min-height: 26px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    font-family: var(--font-sans);
   }
-  .langChip:hover { color: var(--text-muted); border-color: var(--border-strong); }
-  .langChipActive {
-    background: var(--accent-muted);
-    border-color: var(--accent-dim);
-    color: var(--accent-fg);
+  .searchPanelToggle span:first-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-  .langChipActive:hover { background: var(--accent-muted); color: var(--accent-fg); }
-  .advancedDivider {
-    height: 1px;
-    background: var(--border-dim);
-    margin: 2px 0;
+  .searchKnownToggle p {
+    margin: 0;
+    color: rgba(229, 226, 225, 0.42);
+    font-family: var(--font-sans);
+    font-size: 12.5px;
+    line-height: 1.4;
   }
-  .advancedFooter {
-    font-family: var(--font-ui);
-    font-size: var(--text-2xs);
-    color: var(--text-faint);
-    letter-spacing: var(--tracking-wide);
+  .searchDiversity,
+  .searchInsights {
+    display: flex;
+    flex-direction: column;
+    gap: 11px;
+    margin-top: 28px;
+    padding-top: 20px;
+    border-top: 1px solid rgba(255, 255, 255, 0.045);
   }
-  .advancedLinkStandalone {
+  .searchDiversityHeader span {
+    color: rgba(229, 226, 225, 0.62);
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .searchDiversityTrack {
+    position: relative;
+    height: 3px;
+    border-radius: 0;
+    background: rgba(255, 255, 255, 0.09);
+  }
+  .searchDiversityTrack span {
+    display: block;
+    height: 100%;
+    border-radius: 0;
+    background: rgba(184, 167, 234, 0.82);
+  }
+  .searchDiversityTrack i {
+    position: absolute;
+    top: 50%;
+    width: 10px;
+    height: 10px;
+    border: 2px solid rgba(24, 22, 31, 0.95);
+    border-radius: 50%;
+    background: rgba(218, 207, 255, 0.95);
+    transform: translate(-50%, -50%);
+  }
+  .searchDiversityLabels {
+    color: rgba(229, 226, 225, 0.32);
+    font-family: var(--font-sans);
+    font-size: 11px;
+  }
+  .searchDivergentNote {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr);
+    gap: 9px;
+    margin-top: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+  .searchDivergentNote .material-symbols-outlined {
+    color: rgba(188, 166, 255, 0.68);
+    font-size: 16px;
+  }
+  .searchDivergentNote p,
+  .searchInsights p {
+    margin: 0;
+    color: rgba(229, 226, 225, 0.48);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.45;
+  }
+  .searchInsights p {
+    display: grid;
+    grid-template-columns: 14px minmax(0, 1fr);
+    gap: 8px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.04);
+  }
+  .searchInsights p:first-of-type {
+    border-top: 0;
+    padding-top: 0;
+  }
+  .searchInsights p .material-symbols-outlined {
+    color: rgba(188, 166, 255, 0.68);
+    font-size: 12px;
+    margin-top: 1px;
+  }
+  .searchInsightsButton {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    font-family: var(--font-ui);
-    font-size: var(--text-2xs);
-    letter-spacing: var(--tracking-wide);
-    color: var(--accent-fg);
-    background: none;
-    border: none;
-    padding: 0;
+    justify-content: center;
+    gap: 8px;
+    border: 1px solid rgba(184, 167, 234, 0.14);
+    background: transparent;
+    color: rgba(211, 192, 255, 0.78);
+    font-family: var(--font-sans);
+    font-size: 11px;
+    font-weight: 720;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
     cursor: pointer;
-    opacity: 0.7;
-    transition: opacity var(--t-base);
+    transition: background var(--t-base), border-color var(--t-base), color var(--t-base);
   }
-  .advancedLinkStandalone:hover { opacity: 1; }
+  .searchInsightsButton {
+    width: 100%;
+    min-height: 36px;
+    margin-top: 18px;
+    border-radius: 7px;
+  }
+  .searchInsightsButton:hover {
+    color: rgba(238, 235, 242, 0.92);
+    border-color: rgba(184, 167, 234, 0.2);
+    background: rgba(184, 167, 234, 0.06);
+  }
   .empty {
     flex: 1;
     display: flex;
@@ -2602,9 +6017,6 @@
     justify-content: center;
     gap: var(--sp-2);
   }
-  .emptyIcon { color: var(--text-faint); }
-  .emptyText { font-size: var(--text-base); color: var(--text-muted); }
-  .emptyHint { font-size: var(--text-sm); color: var(--text-faint); }
   .results {
     flex: 1;
     overflow-y: auto;
@@ -2651,12 +6063,6 @@
     font-size: var(--text-2xs);
     color: var(--text-faint);
     letter-spacing: var(--tracking-wide);
-  }
-  .sourceError {
-    font-size: var(--text-xs);
-    color: var(--color-error);
-    padding: var(--sp-1) 0;
-    margin: 0;
   }
   .sourceRow {
     display: flex;
@@ -2725,55 +6131,12 @@
     transition: color var(--t-base);
   }
   .splitSearchClear:hover { color: var(--text-muted); }
-  .splitList {
-    flex: 1;
-    overflow-y: auto;
-    padding: var(--sp-1);
-    scrollbar-width: thin;
-    scrollbar-color: var(--border-dim) transparent;
-  }
-  .splitItem {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-2);
-    width: 100%;
-    padding: 7px var(--sp-3);
-    border-radius: var(--radius-md);
-    border: 1px solid transparent;
-    background: none;
-    text-align: left;
-    cursor: pointer;
-    transition: background var(--t-fast), border-color var(--t-fast);
-  }
-  .splitItem:hover { background: var(--bg-raised); border-color: var(--border-dim); }
-  .splitItemActive {
-    background: var(--accent-muted);
-    border-color: var(--accent-dim);
-  }
-  .splitItemActive:hover { background: var(--accent-muted); }
-  .splitItemLabel {
-    font-size: var(--text-xs);
-    color: var(--text-muted);
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .splitItemActive .splitItemLabel { color: var(--accent-fg); font-weight: var(--weight-medium); }
-  .splitItemSource { gap: var(--sp-2); }
   .splitEmpty {
     font-family: var(--font-ui);
     font-size: var(--text-xs);
     color: var(--text-faint);
     padding: var(--sp-3);
     margin: 0;
-  }
-  .splitLoading {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: var(--sp-6);
   }
   .splitContent {
     flex: 1;
@@ -2836,7 +6199,7 @@
     background: var(--bg-raised);
   }
   .tagCheckMark {
-    font-size: var(--text-xs);
+    font-size: 14px;
     color: rgba(218, 207, 255, 0.92);
     margin-left: auto;
   }
@@ -2868,21 +6231,24 @@
     display: inline-flex;
     align-items: center;
     gap: var(--sp-1);
-    padding: 5px 12px;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border-dim);
-    background: none;
+    min-height: 34px;
+    padding: 0 14px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    background: rgba(255, 255, 255, 0.026);
     font-family: var(--font-ui);
-    font-size: var(--text-xs);
-    letter-spacing: var(--tracking-wide);
-    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 780;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: rgba(211, 192, 255, 0.88);
     cursor: pointer;
     transition: background var(--t-base), color var(--t-base), border-color var(--t-base);
   }
   .showMoreBtn:hover:not(:disabled) {
-    background: var(--bg-raised);
-    color: var(--text-secondary);
-    border-color: var(--border-strong);
+    background: rgba(184, 167, 234, 0.075);
+    color: rgba(238, 235, 242, 0.9);
+    border-color: rgba(184, 167, 234, 0.24);
   }
   .showMoreBtn:disabled { opacity: 0.4; cursor: default; }
   .loadMoreRow {
@@ -2895,58 +6261,11 @@
   .sourceBrowseBar {
     display: flex;
     align-items: center;
-    gap: var(--sp-2);
-    padding: var(--sp-2) var(--sp-4);
-    border-bottom: 1px solid var(--border-dim);
+    gap: 10px;
+    padding: 12px clamp(14px, 1.2vw, 20px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.045);
+    background: rgba(8, 8, 12, 0.18);
     flex-shrink: 0;
-  }
-  .srcLangRow {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: var(--sp-2) var(--sp-3);
-    border-bottom: 1px solid var(--border-dim);
-    flex-shrink: 0;
-    gap: var(--sp-2);
-  }
-  .langPocketLabel {
-    font-family: var(--font-ui);
-    font-size: var(--text-2xs);
-    color: var(--text-faint);
-    letter-spacing: var(--tracking-wider);
-    text-transform: uppercase;
-  }
-  .langSelect {
-    appearance: none;
-    -webkit-appearance: none;
-    background: var(--bg-overlay);
-    border: 1px solid var(--border-dim);
-    border-radius: var(--radius-sm);
-    color: var(--text-secondary);
-    font-family: var(--font-ui);
-    font-size: var(--text-2xs);
-    letter-spacing: var(--tracking-wide);
-    padding: 4px 24px 4px 8px;
-    cursor: pointer;
-    max-width: 110px;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8' viewBox='0 0 256 256'%3E%3Cpath fill='%23888' d='M213.66,101.66l-80,80a8,8,0,0,1-11.32,0l-80-80A8,8,0,0,1,53.66,90.34L128,164.69l74.34-74.35a8,8,0,0,1,11.32,11.32Z'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 7px center;
-    transition: border-color var(--t-base), background var(--t-base), color var(--t-base);
-  }
-  .langSelect:hover {
-    border-color: var(--border-strong);
-    background-color: var(--bg-raised);
-    color: var(--text-primary);
-  }
-  .langSelect:focus {
-    outline: none;
-    border-color: var(--accent-dim);
-    color: var(--text-primary);
-  }
-  .langSelect option {
-    background: var(--bg-surface);
-    color: var(--text-secondary);
   }
   .nsfwBadge {
     font-family: var(--font-ui);
@@ -2984,27 +6303,7 @@
       rgba(18, 18, 22, 0.72);
     box-shadow: 0 22px 60px rgba(0, 0, 0, 0.18);
   }
-  .browseShell > .browseSubtabs {
-    width: fit-content;
-    gap: 4px;
-    margin: 0 0 calc(12px * var(--n-hud-scale));
-    padding: 3px;
-    border: 1px solid rgba(255, 255, 255, 0.055);
-    border-radius: calc(14px * var(--n-hud-scale));
-    background: rgba(26, 24, 34, 0.72);
-  }
-  .browseShell .tab {
-    min-height: calc(28px * var(--n-hud-scale));
-    padding: 0 calc(12px * var(--n-hud-scale));
-    border-radius: calc(10px * var(--n-hud-scale));
-  }
-  .browseShell .tabActive {
-    background: rgba(184, 167, 234, 0.18);
-    border-color: rgba(184, 167, 234, 0.2);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
-  }
-  .catalogRoot,
-  .browseShell > .splitRoot {
+  .catalogRoot {
     flex: 1;
     min-height: 0;
     border-radius: clamp(18px, 1.6vw, 26px);
@@ -3020,8 +6319,7 @@
     border-radius: 0;
     background: transparent;
   }
-  .catalogSidebar,
-  .browseShell > .splitRoot > .splitSidebar {
+  .catalogSidebar {
     flex: 0 0 clamp(226px, 13vw, 248px);
     width: clamp(226px, 13vw, 248px);
     min-width: 0;
@@ -3255,6 +6553,12 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .searchTastePills span.is-muted {
+    grid-column: 1 / -1;
+    color: rgba(229, 226, 225, 0.48);
+    font-weight: 620;
+    text-transform: none;
+  }
   .browseInlinePicker button span:last-child {
     flex-shrink: 0;
     color: rgba(229, 226, 225, 0.34);
@@ -3339,9 +6643,6 @@
     width: calc(18px * var(--n-hud-scale));
     height: calc(18px * var(--n-hud-scale));
     border-radius: calc(5px * var(--n-hud-scale));
-  }
-  .splitItemLabel {
-    font-size: 10px;
   }
   .browseGenresSection {
     margin-top: 0;
@@ -3451,50 +6752,10 @@
   .results {
     padding-top: calc(10px * var(--n-hud-scale));
   }
-  .keywordBar {
-    width: min(calc(880px * var(--n-hud-scale)), calc(100% - 48px));
-    margin: calc(14px * var(--n-hud-scale)) auto calc(8px * var(--n-hud-scale));
-    padding: 0;
-  }
-  .keywordBar .searchBar,
   .sourceBrowseBar .searchBar {
     min-height: calc(40px * var(--n-hud-scale));
     border-color: rgba(255, 255, 255, 0.055);
     background: rgba(27, 25, 34, 0.7);
-  }
-  .advancedPanel,
-  .visibilityCard {
-    border-color: rgba(255, 255, 255, 0.055);
-    background: rgba(18, 18, 22, 0.72);
-  }
-  .browseVisibility {
-    margin-top: 0;
-    border-color: rgba(255, 255, 255, 0.055);
-    background: rgba(255, 255, 255, 0.02);
-    min-height: 66px;
-    padding: 13px;
-    border-radius: 15px;
-  }
-  .browseVisibilityIcon,
-  .browseVisibilityLabel {
-    color: rgba(184, 167, 234, 0.74) !important;
-  }
-  .browseVisibilityBody {
-    color: rgba(229, 226, 225, 0.48);
-    font-size: 11px;
-    line-height: 1.35;
-  }
-  .splitList {
-    padding: calc(8px * var(--n-hud-scale));
-  }
-  .splitItem {
-    min-height: calc(34px * var(--n-hud-scale));
-    padding: 0 calc(9px * var(--n-hud-scale));
-    border-radius: calc(12px * var(--n-hud-scale));
-  }
-  .srcLangRow {
-    padding: 0 0 calc(12px * var(--n-hud-scale));
-    border-bottom-color: rgba(255, 255, 255, 0.055);
   }
   .discoverPanel {
     flex: 1;
@@ -3540,12 +6801,71 @@
     .browseShell {
       padding-inline: 10px;
     }
-    .catalogRoot,
-    .browseShell > .splitRoot {
+    .searchLanding {
+      padding: 18px clamp(14px, 3vw, 22px) 36px;
+    }
+    .searchCanvas {
+      --search-rail-width: 100%;
+      --search-panel-width: 100%;
+      grid-template-columns: 1fr;
+      justify-content: stretch;
+    }
+    .searchMainColumn,
+    .searchRecommendationSection,
+    .searchRecommendationHeader,
+    .searchRecommendationRow {
+      width: 100%;
+      max-width: 100%;
+    }
+    .searchRecommendationHeader {
+      align-items: flex-start;
+    }
+    .searchInsightPanel {
+      position: static;
+      display: grid;
+      grid-template-columns: 1fr;
+      justify-self: stretch;
+      width: 100%;
+    }
+    .searchInsightCard {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(210px, 0.65fr);
+      column-gap: 22px;
+      row-gap: 14px;
+      align-items: start;
+      padding: 18px;
+    }
+    .searchPanelTitle {
+      grid-column: 1 / -1;
+    }
+    .searchPanelLabel {
+      margin-top: 0;
+    }
+    .searchTastePills {
+      grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
+      gap: 8px 10px;
+    }
+    .searchKnownToggle {
+      grid-column: 2;
+      grid-row: 2 / span 2;
+      margin-top: 0;
+      padding-top: 0;
+      border-top: 0;
+    }
+    .searchDiversity {
+      grid-column: 1 / -1;
+      margin-top: 0;
+      padding-top: 14px;
+    }
+    .searchDivergentNote,
+    .searchInsights,
+    .searchInsightsButton {
+      display: none;
+    }
+    .catalogRoot {
       flex-direction: row !important;
     }
-    .catalogSidebar,
-    .browseShell > .splitRoot > .splitSidebar {
+    .catalogSidebar {
       flex: 0 0 clamp(204px, 28vw, 220px);
       width: clamp(204px, 28vw, 220px);
       max-height: none;
@@ -3586,9 +6906,93 @@
     }
   }
 
+  @media (max-width: 1740px) {
+    .searchCanvas {
+      --search-card-width: clamp(142px, 13.5vw, 172px);
+      --search-rail-width: calc((var(--search-card-width) * 6) + (var(--search-card-gap) * 5));
+    }
+  }
+
+  @media (max-width: 1500px) {
+    .searchCanvas {
+      --search-card-width: clamp(142px, 13.5vw, 172px);
+      --search-rail-width: calc((var(--search-card-width) * 5) + (var(--search-card-gap) * 4));
+    }
+  }
+
+  @media (max-width: 1220px) {
+    .searchCanvas {
+      --search-card-width: clamp(138px, 18vw, 166px);
+      --search-rail-width: calc((var(--search-card-width) * 4) + (var(--search-card-gap) * 3));
+    }
+  }
+
+  @media (max-width: 900px) {
+    .searchCanvas {
+      --search-card-width: clamp(132px, 28vw, 158px);
+      --search-rail-width: 100%;
+    }
+  }
+
+  @media (max-width: 520px) {
+    .searchCanvas {
+      --search-card-width: 132px;
+      --search-rail-width: 100%;
+    }
+  }
+
   @media (max-width: 700px) {
-    .catalogSidebar,
-    .browseShell > .splitRoot > .splitSidebar {
+    .root :global(.browse-topbar) {
+      grid-template-columns: minmax(0, auto) minmax(0, 1fr) minmax(0, auto);
+      gap: 8px;
+    }
+    .root :global(.browse-topbar .n-segmented) {
+      max-width: 190px;
+    }
+    .root :global(.browse-topbar .n-search) {
+      min-width: 0;
+      max-width: 100%;
+    }
+    .browseSubtabs {
+      gap: 18px;
+      padding-inline: 14px;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .browseSubtabs::-webkit-scrollbar {
+      display: none;
+    }
+    .searchLanding {
+      padding-inline: 14px;
+    }
+    .searchCanvas {
+      --search-card-width: clamp(128px, 39vw, 148px);
+    }
+    .searchRecommendationHeader {
+      gap: 8px;
+    }
+    .searchRailControls button {
+      width: 26px;
+      height: 26px;
+    }
+    .searchInsightCard {
+      grid-template-columns: 1fr;
+      row-gap: 12px;
+      padding: 16px;
+    }
+    .searchKnownToggle,
+    .searchDiversity {
+      grid-column: auto;
+      grid-row: auto;
+    }
+    .searchKnownToggle {
+      padding-top: 14px;
+      border-top: 1px solid rgba(255, 255, 255, 0.045);
+    }
+    .searchHeroCopy h2 {
+      font-size: 24px;
+    }
+    .catalogSidebar {
       flex-basis: 188px;
       width: 188px;
     }
@@ -3607,8 +7011,33 @@
       grid-template-columns: repeat(auto-fill, minmax(86px, 1fr));
     }
   }
+
+  @media (max-width: 560px) {
+    .root :global(.browse-topbar) {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+    .browse-topbar__center {
+      display: none;
+    }
+    .searchCanvas {
+      --search-card-width: min(132px, 42vw);
+    }
+    .searchHeroCopy h2 {
+      font-size: 22px;
+    }
+    .searchRecommendationHeader {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .searchRailControls {
+      align-self: flex-start;
+    }
+    .searchTastePills {
+      grid-template-columns: 1fr;
+    }
+  }
 </style>
 
-<script context="module" lang="ts">
+<script module lang="ts">
   function focusOnMount(node: HTMLElement) { node.focus(); }
 </script>

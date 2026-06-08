@@ -2771,7 +2771,7 @@ server.debugLogsEnabled = false
 server.downloadAsCbz = true
 server.autoDownloadNewChapters = false
 server.globalUpdateInterval = 12
-server.maxSourcesInParallel = 6
+server.maxSourcesInParallel = 3
 server.extensionRepos = []
 "#;
 
@@ -2815,6 +2815,7 @@ fn seed_server_conf(data_dir: &Path, profile: LocalServerProfile, port: u16) {
         &server_ip,
     );
     let patched = patch_conf_key(patched, "server.port", &port.to_string());
+    let patched = patch_conf_key(patched, "server.maxSourcesInParallel", "3");
 
     let _ = std::fs::write(&conf_path, patched);
 }
@@ -3655,7 +3656,7 @@ fn spawn_server(
     let cmd = app
         .shell()
         .command(&invocation.bin)
-        .env("JAVA_TOOL_OPTIONS", "-Djava.awt.headless=true")
+        .env("JAVA_TOOL_OPTIONS", "-Djava.awt.headless=true -Xms96m -Xmx1024m -XX:+UseG1GC")
         .args(&invocation.args)
         .current_dir(&working_dir);
 
@@ -3687,7 +3688,9 @@ fn spawn_server(
                 spawn_main_startup_event_drain(rx, diagnostic_log_path.clone(), java_pid);
             }
             let boot_probe_attempts = if data_dir.join("database.mv.db").exists() {
-                30
+                // Existing profiles can run scheduled backup/update work before binding the API port.
+                // Give them enough room to finish startup instead of killing a healthy-but-slow boot.
+                150
             } else {
                 90
             };

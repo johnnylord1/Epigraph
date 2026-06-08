@@ -547,6 +547,7 @@ struct SerializableMutationsRequest {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "entityType")]
+#[allow(dead_code)]
 enum SerializableMutationInput {
     #[serde(rename = "book.entry")]
     BookEntry {
@@ -2276,10 +2277,12 @@ fn value_i64_field(value: &Value, field: &str) -> Option<i64> {
     value.get(field).and_then(Value::as_i64)
 }
 
+#[allow(dead_code)]
 fn value_f64_field(value: &Value, field: &str) -> Option<f64> {
     value.get(field).and_then(Value::as_f64)
 }
 
+#[allow(dead_code)]
 fn value_bool_field(value: &Value, field: &str, default: bool) -> bool {
     value.get(field).and_then(Value::as_bool).unwrap_or(default)
 }
@@ -2337,6 +2340,7 @@ fn novel_classification_entity_id(value: &Value) -> Option<String> {
     value_string_field(value, "pluginId")
 }
 
+#[allow(dead_code)]
 fn build_book_entry_patch(value: &Value) -> Option<BookEntryPatch> {
     Some(BookEntryPatch {
         asset_fingerprint: value_string_field(value, "assetFingerprint"),
@@ -2355,6 +2359,7 @@ fn build_book_entry_patch(value: &Value) -> Option<BookEntryPatch> {
     })
 }
 
+#[allow(dead_code)]
 fn build_book_category_patch(value: &Value) -> Option<BookCategoryPatch> {
     let category_id = book_category_entity_id(value)?;
     Some(BookCategoryPatch {
@@ -2364,6 +2369,7 @@ fn build_book_category_patch(value: &Value) -> Option<BookCategoryPatch> {
     })
 }
 
+#[allow(dead_code)]
 fn build_book_library_ui_patch(value: &Value) -> BookLibraryUiPatch {
     BookLibraryUiPatch {
         active_category_id: value_string_field(value, "activeCategoryId"),
@@ -2375,6 +2381,7 @@ fn build_book_library_ui_patch(value: &Value) -> BookLibraryUiPatch {
     }
 }
 
+#[allow(dead_code)]
 fn build_novel_entry_patch(value: &Value) -> Option<NovelEntryPatch> {
     Some(NovelEntryPatch {
         identity_key: value_string_field(value, "id")?,
@@ -2391,6 +2398,7 @@ fn build_novel_entry_patch(value: &Value) -> Option<NovelEntryPatch> {
     })
 }
 
+#[allow(dead_code)]
 fn build_novel_chapter_patch(value: &Value) -> Option<NovelChapterPatch> {
     Some(NovelChapterPatch {
         novel_id: value_string_field(value, "novelId")?,
@@ -2402,6 +2410,7 @@ fn build_novel_chapter_patch(value: &Value) -> Option<NovelChapterPatch> {
     })
 }
 
+#[allow(dead_code)]
 fn build_novel_history_patch(value: &Value) -> Option<NovelHistoryPatch> {
     Some(NovelHistoryPatch {
         novel_id: value_string_field(value, "novelId")?,

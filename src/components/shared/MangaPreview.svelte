@@ -7,6 +7,7 @@
   import { cache, CACHE_KEYS } from "../../lib/cache";
   import { getCategoryDisplayName, isCompletedCategory, normalizeCategories } from "../../lib/library/categories";
   import { store, openReader, addToast, linkManga, unlinkManga, setPreviewManga, setActiveManga, openSearchBrowseFeatured, checkAndMarkCompleted as storeCheckAndMarkCompleted } from "../../store/state.svelte";
+  import NocturneState from "./NocturneState.svelte";
   import type { Manga, Chapter, Category } from "../../lib/types";
 
   let manga: Manga | null      = $state(null);
@@ -276,9 +277,9 @@
           {#if folderOpen}
             <div class="folder-menu">
               {#if catsLoading}
-                <p class="folder-empty">Loading…</p>
+                <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Folders" title="Loading folders" />
               {:else if allCategories.length === 0 && !creatingFolder}
-                <p class="folder-empty">No folders yet</p>
+                <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Folders" title="No folders yet" body="Create a folder in Settings to organize this series." />
               {/if}
               {#each allCategories as cat}
                 {@const isIn = mangaCategories.some(c => c.id === cat.id)}
@@ -323,7 +324,16 @@
       </div>
 
       <div class="content-body">
-        {#if fetchError}<div class="error-banner">{fetchError}</div>{/if}
+        {#if fetchError}
+          <NocturneState
+            layout="compact"
+            tone="warning"
+            icon="warning"
+            eyebrow="Preview"
+            title="Could not refresh this manga"
+            body={fetchError}
+          />
+        {/if}
 
         {#if loadingDetail}
           <div class="sk-row"><div class="sk-badge"></div><div class="sk-badge" style="width:72px"></div></div>
@@ -431,12 +441,12 @@
       </p>
       <div class="link-search-wrap">
         <input class="link-search" placeholder="Search your library…" bind:value={linkSearch} use:focusAction />
-      </div>
-      <div class="link-list">
+        </div>
+        <div class="link-list">
         {#if loadingLinkList}
-          <p class="link-empty">Loading…</p>
+          <NocturneState layout="compact" tone="info" icon="search" eyebrow="Links" title="Loading library" />
         {:else if linkPickerResults.length === 0}
-          <p class="link-empty">No results</p>
+          <NocturneState layout="compact" tone="info" icon="search" eyebrow="Links" title="No matching manga" body="Try another title from your library." />
         {:else}
           {#each linkPickerResults as m (m.id)}
             {@const isLinked = linkedIds.includes(m.id)}
@@ -457,7 +467,7 @@
 
 {/if}
 
-<script context="module" lang="ts">
+<script module lang="ts">
   function focusAction(node: HTMLElement) { node.focus(); }
 </script>
 
@@ -477,7 +487,6 @@
   .action-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .folder-wrap { position: relative; width: 100%; }
   .folder-menu { position: absolute; bottom: calc(100% + 4px); left: 0; right: 0; background: var(--bg-raised); border: 1px solid var(--border-base); border-radius: var(--radius-md); padding: var(--sp-1); display: flex; flex-direction: column; gap: 1px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); z-index: 10; animation: scaleIn 0.1s ease both; transform-origin: bottom center; }
-  .folder-empty { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-faint); padding: var(--sp-2) var(--sp-3); }
   .folder-item { display: flex; align-items: center; gap: var(--sp-2); padding: 6px var(--sp-3); border-radius: var(--radius-sm); font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-muted); background: none; border: none; cursor: pointer; text-align: left; transition: background var(--t-fast), color var(--t-fast); }
   .folder-item:hover { background: var(--bg-overlay); color: var(--text-primary); }
   .folder-item.folder-item-on { color: var(--accent-fg); }
@@ -500,7 +509,6 @@
   .close-btn:hover { color: var(--text-muted); background: var(--bg-raised); }
   .content-body { flex: 1; overflow-y: auto; padding: var(--sp-5) var(--sp-6); display: flex; flex-direction: column; gap: var(--sp-4); scrollbar-width: none; }
   .content-body::-webkit-scrollbar { display: none; }
-  .error-banner { font-family: var(--font-ui); font-size: var(--text-xs); color: #f59e0b; background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.25); border-radius: var(--radius-sm); padding: 6px var(--sp-3); }
   .sk-row { display: flex; gap: var(--sp-2); align-items: center; }
   .sk-badge { height: 20px; width: 54px; background: var(--bg-overlay); border-radius: var(--radius-sm); animation: pulse 1.4s ease infinite; }
   .sk-desc { display: flex; flex-direction: column; gap: 8px; padding: var(--sp-2) 0; }
@@ -546,7 +554,6 @@
   .link-search:focus { border-color: var(--border-strong); }
   .link-list { flex: 1; overflow-y: auto; padding: var(--sp-2); scrollbar-width: none; }
   .link-list::-webkit-scrollbar { display: none; }
-  .link-empty { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-faint); padding: var(--sp-4) var(--sp-3); text-align: center; letter-spacing: var(--tracking-wide); }
   .link-row { display: flex; align-items: center; gap: var(--sp-3); width: 100%; padding: 8px var(--sp-3); border-radius: var(--radius-md); border: none; background: none; text-align: left; cursor: pointer; transition: background var(--t-fast); }
   .link-row:hover { background: var(--bg-raised); }
   .link-row-linked { background: var(--accent-muted) !important; }

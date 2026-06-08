@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { slide } from "svelte/transition";
-  import { X, Book, Image, Sliders, Info, Keyboard, Gear, HardDrives, FolderSimple, Plus, Pencil, Trash, Wrench, PaintBrush, ListChecks, Lock, Eye, EyeSlash, Star, ShieldCheck, Tag, CaretDown, MagnifyingGlass } from "phosphor-svelte";
+  import { X, Book, Image, Sliders, Info, Keyboard, Gear, HardDrives, FolderSimple, Plus, Pencil, Trash, Wrench, PaintBrush, ListChecks, Lock, Eye, EyeSlash, Star, ShieldCheck, Tag, CaretDown } from "phosphor-svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { getVersion } from "@tauri-apps/api/app";
@@ -49,6 +49,12 @@
   import { GET_DOWNLOADS_PATH, SET_DOWNLOADS_PATH, SET_LOCAL_SOURCE_PATH, GET_TRACKERS, LOGIN_TRACKER_OAUTH, LOGIN_TRACKER_CREDENTIALS, LOGOUT_TRACKER, GET_TRACKER_RECORDS, GET_SERVER_SECURITY, SET_SERVER_AUTH, SET_SOCKS_PROXY, SET_FLARESOLVERR, CREATE_BACKUP, RESTORE_BACKUP, GET_RESTORE_STATUS, UPDATE_EXTENSION } from "../../lib/queries";
   import { buildRestoreReadiness } from "../../lib/reconciliation/readiness";
   import { normalizeTrackerOAuthInput, trackerOAuthParamName } from "../../lib/trackerOAuth";
+  import {
+    connectHardcover,
+    disconnectHardcover,
+    loadHardcoverState,
+    type HardcoverTrackingState,
+  } from "../../lib/novels/hardcover";
   import type { Category, Source, Extension } from "../../lib/types";
   import { BOOKS_FILTER_OPTIONS } from "../../lib/library/booksSection";
   import {
@@ -63,6 +69,7 @@
   import splashMark from "../../assets/aethon-splash-mark.png";
   import AppTopbar from "../layout/AppTopbar.svelte";
   import WindowControlsInline from "../layout/WindowControlsInline.svelte";
+  import NocturneState from "../shared/NocturneState.svelte";
   import SyncdConnectionPanel from "./SyncdConnectionPanel.svelte";
   import { store, updateSettings, resetSettings, resetKeybinds, clearHistory, wipeAllData, setSettingsOpen, setRuntimeSettingsTab, deleteCustomTheme, toggleHiddenCategory, setCategories, setLibraryMangaSnapshot, setLibraryTrackingSummarySnapshot, addToast, openSearchSources, replaceAppReadingState, replaceBooksState, DEFAULT_READING_STATS } from "../../store/state.svelte";
   import { cache } from "../../lib/cache";
@@ -2778,6 +2785,15 @@
   let credsPassword:   string       = $state("");
   let credsSubmitting: boolean      = $state(false);
   let loggingOut:      number|null  = $state(null); // trackerId being logged out
+  let hardcoverState: HardcoverTrackingState = $state(loadHardcoverState({
+    profileId: store.runtimeResolvedLocalProfileId,
+    serverUrl: store.runtimeServerUrl,
+  }));
+  let hardcoverTokenInput = $state("");
+  let hardcoverSubmitting = $state(false);
+  let hardcoverError: string | null = $state(null);
+  let hardcoverAuthOpen = $state(false);
+  let hardcoverIconBroken = $state(false);
   const activeTrackerDetail = $derived.by(
     () => trackers.find((candidate) => candidate.id === oauthTrackerId || candidate.id === credsTrackerId) ?? null,
   );
@@ -2796,9 +2812,57 @@
     }
   }
   $effect(() => { if (tab === "tracking" && trackers.length === 0 && !trackersLoading) loadTrackers(); });
+  $effect(() => {
+    if (tab === "tracking") {
+      hardcoverState = loadHardcoverState({
+        profileId: currentRuntimeProfileId,
+        serverUrl: currentRuntimeServerUrl,
+      });
+    }
+  });
+  async function submitHardcoverToken() {
+    if (!hardcoverTokenInput.trim()) return;
+    hardcoverSubmitting = true;
+    hardcoverError = null;
+    try {
+      hardcoverState = await connectHardcover({
+        profileId: currentRuntimeProfileId,
+        serverUrl: currentRuntimeServerUrl,
+      }, hardcoverTokenInput);
+      hardcoverTokenInput = "";
+      hardcoverAuthOpen = false;
+      addToast({ kind: "success", title: "Hardcover connected", body: hardcoverState.auth.username ?? "Novel tracking is ready." });
+    } catch (error: any) {
+      hardcoverError = error?.message ?? "Failed to connect Hardcover";
+    } finally {
+      hardcoverSubmitting = false;
+    }
+  }
+  function disconnectHardcoverAccount() {
+    hardcoverState = disconnectHardcover({
+      profileId: currentRuntimeProfileId,
+      serverUrl: currentRuntimeServerUrl,
+    });
+    hardcoverTokenInput = "";
+    hardcoverError = null;
+    hardcoverAuthOpen = false;
+    addToast({ kind: "info", title: "Hardcover disconnected" });
+  }
+  function startHardcoverAuth() {
+    closeTrackerDetail();
+    hardcoverError = null;
+    hardcoverTokenInput = "";
+    hardcoverAuthOpen = true;
+  }
+  function cancelHardcoverAuth() {
+    hardcoverTokenInput = "";
+    hardcoverError = null;
+    hardcoverAuthOpen = false;
+  }
   async function startOAuth(tracker: Tracker) {
     if (!tracker.authUrl) return;
     trackersError = null;
+    hardcoverAuthOpen = false;
     credsTrackerId = null;
     credsUsername = "";
     credsPassword = "";
@@ -2859,6 +2923,7 @@
     oauthAutoUnlisten = null;
   }
   function startCredentials(tracker: Tracker) {
+    hardcoverAuthOpen = false;
     oauthTrackerId = null;
     oauthCallbackInput = "";
     oauthAutoCapturing = false;
@@ -2900,6 +2965,7 @@
     }
   }
   function closeTrackerDetail() {
+    hardcoverAuthOpen = false;
     oauthTrackerId = null;
     oauthCallbackInput = "";
     oauthAutoCapturing = false;
@@ -3116,9 +3182,7 @@
         onfocusin={handleSettingsSearchFocusIn}
         onfocusout={handleSettingsSearchFocusOut}
       >
-        <span class="n-search__icon" aria-hidden="true">
-          <MagnifyingGlass size={18} weight="light" />
-        </span>
+        <span class="n-search__icon material-symbols-outlined" aria-hidden="true">search</span>
         <input
           class="n-search__input"
           aria-label="Search settings"
@@ -4008,9 +4072,13 @@
                 </button>
               </div>
               {#if storageError}
-                <p class="settings-card__notice settings-card__notice--error">{storageError}</p>
+                <div class="settings-state">
+                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Storage" title="Could not load disk usage" body={storageError} />
+                </div>
               {:else if isExternalServer}
-                <p class="settings-card__notice settings-card__notice--info">Disk usage is unavailable for external servers because filesystem access requires a local runtime.</p>
+                <div class="settings-state">
+                  <NocturneState layout="compact" tone="info" icon="info" eyebrow="Storage" title="Disk usage unavailable" body="External servers do not expose local filesystem usage to this desktop runtime." />
+                </div>
               {:else}
                 <div class="mb-3 flex items-baseline justify-between">
                   <span class="settings-mini-row__label">Storage usage</span>
@@ -4218,7 +4286,9 @@
                       <span class="settings-chip">Warnings: {backupUnifiedWarningCount}</span>
                     </div>
                     {#if backupUnifiedPlan.executionBlockedReason}
-                      <p class="settings-card__notice settings-card__notice--error" style="margin-top:14px">{backupUnifiedPlan.executionBlockedReason}</p>
+                      <div class="settings-state settings-state--spaced">
+                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Restore" title="Restore is blocked" body={backupUnifiedPlan.executionBlockedReason} />
+                      </div>
                     {/if}
                     {#if backupUnifiedPlan.containerIssues.length > 0}
                       <div class="settings-card__stack" style="margin-top:14px">
@@ -4354,7 +4424,9 @@
                       </div>
                     {/if}
                     {#if backupResolvedExecutionBlockedReason}
-                      <p class="settings-card__notice settings-card__notice--error" style="margin-top:14px">{backupResolvedExecutionBlockedReason}</p>
+                      <div class="settings-state settings-state--spaced">
+                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Restore" title="Restore target needs attention" body={backupResolvedExecutionBlockedReason} />
+                      </div>
                     {/if}
                     <div class="settings-row settings-mini-row settings-mini-row--stretch" style="margin-top:14px">
                       <div class="settings-mini-row__body">
@@ -4592,7 +4664,9 @@
                         </div>
                       {/if}
                       {#if backupExtensionLookupError}
-                        <p class="settings-card__notice settings-card__notice--error" style="margin-top:12px">{backupExtensionLookupError}</p>
+                        <div class="settings-state settings-state--spaced">
+                          <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Extensions" title="Could not inspect extension matches" body={backupExtensionLookupError} />
+                        </div>
                       {/if}
                     </div>
                   {/if}
@@ -4638,7 +4712,9 @@
                 </div>
               {/if}
               {#if backupError}
-                <p class="settings-card__notice settings-card__notice--error" style="margin-top:16px">{backupError}</p>
+                <div class="settings-state settings-state--spaced">
+                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Backup" title="Backup action failed" body={backupError} />
+                </div>
               {/if}
             </div>
             {/if}
@@ -4680,7 +4756,7 @@
                         </button>
                       </div>
                       {#if pathsFieldError.dl}
-                        <span class="settings-input-line__error">{pathsFieldError.dl}</span>
+                        <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Path" title="Download path needs attention" body={pathsFieldError.dl} />
                       {/if}
                     </div>
                     <div class="settings-row settings-mini-row settings-mini-row--stretch">
@@ -4706,10 +4782,10 @@
                         </button>
                       </div>
                       {#if pathsFieldError.loc}
-                        <span class="settings-input-line__error">{pathsFieldError.loc}</span>
+                        <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Path" title="Local source path needs attention" body={pathsFieldError.loc} />
                       {/if}
                       {#if pathsError}
-                        <span class="settings-input-line__error">{pathsError}</span>
+                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Path" title="Could not save paths" body={pathsError} />
                       {/if}
                     </div>
                   </div>
@@ -4741,7 +4817,9 @@
                       </div>
                     {/if}
                     {#if migrateError}
-                      <p class="settings-card__notice settings-card__notice--error" style="margin-top:14px">{migrateError}</p>
+                      <div class="settings-state settings-state--spaced">
+                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Migration" title="Path migration failed" body={migrateError} />
+                      </div>
                     {/if}
                   </div>
                 {/if}
@@ -4873,7 +4951,9 @@
                     : "Books categories are local to Aethon and stay separate from Comics."}
                 </p>
                 {#if categoryDomain === "comics" && catsError}
-                  <p class="storage-loading" style="color:var(--color-error)">{catsError}</p>
+                  <div class="settings-state">
+                    <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Categories" title="Could not load comic folders" body={catsError} />
+                  </div>
                 {/if}
                 <div class="settings-card__footer settings-card__footer--editor">
                   <div class="settings-input-line settings-input-line__grow">
@@ -4883,9 +4963,9 @@
                 </div>
                 {#if categoryDomain === "comics"}
                   {#if catsLoading}
-                    <p class="storage-loading">Loading categories...</p>
+                    <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Categories" title="Loading categories" />
                   {:else if store.categories.filter((c) => c.id !== 0).length === 0}
-                    <p class="storage-loading">No categories yet. Create one above.</p>
+                    <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Categories" title="No categories yet" body="Create one above to organize your library." />
                   {:else}
                     {@const displayCats = store.categories
                       .filter((c) => c.id !== 0)
@@ -4922,7 +5002,7 @@
                     </div>
                   {/if}
                 {:else if sortedBooksCategories.length === 0}
-                  <p class="storage-loading">No Books categories yet. Create one above.</p>
+                  <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Books categories" title="No categories yet" body="Create one above to organize books and novels." />
                 {:else}
                   <div class="settings-card__stack" style="margin-top:16px">
                     {#each sortedBooksCategories as cat, i}
@@ -4965,10 +5045,12 @@
             <div class="settings-card">
               <p class="settings-card__title">Connected services</p>
               {#if trackersError}
-                <div class="tracker-error">{trackersError}</div>
+                <div class="settings-state">
+                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Trackers" title="Could not load trackers" body={trackersError} />
+                </div>
               {/if}
               {#if trackersLoading}
-                <p class="storage-loading">Loading trackers...</p>
+                <NocturneState layout="compact" tone="info" icon="retry" eyebrow="Trackers" title="Loading trackers" />
               {:else}
                 <div class="settings-card__stack">
                   {#each trackers as tracker}
@@ -4995,6 +5077,37 @@
                       </div>
                     </div>
                   {/each}
+                  <div class="settings-row settings-mini-row settings-mini-row--tracker" class:tracker-row-active={hardcoverState.auth.connected}>
+                    <div class="tracker-identity">
+                      {#if hardcoverIconBroken}
+                        <div class="tracker-logo tracker-logo--text">HC</div>
+                      {:else}
+                        <img
+                          src="https://hardcover.app/favicon.ico"
+                          alt="Hardcover"
+                          class="tracker-logo"
+                          onerror={() => (hardcoverIconBroken = true)}
+                        />
+                      {/if}
+                      <div class="tracker-name-block">
+                        <span class="tracker-label">Hardcover</span>
+                        <span class="tracker-status-pill" class:pill-on={hardcoverState.auth.connected}>
+                          {hardcoverState.auth.connected ? "Connected" : "Not connected"}
+                        </span>
+                      </div>
+                    </div>
+                    <div class="tracker-action">
+                      {#if hardcoverState.auth.connected}
+                        <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger" type="button" onclick={disconnectHardcoverAccount}>
+                          Disconnect
+                        </button>
+                      {:else}
+                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={startHardcoverAuth}>
+                          Login
+                        </button>
+                      {/if}
+                    </div>
+                  </div>
                 </div>
                 {#if activeTrackerDetail}
                   <div class="settings-card__surface" style="margin-top:16px">
@@ -5065,6 +5178,46 @@
                       </div>
                     {/if}
                   </div>
+                {:else if hardcoverAuthOpen}
+                  <div class="settings-card__surface" style="margin-top:16px">
+                    <div class="settings-card__head">
+                      <p class="settings-card__title">Hardcover</p>
+                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={cancelHardcoverAuth}>Close</button>
+                    </div>
+                    <p class="settings-card__intro">
+                      Hardcover currently authenticates third-party apps with an API key. Aethon stores it only in this local profile and uses it for novels/books.
+                    </p>
+                    {#if hardcoverError}
+                      <div class="settings-state">
+                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Hardcover" title="Could not connect Hardcover" body={hardcoverError} />
+                      </div>
+                    {/if}
+                    <div class="settings-card__stack">
+                      <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                        <div class="settings-mini-row__body">
+                          <p class="settings-mini-row__label">Hardcover API key</p>
+                          <p class="settings-mini-row__hint">Create an API key in Hardcover account settings, then paste the key value here.</p>
+                        </div>
+                      </div>
+                      <input
+                        class="settings-text-input"
+                        type="password"
+                        placeholder="Hardcover API key"
+                        bind:value={hardcoverTokenInput}
+                        onkeydown={(e) => { if (e.key === "Enter") submitHardcoverToken(); if (e.key === "Escape") cancelHardcoverAuth(); }}
+                        use:focusEl
+                      />
+                    </div>
+                    <div class="settings-card__footer">
+                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={submitHardcoverToken} disabled={hardcoverSubmitting || !hardcoverTokenInput.trim()}>
+                        {hardcoverSubmitting ? "Connecting..." : "Connect"}
+                      </button>
+                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => openUrl("https://hardcover.app/account/api")}>
+                        Get API key
+                      </button>
+                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={cancelHardcoverAuth}>Cancel</button>
+                    </div>
+                  </div>
                 {/if}
               {/if}
             </div>
@@ -5128,7 +5281,9 @@
             {#if secError}
               <div class="settings-card settings-card--wide">
                 <p class="settings-card__title">Security status</p>
-                <p class="settings-card__notice settings-card__notice--error">{secError}</p>
+                <div class="settings-state">
+                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Security" title="Security setting failed" body={secError} />
+                </div>
               </div>
             {/if}
 
@@ -5237,7 +5392,9 @@
                 </div>
               </div>
               {#if store.settings.serverAuthEnabled}
-                <p class="settings-card__notice settings-card__notice--info">Images are proxied through Tauri when Basic Auth is active, which may reduce loading speed.</p>
+                <div class="settings-state">
+                  <NocturneState layout="compact" tone="info" icon="info" eyebrow="Security" title="Image proxy enabled" body="Images are proxied through Tauri while Basic Auth is active, so image loading can be slower." />
+                </div>
               {/if}
             </div>
 
@@ -5347,7 +5504,7 @@
                         <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={commitPin} disabled={pinInput.length > 0 && pinInput.length < 4}>{store.settings.appLockPin && pinInput === store.settings.appLockPin ? "Saved" : "Save"}</button>
                       </div>
                       {#if pinError}
-                        <span class="settings-input-line__error">{pinError}</span>
+                        <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="PIN" title="PIN needs attention" body={pinError} />
                       {/if}
                     </div>
                   </div>
@@ -5733,9 +5890,9 @@
                     <input class="settings-text-input" placeholder="Filter sources..." bind:value={sourceSearch} />
                   </div>
                   {#if contentSourcesLoading}
-                    <p class="storage-loading">Loading sources...</p>
+                    <NocturneState layout="compact" tone="info" icon="retry" eyebrow="Sources" title="Loading sources" />
                   {:else if contentSources.length === 0}
-                    <p class="storage-loading">No sources found - check your server connection.</p>
+                    <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Sources" title="No sources found" body="Check your server connection or source visibility rules." />
                   {:else}
                     <div class="content-source-list">
                       {#each contentSourcesFiltered as group (group.name)}
@@ -5821,7 +5978,9 @@
                 </div>
               </div>
               {#if onLatestVersion}
-                <p class="settings-card__notice settings-card__notice--success">You're on the latest version.</p>
+                <div class="settings-state">
+                  <NocturneState layout="compact" tone="success" icon="info" eyebrow="Updates" title="You're on the latest version" />
+                </div>
               {/if}
               {#if updatePhase === "downloading" && IS_WINDOWS}
                 <div class="update-progress-wrap">
@@ -5842,8 +6001,10 @@
                 </div>
               {/if}
               {#if updatePhase === "error"}
+                <div class="settings-state">
+                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Updates" title="Update failed" body={updateError} />
+                </div>
                 <div class="update-error-row">
-                  <span style="color:var(--color-error);font-family:var(--font-ui);font-size:var(--text-xs)">{updateError}</span>
                   <button class="n-btn n-btn--sm n-btn-ghost settings-mini-action" type="button" onclick={cancelUpdate}>Dismiss</button>
                 </div>
               {/if}
@@ -5854,11 +6015,13 @@
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (aboutReleasesOpen = false)}>Close</button>
                 </div>
                 {#if releasesError}
-                  <p class="storage-loading" style="color:var(--color-error)">{releasesError}</p>
+                  <div class="settings-state">
+                    <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Releases" title="Could not fetch releases" body={releasesError} />
+                  </div>
                 {:else if releasesLoading}
-                  <p class="storage-loading">Fetching releases...</p>
+                  <NocturneState layout="compact" tone="info" icon="retry" eyebrow="Releases" title="Fetching releases" />
                 {:else if releases.length === 0}
-                  <p class="storage-loading">No releases found.</p>
+                  <NocturneState layout="compact" tone="info" icon="info" eyebrow="Releases" title="No releases found" />
                 {:else}
                   <div class="release-list-scroll">
                     <div class="release-list">
@@ -5972,7 +6135,7 @@
     </section>
   </div>
 </main>
-<script context="module" lang="ts">
+<script module lang="ts">
   function focusInput(node: HTMLElement) { node.focus(); }
   function focusEl(node: HTMLElement) { setTimeout(() => node.focus(), 0); }
 </script>
@@ -6027,7 +6190,19 @@
     min-width: 28px;
     padding: 0 8px;
   }
-  .storage-loading { font-family: var(--font-ui); font-size: 12px; color: rgba(202, 196, 208, 0.48); letter-spacing: 0.02em; padding: 12px 14px; border-radius: 14px; border: 1px solid rgba(72, 69, 79, 0.12); background: rgba(255, 255, 255, 0.02); }
+  .settings-state {
+    margin-top: 12px;
+  }
+  .settings-state:first-child {
+    margin-top: 0;
+  }
+  .settings-state--spaced {
+    margin-top: 14px;
+  }
+  .path-input-error {
+    border-color: rgba(216, 180, 255, 0.32) !important;
+    box-shadow: 0 0 0 1px rgba(216, 180, 255, 0.08);
+  }
   .release-list-scroll { max-height: 336px; overflow-y: auto; padding: 0 var(--sp-1); scrollbar-width: thin; scrollbar-color: var(--border-base) transparent; }
   .release-list-scroll::-webkit-scrollbar { width: 4px; }
   .release-list-scroll::-webkit-scrollbar-track { background: transparent; }
@@ -6095,15 +6270,15 @@
     margin: 0 var(--sp-3) var(--sp-2);
   }
   .update-ready-label { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--accent-fg); letter-spacing: var(--tracking-wide); flex: 1; }
-  .update-error-row { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); }
+  .update-error-row { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); padding: var(--sp-2) 0 0; }
   .tracker-identity { display: flex; align-items: center; gap: var(--sp-3); flex-shrink: 0; }
   .tracker-logo { width: 28px; height: 28px; border-radius: var(--radius-sm); object-fit: contain; flex-shrink: 0; }
+  .tracker-logo--text { display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--accent-dim); background: var(--accent-muted); color: var(--accent-fg); font-family: var(--font-ui); font-size: 10px; font-weight: var(--weight-bold); letter-spacing: var(--tracking-wide); }
   .tracker-name-block { display: flex; flex-direction: column; gap: 3px; }
   .tracker-label { font-size: var(--text-sm); color: var(--text-secondary); font-weight: var(--weight-medium); }
   .tracker-status-pill { font-family: var(--font-ui); font-size: var(--text-2xs); letter-spacing: var(--tracking-wider); text-transform: uppercase; padding: 2px 7px; border-radius: var(--radius-sm); border: 1px solid var(--border-dim); color: var(--text-faint); background: var(--bg-overlay); width: fit-content; }
   .tracker-status-pill.pill-on { border-color: var(--accent-dim); color: var(--accent-fg); background: var(--accent-muted); }
   .tracker-action { display: flex; flex-direction: column; align-items: flex-end; gap: var(--sp-2); flex: 1; min-width: 0; }
-  .tracker-error { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--color-error); background: var(--color-error-bg); border: 1px solid var(--color-error); border-radius: var(--radius-sm); padding: 6px var(--sp-3); margin: 0 var(--sp-3) var(--sp-2); letter-spacing: var(--tracking-wide); }
   .sec-status-pill { font-family: var(--font-ui); font-size: var(--text-2xs); letter-spacing: var(--tracking-wider); text-transform: uppercase; padding: 2px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border-dim); color: var(--text-faint); background: var(--bg-overlay); flex-shrink: 0; cursor: default; }
   .sec-pill-on { border-color: var(--accent-dim); color: var(--accent-fg); background: var(--accent-muted); }
   .sec-field-wrap { position: relative; flex-shrink: 0; }

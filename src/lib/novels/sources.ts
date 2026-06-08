@@ -16,6 +16,41 @@ import {
 
 const runtimeHost = new TauriNovelRuntimeHostAdapter();
 
+type NovelSourceRuntimeEntry = {
+  name: string | null;
+  path: string | null;
+  cover: string | null;
+  rating?: unknown;
+  score?: unknown;
+  stars?: unknown;
+  ratingMax?: unknown;
+  scoreMax?: unknown;
+};
+
+function coerceNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const normalized = value.replace(",", ".").match(/\d+(?:\.\d+)?/u)?.[0];
+    if (!normalized) return null;
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function extractNovelSourceRating(entry: NovelSourceRuntimeEntry): Pick<NovelSourceSearchResult, "rating" | "ratingMax" | "ratingLabel"> {
+  const ratingValue = entry.rating ?? entry.score ?? entry.stars;
+  const rating = coerceNumber(ratingValue);
+  if (rating == null) return {};
+  const explicitMax = coerceNumber(entry.ratingMax ?? entry.scoreMax);
+  const ratingMax = explicitMax ?? (rating > 10 ? 100 : rating > 5 ? 10 : 5);
+  return {
+    rating,
+    ratingMax,
+    ratingLabel: typeof ratingValue === "string" ? ratingValue : `${rating}`,
+  };
+}
+
 function decodeBase64Text(input: string): string {
   if (typeof atob === "function") {
     const binary = atob(input);
@@ -162,7 +197,7 @@ export async function searchInstalledNovelSource(
   const payload = await readPluginPayload(source);
   return resolveSearchResultsWithFallback(searchTerm, async (attemptTerm) => {
     const result = await runtimeHost.invoke<typeof payload & { searchTerm: string; pageNo: number }, {
-      results: Array<{ name: string | null; path: string | null; cover: string | null }>;
+      results: Array<NovelSourceRuntimeEntry>;
     }>("source.search", {
       ...payload,
       searchTerm: attemptTerm,
@@ -182,6 +217,7 @@ export async function searchInstalledNovelSource(
           title,
           path,
           coverUrl: normalizeText(entry.cover),
+          ...extractNovelSourceRating(entry),
         } satisfies NovelSourceSearchResult;
       })
       .filter((entry): entry is NovelSourceSearchResult => Boolean(entry));
@@ -200,7 +236,7 @@ export async function browseInstalledNovelSource(
 
   const payload = await readPluginPayload(source);
   const result = await runtimeHost.invoke<typeof payload & { pageNo: number }, {
-    results: Array<{ name: string | null; path: string | null; cover: string | null }>;
+    results: Array<NovelSourceRuntimeEntry>;
   }>("source.popular", {
     ...payload,
     pageNo,
@@ -219,6 +255,7 @@ export async function browseInstalledNovelSource(
         title,
         path,
         coverUrl: normalizeText(entry.cover),
+        ...extractNovelSourceRating(entry),
       } satisfies NovelSourceSearchResult;
     })
     .filter((entry): entry is NovelSourceSearchResult => Boolean(entry));

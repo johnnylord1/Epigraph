@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { BookOpen, Folder, FolderSimplePlus, UploadSimple } from "phosphor-svelte";
+  import { Folder, FolderSimplePlus, UploadSimple } from "phosphor-svelte";
   import { addToast, setActiveBookId, setLibraryScrollTop, store, updateSettings, upsertBook } from "../../store/state.svelte";
   import { hasBookLocalAsset, MISSING_BOOK_ASSET_MESSAGE } from "../../lib/books/availability";
   import { BookAssetResolver } from "../../lib/books/assets";
@@ -17,7 +17,9 @@
   } from "../../lib/library/domainCategories";
   import { computeLibraryLayout, type LibraryPreferredGridColumns, type LibraryViewMode } from "../../lib/libraryDisplay";
   import type { BooksSectionVM } from "../../lib/library/contracts";
+  import type { NovelShelfCard } from "../../lib/novels/libraryShelf";
   import ContextMenu, { type MenuEntry } from "../shared/ContextMenu.svelte";
+  import NocturneState from "../shared/NocturneState.svelte";
   import LibraryCardGrid from "./LibraryCardGrid.svelte";
 
   type Props = {
@@ -30,6 +32,8 @@
     preferredColumns: LibraryPreferredGridColumns;
     showProgress: boolean;
     showOutline: boolean;
+    novelCards?: NovelShelfCard[];
+    onOpenNovel?: (novelId: string) => void;
   };
 
   let {
@@ -42,6 +46,8 @@
     preferredColumns = "auto",
     showProgress = true,
     showOutline = true,
+    novelCards = [],
+    onOpenNovel = () => {},
   }: Props = $props();
 
   const win = getCurrentWindow();
@@ -64,7 +70,7 @@
   );
 
   const visibleBooks = $derived(books.slice(0, renderVisible));
-  const visibleCards = $derived(
+  const visibleBookCards = $derived(
     visibleBooks.map((book) => {
       const progress = bookProgressById.get(book.id);
       const coverSrc = brokenCoverKeys.has(bookCoverKey(book))
@@ -102,6 +108,7 @@
       };
     }),
   );
+  const visibleCards = $derived([...visibleBookCards, ...novelCards]);
   const hasMore = $derived(books.length > renderVisible);
   const remainingCount = $derived(Math.max(0, books.length - renderVisible));
   const layout = $derived(
@@ -169,6 +176,9 @@
 
   $effect(() => {
     books.length;
+    if (renderVisible === 0 && books.length > 0) {
+      renderVisible = Math.min(renderLimit, books.length);
+    }
     if (renderVisible > books.length) {
       renderVisible = books.length;
     }
@@ -234,6 +244,12 @@
   }
 
   function openBook(cardId: string) {
+    const novel = novelCards.find((card) => card.id === cardId);
+    if (novel) {
+      onOpenNovel(novel.novelId);
+      return;
+    }
+
     const book = bookByCardId.get(cardId);
     if (!book) return;
     if (!hasBookLocalAsset(book)) {
@@ -362,10 +378,16 @@
 </script>
 
 <div class="content" bind:this={contentEl} onscroll={handleContentScroll}>
-  {#if totalBooks === 0 || books.length === 0}
+  {#if totalBooks === 0 || visibleCards.length === 0}
     <div class="center books-empty">
-      <BookOpen size={28} weight="duotone" />
-      <span>{vm.emptyMessage}</span>
+      <NocturneState
+        layout="center"
+        tone="info"
+        icon="books"
+        eyebrow="Library"
+        title="No books here yet"
+        body={vm.emptyMessage}
+      />
     </div>
   {:else}
     <LibraryCardGrid

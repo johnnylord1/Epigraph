@@ -40,6 +40,7 @@
   } from "../../lib/novels/automaticClassification";
   import NovelSourceCheckModal, { type NovelSourceCheckStage } from "../novels/NovelSourceCheckModal.svelte";
   import NovelSourceStatusDetails from "../novels/NovelSourceStatusDetails.svelte";
+  import NocturneState from "../shared/NocturneState.svelte";
 
   interface Props {
     profileId?: string | null;
@@ -638,13 +639,20 @@
   {/if}
 
   {#if panelError}
-    <p class="novel-repos-state novel-repos-state--error">{panelError}</p>
+    <NocturneState
+      layout="compact"
+      tone="danger"
+      icon="warning"
+      eyebrow="Novel repositories"
+      title="Could not update repository settings"
+      body={panelError}
+    />
   {/if}
 
   {#if loading}
-    <p class="novel-repos-state">Loading profile-scoped novel repositories…</p>
+    <NocturneState layout="compact" tone="info" icon="retry" eyebrow="Novel repositories" title="Loading repositories" body="Loading profile-scoped novel repositories..." />
   {:else if repositoryState.repositories.length === 0}
-    <p class="novel-repos-state">No LNReader repositories saved for this profile yet.</p>
+    <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Novel repositories" title="No repositories saved" body="No LNReader repositories are saved for this profile yet." />
   {:else}
     <div class="novel-repos-list">
       {#each repositoryState.repositories as repository (repository.id)}
@@ -706,7 +714,7 @@
           </div>
 
           {#if repository.lastError}
-            <p class="novel-repos-state novel-repos-state--error">{repository.lastError}</p>
+            <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Repository" title="Last refresh failed" body={repository.lastError} />
           {/if}
 
           <div class="novel-repo-card__catalog-shell">
@@ -936,23 +944,6 @@
     border-color: rgba(184, 167, 234, 0.24);
     background: rgba(25, 23, 31, 0.94);
     box-shadow: 0 0 0 1px rgba(184, 167, 234, 0.08);
-  }
-
-  .novel-repos-state {
-    margin: 0;
-    padding: 12px 14px;
-    border-radius: 16px;
-    border: 1px solid rgba(72, 69, 79, 0.12);
-    background: rgba(255, 255, 255, 0.02);
-    color: rgba(202, 196, 208, 0.48);
-    font-size: 12px;
-    line-height: 1.45;
-  }
-
-  .novel-repos-state--error {
-    color: var(--color-error);
-    border-color: color-mix(in srgb, var(--color-error) 35%, rgba(72, 69, 79, 0.12));
-    background: color-mix(in srgb, var(--color-error) 10%, rgba(255, 255, 255, 0.02));
   }
 
   .novel-repos-list {

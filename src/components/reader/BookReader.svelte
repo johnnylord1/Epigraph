@@ -10,6 +10,7 @@
     CircleNotch,
     MagnifyingGlassMinus,
     MagnifyingGlassPlus,
+    SlidersHorizontal,
     X,
   } from "phosphor-svelte";
   import {
@@ -44,6 +45,7 @@
     store,
     updateSettings,
   } from "../../store/state.svelte";
+  import NocturneState from "../shared/NocturneState.svelte";
   import ReaderHud from "./ReaderHud.svelte";
 
   configurePdfJsWorker(pdfjsLib);
@@ -72,6 +74,26 @@
   const isBookmarked = $derived(!!currentBookmark);
   const zoom = $derived(store.settings.readerZoom ?? 1);
   const zoomPct = $derived(Math.round(zoom * 100));
+  const proseTheme = $derived(store.settings.proseReaderTheme ?? "nocturne");
+  const proseFontSize = $derived(store.settings.proseReaderFontSize ?? 18);
+  const proseLineHeight = $derived(store.settings.proseReaderLineHeight ?? 1.75);
+  const proseParagraphSpacing = $derived(store.settings.proseReaderParagraphSpacing ?? 1.1);
+  const proseContentWidth = $derived(store.settings.proseReaderContentWidth ?? 760);
+  const proseFontFamily = $derived(store.settings.proseReaderFontFamily || "Georgia, serif");
+  const proseTextAlign = $derived(store.settings.proseReaderTextAlign ?? "left");
+  const pdfFitMode = $derived(store.settings.pdfFitMode ?? "width");
+  const pdfDarkMode = $derived(store.settings.pdfDarkMode ?? false);
+  const prosePalette = $derived.by(() => {
+    if (proseTheme === "light") return { text: "#19151d", bg: "#f5f1ea", surface: "#f8f4ec" };
+    if (proseTheme === "sepia") return { text: "#2b2118", bg: "#efe1c9", surface: "#f6ead4" };
+    if (proseTheme === "oled") return { text: "#e8e2f4", bg: "#000000", surface: "#050507" };
+    if (proseTheme === "dark") return { text: "#ece7f5", bg: "#09080d", surface: "#111019" };
+    return {
+      text: store.settings.proseReaderTextColor ?? "#efe9de",
+      bg: store.settings.proseReaderBackgroundColor ?? "#17121c",
+      surface: store.settings.proseReaderBackgroundColor ?? "#17121c",
+    };
+  });
   const pdfSections = $derived(
     activeBook?.subtype === "pdf" ? getBookSectionsSummary(activeBook) : [],
   );
@@ -85,6 +107,7 @@
   let error: string | null = $state(null);
   let uiVisible = $state(true);
   let zoomOpen = $state(false);
+  let toolsOpen = $state(true);
   let pageNumber = $state(1);
   let totalPages = $state(1);
   let progressPercent = $state(0);
@@ -133,6 +156,118 @@
 
   function resolveEpubHrefFromPercentage(pct: number) {
     return resolveBookSectionHrefFromProgress(epubSections, pct);
+  }
+
+  function applyEpubTheme() {
+    const rendition = currentRendition;
+    if (!rendition || activeBook?.subtype !== "epub") return;
+    const themeCss = `
+      html,
+      body {
+        background: ${prosePalette.surface} !important;
+        color: ${prosePalette.text} !important;
+        font-family: ${proseFontFamily} !important;
+        font-size: ${proseFontSize}px !important;
+        line-height: ${proseLineHeight} !important;
+        text-align: ${proseTextAlign} !important;
+      }
+
+      body {
+        padding: 0 1.6rem !important;
+      }
+
+      body,
+      body * {
+        color: ${prosePalette.text} !important;
+        font-family: ${proseFontFamily} !important;
+      }
+
+      p,
+      li,
+      blockquote,
+      div {
+        font-family: ${proseFontFamily} !important;
+        font-size: ${proseFontSize}px !important;
+        line-height: ${proseLineHeight} !important;
+      }
+
+      p {
+        margin-bottom: ${proseParagraphSpacing}em !important;
+        text-align: ${proseTextAlign} !important;
+      }
+
+      a {
+        color: #c9b5ff !important;
+      }
+    `;
+    rendition.themes.default({
+      "html, body": {
+        "background": prosePalette.surface,
+        "color": prosePalette.text,
+        "font-family": proseFontFamily,
+        "font-size": `${proseFontSize}px`,
+        "line-height": String(proseLineHeight),
+        "text-align": proseTextAlign,
+      },
+      body: {
+        "font-family": proseFontFamily,
+        "font-size": `${proseFontSize}px`,
+        "line-height": String(proseLineHeight),
+        "text-align": proseTextAlign,
+        "color": prosePalette.text,
+        "background": prosePalette.surface,
+        "padding": "0 1.6rem",
+      },
+      p: {
+        "color": prosePalette.text,
+        "margin-bottom": `${proseParagraphSpacing}em`,
+      },
+      a: {
+        "color": "#c9b5ff",
+      },
+    });
+    rendition.themes.fontSize(`${zoomPct}%`);
+    for (const content of rendition.getContents?.() ?? []) {
+      const doc = content.document;
+      if (!doc) continue;
+      let style = doc.getElementById("aethon-epub-reader-theme");
+      if (!style) {
+        style = doc.createElement("style");
+        style.id = "aethon-epub-reader-theme";
+        doc.head.appendChild(style);
+      }
+      style.textContent = themeCss;
+    }
+  }
+
+  function cycleProseTheme() {
+    const themes = ["nocturne", "dark", "sepia", "light", "oled"] as const;
+    const current = themes.indexOf(proseTheme as any);
+    updateSettings({ proseReaderTheme: themes[(current + 1) % themes.length] });
+  }
+
+  function updateFontSize(delta: number) {
+    updateSettings({ proseReaderFontSize: Math.max(12, Math.min(32, proseFontSize + delta)) });
+  }
+
+  function updateLineHeight(delta: number) {
+    updateSettings({ proseReaderLineHeight: Math.round(Math.max(1.2, Math.min(2.4, proseLineHeight + delta)) * 100) / 100 });
+  }
+
+  function updateContentWidth(delta: number) {
+    updateSettings({ proseReaderContentWidth: Math.max(520, Math.min(980, proseContentWidth + delta)) });
+  }
+
+  function updateProseColor(key: "text" | "background", value: string) {
+    updateSettings(key === "text"
+      ? { proseReaderTheme: "nocturne", proseReaderTextColor: value }
+      : { proseReaderTheme: "nocturne", proseReaderBackgroundColor: value });
+  }
+
+  function cyclePdfFit() {
+    const modes = ["width", "page", "actual"] as const;
+    const current = modes.indexOf(pdfFitMode as any);
+    updateSettings({ pdfFitMode: modes[(current + 1) % modes.length] });
   }
 
   function auditReader(event: string, payload: Record<string, unknown> = {}) {
@@ -338,14 +473,9 @@
 
     currentBookRef = book;
     currentRendition = rendition;
-    rendition.themes.default({
-      body: {
-        "font-family": "Georgia, serif",
-        "line-height": "1.7",
-      },
-    });
-    rendition.themes.fontSize(`${zoomPct}%`);
+    applyEpubTheme();
     rendition.on("relocated", updateEpubProgress);
+    rendition.on("rendered", applyEpubTheme);
 
     await book.ready;
     setStage("epub.ready");
@@ -356,6 +486,7 @@
     const target = resolveBookResumeTarget(activeProgress) ?? undefined;
     if (target) await rendition.display(target);
     else await rendition.display();
+    applyEpubTheme();
     setStage("epub.displayed");
     auditReader("books.reader.epub.displayed", {
       stage: currentStage,
@@ -384,7 +515,16 @@
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const baseScale = Math.max(0.1, zoom) * 1.5;
+    const nativeViewport = page.getViewport({ scale: 1 });
+    const stage = canvas.parentElement;
+    const availableWidth = Math.max(320, (stage?.clientWidth ?? window.innerWidth) - 48);
+    const availableHeight = Math.max(320, window.innerHeight - 150);
+    const fitScale = pdfFitMode === "actual"
+      ? 1
+      : pdfFitMode === "page"
+        ? Math.min(availableWidth / nativeViewport.width, availableHeight / nativeViewport.height)
+        : availableWidth / nativeViewport.width;
+    const baseScale = Math.max(0.1, zoom) * Math.max(0.1, fitScale);
     const baseViewport = page.getViewport({ scale: baseScale });
     const dpr = window.devicePixelRatio || 1;
     const pixelRatio = dpr * dpr;
@@ -697,10 +837,34 @@
     const pdf = currentPdfDoc;
     const nextZoom = zoom;
     if (book?.subtype === "epub" && rendition) {
-      rendition.themes.fontSize(`${Math.round(nextZoom * 100)}%`);
+      applyEpubTheme();
       return;
     }
     if (book?.subtype === "pdf" && pdf) {
+      untrack(() => {
+        void renderPdfPage(pageNumber);
+      });
+    }
+  });
+
+  $effect(() => {
+    proseTheme;
+    proseFontSize;
+    proseLineHeight;
+    proseParagraphSpacing;
+    proseFontFamily;
+    proseTextAlign;
+    prosePalette.text;
+    prosePalette.surface;
+    if (activeBook?.subtype === "epub" && currentRendition) {
+      untrack(() => applyEpubTheme());
+    }
+  });
+
+  $effect(() => {
+    pdfFitMode;
+    pdfDarkMode;
+    if (activeBook?.subtype === "pdf" && currentPdfDoc) {
       untrack(() => {
         void renderPdfPage(pageNumber);
       });
@@ -742,16 +906,15 @@
     <button class="icon-btn" onclick={() => requestClose("toolbar")} title="Close reader">
       <X size={15} weight="light" />
     </button>
-    <span class="ch-label">
-      <span class="ch-title">{activeBook?.title ?? "Book"}</span>
-      <span class="ch-sep">/</span>
-      <span>{currentSectionLabel ?? activeBook?.subtype.toUpperCase() ?? "BOOK"}</span>
-    </span>
-    <span class="page-label">{progressLabel}</span>
+    <div class="reader-title">
+      <strong>{activeBook?.title ?? "Book"}</strong>
+      <span>{currentSectionLabel ?? activeBook?.subtype.toUpperCase() ?? "BOOK"} - {progressLabel}</span>
+    </div>
   {/snippet}
 
   {#snippet topbarRight()}
     <div class="top-sep"></div>
+    <span class="reader-progress-text">{progressLabel}</span>
     <div class="zoom-wrap">
       <div class="zoom-inline">
         <button class="zoom-step-btn" onclick={() => adjustZoom(-ZOOM_STEP)} title="Zoom out" disabled={zoom <= ZOOM_MIN}>
@@ -781,16 +944,24 @@
         </div>
       {/if}
     </div>
-    <button class="mode-btn" disabled>
+    <span class="mode-status">
       <BookOpen size={14} weight="light" />
       <span class="mode-label">{activeBook?.subtype ?? "book"}</span>
-    </button>
+    </span>
     <button class="icon-btn" class:active={isBookmarked} onclick={toggleBookmark} title={isBookmarked ? "Remove bookmark" : "Bookmark this position"}>
       <Bookmark size={15} weight={isBookmarked ? "fill" : "regular"} />
     </button>
+    <button class="icon-btn" class:active={toolsOpen} onclick={() => toolsOpen = !toolsOpen} title="Reader tools">
+      <SlidersHorizontal size={15} weight="light" />
+    </button>
   {/snippet}
 
-  <div class="viewer book-viewer" class:pdf={activeBook?.subtype === "pdf"}>
+  <div
+    class="viewer book-viewer"
+    class:pdf={activeBook?.subtype === "pdf"}
+    class:pdf-dark={pdfDarkMode}
+    style={`--prose-page-bg:${prosePalette.bg};--prose-bg:${prosePalette.surface};--prose-text:${prosePalette.text};--prose-content-width:${proseContentWidth}px;`}
+  >
     {#if waitingForBookHydration}
       <div class="center-overlay">
         <CircleNotch size={20} weight="light" class="anim-spin" style="color:var(--text-faint)" />
@@ -812,40 +983,197 @@
     {/if}
     {#if error}
       <div class="center-overlay error-stack">
-        <p class="error-msg">{error}</p>
+        <NocturneState
+          layout="center"
+          tone="danger"
+          icon="warning"
+          eyebrow="Reader"
+          title="Could not open this book"
+          body={error}
+        />
       </div>
     {/if}
   </div>
+
+  {#snippet sidePanel()}
+    {#if toolsOpen && uiVisible}
+      <aside class="reader-tools-panel" aria-label="Book reader tools">
+        <div class="reader-tools-panel__header">
+          <span class="reader-tools-panel__eyebrow">Book tools</span>
+          <strong>{activeBook?.subtype === "pdf" ? "PDF pages" : "EPUB flow"}</strong>
+          <button class="reader-tools-panel__close" type="button" onclick={() => toolsOpen = false} title="Hide tools">
+            <X size={13} weight="light" />
+          </button>
+        </div>
+
+        <div class="reader-tools-segment" aria-label="Book quick actions">
+          <button type="button" onclick={goPrev} disabled={loading || !canPrev}>Prev</button>
+          <button type="button" class:active={isBookmarked} onclick={toggleBookmark}>Mark</button>
+          <button type="button" onclick={goNext} disabled={loading || !canNext}>Next</button>
+        </div>
+
+        <dl class="reader-tools-list">
+          <div>
+            <dt>Section</dt>
+            <dd>{currentSectionLabel ?? "Current"}</dd>
+          </div>
+          <div>
+            <dt>Zoom</dt>
+            <dd>
+              <div class="reader-tools-zoom">
+                <button type="button" onclick={() => adjustZoom(-ZOOM_STEP)} disabled={zoom <= ZOOM_MIN}><MagnifyingGlassMinus size={12} weight="light" /></button>
+                <button type="button" onclick={resetZoom}>{zoomPct}%</button>
+                <button type="button" onclick={() => adjustZoom(ZOOM_STEP)} disabled={zoom >= ZOOM_MAX}><MagnifyingGlassPlus size={12} weight="light" /></button>
+              </div>
+            </dd>
+          </div>
+          <div>
+            <dt>Progress</dt>
+            <dd>{progressLabel}</dd>
+          </div>
+          <div>
+            <dt>Bookmark</dt>
+            <dd>{isBookmarked ? "Saved" : "Not saved"}</dd>
+          </div>
+          {#if activeBook?.subtype === "epub"}
+            <div>
+              <dt>Theme</dt>
+              <dd><button type="button" onclick={cycleProseTheme}>{proseTheme}</button></dd>
+            </div>
+            <div>
+              <dt>Font</dt>
+              <dd>
+                <select
+                  class="reader-tools-select"
+                  value={proseFontFamily}
+                  onchange={(event) => updateSettings({ proseReaderFontFamily: event.currentTarget.value })}
+                >
+                  <option value="Georgia, serif">Georgia</option>
+                  <option value="Merriweather, Georgia, serif">Merriweather</option>
+                  <option value="Inter, sans-serif">Inter</option>
+                  <option value="Atkinson Hyperlegible, Inter, sans-serif">Atkinson</option>
+                  <option value='"Segoe UI", sans-serif'>Segoe UI</option>
+                </select>
+              </dd>
+            </div>
+            <div>
+              <dt>Size</dt>
+              <dd>
+                <div class="reader-tools-zoom">
+                  <button type="button" onclick={() => updateFontSize(-1)}>-</button>
+                  <button type="button">{proseFontSize}px</button>
+                  <button type="button" onclick={() => updateFontSize(1)}>+</button>
+                </div>
+              </dd>
+            </div>
+            <div>
+              <dt>Line</dt>
+              <dd>
+                <div class="reader-tools-zoom">
+                  <button type="button" onclick={() => updateLineHeight(-0.05)}>-</button>
+                  <button type="button">{proseLineHeight.toFixed(2)}</button>
+                  <button type="button" onclick={() => updateLineHeight(0.05)}>+</button>
+                </div>
+              </dd>
+            </div>
+            <div>
+              <dt>Align</dt>
+              <dd><button type="button" onclick={() => updateSettings({ proseReaderTextAlign: proseTextAlign === "justify" ? "left" : "justify" })}>{proseTextAlign}</button></dd>
+            </div>
+            <div>
+              <dt>Width</dt>
+              <dd>
+                <div class="reader-tools-zoom">
+                  <button type="button" onclick={() => updateContentWidth(-40)}>-</button>
+                  <button type="button">{proseContentWidth}px</button>
+                  <button type="button" onclick={() => updateContentWidth(40)}>+</button>
+                </div>
+              </dd>
+            </div>
+            <div>
+              <dt>Text</dt>
+              <dd>
+                <input
+                  class="reader-tools-color"
+                  type="color"
+                  value={prosePalette.text}
+                  onchange={(event) => updateProseColor("text", event.currentTarget.value)}
+                  title="Text color"
+                />
+              </dd>
+            </div>
+            <div>
+              <dt>Paper</dt>
+              <dd>
+                <input
+                  class="reader-tools-color"
+                  type="color"
+                  value={prosePalette.surface}
+                  onchange={(event) => updateProseColor("background", event.currentTarget.value)}
+                  title="Page background"
+                />
+              </dd>
+            </div>
+          {:else if activeBook?.subtype === "pdf"}
+            <div>
+              <dt>Fit</dt>
+              <dd><button type="button" onclick={cyclePdfFit}>{pdfFitMode}</button></dd>
+            </div>
+            <div>
+              <dt>Page</dt>
+              <dd>
+                <input
+                  class="reader-tools-number"
+                  type="number"
+                  min="1"
+                  max={totalPages}
+                  value={pageNumber}
+                  onchange={(event) => jumpToSliderValue(Number(event.currentTarget.value))}
+                />
+              </dd>
+            </div>
+            <div>
+              <dt>Dark PDF</dt>
+              <dd><button type="button" onclick={() => updateSettings({ pdfDarkMode: !pdfDarkMode })}>{pdfDarkMode ? "On" : "Off"}</button></dd>
+            </div>
+          {/if}
+        </dl>
+      </aside>
+    {/if}
+  {/snippet}
 
   {#snippet bottombar()}
     <button class="nav-btn" onclick={goPrev} disabled={loading || !canPrev}>
       <ArrowLeft size={13} weight="light" />
     </button>
 
-    <div
-      class="slider-wrap"
-      role="presentation"
-    >
-      <div class="slider-track-bg">
-        <div class="slider-fill" style="width: {sliderPct}%"></div>
+    <div class="progress-block">
+      <div class="progress-meta">
+        <span>{activeBook?.subtype === "pdf" ? `Page ${pageNumber} of ${totalPages}` : `Progress ${sliderValue}%`}</span>
+        <strong>{progressLabel}</strong>
       </div>
-      {#if isBookmarked && currentBookmark}
-        <div
-          class="slider-checkpoint bookmark-checkpoint"
-          style="left: {bookmarkPct}%"
-          title={activeBook?.subtype === "pdf" && currentBookmark.pageIndex ? `Bookmark: Page ${currentBookmark.pageIndex}` : "Bookmark"}
-        ></div>
-      {/if}
-      <input
-        type="range"
-        class="slider-input"
-        min={1}
-        max={sliderMax}
-        step={1}
-        value={sliderValue}
-        oninput={(event) => jumpToSliderValue(Number(event.currentTarget.value))}
-        aria-label={activeBook?.subtype === "pdf" ? `Page ${pageNumber} of ${totalPages}` : `Progress ${sliderValue}%`}
-      />
+      <div class="slider-wrap" role="presentation">
+        <div class="slider-track-bg">
+          <div class="slider-fill" style="width: {sliderPct}%"></div>
+        </div>
+        {#if isBookmarked && currentBookmark}
+          <div
+            class="slider-checkpoint bookmark-checkpoint"
+            style="left: {bookmarkPct}%"
+            title={activeBook?.subtype === "pdf" && currentBookmark.pageIndex ? `Bookmark: Page ${currentBookmark.pageIndex}` : "Bookmark"}
+          ></div>
+        {/if}
+        <input
+          type="range"
+          class="slider-input"
+          min={1}
+          max={sliderMax}
+          step={1}
+          value={sliderValue}
+          oninput={(event) => jumpToSliderValue(Number(event.currentTarget.value))}
+          aria-label={activeBook?.subtype === "pdf" ? `Page ${pageNumber} of ${totalPages}` : `Progress ${sliderValue}%`}
+        />
+      </div>
     </div>
 
     <button class="nav-btn" onclick={goNext} disabled={loading || !canNext}>
@@ -862,7 +1190,9 @@
     align-items: stretch;
     justify-content: center;
     position: relative;
-    background: var(--bg-void);
+    background:
+      radial-gradient(circle at 45% 18%, rgba(185, 156, 255, 0.1), transparent 30%),
+      linear-gradient(180deg, var(--prose-page-bg, var(--bg-void)), #050507 62%, var(--prose-page-bg, var(--bg-void)));
     color: var(--text-muted);
   }
 
@@ -872,10 +1202,17 @@
   }
 
   .epub-host {
-    width: min(920px, 100%);
+    width: min(var(--prose-content-width, 920px), 100%);
     height: 100%;
-    background: var(--bg-base);
-    color: var(--text-primary);
+    margin: var(--sp-3) 0;
+    border: 1px solid color-mix(in srgb, var(--border-base) 68%, transparent);
+    border-radius: 14px;
+    background:
+      radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.1), transparent 34%),
+      var(--prose-bg, #f5f1ea);
+    color: var(--prose-text, #19151d);
+    box-shadow: 0 44px 110px rgba(0, 0, 0, 0.5);
+    overflow: hidden;
   }
 
   .pdf-stage {
@@ -886,8 +1223,15 @@
 
   .pdf-stage canvas {
     display: block;
-    background: #fff;
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.48);
+    background: #f2eee6;
+    border-radius: 10px;
+    box-shadow:
+      0 44px 110px rgba(0, 0, 0, 0.58),
+      0 0 0 1px rgba(255, 255, 255, 0.08);
+  }
+
+  .book-viewer.pdf-dark .pdf-stage canvas {
+    filter: invert(1) hue-rotate(180deg) contrast(0.92);
   }
 
   .center-overlay {
@@ -905,12 +1249,4 @@
     background: rgba(0, 0, 0, 0.72);
   }
 
-  .error-msg {
-    max-width: 70ch;
-    color: var(--color-error);
-    font-family: var(--font-ui);
-    font-size: var(--text-sm);
-    line-height: var(--leading-base);
-    text-align: center;
-  }
 </style>

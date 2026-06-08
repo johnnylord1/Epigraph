@@ -11,6 +11,7 @@
     "test:unit": "vitest run --project unit --project shell-jsdom",
     "test:browser": "vitest run --project browser-components",
     "syncd:prepare-sidecar": "node ./scripts/prepare-syncd-sidecar.mjs",
+    "image:generate": "node ./scripts/gpt-image-generate.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "tauri:dev:gate": "tauri dev --config src-tauri/tauri.dev.conf.json --no-watch"
@@ -30,6 +31,7 @@
     "jsqr": "^1.4.0",
     "jszip": "^3.10.1",
     "long": "^5.3.2",
+    "openai": "^6.37.0",
     "pako": "^2.1.0",
     "pdfjs-dist": "^5.6.205",
     "phosphor-svelte": "^3.1.0",

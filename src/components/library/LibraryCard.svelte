@@ -108,7 +108,8 @@
         use:resolvedImage={vm.coverSrc}
         alt={vm.title}
         style={`object-fit:${vm.coverFit};`}
-        loading="eager"
+        loading="lazy"
+        decoding="async"
         draggable="false"
         onload={onCoverLoad ? (() => onCoverLoad(vm.id)) : undefined}
         onerror={onCoverError ? (() => onCoverError(vm.id)) : undefined}
@@ -326,7 +327,6 @@
     width: 100%;
     height: 100%;
     transition: filter var(--t-base);
-    will-change: filter;
     display: block;
     background: var(--bg-raised);
   }

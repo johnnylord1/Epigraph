@@ -6,6 +6,7 @@
   import { store, setActiveSource, setActiveManga, setNavPage } from "../../store/state.svelte";
   import type { Manga, Category } from "../../lib/types";
   import ContextMenu, { type MenuEntry } from "../shared/ContextMenu.svelte";
+  import NocturneState from "../shared/NocturneState.svelte";
 
   type BrowseType = "POPULAR" | "LATEST" | "SEARCH";
 
@@ -127,7 +128,16 @@
       {/each}
     </div>
   {:else if mangas.length === 0}
-    <div class="empty">No results.</div>
+    <div class="empty">
+      <NocturneState
+        layout="center"
+        tone="info"
+        icon="search"
+        eyebrow="Source browse"
+        title="No results"
+        body="Try another source, page, or search term."
+      />
+    </div>
   {:else}
     <div class="grid">
       {#each mangas as m (m.id)}
@@ -193,6 +203,6 @@
   .page-btn:hover:not(:disabled) { color: var(--text-primary); border-color: var(--border-strong); background: var(--bg-raised); }
   .page-btn:disabled { opacity: 0.3; cursor: default; }
   .page-num { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-muted); letter-spacing: var(--tracking-wider); min-width: 24px; text-align: center; }
-  .empty { display: flex; align-items: center; justify-content: center; flex: 1; color: var(--text-muted); font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); }
+  .empty { display: flex; align-items: center; justify-content: center; flex: 1; min-height: 260px; color: var(--text-muted); }
   @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
 </style>

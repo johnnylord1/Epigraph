@@ -177,8 +177,15 @@ class AdvancedPlugin {
       keysAfterDelete,
     };
   }
-  popularNovels(pageNo) {
-    return [{ name: "Popular Novel", path: "/popular/" + pageNo, cover: "https://example.com/popular.jpg" }];
+  popularNovels(pageNo, options) {
+    const genres = options && options.filters && options.filters.genres && options.filters.genres.value;
+    if (!genres) throw new Error("filters missing");
+    return [{
+      name: "Popular Novel",
+      path: "/popular/" + pageNo,
+      cover: "https://example.com/popular.jpg",
+      genres,
+    }];
   }
   searchNovels(searchTerm, pageNo) {
     return [{ name: "Search " + searchTerm, path: "/search/" + pageNo, cover: null }];

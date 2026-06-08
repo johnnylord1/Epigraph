@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { addToast } from "../../store/state.svelte";
   import { buildSyncdQrDataUrl, decodeSyncdQrDataUrl, decodeSyncdQrFile } from "../../lib/syncdQr";
+  import NocturneState from "../shared/NocturneState.svelte";
   import SyncdSessionDetails from "./SyncdSessionDetails.svelte";
   import {
     listenSyncdDesktopState,
@@ -738,9 +739,9 @@
                   alt="Sync bootstrap QR code"
                 />
               {:else if qrBusy}
-                <p class="syncd-empty">Rendering QR...</p>
+                <NocturneState layout="compact" tone="info" icon="retry" eyebrow="Pairing" title="Rendering QR" />
               {:else}
-                <p class="syncd-empty">The QR payload will appear here once the host bundle is ready.</p>
+                <NocturneState layout="compact" tone="info" icon="info" eyebrow="Pairing" title="QR waiting" body="The QR payload will appear here once the host bundle is ready." />
               {/if}
             </div>
           </div>
@@ -761,11 +762,13 @@
             {/if}
           </div>
           {#if host.error}
-            <p class="syncd-error" data-testid="syncd-host-error">{host.error}</p>
+            <div data-testid="syncd-host-error">
+              <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Host" title="Host pairing failed" body={host.error} />
+            </div>
           {/if}
         </div>
       {:else}
-        <p class="syncd-empty">Host mode is idle. Start one pairing session to generate a bundle and wait for the second desktop to claim it.</p>
+        <NocturneState layout="compact" tone="info" icon="info" eyebrow="Host" title="Host mode is idle" body="Start one pairing session to generate a bundle and wait for the second desktop to claim it." />
       {/if}
     </div>
   </div>
@@ -806,7 +809,7 @@
             {/each}
           </div>
         {:else}
-          <p class="syncd-empty">No LAN peers are visible right now. Manual origin fallback is ready below.</p>
+          <NocturneState layout="compact" tone="info" icon="search" eyebrow="Discovery" title="No LAN peers visible" body="Manual origin fallback is ready below." />
         {/if}
       </div>
 
@@ -881,7 +884,9 @@
             </div>
           </div>
           {#if connect.error}
-            <p class="syncd-error" data-testid="syncd-connect-error">{connect.error}</p>
+            <div data-testid="syncd-connect-error">
+              <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Connect" title="Pairing failed" body={connect.error} />
+            </div>
           {/if}
         </div>
       {/if}
@@ -915,7 +920,7 @@
           </div>
         </div>
         {#if replicationSnapshot?.lastError}
-          <p class="syncd-error">{replicationSnapshot.lastError}</p>
+          <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Replication" title="Sync replay failed" body={replicationSnapshot.lastError} />
         {/if}
         <div class="syncd-actions">
           <button
@@ -975,13 +980,20 @@
             {/each}
           </div>
         {:else}
-          <p class="syncd-empty">No approved sync session is stored for this profile yet.</p>
+          <NocturneState layout="compact" tone="info" icon="info" eyebrow="Sessions" title="No approved sessions" body="Pair another desktop to start continuous sync for this profile." />
         {/if}
       </div>
     </div>
 
     {#if panelError}
-      <p class="syncd-error" data-testid="syncd-panel-error">{panelError}</p>
+      <NocturneState
+        layout="compact"
+        tone="danger"
+        icon="warning"
+        eyebrow="Sync"
+        title="Sync action failed"
+        body={panelError}
+      />
     {/if}
   </div>
 </div>
@@ -1031,8 +1043,6 @@
   .syncd-row__hint,
   .syncd-list__hint,
   .syncd-list__meta,
-  .syncd-empty,
-  .syncd-error,
   .syncd-meta__value {
     margin: 0;
     font-size: 12px;
@@ -1173,10 +1183,6 @@
 
   .syncd-pill--danger {
     border-color: color-mix(in srgb, var(--color-error) 55%, var(--border-base));
-    color: var(--color-error);
-  }
-
-  .syncd-error {
     color: var(--color-error);
   }
 

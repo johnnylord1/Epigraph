@@ -132,9 +132,7 @@ export function resolveSessionProfile(
   fallbackServerUrl?: string | null,
 ): ResolvedSessionProfile {
   const normalizedDefault = normalizeLocalProfileId(persistedDefaultProfileId);
-  const defaultProfileId = normalizedDefault === "test"
-    ? "main"
-    : normalizedDefault ?? DEFAULT_LOCAL_PROFILE_ID;
+  const defaultProfileId = normalizedDefault ?? DEFAULT_LOCAL_PROFILE_ID;
   const defaultProfile = getLocalProfileMeta(defaultProfileId) ?? TEST_PROFILE;
   const overrideSession = hasLaunchOverride(launchTarget);
   const overrideProfileId = inferProfileId(launchTarget?.profileLabelOverride, launchTarget?.serverUrlOverride);

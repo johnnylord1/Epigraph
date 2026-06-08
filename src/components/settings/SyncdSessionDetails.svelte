@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Info, X } from "phosphor-svelte";
   import type { PersistedSyncSessionView } from "../../lib/syncdDesktop";
+  import NocturneState from "../shared/NocturneState.svelte";
 
   let {
     session,
@@ -119,7 +120,7 @@
         <p class="syncd-list__hint" data-testid="syncd-session-status">{summary}</p>
         <p class="syncd-list__meta">Validated {lastValidatedLabel}</p>
         {#if reconnectError}
-          <p class="syncd-error">{reconnectError}</p>
+          <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Session" title="Reconnect failed" body={reconnectError} />
         {/if}
       </div>
 

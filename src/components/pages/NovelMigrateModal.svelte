@@ -33,6 +33,7 @@
     type NovelMigrationPreview,
   } from "../../lib/migration/novels";
   import { loadNovelSourceClassificationState, peekNovelSourceClassificationState, type PersistedNovelSourceClassificationState } from "../../lib/novels/sourceClassificationState";
+  import NocturneState from "../shared/NocturneState.svelte";
   import { getNovelMigrationBlocker, hasMinimumNovelMigrationSafeCohort, isNovelSourceMigrationSafe } from "../../lib/novels/migrationSafe";
 
   interface Props {
@@ -422,7 +423,7 @@
           <div class="section">
             <button class="back-btn" type="button" onclick={() => step = "source"}>Back</button>
             {#if error}
-              <div class="notice danger"><Warning size={14} weight="light" /><span>{error}</span></div>
+              <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Migration" title="Search failed" body={error} />
             {/if}
             <div class="results">
               {#each results as result (result.path)}
@@ -453,7 +454,7 @@
               <div class="stat-row"><span>Selected to apply</span><strong>{massSelectedIds.size}</strong></div>
             </div>
             {#if error}
-              <div class="notice danger"><Warning size={14} weight="light" /><span>{error}</span></div>
+              <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Migration" title="Mass migration failed" body={error} />
             {/if}
             <div class="results">
               {#each massPreview.items as item (item.currentNovelId)}
@@ -522,17 +523,14 @@
               <div class="stat-row"><span>Chapter diff</span><strong>{preview.chapterDiff > 0 ? `+${preview.chapterDiff}` : preview.chapterDiff}</strong></div>
             </div>
             {#if preview.confidence < 0.5}
-              <div class="notice danger">
-                <Warning size={14} weight="light" />
-                <span>This match is low-confidence. Review carefully before replacing the source.</span>
-              </div>
+              <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Migration" title="Low-confidence match" body="Review carefully before replacing the source." />
             {/if}
             <div class="notice inline">
               <Check size={14} weight="light" />
               <span>The old novel will be replace-hidden through the migration journal, and Undo stays available for a short window.</span>
             </div>
             {#if error}
-              <div class="notice danger"><Warning size={14} weight="light" /><span>{error}</span></div>
+              <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Migration" title="Migration failed" body={error} />
             {/if}
             <div class="actions-row">
               <button class="search-btn primary" type="button" disabled={migrating} onclick={applyMigration}>
@@ -553,28 +551,43 @@
 
 <style>
   .overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 220; }
-  .backdrop { position: absolute; inset: 0; border: none; background: rgba(0, 0, 0, 0.6); cursor: pointer; }
-  .modal { position: relative; width: 640px; max-height: 82vh; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border-base); border-radius: var(--radius-xl); background: var(--bg-base); box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5); z-index: 1; }
-  .modal-header { display: flex; align-items: flex-start; justify-content: space-between; padding: var(--sp-4) var(--sp-5); border-bottom: 1px solid var(--border-dim); }
+  .backdrop { position: absolute; inset: 0; border: none; background: rgba(0, 0, 0, 0.68); backdrop-filter: blur(14px) saturate(118%); cursor: pointer; }
+  .modal { position: relative; width: 640px; max-height: 82vh; display: flex; flex-direction: column; overflow: hidden; border: 1px solid rgba(92, 88, 103, 0.42); border-radius: 18px; background: rgba(21, 20, 25, 0.98); box-shadow: inset 0 1px 0 rgba(255,255,255,0.025), 0 28px 80px rgba(0, 0, 0, 0.54); z-index: 1; animation: scaleIn 0.16s ease both; }
+  .modal-header { display: flex; align-items: flex-start; justify-content: space-between; padding: 15px 18px; border-bottom: 1px solid rgba(92, 88, 103, 0.34); }
   .modal-title { display: flex; flex-direction: column; gap: 2px; }
-  .modal-title-label { font-family: var(--font-ui); font-size: var(--text-2xs); color: var(--text-faint); letter-spacing: var(--tracking-wider); text-transform: uppercase; }
-  .modal-title-name { font-size: var(--text-base); font-weight: var(--weight-medium); color: var(--text-primary); }
-  .close-btn { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: var(--radius-md); color: var(--text-faint); background: none; border: none; cursor: pointer; }
+  .modal-title-label { font-family: "Manrope", "Inter", system-ui, sans-serif; font-size: 9px; color: rgba(202, 196, 208, 0.48); letter-spacing: 0.14em; text-transform: uppercase; }
+  .modal-title-name { font-size: 13px; font-weight: 800; color: #e8e4eb; letter-spacing: 0.02em; }
+  .close-btn { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 10px; color: rgba(202, 196, 208, 0.74); background: rgba(255,255,255,0.018); border: 1px solid rgba(92, 88, 103, 0.42); cursor: pointer; transition: color 140ms ease, background 140ms ease, transform 140ms ease; }
+  .close-btn:hover { color: #e8e4eb; background: rgba(201, 181, 255, 0.1); }
+  .close-btn:active { transform: scale(0.96); }
   .body { display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-4); overflow: auto; }
   .section { display: flex; flex-direction: column; gap: var(--sp-3); }
   .mode-tabs { display: flex; gap: 4px; }
   .mode-tab { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 var(--sp-3); border-radius: var(--radius-md); border: 1px solid var(--border-dim); background: none; color: var(--text-muted); font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); cursor: pointer; }
   .mode-tab-active { background: var(--accent-muted); border-color: var(--accent-dim); color: var(--accent-fg); }
-  .notice { display: flex; align-items: flex-start; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4); background: var(--bg-raised); border-bottom: 1px solid var(--border-dim); color: var(--text-muted); }
-  .notice.inline { border: 1px solid var(--border-dim); border-radius: var(--radius-md); }
-  .notice.danger { color: var(--color-error); }
+  .notice {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--sp-2);
+    padding: var(--sp-3) var(--sp-4);
+    background:
+      linear-gradient(135deg, rgba(184, 167, 234, 0.09), rgba(184, 167, 234, 0.025)),
+      var(--bg-elevated);
+    border: 1px solid rgba(184, 167, 234, 0.14);
+    border-radius: var(--radius-md);
+    color: var(--text-muted);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  }
+  .notice.inline {
+    border-color: var(--border-dim);
+  }
   .search-bar { display: flex; align-items: center; gap: var(--sp-2); }
   .search-input { flex: 1; min-height: 34px; padding: 0 var(--sp-3); border: 1px solid var(--border-dim); border-radius: var(--radius-md); background: var(--bg-raised); color: var(--text-primary); }
   .source-list, .results { display: flex; flex-direction: column; gap: 6px; overflow: auto; }
   .source-row, .result-row, .search-btn, .back-btn, .mass-check { cursor: pointer; }
   .source-row, .result-row { display: flex; align-items: center; gap: var(--sp-3); width: 100%; padding: 10px var(--sp-3); text-align: left; border-radius: var(--radius-md); border: 1px solid transparent; background: none; }
-  .source-row:hover, .result-row:hover { background: var(--bg-raised); border-color: var(--border-dim); }
-  .source-row-active { background: var(--accent-muted); border-color: var(--accent-dim); }
+  .source-row:hover, .result-row:hover { background: rgba(184, 167, 234, 0.08); border-color: rgba(184, 167, 234, 0.14); }
+  .source-row-active { background: rgba(184, 167, 234, 0.12); border-color: rgba(184, 167, 234, 0.18); }
   .result-row-ready { border-color: color-mix(in srgb, var(--color-success) 18%, var(--border-dim)); }
   .result-row-blocked { border-color: color-mix(in srgb, var(--color-error) 18%, var(--border-dim)); }
   .source-info, .result-info, .compare-card { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
@@ -594,4 +607,5 @@
   .mass-check:disabled { opacity: 0.35; cursor: default; }
   .compare { display: flex; align-items: center; justify-content: center; gap: var(--sp-3); }
   .compare-card { flex: 1; padding: var(--sp-3); border-radius: var(--radius-md); border: 1px solid var(--border-dim); background: var(--bg-raised); }
+  @keyframes scaleIn { from { opacity: 0; transform: translateY(8px) scale(0.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
 </style>

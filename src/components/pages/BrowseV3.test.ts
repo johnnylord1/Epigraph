@@ -39,6 +39,35 @@ const {
         ],
       },
     };
+    if (query === "GET_LIBRARY") return {
+      mangas: {
+        nodes: [],
+      },
+    };
+    if (query === "GET_ALL_TRACKER_RECORDS") return {
+      trackers: {
+        nodes: [
+          {
+            id: 1,
+            name: "Mock Tracker",
+            icon: "",
+            isLoggedIn: true,
+            authUrl: null,
+            supportsPrivateTracking: false,
+            scores: [],
+            statuses: [{ value: 1, name: "Reading" }],
+            trackRecords: {
+              nodes: [],
+            },
+          },
+        ],
+      },
+    };
+    if (query === "FETCH_EXTENSIONS") return {
+      fetchExtensions: {
+        extensions: [],
+      },
+    };
     if (query === "SEARCH_TRACKER") return {
       searchTracker: {
         trackSearches: [
@@ -92,6 +121,7 @@ const {
       name: "Novel Source",
       lang: "en",
       iconUrl: null,
+      enabled: true,
     },
   ]),
 }));
@@ -107,6 +137,9 @@ vi.mock("../../lib/queries", () => ({
   FETCH_SOURCE_MANGA: "FETCH_SOURCE_MANGA",
   GET_TRACKERS: "GET_TRACKERS",
   SEARCH_TRACKER: "SEARCH_TRACKER",
+  GET_LIBRARY: "GET_LIBRARY",
+  GET_ALL_TRACKER_RECORDS: "GET_ALL_TRACKER_RECORDS",
+  FETCH_EXTENSIONS: "FETCH_EXTENSIONS",
 }));
 
 vi.mock("../../lib/manga/sourceSearch", () => ({
@@ -141,6 +174,7 @@ vi.mock("../../store/state.svelte", async () => {
     setSearchVisibilityDismissed: vi.fn(),
     store: {
       ...actual.store,
+      setLibraryMangaSnapshot: vi.fn(),
       settings: {
         ...actual.store.settings,
         showNsfw: true,
@@ -197,8 +231,14 @@ describe("BrowseV3", () => {
 
   afterEach(() => cleanup());
 
-  test("shows the browse shell by default and can switch tabs", async () => {
+  test("shows Search by default and can switch to Discover and Sources", async () => {
     render(BrowseV3);
+
+    await waitFor(() => {
+      expect(screen.getByText("Find something to read")).toBeTruthy();
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Discover" }));
 
     await waitFor(() => {
       expect(screen.getByText("Discover New Series")).toBeTruthy();
@@ -210,7 +250,7 @@ describe("BrowseV3", () => {
     expect(screen.getByText("Genres")).toBeTruthy();
     expect(screen.getByText("Language")).toBeTruthy();
 
-    const searchInput = screen.getByPlaceholderText("Search sources...");
+    const searchInput = screen.getByPlaceholderText("Filter Discover...");
     await fireEvent.focus(searchInput);
     expect(document.body.className).toContain("aethon-browse-search-engaged");
     await fireEvent.blur(searchInput);
@@ -219,22 +259,24 @@ describe("BrowseV3", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Sources" }));
 
     await waitFor(() => {
-      expect(screen.getByText("Browse Sources")).toBeTruthy();
-      expect(screen.getByText("Extensions & Repos")).toBeTruthy();
+      expect(screen.getByText("Manage extensions")).toBeTruthy();
+      expect(screen.getByText("Installed")).toBeTruthy();
     });
   });
 
   test("keeps manga sources out of the manga filter and shows novel sources only in novels", async () => {
     render(BrowseV3);
 
+    await fireEvent.click(screen.getByRole("button", { name: "Discover" }));
+
     await waitFor(() => {
       expect(screen.getAllByRole("button", { name: /All sources/i }).length).toBeGreaterThan(0);
     });
 
     await fireEvent.click(screen.getAllByRole("button", { name: /All sources/i })[0]);
-    expect(screen.getByRole("button", { name: /Manga Source/i })).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: /Manga Source/i }).length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: /Novel Source/i })).toBeNull();
-    expect(screen.getByPlaceholderText("Search sources...")).toBeTruthy();
+    expect(screen.getByPlaceholderText("Filter Discover...")).toBeTruthy();
 
     await fireEvent.click(screen.getByRole("button", { name: "Novels" }));
 
@@ -243,9 +285,10 @@ describe("BrowseV3", () => {
     });
 
     await fireEvent.click(screen.getAllByRole("button", { name: /All sources/i })[0]);
-    expect(screen.getByRole("button", { name: /Novel Source/i })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Manga Source/i })).toBeNull();
-    expect(screen.getByPlaceholderText("Search installed novel sources...")).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Novel Source/i })).toBeTruthy();
+    });
+    expect(screen.getByPlaceholderText("Filter Discover...")).toBeTruthy();
 
     await fireEvent.click(screen.getByRole("button", { name: "Manga" }));
 
@@ -255,11 +298,13 @@ describe("BrowseV3", () => {
 
     await fireEvent.click(screen.getAllByRole("button", { name: /All sources/i })[0]);
     expect(screen.getAllByRole("button", { name: /Manga Source/i }).length).toBeGreaterThan(0);
-    expect(screen.getByPlaceholderText("Search sources...")).toBeTruthy();
+    expect(screen.getByPlaceholderText("Filter Discover...")).toBeTruthy();
   });
 
   test("loads discover results without opening the Sources tab", async () => {
     render(BrowseV3);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Discover" }));
 
     await waitFor(() => {
       expect(screen.getByText("Popular Mock Manga")).toBeTruthy();
@@ -278,6 +323,8 @@ describe("BrowseV3", () => {
 
   test("uses Latest fetch type when the catalog filter changes", async () => {
     render(BrowseV3);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Discover" }));
 
     await waitFor(() => {
       expect(screen.getByText("Popular Mock Manga")).toBeTruthy();

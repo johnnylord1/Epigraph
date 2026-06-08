@@ -1,25 +1,27 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
-  import { ArrowLeft, BookmarkSimple, CaretLeft, CaretRight } from "phosphor-svelte";
-  import { addToast, bumpContentSetupVersion, closeNovelReader, setActiveNovelDetail, store } from "../../store/state.svelte";
+  import { ArrowLeft, ArrowRight, BookmarkSimple, BookOpen, CaretLeft, CaretRight, CircleNotch, SlidersHorizontal, X } from "phosphor-svelte";
+  import { addToast, bumpContentSetupVersion, closeNovelReader, setActiveNovelDetail, store, updateSettings } from "../../store/state.svelte";
   import {
     buildNovelDetailRecordFromLibrary,
     getNovelBookmarkEntries,
     getNovelLibraryChapters,
     getNovelLibraryEntry,
-    getNovelProgressEntry,
     getNovelReadStats,
     loadNovelLibraryState,
-    peekNovelLibraryState,
     markNovelChapterRead,
+    peekNovelLibraryState,
     saveNovelLibraryState,
     toggleNovelChapterBookmark,
   } from "../../lib/novels/libraryState";
   import { readInstalledNovelChapter } from "../../lib/novels/sources";
+  import NocturneState from "../shared/NocturneState.svelte";
+  import ReaderHud from "./ReaderHud.svelte";
 
   let loading = $state(false);
   let error = $state<string | null>(null);
   let chapterHtml = $state("");
+  let toolsOpen = $state(true);
   let libraryState = $state(peekNovelLibraryState({
     profileId: store.runtimeResolvedLocalProfileId,
     serverUrl: store.runtimeServerUrl,
@@ -50,10 +52,59 @@
       ? currentNovel.chapters[currentChapterIndex + 1]
       : null,
   );
-  const currentProgress = $derived.by(() => activeReader ? getNovelProgressEntry(libraryState, activeReader.novelId) : null);
   const currentStats = $derived.by(() => activeReader ? getNovelReadStats(libraryState, activeReader.novelId) : null);
   const currentBookmarks = $derived.by(() => activeReader ? getNovelBookmarkEntries(libraryState, activeReader.novelId) : []);
   const currentChapterBookmarked = $derived.by(() => currentBookmarks.some((entry) => entry.chapterId === activeReader?.chapterId));
+  const sliderMax = $derived(Math.max(1, currentNovel?.chapters.length ?? 1));
+  const sliderValue = $derived(Math.max(1, currentChapterIndex + 1));
+  const sliderPct = $derived(sliderMax > 1 ? ((sliderValue - 1) / (sliderMax - 1)) * 100 : 0);
+  const progressLabel = $derived.by(() => {
+    if (!currentNovel || currentChapterIndex < 0) return "Chapter";
+    const percent = currentStats ? Math.round(currentStats.progressPercent * 100) : Math.round((sliderValue / sliderMax) * 100);
+    return `${sliderValue} / ${sliderMax} - ${percent}%`;
+  });
+  const proseTheme = $derived(store.settings.proseReaderTheme ?? "nocturne");
+  const proseFontSize = $derived(store.settings.proseReaderFontSize ?? 18);
+  const proseLineHeight = $derived(store.settings.proseReaderLineHeight ?? 1.75);
+  const proseParagraphSpacing = $derived(store.settings.proseReaderParagraphSpacing ?? 1.1);
+  const proseContentWidth = $derived(store.settings.proseReaderContentWidth ?? 760);
+  const proseFontFamily = $derived(store.settings.proseReaderFontFamily || "Georgia, serif");
+  const proseTextAlign = $derived(store.settings.proseReaderTextAlign ?? "left");
+  const prosePalette = $derived.by(() => {
+    if (proseTheme === "light") return { text: "#19151d", bg: "#f5f1ea", surface: "#f8f4ec" };
+    if (proseTheme === "sepia") return { text: "#2b2118", bg: "#efe1c9", surface: "#f6ead4" };
+    if (proseTheme === "oled") return { text: "#e8e2f4", bg: "#000000", surface: "#050507" };
+    if (proseTheme === "dark") return { text: "#ece7f5", bg: "#09080d", surface: "#111019" };
+    return {
+      text: store.settings.proseReaderTextColor ?? "#efe9de",
+      bg: store.settings.proseReaderBackgroundColor ?? "#17121c",
+      surface: store.settings.proseReaderBackgroundColor ?? "#17121c",
+    };
+  });
+
+  function cycleProseTheme() {
+    const themes = ["nocturne", "dark", "sepia", "light", "oled"] as const;
+    const current = themes.indexOf(proseTheme as any);
+    updateSettings({ proseReaderTheme: themes[(current + 1) % themes.length] });
+  }
+
+  function updateFontSize(delta: number) {
+    updateSettings({ proseReaderFontSize: Math.max(12, Math.min(32, proseFontSize + delta)) });
+  }
+
+  function updateLineHeight(delta: number) {
+    updateSettings({ proseReaderLineHeight: Math.round(Math.max(1.2, Math.min(2.4, proseLineHeight + delta)) * 100) / 100 });
+  }
+
+  function updateContentWidth(delta: number) {
+    updateSettings({ proseReaderContentWidth: Math.max(520, Math.min(980, proseContentWidth + delta)) });
+  }
+
+  function updateProseColor(key: "text" | "background", value: string) {
+    updateSettings(key === "text"
+      ? { proseReaderTheme: "nocturne", proseReaderTextColor: value }
+      : { proseReaderTheme: "nocturne", proseReaderBackgroundColor: value });
+  }
 
   function sanitizeChapterHtml(input: string): string {
     if (typeof DOMParser === "undefined") return input;
@@ -62,9 +113,7 @@
     doc.querySelectorAll("script, style, iframe, object, embed, link, meta").forEach((node) => node.remove());
     doc.querySelectorAll("*").forEach((node) => {
       for (const attribute of [...node.attributes]) {
-        if (attribute.name.startsWith("on")) {
-          node.removeAttribute(attribute.name);
-        }
+        if (attribute.name.startsWith("on")) node.removeAttribute(attribute.name);
       }
     });
     return doc.body.innerHTML;
@@ -123,8 +172,7 @@
     });
   }
 
-  function openRelativeChapter(direction: "prev" | "next") {
-    const target = direction === "prev" ? previousChapter : nextChapter;
+  function openChapter(target: NonNullable<typeof currentNovel>["chapters"][number] | null) {
     if (!activeReader || !target) return;
     store.setActiveNovelReader({
       ...activeReader,
@@ -132,6 +180,15 @@
       chapterPath: target.path,
       chapterTitle: target.title,
     });
+  }
+
+  function openRelativeChapter(direction: "prev" | "next") {
+    openChapter(direction === "prev" ? previousChapter : nextChapter);
+  }
+
+  function openChapterByIndex(index: number) {
+    if (!currentNovel) return;
+    openChapter(currentNovel.chapters[index] ?? null);
   }
 
   $effect(() => {
@@ -164,147 +221,276 @@
 </script>
 
 {#if activeReader}
-  <div class="root">
-    <div class="reader-header">
-      <button class="chrome-btn" onclick={closeNovelReader}>
-        <ArrowLeft size={14} weight="bold" />
-        Back
+  <ReaderHud overlayBars={false} uiVisible={true}>
+    {#snippet topbarLeft()}
+      <button class="icon-btn" onclick={closeNovelReader} title="Close reader">
+        <X size={15} weight="light" />
+      </button>
+      <button class="icon-btn" onclick={() => openRelativeChapter("prev")} disabled={!previousChapter} title="Previous chapter">
+        <CaretLeft size={14} weight="light" />
+      </button>
+      <button class="icon-btn" onclick={() => openRelativeChapter("next")} disabled={!nextChapter} title="Next chapter">
+        <CaretRight size={14} weight="light" />
       </button>
       <div class="reader-title">
         <strong>{currentNovel?.title ?? "Novel source"}</strong>
-        <span>
-          {activeReader.chapterTitle}
-          {#if currentNovel && currentChapterIndex >= 0}
-            · Chapter {currentChapterIndex + 1} of {currentNovel.chapters.length}
-          {/if}
-          {#if currentStats}
-            · {Math.round(currentStats.progressPercent * 100)}%
-          {/if}
-          {#if currentProgress?.updatedAt}
-            · Saved
-          {/if}
-        </span>
+        <span>{activeReader.chapterTitle}</span>
       </div>
-      <div class="reader-nav">
-        <button
-          class="chrome-btn"
-          onclick={toggleCurrentChapterBookmark}
-          disabled={!getNovelLibraryEntry(libraryState, activeReader.novelId)}
-          title={currentChapterBookmarked ? "Remove bookmark" : "Save bookmark"}
-        >
-          {#if currentChapterBookmarked}
-            <BookmarkSimple size={14} weight="fill" />
-          {:else}
-            <BookmarkSimple size={14} weight="bold" />
-          {/if}
-          {currentChapterBookmarked ? "Bookmarked" : "Bookmark"}
-        </button>
-        <button class="chrome-btn" onclick={() => openRelativeChapter("prev")} disabled={!previousChapter}>
-          <CaretLeft size={14} weight="bold" />
-          Prev
-        </button>
-        <button class="chrome-btn" onclick={() => openRelativeChapter("next")} disabled={!nextChapter}>
-          Next
-          <CaretRight size={14} weight="bold" />
-        </button>
-      </div>
+    {/snippet}
+
+    {#snippet topbarRight()}
+      <div class="top-sep"></div>
+      <span class="reader-progress-text">{progressLabel}</span>
+      <span class="mode-status" title="Novel reader">
+        <BookOpen size={14} weight="light" />
+        <span class="mode-label">Novel</span>
+      </span>
+      <button
+        class="icon-btn"
+        class:active={currentChapterBookmarked}
+        onclick={toggleCurrentChapterBookmark}
+        disabled={!getNovelLibraryEntry(libraryState, activeReader.novelId)}
+        title={currentChapterBookmarked ? "Remove bookmark" : "Bookmark this chapter"}
+      >
+        <BookmarkSimple size={15} weight={currentChapterBookmarked ? "fill" : "regular"} />
+      </button>
+      <button class="icon-btn" class:active={toolsOpen} onclick={() => toolsOpen = !toolsOpen} title="Reader tools">
+        <SlidersHorizontal size={15} weight="light" />
+      </button>
+    {/snippet}
+
+    <div class="viewer novel-viewer" style={`--prose-page-bg:${prosePalette.bg};`}>
+      {#if loading}
+        <div class="center-overlay">
+          <CircleNotch size={20} weight="light" class="anim-spin" style="color:var(--text-faint)" />
+        </div>
+      {:else if error}
+        <div class="center-overlay error-stack">
+          <NocturneState
+            layout="center"
+            tone="danger"
+            icon="warning"
+            eyebrow="Reader"
+            title="Could not load this chapter"
+            body={error}
+            actions={[{
+              label: "Retry chapter",
+              kind: "primary",
+              icon: "retry",
+              onClick: loadChapter,
+            }]}
+          />
+        </div>
+      {:else if !chapterHtml.trim()}
+        <div class="center-overlay error-stack">
+          <NocturneState
+            layout="center"
+            tone="warning"
+            icon="info"
+            eyebrow="Reader"
+            title="No readable content"
+            body="This source returned an empty chapter."
+          />
+        </div>
+      {:else}
+        <article
+          class="reader-body prose"
+          style={`--prose-font-size:${proseFontSize}px;--prose-line-height:${proseLineHeight};--prose-paragraph-spacing:${proseParagraphSpacing}em;--prose-content-width:${proseContentWidth}px;--prose-font-family:${proseFontFamily};--prose-text:${prosePalette.text};--prose-bg:${prosePalette.surface};--prose-page-bg:${prosePalette.bg};--prose-align:${proseTextAlign};`}
+        >{@html chapterHtml}</article>
+      {/if}
     </div>
 
-    {#if loading}
-      <div class="empty">Loading chapter...</div>
-    {:else if error}
-      <div class="empty error-state">
-        <strong>Could not load this chapter.</strong>
-        <span>{error}</span>
-        <button class="chrome-btn" onclick={loadChapter}>Retry</button>
+    {#snippet sidePanel()}
+      {#if toolsOpen}
+        <aside class="reader-tools-panel" aria-label="Novel reader tools">
+          <div class="reader-tools-panel__header">
+            <span class="reader-tools-panel__eyebrow">Novel tools</span>
+            <strong>Chapter view</strong>
+            <button class="reader-tools-panel__close" type="button" onclick={() => toolsOpen = false} title="Hide tools">
+              <X size={13} weight="light" />
+            </button>
+          </div>
+
+          <div class="reader-tools-segment" aria-label="Novel quick actions">
+            <button type="button" onclick={() => openRelativeChapter("prev")} disabled={loading || !previousChapter}>Prev</button>
+            <button
+              type="button"
+              class:active={currentChapterBookmarked}
+              onclick={toggleCurrentChapterBookmark}
+              disabled={!getNovelLibraryEntry(libraryState, activeReader.novelId)}
+            >Mark</button>
+            <button type="button" onclick={() => openRelativeChapter("next")} disabled={loading || !nextChapter}>Next</button>
+          </div>
+
+          <dl class="reader-tools-list">
+            <div>
+              <dt>Chapter</dt>
+              <dd>{sliderValue} / {sliderMax}</dd>
+            </div>
+            <div>
+              <dt>Progress</dt>
+              <dd>{progressLabel}</dd>
+            </div>
+            <div>
+              <dt>Library</dt>
+              <dd>{getNovelLibraryEntry(libraryState, activeReader.novelId) ? "Saved" : "Source"}</dd>
+            </div>
+            <div>
+              <dt>Bookmark</dt>
+              <dd>{currentChapterBookmarked ? "Saved" : "Not saved"}</dd>
+            </div>
+            <div>
+              <dt>Theme</dt>
+              <dd><button type="button" onclick={cycleProseTheme}>{proseTheme}</button></dd>
+            </div>
+            <div>
+              <dt>Font</dt>
+              <dd>
+                <select
+                  class="reader-tools-select"
+                  value={proseFontFamily}
+                  onchange={(event) => updateSettings({ proseReaderFontFamily: event.currentTarget.value })}
+                >
+                  <option value="Georgia, serif">Georgia</option>
+                  <option value="Merriweather, Georgia, serif">Merriweather</option>
+                  <option value="Inter, sans-serif">Inter</option>
+                  <option value="Atkinson Hyperlegible, Inter, sans-serif">Atkinson</option>
+                  <option value='"Segoe UI", sans-serif'>Segoe UI</option>
+                </select>
+              </dd>
+            </div>
+            <div>
+              <dt>Size</dt>
+              <dd>
+                <div class="reader-tools-zoom">
+                  <button type="button" onclick={() => updateFontSize(-1)}>-</button>
+                  <button type="button">{proseFontSize}px</button>
+                  <button type="button" onclick={() => updateFontSize(1)}>+</button>
+                </div>
+              </dd>
+            </div>
+            <div>
+              <dt>Line</dt>
+              <dd>
+                <div class="reader-tools-zoom">
+                  <button type="button" onclick={() => updateLineHeight(-0.05)}>-</button>
+                  <button type="button">{proseLineHeight.toFixed(2)}</button>
+                  <button type="button" onclick={() => updateLineHeight(0.05)}>+</button>
+                </div>
+              </dd>
+            </div>
+            <div>
+              <dt>Align</dt>
+              <dd><button type="button" onclick={() => updateSettings({ proseReaderTextAlign: proseTextAlign === "justify" ? "left" : "justify" })}>{proseTextAlign}</button></dd>
+            </div>
+            <div>
+              <dt>Width</dt>
+              <dd>
+                <div class="reader-tools-zoom">
+                  <button type="button" onclick={() => updateContentWidth(-40)}>-</button>
+                  <button type="button">{proseContentWidth}px</button>
+                  <button type="button" onclick={() => updateContentWidth(40)}>+</button>
+                </div>
+              </dd>
+            </div>
+            <div>
+              <dt>Text</dt>
+              <dd>
+                <input
+                  class="reader-tools-color"
+                  type="color"
+                  value={prosePalette.text}
+                  onchange={(event) => updateProseColor("text", event.currentTarget.value)}
+                  title="Text color"
+                />
+              </dd>
+            </div>
+            <div>
+              <dt>Paper</dt>
+              <dd>
+                <input
+                  class="reader-tools-color"
+                  type="color"
+                  value={prosePalette.surface}
+                  onchange={(event) => updateProseColor("background", event.currentTarget.value)}
+                  title="Page background"
+                />
+              </dd>
+            </div>
+          </dl>
+        </aside>
+      {/if}
+    {/snippet}
+
+    {#snippet bottombar()}
+      <button class="nav-btn" onclick={() => openRelativeChapter("prev")} disabled={loading || !previousChapter}>
+        <ArrowLeft size={13} weight="light" />
+      </button>
+
+      <div class="progress-block">
+        <div class="progress-meta">
+          <span>Chapter {sliderValue} of {sliderMax}</span>
+          <strong>{progressLabel}</strong>
+        </div>
+        <div class="slider-wrap" role="presentation">
+          <div class="slider-track-bg">
+            <div class="slider-fill" style="width: {sliderPct}%"></div>
+          </div>
+          {#if currentChapterBookmarked}
+            <div class="slider-checkpoint bookmark-checkpoint" style="left: {sliderPct}%" title="Bookmarked chapter"></div>
+          {/if}
+          <input
+            type="range"
+            class="slider-input"
+            min={1}
+            max={sliderMax}
+            step={1}
+            value={sliderValue}
+            oninput={(event) => openChapterByIndex(Number(event.currentTarget.value) - 1)}
+            aria-label={`Chapter ${sliderValue} of ${sliderMax}`}
+          />
+        </div>
       </div>
-    {:else if !chapterHtml.trim()}
-      <div class="empty">This chapter returned no readable content.</div>
-    {:else}
-      <article class="reader-body prose">{@html chapterHtml}</article>
-    {/if}
-  </div>
+
+      <button class="nav-btn" onclick={() => openRelativeChapter("next")} disabled={loading || !nextChapter}>
+        <ArrowRight size={13} weight="light" />
+      </button>
+    {/snippet}
+  </ReaderHud>
 {/if}
 
 <style>
-  .root {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    background: var(--bg-base);
-    color: var(--text-primary);
-  }
-
-  .reader-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--sp-3);
-    padding: var(--sp-3) var(--sp-4);
-    border-bottom: 1px solid var(--border-dim);
-    background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
-  }
-
-  .reader-title {
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    text-align: center;
-  }
-
-  .reader-title strong,
-  .reader-title span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .reader-title span {
-    font-size: var(--text-xs);
-    color: var(--text-faint);
-  }
-
-  .reader-nav {
-    display: flex;
-    gap: var(--sp-2);
-  }
-
-  .chrome-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: var(--sp-2);
-    padding: 7px 12px;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border-dim);
-    background: var(--bg-raised);
-    color: var(--text-secondary);
-    font-family: var(--font-ui);
-    font-size: var(--text-xs);
-    letter-spacing: var(--tracking-wide);
-    cursor: pointer;
-  }
-
-  .chrome-btn:disabled {
-    opacity: 0.4;
-    cursor: default;
+  .novel-viewer {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    position: relative;
+    background:
+      radial-gradient(circle at 45% 18%, rgba(185, 156, 255, 0.1), transparent 30%),
+      linear-gradient(180deg, var(--prose-page-bg, var(--bg-void)), #050507 62%, var(--prose-page-bg, var(--bg-void)));
+    color: var(--prose-text, var(--text-primary));
   }
 
   .reader-body {
-    flex: 1;
-    overflow-y: auto;
-    padding: clamp(20px, 4vw, 40px);
-    margin: 0 auto;
-    width: min(920px, 100%);
-    line-height: 1.9;
-    font-size: 1.05rem;
+    padding: clamp(42px, 6vw, 72px);
+    margin: var(--sp-3) auto;
+    width: min(var(--prose-content-width, 760px), calc(100% - 40px));
+    min-height: calc(100% - var(--sp-6));
+    border: 1px solid color-mix(in srgb, var(--border-base) 68%, transparent);
+    border-radius: 14px;
+    background: var(--prose-bg, color-mix(in srgb, var(--bg-base) 88%, #d7d0c2 12%));
+    box-shadow: 0 44px 110px rgba(0, 0, 0, 0.5);
+    color: var(--prose-text, var(--text-primary));
+    font-family: var(--prose-font-family, Georgia, serif);
+    line-height: var(--prose-line-height, 1.75);
+    font-size: var(--prose-font-size, 18px);
+    text-align: var(--prose-align, left);
   }
 
   .reader-body :global(p),
   .reader-body :global(div) {
-    color: var(--text-primary);
-    margin: 0 0 1.1em;
+    color: var(--prose-text, var(--text-primary));
+    margin: 0 0 var(--prose-paragraph-spacing, 1.1em);
   }
 
   .reader-body :global(img) {
@@ -312,20 +498,15 @@
     height: auto;
   }
 
-  .empty {
-    flex: 1;
+  .center-overlay {
+    position: absolute;
+    inset: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    flex-direction: column;
-    gap: var(--sp-2);
-    color: var(--text-muted);
-    font-size: var(--text-sm);
-    text-align: center;
-    padding: var(--sp-5);
   }
 
-  .error-state strong {
-    color: var(--text-primary);
+  .error-stack {
+    padding: var(--sp-5);
   }
 </style>

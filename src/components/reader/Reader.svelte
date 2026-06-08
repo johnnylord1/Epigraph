@@ -2,9 +2,10 @@
   import { onMount, onDestroy, untrack, tick } from "svelte";
   import {
     X, CaretLeft, CaretRight, ArrowLeft, ArrowRight,
-    Square, Rows, Download, ArrowsLeftRight, ArrowsIn, ArrowsOut, ArrowsVertical,
+    Square, Rows, Download, ArrowsLeftRight,
     CircleNotch, MagnifyingGlassMinus, MagnifyingGlassPlus,
     Bookmark, BookOpen, MonitorPlay, GlobeHemisphereWest, ArrowSquareOut,
+    SlidersHorizontal,
   } from "phosphor-svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
@@ -17,6 +18,7 @@
   import { matchesKeybind, toggleFullscreen, DEFAULT_KEYBINDS } from "../../lib/keybinds";
   import { setReading } from "../../lib/discord";
   import type { FitMode } from "../../store/state.svelte";
+  import NocturneState from "../shared/NocturneState.svelte";
   import ReaderHud from "./ReaderHud.svelte";
 
   const AVG_MIN_PER_PAGE = 0.33;
@@ -179,6 +181,7 @@
   let error: string | null = $state(null);
   let dlOpen           = $state(false);
   let zoomOpen         = $state(false);
+  let toolsOpen        = $state(true);
   let uiVisible        = $state(true);
   let pageReady        = $state(false);
   let pageGroups: number[][] = $state([]);
@@ -921,50 +924,18 @@
       <button class="icon-btn" onclick={() => { if (adjacent.prev) { maybeMarkCurrentRead(); openReader(adjacent.prev, store.activeChapterList); } }} disabled={!adjacent.prev}>
         <CaretLeft size={14} weight="light" />
       </button>
-      <span class="ch-label">
-        <span class="ch-title">{store.activeManga?.title}</span>
-        <span class="ch-sep">/</span>
-        <span>{displayChapter?.name}</span>
-      </span>
       <button class="icon-btn" onclick={() => { if (adjacent.next) { maybeMarkCurrentRead(); openReader(adjacent.next, store.activeChapterList); } }} disabled={!adjacent.next}>
         <CaretRight size={14} weight="light" />
       </button>
-      <span class="page-label">{store.pageNumber} / {visibleChunkLastPage || "…"}</span>
+      <div class="reader-title">
+        <strong>{store.activeManga?.title}</strong>
+        <span>{displayChapter?.name}</span>
+      </div>
   {/snippet}
 
   {#snippet topbarRight()}
       <div class="top-sep"></div>
-
-      <button class="mode-btn" onclick={cycleFit}>
-        {#if fit === "width"}<ArrowsLeftRight size={14} weight="light" />
-        {:else if fit === "height"}<ArrowsVertical size={14} weight="light" />
-        {:else if fit === "screen"}<ArrowsIn size={14} weight="light" />
-        {:else}<ArrowsOut size={14} weight="light" />{/if}
-        <span class="mode-label">{fitLabel}</span>
-      </button>
-
-      <div class="zoom-wrap">
-        <div class="zoom-inline">
-          <button class="zoom-step-btn" onclick={() => adjustZoom(-ZOOM_STEP)} title="Zoom out" disabled={zoom <= ZOOM_MIN}>
-            <MagnifyingGlassMinus size={13} weight="light" />
-          </button>
-          <button class="zoom-pct-btn" onclick={() => zoomOpen = !zoomOpen} title="Click to adjust zoom">
-            {zoomPct}%
-          </button>
-          <button class="zoom-step-btn" onclick={() => adjustZoom(ZOOM_STEP)} title="Zoom in" disabled={zoom >= ZOOM_MAX}>
-            <MagnifyingGlassPlus size={13} weight="light" />
-          </button>
-        </div>
-        {#if zoomOpen}
-          <div class="zoom-popover">
-            <div class="zoom-slider-row">
-              <input type="range" class="zoom-slider" min={10} max={100} step={5} value={zoomPct}
-                oninput={(e) => { captureZoomAnchor(); updateSettings({ readerZoom: clampZoom(Number(e.currentTarget.value) / 100) }); restoreZoomAnchor(); }} />
-            </div>
-            <button class="zoom-reset" onclick={resetZoom} disabled={zoom === 1.0}>Reset</button>
-          </div>
-        {/if}
-      </div>
+      <span class="reader-progress-text">{store.pageNumber} / {visibleChunkLastPage || "…"} - {sliderPct.toFixed(0)}%</span>
 
       <button class="mode-btn" class:active={rtl} onclick={() => updateSettings({ readingDirection: rtl ? "ltr" : "rtl" })}>
         <ArrowsLeftRight size={14} weight="light" /><span class="mode-label">{rtl ? "RTL" : "LTR"}</span>
@@ -975,26 +946,19 @@
         {:else if style === "fade"}<MonitorPlay size={14} weight="light" />
         {:else if style === "double"}<BookOpen size={14} weight="light" />
         {:else}<Rows size={14} weight="light" />{/if}
-        <span class="mode-label">{style}</span>
+        <span class="mode-label">{style === "longstrip" ? "Longstrip" : style === "single" ? "Single" : style === "double" ? "Double" : "Fade"}</span>
       </button>
 
       <div class="mode-extras">
-        {#if style === "double"}
-          <button class="mode-btn" class:active={store.settings.offsetDoubleSpreads} onclick={() => updateSettings({ offsetDoubleSpreads: !store.settings.offsetDoubleSpreads })}>
-            <span class="mode-label">Offset</span>
-          </button>
-        {/if}
-        {#if style === "longstrip"}
-          <button class="mode-btn" class:active={store.settings.pageGap} onclick={() => updateSettings({ pageGap: !store.settings.pageGap })}>
-            <span class="mode-label">Gap</span>
-          </button>
-          <button class="mode-btn" class:active={autoNext} onclick={() => updateSettings({ autoNextChapter: !autoNext })}>
-            <span class="mode-label">Auto</span>
-          </button>
-        {/if}
-        {#if !autoNext}
-          <button class="mode-btn" class:active={markOnNext} onclick={() => updateSettings({ markReadOnNext: !markOnNext })}>
-            <span class="mode-label">Mk.Read</span>
+        {#if style === "longstrip" || style === "double"}
+          <button
+            class="mode-btn"
+            class:active={style === "longstrip" ? store.settings.pageGap || autoNext : store.settings.offsetDoubleSpreads}
+            onclick={() => style === "longstrip"
+              ? updateSettings({ pageGap: !store.settings.pageGap })
+              : updateSettings({ offsetDoubleSpreads: !store.settings.offsetDoubleSpreads })}
+          >
+            <span class="mode-label">{style === "longstrip" ? "Gap Auto" : "Offset"}</span>
           </button>
         {/if}
       </div>
@@ -1003,23 +967,26 @@
         <Download size={14} weight="light" />
       </button>
 
-        {#if canOpenWebView}
-          <button class="mode-btn" class:active={webViewWindowOpen} onclick={toggleReaderWebView} title={webViewWindowOpen ? "Close chapter web view" : "Open chapter web view"}>
-            <GlobeHemisphereWest size={14} weight="light" />
-            <span class="mode-label">Web</span>
-          </button>
-        {/if}
-
       <button class="icon-btn" class:active={isBookmarked} onclick={toggleBookmark} title={isBookmarked ? "Remove bookmark" : "Bookmark this page"}>
           <Bookmark size={15} weight={isBookmarked ? "fill" : "regular"} />
         </button>
+
+      <button class="icon-btn" class:active={toolsOpen} onclick={() => toolsOpen = !toolsOpen} title="Reader tools">
+        <SlidersHorizontal size={15} weight="light" />
+      </button>
   {/snippet}
 
   {#if showResumeBanner}
-    <div class="resume-banner" class:fading={resumeFading} role="status" onclick={() => { resumeVisible = false; resumeFading = false; }}>
+    <button
+      type="button"
+      class="resume-banner"
+      class:fading={resumeFading}
+      aria-label={`Dismiss bookmark resume notice for page ${resumePage}`}
+      onclick={() => { resumeVisible = false; resumeFading = false; }}
+    >
       <span>Bookmark at page {resumePage}</span>
 
-    </div>
+    </button>
   {/if}
 
   <div
@@ -1039,19 +1006,28 @@
     {/if}
     {#if error}
       <div class="center-overlay error-stack">
-          <p class="error-msg">{error}</p>
-          {#if canOpenWebView}
-            <div class="reader-error-actions">
-              <button class="reader-error-btn" onclick={toggleReaderWebView}>
-                <GlobeHemisphereWest size={14} weight="light" />
-                {webViewWindowOpen ? "Close web view" : "Try web view"}
-              </button>
-            <button class="reader-error-btn subtle" onclick={openExternalWebView}>
-              <ArrowSquareOut size={14} weight="light" />
-              Open in browser
-            </button>
-          </div>
-        {/if}
+        <NocturneState
+          layout="center"
+          tone="danger"
+          icon="warning"
+          eyebrow="Reader"
+          title="Could not load chapter pages"
+          body={error}
+          actions={canOpenWebView ? [
+            {
+              label: webViewWindowOpen ? "Close web view" : "Try web view",
+              kind: "primary",
+              icon: "plug",
+              onClick: toggleReaderWebView,
+            },
+            {
+              label: "Open in browser",
+              kind: "secondary",
+              icon: "info",
+              onClick: openExternalWebView,
+            },
+          ] : []}
+        />
       </div>
     {/if}
 
@@ -1102,52 +1078,109 @@
     {/if}
   </div>
 
+  {#snippet sidePanel()}
+    {#if toolsOpen && uiVisible}
+      <aside class="reader-tools-panel" aria-label="Manga reader tools">
+        <div class="reader-tools-panel__header">
+          <span class="reader-tools-panel__eyebrow">Manga tools</span>
+          <strong>{style === "single" ? "Single page" : style === "double" ? "Double page" : style === "fade" ? "Fade page" : "Long strip"}</strong>
+          <button class="reader-tools-panel__close" type="button" onclick={() => toolsOpen = false} title="Hide tools">
+            <X size={13} weight="light" />
+          </button>
+        </div>
+
+        <div class="reader-tools-segment" aria-label="Reader mode">
+          <button type="button" class:active={style === "single"} onclick={() => updateSettings({ pageStyle: "single" })}>Single</button>
+          <button type="button" class:active={style === "double"} onclick={() => updateSettings({ pageStyle: "double" })}>Double</button>
+          <button type="button" class:active={style === "longstrip"} onclick={() => updateSettings({ pageStyle: "longstrip" })}>Strip</button>
+        </div>
+
+        <dl class="reader-tools-list">
+          <div>
+            <dt>Fit</dt>
+            <dd><button type="button" onclick={cycleFit}>{fitLabel}</button></dd>
+          </div>
+          <div>
+            <dt>Zoom</dt>
+            <dd>
+              <div class="reader-tools-zoom">
+                <button type="button" onclick={() => adjustZoom(-ZOOM_STEP)} disabled={zoom <= ZOOM_MIN}><MagnifyingGlassMinus size={12} weight="light" /></button>
+                <button type="button" onclick={resetZoom}>{zoomPct}%</button>
+                <button type="button" onclick={() => adjustZoom(ZOOM_STEP)} disabled={zoom >= ZOOM_MAX}><MagnifyingGlassPlus size={12} weight="light" /></button>
+              </div>
+            </dd>
+          </div>
+          <div>
+            <dt>Direction</dt>
+            <dd><button type="button" onclick={() => updateSettings({ readingDirection: rtl ? "ltr" : "rtl" })}>{rtl ? "Right to left" : "Left to right"}</button></dd>
+          </div>
+          <div>
+            <dt>Downloaded</dt>
+            <dd>{store.activeChapter?.isDownloaded ? "Ready" : "Not saved"}</dd>
+          </div>
+        </dl>
+      </aside>
+    {/if}
+  {/snippet}
+
   {#snippet bottombar()}
     <button class="nav-btn" onclick={goPrev} disabled={loading || (style === "longstrip" ? !adjacent.prev : (store.pageNumber === 1 && !adjacent.prev))}>
       <ArrowLeft size={13} weight="light" />
     </button>
 
-    {#if sliderMax > 1}
-      <div
-        class="slider-wrap"
-        class:dragging={sliderDragging}
-        onmouseenter={() => sliderHover = true}
-        onmouseleave={() => { sliderHover = false; }}
-        role="presentation"
-      >
-        <div class="slider-track-bg">
-          <div class="slider-fill" style="width: {rtl ? 100 - sliderPct : sliderPct}%"></div>
-        </div>
-        {#if isBookmarked && currentBookmark}
-          {@const bPct = sliderMax > 1 ? ((currentBookmark.pageNumber - 1) / (sliderMax - 1)) * 100 : 0}
-          <div
-            class="slider-checkpoint bookmark-checkpoint"
-            style="left: {rtl ? 100 - bPct : bPct}%"
-            title="Bookmark: Page {currentBookmark.pageNumber}"
-          ></div>
-        {/if}
-        <input
-          type="range"
-          class="slider-input"
-          min={1}
-          max={sliderMax}
-          step={1}
-          value={sliderPage}
-          dir={rtl ? "rtl" : "ltr"}
-          oninput={onSliderInput}
-          onmousedown={() => sliderDragging = true}
-          onmouseup={() => sliderDragging = false}
-          ontouchstart={() => sliderDragging = true}
-          ontouchend={() => sliderDragging = false}
-          aria-label="Page {sliderPage} of {sliderMax}"
-        />
-        {#if sliderHover || sliderDragging}
-          <div class="slider-tooltip" style="left: {rtl ? 100 - sliderPct : sliderPct}%">
-            {sliderPage} / {sliderMax}
-          </div>
-        {/if}
+    <div class="progress-block">
+      <div class="progress-meta">
+        <span>Page {sliderPage} of {sliderMax}</span>
+        <strong>{sliderPct.toFixed(0)}%</strong>
       </div>
-    {/if}
+      {#if sliderMax > 1}
+        <div
+          class="slider-wrap"
+          class:dragging={sliderDragging}
+          onmouseenter={() => sliderHover = true}
+          onmouseleave={() => { sliderHover = false; }}
+          role="presentation"
+        >
+          <div class="slider-track-bg">
+            <div class="slider-fill" style="width: {rtl ? 100 - sliderPct : sliderPct}%"></div>
+          </div>
+          {#if isBookmarked && currentBookmark}
+            {@const bPct = sliderMax > 1 ? ((currentBookmark.pageNumber - 1) / (sliderMax - 1)) * 100 : 0}
+            <div
+              class="slider-checkpoint bookmark-checkpoint"
+              style="left: {rtl ? 100 - bPct : bPct}%"
+              title="Bookmark: Page {currentBookmark.pageNumber}"
+            ></div>
+          {/if}
+          <input
+            type="range"
+            class="slider-input"
+            min={1}
+            max={sliderMax}
+            step={1}
+            value={sliderPage}
+            dir={rtl ? "rtl" : "ltr"}
+            oninput={onSliderInput}
+            onmousedown={() => sliderDragging = true}
+            onmouseup={() => sliderDragging = false}
+            ontouchstart={() => sliderDragging = true}
+            ontouchend={() => sliderDragging = false}
+            aria-label="Page {sliderPage} of {sliderMax}"
+          />
+          {#if sliderHover || sliderDragging}
+            <div class="slider-tooltip" style="left: {rtl ? 100 - sliderPct : sliderPct}%">
+              {sliderPage} / {sliderMax}
+            </div>
+          {/if}
+        </div>
+      {:else}
+        <div class="slider-wrap is-static" aria-hidden="true">
+          <div class="slider-track-bg">
+            <div class="slider-fill" style="width: {rtl ? 100 - sliderPct : sliderPct}%"></div>
+          </div>
+        </div>
+      {/if}
+    </div>
 
     <button class="nav-btn" onclick={goNext} disabled={loading || (style === "longstrip" ? !adjacent.next : (store.pageNumber === lastPage && !adjacent.next))}>
       <ArrowRight size={13} weight="light" />
@@ -1189,10 +1222,37 @@
 <style>
   .error-stack { display: flex; flex-direction: column; align-items: center; gap: 12px; }
   .reader-error-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; }
-  .reader-error-btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: var(--radius-md); border: 1px solid var(--accent-dim); background: var(--accent-muted); color: var(--accent-fg); font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); cursor: pointer; transition: background var(--t-base), border-color var(--t-base), color var(--t-base); }
-  .reader-error-btn:hover { background: var(--accent-dim); }
-  .reader-error-btn.subtle { border-color: var(--border-strong); background: var(--bg-raised); color: var(--text-secondary); }
-  .reader-error-btn.subtle:hover { border-color: var(--border-focus); color: var(--text-primary); }
+  .reader-error-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 34px;
+    padding: 0 13px;
+    border-radius: 10px;
+    border: 1px solid rgba(184, 167, 234, 0.16);
+    background: rgba(184, 167, 234, 0.1);
+    color: var(--accent-fg);
+    font-family: Manrope, Inter, "Segoe UI", sans-serif;
+    font-size: 10px;
+    font-weight: 850;
+    letter-spacing: 0.055em;
+    cursor: pointer;
+    transition: background var(--t-base), border-color var(--t-base), color var(--t-base), transform var(--t-base);
+  }
+  .reader-error-btn:hover {
+    border-color: rgba(184, 167, 234, 0.24);
+    background: rgba(184, 167, 234, 0.14);
+    transform: translateY(-1px);
+  }
+  .reader-error-btn.subtle {
+    border-color: rgba(202, 196, 208, 0.08);
+    background: rgba(255, 255, 255, 0.02);
+    color: var(--text-secondary);
+  }
+  .reader-error-btn.subtle:hover {
+    border-color: rgba(184, 167, 234, 0.16);
+    color: var(--text-primary);
+  }
 
   .viewer { flex: 1; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; align-items: center; justify-content: center; -webkit-overflow-scrolling: touch; position: relative; }
   .viewer.strip { justify-content: flex-start; padding: var(--sp-4) 0; }
@@ -1212,28 +1272,34 @@
   .gap-right { margin-left: 2px; }
 
   .center-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
-  .error-msg { color: var(--color-error); font-size: var(--text-base); }
 
-  .resume-banner { position: fixed; top: 48px; left: 50%; display: flex; align-items: center; gap: var(--sp-2); background: var(--bg-raised); border: 1px solid var(--border-base); border-radius: var(--hud-toast-radius); padding: 6px var(--sp-3); font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-secondary); z-index: 20; box-shadow: 0 4px 16px rgba(0,0,0,0.4); animation: bannerIn var(--t-slow) cubic-bezier(0.16,1,0.3,1) both; white-space: nowrap; cursor: pointer; }
+  .resume-banner { position: fixed; top: 68px; left: 50%; display: flex; align-items: center; gap: var(--sp-2); background: rgba(20, 19, 38, 0.94); border: 1px solid rgba(184, 167, 234, 0.16); border-radius: 14px; padding: 8px 12px; font-family: Manrope, Inter, "Segoe UI", sans-serif; font-size: 11px; font-weight: 760; color: var(--text-secondary); z-index: 20; box-shadow: 0 18px 48px rgba(0,0,0,0.46); backdrop-filter: blur(24px) saturate(160%); animation: bannerIn var(--t-slow) cubic-bezier(0.16,1,0.3,1) both; white-space: nowrap; cursor: pointer; }
   .resume-banner.fading { animation: bannerOut 1s ease forwards; }
   @keyframes bannerIn  { from { opacity: 0; transform: translateX(-50%) translateY(-6px) scale(0.97); } to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); } }
   @keyframes bannerOut { from { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); } to { opacity: 0; transform: translateX(-50%) translateY(-4px) scale(0.97); } }
-  .resume-jump { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--accent-fg); background: var(--accent-muted); border: 1px solid var(--accent-dim); border-radius: var(--radius-sm); padding: 2px 8px; cursor: pointer; transition: filter var(--t-fast); }
-  .resume-jump:hover { filter: brightness(1.15); }
+  .resume-jump { font-family: Manrope, Inter, "Segoe UI", sans-serif; font-size: 10px; font-weight: 850; letter-spacing: 0.055em; color: var(--accent-fg); background: rgba(184, 167, 234, 0.1); border: 1px solid rgba(184, 167, 234, 0.16); border-radius: 10px; padding: 4px 9px; cursor: pointer; transition: background var(--t-fast), border-color var(--t-fast), transform var(--t-fast); }
+  .resume-jump:hover { background: rgba(184, 167, 234, 0.14); border-color: rgba(184, 167, 234, 0.24); transform: translateY(-1px); }
 
   .dl-backdrop { position: fixed; inset: 0; z-index: calc(var(--z-reader) + 10); display: flex; align-items: flex-start; justify-content: flex-end; padding: 48px var(--sp-4) 0; }
-  .dl-modal { background: var(--bg-raised); border: 1px solid var(--border-base); border-radius: var(--hud-popover-radius); padding: var(--sp-3); min-width: 210px; display: flex; flex-direction: column; gap: var(--sp-1); box-shadow: 0 8px 32px rgba(0,0,0,0.6); animation: scaleIn var(--t-fast) both; transform-origin: top right; }
-  .dl-title { font-family: var(--font-ui); font-size: var(--text-2xs); color: var(--text-faint); letter-spacing: var(--tracking-wider); text-transform: uppercase; padding: 2px var(--sp-2) var(--sp-2); border-bottom: 1px solid var(--border-dim); margin-bottom: var(--sp-1); }
-  .dl-option { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 7px var(--sp-3); border-radius: var(--radius-md); font-size: var(--text-sm); color: var(--text-secondary); background: none; border: none; cursor: pointer; text-align: left; transition: background var(--t-fast), color var(--t-fast); }
-  .dl-option:hover:not(:disabled) { background: var(--bg-overlay); color: var(--text-primary); }
+  .dl-modal { background: rgba(20, 19, 38, 0.96); border: 1px solid rgba(184, 167, 234, 0.16); border-radius: 16px; padding: 14px; min-width: 236px; display: flex; flex-direction: column; gap: 4px; box-shadow: 0 24px 72px rgba(0,0,0,0.54); backdrop-filter: blur(28px) saturate(165%); animation: scaleIn var(--t-fast) both; transform-origin: top right; }
+  .dl-title { font-family: Manrope, Inter, "Segoe UI", sans-serif; font-size: 9px; font-weight: 850; color: var(--accent-fg); letter-spacing: 0.18em; text-transform: uppercase; padding: 2px 4px 10px; border-bottom: 1px solid rgba(202, 196, 208, 0.08); margin-bottom: 4px; }
+  .dl-option { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; width: 100%; padding: 9px 10px; border-radius: 12px; font-family: Manrope, Inter, "Segoe UI", sans-serif; font-size: 12px; font-weight: 780; color: var(--text-secondary); background: transparent; border: 1px solid transparent; cursor: pointer; text-align: left; transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast), transform var(--t-fast); }
+  .dl-option:hover:not(:disabled) { background: rgba(184, 167, 234, 0.06); border-color: rgba(184, 167, 234, 0.12); color: var(--text-primary); transform: translateY(-1px); }
   .dl-option:disabled { opacity: 0.3; cursor: default; }
-  .dl-sub { font-size: var(--text-xs); color: var(--text-faint); }
+  .dl-sub { font-size: 10px; color: var(--text-faint); letter-spacing: 0.04em; }
   .dl-row { display: flex; align-items: center; gap: var(--sp-2); }
-  .dl-stepper { display: flex; align-items: center; gap: 2px; background: var(--bg-overlay); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); overflow: hidden; flex-shrink: 0; }
-  .dl-step-btn { display: flex; align-items: center; justify-content: center; width: 22px; height: 28px; font-size: var(--text-base); color: var(--text-muted); background: none; border: none; cursor: pointer; line-height: 1; transition: color var(--t-fast), background var(--t-fast); }
-  .dl-step-btn:hover:not(:disabled) { color: var(--text-primary); background: var(--bg-raised); }
+  .dl-stepper { display: flex; align-items: center; gap: 2px; background: rgba(255, 255, 255, 0.018); border: 1px solid rgba(202, 196, 208, 0.08); border-radius: 10px; overflow: hidden; flex-shrink: 0; }
+  .dl-step-btn { display: flex; align-items: center; justify-content: center; width: 24px; height: 30px; font-size: var(--text-base); color: var(--text-muted); background: none; border: none; cursor: pointer; line-height: 1; transition: color var(--t-fast), background var(--t-fast); }
+  .dl-step-btn:hover:not(:disabled) { color: var(--text-primary); background: rgba(184, 167, 234, 0.08); }
   .dl-step-btn:disabled { opacity: 0.25; cursor: default; }
-  .dl-step-val { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-secondary); min-width: 24px; text-align: center; letter-spacing: var(--tracking-wide); }
+  .dl-step-val { font-family: Manrope, Inter, "Segoe UI", sans-serif; font-size: 10px; font-weight: 850; color: var(--text-secondary); min-width: 24px; text-align: center; letter-spacing: 0.055em; }
 
   @keyframes scaleIn { from { opacity: 0; transform: scale(0.97) } to { opacity: 1; transform: scale(1) } }
+  @keyframes readerToolsIn { from { opacity: 0; transform: translateY(-6px) scale(0.98) } to { opacity: 1; transform: translateY(0) scale(1) } }
+
+  @media (max-width: 900px) {
+    .reader-tools-panel {
+      display: none;
+    }
+  }
 </style>

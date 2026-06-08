@@ -39,6 +39,9 @@ export type SearchSourcesPane = "browse" | "extensions" | "novels";
 export type ReadingDirection = "ltr" | "rtl";
 export type ChapterSortDir   = "desc" | "asc";
 export type ChapterSortMode  = "source" | "chapterNumber" | "uploadDate";
+export type ProseReaderTheme = "nocturne" | "dark" | "sepia" | "light" | "oled";
+export type ProseReaderAlign = "left" | "justify";
+export type PdfFitMode = "width" | "page" | "actual";
 
 export type LibrarySortMode =
   | "az"
@@ -343,6 +346,7 @@ export interface Toast {
   body?:     string;
   duration?: number;
   action?:   { label: string; run: () => void };
+  updatedAt?: number;
 }
 
 export interface ActiveDownload {
@@ -375,6 +379,17 @@ export interface Settings {
    * Replaces the old `maxPageWidth` pixel value.
    */
   readerZoom:              number;
+  proseReaderFontSize:     number;
+  proseReaderFontFamily:   string;
+  proseReaderLineHeight:   number;
+  proseReaderParagraphSpacing: number;
+  proseReaderContentWidth: number;
+  proseReaderTextColor:    string;
+  proseReaderBackgroundColor: string;
+  proseReaderTheme:        ProseReaderTheme;
+  proseReaderTextAlign:    ProseReaderAlign;
+  pdfFitMode:              PdfFitMode;
+  pdfDarkMode:             boolean;
   pageGap:                 boolean;
   optimizeContrast:        boolean;
   offsetDoubleSpreads:     boolean;
@@ -415,6 +430,7 @@ export interface Settings {
   renderLimit:             number;
   heroSlots:               (number | null)[];
   mangaLinks:              Record<number, number[]>;
+  novelLinks:              Record<string, string[]>;
   serverAuthUser:          string;
   serverAuthPass:          string;
   serverAuthEnabled:       boolean;
@@ -480,6 +496,17 @@ export const DEFAULT_SETTINGS: Settings = {
   fitMode:                "width",
   launchIntoLibrary:      false,
   readerZoom:             1.0,
+  proseReaderFontSize:    18,
+  proseReaderFontFamily:  "Georgia, serif",
+  proseReaderLineHeight:  1.75,
+  proseReaderParagraphSpacing: 1.1,
+  proseReaderContentWidth: 760,
+  proseReaderTextColor:   "#efe9de",
+  proseReaderBackgroundColor: "#17121c",
+  proseReaderTheme:       "nocturne",
+  proseReaderTextAlign:   "left",
+  pdfFitMode:             "width",
+  pdfDarkMode:            false,
   pageGap:                true,
   optimizeContrast:       false,
   offsetDoubleSpreads:    false,
@@ -515,6 +542,7 @@ export const DEFAULT_SETTINGS: Settings = {
   renderLimit:            48,
   heroSlots:              [null, null, null, null],
   mangaLinks:             {},
+  novelLinks:             {},
   serverAuthUser:         "",
   serverAuthPass:         "",
   serverAuthEnabled:      false,
@@ -669,6 +697,7 @@ function mergeSettings(saved: any): Settings {
     keybinds:     { ...DEFAULT_KEYBINDS, ...saved?.settings?.keybinds },
     heroSlots:    saved?.settings?.heroSlots ?? [null, null, null, null],
     mangaLinks:   saved?.settings?.mangaLinks ?? {},
+    novelLinks:   saved?.settings?.novelLinks ?? {},
     customThemes: saved?.settings?.customThemes ?? [],
     hiddenCategoryIds: saved?.settings?.hiddenCategoryIds ?? [],
     booksCategories: savedBooksLibraryState.booksCategories,
@@ -1296,7 +1325,7 @@ class Store {
             activeCategoryId: typeof snapshot.booksLibraryUi.activeCategoryId === "string"
               ? snapshot.booksLibraryUi.activeCategoryId
               : null,
-            typeFilter: snapshot.booksLibraryUi.typeFilter === "epub" || snapshot.booksLibraryUi.typeFilter === "pdf" || snapshot.booksLibraryUi.typeFilter === "sources"
+            typeFilter: snapshot.booksLibraryUi.typeFilter === "epub" || snapshot.booksLibraryUi.typeFilter === "pdf"
               ? snapshot.booksLibraryUi.typeFilter
               : "all",
             statusFilter: snapshot.booksLibraryUi.statusFilter === "unopened" || snapshot.booksLibraryUi.statusFilter === "in_progress" || snapshot.booksLibraryUi.statusFilter === "finished"
@@ -1355,7 +1384,7 @@ class Store {
     this.bookBookmarks = [];
     this.readLog      = [];
     this.readingStats = { ...DEFAULT_READING_STATS };
-    this.settings     = { ...this.settings, heroSlots: [null, null, null, null], mangaLinks: {} };
+    this.settings     = { ...this.settings, heroSlots: [null, null, null, null], mangaLinks: {}, novelLinks: {} };
   }
 
 
@@ -1385,7 +1414,16 @@ class Store {
   }
 
   addToast(toast: Omit<Toast, "id">) {
-    this.toasts = [...this.toasts, { ...toast, id: Math.random().toString(36).slice(2) }].slice(-5);
+    const body = toast.body ?? "";
+    const isDownloadLike = toast.kind === "download" || /download/i.test(toast.title);
+    const existing = this.toasts.find(t =>
+      t.kind === toast.kind
+      && t.title === toast.title
+      && (isDownloadLike || (t.body ?? "") === body),
+    );
+    const id = existing?.id ?? Math.random().toString(36).slice(2);
+    const next = { ...existing, ...toast, id, updatedAt: Date.now() };
+    this.toasts = [...this.toasts.filter(t => t.id !== id), next].slice(-5);
   }
 
   dismissToast(id: string)                      { this.toasts = this.toasts.filter(x => x.id !== id); }

@@ -27,6 +27,7 @@ export interface Manga {
   source?: {
     id: string;
     name: string;
+    lang?: string | null;
     displayName: string;
   } | null;
 }
@@ -145,4 +146,10 @@ export interface TrackSearch {
   startDate: string | null;
   totalChapters: number;
   trackingUrl: string | null;
+  score?: number | null;
+  scoreMax?: number | null;
+  rank?: number | null;
+  popularity?: number | null;
+  trending?: number | null;
+  genres?: string[] | null;
 }

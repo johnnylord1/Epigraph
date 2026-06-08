@@ -11,7 +11,6 @@
   import {
     setLibraryReturnToMangaId,
     setLibraryScrollTop,
-    setLibraryVisibleCount,
     setActiveManga,
     store,
   } from "../../store/state.svelte";
@@ -46,6 +45,7 @@
     categoryMangaMap,
     trackedCompletedIds = new Set(),
     trackedChapterTotalsByMangaId = new Map(),
+    renderLimit = 48,
     viewKey,
     viewMode = "grid",
     preferredColumns = "auto",
@@ -69,6 +69,9 @@
   let bulkMoveOpen = $state(false);
   let failedCoverIds = $state(new Set<number>());
   let coverRetryCounts = $state(new Map<number, number>());
+  let renderVisible = $state(0);
+  let loadMoreSentinel: HTMLDivElement | null = $state(null);
+  let loadMoreObserver: IntersectionObserver | null = $state(null);
   let viewStateReady = false;
   let pendingScrollRestore = false;
   let pendingCardRestore = false;
@@ -82,8 +85,10 @@
     new Map(mangas.map((manga) => [createComicLibraryCardId(manga.id), manga])),
   );
 
+  const safeRenderLimit = $derived(Math.max(1, renderLimit || 48));
+  const renderedMangas = $derived(mangas.slice(0, renderVisible));
   const visibleCards = $derived(
-    mangas.map((manga) => {
+    renderedMangas.map((manga) => {
       const card = buildComicsLibraryCardVm(manga, {
         cropCovers: store.settings.libraryCropCovers,
         selectedIds,
@@ -97,6 +102,8 @@
       };
     }),
   );
+  const hasMoreCards = $derived(renderVisible < mangas.length);
+  const remainingCards = $derived(Math.max(0, mangas.length - renderVisible));
   const layout = $derived(
     computeLibraryLayout({
       availableWidth: contentWidth,
@@ -284,6 +291,22 @@
   function handleContentScroll() {
     if (!contentEl) return;
     setLibraryScrollTop(contentEl.scrollTop);
+    maybeLoadNextPage();
+  }
+
+  function resetRenderedPage() {
+    renderVisible = mangas.length > 0 ? Math.min(safeRenderLimit, mangas.length) : 0;
+  }
+
+  function loadNextPage() {
+    if (!hasMoreCards) return;
+    renderVisible = Math.min(mangas.length, Math.max(renderVisible, safeRenderLimit) + safeRenderLimit);
+  }
+
+  function maybeLoadNextPage() {
+    if (!contentEl || !hasMoreCards) return;
+    const remainingScroll = contentEl.scrollHeight - contentEl.scrollTop - contentEl.clientHeight;
+    if (remainingScroll <= 900) loadNextPage();
   }
 
   function openCtx(cardId: string, event: MouseEvent) {
@@ -339,18 +362,34 @@
   }
 
   $effect(() => {
-    mangas.length;
-    setLibraryVisibleCount(mangas.length);
+    const total = mangas.length;
+    const pageSize = safeRenderLimit;
+
+    if (total === 0) {
+      if (renderVisible !== 0) renderVisible = 0;
+      return;
+    }
+
+    if (renderVisible === 0) {
+      renderVisible = Math.min(pageSize, total);
+      return;
+    }
+
+    if (renderVisible > total) {
+      renderVisible = total;
+    }
   });
 
   $effect(() => {
     viewKey;
     if (!viewStateReady) {
       viewStateReady = true;
+      resetRenderedPage();
       return;
     }
 
     exitSelectMode();
+    resetRenderedPage();
     setLibraryScrollTop(0);
     if (contentEl) contentEl.scrollTo({ top: 0 });
   });
@@ -361,7 +400,6 @@
     if (activeMangaId !== null && contentEl) {
       clearLongPress();
       setLibraryScrollTop(contentEl.scrollTop);
-      setLibraryVisibleCount(mangas.length);
       setLibraryReturnToMangaId(activeMangaId);
     }
 
@@ -408,9 +446,21 @@
         if (card) {
           card.scrollIntoView({ block: "center", inline: "nearest" });
           pendingCardRestore = false;
+        } else if (hasMoreCards) {
+          loadNextPage();
+        } else {
+          pendingCardRestore = false;
         }
       });
     });
+  });
+
+  $effect(() => {
+    const observer = loadMoreObserver;
+    const sentinel = loadMoreSentinel;
+    if (!observer) return;
+    observer.disconnect();
+    if (sentinel) observer.observe(sentinel);
   });
 
   onMount(() => {
@@ -444,6 +494,15 @@
       if (store.libraryScrollTop <= 0 && store.libraryReturnToMangaId !== null) {
         pendingCardRestore = true;
       }
+
+      if (typeof IntersectionObserver !== "undefined") {
+        loadMoreObserver = new IntersectionObserver((entries) => {
+          if (entries.some((entry) => entry.isIntersecting)) {
+            loadNextPage();
+          }
+        }, { root: null, rootMargin: "900px 0px" });
+        if (loadMoreSentinel) loadMoreObserver.observe(loadMoreSentinel);
+      }
     });
 
     window.addEventListener("keydown", onKeyDown);
@@ -455,6 +514,7 @@
       for (const timer of coverRecoveryTimers.values()) clearTimeout(timer);
       coverRecoveryTimers.clear();
       resizeObserver?.disconnect();
+      loadMoreObserver?.disconnect();
       window.removeEventListener("keydown", onKeyDown);
     };
   });
@@ -546,6 +606,14 @@
       onCoverLoad={handleCoverLoad}
       onCoverError={handleCoverError}
     />
+    {#if hasMoreCards}
+      <div class="load-more-row" bind:this={loadMoreSentinel}>
+        <button type="button" class="load-more-btn" onclick={loadNextPage}>
+          Load {Math.min(remainingCards, safeRenderLimit)} more
+          <span>{remainingCards} remaining</span>
+        </button>
+      </div>
+    {/if}
   {/if}
 </div>
 
@@ -562,7 +630,6 @@
     overflow-y: auto;
     padding: var(--sp-5) var(--sp-6) var(--sp-6);
     min-height: 0;
-    will-change: scroll-position;
     -webkit-overflow-scrolling: touch;
   }
 
@@ -570,6 +637,41 @@
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
     gap: var(--sp-4);
+  }
+
+  .load-more-row {
+    display: flex;
+    justify-content: center;
+    padding: var(--sp-6) 0 var(--sp-2);
+  }
+
+  .load-more-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-2);
+    min-height: 38px;
+    padding: 0 var(--sp-4);
+    border-radius: 999px;
+    border: 1px solid var(--border-strong);
+    background: color-mix(in srgb, var(--bg-raised) 80%, transparent);
+    color: var(--text-secondary);
+    font-family: var(--font-ui);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--tracking-wide);
+    cursor: pointer;
+    transition: transform var(--t-base), border-color var(--t-base), color var(--t-base), background var(--t-base);
+  }
+
+  .load-more-btn:hover {
+    transform: translateY(-1px);
+    border-color: var(--accent-dim);
+    background: color-mix(in srgb, var(--accent-muted) 42%, var(--bg-raised));
+    color: var(--text-primary);
+  }
+
+  .load-more-btn span {
+    color: var(--text-faint);
   }
 
   .card-skeleton {

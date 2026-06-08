@@ -9,6 +9,7 @@
   import type { Manga, Source, Category } from "../../lib/types";
   import ContextMenu from "../shared/ContextMenu.svelte";
   import type { MenuEntry } from "../shared/ContextMenu.svelte";
+  import NocturneState from "../shared/NocturneState.svelte";
   import SourceBrowse from "../shared/SourceBrowse.svelte";
 
   let { embedded = false, feedType = "POPULAR" } = $props();
@@ -358,13 +359,25 @@
         </div>
 
       {:else if loadError && visibleGrid.length === 0}
-        <div class="empty">
-          <span>Could not reach Suwayomi</span>
-          <button class="retry-btn" onclick={loadAll}>Retry</button>
-        </div>
+        <NocturneState
+          layout="center"
+          tone="danger"
+          icon="plug"
+          eyebrow="Discover"
+          title="Could not reach Suwayomi"
+          body="Connect the server and retry to load recommendations."
+          actions={[{ label: "Retry", kind: "primary", icon: "retry", onClick: loadAll }]}
+        />
 
       {:else if visibleGrid.length === 0}
-        <div class="empty"><span>Nothing found for "{currentGenre}"</span></div>
+        <NocturneState
+          layout="center"
+          tone="info"
+          icon="search"
+          eyebrow="Discover"
+          title={`Nothing found for "${currentGenre}"`}
+          body="Try another genre or refresh the source rotation."
+        />
 
       {:else}
         <div class="manga-grid" class:embeddedGrid={embedded}>
@@ -553,7 +566,6 @@
   .skeleton { background: var(--bg-raised); border-radius: var(--radius-sm); animation: pulse 1.6s ease-in-out infinite; }
   @keyframes pulse { 0%, 100% { opacity: 0.4 } 50% { opacity: 0.85 } }
   .empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--sp-3); padding: var(--sp-10) var(--sp-6); color: var(--text-faint); font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); }
-  .retry-btn { padding: 6px 16px; border-radius: var(--radius-md); border: 1px solid var(--border-dim); background: var(--bg-raised); color: var(--text-muted); cursor: pointer; font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); }
   .refresh-btn.spinning { opacity: 0.5; cursor: default; }
   .refresh-btn.spinning :global(svg) { animation: spin 0.8s linear infinite; }
   @keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }

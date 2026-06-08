@@ -8,6 +8,7 @@
   import { store, setGenreFilter, setPreviewManga, setNavPage } from "../../store/state.svelte";
   import type { Manga, Source, Category } from "../../lib/types";
   import ContextMenu, { type MenuEntry } from "../shared/ContextMenu.svelte";
+  import NocturneState from "../shared/NocturneState.svelte";
 
   const PAGE_SIZE     = 50;
   const INITIAL_PAGES = 3;
@@ -211,7 +212,7 @@
       {/each}
     </div>
   {:else if filtered.length === 0}
-    <div class="empty">No manga found for "{label}".</div>
+    <NocturneState layout="center" tone="info" icon="search" eyebrow="Genre" title={`No manga found for "${label}"`} body="Try a broader genre or refresh your sources." />
   {:else}
     <div class="grid">
       {#each visibleItems as m (m.id)}

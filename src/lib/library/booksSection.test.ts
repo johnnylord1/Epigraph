@@ -154,7 +154,7 @@ describe("buildBooksSectionState", () => {
     });
 
     expect(state.filteredBooks).toEqual([]);
-    expect(state.vm.emptyMessage).toBe("No books from sources yet.");
+    expect(state.vm.emptyMessage).toBe("No source novels in this profile library yet.");
     expect(state.vm.dragDropEnabled).toBe(false);
   });
 

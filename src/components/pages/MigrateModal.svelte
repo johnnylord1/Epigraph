@@ -666,17 +666,18 @@
 </div>
 
 <style>
-  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 200; animation: fadeIn 0.1s ease both; }
-  .modal { background: var(--bg-base); border: 1px solid var(--border-base); border-radius: var(--radius-xl); width: 520px; max-height: 80vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 8px 40px rgba(0,0,0,0.5); }
-  .modal-header { display: flex; align-items: flex-start; justify-content: space-between; padding: var(--sp-4) var(--sp-5); border-bottom: 1px solid var(--border-dim); flex-shrink: 0; }
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.68); display: flex; align-items: center; justify-content: center; z-index: 200; backdrop-filter: blur(14px) saturate(118%); animation: fadeIn 0.14s ease both; }
+  .modal { background: rgba(21, 20, 25, 0.98); border: 1px solid rgba(92, 88, 103, 0.42); border-radius: 18px; width: 520px; max-height: 80vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: inset 0 1px 0 rgba(255,255,255,0.025), 0 28px 80px rgba(0,0,0,0.54); animation: scaleIn 0.16s ease both; }
+  .modal-header { display: flex; align-items: flex-start; justify-content: space-between; padding: 15px 18px; border-bottom: 1px solid rgba(92, 88, 103, 0.34); flex-shrink: 0; }
   .modal-title { display: flex; flex-direction: column; gap: 2px; }
-  .modal-title-label { font-family: var(--font-ui); font-size: var(--text-2xs); color: var(--text-faint); letter-spacing: var(--tracking-wider); text-transform: uppercase; }
-  .modal-title-manga { font-size: var(--text-base); font-weight: var(--weight-medium); color: var(--text-primary); letter-spacing: var(--tracking-tight); }
-  .close-btn { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: var(--radius-md); color: var(--text-faint); background: none; border: none; cursor: pointer; transition: color var(--t-base), background var(--t-base); flex-shrink: 0; }
-  .close-btn:hover { color: var(--text-muted); background: var(--bg-raised); }
+  .modal-title-label { font-family: "Manrope", "Inter", system-ui, sans-serif; font-size: 9px; color: rgba(202, 196, 208, 0.48); letter-spacing: 0.14em; text-transform: uppercase; }
+  .modal-title-manga { font-size: 13px; font-weight: 800; color: #e8e4eb; letter-spacing: 0.02em; }
+  .close-btn { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 10px; color: rgba(202, 196, 208, 0.74); background: rgba(255,255,255,0.018); border: 1px solid rgba(92, 88, 103, 0.42); cursor: pointer; transition: color 140ms ease, background 140ms ease, transform 140ms ease; flex-shrink: 0; }
+  .close-btn:hover { color: #e8e4eb; background: rgba(201, 181, 255, 0.1); }
+  .close-btn:active { transform: scale(0.96); }
 
   /* Steps */
-  .steps { display: flex; align-items: center; gap: var(--sp-1); padding: var(--sp-3) var(--sp-5); border-bottom: 1px solid var(--border-dim); flex-shrink: 0; }
+  .steps { display: flex; align-items: center; gap: var(--sp-1); padding: 10px 18px; border-bottom: 1px solid rgba(92, 88, 103, 0.34); flex-shrink: 0; }
   .step { display: flex; align-items: center; gap: var(--sp-2); opacity: 0.4; transition: opacity var(--t-base); }
   .step + .step::before { content: "›"; color: var(--text-faint); margin-right: var(--sp-1); font-size: var(--text-sm); }
   .step-active { opacity: 1; }
@@ -711,8 +712,8 @@
   /* Source list */
   .source-list { flex: 1; overflow-y: auto; padding: var(--sp-2); display: flex; flex-direction: column; gap: 1px; }
   .source-row { display: flex; align-items: center; gap: var(--sp-3); padding: 9px var(--sp-3); border-radius: var(--radius-md); border: 1px solid transparent; background: none; text-align: left; width: 100%; cursor: pointer; transition: background var(--t-fast), border-color var(--t-fast); }
-  .source-row:hover { background: var(--bg-raised); border-color: var(--border-dim); }
-  .source-row-active { background: var(--accent-muted); border-color: var(--accent-dim); }
+  .source-row:hover { background: rgba(184, 167, 234, 0.08); border-color: rgba(184, 167, 234, 0.14); }
+  .source-row-active { background: rgba(184, 167, 234, 0.12); border-color: rgba(184, 167, 234, 0.18); }
   .source-icon { width: 28px; height: 28px; border-radius: var(--radius-md); object-fit: cover; flex-shrink: 0; background: var(--bg-raised); }
   .source-info { flex: 1; display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
   .source-name { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -821,6 +822,6 @@
   @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
 </style>
 
-<script context="module" lang="ts">
+<script module lang="ts">
   function focusOnMount(node: HTMLElement) { node.focus(); }
 </script>

@@ -9,11 +9,15 @@ function normalizeScanlator(value: string | null | undefined): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-export function listScanlators(chapters: Chapter[]): string[] {
+export function effectiveScanlator(chapter: Pick<Chapter, "scanlator">, fallback?: string | null): string {
+  return normalizeScanlator(chapter.scanlator) || normalizeScanlator(fallback);
+}
+
+export function listScanlators(chapters: Chapter[], fallback?: string | null): string[] {
   return Array.from(
     new Set(
       chapters
-        .map((chapter) => normalizeScanlator(chapter.scanlator))
+        .map((chapter) => effectiveScanlator(chapter, fallback))
         .filter((value): value is string => value.length > 0),
     ),
   );
@@ -42,6 +46,7 @@ export function normalizeMangaReaderPreference(
 export function buildReaderChapterList(
   chapters: Chapter[],
   prefs: Partial<MangaReaderPreference> | null | undefined,
+  fallbackScanlator?: string | null,
 ): Chapter[] {
   const normalizedPrefs = normalizeMangaReaderPreference(prefs);
   const filterSet = new Set(normalizedPrefs.scanlatorFilter);
@@ -50,7 +55,7 @@ export function buildReaderChapterList(
     .sort((left, right) => left.sourceOrder - right.sourceOrder)
     .filter((chapter) => {
       if (filterSet.size === 0) return true;
-      return filterSet.has(normalizeScanlator(chapter.scanlator));
+      return filterSet.has(effectiveScanlator(chapter, fallbackScanlator));
     });
 
   if (!normalizedPrefs.preferredScanlator) return canonical;
@@ -70,10 +75,10 @@ export function buildReaderChapterList(
   return order.flatMap((key) => {
     const group = grouped.get(key) ?? [];
     const preferred = group.filter(
-      (chapter) => normalizeScanlator(chapter.scanlator) === normalizedPrefs.preferredScanlator,
+      (chapter) => effectiveScanlator(chapter, fallbackScanlator) === normalizedPrefs.preferredScanlator,
     );
     const remaining = group.filter(
-      (chapter) => normalizeScanlator(chapter.scanlator) !== normalizedPrefs.preferredScanlator,
+      (chapter) => effectiveScanlator(chapter, fallbackScanlator) !== normalizedPrefs.preferredScanlator,
     );
     return [...preferred, ...remaining];
   });

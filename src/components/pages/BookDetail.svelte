@@ -2,10 +2,18 @@
   import { onDestroy, tick, untrack } from "svelte";
   import ePub from "epubjs";
   import {
-    ArrowLeft,
-    ArrowsOutCardinal,
     BookOpen,
+    BookmarkSimple,
     CaretDown,
+    ChartLineUp,
+    CheckCircle,
+    FolderSimplePlus,
+    FunnelSimple,
+    List,
+    Play,
+    SortAscending,
+    SortDescending,
+    SquaresFour,
     X,
   } from "phosphor-svelte";
   import {
@@ -16,14 +24,18 @@
     setActiveBookId,
     setBookProgress,
     store,
+    updateSettings,
   } from "../../store/state.svelte";
+  import type { BooksCategory } from "../../store/state.svelte";
   import {
     getBookSectionCount,
     getBookSectionsSummary,
+    findBookSectionIndex,
     resolveBookSectionLabel,
     resolveBookSectionProgress,
   } from "../../lib/books/summary";
-  import type { BookProgress } from "../../lib/books/types";
+  import type { BookProgress, BookSectionSummaryItem } from "../../lib/books/types";
+  import { createPdfPageHref, parsePdfPageHref } from "../../lib/books/pdf";
   import { BookAssetResolver } from "../../lib/books/assets";
   import { getBookProgressPrecision, resolveBookResumeTarget } from "../../lib/books/progress";
   import {
@@ -39,8 +51,21 @@
   import { mediaAuditEnabled, traceMediaAudit } from "../../lib/mediaAudit";
   import { peekPersistedBookEntry, peekPersistedBookProgress } from "../../lib/books/libraryState";
   import { removeBookAssets } from "../../lib/books/storage";
+  import { createBooksCategory, sortBooksCategories, toggleBookCategoryAssignment } from "../../lib/library/domainCategories";
+  import NocturneState from "../shared/NocturneState.svelte";
+  import NovelTrackingPanel from "../shared/NovelTrackingPanel.svelte";
+  import SeriesDetailV3Shell from "../shared/SeriesDetailV3Shell.svelte";
 
   const SECTIONS_PER_PAGE = 25;
+  type SectionFilter = "all" | "unread" | "read" | "bookmarked" | "current";
+  type BookSectionView = BookSectionSummaryItem & {
+    sectionNumber: number;
+    progressPercent: number;
+    pageNumber: number | null;
+    isRead: boolean;
+    isCurrent: boolean;
+    isBookmarked: boolean;
+  };
 
   let previewing = $state(false);
   let previewLoading = $state(false);
@@ -55,6 +80,16 @@
   let sectionPage = $state(1);
   let detailsOpen = $state(false);
   let coverBroken = $state(false);
+  let trackingOpen = $state(false);
+  let sectionSortDir: "asc" | "desc" = $state("asc");
+  let sortMenuOpen = $state(false);
+  let filterMenuOpen = $state(false);
+  let folderPickerOpen = $state(false);
+  let folderCreating = $state(false);
+  let folderNewName = $state("");
+  let folderPickerRef: HTMLDivElement | undefined = $state();
+  let sectionFilter: SectionFilter = $state("all");
+  let viewMode: "list" | "grid" = $state("list");
   const booksLibraryReady = $derived(store.booksLibraryHydrated);
 
   const activeBook = $derived(
@@ -68,19 +103,116 @@
   );
   const activePresentation = $derived(activeBook ? presentBook(activeBook, activeProgress) : null);
   const detailSections = $derived(activeBook ? getBookSectionsSummary(activeBook) : []);
-  const totalSectionCount = $derived(activePresentation?.sectionCount ?? (activeBook ? getBookSectionCount(activeBook) : 0));
-  const totalSectionPages = $derived(Math.max(1, Math.ceil(detailSections.length / SECTIONS_PER_PAGE)));
-  const visibleSections = $derived(
-    detailSections.slice((sectionPage - 1) * SECTIONS_PER_PAGE, sectionPage * SECTIONS_PER_PAGE),
-  );
   const readPercent = $derived(activePresentation?.readPercent ?? Math.max(0, Math.min(1, activeProgress?.progressPercent ?? 0)));
+  const fallbackPdfSections = $derived.by(() => {
+    if (!activeBook || activeBook.subtype !== "pdf" || detailSections.length > 0) return [];
+    const pageCount = Math.max(1, activeBook.pageCount ?? activeProgress?.totalPages ?? 1);
+    return Array.from({ length: pageCount }, (_, index) => {
+      const pageNumber = index + 1;
+      return {
+        id: `pdf-page:${pageNumber}`,
+        label: `Page ${pageNumber}`,
+        href: createPdfPageHref(pageNumber),
+        depth: 0,
+      } satisfies BookSectionSummaryItem;
+    });
+  });
+  const baseSections = $derived(detailSections.length > 0 ? detailSections : fallbackPdfSections);
+  const totalSectionCount = $derived(activePresentation?.sectionCount ?? (activeBook ? getBookSectionCount(activeBook) : 0));
+  const displaySectionCount = $derived(Math.max(totalSectionCount, baseSections.length));
   const readSectionCount = $derived(activePresentation?.readSectionCount ?? (
-    totalSectionCount > 0 ? Math.min(totalSectionCount, Math.round(readPercent * totalSectionCount)) : 0
+    displaySectionCount > 0 ? Math.min(displaySectionCount, Math.round(readPercent * displaySectionCount)) : 0
   ));
-  const showProgress = $derived(activePresentation?.showProgress ?? (totalSectionCount > 0 || !!activeProgress));
-  const previewHeading = $derived(previewing ? "Preview" : "Book contents");
+  const showProgress = $derived(activePresentation?.showProgress ?? (displaySectionCount > 0 || !!activeProgress));
+  const usesPagesLabel = $derived(activeBook?.subtype === "pdf");
+  const previewHeading = $derived(previewing ? "Preview" : (usesPagesLabel ? "Pages" : "Chapters"));
   const coverSrc = $derived(activePresentation?.coverSrc ?? (activeBook ? BookAssetResolver.resolveCoverSrc(activeBook) : null));
   const bookFileAvailable = $derived(activeBook ? hasBookLocalAsset(activeBook) : false);
+  const currentBookmark = $derived(activeBook ? store.bookBookmarks.find((bookmark) => bookmark.bookId === activeBook.id) ?? null : null);
+  const currentEpubSectionIndex = $derived.by(() => {
+    if (activeBook?.subtype !== "epub" || !baseSections.length) return -1;
+    const hrefIndex = findBookSectionIndex(baseSections, activeProgress?.href);
+    if (hrefIndex >= 0) return hrefIndex;
+    if (activeProgress?.sectionLabel) {
+      const labelIndex = baseSections.findIndex((item) => item.label === activeProgress.sectionLabel);
+      if (labelIndex >= 0) return labelIndex;
+    }
+    if (typeof activeProgress?.progressPercent === "number" && activeProgress.progressPercent > 0) {
+      return Math.max(0, Math.min(baseSections.length - 1, Math.round(activeProgress.progressPercent * (baseSections.length - 1))));
+    }
+    return -1;
+  });
+  const bookmarkedEpubSectionIndex = $derived.by(() => {
+    if (activeBook?.subtype !== "epub" || !baseSections.length) return -1;
+    const hrefIndex = findBookSectionIndex(baseSections, currentBookmark?.href);
+    if (hrefIndex >= 0) return hrefIndex;
+    if (typeof currentBookmark?.progressPercent === "number" && currentBookmark.progressPercent > 0) {
+      return Math.max(0, Math.min(baseSections.length - 1, Math.round(currentBookmark.progressPercent * (baseSections.length - 1))));
+    }
+    return -1;
+  });
+  const sectionViews = $derived.by<BookSectionView[]>(() => {
+    if (!activeBook) return [];
+    const count = Math.max(1, baseSections.length);
+    return baseSections.map((item, index) => {
+      const pageNumber = activeBook.subtype === "pdf" ? parsePdfPageHref(item.href) : null;
+      const progressPercent = activeBook.subtype === "pdf"
+        ? (pageNumber && (activeBook.pageCount ?? activeProgress?.totalPages ?? 0) > 1
+          ? (pageNumber - 1) / Math.max(1, (activeBook.pageCount ?? activeProgress?.totalPages ?? 1) - 1)
+          : 0)
+        : (count > 1 ? index / (count - 1) : 0);
+      const isCurrent = activeBook.subtype === "pdf"
+        ? !!pageNumber && activeProgress?.pageIndex === pageNumber
+        : currentEpubSectionIndex === index;
+      const isBookmarked = activeBook.subtype === "pdf"
+        ? !!pageNumber && currentBookmark?.pageIndex === pageNumber
+        : bookmarkedEpubSectionIndex === index;
+      const isRead = activeBook.subtype === "pdf"
+        ? !!pageNumber && typeof activeProgress?.pageIndex === "number" && activeProgress.pageIndex >= pageNumber
+        : index + 1 <= readSectionCount;
+      return {
+        ...item,
+        sectionNumber: index + 1,
+        progressPercent,
+        pageNumber,
+        isRead,
+        isCurrent,
+        isBookmarked,
+      };
+    });
+  });
+  const filteredSections = $derived.by(() => {
+    const filtered = sectionViews.filter((item) => {
+      if (sectionFilter === "read") return item.isRead;
+      if (sectionFilter === "unread") return !item.isRead;
+      if (sectionFilter === "bookmarked") return item.isBookmarked;
+      if (sectionFilter === "current") return item.isCurrent;
+      return true;
+    });
+    return [...filtered].sort((left, right) => sectionSortDir === "asc"
+      ? left.sectionNumber - right.sectionNumber
+      : right.sectionNumber - left.sectionNumber);
+  });
+  const totalSectionPages = $derived(Math.max(1, Math.ceil(filteredSections.length / SECTIONS_PER_PAGE)));
+  const visibleSections = $derived(
+    filteredSections.slice((sectionPage - 1) * SECTIONS_PER_PAGE, sectionPage * SECTIONS_PER_PAGE),
+  );
+  const currentSectionView = $derived(sectionViews.find((item) => item.isCurrent) ?? null);
+  const allBookCategories = $derived(sortBooksCategories(store.settings.booksCategories ?? []));
+  const assignedBookCategoryIds = $derived(activeBook ? store.settings.booksCategoryAssignments[activeBook.id] ?? [] : []);
+  const assignedBookCategories = $derived(allBookCategories.filter((category) => assignedBookCategoryIds.includes(category.id)));
+  const hasFolders = $derived(assignedBookCategories.length > 0);
+  const primaryActionLabel = $derived.by(() => {
+    if (previewLoading) return "Opening...";
+    if (!activeProgress) return "Start reading";
+    if (currentSectionView) {
+      if (usesPagesLabel) return `Continue p.${currentSectionView.pageNumber ?? currentSectionView.sectionNumber}`;
+      const title = sectionTitle(currentSectionView);
+      const chapterMatch = title.match(/^chapter\s+(\d+(?:\.\d+)?)/i);
+      return chapterMatch ? `Continue Ch.${chapterMatch[1]}` : `Continue ${title}`;
+    }
+    return "Continue reading";
+  });
 
   function revokeObjectUrl(url: string | null | undefined) {
     if (!url?.startsWith("blob:")) return;
@@ -168,6 +300,99 @@
 
   function goToSectionPage(nextPage: number) {
     sectionPage = Math.max(1, Math.min(totalSectionPages, nextPage));
+  }
+
+  function setSortDir(next: "asc" | "desc") {
+    sectionSortDir = next;
+    sectionPage = 1;
+    sortMenuOpen = false;
+  }
+
+  function setFilter(next: SectionFilter) {
+    sectionFilter = next;
+    sectionPage = 1;
+    filterMenuOpen = false;
+  }
+
+  function filterLabel(filter: SectionFilter) {
+    if (filter === "read") return "Read";
+    if (filter === "unread") return "Unread";
+    if (filter === "bookmarked") return "Bookmarked";
+    if (filter === "current") return "Current";
+    return "All";
+  }
+
+  function handleFolderOutside(event: MouseEvent) {
+    if (folderPickerRef && !folderPickerRef.contains(event.target as Node)) {
+      folderPickerOpen = false;
+      folderCreating = false;
+      folderNewName = "";
+    }
+  }
+
+  function createFolder() {
+    const name = folderNewName.trim();
+    if (!activeBook || !name) return;
+    const category = createBooksCategory(allBookCategories, name);
+    updateSettings({
+      booksCategories: sortBooksCategories([...allBookCategories, category]),
+      booksCategoryAssignments: toggleBookCategoryAssignment(
+        store.settings.booksCategoryAssignments,
+        activeBook.id,
+        category.id,
+      ),
+    });
+    folderNewName = "";
+    folderCreating = false;
+  }
+
+  function toggleFolder(category: BooksCategory) {
+    if (!activeBook) return;
+    updateSettings({
+      booksCategoryAssignments: toggleBookCategoryAssignment(
+        store.settings.booksCategoryAssignments,
+        activeBook.id,
+        category.id,
+      ),
+    });
+  }
+
+  function splitChapterLabel(label: string) {
+    const normalized = label.trim().replace(/\s+/g, " ");
+    const match = normalized.match(/^(chapter\s+\d+(?:\.\d+)?|chapters?\s+[ivxlcdm]+|prologue|epilogue|cover|information|appendix)(?:\s*[:\-–—]\s+(.+))$/i);
+    if (!match) return { title: normalized, subtitle: "" };
+    return {
+      title: match[1] ?? normalized,
+      subtitle: match[2]?.trim() ?? "",
+    };
+  }
+
+  function sectionTitle(item: BookSectionView) {
+    if (usesPagesLabel) return item.label;
+    return splitChapterLabel(item.label).title;
+  }
+
+  function sectionSubtitle(item: BookSectionView) {
+    if (usesPagesLabel) return `Page ${item.pageNumber ?? item.sectionNumber}`;
+    return splitChapterLabel(item.label).subtitle;
+  }
+
+  function openBookSection(section: BookSectionView) {
+    if (!activeBook || !bookFileAvailable) return;
+    closePreview();
+    const pageNumber = activeBook.subtype === "pdf" ? section.pageNumber : null;
+    setBookProgress({
+      bookId: activeBook.id,
+      location: null,
+      href: activeBook.subtype === "epub" ? section.href : null,
+      progressPercent: section.progressPercent,
+      lastReadAt: Date.now(),
+      pageIndex: pageNumber,
+      totalPages: activeBook.subtype === "pdf" ? activeBook.pageCount ?? activeProgress?.totalPages ?? null : null,
+      sectionLabel: section.label,
+      renderer: activeBook.subtype,
+    });
+    openBookReader(activeBook.id);
   }
 
   async function waitForPreviewHost() {
@@ -348,7 +573,7 @@
       await removeBookAssets(removed.assetPath, removed.coverPath);
       addToast({
         kind: "info",
-        title: "Removed from Books",
+        title: "Removed from Library",
         body: removed.title,
       });
     } catch (error) {
@@ -356,7 +581,7 @@
         error instanceof Error ? error.message : "Book files could not be fully removed.";
       addToast({
         kind: "info",
-        title: "Removed from Books",
+        title: "Removed from Library",
         body: `${removed.title} (${message})`,
       });
     }
@@ -367,9 +592,32 @@
     sectionPage = 1;
     detailsOpen = false;
     coverBroken = false;
+    trackingOpen = false;
+    sortMenuOpen = false;
+    filterMenuOpen = false;
+    folderPickerOpen = false;
+    folderCreating = false;
+    folderNewName = "";
+    sectionFilter = "all";
+    sectionSortDir = "asc";
+    viewMode = "list";
     untrack(() => {
       closePreview();
     });
+  });
+
+  $effect(() => {
+    if (sectionPage > totalSectionPages) sectionPage = totalSectionPages;
+    if (sectionPage < 1) sectionPage = 1;
+  });
+
+  $effect(() => {
+    if (folderPickerOpen) {
+      setTimeout(() => document.addEventListener("mousedown", handleFolderOutside, true), 0);
+    } else {
+      document.removeEventListener("mousedown", handleFolderOutside, true);
+    }
+    return () => document.removeEventListener("mousedown", handleFolderOutside, true);
   });
 
   $effect(() => {
@@ -401,151 +649,167 @@
 </script>
 
 {#if activeBook}
-  <div class="root">
-    <div class="sidebar">
-      <button class="back" onclick={closeDetail}>
-        <ArrowLeft size={13} weight="light" />
-        Back
-      </button>
-
-        <div class="cover-wrap">
-        <div class="cover-fallback">
-          <BookOpen size={40} weight="duotone" />
-          <span>{activePresentation?.subtypeLabel ?? activeBook.subtype.toUpperCase()}</span>
-        </div>
-        {#if coverSrc && !coverBroken}
-          <img
-            src={coverSrc}
-            alt=""
-            class="cover"
-            loading="eager"
-            draggable="false"
-            onerror={() => {
-              BookAssetResolver.dropCoverSrc(activeBook.coverPath);
-              coverBroken = true;
-            }}
-          />
-        {/if}
-      </div>
-
-      <div class="meta">
-        <p class="title">{activePresentation?.title ?? activeBook.title}</p>
-        <p class="byline">{activePresentation?.authorLabel ?? activeBook.author ?? "Unknown author"}</p>
-        <span class="status-badge" class:epub={activeBook.subtype === "epub"} class:pdf={activeBook.subtype === "pdf"}>
-          {activePresentation?.subtypeLabel ?? activeBook.subtype.toUpperCase()}
-        </span>
-        {#if activePresentation?.description ?? activeBook.description}
-          <p class="desc">{activePresentation?.description ?? activeBook.description}</p>
-        {/if}
-      </div>
-
-      <div class="cta-section">
-        <button class="read-btn" onclick={openFullscreenReader} disabled={previewLoading || !bookFileAvailable}>
-          <ArrowsOutCardinal size={12} weight="bold" />
-          {#if !bookFileAvailable}
-            File missing
-          {:else}
-            {previewLoading ? "Opening..." : "Open book"}
-          {/if}
-        </button>
-        <div class="actions">
-          <button class="library-btn danger" onclick={handleRemove}>
-            <X size={13} weight="light" />
-            Remove
-          </button>
-        </div>
+  <SeriesDetailV3Shell
+    mediaKind="novel"
+    title={activePresentation?.title ?? activeBook.title}
+    subtitle={activePresentation?.authorLabel ?? activeBook.author ?? "Unknown author"}
+    coverUrl={coverSrc && !coverBroken ? coverSrc : null}
+    fallbackLabel={activePresentation?.subtypeLabel ?? activeBook.subtype.toUpperCase()}
+    statusLabel={activePresentation?.subtypeLabel ?? activeBook.subtype.toUpperCase()}
+    sourceLabel="Book"
+    sourceLine={`Book - ${activePresentation?.subtypeLabel ?? activeBook.subtype.toUpperCase()}`}
+    description={activePresentation?.description ?? activeBook.description}
+    tags={[activeBook.subtype === "pdf" ? "PDF" : "EPUB"]}
+    detailsOpen={detailsOpen}
+    progressLabel={showProgress ? (activePresentation?.progressSummary ?? `${readSectionCount} / ${displaySectionCount} read`) : null}
+    progressPercent={readPercent * 100}
+    metrics={[
+      { label: usesPagesLabel ? "Pages" : "Chapters", value: String(displaySectionCount) },
+      { label: "Read", value: String(readSectionCount) },
+      { label: "Bookmarks", value: String(currentBookmark ? 1 : 0) },
+    ]}
+    onBack={closeDetail}
+    onDetailsToggle={() => detailsOpen = !detailsOpen}
+  >
+    {#snippet primaryAction()}
+      <button class="series-primary" onclick={openFullscreenReader} disabled={previewLoading || !bookFileAvailable}>
+        <Play size={13} weight="fill" />
         {#if !bookFileAvailable}
-          <p class="missing-file-note">{MISSING_BOOK_ASSET_MESSAGE}</p>
+          File missing
+        {:else}
+          {primaryActionLabel}
         {/if}
-      </div>
+      </button>
+    {/snippet}
 
-      {#if showProgress}
-        <div class="progress-section">
-          <div class="progress-header">
-            <span class="progress-label">{activePresentation?.progressSummary ?? `${readSectionCount} / ${totalSectionCount} read`}</span>
-            <span class="progress-pct">{activePresentation?.readPercentLabel ?? `${Math.round(readPercent * 100)}%`}</span>
-          </div>
-          <div class="progress-track">
-            <div class="progress-fill" style={`width:${readPercent * 100}%`}></div>
-          </div>
-        </div>
-      {/if}
+    {#snippet secondaryActions()}
+      <button class="series-action series-icon-action active" type="button" onclick={handleRemove} title="Remove from Library" aria-label="Remove from Library">
+        <BookmarkSimple size={13} weight="fill" />
+      </button>
+      <button class="series-action series-icon-action" type="button" onclick={() => trackingOpen = true} title="Tracking" aria-label="Tracking">
+        <ChartLineUp size={13} weight="light" />
+      </button>
+    {/snippet}
 
-      <div class="details-section">
-        <button class="details-toggle" onclick={() => (detailsOpen = !detailsOpen)}>
-          <span>Details</span>
-          <CaretDown
-            size={11}
-            weight="light"
-            style={`transform:${detailsOpen ? "rotate(180deg)" : "rotate(0)"};transition:transform 0.15s ease;`}
-          />
+    {#snippet utilityActions()}
+      <div class="fp-wrap" bind:this={folderPickerRef}>
+        <button class="series-utility" class:active={hasFolders} type="button" onclick={() => folderPickerOpen = !folderPickerOpen} title="Folders">
+          <FolderSimplePlus size={14} weight={hasFolders ? "fill" : "light"} />
+          Folder
         </button>
-        {#if detailsOpen}
-          <div class="details-body">
-            <div class="detail-row">
-              <span class="detail-key">Type</span>
-              <span class="detail-val">{activePresentation?.subtypeLabel ?? activeBook.subtype.toUpperCase()}</span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-key">{activeBook.subtype === "pdf" ? "Outline items" : "Reading sections"}</span>
-              <span class="detail-val">{activePresentation?.sectionCount ?? totalSectionCount}</span>
-            </div>
-            {#if activeBook.subtype === "pdf"}
-              <div class="detail-row">
-                <span class="detail-key">Pages</span>
-                <span class="detail-val">{activePresentation?.pageCountLabel ?? `${activeBook.pageCount ?? 0} pages`}</span>
-              </div>
+        {#if folderPickerOpen}
+          <div class="fp-menu">
+            {#if allBookCategories.length === 0 && !folderCreating}
+              <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Folders" title="No folders yet" body="Create a folder in Settings to organize this book." />
             {/if}
-            {#if activeBook.subtype === "epub"}
-              <div class="detail-row">
-                <span class="detail-key">Spine items</span>
-                <span class="detail-val">{activeBook.spineCount ?? activeBook.spine?.length ?? 0}</span>
+            {#each allBookCategories as category (category.id)}
+              {@const isIn = assignedBookCategoryIds.includes(category.id)}
+              <button class="fp-item" class:fp-item-active={isIn} type="button" onclick={() => toggleFolder(category)}>
+                <span class="fp-check">{isIn ? "On" : ""}</span>
+                {category.name}
+              </button>
+            {/each}
+            <div class="fp-div"></div>
+            {#if folderCreating}
+              <div class="fp-create">
+                <input
+                  class="fp-input"
+                  placeholder="Folder name..."
+                  bind:value={folderNewName}
+                  onkeydown={(event) => {
+                    if (event.key === "Enter") createFolder();
+                    if (event.key === "Escape") {
+                      folderCreating = false;
+                      folderNewName = "";
+                    }
+                  }}
+                />
+                <button class="fp-confirm" type="button" onclick={createFolder} disabled={!folderNewName.trim()}>Add</button>
+                <button class="fp-cancel" type="button" onclick={() => { folderCreating = false; folderNewName = ""; }} aria-label="Cancel folder creation">
+                  <X size={12} weight="light" />
+                </button>
               </div>
-              <div class="detail-row">
-                <span class="detail-key">TOC labels</span>
-                <span class="detail-val">{activeBook.tocCount ?? activeBook.toc?.length ?? 0}</span>
-              </div>
+            {:else}
+              <button class="fp-new" type="button" onclick={() => folderCreating = true}>+ New folder</button>
             {/if}
-            {#if activeProgress}
-              <div class="detail-row">
-                <span class="detail-key">Last progress</span>
-                <span class="detail-val">{activePresentation?.readPercentLabel ?? `${Math.round(readPercent * 100)}%`}</span>
-              </div>
-            {/if}
-            <div class="detail-file">
-              <span class="detail-key">Source file</span>
-              <p class="detail-path">{activeBook.importPath || "Metadata-only restore (original file unavailable)"}</p>
-            </div>
           </div>
         {/if}
       </div>
-    </div>
+    {/snippet}
 
-    <div class="list-wrap">
-      <div class="list-header">
-        <div class="list-header-left">
-          <span class="list-label">{previewHeading}</span>
-        </div>
-        <div class="list-header-right">
-          {#if previewing}
-            <button class="sort-btn" onclick={closePreview}>Close preview</button>
-          {:else if totalSectionPages > 1}
-            <div class="pagination">
-              <button class="page-btn" onclick={() => goToSectionPage(sectionPage - 1)} disabled={sectionPage === 1}>
-                ←
-              </button>
-              <span class="page-num">{sectionPage} / {totalSectionPages}</span>
-              <button class="page-btn" onclick={() => goToSectionPage(sectionPage + 1)} disabled={sectionPage === totalSectionPages}>
-                →
-              </button>
-            </div>
-          {/if}
+    {#snippet detailsExtra()}
+      <div class="v3-details-stack">
+        <div class="detail-row"><span class="detail-key">Type</span><span class="detail-val">{activePresentation?.subtypeLabel ?? activeBook.subtype.toUpperCase()}</span></div>
+        <div class="detail-row"><span class="detail-key">{usesPagesLabel ? "Pages" : "Chapters"}</span><span class="detail-val">{displaySectionCount}</span></div>
+        {#if hasFolders}<div class="detail-row"><span class="detail-key">Folders</span><span class="detail-val">{assignedBookCategories.map((category) => category.name).join(", ")}</span></div>{/if}
+        {#if activeBook.subtype === "pdf"}<div class="detail-row"><span class="detail-key">Pages</span><span class="detail-val">{activePresentation?.pageCountLabel ?? `${activeBook.pageCount ?? 0} pages`}</span></div>{/if}
+        {#if activeBook.subtype === "epub"}<div class="detail-row"><span class="detail-key">Spine items</span><span class="detail-val">{activeBook.spineCount ?? activeBook.spine?.length ?? 0}</span></div>{/if}
+        {#if activeProgress}<div class="detail-row"><span class="detail-key">Last progress</span><span class="detail-val">{activePresentation?.readPercentLabel ?? `${Math.round(readPercent * 100)}%`}</span></div>{/if}
+        <div class="detail-file">
+          <span class="detail-key">Source file</span>
+          <p class="detail-path">{activeBook.importPath || "Metadata-only restore (original file unavailable)"}</p>
         </div>
       </div>
+    {/snippet}
 
+    {#snippet chapterControls()}
+      <div class="list-header-left">
+        {#if !bookFileAvailable}<span class="sort-meta">{MISSING_BOOK_ASSET_MESSAGE}</span>{/if}
+        {#if !previewing && sectionViews.length > 0}
+          <div class="sort-wrap">
+            <button class="series-toolbar-btn" type="button" onclick={() => { sortMenuOpen = !sortMenuOpen; filterMenuOpen = false; }}>
+              {#if sectionSortDir === "desc"}<SortDescending size={14} weight="light" />{:else}<SortAscending size={14} weight="light" />{/if}
+              Sort
+              <CaretDown size={10} weight="light" />
+            </button>
+            {#if sortMenuOpen}
+              <div class="sort-menu" role="presentation" onmouseleave={() => sortMenuOpen = false}>
+                <p class="sort-section-label">{usesPagesLabel ? "Page order" : "Chapter order"}</p>
+                <button class="sort-option" class:active={sectionSortDir === "asc"} onclick={() => setSortDir("asc")}>Ascending</button>
+                <button class="sort-option" class:active={sectionSortDir === "desc"} onclick={() => setSortDir("desc")}>Descending</button>
+              </div>
+            {/if}
+          </div>
+          <div class="sort-wrap">
+            <button class="series-toolbar-btn" class:active={sectionFilter !== "all"} type="button" onclick={() => { filterMenuOpen = !filterMenuOpen; sortMenuOpen = false; }}>
+              <FunnelSimple size={14} weight={sectionFilter !== "all" ? "fill" : "light"} />
+              {filterLabel(sectionFilter)}
+              <CaretDown size={10} weight="light" />
+            </button>
+            {#if filterMenuOpen}
+              <div class="sort-menu" role="presentation" onmouseleave={() => filterMenuOpen = false}>
+                <p class="sort-section-label">Filter</p>
+                <button class="sort-option" class:active={sectionFilter === "all"} onclick={() => setFilter("all")}>{usesPagesLabel ? "All pages" : "All chapters"}</button>
+                <button class="sort-option" class:active={sectionFilter === "unread"} onclick={() => setFilter("unread")}>Unread</button>
+                <button class="sort-option" class:active={sectionFilter === "read"} onclick={() => setFilter("read")}>Read</button>
+                <button class="sort-option" class:active={sectionFilter === "bookmarked"} onclick={() => setFilter("bookmarked")}>Bookmarked</button>
+                <button class="sort-option" class:active={sectionFilter === "current"} onclick={() => setFilter("current")}>Current</button>
+              </div>
+            {/if}
+          </div>
+        {/if}
+      </div>
+      <div class="list-header-right">
+        {#if !previewing && sectionViews.length > 0}
+          <div class="view-segmented" aria-label={`${previewHeading} view`}>
+            <button class="series-icon" class:active={viewMode === "list"} onclick={() => viewMode = "list"} title="List view"><List size={14} weight="light" /></button>
+            <button class="series-icon" class:active={viewMode === "grid"} onclick={() => viewMode = "grid"} title="Grid view"><SquaresFour size={14} weight="light" /></button>
+          </div>
+        {/if}
+      </div>
+    {/snippet}
+
+    {#snippet chapterList()}
       {#if previewing}
         {#if previewError}
-          <div class="preview-error">{previewError}</div>
+          <NocturneState
+            layout="compact"
+            tone="danger"
+            icon="info"
+            eyebrow="Reader preview"
+            title="Could not open this book"
+            body={previewError}
+          />
         {:else}
           <div class="preview-frame" class:is-loading={previewLoading}>
             <div class="preview-host" bind:this={previewHost}></div>
@@ -554,47 +818,89 @@
             {/if}
           </div>
         {/if}
-      {:else if visibleSections.length}
-        <div class="ch-list">
-          {#each visibleSections as item, index (item.id)}
-            <div class="ch-row" style={`--toc-depth:${item.depth};`}>
-              <div class="ch-left">
-                <span class="ch-name">{item.label}</span>
-                <div class="ch-meta">
-                  <span class="ch-meta-item">
-                    Section {(sectionPage - 1) * SECTIONS_PER_PAGE + index + 1}
-                  </span>
-                  {#if item.depth > 0}
-                    <span class="ch-meta-item">Depth {item.depth}</span>
-                  {/if}
-                </div>
-              </div>
+      {:else if sectionViews.length > 0 && filteredSections.length === 0}
+        <NocturneState layout="compact" tone="info" icon="search" eyebrow={usesPagesLabel ? "Pages" : "Chapters"} title={`No ${usesPagesLabel ? "pages" : "chapters"} match this filter`} body="Try another status filter or clear the current view filter." />
+      {:else if filteredSections.length > 0}
+        <div class={viewMode === "grid" ? "ch-grid v3-ch-grid" : "ch-list v3-ch-list"}>
+          {#if viewMode === "grid"}
+            {#each filteredSections as item (item.id)}
+              <button class="grid-cell book-grid-cell" class:read={item.isRead} class:in-progress={item.isCurrent} onclick={() => openBookSection(item)} title={item.label}>
+                <span class="grid-cell-title">{sectionTitle(item)}</span>
+                {#if sectionSubtitle(item)}<span class="grid-cell-sub">{sectionSubtitle(item)}</span>{/if}
+                <span class="chapter-progress"><span class="chapter-progress__fill" style={`width: ${item.isRead ? 100 : 0}%`}></span></span>
+                {#if item.isCurrent}<span class="grid-cell-dl book-current-dot" title="Current"></span>{/if}
+                {#if item.isBookmarked}<span class="grid-cell-dot" title="Bookmarked"></span>{/if}
+              </button>
+            {/each}
+          {:else}
+            <div class="chapter-table-header">
+              <span>{usesPagesLabel ? "Page" : "Chapter"}</span>
+              <span>Type</span>
+              <span>{activeBook.subtype === "pdf" ? "Position" : "Depth"}</span>
+              <span>Status</span>
             </div>
-          {/each}
-        </div>
-      {:else if activeBook.subtype === "pdf"}
-        <div class="empty-state">
-          This PDF has no chapter outline metadata.
+            {#each visibleSections as item (item.id)}
+              <button class="ch-row v3-ch-row" class:read={item.isRead} class:ch-selected={item.isCurrent} style={`--toc-depth:${item.depth};`} onclick={() => openBookSection(item)}>
+                <div class="ch-left">
+                  <span class="ch-name">{sectionTitle(item)}</span>
+                  <div class="ch-meta">
+                    {#if sectionSubtitle(item)}<span class="ch-meta-item">{sectionSubtitle(item)}</span>{/if}
+                    {#if item.isCurrent}<span class="ch-meta-item current">Current</span>{/if}
+                    {#if item.isBookmarked}<span class="ch-meta-item bookmarked">Bookmarked</span>{/if}
+                    {#if !item.isRead && !item.isCurrent}<span class="ch-meta-item unread">Unread</span>{/if}
+                    {#if item.depth > 0}<span class="ch-meta-item">Depth {item.depth}</span>{/if}
+                  </div>
+                  <div class="chapter-progress"><div class="chapter-progress__fill" style={`width: ${item.isRead ? 100 : 0}%`}></div></div>
+                </div>
+                <span class="ch-provider">{activePresentation?.subtypeLabel ?? activeBook.subtype.toUpperCase()}</span>
+                <span class="ch-date">{activeBook.subtype === "pdf" && item.pageNumber ? `${Math.round(item.progressPercent * 100)}%` : (item.depth > 0 ? `Depth ${item.depth}` : "")}</span>
+                <div class="ch-status">
+                  <span class="ch-status-read">{#if item.isRead}<CheckCircle size={14} weight="fill" class="read-icon" />{/if}</span>
+                  <span class="ch-status-main">
+                    {#if item.isCurrent}
+                      <span class="book-current-dot" title="Current"></span>
+                    {:else if item.isBookmarked}
+                      <BookmarkSimple size={14} weight="fill" class="read-icon" />
+                    {:else if !item.isRead}
+                      <span class="book-unread-dot" title="Unread"></span>
+                    {/if}
+                  </span>
+                  <span class="ch-status-action"></span>
+                </div>
+              </button>
+            {/each}
+          {/if}
         </div>
       {:else}
-        <div class="empty-state">
-          No readable spine or TOC metadata was found in this EPUB.
-        </div>
+        <NocturneState
+          layout="compact"
+          tone="info"
+          icon="books"
+          eyebrow="Book contents"
+          title="No readable sections"
+          body={activeBook.subtype === "pdf" ? "This PDF has no readable pages." : "No readable spine or TOC metadata was found in this EPUB."}
+        />
       {/if}
+    {/snippet}
 
-      {#if !previewing && totalSectionPages > 1}
-        <div class="pagination-bottom">
-          <button class="page-btn" onclick={() => goToSectionPage(sectionPage - 1)} disabled={sectionPage === 1}>
-            ← Prev
-          </button>
+    {#snippet chapterFooter()}
+      {#if !previewing && viewMode === "list" && filteredSections.length > 0 && totalSectionPages > 1}
+        <div class="pagination-bottom v3-pagination">
+          <button class="series-page-btn" onclick={() => goToSectionPage(sectionPage - 1)} disabled={sectionPage === 1}>Prev</button>
           <span class="page-num">{sectionPage} / {totalSectionPages}</span>
-          <button class="page-btn" onclick={() => goToSectionPage(sectionPage + 1)} disabled={sectionPage === totalSectionPages}>
-            Next →
-          </button>
+          <button class="series-page-btn" onclick={() => goToSectionPage(sectionPage + 1)} disabled={sectionPage === totalSectionPages}>Next</button>
         </div>
       {/if}
-    </div>
-  </div>
+    {/snippet}
+  </SeriesDetailV3Shell>
+  {#if trackingOpen}
+    <NovelTrackingPanel
+      title={activePresentation?.title ?? activeBook.title}
+      sourceNovelId={activeBook.id}
+      contentLabel="Book"
+      onClose={() => trackingOpen = false}
+    />
+  {/if}
 {:else if store.activeBookId && !booksLibraryReady}
   <div class="root root--loading">
     <div class="loading-shell">
@@ -637,311 +943,6 @@
     text-transform: uppercase;
   }
 
-  .sidebar {
-    width: 240px;
-    flex-shrink: 0;
-    padding: var(--sp-5);
-    border-right: 1px solid var(--border-dim);
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: var(--sp-4);
-    background: var(--bg-base);
-  }
-
-  .back {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-2);
-    color: var(--text-muted);
-    font-size: var(--text-xs);
-    font-family: var(--font-ui);
-    letter-spacing: var(--tracking-wide);
-    text-transform: uppercase;
-    transition: color var(--t-base);
-  }
-
-  .back:hover {
-    color: var(--text-secondary);
-  }
-
-  .cover-wrap {
-    position: relative;
-    width: 100%;
-    aspect-ratio: 2 / 3;
-    border-radius: var(--radius-md);
-    overflow: hidden;
-    background: var(--bg-raised);
-    border: 1px solid var(--border-dim);
-    flex-shrink: 0;
-  }
-
-  .cover {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    display: block;
-    color: transparent;
-    font-size: 0;
-  }
-
-  .cover-fallback {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    gap: var(--sp-2);
-    align-items: center;
-    justify-content: center;
-    color: var(--text-faint);
-    background: linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--bg-raised) 88%, white 12%),
-      var(--bg-base)
-    );
-    font-family: var(--font-ui);
-    font-size: var(--text-2xs);
-    letter-spacing: var(--tracking-wider);
-    text-transform: uppercase;
-  }
-
-  .meta {
-    display: flex;
-    flex-direction: column;
-    gap: var(--sp-3);
-  }
-
-  .title {
-    font-size: var(--text-base);
-    font-weight: var(--weight-medium);
-    color: var(--text-primary);
-    line-height: var(--leading-snug);
-    letter-spacing: var(--tracking-tight);
-  }
-
-  .byline {
-    font-size: var(--text-xs);
-    color: var(--text-muted);
-    font-family: var(--font-ui);
-  }
-
-  .status-badge {
-    display: inline-block;
-    font-family: var(--font-ui);
-    font-size: var(--text-2xs);
-    letter-spacing: var(--tracking-wider);
-    text-transform: uppercase;
-    padding: 2px 7px;
-    border-radius: var(--radius-sm);
-    width: fit-content;
-  }
-
-  .status-badge.epub {
-    background: var(--accent-muted);
-    color: var(--accent-fg);
-    border: 1px solid var(--accent-dim);
-  }
-
-  .status-badge.pdf {
-    background: var(--bg-raised);
-    color: var(--text-faint);
-    border: 1px solid var(--border-dim);
-  }
-
-  .desc {
-    font-size: var(--text-xs);
-    color: var(--text-muted);
-    line-height: var(--leading-base);
-    display: -webkit-box;
-    -webkit-line-clamp: 4;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-
-  .cta-section {
-    display: flex;
-    flex-direction: column;
-    gap: var(--sp-2);
-  }
-
-  .read-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: var(--sp-2);
-    width: 100%;
-    min-height: 34px;
-    padding: 0 var(--sp-3);
-    border-radius: var(--radius-md);
-    background: var(--accent);
-    border: 1px solid var(--accent);
-    color: var(--accent-contrast, #fff);
-    font-size: var(--text-xs);
-    font-family: var(--font-ui);
-    letter-spacing: var(--tracking-wide);
-    cursor: pointer;
-    transition: opacity var(--t-base);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    box-sizing: border-box;
-  }
-
-  .read-btn:hover {
-    opacity: 0.88;
-  }
-
-  .read-btn:disabled {
-    cursor: not-allowed;
-    opacity: 0.55;
-  }
-
-  .actions {
-    display: flex;
-    align-items: stretch;
-    gap: var(--sp-2);
-  }
-
-  .library-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: var(--sp-2);
-    min-height: 32px;
-    font-size: var(--text-xs);
-    font-family: var(--font-ui);
-    letter-spacing: var(--tracking-wide);
-    padding: 0 10px;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border-strong);
-    color: var(--text-muted);
-    background: var(--bg-raised);
-    transition: border-color var(--t-base), color var(--t-base), background var(--t-base);
-    flex: 1;
-    box-sizing: border-box;
-  }
-
-  .library-btn:hover {
-    border-color: var(--border-strong);
-    color: var(--text-secondary);
-  }
-
-  .library-btn.danger {
-    color: var(--color-error);
-  }
-
-  .library-btn.danger:hover {
-    background: var(--color-error-bg);
-    border-color: var(--color-error);
-    color: var(--color-error);
-  }
-
-  .missing-file-note {
-    margin: 0;
-    padding: var(--sp-2) var(--sp-3);
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border-strong);
-    background: color-mix(in srgb, var(--bg-raised) 88%, transparent);
-    color: var(--text-muted);
-    font-size: var(--text-2xs);
-    line-height: var(--leading-base);
-  }
-
-  .progress-section {
-    display: flex;
-    flex-direction: column;
-    gap: var(--sp-1);
-  }
-
-  .progress-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .progress-label {
-    font-family: var(--font-ui);
-    font-size: var(--text-2xs);
-    color: var(--text-faint);
-    letter-spacing: var(--tracking-wide);
-  }
-
-  .progress-pct {
-    font-family: var(--font-ui);
-    font-size: var(--text-2xs);
-    color: var(--accent-fg);
-    letter-spacing: var(--tracking-wide);
-  }
-
-  .progress-track {
-    height: 3px;
-    background: var(--border-base);
-    border-radius: var(--radius-full);
-    overflow: hidden;
-  }
-
-  .progress-fill {
-    height: 100%;
-    background: var(--accent);
-    border-radius: var(--radius-full);
-    transition: width 0.4s ease;
-  }
-
-  .details-section {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .details-toggle {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    font-family: var(--font-ui);
-    font-size: var(--text-xs);
-    color: var(--text-faint);
-    letter-spacing: var(--tracking-wide);
-    padding: 4px 0;
-    transition: color var(--t-base);
-  }
-
-  .details-toggle:hover {
-    color: var(--text-muted);
-  }
-
-  .details-body {
-    display: flex;
-    flex-direction: column;
-    gap: var(--sp-2);
-    padding-top: var(--sp-2);
-  }
-
-  .detail-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: var(--sp-2);
-  }
-
-  .detail-key {
-    font-family: var(--font-ui);
-    font-size: var(--text-2xs);
-    color: var(--text-faint);
-    letter-spacing: var(--tracking-wide);
-  }
-
-  .detail-val {
-    font-family: var(--font-ui);
-    font-size: var(--text-2xs);
-    color: var(--text-secondary);
-    letter-spacing: var(--tracking-wide);
-    text-align: right;
-  }
-
   .detail-file {
     display: flex;
     flex-direction: column;
@@ -958,154 +959,23 @@
     word-break: break-all;
   }
 
-  .list-wrap {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  .list-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: var(--sp-3) var(--sp-4);
-    border-bottom: 1px solid var(--border-dim);
-    flex-shrink: 0;
-    gap: var(--sp-2);
-    flex-wrap: wrap;
-  }
-
-  .list-header-left,
-  .list-header-right {
-    display: flex;
-    align-items: stretch;
-    gap: var(--sp-2);
-  }
-
-  .list-label {
-    font-family: var(--font-ui);
-    font-size: var(--text-xs);
-    color: var(--text-faint);
-    letter-spacing: var(--tracking-wider);
-    text-transform: uppercase;
-  }
-
-  .sort-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 5px;
-    min-height: 32px;
-    font-family: var(--font-ui);
-    font-size: var(--text-xs);
-    letter-spacing: var(--tracking-wide);
-    padding: 0 var(--sp-2);
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border-dim);
-    color: var(--text-muted);
-    background: var(--bg-raised);
-    transition: color var(--t-base), border-color var(--t-base), background var(--t-base);
-    box-sizing: border-box;
-  }
-
-  .sort-btn:hover {
-    color: var(--text-secondary);
-    border-color: var(--border-strong);
-    background: var(--bg-raised);
-  }
-
-  .pagination,
-  .pagination-bottom {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-2);
-  }
-
-  .pagination-bottom {
-    justify-content: center;
-    padding: var(--sp-3);
-    border-top: 1px solid var(--border-dim);
-    flex-shrink: 0;
-  }
-
-  .page-btn {
-    font-family: var(--font-ui);
-    font-size: var(--text-xs);
-    letter-spacing: var(--tracking-wide);
-    padding: 4px 10px;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border-dim);
-    color: var(--text-faint);
-    background: none;
-    cursor: pointer;
-    transition: color var(--t-base), border-color var(--t-base);
-  }
-
-  .page-btn:hover:not(:disabled) {
-    color: var(--text-muted);
-    border-color: var(--border-strong);
-  }
-
-  .page-btn:disabled {
-    opacity: 0.3;
-    cursor: default;
-  }
-
-  .page-num {
-    font-family: var(--font-ui);
-    font-size: var(--text-xs);
-    color: var(--text-faint);
-    letter-spacing: var(--tracking-wide);
-  }
-
-  .ch-list {
-    flex: 1;
-    overflow-y: auto;
-  }
-
-  .ch-row {
-    display: flex;
-    align-items: center;
-    padding: 10px var(--sp-4);
-    border-bottom: 1px solid var(--border-dim);
-    gap: var(--sp-3);
-  }
-
   .ch-left {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
     padding-left: calc(var(--toc-depth, 0) * 12px);
   }
 
-  .ch-name {
-    font-size: var(--text-sm);
-    color: var(--text-secondary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  .book-current-dot,
+  .book-unread-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 999px;
+    background: #d3c4ff;
   }
 
-  .ch-meta {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-2);
-    flex-wrap: wrap;
+  .book-unread-dot {
+    opacity: 0.56;
   }
 
-  .ch-meta-item {
-    font-family: var(--font-ui);
-    font-size: var(--text-2xs);
-    color: var(--text-faint);
-    letter-spacing: var(--tracking-wide);
-  }
-
-  .empty-state,
-  .preview-loading,
-  .preview-error {
+  .preview-loading {
     flex: 1;
     display: flex;
     align-items: center;
@@ -1140,12 +1010,6 @@
   @media (max-width: 980px) {
     .root {
       flex-direction: column;
-    }
-
-    .sidebar {
-      width: 100%;
-      border-right: none;
-      border-bottom: 1px solid var(--border-dim);
     }
   }
 </style>

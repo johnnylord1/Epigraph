@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildReaderChapterList, listScanlators, normalizeMangaReaderPreference, resolveReaderChapterTarget } from "./scanlator";
+import { buildReaderChapterList, effectiveScanlator, listScanlators, normalizeMangaReaderPreference, resolveReaderChapterTarget } from "./scanlator";
 import type { Chapter } from "../types";
 
 const chapters: Chapter[] = [
@@ -46,12 +46,28 @@ describe("scanlator reader helpers", () => {
     expect(listScanlators(chapters)).toEqual(["Group A", "Group B"]);
   });
 
+  it("uses a source fallback for official sources with empty chapter scanlators", () => {
+    const officialChapters = chapters.map((chapter) => ({ ...chapter, scanlator: null }));
+
+    expect(listScanlators(officialChapters, "MangaPlus")).toEqual(["MangaPlus"]);
+    expect(effectiveScanlator(officialChapters[0], "MangaPlus")).toBe("MangaPlus");
+  });
+
   it("filters the canonical reader list when allowed scanlators are selected", () => {
     const filtered = buildReaderChapterList(chapters, {
       scanlatorFilter: ["Group B"],
     });
 
     expect(filtered.map((chapter) => chapter.id)).toEqual([2]);
+  });
+
+  it("filters official-source chapters by the fallback scanlator label", () => {
+    const officialChapters = chapters.map((chapter) => ({ ...chapter, scanlator: null }));
+    const filtered = buildReaderChapterList(officialChapters, {
+      scanlatorFilter: ["MangaPlus"],
+    }, "MangaPlus");
+
+    expect(filtered.map((chapter) => chapter.id)).toEqual([1, 2, 3]);
   });
 
   it("prioritizes the preferred scanlator within duplicate chapter groups", () => {

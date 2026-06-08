@@ -87,6 +87,11 @@ export interface NovelPluginSearchResultSummary {
   name: string | null;
   path: string | null;
   cover: string | null;
+  rating: number | string | null;
+  score: number | string | null;
+  stars: number | string | null;
+  ratingMax: number | string | null;
+  scoreMax: number | string | null;
 }
 
 export interface NovelPluginSearchSummary {
@@ -190,6 +195,14 @@ function normalizeText(value: unknown): string | null {
   return trimmed ? trimmed : null;
 }
 
+function normalizeNumberish(value: unknown): number | string | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  return normalizeText(value);
+}
+
 function normalizeRuntimeErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
@@ -222,6 +235,17 @@ function normalizeResultList(payload: unknown): NovelPluginSearchResultSummary[]
         name: normalizeText(record.name),
         path: normalizeText(record.path),
         cover: normalizeText(record.cover),
+        rating: normalizeNumberish(
+          record.rating
+            ?? record.rate
+            ?? record.averageRating
+            ?? record.avgRating
+            ?? record.ratingText,
+        ),
+        score: normalizeNumberish(record.score ?? record.scoreText),
+        stars: normalizeNumberish(record.stars ?? record.starRating),
+        ratingMax: normalizeNumberish(record.ratingMax ?? record.maxRating),
+        scoreMax: normalizeNumberish(record.scoreMax ?? record.maxScore),
       } satisfies NovelPluginSearchResultSummary;
     })
     .filter((entry): entry is NovelPluginSearchResultSummary => Boolean(entry));
@@ -738,6 +762,26 @@ function ensureDefaultImageRequestInit(plugin: NovelPluginLike) {
   }
 }
 
+function cloneRuntimeValue<T>(value: T): T {
+  if (value == null || typeof value !== "object") return value;
+  if (typeof structuredClone === "function") {
+    try {
+      return structuredClone(value);
+    } catch {
+      // Fall back to JSON cloning for plugin metadata, which is expected to be data-only.
+    }
+  }
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function createPopularOptions(plugin: NovelPluginLike, inputOptions: Record<string, unknown> | undefined): Record<string, unknown> {
+  const options = { ...(inputOptions ?? {}) };
+  if (!("filters" in options) && plugin.filters && typeof plugin.filters === "object") {
+    options.filters = cloneRuntimeValue(plugin.filters);
+  }
+  return options;
+}
+
 function evaluatePluginSource(input: NovelPluginSmokeInput): LoadedNovelPluginBoundary {
   const storageShim = createStorageShim(input);
   const require = createRequireShim(storageShim);
@@ -928,9 +972,10 @@ export async function readNovelPluginPopular(input: NovelPluginPopularSmokeInput
   }
 
   const pageNo = input.pageNo ?? 1;
+  const options = createPopularOptions(loaded.plugin, input.options);
   let results: unknown;
   try {
-    results = await popularNovels.call(loaded.plugin, pageNo, input.options ?? {});
+    results = await popularNovels.call(loaded.plugin, pageNo, options);
   } catch (error) {
     throw new Error(
       `Plugin ${input.pluginId} popularNovels failed for page ${pageNo}: ${normalizeRuntimeErrorMessage(error)}`,
