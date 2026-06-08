@@ -87,7 +87,7 @@ Start-Process `
   -ArgumentList @(
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
-    "-Command", "npm exec pnpm -- tauri:dev:gate"
+    "-Command", "npm exec --yes pnpm -- tauri:dev:gate"
   ) | Out-Null
 
 $listenerDeadline = (Get-Date).AddSeconds(90)
