@@ -40,4 +40,14 @@ repo/
 dist/
 packaging/frontend-dist.tar.gz
 *.flatpak
-.flatpak-builder/\n# --- Staged sidecar binaries (platform-specific, never commit) ---\nsrc-tauri/binaries/
+.flatpak-builder/
+
+# --- Local generated artifacts ---
+.codex-run/
+.codex-*.png
+tmp/
+src-tauri/target-codex/
+*.actual.png
+
+# --- Staged sidecar binaries (platform-specific, never commit) ---
+src-tauri/binaries/
