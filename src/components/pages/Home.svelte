@@ -1,7 +1,7 @@
 ﻿<script lang="ts">
   import { onMount } from "svelte";
   import { gql, thumbUrl } from "../../lib/client";
-  import { GET_LIBRARY, GET_CATEGORIES, GET_LIBRARY_TRACKING_SUMMARY, GET_SOURCES, GET_TRACKERS, GET_EXTENSIONS } from "../../lib/queries";
+  import { GET_LIBRARY, GET_CATEGORIES_SUMMARY, GET_LIBRARY_TRACKING_SUMMARY, GET_SOURCES, GET_TRACKERS, GET_EXTENSIONS } from "../../lib/queries";
   import { cache, CACHE_GROUPS, CACHE_KEYS, DEFAULT_TTL_MS } from "../../lib/cache";
   import { buildCompletedLibraryIds, collectTrackedChapterTotalsByMangaId, collectTrackedCompletedMangaIds, type TrackerCompletionTracker } from "../../lib/library/completion";
   import { isCompletedCategory, normalizeCategories } from "../../lib/library/categories";
@@ -208,7 +208,7 @@
   function loadCategoriesSnapshot() {
     return cache.get(
       CACHE_KEYS.CATEGORIES,
-      () => gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES).then((d) => normalizeCategories(d.categories.nodes)),
+      () => gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES_SUMMARY).then((d) => normalizeCategories(d.categories.nodes)),
       DEFAULT_TTL_MS,
       CACHE_GROUPS.LIBRARY,
     );

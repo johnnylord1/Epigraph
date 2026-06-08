@@ -36,8 +36,8 @@
   import { dedupeMangaById } from "../../lib/util";
   import { createBookLibraryCardId, createComicLibraryCardId } from "../../lib/library/cardIdentity";
   import {
-    GET_CATEGORIES,
     GET_CATEGORIES_SUMMARY,
+    GET_CATEGORIES_WITH_MANGA_IDS,
     GET_CHAPTERS,
     GET_LIBRARY,
     GET_LIBRARY_TRACKING_SUMMARY,
@@ -76,7 +76,8 @@
   import NocturneState from "../shared/NocturneState.svelte";
 
   const DT_TAB = "application/x-moku-tab";
-  const CATEGORIES_WITH_MANGA_CACHE_KEY = `${CACHE_KEYS.CATEGORIES}:with-manga`;
+  const CATEGORY_MEMBERS_CACHE_KEY = `${CACHE_KEYS.CATEGORIES}:members`;
+  const LEGACY_CATEGORIES_WITH_MANGA_CACHE_KEY = `${CACHE_KEYS.CATEGORIES}:with-manga`;
 
   let ensureCompletedInFlight: Promise<Category[]> | null = null;
   let hydrateCategoriesInFlight: Promise<Category[]> | null = null;
@@ -205,7 +206,7 @@
       duplicates.map((cat) => gql(DELETE_CATEGORY, { id: cat.id }).catch(console.error)),
     );
 
-    const refreshed = await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES)
+    const refreshed = await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES_SUMMARY)
       .then((data) => data.categories.nodes)
       .catch(() => cats.filter((cat) => cat.id === keep.id || !isCompletedCategory(cat)));
 
@@ -221,7 +222,7 @@
     ensureCompletedInFlight = (async () => {
       try {
         const fresh = await cleanupCompletedDuplicates(
-          normalizeCategories((await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES)).categories.nodes),
+          normalizeCategories((await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES_SUMMARY)).categories.nodes),
         );
         if (fresh.some(isCompletedCategory)) return fresh;
 
@@ -230,7 +231,7 @@
         } catch {}
 
         return await cleanupCompletedDuplicates(
-          normalizeCategories((await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES)).categories.nodes),
+          normalizeCategories((await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES_SUMMARY)).categories.nodes),
         );
       } finally {
         ensureCompletedInFlight = null;
@@ -253,10 +254,10 @@
     );
   }
 
-  function loadCategoriesWithMangaSnapshot() {
+  function loadCategoryMembersSnapshot() {
     return cache.get(
-      CATEGORIES_WITH_MANGA_CACHE_KEY,
-      async () => ensureCompletedCategory((await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES)).categories.nodes),
+      CATEGORY_MEMBERS_CACHE_KEY,
+      async () => ensureCompletedCategory((await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES_WITH_MANGA_IDS)).categories.nodes),
       DEFAULT_TTL_MS,
       CACHE_GROUPS.LIBRARY,
     );
@@ -270,8 +271,9 @@
     if (hydrateCategoriesInFlight) return hydrateCategoriesInFlight;
     hydrateCategoriesInFlight = (async () => {
       try {
-        if (force) cache.clear(CATEGORIES_WITH_MANGA_CACHE_KEY);
-        const categories = normalizeCategories(await loadCategoriesWithMangaSnapshot());
+        if (force) cache.clear(CATEGORY_MEMBERS_CACHE_KEY);
+        cache.clear(LEGACY_CATEGORIES_WITH_MANGA_CACHE_KEY);
+        const categories = normalizeCategories(await loadCategoryMembersSnapshot());
         setCategories(categories);
         return categories;
       } finally {
@@ -284,10 +286,11 @@
   async function reloadCategories(force = true) {
     try {
       if (force) cache.clear(CACHE_KEYS.CATEGORIES);
-      if (force) cache.clear(CATEGORIES_WITH_MANGA_CACHE_KEY);
+      if (force) cache.clear(CATEGORY_MEMBERS_CACHE_KEY);
+      cache.clear(LEGACY_CATEGORIES_WITH_MANGA_CACHE_KEY);
       const categories = await loadCategoriesSnapshot();
       setCategories(categories);
-      if (force || !categoriesHaveMangaMembers(categories)) {
+      if (!categoriesHaveMangaMembers(categories)) {
         return await hydrateCategoryMembers(force);
       }
       return categories;

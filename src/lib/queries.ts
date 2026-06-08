@@ -294,6 +294,27 @@ export const GET_CATEGORIES_WITH_MANGA = `
   }
 `;
 
+export const GET_CATEGORIES_WITH_MANGA_IDS = `
+  query GetCategoriesWithMangaIds {
+    categories {
+      nodes {
+        id
+        name
+        order
+        default
+        includeInUpdate
+        includeInDownload
+        mangas {
+          nodes {
+            id
+            inLibrary
+          }
+        }
+      }
+    }
+  }
+`;
+
 export const CREATE_CATEGORY = `
   mutation CreateCategory($name: String!) {
     createCategory(input: { name: $name }) {

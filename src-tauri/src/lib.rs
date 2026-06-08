@@ -2775,6 +2775,20 @@ server.maxSourcesInParallel = 3
 server.extensionRepos = []
 "#;
 
+const LOCAL_SERVER_JAVA_TOOL_OPTIONS: &str =
+    "-Djava.awt.headless=true -Xms96m -Xmx512m -XX:+UseG1GC";
+
+fn local_server_java_args(jar: &Path) -> Vec<String> {
+    vec![
+        "-Djava.awt.headless=true".to_string(),
+        "-Xms96m".to_string(),
+        "-Xmx512m".to_string(),
+        "-XX:+UseG1GC".to_string(),
+        "-jar".to_string(),
+        jar.to_string_lossy().into_owned(),
+    ]
+}
+
 fn seed_server_conf(data_dir: &Path, profile: LocalServerProfile, port: u16) {
     let conf_path = data_dir.join("server.conf");
     let exposure_mode = suwayomi_lan::load_and_sanitize(data_dir, profile.key())
@@ -3232,7 +3246,7 @@ fn resolve_server_binary(
                     do_log(log, "[resolve] both java and jar found — using bundled JRE");
                     return Ok(ServerInvocation {
                         bin: java.to_string_lossy().into_owned(),
-                        args: vec!["-jar".to_string(), jar.to_string_lossy().into_owned()],
+                        args: local_server_java_args(&jar),
                         working_dir: Some(bundle_dir),
                     });
                 }
@@ -3302,7 +3316,7 @@ fn resolve_server_binary(
                 );
                 return Ok(ServerInvocation {
                     bin: java.to_string_lossy().into_owned(),
-                    args: vec!["-jar".to_string(), jar_path.to_string_lossy().into_owned()],
+                    args: local_server_java_args(&jar_path),
                     working_dir: Some(resource_dir),
                 });
             }
@@ -3656,7 +3670,7 @@ fn spawn_server(
     let cmd = app
         .shell()
         .command(&invocation.bin)
-        .env("JAVA_TOOL_OPTIONS", "-Djava.awt.headless=true -Xms96m -Xmx1024m -XX:+UseG1GC")
+        .env("JAVA_TOOL_OPTIONS", LOCAL_SERVER_JAVA_TOOL_OPTIONS)
         .args(&invocation.args)
         .current_dir(&working_dir);
 
