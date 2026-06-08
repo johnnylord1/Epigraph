@@ -34,26 +34,36 @@ function shouldKeepSearchToken(token: string): boolean {
   return token.length >= 4 && !SEARCH_STOP_WORDS.has(token.toLowerCase());
 }
 
-export function buildSearchAttemptTerms(searchTerm: string): string[] {
-  const original = collapseSearchWhitespace(searchTerm);
-  const normalizedSymbols = normalizeSearchSymbols(original);
-  const accentFolded = removeSearchDiacritics(normalizedSymbols);
-  const compact = normalizedSymbols.replace(/\s+/g, "");
-  const accentFoldedCompact = accentFolded.replace(/\s+/g, "");
-  const tokenFallbacks = accentFolded
+function uniqueSearchAttempts(values: Array<string | null | undefined>): string[] {
+  return [...new Set(values.filter((value): value is string => Boolean(value)))];
+}
+
+function compactSearchTerm(value: string): string | null {
+  const compact = value.replace(/\s+/g, "");
+  return compact.length >= 4 ? compact : null;
+}
+
+function buildTokenFallbacks(value: string): string[] {
+  return value
     .split(" ")
     .filter((token) => shouldKeepSearchToken(token))
     .sort((left, right) => right.length - left.length)
     .slice(0, 2);
+}
 
-  return [...new Set([
+export function buildSearchAttemptTerms(searchTerm: string): string[] {
+  const original = collapseSearchWhitespace(searchTerm);
+  const normalizedSymbols = normalizeSearchSymbols(original);
+  const accentFolded = removeSearchDiacritics(normalizedSymbols);
+
+  return uniqueSearchAttempts([
     original,
     normalizedSymbols,
     accentFolded,
-    ...tokenFallbacks,
-    compact.length >= 4 ? compact : null,
-    accentFoldedCompact.length >= 4 ? accentFoldedCompact : null,
-  ].filter((value): value is string => Boolean(value)))];
+    ...buildTokenFallbacks(accentFolded),
+    compactSearchTerm(normalizedSymbols),
+    compactSearchTerm(accentFolded),
+  ]);
 }
 
 export async function resolveSearchResultsWithFallback<TResult>(
