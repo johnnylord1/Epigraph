@@ -94,7 +94,9 @@
   const SEARCH_RECOMMENDATION_AUTOFILL_TARGET = 56;
   const SEARCH_RECOMMENDATION_AUTOFILL_PAGE_LIMIT = 16;
   const SEARCH_RECOMMENDATION_PER_SOURCE_CAP = 60;
-  const SEARCH_RECOMMENDATION_SEED_CAP = 420;
+  const SEARCH_RECOMMENDATION_MANGA_SEED_CAP = 240;
+  const SEARCH_RECOMMENDATION_NOVEL_SEED_CAP = 180;
+  const SEARCH_RECOMMENDATION_PROVIDER_RESULT_CAP = 120;
   const SEARCH_RECOMMENDATION_SCROLL_THROTTLE_MS = 160;
   const SEARCH_RECOMMENDATION_DUPLICATE_PAGE_RETRY_LIMIT = 18;
   const TRACKER_SCORE_ENRICHMENT_LIMIT = 32;
@@ -112,6 +114,22 @@
   const NOVEL_DETAIL_ENRICHMENT_TIMEOUT_MS = 850;
   const trackerScoreSearchCache = new Map<string, TrackSearch[]>();
   const hardcoverScoreSearchCache = new Map<string, RecommendationProviderSignal | null>();
+
+  function capMangaRecommendationSeeds(items: Manga[]) {
+    return items.slice(0, SEARCH_RECOMMENDATION_MANGA_SEED_CAP);
+  }
+
+  function capNovelRecommendationSeeds(items: NovelSourceSearchResult[]) {
+    return items.slice(0, SEARCH_RECOMMENDATION_NOVEL_SEED_CAP);
+  }
+
+  function capProviderResults<T>(items: T[]) {
+    return items.slice(0, SEARCH_RECOMMENDATION_PROVIDER_RESULT_CAP);
+  }
+
+  function capProviderSignalMap(map: Map<string, RecommendationProviderSignal>) {
+    return new Map([...map].slice(0, SEARCH_RECOMMENDATION_PROVIDER_RESULT_CAP));
+  }
 
   const COMMON_GENRES = [
     "Action","Adventure","Comedy","Drama","Fantasy","Romance",
@@ -530,6 +548,72 @@
     searchRecommendationMoreTriggeredAt = new Map();
     searchRecommendationMoreRequestedWidths = new Map();
     searchRecommendationSectionOrder = new Map();
+  }
+
+  function releaseBrowseTransientState() {
+    kw_abortCtrl?.abort();
+    tag_abortLocal?.abort();
+    tag_abortSource?.abort();
+    src_abortCtrl?.abort();
+    discoverAbortCtrl?.abort();
+    searchTrackerScoreAbortCtrl?.abort();
+    searchSourceSeedAbortCtrl?.abort();
+
+    kw_abortCtrl = null;
+    tag_abortLocal = null;
+    tag_abortSource = null;
+    src_abortCtrl = null;
+    discoverAbortCtrl = null;
+    searchTrackerScoreAbortCtrl = null;
+    searchSourceSeedAbortCtrl = null;
+
+    kw_results = [];
+    kw_novelResults = [];
+    tag_localResults = [];
+    tag_sourceResults = [];
+    tag_srcNextPage = new Map();
+    src_browseResults = [];
+    src_novelBrowseResults = [];
+    discoverMangaResults = [];
+    discoverNovelResults = [];
+    trackerCatalogResults = [];
+    searchTrackerScoreResults = [];
+    searchTrackerTrendingResults = [];
+    searchTrackerRecordCandidates = [];
+    searchTrackerSeedItems = [];
+    searchSourceSeedResults = [];
+    searchFreshSourceSeedResults = [];
+    searchNovelSourceSeedResults = [];
+    searchHardcoverRecords = [];
+    searchHardcoverDiscoveryResults = [];
+    searchHardcoverScoreResults = new Map();
+    searchNovelDetailTagsByKey = new Map();
+    searchNovelDetailUpdatedAtByKey = new Map();
+    failedSearchCoverKeys = new Set();
+    searchRecommendationVisibleLimits = new Map();
+    searchRecommendationMoreLoadingKeys = new Set();
+    searchRecommendationMoreExhaustedKeys = new Set();
+    searchRecommendationMorePages = new Map();
+    searchRecommendationMoreTriggeredAt = new Map();
+    searchRecommendationMoreRequestedWidths = new Map();
+    searchRecommendationSectionOrder = new Map();
+
+    discoverLoading = false;
+    discoverLoadingMore = false;
+    trackerCatalogLoading = false;
+    trackerCatalogLoadingMore = false;
+    searchTrackerScoreLoading = false;
+    searchTrackerTrendingLoading = false;
+    searchHardcoverDiscoveryLoading = false;
+    searchHardcoverScoreLoading = false;
+    searchSourceSeedLoading = false;
+    searchMangaSeedAutofillLoading = false;
+    searchNovelSeedAutofillLoading = false;
+    tag_loadingLocal = false;
+    tag_loadingMoreLocal = false;
+    tag_loadingSourceSearch = false;
+    tag_loadingMoreSource = false;
+    src_loadingBrowse = false;
   }
 
   function resetContentTypeTransientState() {
@@ -2033,10 +2117,10 @@
           }
 
           loadedAnyIncoming = true;
-          const nextResults = balanceNovelSourceResults(dedupeNovelSourceResults([
+          const nextResults = capNovelRecommendationSeeds(balanceNovelSourceResults(dedupeNovelSourceResults([
             ...searchNovelSourceSeedResults,
             ...incoming,
-          ])).slice(0, SEARCH_RECOMMENDATION_SEED_CAP);
+          ])));
           searchNovelSourceSeedResults = nextResults;
           await tick();
 
@@ -2090,20 +2174,20 @@
             void loadSearchTrackerScoresForTitles(incoming.map((manga) => manga.title));
           }
 
-          const nextSectionResults = balanceMangaBySource(dedupeMangaByTitle(
+          const nextSectionResults = capMangaRecommendationSeeds(balanceMangaBySource(dedupeMangaByTitle(
             dedupeMangaById([
               ...(fetchType === "LATEST" ? searchFreshSourceSeedResults : searchSourceSeedResults),
               ...incoming,
             ]),
             store.settings.mangaLinks,
-          )).slice(0, SEARCH_RECOMMENDATION_SEED_CAP);
-          const nextCombinedResults = balanceMangaBySource(dedupeMangaByTitle(
+          )));
+          const nextCombinedResults = capMangaRecommendationSeeds(balanceMangaBySource(dedupeMangaByTitle(
             dedupeMangaById([
               ...searchSourceSeedResults,
               ...(fetchType === "LATEST" ? nextSectionResults : incoming),
             ]),
             store.settings.mangaLinks,
-          )).slice(0, SEARCH_RECOMMENDATION_SEED_CAP);
+          )));
           if (fetchType === "LATEST") {
             searchFreshSourceSeedResults = nextSectionResults;
           }
@@ -2171,10 +2255,10 @@
         return;
       }
 
-      searchSourceSeedResults = balanceMangaBySource(dedupeMangaByTitle(
+      searchSourceSeedResults = capMangaRecommendationSeeds(balanceMangaBySource(dedupeMangaByTitle(
         dedupeMangaById([...searchSourceSeedResults, ...incoming]),
         store.settings.mangaLinks,
-      )).slice(0, SEARCH_RECOMMENDATION_SEED_CAP);
+      )));
       searchSourceSeedFetchedAt = searchSourceSeedFetchedAt ?? Date.now();
       void loadSearchTrackerScoresForTitles(incoming.map((manga) => manga.title));
     } catch (error) {
@@ -2660,10 +2744,10 @@
       let collected: Manga[] = [];
       const publishPartial = (incoming: Manga[]) => {
         if (searchSourceSeedKey !== key || ctrl.signal.aborted || incoming.length === 0) return;
-        collected = balanceMangaBySource(dedupeMangaByTitle(
+        collected = capMangaRecommendationSeeds(balanceMangaBySource(dedupeMangaByTitle(
           dedupeMangaById([...collected, ...incoming]),
           mangaLinks,
-        )).slice(0, SEARCH_RECOMMENDATION_SEED_CAP);
+        )));
         untrack(() => {
           searchSourceSeedResults = collected;
         });
@@ -2712,10 +2796,10 @@
 
       if (searchSourceSeedKey !== key || ctrl.signal.aborted) return;
       const incoming = settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
-      const nextResults = balanceMangaBySource(dedupeMangaByTitle(
+      const nextResults = capMangaRecommendationSeeds(balanceMangaBySource(dedupeMangaByTitle(
         dedupeMangaById([...collected, ...incoming]),
         mangaLinks,
-      )).slice(0, SEARCH_RECOMMENDATION_SEED_CAP);
+      )));
       untrack(() => {
         searchSourceSeedResults = nextResults;
       });
@@ -2735,14 +2819,14 @@
       }));
       if (searchSourceSeedKey !== key || ctrl.signal.aborted) return;
       const latestIncoming = latestSettled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
-      const nextFreshResults = balanceMangaBySource(dedupeMangaByTitle(
+      const nextFreshResults = capMangaRecommendationSeeds(balanceMangaBySource(dedupeMangaByTitle(
         dedupeMangaById(latestIncoming),
         mangaLinks,
-      )).slice(0, SEARCH_RECOMMENDATION_SEED_CAP);
-      const nextCombinedResults = balanceMangaBySource(dedupeMangaByTitle(
+      )));
+      const nextCombinedResults = capMangaRecommendationSeeds(balanceMangaBySource(dedupeMangaByTitle(
         dedupeMangaById([...nextResults, ...nextFreshResults]),
         mangaLinks,
-      )).slice(0, SEARCH_RECOMMENDATION_SEED_CAP);
+      )));
       untrack(() => {
         searchFreshSourceSeedResults = nextFreshResults;
         searchSourceSeedResults = nextCombinedResults;
@@ -2842,14 +2926,14 @@
         return;
       }
 
-      const nextFreshResults = balanceMangaBySource(dedupeMangaByTitle(
+      const nextFreshResults = capMangaRecommendationSeeds(balanceMangaBySource(dedupeMangaByTitle(
         dedupeMangaById([...searchFreshSourceSeedResults, ...latestIncoming]),
         mangaLinks,
-      )).slice(0, SEARCH_RECOMMENDATION_SEED_CAP);
-      const nextSeedResults = balanceMangaBySource(dedupeMangaByTitle(
+      )));
+      const nextSeedResults = capMangaRecommendationSeeds(balanceMangaBySource(dedupeMangaByTitle(
         dedupeMangaById([...searchSourceSeedResults, ...popularIncoming, ...nextFreshResults]),
         mangaLinks,
-      )).slice(0, SEARCH_RECOMMENDATION_SEED_CAP);
+      )));
 
       searchFreshSourceSeedResults = nextFreshResults;
       searchSourceSeedResults = nextSeedResults;
@@ -2963,10 +3047,10 @@
         return;
       }
 
-      const nextResults = balanceNovelSourceResults(dedupeNovelSourceResults([
+      const nextResults = capNovelRecommendationSeeds(balanceNovelSourceResults(dedupeNovelSourceResults([
         ...searchNovelSourceSeedResults,
         ...incoming,
-      ])).slice(0, SEARCH_RECOMMENDATION_SEED_CAP);
+      ])));
       searchNovelSourceSeedResults = nextResults;
 
       if (nextResults.length <= previousCount && nextPage >= SEARCH_RECOMMENDATION_DUPLICATE_PAGE_RETRY_LIMIT) {
@@ -2998,10 +3082,10 @@
       let collected: NovelSourceSearchResult[] = [];
       const publishPartial = (incoming: NovelSourceSearchResult[]) => {
         if (searchSourceSeedKey !== key || ctrl.signal.aborted || incoming.length === 0) return;
-        collected = balanceNovelSourceResults(dedupeNovelSourceResults([
+        collected = capNovelRecommendationSeeds(balanceNovelSourceResults(dedupeNovelSourceResults([
           ...collected,
           ...incoming,
-        ])).slice(0, SEARCH_RECOMMENDATION_SEED_CAP);
+        ])));
         untrack(() => {
           searchNovelSourceSeedResults = collected;
           searchSourceSeedLoading = false;
@@ -3024,7 +3108,7 @@
           return [] as NovelSourceSearchResult[];
         }));
         incoming.push(...settled.flatMap((result) => result.status === "fulfilled" ? result.value : []));
-        if (incoming.length >= SEARCH_RECOMMENDATION_SEED_CAP) break;
+        if (incoming.length >= SEARCH_RECOMMENDATION_NOVEL_SEED_CAP) break;
       }
 
       if (searchSourceSeedKey !== key || ctrl.signal.aborted) return;
@@ -3055,10 +3139,10 @@
         }
       }
       untrack(() => {
-        searchNovelSourceSeedResults = balanceNovelSourceResults(dedupeNovelSourceResults([
+        searchNovelSourceSeedResults = capNovelRecommendationSeeds(balanceNovelSourceResults(dedupeNovelSourceResults([
           ...collected,
           ...incoming,
-        ])).slice(0, SEARCH_RECOMMENDATION_SEED_CAP);
+        ])));
       });
     } catch (error) {
       if (searchSourceSeedKey !== key || ctrl.signal.aborted) return;
@@ -3750,7 +3834,7 @@
       }, ctrl.signal);
 
       if (searchHardcoverScoreRun !== runId || searchHardcoverScoreKey !== key) return;
-      searchHardcoverScoreResults = providers;
+      searchHardcoverScoreResults = capProviderSignalMap(providers);
     } finally {
       if (searchHardcoverScoreRun === runId && searchHardcoverScoreKey === key) {
         searchHardcoverScoreLoading = false;
@@ -3852,12 +3936,12 @@
           byId.set(book.id, hardcoverBookToRecommendationCandidate(book, queryTags));
         }
         if (byId.size > 0 && searchHardcoverDiscoveryRun === runId && searchHardcoverDiscoveryKey === key) {
-          searchHardcoverDiscoveryResults = [...byId.values()];
+          searchHardcoverDiscoveryResults = capProviderResults([...byId.values()]);
         }
       }, ctrl.signal);
 
       if (searchHardcoverDiscoveryRun !== runId || searchHardcoverDiscoveryKey !== key) return;
-      searchHardcoverDiscoveryResults = [...byId.values()];
+      searchHardcoverDiscoveryResults = capProviderResults([...byId.values()]);
     } finally {
       if (searchHardcoverDiscoveryRun === runId && searchHardcoverDiscoveryKey === key) {
         searchHardcoverDiscoveryLoading = false;
@@ -3906,7 +3990,7 @@
         }
       }
       if (ctrl.signal.aborted || searchTrackerScoreKey !== key) return;
-      searchTrackerScoreResults = dedupeTrackSearches(collected);
+      searchTrackerScoreResults = capProviderResults(dedupeTrackSearches(collected));
     } finally {
       if (searchTrackerScoreKey === key) searchTrackerScoreLoading = false;
     }
@@ -3936,7 +4020,7 @@
     }
 
     if (collected.length === 0) return false;
-    searchTrackerScoreResults = dedupeTrackSearches([...searchTrackerScoreResults, ...collected]);
+    searchTrackerScoreResults = capProviderResults(dedupeTrackSearches([...searchTrackerScoreResults, ...collected]));
     return true;
   }
 
@@ -3958,7 +4042,7 @@
       ]);
       const results = (await Promise.all(requests)).flat();
       if (searchTrackerTrendingKey !== key) return;
-      searchTrackerTrendingResults = dedupeTrackSearches(results);
+      searchTrackerTrendingResults = capProviderResults(dedupeTrackSearches(results));
       searchTrackerTrendingPage = 2;
       window.setTimeout(() => {
         if (searchTrackerTrendingKey === key) void prefetchSearchTrackerTrendingPages(3, 2);
@@ -3983,7 +4067,7 @@
         ),
       )).flat();
       if (results.length === 0) return false;
-      searchTrackerTrendingResults = dedupeTrackSearches([...searchTrackerTrendingResults, ...results]);
+      searchTrackerTrendingResults = capProviderResults(dedupeTrackSearches([...searchTrackerTrendingResults, ...results]));
       searchTrackerTrendingPage = nextPage;
       return true;
     } finally {
@@ -4002,7 +4086,7 @@
       ),
     ))).flat();
     if (searchTrackerTrendingKey !== expectedKey || results.length === 0) return;
-    searchTrackerTrendingResults = dedupeTrackSearches([...searchTrackerTrendingResults, ...results]);
+    searchTrackerTrendingResults = capProviderResults(dedupeTrackSearches([...searchTrackerTrendingResults, ...results]));
     searchTrackerTrendingPage = Math.max(searchTrackerTrendingPage, startPage + pageCount - 1);
   }
 
@@ -4027,7 +4111,7 @@
     try {
       const incoming = await fetchTrackerCatalogPage(tracker, 1);
       if (trackerCatalogLoadedKey !== key) return;
-      trackerCatalogResults = dedupeTrackSearches(incoming);
+      trackerCatalogResults = capProviderResults(dedupeTrackSearches(incoming));
     } catch (error) {
       if (trackerCatalogLoadedKey !== key) return;
       trackerCatalogError = error instanceof Error ? error.message : "Could not load tracker catalog.";
@@ -4044,7 +4128,7 @@
     trackerCatalogLoadingMore = true;
     try {
       const incoming = await fetchTrackerCatalogPage(tracker, nextPage);
-      trackerCatalogResults = dedupeTrackSearches([...trackerCatalogResults, ...incoming]);
+      trackerCatalogResults = capProviderResults(dedupeTrackSearches([...trackerCatalogResults, ...incoming]));
       if (incoming.length > 0) trackerCatalogPage = nextPage;
     } catch (error) {
       console.error(error);
@@ -4174,7 +4258,7 @@
         }));
         if (discoverLoadedKey !== key) return;
         const incoming = settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
-        discoverNovelResults = [...discoverNovelResults, ...incoming];
+        discoverNovelResults = capProviderResults([...discoverNovelResults, ...incoming]);
         discoverCurrentPage = page;
         discoverHasNextPage = incoming.length > 0;
         return;
@@ -4197,10 +4281,10 @@
       }));
       if (discoverLoadedKey !== key) return;
       const incoming = settled.flatMap((result) => result.status === "fulfilled" ? result.value.mangas : []);
-      discoverMangaResults = dedupeMangaByTitle(
+      discoverMangaResults = capProviderResults(dedupeMangaByTitle(
         dedupeMangaById([...discoverMangaResults, ...incoming]),
         store.settings.mangaLinks,
-      );
+      ));
       discoverCurrentPage = page;
       discoverHasNextPage = settled.some((result) => result.status === "fulfilled" && result.value.hasNextPage);
     } catch (error) {
@@ -4412,12 +4496,7 @@
   });
 
   onDestroy(() => {
-    kw_abortCtrl?.abort();
-    tag_abortLocal?.abort();
-    tag_abortSource?.abort();
-    src_abortCtrl?.abort();
-    searchTrackerScoreAbortCtrl?.abort();
-    searchSourceSeedAbortCtrl?.abort();
+    releaseBrowseTransientState();
     void shutdownInstalledNovelSourcesRuntime();
     document.body.classList.remove("aethon-browse-search-engaged");
   });

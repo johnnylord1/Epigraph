@@ -21,7 +21,17 @@
 interface Entry<T> {
   promise:   Promise<T>;
   fetchedAt: number;
+  ttl:       number;
 }
+
+export type CacheStats = {
+  entryCount: number;
+  expiredEntryCount: number;
+  groupCount: number;
+  keysByGroup: Record<string, string[]>;
+  inflightCount: number;
+  pageSetCount: number;
+};
 
 const store  = new Map<string, Entry<unknown>>();
 const subs   = new Map<string, Set<() => void>>();
@@ -31,6 +41,25 @@ export const DEFAULT_TTL_MS = 5 * 60 * 1_000;
 
 function notify(key: string) {
   subs.get(key)?.forEach((cb) => cb());
+}
+
+function isExpired(entry: Entry<unknown>, now = Date.now()) {
+  return Number.isFinite(entry.ttl) && now - entry.fetchedAt >= entry.ttl;
+}
+
+function removeKeyFromGroups(key: string) {
+  for (const [tag, keys] of groups) {
+    keys.delete(key);
+    if (keys.size === 0) groups.delete(tag);
+  }
+}
+
+function deleteEntry(key: string, shouldNotify = true) {
+  const deleted = store.delete(key);
+  if (!deleted) return false;
+  removeKeyFromGroups(key);
+  if (shouldNotify) notify(key);
+  return true;
 }
 
 export const cache = {
@@ -44,15 +73,16 @@ export const cache = {
     ttl:     number = DEFAULT_TTL_MS,
     group?:  string | string[],
   ): Promise<T> {
+    const now = Date.now();
     const existing = store.get(key) as Entry<T> | undefined;
-    if (existing && Date.now() - existing.fetchedAt < ttl) return existing.promise;
+    if (existing && !isExpired(existing, now)) return existing.promise;
 
     const promise = fetcher().catch((err) => {
-      if (err?.name !== "AbortError") store.delete(key);
+      if (err?.name !== "AbortError") deleteEntry(key, false);
       return Promise.reject(err);
     }) as Promise<T>;
 
-    store.set(key, { promise, fetchedAt: Date.now() });
+    store.set(key, { promise, fetchedAt: now, ttl });
 
     // Register in invalidation groups
     if (group) {
@@ -75,7 +105,7 @@ export const cache = {
    */
   set<T>(key: string, value: T, group?: string | string[]) {
     const promise = Promise.resolve(value);
-    store.set(key, { promise, fetchedAt: Date.now() });
+    store.set(key, { promise, fetchedAt: Date.now(), ttl: Infinity });
 
     if (group) {
       const tags = Array.isArray(group) ? group : [group];
@@ -96,7 +126,7 @@ export const cache = {
     const existing = store.get(key) as Entry<T> | undefined;
     if (!existing) return;
     const next = existing.promise.then(fn);
-    store.set(key, { promise: next, fetchedAt: Date.now() });
+    store.set(key, { promise: next, fetchedAt: Date.now(), ttl: existing.ttl });
     next.then(() => notify(key)).catch(() => {});
   },
 
@@ -108,8 +138,7 @@ export const cache = {
   },
 
   clear(key: string) {
-    store.delete(key);
-    notify(key);
+    deleteEntry(key);
   },
 
   /**
@@ -119,11 +148,29 @@ export const cache = {
   clearGroup(tag: string) {
     const keys = groups.get(tag);
     if (!keys) return;
-    for (const key of keys) {
-      store.delete(key);
-      notify(key);
-    }
+    for (const key of [...keys]) deleteEntry(key);
     groups.delete(tag);
+  },
+
+  trimExpired(now = Date.now()) {
+    for (const [key, entry] of store) {
+      if (isExpired(entry, now)) deleteEntry(key);
+    }
+  },
+
+  stats(now = Date.now()): CacheStats {
+    let expiredEntryCount = 0;
+    for (const entry of store.values()) {
+      if (isExpired(entry, now)) expiredEntryCount += 1;
+    }
+    return {
+      entryCount: store.size,
+      expiredEntryCount,
+      groupCount: groups.size,
+      keysByGroup: Object.fromEntries([...groups].map(([tag, keys]) => [tag, [...keys]])),
+      inflightCount: inflight.size,
+      pageSetCount: _pageSets.size,
+    };
   },
 
   clearAll() {

@@ -324,6 +324,7 @@
     pageHidden: boolean;
     activeDownloads: number;
     lastDownloadEventAgeMs: number;
+    cache: ReturnType<typeof cache.stats>;
     imageCache: ReturnType<typeof getImageCacheStats>;
   };
 
@@ -340,6 +341,7 @@
       pageHidden,
       activeDownloads: store.activeDownloads.length,
       lastDownloadEventAgeMs: Math.max(0, Date.now() - lastDownloadEventAt),
+      cache: cache.stats(),
       imageCache: getImageCacheStats(),
     };
   }
@@ -1141,6 +1143,11 @@
 
   const idleEvents = ["mousemove", "mousedown", "keydown", "touchstart", "wheel"] as const;
 
+  function trimIdleMemory() {
+    cache.trimExpired();
+    trimImageCache(false);
+  }
+
   function scheduleUiMotionPause() {
     if (uiMotionIdleTimer) {
       clearTimeout(uiMotionIdleTimer);
@@ -1153,6 +1160,7 @@
     uiMotionIdleTimer = window.setTimeout(() => {
       if (!pageHidden) {
         uiMotionActive = false;
+        trimIdleMemory();
       }
     }, 20_000);
   }
@@ -1982,7 +1990,7 @@
       pageHidden = document.hidden;
       uiMotionActive = !pageHidden;
       if (pageHidden) {
-        trimImageCache();
+        trimIdleMemory();
       }
       scheduleUiMotionPause();
       updateRuntimeDiagnosticsBridge();
