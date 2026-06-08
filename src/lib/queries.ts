@@ -14,6 +14,8 @@ export const GET_LIBRARY = `
         genre
         source {
           id
+          name
+          lang
           displayName
         }
         chapters {
@@ -54,6 +56,7 @@ export const GET_MANGA = `
       source {
         id
         name
+        lang
         displayName
       }
     }
@@ -251,8 +254,23 @@ export const GET_RESTORE_STATUS = `
 
 // ── Categories ────────────────────────────────────────────────────────────────
 
-export const GET_CATEGORIES = `
-  query GetCategories {
+export const GET_CATEGORIES_SUMMARY = `
+  query GetCategoriesSummary {
+    categories {
+      nodes {
+        id
+        name
+        order
+        default
+        includeInUpdate
+        includeInDownload
+      }
+    }
+  }
+`;
+
+export const GET_CATEGORIES_WITH_MANGA = `
+  query GetCategoriesWithManga {
     categories {
       nodes {
         id
@@ -487,6 +505,8 @@ export const REORDER_DOWNLOAD = `
   }
 `;
 
+export const GET_CATEGORIES = GET_CATEGORIES_WITH_MANGA;
+
 export const GET_SOURCES = `
   query GetSources {
     sources {
@@ -513,6 +533,8 @@ export const FETCH_SOURCE_MANGA = `
           status
           source {
             id
+            name
+            lang
             displayName
         }
       }
@@ -538,6 +560,7 @@ export const FETCH_MANGA = `
         source {
           id
           name
+          lang
           displayName
         }
       }
@@ -869,18 +892,30 @@ export const GET_ALL_TRACKER_RECORDS = `
           nodes {
             id
             trackerId
+            remoteId
             title
             status
+            score
             displayScore
             lastChapterRead
             totalChapters
             remoteUrl
+            startDate
+            finishDate
             private
             manga {
               id
               title
               thumbnailUrl
               inLibrary
+              genre
+              status
+              source {
+                id
+                name
+                lang
+                displayName
+              }
             }
           }
         }

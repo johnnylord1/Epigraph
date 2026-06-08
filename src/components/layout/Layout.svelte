@@ -1,15 +1,12 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { store } from "../../store/state.svelte";
   import type { AethonRestorePlan } from "../../lib/backup/aethonRestorePlanner";
   import type { BackupLaunchIntent } from "../../lib/backup/backupRollout";
   import Sidebar from "./Sidebar.svelte";
-  import HomePage from "../pages/Home.svelte";
-  import LibraryPage from "../pages/Library.svelte";
-  import SearchPage from "../pages/Search.svelte";
-  import DownloadsPage from "../pages/Downloads.svelte";
-  import SettingsPage from "../settings/Settings.svelte";
-  import SeriesDetailPage from "../pages/SeriesDetail.svelte";
+  import NocturneState from "../shared/NocturneState.svelte";
   import { peekPersistedBookEntry } from "../../lib/books/libraryState";
+  import type { NavPage } from "../../store/state.svelte";
 
   interface Props {
     onOpenThemeEditor?: (id?: string | null) => void;
@@ -33,14 +30,29 @@
   const navPage = $derived(store.navPage);
   const readerActive = $derived(!!store.activeChapter || !!store.activeBookReaderId || !!store.activeNovelReader);
 
-  type DetailKey = "book";
+  type PageKey = NavPage;
+  type DetailKey = "book" | "series";
   type PageModule = { default: any };
+
+  const pageLoaders: Record<PageKey, () => Promise<PageModule>> = {
+    home: () => import("../pages/Home.svelte"),
+    library: () => import("../pages/Library.svelte"),
+    search: () => import("../pages/Search.svelte"),
+    downloads: () => import("../pages/Downloads.svelte"),
+    settings: () => import("../settings/Settings.svelte"),
+  };
 
   const detailLoaders: Record<DetailKey, () => Promise<PageModule>> = {
     book: () => import("../pages/BookDetail.svelte"),
+    series: () => import("../pages/SeriesDetail.svelte"),
   };
 
+  const pageComponentPromises = new Map<PageKey, Promise<any>>();
   const detailComponentPromises = new Map<DetailKey, Promise<any>>();
+  let pageComponent = $state<any>(null);
+  let pageKey = $state<PageKey | null>(null);
+  let pageError = $state<string | null>(null);
+  let pageLoadRequestId = 0;
   let detailComponent = $state<any>(null);
   let detailKey = $state<DetailKey | null>(null);
   let detailError = $state<string | null>(null);
@@ -57,6 +69,23 @@
       cache.set(key, pending);
     }
     return pending;
+  }
+
+  async function loadPage(nextKey: PageKey) {
+    const requestId = ++pageLoadRequestId;
+    pageKey = nextKey;
+    pageError = null;
+
+    try {
+      const component = await getCachedComponent(pageComponentPromises, nextKey, pageLoaders[nextKey]);
+      if (requestId !== pageLoadRequestId) return;
+      pageComponent = component;
+    } catch (error) {
+      if (requestId !== pageLoadRequestId) return;
+      pageComponent = null;
+      pageError = error instanceof Error ? error.message : String(error);
+      console.error(`Failed to load page "${nextKey}":`, error);
+    }
   }
 
   async function loadDetail(nextKey: DetailKey) {
@@ -77,10 +106,20 @@
   }
 
   $effect(() => {
+    const nextPage = navPage;
+    void loadPage(nextPage);
+  });
+
+  $effect(() => {
     if (navPage === "settings" || navPage === "downloads") {
       detailKey = null;
       detailComponent = null;
       detailError = null;
+      return;
+    }
+
+    if (store.activeManga) {
+      void loadDetail("series");
       return;
     }
 
@@ -92,66 +131,92 @@
     detailKey = null;
     detailComponent = null;
   });
+
+  onMount(() => {
+    queueMicrotask(() => {
+      void getCachedComponent(pageComponentPromises, "library", pageLoaders.library);
+      void getCachedComponent(pageComponentPromises, "home", pageLoaders.home);
+    });
+  });
 </script>
 
 <div class="root aethon-app-shell">
   <Sidebar />
   <div class="main" class:main--settings={navPage === "settings"}>
-    {#if navPage === "library"}
-      <LibraryPage
-        {onOpenThemeEditor}
-        {backupAuditPlan}
-        {backupRestoreLaunchIntent}
-      />
-    {/if}
-
     {#key navPage}
-      {#if navPage === "home"}
-        <HomePage
+      {#if pageError}
+        <div class="page-state">
+          <NocturneState
+            layout="center"
+            tone="danger"
+            icon="warning"
+            eyebrow="Page status"
+            title="Page failed to load"
+            body="Aethon couldn't open this page."
+            detail={pageError}
+            actions={[{
+              label: "Retry page",
+              kind: "primary",
+              icon: "retry",
+              onClick: () => void loadPage(navPage),
+            }]}
+          />
+        </div>
+      {:else if pageComponent && pageKey === navPage}
+        {@const Page = pageComponent}
+        <Page
           {onOpenThemeEditor}
           {backupAuditPlan}
           {backupRestoreLaunchIntent}
         />
-      {:else if navPage === "search"}
-        <SearchPage
-          {onOpenThemeEditor}
-          {backupAuditPlan}
-          {backupRestoreLaunchIntent}
-        />
-      {:else if navPage === "downloads"}
-        <DownloadsPage
-          {onOpenThemeEditor}
-          {backupAuditPlan}
-          {backupRestoreLaunchIntent}
-        />
-      {:else if navPage === "settings"}
-        <SettingsPage
-          {onOpenThemeEditor}
-          {backupAuditPlan}
-          {backupRestoreLaunchIntent}
-        />
+      {:else}
+        <div class="page-state">
+          <NocturneState
+            layout="center"
+            tone="info"
+            icon="info"
+            eyebrow="Loading"
+            title="Opening page"
+            body="Aethon is loading this surface."
+          />
+        </div>
       {/if}
     {/key}
 
     {#if navPage !== "settings" && navPage !== "downloads" && !readerActive}
-      {#if store.activeManga}
-        <div class="detail-layer">
-          <SeriesDetailPage />
-        </div>
-      {:else if detailKey === "book" && detailComponent && hasActiveBook}
+      {#if detailComponent && ((detailKey === "series" && store.activeManga) || (detailKey === "book" && hasActiveBook))}
         {@const DetailPage = detailComponent}
         <div class="detail-layer">
           <DetailPage />
         </div>
+      {:else if detailKey && ((detailKey === "series" && store.activeManga) || (detailKey === "book" && hasActiveBook))}
+        <div class="detail-layer detail-layer--state">
+          <NocturneState
+            layout="center"
+            tone="info"
+            icon="info"
+            eyebrow="Detail status"
+            title="Opening details"
+            body="Aethon is loading this detail page."
+          />
+        </div>
       {:else if detailError}
-        <div class="detail-layer">
-          <div class="load-state" role="alert">
-            <div class="load-state__title">Details failed to load</div>
-            <div class="load-state__detail">{detailError}</div>
-            <button type="button" class="load-state__action" onclick={() => detailKey && void loadDetail(detailKey)}>
-              Retry details
-            </button>
-          </div>
+        <div class="detail-layer detail-layer--state">
+          <NocturneState
+            layout="center"
+            tone="danger"
+            icon="warning"
+            eyebrow="Detail status"
+            title="Details failed to load"
+            body="Aethon couldn't open this detail page."
+            detail={detailError}
+            actions={[{
+              label: "Retry details",
+              kind: "primary",
+              icon: "retry",
+              onClick: () => detailKey && void loadDetail(detailKey),
+            }]}
+          />
         </div>
       {/if}
     {/if}
@@ -192,40 +257,18 @@
     background: var(--bg-surface);
   }
 
-  .load-state {
+  .detail-layer--state {
     display: grid;
     place-items: center;
-    align-content: center;
-    gap: 10px;
-    min-height: 100%;
     padding: 32px;
-    text-align: center;
-    color: var(--n-text-muted);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
   }
 
-  .load-state__title {
-    color: var(--n-text);
+  .page-state {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    place-items: center;
+    padding: 32px;
   }
 
-  .load-state__detail {
-    max-width: min(680px, 100%);
-    letter-spacing: 0.02em;
-    text-transform: none;
-    line-height: 1.5;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-
-  .load-state__action {
-    border: 1px solid var(--n-border);
-    background: var(--n-surface);
-    color: var(--n-text);
-    border-radius: 999px;
-    padding: 10px 16px;
-    cursor: pointer;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
 </style>

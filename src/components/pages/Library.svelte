@@ -37,6 +37,7 @@
   import { createBookLibraryCardId, createComicLibraryCardId } from "../../lib/library/cardIdentity";
   import {
     GET_CATEGORIES,
+    GET_CATEGORIES_SUMMARY,
     GET_CHAPTERS,
     GET_LIBRARY,
     GET_LIBRARY_TRACKING_SUMMARY,
@@ -69,14 +70,16 @@
     type Settings,
   } from "../../store/state.svelte";
   import BooksLibraryBody from "../library/BooksLibraryBody.svelte";
-  import NovelsLibraryBody from "../library/NovelsLibraryBody.svelte";
   import ComicsLibraryBody from "../library/ComicsLibraryBody.svelte";
   import LibraryToolbar from "../library/LibraryToolbar.svelte";
   import LibraryShell from "../library/LibraryShell.svelte";
+  import NocturneState from "../shared/NocturneState.svelte";
 
   const DT_TAB = "application/x-moku-tab";
+  const CATEGORIES_WITH_MANGA_CACHE_KEY = `${CACHE_KEYS.CATEGORIES}:with-manga`;
 
   let ensureCompletedInFlight: Promise<Category[]> | null = null;
+  let hydrateCategoriesInFlight: Promise<Category[]> | null = null;
   let trackedCompletedIds: Set<number> = $state(new Set());
   let trackedChapterTotalsByMangaId: Map<number, number> = $state(new Map());
   function hasWarmLibrarySnapshot() {
@@ -244,17 +247,49 @@
   function loadCategoriesSnapshot() {
     return cache.get(
       CACHE_KEYS.CATEGORIES,
+      async () => ensureCompletedCategory((await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES_SUMMARY)).categories.nodes),
+      DEFAULT_TTL_MS,
+      CACHE_GROUPS.LIBRARY,
+    );
+  }
+
+  function loadCategoriesWithMangaSnapshot() {
+    return cache.get(
+      CATEGORIES_WITH_MANGA_CACHE_KEY,
       async () => ensureCompletedCategory((await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES)).categories.nodes),
       DEFAULT_TTL_MS,
       CACHE_GROUPS.LIBRARY,
     );
   }
 
+  function categoriesHaveMangaMembers(categories = store.categories) {
+    return categories.some((category) => Array.isArray(category.mangas?.nodes));
+  }
+
+  async function hydrateCategoryMembers(force = false) {
+    if (hydrateCategoriesInFlight) return hydrateCategoriesInFlight;
+    hydrateCategoriesInFlight = (async () => {
+      try {
+        if (force) cache.clear(CATEGORIES_WITH_MANGA_CACHE_KEY);
+        const categories = normalizeCategories(await loadCategoriesWithMangaSnapshot());
+        setCategories(categories);
+        return categories;
+      } finally {
+        hydrateCategoriesInFlight = null;
+      }
+    })();
+    return hydrateCategoriesInFlight;
+  }
+
   async function reloadCategories(force = true) {
     try {
       if (force) cache.clear(CACHE_KEYS.CATEGORIES);
+      if (force) cache.clear(CATEGORIES_WITH_MANGA_CACHE_KEY);
       const categories = await loadCategoriesSnapshot();
       setCategories(categories);
+      if (force || !categoriesHaveMangaMembers(categories)) {
+        return await hydrateCategoryMembers(force);
+      }
       return categories;
     } catch (reloadError) {
       console.error(reloadError);
@@ -307,6 +342,7 @@
       setLibraryMangaSnapshot(normalizeLoadedLibrary(nodes));
       setCategories(normalizeCategories(categories));
       store.setLibraryTrackingSummarySnapshot(trackingSummary);
+      void hydrateCategoryMembers(false).catch(console.error);
       error = null;
       if (nodes.length > 0 || categories.length > 0 || hasWarmLibrarySnapshot()) {
         if (libraryLoadRetryTimer) {
@@ -443,13 +479,18 @@
       : null,
   );
 
+  const novelEntriesForActiveCategory = $derived(
+    bookActiveCategoryId
+      ? novelsLibraryState.entries.filter((entry) => (store.settings.booksCategoryAssignments[entry.id] ?? []).includes(bookActiveCategoryId))
+      : novelsLibraryState.entries,
+  );
   const booksSectionState = $derived(
     store.librarySection === "books"
       ? buildBooksSectionState({
           librarySection: store.librarySection,
           profileLabel: store.runtimeResolvedLocalProfileMeta?.label ?? null,
           books: store.books,
-          sourceCount: novelsLibraryState.entries.length,
+          sourceCount: novelEntriesForActiveCategory.length,
           progressByBookId: new Map(store.bookProgress.map((progress) => [progress.bookId, progress])),
           categories: store.settings.booksCategories,
           categoryAssignments: store.settings.booksCategoryAssignments,
@@ -468,7 +509,7 @@
   const novelsShelf = $derived(
     store.librarySection === "books"
       ? buildNovelLibraryCards({
-          entries: novelsLibraryState.entries,
+          entries: novelEntriesForActiveCategory,
           chapters: novelsLibraryState.chapters,
           progress: novelsLibraryState.progress,
           search: booksSearch,
@@ -477,6 +518,11 @@
           statusFilter: bookStatusFilter,
         })
       : null,
+  );
+  const visibleNovelCards = $derived(
+    store.librarySection === "books" && (bookTypeFilter === "all" || bookTypeFilter === "sources")
+      ? novelsShelf?.cards ?? []
+      : [],
   );
 
   const activeSectionVm = $derived(
@@ -523,7 +569,7 @@
   const activeHeroTitle = $derived(store.librarySection === "books" ? "Books" : "Comics");
   const activeHeroCountLabel = $derived(
     store.librarySection === "books"
-      ? `${store.books.length} Books Imported`
+      ? `${store.books.length + novelsLibraryState.entries.length} Books Saved`
       : `${comicsSectionState?.counts.library ?? 0} Titles`,
   );
   const activeHeroCollections = $derived(activeSectionVm?.collections ?? []);
@@ -754,8 +800,12 @@
   }
 
   async function toggleMangaCategory(manga: Manga, category: Category) {
-    const inCategory = (comicsSectionState?.categoryMangaMap.get(category.id) ?? []).some((entry) => entry.id === manga.id);
-    setCategories(store.categories.map((entry) => {
+    const categories = categoriesHaveMangaMembers()
+      ? store.categories
+      : await hydrateCategoryMembers(false).catch(() => store.categories);
+    const currentCategory = categories.find((entry) => entry.id === category.id);
+    const inCategory = (currentCategory?.mangas?.nodes ?? []).some((entry) => entry.id === manga.id);
+    setCategories(categories.map((entry) => {
       if (entry.id !== category.id || !entry.mangas) return entry;
       const nodes = inCategory
         ? entry.mangas.nodes.filter((node) => node.id !== manga.id)
@@ -833,9 +883,15 @@
 
 {#if error}
   <div class="center">
-    <p class="error-msg">Could not reach Suwayomi</p>
-    <p class="error-detail">Make sure the server is running, then retry.</p>
-    <button type="button" class="retry-btn" onclick={() => retryCount++}>Retry</button>
+    <NocturneState
+      layout="center"
+      tone="danger"
+      icon="plug"
+      eyebrow="Library"
+      title="Could not reach Suwayomi"
+      body="Make sure the server is running, then retry."
+      actions={[{ label: "Retry", kind: "primary", icon: "retry", onClick: () => retryCount++ }]}
+    />
   </div>
 {:else}
       <LibraryShell
@@ -950,28 +1006,18 @@
       </section>
     {/snippet}
     {#if store.librarySection === "books"}
-      {#if bookTypeFilter === "sources"}
-        <NovelsLibraryBody
-          cards={novelsShelf?.cards ?? []}
-          emptyMessage={novelsShelf?.emptyMessage ?? ""}
-          viewMode={displaySettings.viewMode}
-          preferredColumns={displaySettings.preferredColumns}
-          showProgress={displaySettings.showProgress}
-          showOutline={displaySettings.showOutline}
-          onOpenNovel={openNovelCard}
-        />
-      {:else}
-        <BooksLibraryBody
-          vm={booksSectionState?.vm}
-          books={booksSectionState?.filteredBooks ?? []}
-          totalBooks={store.books.length}
-          viewKey={booksViewKey}
-          viewMode={displaySettings.viewMode}
-          preferredColumns={displaySettings.preferredColumns}
-          showProgress={displaySettings.showProgress}
-          showOutline={displaySettings.showOutline}
-        />
-      {/if}
+      <BooksLibraryBody
+        vm={booksSectionState?.vm}
+        books={booksSectionState?.filteredBooks ?? []}
+        totalBooks={(booksSectionState?.filteredBooks.length ?? 0) + visibleNovelCards.length}
+        viewKey={`${booksViewKey}|novels:${visibleNovelCards.map((card) => card.novelId).join(",")}`}
+        viewMode={displaySettings.viewMode}
+        preferredColumns={displaySettings.preferredColumns}
+        showProgress={displaySettings.showProgress}
+        showOutline={displaySettings.showOutline}
+        novelCards={visibleNovelCards}
+        onOpenNovel={openNovelCard}
+      />
     {:else}
       <ComicsLibraryBody
         vm={comicsSectionState?.vm}
@@ -1085,10 +1131,6 @@
     transform-origin: left center;
   }
 
-  .books-type-row {
-    margin-top: -2px;
-  }
-
   .chip-divider {
     width: 1px;
     height: 16px;
@@ -1117,26 +1159,4 @@
     line-height: var(--leading-base);
   }
 
-  .error-msg {
-    color: var(--color-error);
-    font-size: var(--text-base);
-  }
-
-  .error-detail {
-    color: var(--text-faint);
-    font-size: var(--text-sm);
-  }
-
-  .retry-btn {
-    margin-top: var(--sp-3);
-    padding: 6px 16px;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border-dim);
-    background: var(--bg-raised);
-    color: var(--text-muted);
-    cursor: pointer;
-    font-family: var(--font-ui);
-    font-size: var(--text-xs);
-    letter-spacing: var(--tracking-wide);
-  }
 </style>

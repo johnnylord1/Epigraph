@@ -198,6 +198,10 @@
   display: block;
 }
 
+.aethon-port--splash[data-state="error"] .state-dock {
+  width: min(520px, calc(100% - 64px));
+}
+
 .aethon-port--splash .state {
   min-height: 34px;
   display: none;
@@ -223,7 +227,40 @@
 }
 
 .aethon-port--splash .state.error .state-value {
-  color: var(--splash-error);
+  color: rgba(239, 234, 255, 0.9);
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.aethon-port--splash .state.error {
+  justify-items: start;
+  gap: 8px;
+  min-height: 0;
+  width: min(520px, calc(100vw - 64px));
+  padding: 18px;
+  border: 1px solid rgba(255, 185, 199, 0.22);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(255, 185, 199, 0.1), transparent 42%),
+    linear-gradient(180deg, rgba(24, 22, 30, 0.92), rgba(14, 13, 18, 0.94));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.045), 0 22px 70px rgba(0,0,0,0.34);
+  color: rgba(239, 234, 255, 0.58);
+  font-size: 13px;
+  line-height: 1.45;
+  letter-spacing: 0;
+  text-transform: none;
+  text-align: left;
+}
+
+.aethon-port--splash .state.error::before {
+  content: "Startup status";
+  color: rgba(239, 234, 255, 0.38);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
 }
 
 .aethon-port--splash .line {
@@ -258,27 +295,43 @@
 
 .aethon-port--splash .error-actions {
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 6px;
 }
 
 .aethon-port--splash .error-action {
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: rgba(239, 234, 255, 0.58);
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid rgba(239, 234, 255, 0.12);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.035);
+  color: rgba(239, 234, 255, 0.68);
   font: inherit;
+  font-weight: 800;
   text-transform: none;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: transform 140ms ease, color 140ms ease, border-color 140ms ease, background 140ms ease;
 }
 
 .aethon-port--splash .error-action:hover,
 .aethon-port--splash .error-action:focus-visible {
   color: rgba(239, 234, 255, 0.86);
+  transform: translateY(-1px);
+  border-color: rgba(199, 177, 255, 0.34);
+  background: rgba(199, 177, 255, 0.11);
+}
+
+.aethon-port--splash .error-action:active {
+  transform: translateY(0) scale(0.98);
 }
 
 .aethon-port--splash .error-action--primary {
-  color: rgba(239, 234, 255, 0.84);
+  color: rgba(20, 17, 28, 0.92);
+  border-color: rgba(199, 177, 255, 0.82);
+  background: linear-gradient(180deg, #d1bdff, #bfa5ff);
 }
 
 .aethon-port--splash .pin-dots {
@@ -731,11 +784,17 @@ body.aethon-downloads-search-engaged .n-topbar .n-search {
   position: relative;
   z-index: 2;
   box-shadow: none;
-  will-change: transform;
-  animation: n-brand-organic-float 14s ease-in-out infinite;
+  transform: translateZ(0);
+  transition: transform 180ms ease, filter 180ms ease;
+}
+
+.n-sidebar__brand:hover img,
+.n-sidebar__brand:focus-visible img {
+  transform: translateY(-2px) rotate(1deg) scale(1.015);
 }
 
 html[data-aethon-motion="idle"] .n-sidebar__brand::after,
+html[data-aethon-motion="idle"] .n-sidebar__brand img,
 html[data-aethon-motion="idle"] .n-sidebar-btn.is-active::before,
 html[data-aethon-motion="idle"] .n-sidebar-btn.is-active .n-icon,
 html[data-aethon-motion="idle"] .aethon-port--splash .brand-mark {
@@ -917,6 +976,11 @@ html[data-aethon-motion="idle"] .aethon-port--splash .brand-mark {
   z-index: 50;
 }
 
+html[data-aethon-motion="idle"] .n-topbar {
+  backdrop-filter: blur(8px) saturate(110%);
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.015);
+}
+
 .n-topbar::before {
   content: "";
   position: absolute;
@@ -992,11 +1056,23 @@ html[data-aethon-motion="idle"] .aethon-port--splash .brand-mark {
   position: absolute;
   left: var(--n-search-icon-offset);
   top: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--n-search-icon-size);
+  height: var(--n-search-icon-size);
   transform: translateY(-50%);
   color: rgba(202, 196, 208, 0.35);
   font-size: var(--n-search-icon-size);
   pointer-events: none;
+  z-index: 1;
   transition: color 220ms ease, opacity 220ms ease;
+}
+
+.n-search__icon svg {
+  width: 100%;
+  height: 100%;
+  color: currentColor;
 }
 
 .n-search:focus-within .n-search__icon {
@@ -1688,6 +1764,11 @@ html[data-aethon-motion="idle"] .aethon-port--splash .brand-mark {
   z-index: 20;
 }
 
+html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.settings-modal-topbar {
+  backdrop-filter: blur(8px) saturate(110%);
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.015);
+}
+
 .aethon-port--settings .content-header.n-topbar.settings-modal-topbar::before {
   content: "";
   position: absolute;
@@ -1725,7 +1806,7 @@ html[data-aethon-motion="idle"] .aethon-port--splash .brand-mark {
 .aethon-port--settings .n-search.settings-search,
 .aethon-port--settings .n-search--settings {
   position: relative;
-  width: min(100%, var(--n-search-width));
+  width: min(100%, calc(420px * var(--n-hud-scale)));
   margin: 0 auto;
   max-width: 100%;
 }

@@ -18,7 +18,7 @@
   } from "./lib/localProfiles";
   import {
     GET_CHAPTERS,
-    GET_CATEGORIES,
+    GET_CATEGORIES_SUMMARY,
     GET_DOWNLOAD_STATUS,
     GET_LIBRARY,
     GET_LIBRARY_TRACKING_SUMMARY,
@@ -49,16 +49,10 @@
   } from "./store/state.svelte";
   import { readFileAsArrayBuffer } from "./lib/books/storage";
   import { importLocalBookFile } from "./lib/books/importFile";
-  import { buildAethonRestorePlan, type AethonRestorePlan, type AethonRestorePlannerRuntime } from "./lib/backup/aethonRestorePlanner";
+  import type { AethonRestorePlan, AethonRestorePlannerRuntime } from "./lib/backup/aethonRestorePlanner";
   import type { BackupLaunchIntent } from "./lib/backup/backupRollout";
-  import { restoreAethonBooksPayload } from "./lib/backup/booksBackup";
-  import { extractAethonMangaPayloadFile } from "./lib/backup/mangaBackup";
-  import { restoreAethonNovelsPayload, type AethonNovelRuntimeState } from "./lib/backup/novelsBackup";
-  import { analyzeBackupReconciliation, overlayEntryFromAnalysis } from "./lib/reconciliation/analyze";
-  import { readOverlayFile, upsertOverlayEntry } from "./lib/reconciliation/overlay";
-  import { buildRestoreReadiness } from "./lib/reconciliation/readiness";
-  import { buildReconciledBackupFile } from "./lib/reconciliation/restore";
-  import { loadSourceInventory } from "./lib/reconciliation/sourceInventory";
+  import type { AethonNovelRuntimeState } from "./lib/backup/novelsBackup";
+  import type { RestoreReadinessSummary } from "./lib/reconciliation/types";
   import { initRpc, setIdle, clearReading, destroyRpc } from "./lib/discord";
   import { cache, CACHE_GROUPS, CACHE_KEYS, DEFAULT_TTL_MS } from "./lib/cache";
   import { normalizeCategories } from "./lib/library/categories";
@@ -379,7 +373,7 @@
         ),
         cache.get(
           CACHE_KEYS.CATEGORIES,
-          () => gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES).then((d) => normalizeCategories(d.categories.nodes)),
+          () => gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES_SUMMARY).then((d) => normalizeCategories(d.categories.nodes)),
           DEFAULT_TTL_MS,
           CACHE_GROUPS.LIBRARY,
         ),
@@ -421,6 +415,7 @@
     showSplash: () => void;
     hideSplash: () => void;
     toggleSplash: () => void;
+    bypassStartupSplash: () => void;
     openSettings: () => void;
     closeSettings: () => void;
     openLibrary: () => void;
@@ -514,6 +509,10 @@
     devSplash = !devSplash;
   }
 
+  function bypassAuditStartupSplash() {
+    handleBypass();
+  }
+
   function openAuditSettings(tab: "security" | "storage" | null | undefined = undefined) {
     if (tab !== undefined) {
       setRuntimeSettingsTab(tab);
@@ -534,6 +533,14 @@
   function openAuditBooksLibrary() {
     openAuditLibrary();
     setLibrarySection("books");
+    updateSettings({
+      booksLibraryUi: {
+        ...store.settings.booksLibraryUi,
+        activeCategoryId: null,
+        typeFilter: "all",
+        search: "",
+      },
+    });
   }
 
   function applyStartupLandingPage() {
@@ -605,11 +612,41 @@
     setActiveBookId(book.id);
   }
 
+  async function openAuditFirstPdfBook() {
+    const pdfBook = store.books.find((book) => book.subtype === "pdf") ?? null;
+    await openAuditFirstBook(pdfBook?.id ?? null);
+  }
+
   async function openAuditFirstBookReader(bookId?: string | null) {
     const book = await resolveAuditFirstBook(bookId);
     if (!book) return;
     setActiveBookId(book.id);
     openBookReader(book.id);
+  }
+
+  async function openAuditFirstNovel(novelId?: string | null) {
+    openAuditBooksLibrary();
+    updateSettings({
+      booksLibraryUi: {
+        ...store.settings.booksLibraryUi,
+        activeCategoryId: null,
+        typeFilter: "all",
+        search: "",
+      },
+    });
+
+    const scope = resolveAuditSyncScope();
+    const { reloadNovelLibraryState, getNovelLibraryChapters, buildNovelDetailRecordFromLibrary } = await import("./lib/novels/libraryState");
+    const state = await reloadNovelLibraryState(scope);
+    const target = typeof novelId === "string" && novelId.trim()
+      ? state.entries.find((entry) => entry.id === novelId.trim()) ?? null
+      : state.entries[0] ?? null;
+    if (!target) return;
+
+    store.setActiveNovelDetail({
+      novel: buildNovelDetailRecordFromLibrary(target, getNovelLibraryChapters(state, target.id)),
+      inLibrary: true,
+    });
   }
 
   function getAuditState() {
@@ -946,6 +983,7 @@
       showSplash: showAuditSplash,
       hideSplash: hideAuditSplash,
       toggleSplash: toggleAuditSplash,
+      bypassStartupSplash: bypassAuditStartupSplash,
       openSettings: openAuditSettings,
       closeSettings: closeAuditSettings,
       openLibrary: openAuditLibrary,
@@ -954,6 +992,8 @@
       openFirstReader: openAuditFirstReader,
       openFirstBook: openAuditFirstBook,
       openFirstBookReader: openAuditFirstBookReader,
+      openFirstPdfBook: openAuditFirstPdfBook,
+      openFirstNovel: openAuditFirstNovel,
       getState: getAuditState,
       getSyncdPanelDiagnostics,
       readNovelLibraryPersistence: readAuditNovelLibraryPersistence,
@@ -1026,10 +1066,24 @@
       return;
     }
 
+    if (key === "p") {
+      event.preventDefault();
+      event.stopPropagation();
+      void openAuditFirstPdfBook();
+      return;
+    }
+
     if (key === "k") {
       event.preventDefault();
       event.stopPropagation();
       void openAuditFirstBookReader();
+      return;
+    }
+
+    if (key === "v") {
+      event.preventDefault();
+      event.stopPropagation();
+      void openAuditFirstNovel();
       return;
     }
 
@@ -1320,6 +1374,7 @@
     });
 
     try {
+      const { restoreAethonBooksPayload } = await import("./lib/backup/booksBackup");
       const bytes = await readFileAsArrayBuffer(path);
       const restored = await restoreAethonBooksPayload(bytes);
       replaceBooksState({
@@ -1405,7 +1460,7 @@
     }
   }
 
-  function mangaRestoreBlockedMessage(readiness: ReturnType<typeof buildRestoreReadiness>): string {
+  function mangaRestoreBlockedMessage(readiness: RestoreReadinessSummary): string {
     if (readiness.requiresInstallCount > 0) {
       return "Required manga source extensions are not usable on this server yet.";
     }
@@ -1445,6 +1500,10 @@
   }
 
   async function loadRestorePlannerRuntime(): Promise<AethonRestorePlannerRuntime> {
+    const [{ loadSourceInventory }, { readOverlayFile }] = await Promise.all([
+      import("./lib/reconciliation/sourceInventory"),
+      import("./lib/reconciliation/overlay"),
+    ]);
     const [inventory, trackersData, novelsRuntime, overlay] = await Promise.all([
       loadSourceInventory(),
       gql<{ trackers: { nodes: Tracker[] } }>(GET_TRACKERS),
@@ -1501,6 +1560,7 @@
     });
 
     try {
+      const { buildAethonRestorePlan } = await import("./lib/backup/aethonRestorePlanner");
       const rawBytes = await readFileAsArrayBuffer(path);
       const runtime = await loadRestorePlannerRuntime();
       const plan = await buildAethonRestorePlan(rawBytes, runtime);
@@ -1597,6 +1657,7 @@
     });
 
     try {
+      const { restoreAethonNovelsPayload } = await import("./lib/backup/novelsBackup");
       const rawBytes = await readFileAsArrayBuffer(path);
       const runtime = await loadNovelAuditRuntimeState();
       const restored = await restoreAethonNovelsPayload(rawBytes, runtime);
@@ -1664,6 +1725,21 @@
     });
 
     try {
+      const [
+        { extractAethonMangaPayloadFile },
+        { analyzeBackupReconciliation, overlayEntryFromAnalysis },
+        { readOverlayFile, upsertOverlayEntry },
+        { buildRestoreReadiness },
+        { buildReconciledBackupFile },
+        { loadSourceInventory },
+      ] = await Promise.all([
+        import("./lib/backup/mangaBackup"),
+        import("./lib/reconciliation/analyze"),
+        import("./lib/reconciliation/overlay"),
+        import("./lib/reconciliation/readiness"),
+        import("./lib/reconciliation/restore"),
+        import("./lib/reconciliation/sourceInventory"),
+      ]);
       const rawBytes = await readFileAsArrayBuffer(path);
       const extractedBackup = await extractAethonMangaPayloadFile(rawBytes);
       const trackersData = await gql<{ trackers: { nodes: Tracker[] } }>(GET_TRACKERS);
