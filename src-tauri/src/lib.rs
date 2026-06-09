@@ -2776,9 +2776,9 @@ server.extensionRepos = []
 "#;
 
 const LOCAL_SERVER_JAVA_XMS: &str = "96m";
-const LOCAL_SERVER_JAVA_XMX: &str = "384m";
+const LOCAL_SERVER_JAVA_XMX: &str = "320m";
 const LOCAL_SERVER_JAVA_TOOL_OPTIONS: &str =
-    "-Djava.awt.headless=true -Xms96m -Xmx384m -XX:+UseG1GC";
+    "-Djava.awt.headless=true -Xms96m -Xmx320m -XX:+UseG1GC";
 
 fn local_server_java_args(jar: &Path) -> Vec<String> {
     vec![
