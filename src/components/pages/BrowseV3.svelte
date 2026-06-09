@@ -17,6 +17,7 @@
   import { browseInstalledNovelSource, loadTrustedInstalledNovelSources, readInstalledNovelDetails, searchInstalledNovelSource, shutdownInstalledNovelSourcesRuntime } from "../../lib/novels/sources";
   import { createNovelLibraryId, type InstalledNovelSourceDescriptor, type NovelDetailRecord, type NovelSourceSearchResult } from "../../lib/novels/domain";
   import { isNovelInLibrary, loadNovelLibraryState, peekNovelLibraryState } from "../../lib/novels/libraryState";
+  import { NOVEL_TITLE_ALIAS_VERSION, canonicalNovelTitleCandidates } from "../../lib/novels/titleAliases";
   import {
     getHardcoverUserBooks,
     getHardcoverRateLimitRemainingMs,
@@ -104,7 +105,7 @@
   const TRACKER_SCORE_ENRICHMENT_LIMIT = 32;
   const TRACKER_SCORE_BATCH_SIZE = 12;
   const TRACKER_SCORE_MAL_FALLBACK_LIMIT = 8;
-  const HARDCOVER_SCORE_ENRICHMENT_LIMIT = 2;
+  const HARDCOVER_SCORE_ENRICHMENT_LIMIT = 6;
   const HARDCOVER_SCORE_ENRICHMENT_CONCURRENCY = 1;
   const HARDCOVER_SCORE_ENRICHMENT_TIMEOUT_MS = 750;
   const HARDCOVER_DISCOVERY_QUERY_LIMIT = 2;
@@ -1355,6 +1356,7 @@
 
   const searchHardcoverScoreExpectedKey = $derived.by(() => JSON.stringify({
     titles: searchHardcoverScoreTitles,
+    aliasVersion: NOVEL_TITLE_ALIAS_VERSION,
     profile: store.runtimeResolvedLocalProfileId,
     server: store.runtimeServerUrl,
   }));
@@ -3962,16 +3964,24 @@
           return;
         }
 
-        const results = await withSoftTimeout(
-          searchHardcoverBooks(scopeInput, title, 5).catch((error) => {
-            pauseHardcoverBackgroundEnrichment(error);
-            return [];
-          }),
-          HARDCOVER_SCORE_ENRICHMENT_TIMEOUT_MS,
-          [],
-        );
-        const match = matchHardcoverBook(title, results);
-        const provider = match && match.rating ? hardcoverBookToProvider(match) : null;
+        let provider: RecommendationProviderSignal | null = null;
+        for (const searchTitle of canonicalNovelTitleCandidates(title)) {
+          if (searchHardcoverScoreRun !== runId || searchHardcoverScoreKey !== key) return;
+          if (!searchHardcoverOnline) return;
+          const results = await withSoftTimeout(
+            searchHardcoverBooks(scopeInput, searchTitle, 5).catch((error) => {
+              pauseHardcoverBackgroundEnrichment(error);
+              return [];
+            }),
+            HARDCOVER_SCORE_ENRICHMENT_TIMEOUT_MS,
+            [],
+          );
+          const match = matchHardcoverBook(searchTitle, results);
+          if (match && match.rating) {
+            provider = hardcoverBookToProvider(match);
+            break;
+          }
+        }
         hardcoverScoreSearchCache.set(titleKey, provider);
         if (provider) providers.set(titleKey, provider);
       }, ctrl.signal);
