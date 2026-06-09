@@ -12,8 +12,17 @@ const HARDCOVER_STORAGE_KEY = "aethon-hardcover-tracking-state";
 const HARDCOVER_RATING_MAX = 5;
 const OPEN_LIBRARY_SEARCH_URL = "https://openlibrary.org/search.json";
 const OPEN_LIBRARY_COVER_TIMEOUT_MS = 2500;
+const HARDCOVER_RATE_LIMIT_COOLDOWN_MS = 10 * 60 * 1000;
 
 const openLibraryCoverCache = new Map<string, string | null>();
+const hardcoverRateLimitUntilByToken = new Map<string, number>();
+
+class HardcoverRateLimitError extends Error {
+  constructor(message: string, readonly retryAtMs: number) {
+    super(message);
+    this.name = "HardcoverRateLimitError";
+  }
+}
 
 function readBrowserStorage(key: string): string | null {
   try {
@@ -384,7 +393,6 @@ export async function getHardcoverUserBooks(
         id
         status_id
         rating
-        current_position
         updated_at
         user_book_status { status }
         book {
@@ -394,11 +402,7 @@ export async function getHardcoverUserBooks(
           cached_image
           rating
           ratings_count
-          genres
-          tags
-          moods
           contributions { author { name } }
-          book_authors { author { name } }
         }
       }
     }
@@ -648,9 +652,6 @@ async function enrichHardcoverBookResults(
           release_year
           rating
           ratings_count
-          genres
-          tags
-          moods
           author_names
           contributions {
             author { name }
@@ -894,6 +895,11 @@ async function hardcoverGraphql<T>(
 ): Promise<T> {
   const authToken = normalizeHardcoverAuthToken(token);
   if (!authToken) throw new Error("Hardcover API key is required.");
+  const throttleKey = hardcoverThrottleKey(authToken);
+  const throttleUntil = hardcoverRateLimitUntilByToken.get(throttleKey) ?? 0;
+  if (throttleUntil > Date.now()) {
+    throw new HardcoverRateLimitError("Hardcover is temporarily rate limited; using cached data.", throttleUntil);
+  }
 
   const attempts = [authToken, `Bearer ${authToken}`];
   let lastError: Error | null = null;
@@ -902,6 +908,10 @@ async function hardcoverGraphql<T>(
       return await sendHardcoverGraphql<T>(authorization, query, variables);
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
+      if (isHardcoverRateLimitError(lastError)) {
+        rememberHardcoverRateLimit(authToken, lastError);
+        throw lastError;
+      }
       if (!isHardcoverAuthorizationError(lastError)) break;
     }
   }
@@ -925,6 +935,9 @@ async function sendHardcoverGraphql<T>(
 
   const body = await response.text();
   if (!response.ok) {
+    if (response.status === 429) {
+      throw new HardcoverRateLimitError(`Hardcover rejected the request (HTTP 429). ${summarizeHardcoverResponse(body)}`, Date.now() + HARDCOVER_RATE_LIMIT_COOLDOWN_MS);
+    }
     throw new Error(`Hardcover rejected the API key (HTTP ${response.status}). ${summarizeHardcoverResponse(body)}`);
   }
 
@@ -938,6 +951,21 @@ async function sendHardcoverGraphql<T>(
   if (json.errors?.length) throw new Error(json.errors[0]?.message ?? "Hardcover GraphQL error");
   if (!json.data) throw new Error("Hardcover response did not include data.");
   return json.data;
+}
+
+function hardcoverThrottleKey(token: string): string {
+  return normalizeHardcoverAuthToken(token).slice(0, 24);
+}
+
+function rememberHardcoverRateLimit(token: string, error: Error): void {
+  const retryAtMs = error instanceof HardcoverRateLimitError
+    ? error.retryAtMs
+    : Date.now() + HARDCOVER_RATE_LIMIT_COOLDOWN_MS;
+  hardcoverRateLimitUntilByToken.set(hardcoverThrottleKey(token), retryAtMs);
+}
+
+function isHardcoverRateLimitError(error: Error): boolean {
+  return error instanceof HardcoverRateLimitError || /http 429|throttled|rate limit/i.test(error.message);
 }
 
 function isHardcoverAuthorizationError(error: Error): boolean {

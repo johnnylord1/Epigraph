@@ -102,18 +102,24 @@
   const TRACKER_SCORE_ENRICHMENT_LIMIT = 32;
   const TRACKER_SCORE_BATCH_SIZE = 12;
   const TRACKER_SCORE_MAL_FALLBACK_LIMIT = 8;
-  const HARDCOVER_SCORE_ENRICHMENT_LIMIT = 3;
-  const HARDCOVER_SCORE_ENRICHMENT_CONCURRENCY = 2;
+  const HARDCOVER_SCORE_ENRICHMENT_LIMIT = 2;
+  const HARDCOVER_SCORE_ENRICHMENT_CONCURRENCY = 1;
   const HARDCOVER_SCORE_ENRICHMENT_TIMEOUT_MS = 750;
-  const HARDCOVER_DISCOVERY_QUERY_LIMIT = 5;
+  const HARDCOVER_DISCOVERY_QUERY_LIMIT = 2;
   const HARDCOVER_DISCOVERY_RESULTS_PER_QUERY = 7;
   const HARDCOVER_DISCOVERY_TIMEOUT_MS = 950;
+  const HARDCOVER_RECORD_REFRESH_COOLDOWN_MS = 5 * 60 * 1000;
+  const HARDCOVER_BACKGROUND_ENRICHMENT_ENABLED = false;
   const NOVEL_SOURCE_REQUEST_TIMEOUT_MS = 850;
   const NOVEL_DETAIL_ENRICHMENT_LIMIT = 3;
   const NOVEL_DETAIL_ENRICHMENT_CONCURRENCY = 1;
   const NOVEL_DETAIL_ENRICHMENT_TIMEOUT_MS = 850;
   const trackerScoreSearchCache = new Map<string, TrackSearch[]>();
   const hardcoverScoreSearchCache = new Map<string, RecommendationProviderSignal | null>();
+  let searchHardcoverRecordsRefreshInFlight = false;
+  let searchHardcoverRecordsRefreshFailedAt = 0;
+  let searchHardcoverRecordsRefreshScopeKey = "";
+  let searchHardcoverOnline = $state(false);
 
   function capMangaRecommendationSeeds(items: Manga[]) {
     return items.slice(0, SEARCH_RECOMMENDATION_MANGA_SEED_CAP);
@@ -904,6 +910,12 @@
       profileId: store.runtimeResolvedLocalProfileId,
       serverUrl: store.runtimeServerUrl,
     };
+    const scopeKey = `${scopeInput.profileId ?? ""}:${scopeInput.serverUrl ?? ""}`;
+    if (scopeKey !== searchHardcoverRecordsRefreshScopeKey) {
+      searchHardcoverRecordsRefreshScopeKey = scopeKey;
+      searchHardcoverRecordsRefreshFailedAt = 0;
+      searchHardcoverOnline = false;
+    }
     let state;
     try {
       state = loadHardcoverState(scopeInput);
@@ -914,14 +926,27 @@
     }
     if (!state.auth.connected) {
       searchHardcoverRecords = state.records;
+      searchHardcoverOnline = false;
+      return;
+    }
+    if (searchHardcoverRecordsRefreshInFlight) return;
+    if (searchHardcoverRecordsRefreshFailedAt > 0 && Date.now() - searchHardcoverRecordsRefreshFailedAt < HARDCOVER_RECORD_REFRESH_COOLDOWN_MS) {
+      searchHardcoverRecords = state.records;
       return;
     }
 
     try {
+      searchHardcoverRecordsRefreshInFlight = true;
       searchHardcoverRecords = await getHardcoverUserBooks(scopeInput);
+      searchHardcoverRecordsRefreshFailedAt = 0;
+      searchHardcoverOnline = true;
     } catch (error) {
       console.warn("Could not refresh Hardcover user books; using cached novel tracking.", error);
+      searchHardcoverRecordsRefreshFailedAt = Date.now();
+      searchHardcoverOnline = false;
       searchHardcoverRecords = state.records;
+    } finally {
+      searchHardcoverRecordsRefreshInFlight = false;
     }
   }
 
@@ -1272,7 +1297,9 @@
   }));
 
   $effect(() => {
+    if (!HARDCOVER_BACKGROUND_ENRICHMENT_ENABLED) return;
     if (!searchRecommendationsReady) return;
+    if (!searchHardcoverOnline) return;
     if (activeContentType !== "novels" || activeBrowseTab !== "keyword" || kw_submitted) return;
     if (searchHardcoverDiscoveryExpectedKey === searchHardcoverDiscoveryKey) return;
     untrack(() => {
@@ -1281,6 +1308,8 @@
   });
 
   $effect(() => {
+    if (!HARDCOVER_BACKGROUND_ENRICHMENT_ENABLED) return;
+    if (!searchHardcoverOnline) return;
     if (activeContentType !== "novels") return;
     if (searchHardcoverScoreExpectedKey === searchHardcoverScoreKey) return;
     untrack(() => {
@@ -3828,6 +3857,7 @@
     try {
       await runConcurrentLimited(titles, HARDCOVER_SCORE_ENRICHMENT_CONCURRENCY, async (title) => {
         if (searchHardcoverScoreRun !== runId || searchHardcoverScoreKey !== key) return;
+        if (!searchHardcoverOnline) return;
         const titleKey = recommendationTitleKey(title, "novel");
         if (hardcoverScoreSearchCache.has(titleKey)) {
           const cached = hardcoverScoreSearchCache.get(titleKey);
@@ -3836,7 +3866,10 @@
         }
 
         const results = await withSoftTimeout(
-          searchHardcoverBooks(scopeInput, title, 5).catch(() => []),
+          searchHardcoverBooks(scopeInput, title, 5).catch(() => {
+            searchHardcoverOnline = false;
+            return [];
+          }),
           HARDCOVER_SCORE_ENRICHMENT_TIMEOUT_MS,
           [],
         );
@@ -3925,23 +3958,35 @@
     const byId = new Map<number, RecommendationCandidate>();
     const ctrl = new AbortController();
     try {
-      await runConcurrentLimited(queries, 2, async (query) => {
+      await runConcurrentLimited(queries, 1, async (query) => {
         if (searchHardcoverDiscoveryRun !== runId || searchHardcoverDiscoveryKey !== key) return;
+        if (!searchHardcoverOnline) return;
         const queryTags = query
           .split(/\s+/)
           .map((part) => part.trim())
           .filter((part) => part.length > 2 && part.toLowerCase() !== "novel");
         const books = await withSoftTimeout((async () => {
-          const weighted = await searchHardcoverBooks(scopeInput, query, HARDCOVER_DISCOVERY_RESULTS_PER_QUERY, 1, {
-            fields: "genres,tags,moods,series_names,title,subtitle,description,author_names",
-            weights: "18,14,9,5,4,3,1,1",
-            sort: "rating:desc",
-            cacheGroup: "recommendation-discovery",
-          }).catch(() => []);
+          let weighted: HardcoverBookSearchResult[];
+          try {
+            weighted = await searchHardcoverBooks(scopeInput, query, HARDCOVER_DISCOVERY_RESULTS_PER_QUERY, 1, {
+              fields: "series_names,title,subtitle,description,author_names",
+              weights: "8,5,4,3,1",
+              sort: "rating:desc",
+              cacheGroup: "recommendation-discovery",
+            });
+          } catch {
+            searchHardcoverOnline = false;
+            return [];
+          }
           if (weighted.length > 0) return weighted;
-          return searchHardcoverBooks(scopeInput, query, HARDCOVER_DISCOVERY_RESULTS_PER_QUERY, 1, {
-            cacheGroup: "recommendation-discovery-fallback",
-          }).catch(() => []);
+          try {
+            return await searchHardcoverBooks(scopeInput, query, HARDCOVER_DISCOVERY_RESULTS_PER_QUERY, 1, {
+              cacheGroup: "recommendation-discovery-fallback",
+            });
+          } catch {
+            searchHardcoverOnline = false;
+            return [];
+          }
         })(), HARDCOVER_DISCOVERY_TIMEOUT_MS, []);
         for (const book of books) {
           if (searchHardcoverDiscoveryRun !== runId || searchHardcoverDiscoveryKey !== key) return;

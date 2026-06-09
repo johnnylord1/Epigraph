@@ -1125,10 +1125,27 @@
     return Array.from(merged.values());
   }
 
+  function sameActiveDownloads(left: ActiveDownload[], right: ActiveDownload[]) {
+    if (left.length !== right.length) return false;
+    return left.every((entry, index) => {
+      const other = right[index];
+      return !!other
+        && entry.chapterId === other.chapterId
+        && entry.mangaId === other.mangaId
+        && entry.progress === other.progress
+        && entry.state === other.state;
+    });
+  }
+
+  function commitActiveDownloads(next: ActiveDownload[]) {
+    if (sameActiveDownloads(next, store.activeDownloads)) return;
+    setActiveDownloads(next);
+  }
+
   function applyQueue(next: DownloadQueueItem[]) {
       detectCompletions(prevQueue, next);
       prevQueue = next;
-      setActiveDownloads(mergePausedDownloads(next.map(item => ({
+      commitActiveDownloads(mergePausedDownloads(next.map(item => ({
         chapterId: item.chapter.id, mangaId: item.chapter.mangaId, progress: item.progress, state: item.state,
       }))));
   }
@@ -2179,7 +2196,7 @@
       type P = { chapterId: number; mangaId: number; progress: number }[];
         const downloadUnlisten = await listen<P>("download-progress", e => {
           lastDownloadEventAt = Date.now();
-          setActiveDownloads(mergePausedDownloads(e.payload));
+          commitActiveDownloads(mergePausedDownloads(e.payload));
         }).catch((error) => {
         console.warn("Download progress listener failed during startup:", error);
         return () => {};
