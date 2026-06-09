@@ -2775,14 +2775,16 @@ server.maxSourcesInParallel = 3
 server.extensionRepos = []
 "#;
 
+const LOCAL_SERVER_JAVA_XMS: &str = "96m";
+const LOCAL_SERVER_JAVA_XMX: &str = "384m";
 const LOCAL_SERVER_JAVA_TOOL_OPTIONS: &str =
-    "-Djava.awt.headless=true -Xms96m -Xmx512m -XX:+UseG1GC";
+    "-Djava.awt.headless=true -Xms96m -Xmx384m -XX:+UseG1GC";
 
 fn local_server_java_args(jar: &Path) -> Vec<String> {
     vec![
         "-Djava.awt.headless=true".to_string(),
-        "-Xms96m".to_string(),
-        "-Xmx512m".to_string(),
+        format!("-Xms{LOCAL_SERVER_JAVA_XMS}"),
+        format!("-Xmx{LOCAL_SERVER_JAVA_XMX}"),
         "-XX:+UseG1GC".to_string(),
         "-jar".to_string(),
         jar.to_string_lossy().into_owned(),
