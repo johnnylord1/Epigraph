@@ -313,7 +313,7 @@ export async function searchHardcoverBooks(
   const normalizedSort = normalizeText(options.sort);
   const cacheGroup = normalizeText(options.cacheGroup) ?? "default";
   const cacheKey = [
-    "v10",
+    "v11",
     cacheGroup,
     normalizedQuery.toLowerCase(),
     limit,

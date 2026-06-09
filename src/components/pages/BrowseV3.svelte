@@ -110,6 +110,7 @@
   const HARDCOVER_DISCOVERY_QUERY_LIMIT = 2;
   const HARDCOVER_DISCOVERY_RESULTS_PER_QUERY = 7;
   const HARDCOVER_DISCOVERY_TIMEOUT_MS = 950;
+  const HARDCOVER_DISCOVERY_MIN_RATING = 3.25;
   const HARDCOVER_RECORD_REFRESH_COOLDOWN_MS = 5 * 60 * 1000;
   const HARDCOVER_BACKGROUND_ENRICHMENT_ENABLED = true;
   const HARDCOVER_BACKGROUND_ENRICHMENT_DELAY_MS = 4500;
@@ -139,6 +140,33 @@
 
   function capProviderResults<T>(items: T[]) {
     return items.slice(0, SEARCH_RECOMMENDATION_PROVIDER_RESULT_CAP);
+  }
+
+  function isUsefulHardcoverDiscoveryTag(tag: string) {
+    const normalized = tag.trim().toLowerCase();
+    if (normalized.length < 4) return false;
+    if (!/[a-z]/i.test(normalized)) return false;
+    if (/^\d+$/.test(normalized)) return false;
+    return ![
+      "book",
+      "books",
+      "novel",
+      "novels",
+      "webnovel",
+      "web novel",
+      "light novel",
+      "epub",
+      "pdf",
+      "hardcover",
+      "syncd",
+      "audit",
+      "unknown",
+      "source",
+      "sources",
+      "reading",
+      "ongoing",
+      "completed",
+    ].includes(normalized);
   }
 
   function capProviderSignalMap(map: Map<string, RecommendationProviderSignal>) {
@@ -1298,10 +1326,8 @@
     if (activeContentType !== "novels") return [];
     const tags = searchNovelProfileOnly.topTags
       .map((tag) => formatTasteTag(tag).trim())
-      .filter((tag) => tag.length > 2)
-      .filter((tag) => !["book", "novel", "webnovel", "epub", "pdf", "hardcover"].includes(tag.toLowerCase()));
+      .filter(isUsefulHardcoverDiscoveryTag);
     const queries = tags.slice(0, HARDCOVER_DISCOVERY_QUERY_LIMIT).map((tag) => `${tag} novel`);
-    if (queries.length === 0) queries.push("popular fantasy novel", "popular web novel");
     return queries.slice(0, HARDCOVER_DISCOVERY_QUERY_LIMIT);
   });
 
@@ -2012,9 +2038,7 @@
 
   function recommendationBadge(item: RecommendationItem) {
     if (activeContentType === "novels") {
-      const hardcoverScore = item.candidate.providers
-        .find((provider) => provider.providerId === "hardcover" && provider.score && provider.score.confidence > 0)
-        ?.score;
+      const hardcoverScore = recommendationHardcoverScore(item);
       if (hardcoverScore && hardcoverScore.value > 0) {
         return `HC ${formatHardcoverBadgeScore(hardcoverScore.value)}`;
       }
@@ -2035,6 +2059,12 @@
     return null;
   }
 
+  function recommendationHardcoverScore(item: RecommendationItem) {
+    return item.candidate.providers
+      .find((provider) => provider.providerId === "hardcover" && provider.score && provider.score.confidence > 0)
+      ?.score ?? null;
+  }
+
   function formatSourceBadgeScore(value: number) {
     return (Math.round(value * 100) / 10).toFixed(1);
   }
@@ -2049,6 +2079,12 @@
   }
 
   function recommendationStatusLabel(item: RecommendationItem) {
+    if (activeContentType === "novels") {
+      const hardcoverScore = recommendationHardcoverScore(item);
+      if (hardcoverScore && hardcoverScore.value > 0) {
+        return `HC ${formatHardcoverBadgeScore(hardcoverScore.value)}`;
+      }
+    }
     return item.candidate.status?.replace(/_/g, " ") ?? (item.candidate.inLibrary ? "In library" : "Ongoing");
   }
 
@@ -4024,23 +4060,16 @@
           .map((part) => part.trim())
           .filter((part) => part.length > 2 && part.toLowerCase() !== "novel");
         const books = await withSoftTimeout((async () => {
-          let weighted: HardcoverBookSearchResult[];
           try {
-            weighted = await searchHardcoverBooks(scopeInput, query, HARDCOVER_DISCOVERY_RESULTS_PER_QUERY, 1, {
+            const weighted = await searchHardcoverBooks(scopeInput, query, HARDCOVER_DISCOVERY_RESULTS_PER_QUERY, 1, {
               fields: "series_names,title,subtitle,description",
               weights: "8,5,4,3",
               sort: "rating:desc",
               cacheGroup: "recommendation-discovery",
             });
-          } catch (error) {
-            pauseHardcoverBackgroundEnrichment(error);
-            return [];
-          }
-          if (weighted.length > 0) return weighted;
-          try {
-            return await searchHardcoverBooks(scopeInput, query, HARDCOVER_DISCOVERY_RESULTS_PER_QUERY, 1, {
-              cacheGroup: "recommendation-discovery-fallback",
-            });
+            return weighted.filter((book) =>
+              typeof book.rating === "number" && book.rating >= HARDCOVER_DISCOVERY_MIN_RATING,
+            );
           } catch (error) {
             pauseHardcoverBackgroundEnrichment(error);
             return [];
@@ -5922,14 +5951,22 @@
   .searchRecommendationRow .n-library-card {
     flex: 0 0 var(--search-card-width);
     width: var(--search-card-width);
+    height: calc((var(--search-card-width) / 0.7) + 74px);
     min-width: 0;
+    overflow: hidden;
     scroll-snap-align: start;
   }
   .searchRecommendationRow .n-library-card__cover {
+    flex: 0 0 auto;
     aspect-ratio: 0.7;
   }
+  .searchRecommendationRow .n-library-card__info {
+    flex: 0 0 58px;
+    overflow: hidden;
+  }
   .searchRecommendationRow .n-library-card__title {
-    min-height: 36px;
+    min-height: 32px;
+    max-height: 36px;
     line-height: 1.16;
     overflow-wrap: anywhere;
   }
