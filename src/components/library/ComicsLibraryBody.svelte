@@ -36,6 +36,8 @@
     onToggleCategory?: (manga: Manga, category: Category) => Promise<void> | void;
     onCreateAndAssign?: (manga: Manga) => Promise<void> | void;
     onCreateCategory?: () => Promise<void> | void;
+    onCoverErrorDetected?: () => void;
+    coverRecoveryKey?: number;
   };
 
   let {
@@ -57,6 +59,8 @@
     onToggleCategory = async () => {},
     onCreateAndAssign = async () => {},
     onCreateCategory = async () => {},
+    onCoverErrorDetected = () => {},
+    coverRecoveryKey = 0,
   }: Props = $props();
 
   let contentEl: HTMLDivElement | null = $state(null);
@@ -204,6 +208,7 @@
   function handleCoverError(cardId: string) {
     const manga = mangaByCardId.get(cardId);
     if (!manga || failedCoverIds.has(manga.id)) return;
+    onCoverErrorDetected();
 
     const attempts = coverRetryCounts.get(manga.id) ?? 0;
     if (attempts < 2) {
@@ -283,7 +288,11 @@
     const base = thumbUrl(manga.thumbnailUrl);
     const sig = getCoverSignature(manga);
     const retry = coverRetryCounts.get(manga.id) ?? 0;
-    const params = [`aethon_cover_sig=${sig}`, `aethon_cover_session=${coverSessionSeed}`];
+    const params = [
+      `aethon_cover_sig=${sig}`,
+      `aethon_cover_session=${coverSessionSeed}`,
+      `aethon_cover_recovery=${coverRecoveryKey}`,
+    ];
     if (retry > 0) params.push(`aethon_cover_retry=${retry}`);
     return `${base}${base.includes("?") ? "&" : "?"}${params.join("&")}`;
   }
@@ -378,6 +387,16 @@
     if (renderVisible > total) {
       renderVisible = total;
     }
+  });
+
+  $effect(() => {
+    coverRecoveryKey;
+    for (const timer of coverRetryTimers.values()) clearTimeout(timer);
+    for (const timer of coverRecoveryTimers.values()) clearTimeout(timer);
+    coverRetryTimers.clear();
+    coverRecoveryTimers.clear();
+    failedCoverIds = new Set();
+    coverRetryCounts = new Map();
   });
 
   $effect(() => {

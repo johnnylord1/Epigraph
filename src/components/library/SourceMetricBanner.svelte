@@ -14,6 +14,9 @@
 </script>
 
 <div class="source-metric-banner" aria-label={label}>
+  {#if banner.newCount > 0}
+    <span class="source-metric-banner__sr">CH {banner.newCount}</span>
+  {/if}
   <span class="source-metric-banner__downloaded">{banner.downloadedCount}</span>
   <span class="source-metric-banner__new">{banner.newCount}</span>
   <span class="source-metric-banner__flag" aria-hidden="true">
@@ -23,18 +26,27 @@
 
 <style>
   .source-metric-banner {
-    --banner-h: calc(30px * var(--n-hud-scale, 1));
-    --flag-size: calc(43px * var(--n-hud-scale, 1));
-    --dark-w: calc(56px * var(--n-hud-scale, 1));
-    --new-w: calc(50px * var(--n-hud-scale, 1));
+    --banner-h: calc(27px * var(--n-hud-scale, 1));
+    --flag-size: calc(39px * var(--n-hud-scale, 1));
+    --dark-w: calc(49px * var(--n-hud-scale, 1));
+    --new-w: calc(44px * var(--n-hud-scale, 1));
     position: absolute;
     top: calc(8px * var(--n-hud-scale, 1));
-    left: calc(-9px * var(--n-hud-scale, 1));
+    left: calc(5px * var(--n-hud-scale, 1));
     width: calc(var(--flag-size) + var(--dark-w) + var(--new-w) - 8px);
     height: var(--flag-size);
     z-index: 4;
     pointer-events: none;
     filter: drop-shadow(0 8px 13px rgba(0, 0, 0, 0.48));
+  }
+
+  .source-metric-banner__sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
   }
 
   .source-metric-banner__downloaded,
@@ -56,18 +68,18 @@
   }
 
   .source-metric-banner__downloaded {
-    left: calc(var(--flag-size) - 10px);
+    left: calc(var(--flag-size) - 9px);
     width: var(--dark-w);
     padding-left: calc(8px * var(--n-hud-scale, 1));
     color: var(--text-primary);
     background:
       linear-gradient(180deg, color-mix(in srgb, var(--bg-subtle) 82%, white 6%), var(--bg-raised)),
       var(--bg-raised);
-    clip-path: polygon(0 0, 100% 0, calc(100% - 12px) 100%, 0 100%);
+    clip-path: polygon(0 0, 100% 0, calc(100% - 11px) 100%, 0 100%);
   }
 
   .source-metric-banner__new {
-    left: calc(var(--flag-size) + var(--dark-w) - 20px);
+    left: calc(var(--flag-size) + var(--dark-w) - 18px);
     width: var(--new-w);
     padding-left: calc(6px * var(--n-hud-scale, 1));
     color: color-mix(in srgb, var(--bg-void) 78%, black);
@@ -75,8 +87,8 @@
       linear-gradient(180deg, var(--accent-bright), var(--accent)),
       var(--accent);
     border-color: color-mix(in srgb, var(--accent-bright) 52%, var(--border-strong));
-    border-radius: 0 calc(15px * var(--n-hud-scale, 1)) calc(15px * var(--n-hud-scale, 1)) 0;
-    clip-path: polygon(16px 0, 100% 0, 100% 100%, 0 100%);
+    border-radius: 0 calc(14px * var(--n-hud-scale, 1)) calc(14px * var(--n-hud-scale, 1)) 0;
+    clip-path: polygon(15px 0, 100% 0, 100% 100%, 0 100%);
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.22),
       inset 0 -1px 0 rgba(0, 0, 0, 0.2);
@@ -107,14 +119,14 @@
     position: relative;
     display: grid;
     place-items: center;
-    min-width: calc(18px * var(--n-hud-scale, 1));
-    height: calc(14px * var(--n-hud-scale, 1));
+    min-width: calc(17px * var(--n-hud-scale, 1));
+    height: calc(13px * var(--n-hud-scale, 1));
     padding: 0 calc(3px * var(--n-hud-scale, 1));
     border-radius: 999px;
     background: rgba(8, 8, 8, 0.62);
     color: var(--accent-fg);
     font-family: var(--font-ui);
-    font-size: calc(8px * var(--n-hud-scale, 1));
+    font-size: calc(7px * var(--n-hud-scale, 1));
     font-weight: 800;
     line-height: 1;
     letter-spacing: 0;
