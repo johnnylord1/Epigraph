@@ -199,15 +199,29 @@ export class TauriNovelRuntimeHostAdapter implements NovelRuntimeHostAdapter {
   kind: NovelRuntimeHostKind = "tauri-webview-window";
   private windowHandle: WebviewWindow | null = null;
   private readyInfo: NovelRuntimeHostReadyPayload | null = null;
+  private startPromise: Promise<void> | null = null;
 
   async start(): Promise<void> {
     if (this.readyInfo) {
       return;
     }
+    if (this.startPromise) {
+      return this.startPromise;
+    }
 
+    this.startPromise = this.startFresh();
+    try {
+      await this.startPromise;
+    } finally {
+      this.startPromise = null;
+    }
+  }
+
+  private async startFresh(): Promise<void> {
     const existing = await WebviewWindow.getByLabel(NOVEL_RUNTIME_HOST_LABEL);
     if (existing) {
       await existing.destroy().catch(() => {});
+      await waitForHostWindowClosed(1_500);
     }
 
     const readyPromise = waitForReadyEvent(NOVEL_RUNTIME_HOST_START_TIMEOUT_MS);

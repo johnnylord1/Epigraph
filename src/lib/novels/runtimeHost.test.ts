@@ -114,12 +114,14 @@ const {
 
   class MockWebviewWindow {
     static instances = new Map<string, MockWebviewWindow>();
+    static createdCount = 0;
     label: string;
     options?: Record<string, unknown>;
 
     constructor(label: string, options?: Record<string, unknown>) {
       this.label = label;
       this.options = options;
+      MockWebviewWindow.createdCount += 1;
       MockWebviewWindow.instances.set(label, this);
       setTimeout(() => {
         dispatch("novel-runtime-host:ready", {
@@ -211,6 +213,7 @@ describe("novel runtime host", () => {
     invokeMock.mockClear();
     eventRegistry.clear();
     MockWebviewWindow.instances.clear();
+    MockWebviewWindow.createdCount = 0;
   });
 
   it("boots the hidden host and sends whitelisted invoke requests across the boundary", async () => {
@@ -238,6 +241,21 @@ describe("novel runtime host", () => {
 
     await host.stop();
     expect(await MockWebviewWindow.getByLabel("novel-runtime-host")).toBeNull();
+  });
+
+  it("serializes concurrent startup requests for the hidden host", async () => {
+    const host = new TauriNovelRuntimeHostAdapter();
+
+    await Promise.all([
+      host.start(),
+      host.start(),
+      host.health(),
+    ]);
+
+    expect(MockWebviewWindow.createdCount).toBe(1);
+    expect(await MockWebviewWindow.getByLabel("novel-runtime-host")).not.toBeNull();
+
+    await host.stop();
   });
 
   it("runs a smoke summary across startup, invoke, controlled error, and shutdown", async () => {
