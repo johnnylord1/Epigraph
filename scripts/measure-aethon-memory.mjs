@@ -13,6 +13,17 @@ function argValue(name, fallback) {
   return match ? match.slice(prefix.length) : fallback;
 }
 
+function numericArgValue(name, fallback) {
+  const raw = argValue(name, null);
+  if (raw == null) return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function collectProcessMemory() {
   const command = `
 $rows = @()
@@ -77,7 +88,13 @@ async function collectWebViewDiagnostics() {
     const { chromium } = await import("playwright");
     const browser = await chromium.connectOverCDP(cdp);
     const context = browser.contexts()[0];
-    const page = context?.pages()[0];
+    const pages = context?.pages() ?? [];
+    const page = pages.find((candidate) => {
+      const url = candidate.url();
+      return url.includes("127.0.0.1:1420")
+        && !url.includes("novelRuntimeHost=1")
+        && !url.includes("replyToLabel=");
+    }) ?? pages.find((candidate) => !candidate.url().includes("novelRuntimeHost=1")) ?? pages[0];
     if (!context || !page) {
       await browser.close();
       return { available: false, error: "No WebView page found." };
@@ -147,11 +164,62 @@ function summarizeProcesses(processes) {
   };
 }
 
+function summarizeIdleCpu(before, after, elapsedMs) {
+  if (elapsedMs <= 0) return null;
+  const beforeByPid = new Map(before.map((entry) => [entry.pid, entry]));
+  const rows = after
+    .map((entry) => {
+      const previous = beforeByPid.get(entry.pid);
+      if (!previous || typeof previous.cpuSeconds !== "number" || typeof entry.cpuSeconds !== "number") {
+        return null;
+      }
+      const cpuSecondsDelta = Math.max(0, entry.cpuSeconds - previous.cpuSeconds);
+      return {
+        pid: entry.pid,
+        role: entry.role,
+        name: entry.name,
+        cpuSecondsDelta: Math.round(cpuSecondsDelta * 1000) / 1000,
+        cpuPercentOneCore: Math.round((cpuSecondsDelta / (elapsedMs / 1000)) * 1000) / 10,
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => right.cpuSecondsDelta - left.cpuSecondsDelta);
+
+  const byRole = new Map();
+  for (const row of rows) {
+    const current = byRole.get(row.role) ?? { role: row.role, cpuSecondsDelta: 0, cpuPercentOneCore: 0 };
+    current.cpuSecondsDelta += row.cpuSecondsDelta;
+    current.cpuPercentOneCore += row.cpuPercentOneCore;
+    byRole.set(row.role, current);
+  }
+
+  return {
+    elapsedMs,
+    totalCpuPercentOneCore: Math.round(rows.reduce((sum, row) => sum + row.cpuPercentOneCore, 0) * 10) / 10,
+    roles: [...byRole.values()]
+      .map((entry) => ({
+        role: entry.role,
+        cpuSecondsDelta: Math.round(entry.cpuSecondsDelta * 1000) / 1000,
+        cpuPercentOneCore: Math.round(entry.cpuPercentOneCore * 10) / 10,
+      }))
+      .sort((left, right) => right.cpuPercentOneCore - left.cpuPercentOneCore),
+    processes: rows,
+  };
+}
+
+const idleMs = numericArgValue("--idle-ms", 0);
 const processes = await collectProcessMemory();
+let idleCpu = null;
+if (idleMs > 0) {
+  await sleep(idleMs);
+  const idleProcesses = await collectProcessMemory();
+  idleCpu = summarizeIdleCpu(processes, idleProcesses, idleMs);
+}
 const webView = await collectWebViewDiagnostics();
 const result = {
   capturedAt: new Date().toISOString(),
   processSummary: summarizeProcesses(processes),
+  idleCpu,
   processes: processes.sort((left, right) => right.workingSetMb - left.workingSetMb),
   webView,
 };
