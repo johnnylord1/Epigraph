@@ -161,7 +161,7 @@ export function buildRecommendationSections(
       + (qualityScore(item) * 0.08)
       + (profileAffinityScore(item) * 0.06),
       (item) => hasExternalProvider(item)
-        && freshnessScore(item) >= 0.12
+        && (freshnessScore(item) >= 0.12 || proseSourceAvailabilityCandidate(item, profile))
         && (profile.seedCount === 0 || fitsProfileComicFormat(item, profile)),
       profile,
     ),
@@ -273,6 +273,13 @@ function proseWarmStartCandidate(item: RecommendationItem, profile: TasteProfile
     && item.breakdown.sourceAvailability >= 0.45
     && (qualityScore(item) >= 0.35 || momentumScore(item) >= 0.08)
     && item.candidate.title.trim().length > 0;
+}
+
+function proseSourceAvailabilityCandidate(item: RecommendationItem, profile: TasteProfile): boolean {
+  return isProseContentType(item.candidate.contentType)
+    && item.breakdown.sourceAvailability >= 0.45
+    && item.candidate.title.trim().length > 0
+    && (profile.seedCount === 0 || contentTypeFitScore(item, profile) >= 0.18);
 }
 
 function profileAffinityScore(item: RecommendationItem): number {

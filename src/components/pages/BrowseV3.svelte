@@ -875,15 +875,25 @@
   async function refreshSources() {
     loadingSources = true;
     try {
-      const [d, novels] = await Promise.all([
+      const [mangaSources, novelSources] = await Promise.allSettled([
         gql<{ sources: { nodes: Source[] } }>(GET_SOURCES),
         loadTrustedInstalledNovelSources({
           profileId: store.runtimeResolvedLocalProfileId,
           serverUrl: store.runtimeServerUrl,
-        }).catch(() => [] as InstalledNovelSourceDescriptor[]),
+        }),
       ]);
-      allSources = d.sources.nodes.filter((src: Source) => src.id !== "0");
-      allNovelSources = novels;
+      if (mangaSources.status === "fulfilled") {
+        allSources = mangaSources.value.sources.nodes.filter((src: Source) => src.id !== "0");
+      } else {
+        console.warn("Could not refresh manga sources for Browse.", mangaSources.reason);
+        allSources = [];
+      }
+      if (novelSources.status === "fulfilled") {
+        allNovelSources = novelSources.value;
+      } else {
+        console.warn("Could not refresh novel sources for Browse.", novelSources.reason);
+        allNovelSources = [];
+      }
     } catch (error) {
       console.error(error);
     } finally {

@@ -3,6 +3,8 @@ const TITLE_ALIAS_LIMIT = 4;
 export const NOVEL_TITLE_ALIAS_VERSION = 1;
 
 const KNOWN_NOVEL_TITLE_ALIASES: Record<string, string[]> = {
+  "a evolucao de um goblin ao apice": ["The Evolution of a Goblin to the Peak"],
+  "a evolucao de um goblin ate o auge": ["The Evolution of a Goblin to the Peak"],
   "apostolo astral": ["Astral Apostle"],
   "cuidado com o frango": ["Beware of Chicken"],
   "circulo da inevitabilidade": ["Circle of Inevitability"],
@@ -36,7 +38,7 @@ export function normalizeNovelTitleAliasKey(title: string): string {
     .toLowerCase()
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[''`]/g, "")
+    .replace(/[''`´\u2018\u2019\u02bc]/g, "")
     .replace(/&/g, " and ")
     .replace(/\b(?:novel|light novel|webnovel|web novel)\b/gi, " ")
     .replace(/\b(?:vol|volume|book|livro)\.?\s*\d+\b/gi, " ")

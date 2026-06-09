@@ -767,7 +767,7 @@ describe("recommendation sections", () => {
       .toBeGreaterThanOrEqual(18);
   });
 
-  it("does not clone sparse source-only novel candidates into every category", () => {
+  it("keeps sparse source-only novel candidates in the source freshness section only", () => {
     const sourceOnlyNovels = Array.from({ length: 48 }, (_, index) =>
       candidate(`novel-${index}`, {
         contentType: "novel",
@@ -794,7 +794,7 @@ describe("recommendation sections", () => {
 
     expect(sections).toHaveLength(5);
     expect(highConfidenceIds).toHaveLength(0);
-    expect(freshIds).toHaveLength(0);
+    expect(freshIds).toHaveLength(18);
     expect(trendingIds).toHaveLength(0);
   });
 });
