@@ -116,6 +116,7 @@ export function buildNovelLibraryCards(input: {
       const progressPercent = progressByNovelId.get(entry.id)?.progressPercent ?? (
         counts.total > 0 ? counts.read / counts.total : 0
       );
+      const unreadCount = Math.max(0, counts.total - counts.read);
 
       return {
         id: `novel-card:${entry.id}`,
@@ -125,6 +126,11 @@ export function buildNovelLibraryCards(input: {
         coverSrc: entry.coverUrl,
         coverFit: "cover",
         badges: [{ kind: "subtype", label: "Source" }],
+        sourceMetricBanner: unreadCount > 0 ? {
+          flagLabel: entry.source?.lang ?? entry.source?.sourceName ?? entry.source?.pluginName ?? "LN",
+          downloadedCount: 0,
+          newCount: unreadCount,
+        } : null,
         metaChips: [
           `${entry.chapterCount} chapters`,
           entry.source?.lang?.toUpperCase?.() ?? "LN",
@@ -143,4 +149,3 @@ export function buildNovelLibraryCards(input: {
       : "No source novels match the current search or filters.",
   };
 }
-

@@ -301,7 +301,9 @@ export function buildComicsLibraryCardVm(
 ) {
   const unreadCount = Math.max(0, manga.unreadCount ?? 0);
   const chapterCount = Math.max(0, manga.chapterCount ?? 0);
+  const downloadedCount = Math.max(0, manga.downloadCount ?? 0);
   const readCount = chapterCount > 0 ? Math.max(0, chapterCount - unreadCount) : 0;
+  const flagLabel = manga.source?.lang ?? manga.source?.displayName ?? manga.source?.name ?? "SRC";
 
   return {
     id: createComicLibraryCardId(manga.id),
@@ -314,11 +316,16 @@ export function buildComicsLibraryCardVm(
         kind: "unread" as const,
         label: `CH ${unreadCount}`,
       }] : []),
-      ...((manga.downloadCount ?? 0) > 0 && unreadCount === 0 ? [{
+      ...(downloadedCount > 0 && unreadCount === 0 ? [{
         kind: "download" as const,
         label: "Local",
       }] : []),
     ],
+    sourceMetricBanner: downloadedCount > 0 || unreadCount > 0 ? {
+      flagLabel,
+      downloadedCount,
+      newCount: unreadCount,
+    } : null,
     metaChips: [
       buildComicsReadingStateLabel(
         manga,

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { CaretDown, CaretUp, Funnel, GridFour, MagnifyingGlass, SortAscending } from "phosphor-svelte";
+  import { ArrowsClockwise, CaretDown, CaretUp, Funnel, GridFour, MagnifyingGlass, SortAscending } from "phosphor-svelte";
   import type { BooksTypeOptionVM, LibraryDisplaySettings, LibraryToolbarVM } from "../../lib/library/contracts";
   import BooksTypeSelector from "./BooksTypeSelector.svelte";
   import LibraryDisplayPopover from "./LibraryDisplayPopover.svelte";
@@ -25,6 +25,9 @@
     onPreferredColumnsChange?: (value: LibraryDisplaySettings["preferredColumns"]) => void;
     onShowProgressChange?: (value: boolean) => void;
     onShowOutlineChange?: (value: boolean) => void;
+    onRefresh?: () => void;
+    refreshPending?: boolean;
+    refreshLabel?: string;
   };
 
   let {
@@ -52,6 +55,9 @@
     onPreferredColumnsChange = () => {},
     onShowProgressChange = () => {},
     onShowOutlineChange = () => {},
+    onRefresh,
+    refreshPending = false,
+    refreshLabel = "Refresh library",
   }: Props = $props();
 
   let sortPanelOpen = $state(false);
@@ -130,6 +136,19 @@
 
   {#if showActions}
     <div class="toolbar-cluster">
+      {#if onRefresh}
+        <button
+          type="button"
+          class="n-icon-btn library-toolbar-btn"
+          title={refreshLabel}
+          aria-label={refreshLabel}
+          disabled={refreshPending}
+          onclick={onRefresh}
+        >
+          <ArrowsClockwise size={15} weight="bold" class={refreshPending ? "anim-spin" : ""} />
+        </button>
+      {/if}
+
       <div class="display-panel-wrap">
         <button
           type="button"

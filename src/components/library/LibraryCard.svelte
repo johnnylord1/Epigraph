@@ -2,6 +2,7 @@
   import { BookOpen, Books, CheckSquare, Stack } from "phosphor-svelte";
   import { resolvedImage } from "../../lib/imageCache";
   import type { LibraryCardVM } from "../../lib/library/contracts";
+  import SourceMetricBanner from "./SourceMetricBanner.svelte";
 
   type Props = {
     vm: LibraryCardVM;
@@ -124,7 +125,9 @@
       </div>
     {/if}
 
-    {#if viewMode !== "list" && primaryGridBadge}
+    {#if viewMode !== "list" && vm.sourceMetricBanner}
+      <SourceMetricBanner banner={vm.sourceMetricBanner} />
+    {:else if viewMode !== "list" && primaryGridBadge}
       <span class="n-library-card__badge">{formatGridStateLabel(primaryGridBadge.label, primaryGridBadge.kind)}</span>
     {/if}
     {#if topLeftBadges.length}

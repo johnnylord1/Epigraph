@@ -4451,30 +4451,6 @@ pub fn run() {
             sanitize_suwayomi_lan_state();
             schedule_suwayomi_lan_session_watchers(app.handle());
             syncd_sidecar::maybe_install_exit_sentinel(app.handle());
-            {
-                let launch_target = app.state::<LaunchTarget>().0.clone();
-                let should_spawn_local_server =
-                    !launch_target.attach_only_override.unwrap_or(false)
-                        && matches!(
-                            launch_target.profile_label_override.as_deref(),
-                            Some("MAIN") | Some("TEST")
-                        )
-                        && matches!(
-                            launch_target.server_url_override.as_deref(),
-                            Some(url) if url.starts_with("http://127.0.0.1:") || url.starts_with("http://localhost:")
-                        );
-
-                if should_spawn_local_server {
-                    let app_handle = app.handle().clone();
-                    let server_url = launch_target
-                        .server_url_override
-                        .clone()
-                        .unwrap_or_else(|| "http://127.0.0.1:4567".to_string());
-                    std::thread::spawn(move || {
-                        let _ = spawn_server(String::new(), server_url, app_handle);
-                    });
-                }
-            }
             tauri::async_runtime::block_on(syncd_sidecar::maybe_spawn_for_phase_gate(app.handle()))
                 .map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
             tauri::async_runtime::block_on(syncd_replication::bootstrap_runtime(

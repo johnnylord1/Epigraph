@@ -21,10 +21,12 @@
     GET_CATEGORIES_SUMMARY,
     GET_DOWNLOAD_STATUS,
     GET_LIBRARY,
+    GET_LIBRARY_UPDATE_STATUS,
     GET_LIBRARY_TRACKING_SUMMARY,
     GET_RESTORE_STATUS,
     GET_TRACKERS,
     RESTORE_BACKUP,
+    UPDATE_LIBRARY,
     UPDATE_EXTENSION,
   } from "./lib/queries";
   import {
@@ -56,6 +58,12 @@
   import { initRpc, setIdle, clearReading, destroyRpc } from "./lib/discord";
   import { cache, CACHE_GROUPS, CACHE_KEYS, DEFAULT_TTL_MS } from "./lib/cache";
   import { normalizeCategories } from "./lib/library/categories";
+  import { loadLibrarySnapshot, saveLibrarySnapshot } from "./lib/library/snapshot";
+  import {
+    ensureServerAwakeFor,
+    isLoopbackServerUrl,
+    maybeStandbyLocalServer,
+  } from "./lib/serverLifecycle";
   import { loadNovelRepositoryState } from "./lib/novels/repositoryState";
   import {
     listenSyncdReplicationError,
@@ -304,6 +312,8 @@
   let prevQueue: DownloadQueueItem[] = [];
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   let pollInterval: ReturnType<typeof setInterval> | null = null;
+  let libraryUpdateInterval: ReturnType<typeof setInterval> | null = null;
+  let lastInteractionAt = Date.now();
   let unlistenDownload: (() => void) | undefined;
   let unlistenSyncdReplicationState: (() => void) | undefined;
   let unlistenSyncdReplicationError: (() => void) | undefined;
@@ -317,6 +327,8 @@
   let lastDownloadEventAt = $state(Date.now());
   let libraryBootstrapScopeKey: string | null = null;
   let libraryBootstrapInFlight: Promise<void> | null = null;
+  let automaticLibraryUpdateInFlight: Promise<void> | null = null;
+  let standbyInFlight = false;
 
   type RuntimeDiagnosticsSnapshot = {
     bootMs: number | null;
@@ -351,6 +363,24 @@
     if (!store.runtimeResolvedLocalProfileId || !store.runtimeServerUrl) return null;
 
     const scopeKey = `${store.runtimeResolvedLocalProfileId}::${store.runtimeServerUrl}`;
+    const persistedSnapshot = loadLibrarySnapshot({
+      profileId: store.runtimeResolvedLocalProfileId,
+      serverUrl: store.runtimeServerUrl,
+    });
+    if (
+      persistedSnapshot
+      && store.libraryMangaSnapshot.length === 0
+      && store.categories.length === 0
+    ) {
+      setLibraryMangaSnapshot(persistedSnapshot.mangas.map((manga: any) => ({
+        ...manga,
+        chapterCount: manga.chapters?.totalCount ?? manga.chapterCount ?? 0,
+      })));
+      setCategories(normalizeCategories(persistedSnapshot.categories));
+      setLibraryTrackingSummarySnapshot(persistedSnapshot.trackingSummary as TrackerCompletionTracker[]);
+      setLibraryBootstrap("ready", scopeKey, persistedSnapshot.trackingSummary as TrackerCompletionTracker[]);
+    }
+
     if (libraryBootstrapScopeKey === scopeKey && libraryBootstrapInFlight) {
       return libraryBootstrapInFlight;
     }
@@ -388,13 +418,26 @@
         ),
       ]);
 
-      setLibraryMangaSnapshot(mangas.map((manga: any) => ({
+      const normalizedMangas = mangas.map((manga: any) => ({
         ...manga,
         chapterCount: manga.chapters?.totalCount ?? manga.chapterCount ?? 0,
-      })));
-      setCategories(normalizeCategories(categories));
+      }));
+      const normalizedCategories = normalizeCategories(categories);
+      setLibraryMangaSnapshot(normalizedMangas);
+      setCategories(normalizedCategories);
       setLibraryTrackingSummarySnapshot(trackingSummary);
       setLibraryBootstrap("ready", scopeKey, trackingSummary);
+      saveLibrarySnapshot(
+        {
+          profileId: store.runtimeResolvedLocalProfileId,
+          serverUrl: store.runtimeServerUrl,
+        },
+        {
+          mangas: normalizedMangas,
+          categories: normalizedCategories,
+          trackingSummary,
+        },
+      );
     })()
       .catch((error) => {
         console.error("Library preload failed:", error);
@@ -405,6 +448,94 @@
       });
 
     return libraryBootstrapInFlight;
+  }
+
+  function shouldKeepServerAwake() {
+    return (
+      store.navPage === "search"
+      || store.navPage === "downloads"
+      || Boolean(store.activeManga)
+      || Boolean(store.activeChapter)
+      || store.activeDownloads.length > 0
+      || Boolean(store.activeSource)
+    );
+  }
+
+  function nextLibraryUpdateDue(now = Date.now()) {
+    if (!store.settings.autoLibraryUpdatesEnabled) return false;
+    const intervalHours = Math.max(1, Number(store.settings.libraryUpdateIntervalHours ?? 12));
+    const last = Number(store.settings.lastLibraryUpdateAt ?? 0);
+    return !last || now - last >= intervalHours * 60 * 60 * 1000;
+  }
+
+  function msUntilNextLibraryUpdate(now = Date.now()) {
+    if (!store.settings.autoLibraryUpdatesEnabled) return Number.POSITIVE_INFINITY;
+    const intervalHours = Math.max(1, Number(store.settings.libraryUpdateIntervalHours ?? 12));
+    const last = Number(store.settings.lastLibraryUpdateAt ?? 0);
+    if (!last) return 0;
+    return Math.max(0, (last + intervalHours * 60 * 60 * 1000) - now);
+  }
+
+  async function maybeStandbyAfterIdle(reason: string) {
+    if (standbyInFlight) return;
+    if (!idle) return;
+    if (!store.settings.localServerStandbyEnabled) return;
+    const standbyIdleMin = Math.max(1, Number(store.settings.localServerStandbyIdleMin ?? 10));
+    if (Date.now() - lastInteractionAt < standbyIdleMin * 60 * 1000) return;
+    if (msUntilNextLibraryUpdate() <= 5 * 60 * 1000) return;
+    if (!store.runtimeServerUrl || !isLoopbackServerUrl(store.runtimeServerUrl)) return;
+    if (shouldKeepServerAwake()) return;
+    if (automaticLibraryUpdateInFlight) return;
+
+    standbyInFlight = true;
+    try {
+      await maybeStandbyLocalServer({ serverUrl: store.runtimeServerUrl });
+      console.info(`Suwayomi entered standby after ${reason}.`);
+    } catch (error) {
+      console.warn("Could not put Suwayomi in standby:", error);
+    } finally {
+      standbyInFlight = false;
+    }
+  }
+
+  async function runAutomaticLibraryUpdate(reason: "startup" | "focus" | "interval") {
+    if (automaticLibraryUpdateInFlight) return automaticLibraryUpdateInFlight;
+    if (!store.runtimeResolvedLocalProfileId || !store.runtimeServerUrl) return null;
+    if (!nextLibraryUpdateDue()) return null;
+    if (shouldKeepServerAwake() && reason !== "startup") return null;
+
+    automaticLibraryUpdateInFlight = (async () => {
+      const awake = await ensureServerAwakeFor("auto-library-update", {
+        serverUrl: store.runtimeServerUrl,
+        binary: store.settings.serverBinary,
+      });
+      if (!awake) return;
+      await gql(UPDATE_LIBRARY, { categories: undefined });
+      await waitForLibraryUpdateToSettle();
+      updateSettings({ lastLibraryUpdateAt: Date.now() });
+      cache.clearGroup(CACHE_GROUPS.LIBRARY);
+      await preloadLibrarySnapshot();
+      await maybeStandbyAfterIdle("auto-library-update");
+    })()
+      .catch((error) => {
+        console.warn("Automatic library update failed:", error);
+      })
+      .finally(() => {
+        automaticLibraryUpdateInFlight = null;
+      });
+
+    return automaticLibraryUpdateInFlight;
+  }
+
+  async function waitForLibraryUpdateToSettle(timeoutMs = 8 * 60 * 1000) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      const status = await gql<any>(GET_LIBRARY_UPDATE_STATUS).catch(() => null);
+      const jobsInfo = status?.libraryUpdateStatus?.jobsInfo;
+      if (!jobsInfo?.isRunning) return jobsInfo ?? null;
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+    }
+    return null;
   }
 
   function updateRuntimeDiagnosticsBridge() {
@@ -1152,7 +1283,8 @@
 
   function resetIdle() {
     if (idleTimer) clearTimeout(idleTimer);
-    if (idle) return;
+    lastInteractionAt = Date.now();
+    idle = false;
     if (store.navPage === "downloads") return;
     const ms = (store.settings.idleTimeoutMin ?? 5) * 60 * 1000;
     if (ms === 0) return;
@@ -1180,7 +1312,7 @@
         uiMotionActive = false;
         trimIdleMemory();
       }
-    }, 20_000);
+    }, 5_000);
   }
 
   $effect(() => {
@@ -1904,6 +2036,58 @@
     }
   }
 
+  async function finishStartupAfterProbe() {
+    failed = false;
+    serverProbeOk = true;
+    shellReady = true;
+    shellReadyAt = Date.now();
+    startupSplashVisible = false;
+    applyStartupLandingPage();
+    await applyPendingAuditAethonBackupPlan().catch((error) => {
+      console.warn("Unified backup planning audit failed:", error);
+    });
+    await applyPendingAuditBooksRestore().catch((error) => {
+      console.warn("Books restore audit failed:", error);
+    });
+    await applyPendingAuditMangaRestore().catch((error) => {
+      console.warn("Manga restore audit failed:", error);
+    });
+    await applyPendingAuditNovelsRestore().catch((error) => {
+      console.warn("Novels restore audit failed:", error);
+    });
+    applyPendingRestoreLaunchIntent();
+    if (pendingAuditOpen) {
+      const target = pendingAuditOpen;
+      const auditMangaId = pendingAuditMangaId;
+      const auditChapterId = pendingAuditChapterId;
+      const auditBookId = pendingAuditBookId;
+      pendingAuditOpen = null;
+      pendingAuditMangaId = null;
+      pendingAuditChapterId = null;
+      pendingAuditBookId = null;
+      setTimeout(() => {
+        if (target === "settings") openAuditSettings();
+        if (target === "settings-security") openAuditSettings("security");
+        if (target === "library") openAuditLibrary();
+        if (target === "manga") void openAuditFirstManga();
+        if (target === "reader") void openAuditFirstReader(auditMangaId, auditChapterId);
+        if (target === "books") openAuditBooksLibrary();
+        if (target === "book") void openAuditFirstBook(auditBookId);
+        if (target === "book-reader") void openAuditFirstBookReader(auditBookId);
+      }, 250);
+    }
+  }
+
+  function canBootFromLibrarySnapshot() {
+    if (!store.settings.localServerStandbyEnabled) return false;
+    if (!store.runtimeResolvedLocalProfileId || !store.runtimeServerUrl) return false;
+    if (runtimeAttachOnly) return false;
+    return Boolean(loadLibrarySnapshot({
+      profileId: store.runtimeResolvedLocalProfileId,
+      serverUrl: store.runtimeServerUrl,
+    }));
+  }
+
   function startProbe() {
     cancelProbe = false;
     failed      = false;
@@ -1914,51 +2098,19 @@
 
     async function probe() {
       if (cancelProbe) return;
+      if (canBootFromLibrarySnapshot() && !nextLibraryUpdateDue()) {
+        cancelProbe = true;
+        await finishStartupAfterProbe();
+        void preloadLibrarySnapshot();
+        return;
+      }
       tries++;
 
       for (const base of getProbeBases()) {
         try {
           const healthy = await invoke<boolean>("probe_server_health", { serverUrl: base });
           if (healthy && !cancelProbe) {
-              failed = false;
-              serverProbeOk = true;
-              shellReady = true;
-              shellReadyAt = Date.now();
-              startupSplashVisible = false;
-              applyStartupLandingPage();
-              await applyPendingAuditAethonBackupPlan().catch((error) => {
-                console.warn("Unified backup planning audit failed:", error);
-              });
-            await applyPendingAuditBooksRestore().catch((error) => {
-              console.warn("Books restore audit failed:", error);
-            });
-            await applyPendingAuditMangaRestore().catch((error) => {
-              console.warn("Manga restore audit failed:", error);
-            });
-            await applyPendingAuditNovelsRestore().catch((error) => {
-              console.warn("Novels restore audit failed:", error);
-            });
-              applyPendingRestoreLaunchIntent();
-              if (pendingAuditOpen) {
-              const target = pendingAuditOpen;
-              const auditMangaId = pendingAuditMangaId;
-              const auditChapterId = pendingAuditChapterId;
-              const auditBookId = pendingAuditBookId;
-              pendingAuditOpen = null;
-              pendingAuditMangaId = null;
-              pendingAuditChapterId = null;
-              pendingAuditBookId = null;
-              setTimeout(() => {
-                if (target === "settings") openAuditSettings();
-                if (target === "settings-security") openAuditSettings("security");
-                if (target === "library") openAuditLibrary();
-                if (target === "manga") void openAuditFirstManga();
-                if (target === "reader") void openAuditFirstReader(auditMangaId, auditChapterId);
-                if (target === "books") openAuditBooksLibrary();
-                if (target === "book") void openAuditFirstBook(auditBookId);
-                if (target === "book-reader") void openAuditFirstBookReader(auditBookId);
-              }, 250);
-            }
+            await finishStartupAfterProbe();
             return;
           }
         } catch {}
@@ -2031,6 +2183,10 @@
     updatePageBackgroundState();
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("storage", refreshAppReadingStateFromPersistence, { passive: true });
+    libraryUpdateInterval = setInterval(() => {
+      void runAutomaticLibraryUpdate("interval");
+      void maybeStandbyAfterIdle("periodic-idle-check");
+    }, 60_000);
 
     let cancelled = false;
     let unlistenResize = () => {};
@@ -2140,6 +2296,7 @@
             updatePageBackgroundState();
             if (event.payload) {
               resetIdle();
+              void runAutomaticLibraryUpdate("focus");
             }
           }).catch((error) => {
             console.warn("Window focus listener failed during startup:", error);
@@ -2160,10 +2317,15 @@
           const parsed = new URL(effectiveServerUrl);
           const host = parsed.hostname.toLowerCase();
           const isLoopback = host === "127.0.0.1" || host === "localhost";
-          const launchProfile = (store.runtimeServerLabel ?? launchTarget?.profileLabelOverride ?? "").trim().toUpperCase();
+          const hasSnapshot = Boolean(loadLibrarySnapshot({
+            profileId: store.runtimeResolvedLocalProfileId,
+            serverUrl: effectiveServerUrl,
+          }));
           shouldAutoStartServer =
             !runtimeAttachOnly &&
-            (launchProfile === "MAIN" || (isLoopback && store.settings.autoStartServer));
+            isLoopback &&
+            store.settings.autoStartServer &&
+            (!store.settings.localServerStandbyEnabled || !hasSnapshot || nextLibraryUpdateDue());
         } catch {
           shouldAutoStartServer = false;
         }
@@ -2190,6 +2352,7 @@
           }
         });
       }
+      void runAutomaticLibraryUpdate("startup");
 
       ensureProbeStarted();
 
@@ -2224,6 +2387,7 @@
       destroyRpc();
       if (idleTimer) clearTimeout(idleTimer);
       if (pollInterval) clearInterval(pollInterval);
+      if (libraryUpdateInterval) clearInterval(libraryUpdateInterval);
       unlistenDownload?.();
       unlistenSyncdReplicationState?.();
       unlistenSyncdReplicationError?.();
@@ -2235,6 +2399,37 @@
 
   $effect(() => {
     updateRuntimeDiagnosticsBridge();
+  });
+
+  $effect(() => {
+    if (!shellReady || isNovelRuntimeHostWindow) return;
+    if (!store.runtimeServerUrl) return;
+    const needsServer =
+      store.navPage === "search"
+      || store.navPage === "downloads"
+      || Boolean(store.activeManga)
+      || Boolean(store.activeChapter)
+      || Boolean(store.activeSource);
+    if (!needsServer) return;
+    const reason = store.activeChapter
+      ? "reader"
+      : store.activeManga
+        ? "series-detail"
+        : store.navPage === "downloads"
+          ? "downloads"
+          : "browse";
+    void ensureServerAwakeFor(reason, {
+      serverUrl: store.runtimeServerUrl,
+      binary: store.settings.serverBinary,
+    }).catch((error) => {
+      console.warn("Could not wake Suwayomi for active surface:", error);
+    });
+  });
+
+  $effect(() => {
+    if (!shellReady || isNovelRuntimeHostWindow) return;
+    if (!idle) return;
+    void maybeStandbyAfterIdle("ui-idle");
   });
 
   $effect(() => {
@@ -2531,6 +2726,10 @@
   :global([data-aethon-motion="idle"] .aethon-app-shell .settings-theme-preview__tile),
   :global([data-aethon-motion="idle"] .aethon-app-shell .settings-theme-preview__glow),
   :global([data-aethon-motion="idle"] .aethon-app-shell .anim-branch) {
+    animation-play-state: paused !important;
+  }
+
+  :global([data-aethon-motion="idle"] .aethon-app-shell *:not(.anim-spin)) {
     animation-play-state: paused !important;
   }
 

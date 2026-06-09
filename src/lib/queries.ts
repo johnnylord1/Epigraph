@@ -115,6 +115,36 @@ export const FETCH_CHAPTER_PAGES = `
   }
 `;
 
+export const UPDATE_LIBRARY = `
+  mutation UpdateLibrary($categories: [Int!]) {
+    updateLibrary(input: { categories: $categories }) {
+      updateStatus {
+        jobsInfo {
+          isRunning
+          finishedJobs
+          totalJobs
+          skippedCategoriesCount
+          skippedMangasCount
+        }
+      }
+    }
+  }
+`;
+
+export const GET_LIBRARY_UPDATE_STATUS = `
+  query LibraryUpdateStatus {
+    libraryUpdateStatus {
+      jobsInfo {
+        isRunning
+        finishedJobs
+        totalJobs
+        skippedCategoriesCount
+        skippedMangasCount
+      }
+    }
+  }
+`;
+
 export const UPDATE_MANGA = `
   mutation UpdateManga($id: Int!, $inLibrary: Boolean) {
     updateManga(input: { id: $id, patch: { inLibrary: $inLibrary } }) {

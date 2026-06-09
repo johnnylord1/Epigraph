@@ -416,6 +416,11 @@ export interface Settings {
   serverUrl:               string;
   serverBinary:            string;
   autoStartServer:         boolean;
+  autoLibraryUpdatesEnabled: boolean;
+  libraryUpdateIntervalHours: number;
+  localServerStandbyEnabled: boolean;
+  localServerStandbyIdleMin: number;
+  lastLibraryUpdateAt?:    number;
   preferredExtensionLang:  string;
   keybinds:                Keybinds;
   idleTimeoutMin?:         number;
@@ -528,6 +533,11 @@ export const DEFAULT_SETTINGS: Settings = {
   serverUrl:              "http://127.0.0.1:4567",
   serverBinary:           "",
   autoStartServer:        true,
+  autoLibraryUpdatesEnabled: true,
+  libraryUpdateIntervalHours: 12,
+  localServerStandbyEnabled: true,
+  localServerStandbyIdleMin: 10,
+  lastLibraryUpdateAt:    undefined,
   preferredExtensionLang: "en",
   keybinds:               DEFAULT_KEYBINDS,
   idleTimeoutMin:         5,

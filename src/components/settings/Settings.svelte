@@ -305,6 +305,11 @@
     return IDLE_TIMEOUT_LABELS[key] ?? `${value ?? 5} min`;
   }
 
+  function libraryUpdateIntervalLabel(value: number | null | undefined): string {
+    const hours = Number(value ?? 12);
+    return hours === 1 ? "Every hour" : `Every ${hours} hours`;
+  }
+
   function pageStyleLabel(value: Settings["pageStyle"]): string {
     const normalized = value === "double" ? "single" : value;
     return PAGE_STYLE_LABELS[normalized] ?? PAGE_STYLE_LABELS.single;
@@ -3311,6 +3316,94 @@
                     aria-label="Auto-start local server"
                     onclick={() => updateSettings({ autoStartServer: !store.settings.autoStartServer })}
                   ></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Automatic library updates</p>
+                    <p class="settings-mini-row__hint">Wake the local server on schedule, sync new chapters, then return to standby when safe.</p>
+                  </div>
+                  <button
+                    class="settings-toggle"
+                    class:is-on={store.settings.autoLibraryUpdatesEnabled}
+                    type="button"
+                    role="switch"
+                    aria-checked={store.settings.autoLibraryUpdatesEnabled}
+                    aria-label="Automatic library updates"
+                    onclick={() => updateSettings({ autoLibraryUpdatesEnabled: !store.settings.autoLibraryUpdatesEnabled })}
+                  ></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Library update interval</p>
+                    <p class="settings-mini-row__hint">How often Aethon checks your comics library for new chapters.</p>
+                  </div>
+                  <div class="select-wrap" id="general-library-update-interval">
+                    <button class="select-btn" type="button" onclick={() => toggleSelect("general-library-update-interval")}>
+                      <span>{libraryUpdateIntervalLabel(store.settings.libraryUpdateIntervalHours)}</span>
+                      <svg class="select-caret" class:open={selectOpen === "general-library-update-interval"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
+                    </button>
+                    {#if selectOpen === "general-library-update-interval"}
+                      <div class="select-menu">
+                        {#each [6, 12, 24, 48] as hours}
+                          <button
+                            class="select-option"
+                            class:active={(store.settings.libraryUpdateIntervalHours ?? 12) === hours}
+                            type="button"
+                            onclick={() => {
+                              updateSettings({ libraryUpdateIntervalHours: hours });
+                              selectOpen = null;
+                            }}
+                          >
+                            {libraryUpdateIntervalLabel(hours)}
+                          </button>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Local server standby</p>
+                    <p class="settings-mini-row__hint">Let Aethon stop Suwayomi after idle while Library can use its local snapshot.</p>
+                  </div>
+                  <button
+                    class="settings-toggle"
+                    class:is-on={store.settings.localServerStandbyEnabled}
+                    type="button"
+                    role="switch"
+                    aria-checked={store.settings.localServerStandbyEnabled}
+                    aria-label="Local server standby"
+                    onclick={() => updateSettings({ localServerStandbyEnabled: !store.settings.localServerStandbyEnabled })}
+                  ></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Standby after idle</p>
+                    <p class="settings-mini-row__hint">Minimum idle time before the embedded server may sleep.</p>
+                  </div>
+                  <div class="select-wrap" id="general-server-standby-idle">
+                    <button class="select-btn" type="button" onclick={() => toggleSelect("general-server-standby-idle")}>
+                      <span>{idleTimeoutLabel(store.settings.localServerStandbyIdleMin)}</span>
+                      <svg class="select-caret" class:open={selectOpen === "general-server-standby-idle"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
+                    </button>
+                    {#if selectOpen === "general-server-standby-idle"}
+                      <div class="select-menu">
+                        {#each [5, 10, 15, 30] as minutes}
+                          <button
+                            class="select-option"
+                            class:active={(store.settings.localServerStandbyIdleMin ?? 10) === minutes}
+                            type="button"
+                            onclick={() => {
+                              updateSettings({ localServerStandbyIdleMin: minutes });
+                              selectOpen = null;
+                            }}
+                          >
+                            {idleTimeoutLabel(minutes)}
+                          </button>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">

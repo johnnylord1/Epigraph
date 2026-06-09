@@ -76,6 +76,12 @@ export interface LibraryCardProgressVM {
   percent?: number;
 }
 
+export interface LibrarySourceMetricBannerVM {
+  flagLabel: string;
+  downloadedCount: number;
+  newCount: number;
+}
+
 export interface LibraryCardVM {
   id: string;
   title: string;
@@ -83,6 +89,7 @@ export interface LibraryCardVM {
   coverSrc: string | null;
   coverFit: "cover" | "contain";
   badges: LibraryCardBadgeVM[];
+  sourceMetricBanner?: LibrarySourceMetricBannerVM | null;
   metaChips: string[];
   progress?: LibraryCardProgressVM | null;
   selectable: boolean;

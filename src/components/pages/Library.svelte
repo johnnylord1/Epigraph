@@ -40,7 +40,9 @@
     GET_CATEGORIES_WITH_MANGA_IDS,
     GET_CHAPTERS,
     GET_LIBRARY,
+    GET_LIBRARY_UPDATE_STATUS,
     GET_LIBRARY_TRACKING_SUMMARY,
+    UPDATE_LIBRARY,
     UPDATE_MANGA,
     DELETE_DOWNLOADED_CHAPTERS,
     DEQUEUE_DOWNLOAD,
@@ -51,11 +53,12 @@
   } from "../../lib/queries";
   import type { Category, Chapter, Manga } from "../../lib/types";
   import {
-  checkAndMarkCompleted as storeCheckAndMarkCompleted,
-  setActiveNovelDetail,
-  setActiveManga,
-  setActiveBookId,
-  setCategories,
+    addToast,
+    checkAndMarkCompleted as storeCheckAndMarkCompleted,
+    setActiveNovelDetail,
+    setActiveManga,
+    setActiveBookId,
+    setCategories,
     setLibraryFilter,
     setLibrarySection,
     setLibraryMangaSnapshot,
@@ -69,6 +72,13 @@
     type LibraryStatusFilter,
     type Settings,
   } from "../../store/state.svelte";
+  import {
+    buildCategoryMembers,
+    loadLibrarySnapshot,
+    saveLibrarySnapshot,
+    type PersistedLibrarySnapshot,
+  } from "../../lib/library/snapshot";
+  import { ensureServerAwakeFor } from "../../lib/serverLifecycle";
   import BooksLibraryBody from "../library/BooksLibraryBody.svelte";
   import ComicsLibraryBody from "../library/ComicsLibraryBody.svelte";
   import LibraryToolbar from "../library/LibraryToolbar.svelte";
@@ -96,6 +106,7 @@
   let dragTabId = $state<string | null>(null);
   let dropTargetTabId = $state<string | null>(null);
   let loadDataInFlight = false;
+  let manualRefreshInFlight = $state(false);
   let libraryLoadRetryTimer: ReturnType<typeof setTimeout> | null = null;
   let libraryLoadRetryCount = 0;
   let lastLoadedScopeKey: string | null = null;
@@ -254,6 +265,49 @@
     );
   }
 
+  function currentSnapshotScope() {
+    return {
+      profileId: store.runtimeResolvedLocalProfileId,
+      serverUrl: store.runtimeServerUrl,
+    };
+  }
+
+  function categoriesWithSnapshotMembers(snapshot: PersistedLibrarySnapshot) {
+    const mangaById = new Map(snapshot.mangas.map((manga) => [manga.id, manga]));
+    return snapshot.categories.map((category) => {
+      const ids = snapshot.categoryMembers[String(category.id)] ?? [];
+      if (!ids.length) return category;
+      return {
+        ...category,
+        mangas: {
+          nodes: ids.map((id) => mangaById.get(id)).filter((manga): manga is Manga => Boolean(manga)),
+        },
+      };
+    });
+  }
+
+  function hydrateFromPersistedSnapshot() {
+    const snapshot = loadLibrarySnapshot(currentSnapshotScope());
+    if (!snapshot) return false;
+    setLibraryMangaSnapshot(normalizeLoadedLibrary(snapshot.mangas));
+    setCategories(normalizeCategories(categoriesWithSnapshotMembers(snapshot)));
+    store.setLibraryTrackingSummarySnapshot(snapshot.trackingSummary as any);
+    return true;
+  }
+
+  function persistCurrentLibrarySnapshot(categories = store.categories) {
+    if (!store.runtimeResolvedLocalProfileId || !store.runtimeServerUrl) return;
+    saveLibrarySnapshot(currentSnapshotScope(), {
+      mangas: store.libraryMangaSnapshot,
+      categories: normalizeCategories(categories.map((category) => {
+        const { mangas: _mangas, ...summary } = category;
+        return summary;
+      })),
+      categoryMembers: buildCategoryMembers(categories),
+      trackingSummary: store.libraryTrackingSummarySnapshot,
+    });
+  }
+
   function loadCategoryMembersSnapshot() {
     return cache.get(
       CATEGORY_MEMBERS_CACHE_KEY,
@@ -275,6 +329,7 @@
         cache.clear(LEGACY_CATEGORIES_WITH_MANGA_CACHE_KEY);
         const categories = normalizeCategories(await loadCategoryMembersSnapshot());
         setCategories(categories);
+        persistCurrentLibrarySnapshot(categories);
         return categories;
       } finally {
         hydrateCategoriesInFlight = null;
@@ -345,6 +400,7 @@
       setLibraryMangaSnapshot(normalizeLoadedLibrary(nodes));
       setCategories(normalizeCategories(categories));
       store.setLibraryTrackingSummarySnapshot(trackingSummary);
+      persistCurrentLibrarySnapshot(normalizeCategories(categories));
       void hydrateCategoryMembers(false).catch(console.error);
       error = null;
       if (nodes.length > 0 || categories.length > 0 || hasWarmLibrarySnapshot()) {
@@ -364,6 +420,10 @@
       }
 
     } catch (loadError: any) {
+      if (hydrateFromPersistedSnapshot()) {
+        error = null;
+        return;
+      }
       trackedCompletedIds = new Set();
       trackedChapterTotalsByMangaId = new Map();
       error = null;
@@ -391,6 +451,16 @@
     const trackingSummary = store.libraryTrackingSummarySnapshot;
     trackedCompletedIds = collectTrackedCompletedMangaIds(trackingSummary);
     trackedChapterTotalsByMangaId = collectTrackedChapterTotalsByMangaId(trackingSummary);
+  });
+
+  $effect(() => {
+    const scopeKey = libraryBootstrapScopeKey;
+    if (!store.runtimeResolvedLocalProfileId || !store.runtimeServerUrl) return;
+    if (store.libraryMangaSnapshot.length > 0 || store.categories.length > 0) return;
+    scopeKey;
+    untrack(() => {
+      hydrateFromPersistedSnapshot();
+    });
   });
 
   $effect(() => {
@@ -776,6 +846,59 @@
     updateSettings({ libraryShowCardOutline: value });
   }
 
+  function manualUpdateCategoryIds() {
+    if (store.librarySection !== "comics") return undefined;
+    const id = Number(store.libraryFilter);
+    return Number.isFinite(id) && id > 0 ? [id] : undefined;
+  }
+
+  async function refreshLibraryManually() {
+    if (manualRefreshInFlight) return;
+    manualRefreshInFlight = true;
+    try {
+      if (store.librarySection === "comics") {
+        const awake = await ensureServerAwakeFor("manual-library-update", {
+          serverUrl: store.runtimeServerUrl,
+          binary: store.settings.serverBinary,
+        });
+        if (!awake) throw new Error("Suwayomi is not reachable.");
+
+        await gql(UPDATE_LIBRARY, { categories: manualUpdateCategoryIds() });
+        await waitForLibraryUpdateToSettle();
+        updateSettings({ lastLibraryUpdateAt: Date.now() });
+        cache.clearGroup(CACHE_GROUPS.LIBRARY);
+        await loadData();
+        addToast({ kind: "success", title: "Library updated", body: "Aethon refreshed your comics library." });
+      } else {
+        novelsLibraryState = await loadNovelLibraryState({
+          profileId: store.runtimeResolvedLocalProfileId,
+          serverUrl: store.runtimeServerUrl,
+        });
+        addToast({ kind: "success", title: "Library refreshed", body: "Aethon refreshed local books and novels." });
+      }
+    } catch (refreshError) {
+      console.error(refreshError);
+      addToast({
+        kind: "error",
+        title: "Could not update library",
+        body: refreshError instanceof Error ? refreshError.message : "Aethon could not reach Suwayomi.",
+      });
+    } finally {
+      manualRefreshInFlight = false;
+    }
+  }
+
+  async function waitForLibraryUpdateToSettle(timeoutMs = 8 * 60 * 1000) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      const status = await gql<any>(GET_LIBRARY_UPDATE_STATUS).catch(() => null);
+      const jobsInfo = status?.libraryUpdateStatus?.jobsInfo;
+      if (!jobsInfo?.isRunning) return jobsInfo ?? null;
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+    }
+    return null;
+  }
+
   async function addToLibrary(manga: Manga) {
     await gql(UPDATE_MANGA, { id: manga.id, inLibrary: true }).catch(console.error);
     setLibraryMangaSnapshot(allManga.map((entry) => (entry.id === manga.id ? { ...entry, inLibrary: true } : entry)));
@@ -921,6 +1044,8 @@
     onPreferredColumnsChange={handlePreferredColumnsChange}
     onShowProgressChange={handleShowProgressChange}
     onShowOutlineChange={handleShowOutlineChange}
+    onRefresh={refreshLibraryManually}
+    refreshPending={manualRefreshInFlight}
   >
     {#snippet hero()}
       <section class="library-hero">
@@ -1001,6 +1126,8 @@
                 onPreferredColumnsChange={handlePreferredColumnsChange}
                 onShowProgressChange={handleShowProgressChange}
                 onShowOutlineChange={handleShowOutlineChange}
+                onRefresh={refreshLibraryManually}
+                refreshPending={manualRefreshInFlight}
                 showSearch={false}
               />
             </div>
