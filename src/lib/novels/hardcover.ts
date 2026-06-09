@@ -263,6 +263,18 @@ export function disconnectHardcover(scopeInput: NovelRepositoryScopeInput): Hard
   }, scopeInput);
 }
 
+export function getHardcoverRateLimitRemainingMs(scopeInput: NovelRepositoryScopeInput): number {
+  const token = loadHardcoverState(scopeInput).auth.token;
+  if (!token) return 0;
+  const throttleUntil = hardcoverRateLimitUntilByToken.get(hardcoverThrottleKey(token)) ?? 0;
+  return Math.max(0, throttleUntil - Date.now());
+}
+
+export function isHardcoverRateLimitError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error instanceof HardcoverRateLimitError || /http 429|throttled|rate limit/i.test(error.message);
+}
+
 export async function validateHardcoverToken(token: string): Promise<{ userId: number | null; username: string | null }> {
   const normalizedToken = normalizeHardcoverAuthToken(token);
   const data = await hardcoverGraphql<{
@@ -647,12 +659,10 @@ async function enrichHardcoverBookResults(
           subtitle
           slug
           cached_image
-          isbns
           description
           release_year
           rating
           ratings_count
-          author_names
           contributions {
             author { name }
           }
@@ -962,10 +972,6 @@ function rememberHardcoverRateLimit(token: string, error: Error): void {
     ? error.retryAtMs
     : Date.now() + HARDCOVER_RATE_LIMIT_COOLDOWN_MS;
   hardcoverRateLimitUntilByToken.set(hardcoverThrottleKey(token), retryAtMs);
-}
-
-function isHardcoverRateLimitError(error: Error): boolean {
-  return error instanceof HardcoverRateLimitError || /http 429|throttled|rate limit/i.test(error.message);
 }
 
 function isHardcoverAuthorizationError(error: Error): boolean {
