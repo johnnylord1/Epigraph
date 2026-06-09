@@ -5,6 +5,7 @@ export type SettingsStorageRuntime = {
   buildAethonBackupContainer: typeof import("../../lib/backup/aethonBackup").buildAethonBackupContainer;
   buildAethonRestorePlan: typeof import("../../lib/backup/aethonRestorePlanner").buildAethonRestorePlan;
   buildAethonAppPayload: typeof import("../../lib/backup/appBackup").buildAethonAppPayload;
+  parseAethonAppPayload: typeof import("../../lib/backup/appBackup").parseAethonAppPayload;
   buildAethonBooksSnapshotFromLibraryState: typeof import("../../lib/backup/booksBackup").buildAethonBooksSnapshotFromLibraryState;
   buildAethonBooksPayload: typeof import("../../lib/backup/booksBackup").buildAethonBooksPayload;
   restoreAethonBooksPayload: typeof import("../../lib/backup/booksBackup").restoreAethonBooksPayload;
@@ -74,6 +75,7 @@ export function loadSettingsStorageRuntime(): Promise<SettingsStorageRuntime> {
       buildAethonBackupContainer: aethonBackup.buildAethonBackupContainer,
       buildAethonRestorePlan: restorePlanner.buildAethonRestorePlan,
       buildAethonAppPayload: appBackup.buildAethonAppPayload,
+      parseAethonAppPayload: appBackup.parseAethonAppPayload,
       buildAethonBooksSnapshotFromLibraryState: booksBackup.buildAethonBooksSnapshotFromLibraryState,
       buildAethonBooksPayload: booksBackup.buildAethonBooksPayload,
       restoreAethonBooksPayload: booksBackup.restoreAethonBooksPayload,

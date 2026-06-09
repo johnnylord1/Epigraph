@@ -18,7 +18,6 @@
   } from "../../lib/localProfiles";
   import { getEffectiveServerUrl } from "../../lib/serverTarget";
   import type { AethonBackupPayloadBuildInput } from "../../lib/backup/aethonBackup";
-  import { parseAethonAppPayload } from "../../lib/backup/appBackup";
   import type {
     AethonPayloadRestorePlan,
     AethonRestorePlan,
@@ -2102,7 +2101,7 @@
         }
 
         if (kind === "app") {
-          const restored = await parseAethonAppPayload(new Uint8Array(bytes));
+          const restored = await storageRuntime.parseAethonAppPayload(new Uint8Array(bytes));
           updateSettings({
             defaultLocalProfileId: restored.profile.defaultLocalProfileId,
           });

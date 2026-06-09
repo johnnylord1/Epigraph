@@ -1,7 +1,5 @@
 <script lang="ts">
   import { onDestroy, onMount, tick, untrack } from "svelte";
-  import ePub from "epubjs";
-  import * as pdfjsLib from "pdfjs-dist";
   import {
     ArrowLeft,
     ArrowRight,
@@ -48,12 +46,24 @@
   import NocturneState from "../shared/NocturneState.svelte";
   import ReaderHud from "./ReaderHud.svelte";
 
-  configurePdfJsWorker(pdfjsLib);
-
   const ZOOM_STEP = 0.1;
   const ZOOM_MIN = 0.5;
   const ZOOM_MAX = 4;
   const MAX_PDF_CANVAS_PIXELS = 16_000_000;
+  let epubFactoryPromise: Promise<typeof import("epubjs").default> | null = null;
+  let pdfJsPromise: Promise<typeof import("pdfjs-dist")> | null = null;
+
+  function loadEpubFactory() {
+    epubFactoryPromise ??= import("epubjs").then((module) => module.default);
+    return epubFactoryPromise;
+  }
+
+  async function loadPdfJs() {
+    const pdfjsLib = await (pdfJsPromise ??= import("pdfjs-dist"));
+    configurePdfJsWorker(pdfjsLib);
+    return pdfjsLib;
+  }
+
   const activeBook = $derived(
     (store.activeBookReaderId && store.books.find((book) => book.id === store.activeBookReaderId))
     ?? (store.activeBookReaderId ? peekPersistedBookEntry(store.activeBookReaderId) : null),
@@ -463,6 +473,8 @@
       sourceUrl,
       classification: currentProbe?.classification ?? null,
     });
+    const ePub = await loadEpubFactory();
+    if (token !== loadToken || activeBook.subtype !== "epub") return;
     const book = ePub(sourceUrl);
     const rendition = book.renderTo(hostEl, {
       width: "100%",
@@ -614,6 +626,8 @@
       sourceUrl,
       classification: currentProbe?.classification ?? null,
     });
+    const pdfjsLib = await loadPdfJs();
+    if (token !== loadToken || activeBook.subtype !== "pdf") return;
     const pdf = await pdfjsLib.getDocument(createPdfDocumentInit(sourceUrl)).promise;
     if (token !== loadToken) {
       await pdf.destroy();

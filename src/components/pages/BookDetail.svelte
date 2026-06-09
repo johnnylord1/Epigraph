@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onDestroy, tick, untrack } from "svelte";
-  import ePub from "epubjs";
   import {
     BookOpen,
     BookmarkSimple,
@@ -57,6 +56,13 @@
   import SeriesDetailV3Shell from "../shared/SeriesDetailV3Shell.svelte";
 
   const SECTIONS_PER_PAGE = 25;
+  let epubFactoryPromise: Promise<typeof import("epubjs").default> | null = null;
+
+  function loadEpubFactory() {
+    epubFactoryPromise ??= import("epubjs").then((module) => module.default);
+    return epubFactoryPromise;
+  }
+
   type SectionFilter = "all" | "unread" | "read" | "bookmarked" | "current";
   type BookSectionView = BookSectionSummaryItem & {
     sectionNumber: number;
@@ -469,6 +475,7 @@
         origin: source.origin,
         classification: currentPreviewProbe?.classification ?? null,
       });
+      const ePub = await loadEpubFactory();
       const book = ePub(source.sourceUrl);
       const rendition = book.renderTo(host, {
         width: "100%",

@@ -34,6 +34,7 @@ const { invokeMock, tauriFetchMock, gqlMock, loadSettingsStorageRuntimeMock } = 
     buildAethonBackupContainer: vi.fn(async () => ({ bytes: new Uint8Array() })),
     buildAethonRestorePlan: vi.fn(async () => ({ payloads: [], summary: { summaryLabel: "", summaryBody: "" }, containerIssues: [], executionBlockedReason: null })),
     buildAethonAppPayload: vi.fn(() => ({})),
+    parseAethonAppPayload: vi.fn(async () => ({})),
     buildAethonBooksSnapshotFromLibraryState: vi.fn((state) => state),
     buildAethonBooksPayload: vi.fn(async () => ({})),
     restoreAethonBooksPayload: vi.fn(async () => ({ books: [], bookProgress: [], bookBookmarks: [], booksCategories: [], booksCategoryAssignments: {}, issues: [], exportMode: "full" })),
