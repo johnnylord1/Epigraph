@@ -108,7 +108,8 @@
   let loadDataInFlight = false;
   let manualRefreshInFlight = $state(false);
   let coverWakeInFlight: Promise<void> | null = null;
-  let coverRecoveryKey = $state(0);
+  let coverRecoveryVersions = $state(new Map<number, number>());
+  const pendingCoverRecoveryIds = new Set<number>();
   let libraryLoadRetryTimer: ReturnType<typeof setTimeout> | null = null;
   let libraryLoadRetryCount = 0;
   let lastLoadedScopeKey: string | null = null;
@@ -890,15 +891,27 @@
     }
   }
 
-  function wakeServerForLibraryCovers() {
+  function bumpCoverRecoveryVersions(mangaIds: Iterable<number>) {
+    const next = new Map(coverRecoveryVersions);
+    for (const mangaId of mangaIds) {
+      next.set(mangaId, (next.get(mangaId) ?? 0) + 1);
+    }
+    coverRecoveryVersions = next;
+  }
+
+  function wakeServerForLibraryCovers(mangaId: number) {
     if (store.librarySection !== "comics") return;
+    pendingCoverRecoveryIds.add(mangaId);
     if (coverWakeInFlight) return;
     coverWakeInFlight = (async () => {
       const awake = await ensureServerAwakeFor("library-covers", {
         serverUrl: store.runtimeServerUrl,
         binary: store.settings.serverBinary,
       });
-      if (awake) coverRecoveryKey += 1;
+      if (awake) {
+        bumpCoverRecoveryVersions(pendingCoverRecoveryIds);
+        pendingCoverRecoveryIds.clear();
+      }
     })()
       .catch((coverError) => {
         console.warn("Could not wake Suwayomi for library covers:", coverError);
@@ -1189,7 +1202,7 @@
         onCreateAndAssign={createAndAssign}
         onCreateCategory={createCategoryOnly}
         onCoverErrorDetected={wakeServerForLibraryCovers}
-        coverRecoveryKey={coverRecoveryKey}
+        coverRecoveryVersions={coverRecoveryVersions}
       />
     {/if}
   </LibraryShell>

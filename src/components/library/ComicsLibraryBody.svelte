@@ -36,8 +36,8 @@
     onToggleCategory?: (manga: Manga, category: Category) => Promise<void> | void;
     onCreateAndAssign?: (manga: Manga) => Promise<void> | void;
     onCreateCategory?: () => Promise<void> | void;
-    onCoverErrorDetected?: () => void;
-    coverRecoveryKey?: number;
+    onCoverErrorDetected?: (mangaId: number) => void;
+    coverRecoveryVersions?: ReadonlyMap<number, number>;
   };
 
   let {
@@ -60,7 +60,7 @@
     onCreateAndAssign = async () => {},
     onCreateCategory = async () => {},
     onCoverErrorDetected = () => {},
-    coverRecoveryKey = 0,
+    coverRecoveryVersions = new Map(),
   }: Props = $props();
 
   let contentEl: HTMLDivElement | null = $state(null);
@@ -84,6 +84,7 @@
   const coverSessionSeed = Math.random().toString(36).slice(2);
   const coverRetryTimers = new Map<number, ReturnType<typeof setTimeout>>();
   const coverRecoveryTimers = new Map<number, ReturnType<typeof setTimeout>>();
+  let lastCoverRecoveryVersions = new Map<number, number>();
 
   const mangaByCardId = $derived(
     new Map(mangas.map((manga) => [createComicLibraryCardId(manga.id), manga])),
@@ -208,7 +209,7 @@
   function handleCoverError(cardId: string) {
     const manga = mangaByCardId.get(cardId);
     if (!manga || failedCoverIds.has(manga.id)) return;
-    onCoverErrorDetected();
+    onCoverErrorDetected(manga.id);
 
     const attempts = coverRetryCounts.get(manga.id) ?? 0;
     if (attempts < 2) {
@@ -291,7 +292,7 @@
     const params = [
       `aethon_cover_sig=${sig}`,
       `aethon_cover_session=${coverSessionSeed}`,
-      `aethon_cover_recovery=${coverRecoveryKey}`,
+      `aethon_cover_recovery=${coverRecoveryVersions.get(manga.id) ?? 0}`,
     ];
     if (retry > 0) params.push(`aethon_cover_retry=${retry}`);
     return `${base}${base.includes("?") ? "&" : "?"}${params.join("&")}`;
@@ -390,13 +391,33 @@
   });
 
   $effect(() => {
-    coverRecoveryKey;
-    for (const timer of coverRetryTimers.values()) clearTimeout(timer);
-    for (const timer of coverRecoveryTimers.values()) clearTimeout(timer);
-    coverRetryTimers.clear();
-    coverRecoveryTimers.clear();
-    failedCoverIds = new Set();
-    coverRetryCounts = new Map();
+    const changedIds: number[] = [];
+    for (const [mangaId, version] of coverRecoveryVersions) {
+      if ((lastCoverRecoveryVersions.get(mangaId) ?? 0) !== version) {
+        changedIds.push(mangaId);
+      }
+    }
+    lastCoverRecoveryVersions = new Map(coverRecoveryVersions);
+    if (!changedIds.length) return;
+
+    const nextFailures = new Set(failedCoverIds);
+    const nextRetries = new Map(coverRetryCounts);
+    for (const mangaId of changedIds) {
+      const retryTimer = coverRetryTimers.get(mangaId);
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+        coverRetryTimers.delete(mangaId);
+      }
+      const recoveryTimer = coverRecoveryTimers.get(mangaId);
+      if (recoveryTimer) {
+        clearTimeout(recoveryTimer);
+        coverRecoveryTimers.delete(mangaId);
+      }
+      nextFailures.delete(mangaId);
+      nextRetries.set(mangaId, (nextRetries.get(mangaId) ?? 0) + 1);
+    }
+    failedCoverIds = nextFailures;
+    coverRetryCounts = nextRetries;
   });
 
   $effect(() => {
