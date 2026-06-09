@@ -311,6 +311,7 @@
   let syncdListenersPromise: Promise<void> | null = null;
   const syncdAppliedMarks = new Map<string, number>();
   let pageHidden = $state(false);
+  let appWindowFocused = true;
   let bootStartedAt = Date.now();
   let shellReadyAt = $state<number | null>(null);
   let lastDownloadEventAt = $state(Date.now());
@@ -1986,8 +1987,8 @@
       return () => {};
     }
 
-    const handleVisibilityChange = () => {
-      pageHidden = document.hidden;
+    const updatePageBackgroundState = () => {
+      pageHidden = document.hidden || !appWindowFocused;
       uiMotionActive = !pageHidden;
       if (pageHidden) {
         trimIdleMemory();
@@ -1995,14 +1996,29 @@
       scheduleUiMotionPause();
       updateRuntimeDiagnosticsBridge();
     };
-    pageHidden = document.hidden;
-    uiMotionActive = !pageHidden;
+
+    const handleVisibilityChange = () => {
+      updatePageBackgroundState();
+    };
+
+    if (win) {
+      void win.isFocused()
+        .then((focused) => {
+          appWindowFocused = focused;
+          updatePageBackgroundState();
+        })
+        .catch((error) => {
+          console.warn("Unable to inspect window focus during startup:", error);
+        });
+    }
+    updatePageBackgroundState();
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("storage", refreshAppReadingStateFromPersistence, { passive: true });
 
     let cancelled = false;
     let unlistenResize = () => {};
     let unlistenScale = () => {};
+    let unlistenFocus = () => {};
     let probeStarted = false;
     async function handleReplicationState(payload: SyncdReplicationSnapshot) {
       if (!payload.lastAppliedAtMs || payload.lastAppliedScopes.length === 0) return;
@@ -2101,6 +2117,24 @@
       }
       unlistenScale = scaleUnlisten;
 
+      const focusUnlisten = win
+        ? await win.onFocusChanged((event) => {
+            appWindowFocused = event.payload;
+            updatePageBackgroundState();
+            if (event.payload) {
+              resetIdle();
+            }
+          }).catch((error) => {
+            console.warn("Window focus listener failed during startup:", error);
+            return () => {};
+          })
+        : () => {};
+      if (cancelled) {
+        focusUnlisten();
+        return;
+      }
+      unlistenFocus = focusUnlisten;
+
         const effectiveServerUrl = normalizeServerUrlFromSession(store.runtimeServerUrl ?? store.settings.serverUrl)
           ?? store.runtimeResolvedLocalProfileMeta?.serverUrl
           ?? "http://127.0.0.1:4667";
@@ -2169,6 +2203,7 @@
       window.removeEventListener("storage", refreshAppReadingStateFromPersistence);
       unlistenResize();
       unlistenScale();
+      unlistenFocus();
       destroyRpc();
       if (idleTimer) clearTimeout(idleTimer);
       if (pollInterval) clearInterval(pollInterval);
@@ -2468,5 +2503,21 @@
     color: var(--n-text-muted);
     letter-spacing: 0.08em;
     text-transform: uppercase;
+  }
+
+  :global([data-aethon-motion="idle"] .aethon-app-shell .aethon-search-dim-layer) {
+    opacity: 0 !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  :global([data-aethon-motion="idle"] .aethon-app-shell .settings-theme-preview__tile),
+  :global([data-aethon-motion="idle"] .aethon-app-shell .settings-theme-preview__glow),
+  :global([data-aethon-motion="idle"] .aethon-app-shell .anim-branch) {
+    animation-play-state: paused !important;
+  }
+
+  :global([data-aethon-motion="idle"] .aethon-app-shell .settings-theme-preview__glow) {
+    filter: none !important;
   }
 </style>

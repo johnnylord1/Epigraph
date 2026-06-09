@@ -364,6 +364,7 @@
   let browseTab: BrowseTab = $state("featured");
   let activeContentType = $state<"manga" | "novels">("manga");
   let activeBrowseTab = $state<SearchTab>("keyword");
+  let searchRecommendationsReady = $state(false);
   let browseSearchFocused = $state(false);
   let searchQuery = $state("");
   let selectedSource = $state("");
@@ -1271,6 +1272,7 @@
   }));
 
   $effect(() => {
+    if (!searchRecommendationsReady) return;
     if (activeContentType !== "novels" || activeBrowseTab !== "keyword" || kw_submitted) return;
     if (searchHardcoverDiscoveryExpectedKey === searchHardcoverDiscoveryKey) return;
     untrack(() => {
@@ -1339,6 +1341,7 @@
   }));
 
   $effect(() => {
+    if (!searchRecommendationsReady) return;
     if (activeContentType !== "manga" || activeBrowseTab !== "keyword" || kw_submitted) return;
     if (searchTrackerTrendingExpectedKey === searchTrackerTrendingKey) return;
     untrack(() => {
@@ -1561,6 +1564,7 @@
   });
 
   $effect(() => {
+    if (!searchRecommendationsReady) return;
     if (activeContentType !== "manga" || activeBrowseTab !== "keyword" || kw_submitted) return;
     if (searchRecommendationHydrating || searchSourceSeedLoading || searchMangaSeedAutofillLoading || searchMangaSeedAutofillExhausted) return;
     const underfilledSection = searchRecommendationSections.find((section) =>
@@ -1586,6 +1590,7 @@
   });
 
   $effect(() => {
+    if (!searchRecommendationsReady) return;
     if (activeContentType !== "novels" || activeBrowseTab !== "keyword" || kw_submitted) return;
     if (searchRecommendationHydrating || searchSourceSeedLoading || searchNovelSeedAutofillLoading || searchNovelSeedAutofillExhausted) return;
     const underfilled = searchDisplayedRecommendationCount === 0
@@ -2554,8 +2559,14 @@
   }
 
   onMount(() => {
+    const recommendationsTimer = window.setTimeout(() => {
+      searchRecommendationsReady = true;
+    }, 1_800);
     document.addEventListener("pointerdown", handleBrowsePointerDown);
-    return () => document.removeEventListener("pointerdown", handleBrowsePointerDown);
+    return () => {
+      window.clearTimeout(recommendationsTimer);
+      document.removeEventListener("pointerdown", handleBrowsePointerDown);
+    };
   });
 
   const browseVisibilitySettings = $derived(
@@ -3231,6 +3242,7 @@
   }
 
   $effect(() => {
+    if (!searchRecommendationsReady) return;
     const key = [
       "search-source-seeds",
       activeContentType,
@@ -3260,6 +3272,7 @@
   });
 
   $effect(() => {
+    if (!searchRecommendationsReady) return;
     if (activeContentType !== "novels" || activeBrowseTab !== "keyword" || kw_submitted) return;
     const candidates = searchNovelSourcePool.slice(0, NOVEL_DETAIL_ENRICHMENT_LIMIT);
     if (candidates.length === 0) return;
