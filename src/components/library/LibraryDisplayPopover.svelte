@@ -60,11 +60,10 @@
         </span>
       </div>
 
-      <div class="n-inline-segmented" role="group" aria-label="Layout mode">
+      <div class="n-mini-switch n-layout-switch" role="group" aria-label="Layout mode">
         {#each VIEW_OPTIONS as option}
           <button
             type="button"
-            class="n-inline-segment"
             class:is-selected={settings.viewMode === option.id}
             onclick={() => onViewModeChange(option.id)}
           >
@@ -116,11 +115,10 @@
         </span>
       </div>
 
-      <div class="n-inline-segmented" role="group" aria-label="Layout mode">
+      <div class="n-mini-switch n-layout-switch" role="group" aria-label="Layout mode">
         {#each VIEW_OPTIONS as option}
           <button
             type="button"
-            class="n-inline-segment"
             class:is-selected={settings.viewMode === option.id}
             onclick={() => onViewModeChange(option.id)}
           >
@@ -152,15 +150,16 @@
   .display-panel {
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    min-width: 352px;
+    gap: 16px;
+    width: min(304px, calc(100vw - 40px));
+    min-width: 0;
   }
 
   .n-popover-panel {
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    padding: 2px 2px 0;
+    gap: 10px;
+    padding: 0;
   }
 
   .n-popover-head {
@@ -172,35 +171,40 @@
 
   .n-popover-title {
     margin: 0;
-    font-family: var(--font-ui);
-    font-size: 9px;
-    font-weight: 800;
-    letter-spacing: 0.16em;
+    font-family: var(--font-sans);
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.09em;
     text-transform: uppercase;
-    color: rgba(202, 196, 208, 0.44);
+    color: rgba(207, 199, 226, 0.68);
   }
 
   .n-popover-note {
     margin: 2px 0 0;
-    font-family: var(--font-ui);
-    font-size: 12px;
-    font-weight: 600;
+    font-family: var(--font-sans);
+    font-size: 12.5px;
+    font-weight: 680;
     letter-spacing: 0;
-    color: rgba(202, 196, 208, 0.62);
+    color: rgba(229, 226, 225, 0.58);
   }
 
   .n-popover-meta {
-    font-family: var(--font-ui);
-    font-size: 11px;
-    font-weight: 800;
+    font-family: var(--font-sans);
+    font-size: 10.5px;
+    font-weight: 720;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: rgba(211, 196, 255, 0.88);
+    color: rgba(218, 207, 255, 0.76);
     white-space: nowrap;
   }
 
-  .n-inline-segmented {
+  .n-layout-switch {
     align-self: flex-start;
+    width: 100%;
+  }
+
+  .n-layout-switch button {
+    flex: 1 1 0;
   }
 
   .n-toggle-row {
@@ -211,12 +215,12 @@
   }
 
   .n-toggle-label {
-    font-family: var(--font-ui);
-    font-size: 9px;
-    font-weight: 800;
-    letter-spacing: 0.08em;
+    font-family: var(--font-sans);
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.07em;
     text-transform: uppercase;
-    color: rgba(202, 196, 208, 0.52);
+    color: rgba(207, 199, 226, 0.62);
   }
 
   .n-mini-switch {
@@ -224,23 +228,22 @@
     gap: 4px;
     padding: 4px;
     border-radius: 9999px;
-    background: rgba(36, 33, 43, 0.58);
-    backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.04);
+    background: rgba(255, 255, 255, 0.055);
+    border: 1px solid rgba(255, 255, 255, 0.045);
   }
 
   .n-mini-switch button {
     min-width: 32px;
-    min-height: 30px;
+    min-height: 28px;
     padding: 0 12px;
     border-radius: 9999px;
     border: none;
     background: transparent;
-    color: var(--n-on-surface-variant);
-    font-family: var(--font-ui);
-    font-size: 11px;
-    font-weight: 800;
-    letter-spacing: 0.06em;
+    color: rgba(229, 226, 225, 0.62);
+    font-family: var(--font-sans);
+    font-size: 11.5px;
+    font-weight: 720;
+    letter-spacing: 0.04em;
     text-transform: uppercase;
     cursor: pointer;
     transition:
@@ -258,7 +261,7 @@
   .n-mini-switch button.is-selected {
     color: var(--n-on-primary);
     background: var(--n-gradient-primary);
-    box-shadow: 0 6px 16px rgba(184, 167, 234, 0.24);
+    box-shadow: 0 6px 16px rgba(184, 167, 234, 0.2);
   }
 
   .n-mini-switch button.is-selected:hover {

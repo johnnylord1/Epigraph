@@ -321,7 +321,7 @@
   }
 
   .display-panel {
-    min-width: min(352px, calc(100vw - 32px));
+    min-width: min(320px, calc(100vw - 32px));
   }
 
   @media (max-width: 520px) {

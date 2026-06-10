@@ -48,7 +48,7 @@
   .density-wrap {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 9px;
     width: 100%;
     min-width: 0;
   }
@@ -59,45 +59,46 @@
 
   .density-range {
     appearance: none;
-    width: 100%;
-    height: 5px;
-    border-radius: 999px;
+    width: calc(100% - 14px);
+    margin: 0 7px;
+    height: 3px;
+    border-radius: 0;
     background:
       linear-gradient(90deg, var(--n-primary-container) 0 0) 0 0 / calc(var(--density-value, 0) * 20%) 100% no-repeat,
-      rgba(255, 255, 255, 0.08);
+      rgba(255, 255, 255, 0.09);
     outline: none;
     cursor: pointer;
   }
 
   .density-range::-webkit-slider-thumb {
     appearance: none;
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
     border-radius: 999px;
-    background: var(--n-gradient-primary);
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    box-shadow: 0 6px 18px rgba(184, 167, 234, 0.42);
+    background: rgba(218, 207, 255, 0.95);
+    border: 2px solid rgba(24, 22, 31, 0.95);
+    box-shadow: 0 0 0 1px rgba(184, 167, 234, 0.2);
     transition: transform 140ms ease, box-shadow 140ms ease;
   }
 
   .density-range::-webkit-slider-thumb:hover {
-    transform: scale(1.08);
-    box-shadow: 0 8px 22px rgba(184, 167, 234, 0.55);
+    transform: scale(1.06);
+    box-shadow: 0 0 0 3px rgba(184, 167, 234, 0.12);
   }
 
   .density-range::-moz-range-thumb {
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
     border-radius: 999px;
-    background: var(--n-gradient-primary);
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    box-shadow: 0 6px 18px rgba(184, 167, 234, 0.42);
+    background: rgba(218, 207, 255, 0.95);
+    border: 2px solid rgba(24, 22, 31, 0.95);
+    box-shadow: 0 0 0 1px rgba(184, 167, 234, 0.2);
   }
 
   .density-range::-moz-range-track {
-    height: 5px;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.08);
+    height: 3px;
+    border-radius: 0;
+    background: rgba(255, 255, 255, 0.09);
   }
 
   .density-labels {
@@ -105,11 +106,11 @@
     justify-content: space-between;
     gap: 4px;
     padding: 0 2px;
-    font-family: var(--font-ui);
-    font-size: 10px;
-    color: rgba(172, 165, 189, 0.5);
+    font-family: var(--font-sans);
+    font-size: 10.5px;
+    color: rgba(229, 226, 225, 0.32);
     letter-spacing: 0.08em;
-    font-weight: 800;
+    font-weight: 720;
     text-transform: uppercase;
   }
 
@@ -120,7 +121,6 @@
 
   .density-labels span.active {
     opacity: 1;
-    color: var(--n-primary);
-    text-shadow: 0 0 10px rgba(184, 167, 234, 0.18);
+    color: rgba(218, 207, 255, 0.76);
   }
 </style>
