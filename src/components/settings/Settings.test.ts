@@ -229,22 +229,15 @@ describe("Settings", () => {
     document.body.innerHTML = "";
   });
 
-  test("renders the approved grouped rails as a page-level shell and returns to the previous page on close", async () => {
-    const { container, opener, unmount } = renderSettings();
+  test("renders the approved grouped rails as a page-level shell without a redundant close button", async () => {
+    const { container } = renderSettings();
 
     expect(container.querySelector(".settings-page.aethon-port--settings")).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.getByRole("navigation", { name: "Settings groups" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Reader & Library" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "General" })).toBeTruthy();
-
-    await fireEvent.click(screen.getByRole("button", { name: "Close settings" }));
-    expect(store.settingsOpen).toBe(false);
-    expect(store.navPage).toBe("home");
-    unmount();
-    await waitFor(() => {
-      expect(document.activeElement).toBe(opener);
-    });
+    expect(screen.queryByRole("button", { name: "Close settings" })).toBeNull();
   });
 
   test("switches groups and contextual tabs without changing the imported shell", async () => {

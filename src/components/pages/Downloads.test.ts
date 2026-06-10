@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { DownloadStatus } from "../../lib/types";
 
-const { gqlMock, resetFixture } = vi.hoisted(() => {
+const { gqlMock, openPathMock, resetFixture } = vi.hoisted(() => {
   const createFixture = (): DownloadStatus => ({
     state: "STARTED",
     queue: [
@@ -36,6 +36,36 @@ const { gqlMock, resetFixture } = vi.hoisted(() => {
           },
         },
       },
+      {
+        progress: 0.12,
+        state: "ERROR",
+        chapter: {
+          id: 404,
+          name: "Chapter 404",
+          pageCount: 16,
+          mangaId: 4,
+          manga: {
+            id: 4,
+            title: "Berserk",
+            thumbnailUrl: "/covers/berserk.png",
+          },
+        },
+      },
+      {
+        progress: 1,
+        state: "FINISHED",
+        chapter: {
+          id: 21,
+          name: "Chapter 21",
+          pageCount: 12,
+          mangaId: 5,
+          manga: {
+            id: 5,
+            title: "Akira",
+            thumbnailUrl: "/covers/akira.png",
+          },
+        },
+      },
     ],
   });
 
@@ -65,6 +95,11 @@ const { gqlMock, resetFixture } = vi.hoisted(() => {
     if (normalized.includes("dequeuechapterdownload")) {
       fixture.queue = fixture.queue.filter((item) => item.chapter.id !== variables?.chapterId);
       return { dequeueChapterDownload: { downloadStatus: { state: fixture.state } } };
+    }
+
+    if (normalized.includes("cleardownloader")) {
+      fixture.queue = fixture.queue.filter((item) => item.state !== "FINISHED");
+      return { clearDownloader: { downloadStatus: structuredClone(fixture) } };
     }
 
     if (normalized.includes("enqueuechapterdownload")) {
@@ -106,7 +141,7 @@ const { gqlMock, resetFixture } = vi.hoisted(() => {
     fixture = createFixture();
   };
 
-  return { gqlMock, resetFixture };
+  return { gqlMock, openPathMock: vi.fn(async () => {}), resetFixture };
 });
 
 vi.mock("../../lib/client", () => ({
@@ -126,6 +161,10 @@ vi.mock("@tauri-apps/api/core", () => ({
     }
     return null;
   }),
+}));
+
+vi.mock("@tauri-apps/plugin-shell", () => ({
+  open: openPathMock,
 }));
 
 vi.mock("../../store/state.svelte", async () => {
@@ -163,7 +202,7 @@ describe("Downloads", () => {
     expect(container.querySelector(".aethon-port--downloads")).toBeTruthy();
     expect(screen.getByText("Vagabond")).toBeTruthy();
     expect(screen.getByText("Vinland Saga")).toBeTruthy();
-    expect(screen.getByText("2 Items")).toBeTruthy();
+    expect(screen.getByText("4 Items")).toBeTruthy();
   });
 
   test("filters the queue locally through the topbar search", async () => {
@@ -178,6 +217,21 @@ describe("Downloads", () => {
 
     expect(screen.queryByText("Vagabond")).toBeNull();
     expect(screen.getByText("Vinland Saga")).toBeTruthy();
+  });
+
+  test("filters the queue locally through the downloads filter menu", async () => {
+    render(Downloads);
+
+    await waitFor(() => {
+      expect(screen.getByText("Vagabond")).toBeTruthy();
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Filter downloads" }));
+    await fireEvent.click(screen.getByRole("menuitemradio", { name: /Failed/ }));
+
+    expect(screen.queryByText("Vagabond")).toBeNull();
+    expect(screen.queryByText("Vinland Saga")).toBeNull();
+    expect(screen.getByText("Berserk")).toBeTruthy();
   });
 
   test("keeps downloads interactive without a blocking overlay", async () => {
@@ -295,5 +349,34 @@ describe("Downloads", () => {
     expect(
       gqlMock.mock.calls.some(([query]) => String(query).includes("mutation StartDownloader")),
     ).toBe(true);
+  });
+
+  test("connects downloads more options to queue actions", async () => {
+    render(Downloads);
+
+    await waitFor(() => {
+      expect(screen.getByText("Akira")).toBeTruthy();
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "More download options" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: /Clear finished/ }));
+    expect(
+      gqlMock.mock.calls.some(([query]) => String(query).includes("mutation ClearDownloader")),
+    ).toBe(true);
+
+    await waitFor(() => {
+      expect(screen.queryByText("Akira")).toBeNull();
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "More download options" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: /Retry failed/ }));
+    expect(
+      gqlMock.mock.calls.some(([query, variables]) =>
+        String(query).includes("mutation EnqueueDownload") && variables?.chapterId === 404),
+    ).toBe(true);
+
+    await fireEvent.click(screen.getByRole("button", { name: "More download options" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: /Open downloads folder/ }));
+    expect(openPathMock).toHaveBeenCalledWith("C:/Downloads");
   });
 });

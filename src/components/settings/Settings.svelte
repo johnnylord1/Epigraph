@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { slide } from "svelte/transition";
-  import { X, Book, Image, Sliders, Info, Keyboard, Gear, HardDrives, FolderSimple, Plus, Pencil, Trash, Wrench, PaintBrush, ListChecks, Lock, Eye, EyeSlash, Star, ShieldCheck, Tag, CaretDown } from "phosphor-svelte";
+  import { Book, Image, Sliders, Info, Keyboard, Gear, HardDrives, FolderSimple, Plus, Pencil, Trash, Wrench, PaintBrush, ListChecks, Lock, Eye, EyeSlash, Star, ShieldCheck, Tag, CaretDown } from "phosphor-svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { getVersion } from "@tauri-apps/api/app";
@@ -3204,9 +3204,6 @@
     {#snippet right()}
       <button class="n-icon-btn" aria-label="Open about settings" type="button" onclick={() => openTab("about")}>
         <Info size={16} weight="light" />
-      </button>
-      <button class="n-icon-btn" aria-label="Close settings" type="button" onclick={close}>
-        <X size={15} weight="light" />
       </button>
       <WindowControlsInline />
     {/snippet}

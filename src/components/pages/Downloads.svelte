@@ -1,6 +1,7 @@
 ﻿<script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
+  import { open as openPath } from "@tauri-apps/plugin-shell";
   import { CircleNotch } from "phosphor-svelte";
   import { gql, thumbUrl } from "../../lib/client";
   import AppTopbar from "../layout/AppTopbar.svelte";
@@ -11,6 +12,7 @@
     ENQUEUE_DOWNLOAD,
     START_DOWNLOADER,
     STOP_DOWNLOADER,
+    CLEAR_DOWNLOADER,
     DEQUEUE_DOWNLOAD,
     REORDER_DOWNLOAD,
   } from "../../lib/queries";
@@ -19,6 +21,7 @@
   import type { ActiveDownload, PausedDownloadItem } from "../../store/state.svelte";
 
   type DownloadVisualState = "downloading" | "paused" | "queued" | "error" | "finished";
+  type DownloadFilter = "all" | DownloadVisualState;
   type DisplayDownloadItem = DownloadQueueItem & {
     localState?: "PAUSED";
     localOrder?: number;
@@ -36,6 +39,12 @@
 
   let status: DownloadStatus | null = $state(null);
   let searchQuery = $state("");
+  let downloadFilter = $state<DownloadFilter>("all");
+  let filterPanelOpen = $state(false);
+  let morePanelOpen = $state(false);
+  let clearingFinished = $state(false);
+  let retryingFailed = $state(false);
+  let openingFolder = $state(false);
   let pausingAll = $state(false);
   let resumingAll = $state(false);
   let dequeueing = $state(new Set<number>());
@@ -157,6 +166,21 @@
     document.body.classList.toggle("aethon-downloads-search-engaged", active);
   }
 
+  function toggleFilterPanel() {
+    filterPanelOpen = !filterPanelOpen;
+    if (filterPanelOpen) morePanelOpen = false;
+  }
+
+  function toggleMorePanel() {
+    morePanelOpen = !morePanelOpen;
+    if (morePanelOpen) filterPanelOpen = false;
+  }
+
+  function selectDownloadFilter(filter: DownloadFilter) {
+    downloadFilter = filter;
+    filterPanelOpen = false;
+  }
+
   async function loadStatus() {
     if (statusRefreshInFlight) return;
     statusRefreshInFlight = true;
@@ -181,6 +205,12 @@
       console.error(error);
       storageInfo = null;
     }
+  }
+
+  async function getDownloadsPath() {
+    if (storageInfo?.path) return storageInfo.path;
+    const data = await gql<{ settings: { downloadsPath: string } }>(GET_DOWNLOADS_PATH);
+    return data.settings.downloadsPath ?? "";
   }
 
   function clearDownloadTimers() {
@@ -219,6 +249,11 @@
   onMount(() => {
     const onKeydown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        if (filterPanelOpen || morePanelOpen) {
+          filterPanelOpen = false;
+          morePanelOpen = false;
+          return;
+        }
         leaveDownloads();
       }
     };
@@ -286,6 +321,53 @@
       await loadStatus();
     } finally {
       resumingAll = false;
+    }
+  }
+
+  async function clearFinished() {
+    if (clearingFinished || finishedCount === 0) return;
+    clearingFinished = true;
+    morePanelOpen = false;
+
+    try {
+      const data = await gql<{ clearDownloader: { downloadStatus: DownloadStatus } }>(CLEAR_DOWNLOADER);
+      applyStatus(data.clearDownloader.downloadStatus);
+    } catch (error) {
+      console.error(error);
+      await loadStatus();
+    } finally {
+      clearingFinished = false;
+    }
+  }
+
+  async function retryFailed() {
+    if (retryingFailed || failedCount === 0) return;
+    retryingFailed = true;
+    morePanelOpen = false;
+
+    try {
+      const failedItems = queue.filter((item) => getVisualState(item) === "error");
+      for (const item of failedItems) {
+        await resumeItem(item);
+      }
+      await loadStatus();
+    } finally {
+      retryingFailed = false;
+    }
+  }
+
+  async function openDownloadsFolder() {
+    if (openingFolder) return;
+    openingFolder = true;
+    morePanelOpen = false;
+
+    try {
+      const downloadsPath = await getDownloadsPath();
+      if (downloadsPath) await openPath(downloadsPath);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      openingFolder = false;
     }
   }
 
@@ -510,10 +592,16 @@
       return left.chapter.id - right.chapter.id;
     });
   });
-  let filteredQueue: DisplayDownloadItem[] = $derived(queue.filter((item: DisplayDownloadItem) => matchesSearch(item, searchQuery)));
+  let filteredQueue: DisplayDownloadItem[] = $derived(queue.filter((item: DisplayDownloadItem) => {
+    if (!matchesSearch(item, searchQuery)) return false;
+    return downloadFilter === "all" || getVisualState(item) === downloadFilter;
+  }));
   let queueSize: number = $derived(queue.length);
   let activeCount: number = $derived(queue.filter((item: DownloadQueueItem) => getVisualState(item) === "downloading").length);
   let pausedCount: number = $derived(queue.filter((item: DownloadQueueItem) => getVisualState(item) === "paused").length);
+  let queuedCount: number = $derived(queue.filter((item: DownloadQueueItem) => getVisualState(item) === "queued").length);
+  let failedCount: number = $derived(queue.filter((item: DownloadQueueItem) => getVisualState(item) === "error").length);
+  let finishedCount: number = $derived(queue.filter((item: DownloadQueueItem) => getVisualState(item) === "finished").length);
   let storageSummary: string = $derived.by(() =>
     storageInfo
       ? `${fmtBytes(storageInfo.manga_bytes)} / ${fmtBytes(storageInfo.free_bytes)} free`
@@ -568,24 +656,92 @@
         </div>
       {/snippet}
       {#snippet right()}
-        <button
-          class="n-icon-btn"
-          type="button"
-          title="Filter"
-          aria-label="Filter"
-          data-inert-control="downloads-filter"
-        >
-          <span class="material-symbols-outlined" aria-hidden="true">filter_list</span>
-        </button>
-        <button
-          class="n-icon-btn"
-          type="button"
-          title="More options"
-          aria-label="More options"
-          data-inert-control="downloads-more"
-        >
-          <span class="material-symbols-outlined" aria-hidden="true">more_vert</span>
-        </button>
+        <div class="downloads-topbar-menu">
+          <button
+            class="n-icon-btn"
+            class:is-active={filterPanelOpen || downloadFilter !== "all"}
+            type="button"
+            title="Filter downloads"
+            aria-label="Filter downloads"
+            aria-expanded={filterPanelOpen}
+            onclick={toggleFilterPanel}
+          >
+            <span class="material-symbols-outlined" aria-hidden="true">filter_list</span>
+          </button>
+          {#if filterPanelOpen}
+            <div class="downloads-menu-panel downloads-filter-panel" role="menu">
+              <p class="downloads-menu-label">Show</p>
+              {#each [
+                { id: "all", label: "All", count: queueSize },
+                { id: "downloading", label: "Active", count: activeCount },
+                { id: "queued", label: "Queued", count: queuedCount },
+                { id: "paused", label: "Paused", count: pausedCount },
+                { id: "error", label: "Failed", count: failedCount },
+                { id: "finished", label: "Finished", count: finishedCount },
+              ] as option}
+                <button
+                  type="button"
+                  class="downloads-menu-item"
+                  class:is-selected={downloadFilter === option.id}
+                  role="menuitemradio"
+                  aria-checked={downloadFilter === option.id}
+                  onclick={() => selectDownloadFilter(option.id as DownloadFilter)}
+                >
+                  <span>{option.label}</span>
+                  <small>{option.count}</small>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+        <div class="downloads-topbar-menu">
+          <button
+            class="n-icon-btn"
+            class:is-active={morePanelOpen}
+            type="button"
+            title="More download options"
+            aria-label="More download options"
+            aria-expanded={morePanelOpen}
+            onclick={toggleMorePanel}
+          >
+            <span class="material-symbols-outlined" aria-hidden="true">more_vert</span>
+          </button>
+          {#if morePanelOpen}
+            <div class="downloads-menu-panel downloads-more-panel" role="menu">
+              <p class="downloads-menu-label">Queue actions</p>
+              <button
+                type="button"
+                class="downloads-menu-item"
+                role="menuitem"
+                disabled={finishedCount === 0 || clearingFinished}
+                onclick={clearFinished}
+              >
+                <span>{clearingFinished ? "Clearing..." : "Clear finished"}</span>
+                <small>{finishedCount}</small>
+              </button>
+              <button
+                type="button"
+                class="downloads-menu-item"
+                role="menuitem"
+                disabled={failedCount === 0 || retryingFailed}
+                onclick={retryFailed}
+              >
+                <span>{retryingFailed ? "Retrying..." : "Retry failed"}</span>
+                <small>{failedCount}</small>
+              </button>
+              <button
+                type="button"
+                class="downloads-menu-item"
+                role="menuitem"
+                disabled={openingFolder}
+                onclick={openDownloadsFolder}
+              >
+                <span>{openingFolder ? "Opening..." : "Open downloads folder"}</span>
+                <small class="material-symbols-outlined" aria-hidden="true">folder_open</small>
+              </button>
+            </div>
+          {/if}
+        </div>
         <WindowControlsInline />
       {/snippet}
     </AppTopbar>
@@ -815,6 +971,75 @@
 
   .downloads-topbar-shell :global(.n-topbar::before) {
     pointer-events: none;
+  }
+
+  .downloads-topbar-menu {
+    position: relative;
+    display: inline-flex;
+  }
+
+  .downloads-menu-panel {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 120;
+    width: min(230px, calc(100vw - 32px));
+    padding: 8px;
+    border: 1px solid rgba(202, 196, 208, 0.08);
+    border-radius: calc(16px * var(--n-hud-scale));
+    background: rgba(31, 29, 39, 0.94);
+    box-shadow:
+      0 18px 42px rgba(0, 0, 0, 0.44),
+      inset 0 1px 0 rgba(255, 255, 255, 0.025);
+    backdrop-filter: blur(18px) saturate(130%);
+  }
+
+  .downloads-menu-label {
+    margin: 2px 8px 7px;
+    color: rgba(202, 196, 208, 0.42);
+    font-family: var(--font-ui);
+    font-size: calc(10px * var(--n-hud-scale));
+    font-weight: 800;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+
+  .downloads-menu-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+    min-height: calc(34px * var(--n-hud-scale));
+    padding: 0 calc(10px * var(--n-hud-scale));
+    border: 0;
+    border-radius: calc(11px * var(--n-hud-scale));
+    background: transparent;
+    color: rgba(238, 235, 242, 0.9);
+    font-family: var(--font-ui);
+    font-size: calc(12px * var(--n-hud-scale));
+    font-weight: 700;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .downloads-menu-item:hover:not(:disabled),
+  .downloads-menu-item.is-selected {
+    background: rgba(184, 167, 234, 0.12);
+    color: var(--n-on-surface);
+  }
+
+  .downloads-menu-item:disabled {
+    cursor: default;
+    opacity: 0.44;
+  }
+
+  .downloads-menu-item small {
+    color: rgba(202, 196, 208, 0.52);
+    font-size: calc(10px * var(--n-hud-scale));
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
 
   .downloads-scroll {
