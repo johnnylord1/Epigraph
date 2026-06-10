@@ -2,6 +2,7 @@
 
 import { cleanup, render } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { getLocalProfileMeta } from "../../lib/localProfiles";
 import { DEFAULT_SETTINGS, store } from "../../store/state.svelte";
 import type { RuntimeSettingsTab } from "../../store/state.svelte";
 
@@ -194,13 +195,13 @@ function resetSettingsStore() {
   store.lastPrimaryNavPage = "home";
   store.settingsOpen = true;
   store.runtimeSettingsTab = null;
-  store.runtimeResolvedLocalProfileId = null;
-  store.runtimeResolvedLocalProfileMeta = null;
-  store.runtimeProfileResolutionSource = null;
+  store.runtimeResolvedLocalProfileId = "test";
+  store.runtimeResolvedLocalProfileMeta = getLocalProfileMeta("test");
+  store.runtimeProfileResolutionSource = "settings-default";
   store.runtimeLaunchProfileOverride = null;
   store.runtimeIsOverrideSession = false;
   store.runtimeServerUrl = "http://127.0.0.1:4667";
-  store.runtimeServerLabel = "CUSTOM";
+  store.runtimeServerLabel = "TEST";
   store.categories = [];
 }
 
