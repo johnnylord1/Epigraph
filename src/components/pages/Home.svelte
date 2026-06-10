@@ -1303,9 +1303,10 @@
 
   .home-continue-card__cover {
     position: relative;
-    width: calc(112px * var(--n-hud-scale));
-    min-width: calc(112px * var(--n-hud-scale));
-    height: calc(160px * var(--n-hud-scale));
+    width: clamp(calc(82px * var(--n-hud-scale)), 28%, calc(112px * var(--n-hud-scale)));
+    min-width: clamp(calc(82px * var(--n-hud-scale)), 28%, calc(112px * var(--n-hud-scale)));
+    height: auto;
+    aspect-ratio: 0.7;
     padding: 0;
     border: none;
     border-radius: calc(12px * var(--n-hud-scale));
@@ -1871,12 +1872,12 @@
     .home-continue-grid,
     .home-quick-actions {
       grid-template-columns: 1fr;
-      justify-items: center;
+      justify-items: stretch;
     }
 
     .home-continue-card,
     .home-quick-action {
-      width: min(100%, var(--app-shell-card-max-inline));
+      width: 100%;
     }
 
     .home-resume-btn {
@@ -1886,14 +1887,14 @@
     }
   }
 
-  @media (max-width: 620px) {
+  @media (max-width: 520px) {
     .home-continue-card {
       flex-direction: column;
     }
 
     .home-continue-card__cover {
-      width: calc(132px * var(--n-hud-scale));
-      min-width: calc(132px * var(--n-hud-scale));
+      width: min(44%, calc(132px * var(--n-hud-scale)));
+      min-width: min(44%, calc(132px * var(--n-hud-scale)));
     }
 
     .home-resume-btn {

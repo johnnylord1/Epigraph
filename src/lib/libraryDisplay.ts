@@ -41,13 +41,13 @@ const DISPLAY_SPECS: Record<LibraryViewMode, LibraryDisplaySpec> = {
     mode: "grid",
     gap: 16,
     minCardWidth: 140,
-    targetCardWidth: 170,
+    targetCardWidth: 148,
   },
   compact_grid: {
     mode: "compact_grid",
     gap: 10,
     minCardWidth: 116,
-    targetCardWidth: 146,
+    targetCardWidth: 124,
   },
   list: {
     mode: "list",

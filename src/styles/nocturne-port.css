@@ -3233,6 +3233,12 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   }
 }
 
+@media (max-width: 1100px) {
+  .aethon-port--settings .settings-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 @media (max-width: 980px) {
   .aethon-port--settings .n-topbar--settings {
     grid-template-columns: minmax(0, 1fr) minmax(200px, 320px) minmax(0, 1fr);
@@ -3245,5 +3251,138 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   }
 }
 
+@media (max-width: 760px) {
+  .aethon-port--settings {
+    --settings-group-rail-width: calc(64px * var(--n-hud-scale));
+    --settings-subnav-width: minmax(0, 1fr);
+    --settings-shell-padding-x: calc(10px * var(--n-hud-scale));
+    --settings-pane-header-pad-x: calc(16px * var(--n-hud-scale));
+    --settings-pane-body-pad-x: calc(16px * var(--n-hud-scale));
+    --settings-card-padding: calc(15px * var(--n-hud-scale));
+  }
+
+  .aethon-port--settings .n-topbar--settings {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) auto;
+    gap: calc(8px * var(--n-hud-scale));
+  }
+
+  .aethon-port--settings #settingsGroupRail.sidebar,
+  .aethon-port--settings .settings-group-rail {
+    min-width: var(--settings-group-rail-width);
+    padding-inline: calc(5px * var(--n-hud-scale));
+    align-items: center;
+  }
+
+  .aethon-port--settings .settings-group-rail__footer,
+  .aethon-port--settings .settings-brand-card,
+  .aethon-port--settings .cat-btn__label,
+  .aethon-port--settings .settings-group-btn__label {
+    display: none;
+  }
+
+  .aethon-port--settings .nav.settings-group-nav,
+  .aethon-port--settings .settings-group-rail__nav {
+    width: 100%;
+    align-items: center;
+  }
+
+  .aethon-port--settings .nav-item.cat-btn,
+  .aethon-port--settings .cat-btn {
+    justify-content: center;
+    width: calc(42px * var(--n-hud-scale));
+    padding-inline: 0;
+  }
+
+  .aethon-port--settings .settings-workbench {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .aethon-port--settings .content-subnav.settings-subnav,
+  .aethon-port--settings .settings-subnav {
+    min-width: 0;
+    padding: calc(10px * var(--n-hud-scale)) calc(12px * var(--n-hud-scale));
+    flex-direction: row;
+    align-items: center;
+    gap: calc(8px * var(--n-hud-scale));
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: none;
+    border-bottom: 1px solid rgba(72, 69, 79, 0.12);
+  }
+
+  .aethon-port--settings .subnav-label.settings-subnav__eyebrow,
+  .aethon-port--settings .settings-subnav__eyebrow {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .aethon-port--settings .subnav-list.settings-subnav__list,
+  .aethon-port--settings .settings-subnav__list {
+    min-width: 0;
+    flex: 1 1 auto;
+    flex-direction: row;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .aethon-port--settings .subnav-list.settings-subnav__list::-webkit-scrollbar,
+  .aethon-port--settings .settings-subnav__list::-webkit-scrollbar {
+    display: none;
+  }
+
+  .aethon-port--settings .subnav-item.settings-subnav-btn,
+  .aethon-port--settings .settings-subnav-btn {
+    width: auto;
+    flex: 0 0 auto;
+    white-space: nowrap;
+    padding-inline: calc(10px * var(--n-hud-scale));
+  }
+}
+
+@media (max-width: 640px) {
+  .aethon-port--settings {
+    --settings-pane-header-pad-x: calc(12px * var(--n-hud-scale));
+    --settings-pane-body-pad-x: calc(12px * var(--n-hud-scale));
+    --settings-card-padding: calc(13px * var(--n-hud-scale));
+    --settings-grid-gap: calc(12px * var(--n-hud-scale));
+  }
+
+  .aethon-port--settings .settings-pane-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .aethon-port--settings .settings-pane-header__title {
+    font-size: calc(28px * var(--n-hud-scale));
+  }
+
+  .aethon-port--settings .settings-row,
+  .aethon-port--settings .settings-mini-row {
+    align-items: stretch;
+    flex-direction: column;
+    gap: calc(9px * var(--n-hud-scale));
+  }
+
+  .aethon-port--settings .settings-row > :not(.settings-mini-row__body),
+  .aethon-port--settings .settings-mini-row > :not(.settings-mini-row__body),
+  .aethon-port--settings .select-wrap,
+  .aethon-port--settings .settings-text-input,
+  .aethon-port--settings .settings-section-actions,
+  .aethon-port--settings .settings-inline-actions {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .aethon-port--settings .settings-toggle {
+    align-self: flex-start;
+  }
+
+  .aethon-port--settings .settings-card__head,
+  .aethon-port--settings .settings-card__footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
 
 

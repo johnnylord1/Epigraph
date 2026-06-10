@@ -5817,7 +5817,7 @@
     scrollbar-color: rgba(184, 167, 234, 0.32) transparent;
   }
   .searchCanvas {
-    --search-card-width: clamp(158px, 9.2vw, 180px);
+    --search-card-width: clamp(124px, 13.2vw, 180px);
     --search-card-gap: clamp(15px, 0.95vw, 17px);
     --search-rail-width: calc((var(--search-card-width) * 7) + (var(--search-card-gap) * 6));
     --search-panel-width: clamp(286px, 18vw, 328px);
@@ -5866,6 +5866,7 @@
   }
   .searchRecommendationSection {
     min-width: 0;
+    container-type: inline-size;
     display: flex;
     flex-direction: column;
     gap: 0;
@@ -5969,9 +5970,9 @@
     background: rgba(184, 167, 234, 0.2);
   }
   .searchRecommendationRow .n-library-card {
-    flex: 0 0 var(--search-card-width);
-    width: var(--search-card-width);
-    height: calc((var(--search-card-width) / 0.7) + 74px);
+    flex: 0 0 clamp(118px, 22cqw, 180px);
+    width: clamp(118px, 22cqw, 180px);
+    height: calc((clamp(118px, 22cqw, 180px) / 0.7) + 74px);
     min-width: 0;
     overflow: hidden;
     scroll-snap-align: start;

@@ -17,7 +17,23 @@ describe("libraryDisplay", () => {
       targetCardWidth: spec.targetCardWidth,
     });
 
-    expect(columns).toBe(6);
+    expect(columns).toBe(7);
+  });
+
+  it("keeps auto density fluid as windows narrow", () => {
+    const wide = computeLibraryLayout({
+      availableWidth: 760,
+      preferredColumns: "auto",
+      mode: "grid",
+    });
+    const narrow = computeLibraryLayout({
+      availableWidth: 540,
+      preferredColumns: "auto",
+      mode: "grid",
+    });
+
+    expect(wide.effectiveColumns).toBe(4);
+    expect(narrow.effectiveColumns).toBe(3);
   });
 
   it("respects explicit preferred columns when they fit", () => {
