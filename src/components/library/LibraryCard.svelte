@@ -2,7 +2,6 @@
   import { BookOpen, Books, CheckSquare, Stack } from "phosphor-svelte";
   import { resolvedImage } from "../../lib/imageCache";
   import type { LibraryCardVM } from "../../lib/library/contracts";
-  import SourceMetricBanner from "./SourceMetricBanner.svelte";
 
   type Props = {
     vm: LibraryCardVM;
@@ -38,11 +37,19 @@
   const showOverlayBadges = $derived(viewMode !== "list");
   const primaryGridBadge = $derived(
     viewMode !== "list"
-      ? vm.badges.find((badge) => badge.kind === "unread")
-        ?? vm.badges.find((badge) => badge.kind === "status")
-        ?? vm.badges.find((badge) => badge.kind === "download")
-        ?? null
+      ? (vm.sourceMetricBanner
+        ? null
+        : (vm.badges.find((badge) => badge.kind === "unread")
+          ?? vm.badges.find((badge) => badge.kind === "status")
+          ?? vm.badges.find((badge) => badge.kind === "download")
+          ?? null))
       : null,
+  );
+  const hasFlag = $derived(
+    vm.sourceMetricBanner
+      ? Boolean(getCountryCode(vm.sourceMetricBanner.flagLabel, vm.sourceMetricBanner.sourceName)) ||
+        getLanguageFlag(vm.sourceMetricBanner.flagLabel, vm.sourceMetricBanner.sourceName) !== "🌐"
+      : false
   );
   const topLeftBadges = $derived(
     showOverlayBadges && viewMode === "list"
@@ -68,6 +75,114 @@
     const normalized = label?.trim();
     if (!normalized || normalized.toLowerCase() === "unknown") return null;
     return normalized;
+  }
+
+  function getLanguageFlag(lang: string | null | undefined, sourceName?: string | null): string {
+    let normalized = (lang ?? "").trim().toLowerCase();
+
+    // Defensive fallback using sourceName keywords (e.g. Asura Scans (EN), Union Mangas)
+    if (!normalized && sourceName) {
+      const nameLower = sourceName.toLowerCase();
+      if (nameLower.includes("(en)") || nameLower.includes("english")) {
+        normalized = "en";
+      } else if (nameLower.includes("(pt") || nameLower.includes("portugue") || nameLower.includes("union") || nameLower.includes("mangaschan")) {
+        normalized = "pt";
+      } else if (nameLower.includes("(ja)") || nameLower.includes("japanese")) {
+        normalized = "ja";
+      } else if (nameLower.includes("(ko)") || nameLower.includes("korean")) {
+        normalized = "ko";
+      } else if (nameLower.includes("(es)") || nameLower.includes("spanish")) {
+        normalized = "es";
+      } else if (nameLower.includes("(zh)") || nameLower.includes("chinese")) {
+        normalized = "zh";
+      }
+    }
+
+    // Split regional subtags (e.g., pt-br -> pt, en-us -> en)
+    const baseLang = normalized.split(/[-_]/)[0];
+
+    switch (baseLang) {
+      case "en":
+      case "gb":
+      case "english":
+        return "🇬🇧";
+      case "pt":
+      case "portuguese":
+        return "🇧🇷";
+      case "ja":
+      case "japanese":
+        return "🇯🇵";
+      case "ko":
+      case "korean":
+        return "🇰🇷";
+      case "es":
+      case "spanish":
+        return "🇪🇸";
+      case "zh":
+      case "chinese":
+        return "🇨🇳";
+      case "fr":
+      case "french":
+        return "🇫🇷";
+      default:
+        return baseLang ? baseLang.substring(0, 2).toUpperCase() : "🌐";
+    }
+  }
+
+  function getCountryCode(lang: string | null | undefined, sourceName?: string | null): string | null {
+    let normalized = (lang ?? "").trim().toLowerCase();
+
+    // Defensive fallback using sourceName keywords (e.g. Asura Scans (EN), Union Mangas)
+    if (!normalized && sourceName) {
+      const nameLower = sourceName.toLowerCase();
+      if (nameLower.includes("(en)") || nameLower.includes("english")) {
+        normalized = "en";
+      } else if (nameLower.includes("(pt") || nameLower.includes("portugue") || nameLower.includes("union") || nameLower.includes("mangaschan")) {
+        normalized = "pt";
+      } else if (nameLower.includes("(ja)") || nameLower.includes("japanese")) {
+        normalized = "ja";
+      } else if (nameLower.includes("(ko)") || nameLower.includes("korean")) {
+        normalized = "ko";
+      } else if (nameLower.includes("(es)") || nameLower.includes("spanish")) {
+        normalized = "es";
+      } else if (nameLower.includes("(zh)") || nameLower.includes("chinese")) {
+        normalized = "zh";
+      }
+    }
+
+    if (!normalized) return null;
+
+    // Split regional subtags (e.g., pt-br -> pt, en-us -> en)
+    const baseLang = normalized.split(/[-_]/)[0];
+
+    // Map language codes to country codes for flagcdn
+    switch (baseLang) {
+      case "en":
+      case "english":
+      case "gb":
+        return "gb";
+      case "pt":
+      case "portuguese":
+        return "br";
+      case "ja":
+      case "japanese":
+        return "jp";
+      case "ko":
+      case "korean":
+        return "kr";
+      case "zh":
+      case "chinese":
+        return "cn";
+      case "es":
+      case "spanish":
+        return "es";
+      case "fr":
+      case "french":
+        return "fr";
+      default:
+        // If the base language is a 2-character code, use it. Otherwise return null.
+        return baseLang.length === 2 ? baseLang : null;
+    }
   }
 </script>
 
@@ -102,65 +217,114 @@
   onpointerleave={onPointerLeave ? ((event) => onPointerLeave(vm.id, event)) : undefined}
   aria-label={vm.title}
 >
-  <div class="cover-wrap" class:n-library-card__cover={viewMode !== "list"}>
-    {#if vm.coverSrc}
-      <img
-        class="cover"
-        use:resolvedImage={vm.coverSrc}
-        alt={vm.title}
-        style={`object-fit:${vm.coverFit};`}
-        loading="lazy"
-        decoding="async"
-        draggable="false"
-        onload={onCoverLoad ? (() => onCoverLoad(vm.id)) : undefined}
-        onerror={onCoverError ? (() => onCoverError(vm.id)) : undefined}
-      />
-    {:else}
-      <div class="cover-fallback" aria-hidden="true">
-        {#if vm.selectable}
-          <Stack size={28} weight="duotone" />
-        {:else}
-          <BookOpen size={28} weight="duotone" />
-        {/if}
-      </div>
-    {/if}
-
-    {#if viewMode !== "list" && vm.sourceMetricBanner}
-      <SourceMetricBanner banner={vm.sourceMetricBanner} />
-    {:else if viewMode !== "list" && primaryGridBadge}
-      <span class="n-library-card__badge">{formatGridStateLabel(primaryGridBadge.label, primaryGridBadge.kind)}</span>
-    {/if}
-    {#if topLeftBadges.length}
-      <div class="badge-cluster badge-cluster-top-left">
-        {#each topLeftBadges as badge, index (badge.kind + badge.label + index)}
-          <span class={`badge badge-${badge.kind} n-library-card__badge`}>{formatGridStateLabel(badge.label, badge.kind)}</span>
-        {/each}
-      </div>
-    {/if}
-    {#if topRightBadges.length}
-      <div class="badge-cluster badge-cluster-top-right">
-        {#each topRightBadges as badge, index (badge.kind + badge.label + index)}
-          <span class={`badge badge-${badge.kind} n-library-card__badge`}>{formatGridStateLabel(badge.label, badge.kind)}</span>
-        {/each}
-      </div>
-    {/if}
-    {#if bottomLeftBadges.length}
-      <div class="badge-cluster badge-cluster-bottom-left">
-        {#each bottomLeftBadges as badge, index (badge.kind + badge.label + index)}
-          <span class={`badge badge-${badge.kind} n-library-card__badge`}>{formatGridStateLabel(badge.label, badge.kind)}</span>
-        {/each}
-      </div>
-    {/if}
-
-    {#if showSelectableState && vm.selectable}
-      <div class="select-overlay" aria-hidden="true">
-        <div class="select-check" class:checked={vm.selected}>
-          {#if vm.selected}
-            <CheckSquare size={20} weight="fill" />
+  <div class="card-cover-container">
+    <div class="cover-wrap" class:n-library-card__cover={viewMode !== "list"}>
+      {#if vm.coverSrc}
+        <img
+          class="cover"
+          use:resolvedImage={vm.coverSrc}
+          alt={vm.title}
+          style={`object-fit:${vm.coverFit};`}
+          loading="lazy"
+          decoding="async"
+          draggable="false"
+          onload={onCoverLoad ? (() => onCoverLoad(vm.id)) : undefined}
+          onerror={onCoverError ? (() => onCoverError(vm.id)) : undefined}
+        />
+      {:else}
+        <div class="cover-fallback" aria-hidden="true">
+          {#if vm.selectable}
+            <Stack size={28} weight="duotone" />
           {:else}
-            <div class="select-check-empty"></div>
+            <BookOpen size={28} weight="duotone" />
           {/if}
         </div>
+      {/if}
+
+      {#if viewMode !== "list" && primaryGridBadge}
+        <span class="n-library-card__badge">{formatGridStateLabel(primaryGridBadge.label, primaryGridBadge.kind)}</span>
+      {/if}
+      {#if topLeftBadges.length}
+        <div class="badge-cluster badge-cluster-top-left">
+          {#each topLeftBadges as badge, index (badge.kind + badge.label + index)}
+            <span class={`badge badge-${badge.kind} n-library-card__badge`}>{formatGridStateLabel(badge.label, badge.kind)}</span>
+          {/each}
+        </div>
+      {/if}
+      {#if topRightBadges.length}
+        <div class="badge-cluster badge-cluster-top-right">
+          {#each topRightBadges as badge, index (badge.kind + badge.label + index)}
+            <span class={`badge badge-${badge.kind} n-library-card__badge`}>{formatGridStateLabel(badge.label, badge.kind)}</span>
+          {/each}
+        </div>
+      {/if}
+      {#if bottomLeftBadges.length}
+        <div class="badge-cluster badge-cluster-bottom-left">
+          {#each bottomLeftBadges as badge, index (badge.kind + badge.label + index)}
+            <span class={`badge badge-${badge.kind} n-library-card__badge`}>{formatGridStateLabel(badge.label, badge.kind)}</span>
+          {/each}
+        </div>
+      {/if}
+
+      {#if showSelectableState && vm.selectable}
+        <div class="select-overlay" aria-hidden="true">
+          <div class="select-check" class:checked={vm.selected}>
+            {#if vm.selected}
+              <CheckSquare size={20} weight="fill" />
+            {:else}
+              <div class="select-check-empty"></div>
+            {/if}
+          </div>
+        </div>
+      {/if}
+    </div>
+
+    {#if viewMode !== "list" && vm.sourceMetricBanner && (vm.sourceMetricBanner.newCount > 0 || vm.sourceMetricBanner.downloadedCount > 0 || hasFlag)}
+      <div class="source-metric-banner" aria-label="Source info: flag, downloaded, unread">
+        {#if hasFlag}
+          <span
+            class="source-metric-flag"
+            class:flag-only={!(vm.sourceMetricBanner.downloadedCount > 0 || vm.sourceMetricBanner.newCount > 0)}
+            aria-label="Source language"
+          >
+            {#if getCountryCode(vm.sourceMetricBanner.flagLabel, vm.sourceMetricBanner.sourceName)}
+              <img
+                class="source-metric-flag-img"
+                src="https://flagcdn.com/w40/{getCountryCode(vm.sourceMetricBanner.flagLabel, vm.sourceMetricBanner.sourceName)}.png"
+                alt={vm.sourceMetricBanner.flagLabel}
+                loading="lazy"
+                draggable="false"
+              />
+            {:else}
+              {getLanguageFlag(vm.sourceMetricBanner.flagLabel, vm.sourceMetricBanner.sourceName)}
+            {/if}
+          </span>
+        {/if}
+
+        {#if vm.sourceMetricBanner.downloadedCount > 0 || vm.sourceMetricBanner.newCount > 0}
+          <div class="source-metric-pill" class:has-flag={hasFlag}>
+            {#if vm.sourceMetricBanner.downloadedCount > 0}
+              <span
+                class="source-metric-downloaded"
+                class:pill-only={vm.sourceMetricBanner.newCount === 0}
+                class:has-flag={hasFlag}
+                aria-label="Downloaded chapters"
+              >
+                {vm.sourceMetricBanner.downloadedCount}
+              </span>
+            {/if}
+            {#if vm.sourceMetricBanner.newCount > 0}
+              <span
+                class="source-metric-unread"
+                class:pill-only={vm.sourceMetricBanner.downloadedCount === 0}
+                class:has-flag={hasFlag}
+                aria-label="Unread chapters"
+              >
+                {vm.sourceMetricBanner.newCount}
+              </span>
+            {/if}
+          </div>
+        {/if}
       </div>
     {/if}
   </div>

@@ -474,5 +474,9 @@ function inferTrackerIconKey(name: string): string {
   const normalized = name.toLowerCase();
   if (normalized.includes("anilist")) return "anilist";
   if (normalized.includes("myanimelist") || normalized === "mal") return "myanimelist";
+  if (normalized.includes("kitsu")) return "kitsu";
+  if (normalized.includes("bangumi")) return "bangumi";
+  if (normalized.includes("mangaupdates")) return "mangaupdates";
+  if (normalized.includes("hardcover")) return "hardcover";
   return "tracker";
 }

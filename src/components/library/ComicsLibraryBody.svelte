@@ -12,7 +12,7 @@
   import { computeLibraryLayout, type LibraryPreferredGridColumns, type LibraryViewMode } from "../../lib/libraryDisplay";
   import type { ComicsSectionVM } from "../../lib/library/contracts";
   import { getCategoryDisplayName } from "../../lib/library/categories";
-  import type { Category, Manga } from "../../lib/types";
+  import type { Category, Manga, Source } from "../../lib/types";
   import {
     setLibraryReturnToMangaId,
     setLibraryScrollTop,
@@ -29,6 +29,7 @@
     categoryMangaMap: Map<number, Manga[]>;
     trackedCompletedIds?: ReadonlySet<number>;
     trackedChapterTotalsByMangaId?: ReadonlyMap<number, number>;
+    sources?: Source[];
     renderLimit?: number;
     viewKey: string;
     viewMode: LibraryViewMode;
@@ -52,6 +53,7 @@
     categoryMangaMap,
     trackedCompletedIds = new Set(),
     trackedChapterTotalsByMangaId = new Map(),
+    sources = [],
     renderLimit = 48,
     viewKey,
     viewMode = "grid",
@@ -109,6 +111,7 @@
         selectedIds,
         trackedCompletedIds,
         trackedChapterTotalsByMangaId,
+        sources,
       });
 
       return {

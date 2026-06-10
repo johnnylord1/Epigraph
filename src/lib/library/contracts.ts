@@ -80,6 +80,7 @@ export interface LibrarySourceMetricBannerVM {
   flagLabel: string;
   downloadedCount: number;
   newCount: number;
+  sourceName?: string | null;
 }
 
 export interface LibraryCardVM {

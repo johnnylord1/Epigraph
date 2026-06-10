@@ -125,6 +125,38 @@ describe("buildComicsSectionState", () => {
     expect(state.vm.cards.map((card) => card.id)).toEqual(["comic:3"]);
   });
 
+  it("resolves id-only category members against the library snapshot", () => {
+    const alpha = manga();
+
+    const state = buildComicsSectionState({
+      librarySection: "comics",
+      libraryFilter: "10",
+      mangas: [alpha],
+      categories: [category(10, "Favorites", [{ id: alpha.id } as Manga])],
+      defaultCategoryId: null,
+      hiddenCategoryIds: [],
+      search: "",
+      sortMode: "az",
+      sortDir: "asc",
+      statusFilter: "ALL",
+      recentReads: [],
+      trackedCompletedIds: new Set(),
+      trackedChapterTotalsByMangaId: new Map(),
+      settings: {
+        showNsfw: false,
+        nsfwFilteredTags: [],
+        nsfwAllowedSourceIds: [],
+        nsfwBlockedSourceIds: [],
+        libraryCropCovers: true,
+      },
+      loading: false,
+      error: null,
+    });
+
+    expect(state.counts["10"]).toBe(1);
+    expect(state.filteredManga.map((entry) => entry.title)).toEqual(["Alpha"]);
+  });
+
   it("builds Aethon comic card metadata from unread count and inferred state", () => {
     const unknownUnread = manga({
       status: "UNKNOWN",

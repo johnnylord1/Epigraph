@@ -3025,8 +3025,9 @@ server.extensionRepos = []
 
 const LOCAL_SERVER_JAVA_XMS: &str = "96m";
 const LOCAL_SERVER_JAVA_XMX: &str = "320m";
+const LOCAL_SERVER_JAVA_VERIFY_FLAG: &str = "-noverify";
 const LOCAL_SERVER_JAVA_TOOL_OPTIONS: &str =
-    "-Djava.awt.headless=true -Xms96m -Xmx320m -XX:+UseG1GC";
+    "-Djava.awt.headless=true -Xms96m -Xmx320m -XX:+UseG1GC -noverify";
 
 fn local_server_java_args(jar: &Path) -> Vec<String> {
     vec![
@@ -3034,6 +3035,7 @@ fn local_server_java_args(jar: &Path) -> Vec<String> {
         format!("-Xms{LOCAL_SERVER_JAVA_XMS}"),
         format!("-Xmx{LOCAL_SERVER_JAVA_XMX}"),
         "-XX:+UseG1GC".to_string(),
+        LOCAL_SERVER_JAVA_VERIFY_FLAG.to_string(),
         "-jar".to_string(),
         jar.to_string_lossy().into_owned(),
     ]

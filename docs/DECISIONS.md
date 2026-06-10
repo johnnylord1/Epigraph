@@ -102,3 +102,67 @@
   - weaker fallback state must never overwrite stronger precise state during normal use
 - Persisted state shown in `BookDetail` must stay consistent with the best state written by `BookReader`.
 - Remaining very-large-EPUB progress-label roughness is non-blocking polish only and does not reopen the stabilization track.
+
+## 2026-06-10 - Card overlay banner mockup exploration is initiated
+- A visual proposal is created to add an overlay banner to cards displaying source language, downloaded chapters, and unread chapters.
+- No code modification or implementation is performed, adhering to strict user constraints.
+- Three variations (Reference replica, Glassmorphism/Frost, Minimalist with Icons) have been proposed in `banner_mockup_proposal.md`.
+- Feedback loop refined the proposal: updated to use actual theme colors (Nocturne graphite and lavender) and showing the banner floating/overflowing outside the card boundaries, with separate isolated and on-card mockups.
+- Second refinement loop: adapted the mockup to utilize the real card component structure of `LibraryCard.svelte` (2:3 aspect ratio, border-radius 16px, title/subtitle positioned beneath the cover wrap).
+- Third refinement loop: adjusted the vertical position of the banner, shifting it higher so that the capsule pill sits almost entirely above the card's top edge, with only the bottom-most 20% overlapping the cover wrap, minimizing cover art obstruction and matching the reference.
+- Fourth refinement loop: recreated the mockup using the exact card layout from the user screenshot (the manga card 'Dangerous Dungeon Escape', including the title and metadata formatting, the cover artwork, and the existing top-right 'CH 1' badge) to ensure a perfectly scaled, non-intrusive 20px capsule height that fits naturally and coexists with other overlay indicators.
+- Fifth refinement loop: clarified that the new banner replaces the existing top-right badge (which is removed). Refined mockup scale to a micro-banner (height 14px, capsule width 32px, flag diameter 16px) to fit cleanly in a dense library grid context where cards are only 90-100px wide, avoiding visual clutter across a large catalog.
+
+## 2026-06-10 - Card overlay banner implementation is finalized
+- Extended `LibraryCardVM` in `contracts.ts` using the existing `sourceMetricBanner` property.
+- Populated `sourceMetricBanner` in `buildComicsLibraryCardVm` (Comics) and `buildNovelLibraryCards` (Novels) with source language, downloaded count, and unread chapter counts.
+- Updated `LibraryCard.svelte` template to display the new floating micro-banner (height 14px, width 42px) in grid views, and hide the old top-right badge if `sourceMetricBanner` is present.
+- Built responsive sizing utilizing the shell's resolution variable `var(--n-hud-scale, 1)` to automatically scale all dimensions (margins, height, borders, font-size).
+- Built theme-adaptive color styling using CSS custom properties (`var(--bg-subtle)`, `var(--text-primary)`, `var(--accent)`, `var(--bg-void)`) with a light-theme override utilizing `:global()`.
+- Validated all Svelte component unit tests and production build.
+- Fixed an overflow clipping issue: wrapped `cover-wrap` in a new `.card-cover-container` with `position: relative` and moved `.source-metric-banner` outside `.cover-wrap`. This bypasses `.cover-wrap`'s necessary `overflow: hidden` (which clips cover images to card border radius), allowing the banner to float and overflow freely as designed.
+
+## 2026-06-10 - Card overlay banner proportions and flags refined
+- Scaled up the micro-banner from 14px to a larger 22px height pill and 24px flag diameter to be proportional to the library cards.
+- Fixed flag rendering on Windows: switched from native Unicode flag emojis (which render as text regional indicators like 'GB' or 'BR' on Windows) to a lightweight circular image overlay fetched from `flagcdn.com`, with a robust fallback to Svelte-rendered text/globe emojis for unrecognized/generic sources. Split regional subtags (e.g., pt-BR -> pt, en-US -> en) to ensure that regional source language codes correctly match their respective flags.
+- Activated the source name fallback parameters inside the template so that sources missing a `lang` property but specifying `sourceName` (e.g., parenthetical '(EN)' or similar keywords) are correctly matched.
+- Switched the unread count background from `--accent` to the app's neon purple CSS variables (`--n-primary-container`, falling back to `--accent-bright`) and corresponding high-contrast text (`--n-on-primary`, falling back to `var(--bg-void)`) for visual alignment with the Nocturne theme identity.
+
+## 2026-06-10 - Card overlay banner dynamic scaling and backend bug bypass implemented
+- Extended `Manga` model in `types.ts` to include `sourceId`.
+- Updated `GET_LIBRARY` query in `queries.ts` to fetch `sourceId` on manga nodes.
+- Updated `Library.svelte` to fetch the available sources list (`GET_SOURCES`) in parallel with the library nodes, storing the list in the component state.
+- Updated card VM builder `buildComicsLibraryCardVm` to resolve null `source` relation by looking up the `sourceId` in the loaded sources list.
+- Re-architected `.source-metric-banner` styling in `LibraryCard.svelte` using CSS Container Queries. Set `container-type: inline-size` on `.card-cover-container` and redefined all banner size dimensions (height, width, font-size, padding, margins, borders, clip-path) in container-query width (`cqw`) units. This ensures that the banner dynamically and linearly scales proportional to the card's width across all layout densities and window resizes.
+- Implemented state-based rendering and layout adjustments on the banner:
+  - *Unread-only*: Shows flag + neon purple pill (symmetrical paddings, clip-path disabled via `.pill-only`).
+  - *Downloaded-only*: Shows flag + neutral pill (symmetrical paddings via `.pill-only`).
+  - *Flag-only*: Shows only the language flag (pill hidden).
+  - *No counts & No flag*: Banner is hidden completely.
+
+## 2026-06-10 - Card overlay banner flag size, shape, and transition refinements
+- Decreased the horizontal size of the flag (`width: 16cqw` vs original `18cqw`), maintaining the rounded left side pill shape (`border-top-left-radius: 9999px; border-bottom-left-radius: 9999px;`).
+- Added a slanted diagonal `/` transition on the flag's right edge (`clip-path: polygon(0 0, 100% 0, calc(100% - 2cqw) 100%, 0 100%)`). This slant runs parallel to the `2cqw` diagonal transition between downloaded and unread counts.
+- Flattened the left side of the metrics pill (`border-top-left-radius: 0; border-bottom-left-radius: 0;` via `.has-flag`) when the flag is present, preventing any rounded corners from peaking out.
+- Kept the flag-only state fully rounded (`border-radius: 9999px; margin-right: 0; clip-path: none;` via `.flag-only`) when no counts are rendered.
+- Scaled up the overall banner height from `12cqw` to `14cqw` to increase visibility.
+- Mathematically aligned the visible widths of both chapter count sections to exactly `13cqw` each, ensuring they look identical in size on screen. To achieve this, the padding configurations account for both the 3.5cqw average flag overlap on the left and the 2cqw unread slant overlap on the right (`padding-left: 8.5cqw` / `padding-right: 7cqw` for downloaded with flag, and `padding-left: 6cqw` / `padding-right: 5cqw` for unread), resulting in perfect visual centering and identical spacing on both counts.
+
+## 2026-06-10 - Card overlay banner style standardized and integrated into search recommendations
+- Standardized the floating `.source-metric-banner` styling as a global theme standard in `src/styles/nocturne-port.css`.
+- Replaced the text-based tracker score badges on search recommendation cards in `browse > search` with the floating overlay banner layout.
+- Designed inline SVG icon flags for AniList, MyAnimeList, and Hardcover trackers to serve as the visual trigger on the left side of the banner, transitioning slantedly into the rating score pill on the right.
+- Cleaned up obsolete helper functions like `recommendationBadge` and unused CSS selectors like `.searchTrackerBadge` from `BrowseV3.svelte`.
+- Fixed layout clipping of absolute-positioned banners by removing `overflow: hidden` from the search recommendation `.n-library-card` buttons and adding responsive headroom (`padding-top: 12px`, `padding-left: 8px`) to `.searchRecommendationRow` to allow the banner to overflow outside card bounds cleanly.
+- Switched the AniList icon to the official "AL" brand logo using separate multi-color paths (white A shape and `#02a9ff` blue L shape) over a dark `#0b1622` background.
+- Resolved background color leaks around inline SVGs by removing hardcoded `<rect>` background layers from the SVGs and dynamically setting matching brand background colors on the `.source-metric-flag` wrapper element.
+- Added an inline SVG golden star rating icon (`#ffb800`, sized `7.6cqw` matching the text size) next to the rating score inside the recommendation note pill.
+- Aligned the rating score and golden star perfectly by wrapping the score in `.source-metric-score-val` (flex container) and using a `1.2cqw` gap for unified spacing and symmetry.
+- Reduced the vertical height of both the flag and the pill to a slimmer `12cqw` baseline, adjusting overlaps, paddings, and font sizes to ensure perfect proportions.
+
+## 2026-06-10 - Tracker rating banner flag size, icon scale, and transparency adjustments
+- Expanded the width of `.source-metric-flag` from `16cqw` to `20cqw` and height from `12cqw` to `13cqw` to increase the size of the flag section in the pill, providing a roomy area for the tracker icons.
+- Applied `box-sizing: border-box` and added custom padding (`1.5cqw 5cqw 1.5cqw 3cqw`) to center tracker SVG icons while keeping them at their original/large visual scale without clipping.
+- Directed inline SVGs to use `object-fit: contain !important` to guarantee icons are never clipped or distorted by the slanted edge, while preserving `object-fit: cover` for country flags.
+- Adjusted the left padding of `.source-metric-downloaded.has-flag` to `6.5cqw` to align with the new `-5cqw` flag overlap margin, preventing any text overlap.
+- Increased the transparency of the frosted glass background to `0.65` in dark mode (`rgba(245, 243, 255, 0.65)`) and `0.75` in light mode (`rgba(15, 12, 30, 0.75)`) as requested.

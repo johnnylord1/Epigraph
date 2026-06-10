@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Aethon Library Badge Popup Mockup</title>
+  <style>
+    :root {
+      --bg: #131313;
+      --bg-top: #15151a;
+      --surface: #1c1b1b;
+      --surface-high: #2a2a2a;
+      --primary: #d3c4ff;
+      --primary-container: #b8a7ea;
+      --on-primary: #352660;
+      --on-surface: #e5e2e1;
+      --on-surface-variant: #cac4d0;
+      --line: rgba(202, 196, 208, 0.08);
+      --line-strong: rgba(202, 196, 208, 0.14);
+      --accent-info: #91a7e8;
+      --shadow-soft: rgba(0, 0, 0, 0.38);
+      --shadow-deep: rgba(0, 0, 0, 0.62);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at 50% 8%, rgba(184, 167, 234, 0.1), transparent 34%),
+        radial-gradient(circle at 26% 28%, rgba(211, 196, 255, 0.045), transparent 30%),
+        linear-gradient(180deg, var(--bg-top), var(--bg));
+      color: var(--on-surface);
+      font-family: Manrope, Inter, ui-sans-serif, system-ui, sans-serif;
+    }
+
+    .board {
+      width: 1024px;
+      height: 640px;
+      padding: 62px;
+      display: grid;
+      grid-template-columns: 1fr 360px;
+      align-items: center;
+      gap: 54px;
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.025), transparent 34%),
+        rgba(15, 14, 18, 0.78);
+      border: 1px solid rgba(255, 255, 255, 0.055);
+      box-shadow:
+        0 28px 90px rgba(0, 0, 0, 0.44),
+        inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      overflow: hidden;
+    }
+
+    .context {
+      position: relative;
+      height: 100%;
+      display: grid;
+      align-content: center;
+      gap: 26px;
+    }
+
+    .eyebrow {
+      margin: 0;
+      color: rgba(211, 196, 255, 0.72);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+    }
+
+    .title {
+      max-width: 450px;
+      margin: 0;
+      color: rgba(241, 238, 252, 0.96);
+      font-size: 35px;
+      line-height: 1.05;
+      letter-spacing: -0.015em;
+    }
+
+    .note {
+      max-width: 430px;
+      margin: 0;
+      color: rgba(202, 196, 208, 0.62);
+      font-size: 14px;
+      line-height: 1.6;
+      font-weight: 600;
+    }
+
+    .library-strip {
+      display: grid;
+      grid-template-columns: repeat(3, 126px);
+      gap: 18px;
+      margin-top: 16px;
+    }
+
+    .tiny-card {
+      position: relative;
+      height: 188px;
+      border-radius: 16px;
+      background: rgba(28, 27, 27, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      overflow: visible;
+      box-shadow: 0 12px 34px rgba(0, 0, 0, 0.26);
+    }
+
+    .tiny-cover {
+      height: 152px;
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.055);
+      background:
+        radial-gradient(circle at 32% 24%, rgba(255, 255, 255, 0.28), transparent 12%),
+        linear-gradient(150deg, #211a2f 0%, #544077 48%, #a78ce4 100%);
+    }
+
+    .tiny-card:nth-child(2) .tiny-cover {
+      background:
+        radial-gradient(circle at 36% 23%, rgba(255, 255, 255, 0.22), transparent 12%),
+        linear-gradient(150deg, #17151f 0%, #41345d 46%, #a18ce8 100%);
+    }
+
+    .tiny-card:nth-child(3) .tiny-cover {
+      background:
+        radial-gradient(circle at 36% 23%, rgba(255, 255, 255, 0.2), transparent 12%),
+        linear-gradient(150deg, #1a1825 0%, #514067 44%, #d3c4ff 100%);
+    }
+
+    .tiny-label {
+      position: absolute;
+      left: 9px;
+      right: 9px;
+      bottom: 9px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: rgba(229, 226, 225, 0.76);
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .focus-wrap {
+      display: grid;
+      place-items: center;
+    }
+
+    .library-card {
+      position: relative;
+      width: 342px;
+      padding: 0 0 18px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 20px;
+      background:
+        linear-gradient(180deg, rgba(36, 33, 43, 0.72), rgba(24, 23, 26, 0.88)),
+        var(--surface);
+      box-shadow:
+        0 24px 64px var(--shadow-soft),
+        inset 0 1px 0 rgba(255, 255, 255, 0.035);
+      overflow: visible;
+    }
+
+    .cover {
+      position: relative;
+      height: 436px;
+      margin: 0;
+      border-radius: 20px;
+      overflow: visible;
+      background:
+        radial-gradient(circle at 35% 22%, rgba(255, 255, 255, 0.18), transparent 12%),
+        radial-gradient(circle at 66% 46%, rgba(211, 196, 255, 0.18), transparent 20%),
+        linear-gradient(145deg, #211829 0%, #4d3a70 42%, #b9a5f3 100%);
+      border: 1px solid rgba(255, 255, 255, 0.065);
+      box-shadow:
+        0 2px 8px rgba(0, 0, 0, 0.24),
+        inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    }
+
+    .cover::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      background:
+        linear-gradient(180deg, transparent 52%, rgba(0, 0, 0, 0.48)),
+        repeating-linear-gradient(115deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 9px);
+      pointer-events: none;
+    }
+
+    .cover::after {
+      content: "";
+      position: absolute;
+      left: 48px;
+      right: 38px;
+      bottom: 66px;
+      height: 150px;
+      border-radius: 48% 52% 12% 14%;
+      background:
+        radial-gradient(circle at 50% 20%, rgba(20, 16, 24, 0.7), transparent 22%),
+        linear-gradient(180deg, rgba(16, 15, 21, 0.9), rgba(37, 28, 46, 0.72));
+      filter: blur(0.3px);
+      opacity: 0.72;
+    }
+
+    .popup-stack {
+      position: absolute;
+      z-index: 5;
+      top: -19px;
+      left: 18px;
+      display: flex;
+      align-items: center;
+      isolation: isolate;
+      filter: drop-shadow(0 14px 20px rgba(0, 0, 0, 0.36));
+    }
+
+    .source-flag {
+      position: relative;
+      z-index: 3;
+      width: 52px;
+      height: 52px;
+      margin-right: -11px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background:
+        linear-gradient(90deg, transparent 44%, #f4f0ff 44% 56%, transparent 56%),
+        linear-gradient(0deg, transparent 42%, #f4f0ff 42% 58%, transparent 58%),
+        linear-gradient(35deg, transparent 41%, #f4f0ff 41% 48%, #c64b5d 48% 54%, #f4f0ff 54% 61%, transparent 61%),
+        linear-gradient(-35deg, transparent 41%, #f4f0ff 41% 48%, #c64b5d 48% 54%, #f4f0ff 54% 61%, transparent 61%),
+        linear-gradient(90deg, transparent 47%, #c64b5d 47% 53%, transparent 53%),
+        linear-gradient(0deg, transparent 46%, #c64b5d 46% 54%, transparent 54%),
+        #24335d;
+      box-shadow:
+        0 10px 22px rgba(0, 0, 0, 0.4),
+        inset 0 1px 0 rgba(255, 255, 255, 0.32);
+    }
+
+    .source-flag::after {
+      content: "EN";
+      position: absolute;
+      left: 50%;
+      bottom: -7px;
+      transform: translateX(-50%);
+      min-width: 22px;
+      height: 14px;
+      display: grid;
+      place-items: center;
+      border-radius: 999px;
+      background: rgba(24, 23, 29, 0.92);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: rgba(241, 238, 252, 0.78);
+      font-size: 7px;
+      font-weight: 900;
+      letter-spacing: 0.08em;
+    }
+
+    .metric {
+      height: 46px;
+      min-width: 76px;
+      padding: 0 21px 0 26px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      font-weight: 900;
+      letter-spacing: -0.03em;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      box-shadow:
+        0 12px 24px rgba(0, 0, 0, 0.32),
+        inset 0 1px 0 rgba(255, 255, 255, 0.07);
+    }
+
+    .metric.downloaded {
+      z-index: 2;
+      margin-right: -9px;
+      border-radius: 0 16px 16px 0;
+      background:
+        linear-gradient(180deg, rgba(46, 44, 56, 0.98), rgba(32, 30, 40, 0.98));
+      color: rgba(229, 226, 225, 0.92);
+      text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+    }
+
+    .metric.unread {
+      z-index: 1;
+      min-width: 72px;
+      border-radius: 0 17px 17px 0;
+      background:
+        linear-gradient(135deg, var(--primary-container), var(--primary));
+      color: var(--on-primary);
+      box-shadow:
+        0 16px 30px rgba(139, 119, 224, 0.28),
+        0 8px 20px rgba(0, 0, 0, 0.28),
+        inset 0 1px 0 rgba(255, 255, 255, 0.32);
+    }
+
+    .metric.unread::after {
+      content: "";
+      position: absolute;
+    }
+
+    .copy {
+      padding: 13px 18px 0;
+    }
+
+    .card-title {
+      margin: 0;
+      color: rgba(255, 255, 255, 0.92);
+      font-size: 17px;
+      line-height: 1.22;
+      font-weight: 800;
+      text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+    }
+
+    .meta {
+      margin: 7px 0 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: rgba(255, 255, 255, 0.45);
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .chip {
+      min-height: 20px;
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 0 8px;
+      background: rgba(36, 33, 43, 0.9);
+      border: 1px solid rgba(184, 167, 234, 0.12);
+      color: rgba(211, 196, 255, 0.86);
+      box-shadow: 0 8px 16px rgba(0, 0, 0, 0.18);
+    }
+  </style>
+</head>
+<body>
+  <main class="board">
+    <section class="context">
+      <p class="eyebrow">Library card badge treatment</p>
+      <h1 class="title">Popup badges using Aethon’s current Nocturne surface language.</h1>
+      <p class="note">Same behavior as the reference, but locked to the active Nocturne palette: graphite glass for downloaded chapters, lavender primary for unread, compact source flag lifted above the cover.</p>
+      <div class="library-strip" aria-hidden="true">
+        <article class="tiny-card">
+          <div class="tiny-cover"></div>
+          <div class="tiny-label"><span>Reading</span><span>42</span></div>
+        </article>
+        <article class="tiny-card">
+          <div class="tiny-cover"></div>
+          <div class="tiny-label"><span>Downloaded</span><span>12</span></div>
+        </article>
+        <article class="tiny-card">
+          <div class="tiny-cover"></div>
+          <div class="tiny-label"><span>Unread</span><span>6</span></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="focus-wrap" aria-label="Focused card badge mockup">
+      <article class="library-card">
+        <figure class="cover">
+          <div class="popup-stack" aria-label="English source, one downloaded chapter, six unread chapters">
+            <span class="source-flag"></span>
+            <span class="metric downloaded">1</span>
+            <span class="metric unread">6</span>
+          </div>
+        </figure>
+        <div class="copy">
+          <h2 class="card-title">A Returner’s Magic</h2>
+          <p class="meta"><span class="chip">Manhwa</span><span>p.18</span></p>
+        </div>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

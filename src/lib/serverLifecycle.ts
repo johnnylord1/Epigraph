@@ -4,6 +4,7 @@ export type ServerWakeReason =
   | "startup"
   | "manual-library-update"
   | "auto-library-update"
+  | "library-category-members"
   | "library-covers"
   | "browse"
   | "downloads"

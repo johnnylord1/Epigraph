@@ -43,6 +43,7 @@
     setLibrarySection,
     setLibraryMangaSnapshot,
     setLibraryTrackingSummarySnapshot,
+    recordLibraryUpdateNotifications,
     refreshAppReadingStateFromPersistence,
     setRuntimeSettingsTab,
     setSettingsOpen,
@@ -505,6 +506,7 @@
     if (shouldKeepServerAwake() && reason !== "startup") return null;
 
     automaticLibraryUpdateInFlight = (async () => {
+      const beforeUpdate = [...store.libraryMangaSnapshot];
       const awake = await ensureServerAwakeFor("auto-library-update", {
         serverUrl: store.runtimeServerUrl,
         binary: store.settings.serverBinary,
@@ -512,9 +514,18 @@
       if (!awake) return;
       await gql(UPDATE_LIBRARY, { categories: undefined });
       await waitForLibraryUpdateToSettle();
-      updateSettings({ lastLibraryUpdateAt: Date.now() });
+      const updatedAt = Date.now();
+      updateSettings({ lastLibraryUpdateAt: updatedAt });
       cache.clearGroup(CACHE_GROUPS.LIBRARY);
       await preloadLibrarySnapshot();
+      const entries = recordLibraryUpdateNotifications(beforeUpdate, store.libraryMangaSnapshot, updatedAt);
+      if (entries.length > 0) {
+        addToast({
+          kind: "success",
+          title: "New chapters found",
+          body: `${entries.reduce((sum, entry) => sum + entry.chapterDelta, 0)} new chapters added across ${entries.length} titles.`,
+        });
+      }
       await maybeStandbyAfterIdle("auto-library-update");
     })()
       .catch((error) => {

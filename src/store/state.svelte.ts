@@ -315,6 +315,18 @@ export interface ReadLogEntry {
   minutes:   number;
 }
 
+export interface LibraryUpdateNotification {
+  id: string;
+  mangaId: number;
+  mangaTitle: string;
+  thumbnailUrl: string;
+  sourceName: string;
+  chapterDelta: number;
+  previousChapterCount: number;
+  nextChapterCount: number;
+  createdAt: number;
+}
+
 export interface ReadingStats {
   totalChaptersRead: number;
   totalMangaRead:    number;
@@ -788,6 +800,67 @@ function normalizeLoadedReadLogEntry(entry: any): ReadLogEntry | null {
   };
 }
 
+function normalizeLoadedLibraryUpdateNotification(entry: any): LibraryUpdateNotification | null {
+  if (!entry || typeof entry !== "object") return null;
+  const mangaId = Number(entry.mangaId);
+  const chapterDelta = Number(entry.chapterDelta);
+  const previousChapterCount = Number(entry.previousChapterCount);
+  const nextChapterCount = Number(entry.nextChapterCount);
+  const createdAt = Number(entry.createdAt);
+  if (
+    !Number.isFinite(mangaId)
+    || !Number.isFinite(chapterDelta)
+    || chapterDelta <= 0
+    || !Number.isFinite(previousChapterCount)
+    || !Number.isFinite(nextChapterCount)
+    || !Number.isFinite(createdAt)
+  ) return null;
+  return {
+    id: typeof entry.id === "string" && entry.id.trim()
+      ? entry.id
+      : `library-update:${mangaId}:${createdAt}`,
+    mangaId,
+    mangaTitle: String(entry.mangaTitle ?? ""),
+    thumbnailUrl: String(entry.thumbnailUrl ?? ""),
+    sourceName: String(entry.sourceName ?? "Library"),
+    chapterDelta,
+    previousChapterCount,
+    nextChapterCount,
+    createdAt,
+  };
+}
+
+function buildLibraryUpdateNotifications(
+  before: Manga[],
+  after: Manga[],
+  createdAt = Date.now(),
+): LibraryUpdateNotification[] {
+  const beforeById = new Map(before.map((manga) => [manga.id, manga]));
+  return after
+    .map((manga) => {
+      const previous = beforeById.get(manga.id);
+      if (!previous) return null;
+      const previousChapterCount = Math.max(0, Number(previous.chapterCount ?? 0));
+      const nextChapterCount = Math.max(0, Number(manga.chapterCount ?? 0));
+      const chapterDelta = nextChapterCount - previousChapterCount;
+      if (chapterDelta <= 0) return null;
+      const sourceName = manga.source?.displayName || manga.source?.name || "Library";
+      return {
+        id: `library-update:${manga.id}:${createdAt}:${previousChapterCount}:${nextChapterCount}`,
+        mangaId: manga.id,
+        mangaTitle: manga.title,
+        thumbnailUrl: manga.thumbnailUrl ?? "",
+        sourceName,
+        chapterDelta,
+        previousChapterCount,
+        nextChapterCount,
+        createdAt,
+      };
+    })
+    .filter((entry): entry is LibraryUpdateNotification => Boolean(entry))
+    .sort((left, right) => right.chapterDelta - left.chapterDelta || left.mangaTitle.localeCompare(right.mangaTitle));
+}
+
 function todayStr(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -868,6 +941,13 @@ class Store {
   librarySection:    LibrarySection   = $state(normalizeLibrarySection(saved?.librarySection));
   libraryFilter:     LibraryFilter    = $state("library");
   history:           HistoryEntry[]   = $state(saved?.history       ?? []);
+  libraryUpdateNotifications: LibraryUpdateNotification[] = $state(
+    Array.isArray(saved?.libraryUpdateNotifications)
+      ? saved.libraryUpdateNotifications
+          .map(normalizeLoadedLibraryUpdateNotification)
+          .filter((entry: LibraryUpdateNotification | null): entry is LibraryUpdateNotification => Boolean(entry))
+      : [],
+  );
   books:             BookEntry[]      = $state(reconciledSavedBooks.books);
   bookProgress:      BookProgress[]   = $state(reconciledSavedBooks.bookProgress);
   bookBookmarks:     BookBookmarkEntry[] = $state(savedBookLibraryState.bookBookmarks.map(normalizeLoadedBookBookmark));
@@ -960,6 +1040,7 @@ class Store {
         $effect(() => { persist({ librarySection: this.librarySection }); });
         $effect(() => { persist({ libraryFilter: this.libraryFilter }); });
         $effect(() => { persist({ history:       this.history       }); });
+        $effect(() => { persist({ libraryUpdateNotifications: this.libraryUpdateNotifications }); });
         $effect(() => { persist({ readLog:       this.readLog       }); });
       $effect(() => { persist({ bookmarks:     this.bookmarks     }); });
       $effect(() => { persist({ readingStats:  this.readingStats  }); });
@@ -1240,6 +1321,16 @@ class Store {
   }
 
   clearHistory()                        { this.history = []; this.readLog = []; bumpContentSetupVersion(); }
+  clearLibraryUpdateNotifications()     { this.libraryUpdateNotifications = []; }
+  recordLibraryUpdateNotifications(before: Manga[], after: Manga[], createdAt = Date.now()) {
+    const entries = buildLibraryUpdateNotifications(before, after, createdAt);
+    if (!entries.length) return [];
+    const existingKeys = new Set(this.libraryUpdateNotifications.map((entry) => entry.id));
+    const nextEntries = entries.filter((entry) => !existingKeys.has(entry.id));
+    if (!nextEntries.length) return [];
+    this.libraryUpdateNotifications = [...nextEntries, ...this.libraryUpdateNotifications].slice(0, 200);
+    return nextEntries;
+  }
   clearHistoryForManga(mangaId: number) {
     this.history = this.history.filter(x => x.mangaId !== mangaId);
     this.readLog  = this.readLog.filter(x => x.mangaId !== mangaId);
@@ -1791,6 +1882,8 @@ export const store = new Store();
 export function openReader(chapter: Chapter, chapterList: Chapter[], manga?: Manga | null) { store.openReader(chapter, chapterList, manga); }
 export function closeReader()                                            { store.closeReader(); }
 export function addHistory(entry: HistoryEntry, completed?: boolean, minutes?: number) { store.addHistory(entry, completed, minutes); }
+export function recordLibraryUpdateNotifications(before: Manga[], after: Manga[], createdAt?: number) { return store.recordLibraryUpdateNotifications(before, after, createdAt); }
+export function clearLibraryUpdateNotifications()                         { store.clearLibraryUpdateNotifications(); }
 export function clearHistory()                                           { store.clearHistory(); }
 export function clearHistoryForManga(mangaId: number)                    { store.clearHistoryForManga(mangaId); }
 export function upsertBook(entry: BookEntry)                             { store.upsertBook(entry); }

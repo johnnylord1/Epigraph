@@ -42,6 +42,7 @@
     GET_LIBRARY,
     GET_LIBRARY_UPDATE_STATUS,
     GET_LIBRARY_TRACKING_SUMMARY,
+    GET_SOURCES,
     UPDATE_LIBRARY,
     UPDATE_MANGA,
     DELETE_DOWNLOADED_CHAPTERS,
@@ -51,7 +52,7 @@
     UPDATE_MANGA_CATEGORIES,
     UPDATE_CATEGORY_ORDER,
   } from "../../lib/queries";
-  import type { Category, Chapter, Manga } from "../../lib/types";
+  import type { Category, Chapter, Manga, Source } from "../../lib/types";
   import {
     addToast,
     checkAndMarkCompleted as storeCheckAndMarkCompleted,
@@ -62,6 +63,7 @@
     setLibraryFilter,
     setLibrarySection,
     setLibraryMangaSnapshot,
+    recordLibraryUpdateNotifications,
     store,
     updateSettings,
     type BooksLibraryStatusFilter,
@@ -93,6 +95,7 @@
   let hydrateCategoriesInFlight: Promise<Category[]> | null = null;
   let trackedCompletedIds: Set<number> = $state(new Set());
   let trackedChapterTotalsByMangaId: Map<number, number> = $state(new Map());
+  let allSources: Source[] = $state([]);
   function hasWarmLibrarySnapshot() {
     return store.libraryMangaSnapshot.length > 0 && store.categories.length > 0;
   }
@@ -314,7 +317,13 @@
   function loadCategoryMembersSnapshot() {
     return cache.get(
       CATEGORY_MEMBERS_CACHE_KEY,
-      async () => ensureCompletedCategory((await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES_WITH_MANGA_IDS)).categories.nodes),
+      async () => {
+        await ensureServerAwakeFor("library-category-members", {
+          serverUrl: store.runtimeServerUrl,
+          binary: store.settings.serverBinary,
+        });
+        return ensureCompletedCategory((await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES_WITH_MANGA_IDS)).categories.nodes);
+      },
       DEFAULT_TTL_MS,
       CACHE_GROUPS.LIBRARY,
     );
@@ -322,6 +331,11 @@
 
   function categoriesHaveMangaMembers(categories = store.categories) {
     return categories.some((category) => Array.isArray(category.mangas?.nodes));
+  }
+
+  function categoryHasMangaMembers(categoryId: number, categories = store.categories) {
+    const category = categories.find((entry) => entry.id === categoryId);
+    return Array.isArray(category?.mangas?.nodes);
   }
 
   async function hydrateCategoryMembers(force = false) {
@@ -376,6 +390,15 @@
     );
   }
 
+  function loadSourcesSnapshot() {
+    return cache.get(
+      CACHE_KEYS.SOURCES,
+      () => gql<{ sources: { nodes: Source[] } }>(GET_SOURCES).then((d) => d.sources.nodes),
+      DEFAULT_TTL_MS,
+      CACHE_GROUPS.SOURCES,
+    );
+  }
+
   async function loadData() {
     if (!libraryRuntimeReady) return;
     if (loadDataInFlight) return;
@@ -385,7 +408,7 @@
       && activeLibraryBootstrapStatus !== "ready";
     if (shouldBlockForLoad) loading = true;
     try {
-      const [nodes, categories, trackingSummary] = await Promise.all([
+      const [nodes, categories, trackingSummary, sources] = await Promise.all([
         loadLibrary().catch((libraryError) => {
           console.error(libraryError);
           return store.libraryMangaSnapshot;
@@ -398,8 +421,13 @@
           console.error(trackingError);
           return store.libraryTrackingSummarySnapshot;
         }),
+        loadSourcesSnapshot().catch((sourcesError) => {
+          console.error(sourcesError);
+          return [];
+        }),
       ]);
 
+      allSources = sources;
       setLibraryMangaSnapshot(normalizeLoadedLibrary(nodes));
       setCategories(normalizeCategories(categories));
       store.setLibraryTrackingSummarySnapshot(trackingSummary);
@@ -506,6 +534,23 @@
     if (!store.categories.some((category) => category.id === id)) {
       untrack(() => setLibraryFilter("library"));
     }
+  });
+
+  $effect(() => {
+    const filter = store.libraryFilter;
+    if (store.librarySection !== "comics") return;
+    if (filter === "library" || filter === "downloaded") return;
+
+    const id = Number(filter);
+    if (!Number.isFinite(id) || id <= 0) return;
+    if (!store.categories.some((category) => category.id === id)) return;
+    if (categoryHasMangaMembers(id)) return;
+
+    untrack(() => {
+      void hydrateCategoryMembers(false).catch((memberError) => {
+        console.warn("Could not hydrate category members:", memberError);
+      });
+    });
   });
 
   $effect(() => {
@@ -860,6 +905,7 @@
     manualRefreshInFlight = true;
     try {
       if (store.librarySection === "comics") {
+        const beforeUpdate = [...store.libraryMangaSnapshot];
         const awake = await ensureServerAwakeFor("manual-library-update", {
           serverUrl: store.runtimeServerUrl,
           binary: store.settings.serverBinary,
@@ -868,10 +914,18 @@
 
         await gql(UPDATE_LIBRARY, { categories: manualUpdateCategoryIds() });
         await waitForLibraryUpdateToSettle();
-        updateSettings({ lastLibraryUpdateAt: Date.now() });
+        const updatedAt = Date.now();
+        updateSettings({ lastLibraryUpdateAt: updatedAt });
         cache.clearGroup(CACHE_GROUPS.LIBRARY);
         await loadData();
-        addToast({ kind: "success", title: "Library updated", body: "Aethon refreshed your comics library." });
+        const entries = recordLibraryUpdateNotifications(beforeUpdate, store.libraryMangaSnapshot, updatedAt);
+        addToast({
+          kind: "success",
+          title: entries.length > 0 ? "New chapters found" : "Library updated",
+          body: entries.length > 0
+            ? `${entries.reduce((sum, entry) => sum + entry.chapterDelta, 0)} new chapters added across ${entries.length} titles.`
+            : "Aethon refreshed your comics library.",
+        });
       } else {
         novelsLibraryState = await loadNovelLibraryState({
           profileId: store.runtimeResolvedLocalProfileId,
@@ -1189,6 +1243,7 @@
         categoryMangaMap={comicsSectionState?.categoryMangaMap ?? new Map()}
         trackedCompletedIds={trackedCompletedIds}
         trackedChapterTotalsByMangaId={trackedChapterTotalsByMangaId}
+        sources={allSources}
         renderLimit={store.settings.renderLimit ?? 48}
         viewKey={comicsViewKey}
         viewMode={displaySettings.viewMode}

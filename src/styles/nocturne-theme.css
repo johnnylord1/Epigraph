@@ -50,6 +50,20 @@
   --hud-selection-bg:          #211b3b;
   --hud-selection-border:      #4c4078;
   --hud-progress-height:       2px;
+
+  --activity-panel:       rgba(18, 17, 22, 0.86);
+  --activity-panel-soft:  rgba(255, 255, 255, 0.035);
+  --activity-line:        rgba(255, 255, 255, 0.07);
+  --activity-line-soft:   rgba(255, 255, 255, 0.045);
+  --activity-text:        rgba(244, 241, 247, 0.94);
+  --activity-title:       rgba(242, 238, 247, 0.9);
+  --activity-muted:       rgba(204, 198, 216, 0.58);
+  --activity-subtle:      rgba(214, 208, 224, 0.54);
+  --activity-faint:       rgba(204, 198, 216, 0.38);
+  --activity-accent:      #c5b0ff;
+  --activity-accent-soft: rgba(197, 176, 255, 0.12);
+  --activity-accent-line: rgba(197, 176, 255, 0.24);
+  --activity-danger:      #f09aaa;
 }
 
 :root {
@@ -116,6 +130,20 @@
   --n-toolbar-icon-btn-size: calc(18px * var(--n-hud-scale));
   --n-toolbar-divider-height: calc(14px * var(--n-hud-scale));
   --n-segmented-height: calc(32px * var(--n-hud-scale));
+
+  --activity-panel:       rgba(18, 17, 22, 0.86);
+  --activity-panel-soft:  rgba(255, 255, 255, 0.035);
+  --activity-line:        rgba(255, 255, 255, 0.07);
+  --activity-line-soft:   rgba(255, 255, 255, 0.045);
+  --activity-text:        rgba(244, 241, 247, 0.94);
+  --activity-title:       rgba(242, 238, 247, 0.9);
+  --activity-muted:       rgba(204, 198, 216, 0.58);
+  --activity-subtle:      rgba(214, 208, 224, 0.54);
+  --activity-faint:       rgba(204, 198, 216, 0.38);
+  --activity-accent:      #c5b0ff;
+  --activity-accent-soft: rgba(197, 176, 255, 0.12);
+  --activity-accent-line: rgba(197, 176, 255, 0.24);
+  --activity-danger:      #f09aaa;
 }
 
 .n-popover-surface {

@@ -12,6 +12,7 @@ export const GET_LIBRARY = `
         unreadCount
         status
         genre
+        sourceId
         source {
           id
           name

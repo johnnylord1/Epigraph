@@ -87,6 +87,7 @@
 
   let homeSearch = $state("");
   let homeSearchFocused = $state(false);
+  let lastActivitySeenAt = $state(0);
   let trackedCompletedIds: Set<number> = $state(new Set());
   let trackedChapterTotalsByMangaId: Map<number, number> = $state(new Map());
   let loadingLibrary = $state(true);
@@ -100,6 +101,16 @@
   const libraryManga = $derived(store.libraryMangaSnapshot);
   const libraryBooks = $derived(store.books);
   const bookProgressById = $derived(new Map(store.bookProgress.map((progress) => [progress.bookId, progress] as const)));
+  const ACTIVITY_SEEN_STORAGE_KEY = "aethon.home.activity.lastSeenReadAt";
+  const latestActivityReadAt = $derived(Math.max(
+    store.history.reduce((latest, entry) => Math.max(latest, Number(entry.readAt) || 0), 0),
+    store.libraryUpdateNotifications.reduce((latest, entry) => Math.max(latest, Number(entry.createdAt) || 0), 0),
+  ));
+  const newActivityCount = $derived(
+    store.history.filter((entry) => (Number(entry.readAt) || 0) > lastActivitySeenAt).length
+    + store.libraryUpdateNotifications.filter((entry) => (Number(entry.createdAt) || 0) > lastActivitySeenAt).length
+  );
+  const newActivityBadge = $derived(newActivityCount > 99 ? "99+" : String(newActivityCount));
 
   function submitHomeSearch() {
     const query = homeSearch.trim();
@@ -177,7 +188,20 @@
     document.body.classList.remove("aethon-home-search-engaged");
   }
 
+  function markActivitySeen() {
+    if (latestActivityReadAt <= 0) return;
+    lastActivitySeenAt = latestActivityReadAt;
+    localStorage.setItem(ACTIVITY_SEEN_STORAGE_KEY, String(latestActivityReadAt));
+  }
+
+  function handleOpenHomeHistory() {
+    openHomeHistory();
+    markActivitySeen();
+  }
+
   onMount(() => {
+    const storedLastSeen = Number(localStorage.getItem(ACTIVITY_SEEN_STORAGE_KEY) ?? 0);
+    lastActivitySeenAt = Number.isFinite(storedLastSeen) ? storedLastSeen : 0;
     void loadLibrary();
     scheduleHomeMetaLoad();
     void refreshSetupState();
@@ -199,6 +223,11 @@
     void loadLibrary();
     scheduleHomeMetaLoad();
     void refreshSetupState();
+  });
+
+  $effect(() => {
+    if (store.homePanelHint !== "history") return;
+    markActivitySeen();
   });
 
   async function refreshSetupState() {
@@ -853,8 +882,17 @@
       </div>
     {/snippet}
     {#snippet right()}
-      <button class="n-icon-btn" type="button" title="Recent activity" aria-label="Recent activity" onclick={openHomeHistory}>
+      <button
+        class="n-icon-btn home-notification-btn"
+        type="button"
+        title="Recent activity"
+        aria-label={newActivityCount > 0 ? `Recent activity, ${newActivityCount} new` : "Recent activity"}
+        onclick={handleOpenHomeHistory}
+      >
         <span class="material-symbols-outlined" aria-hidden="true">notifications</span>
+        {#if newActivityCount > 0}
+          <span class="home-notification-badge" aria-hidden="true">{newActivityBadge}</span>
+        {/if}
       </button>
       <button class="n-icon-btn" type="button" title="Downloads" aria-label="Downloads" onclick={() => setNavPage("downloads")}>
         <span class="material-symbols-outlined" aria-hidden="true">download</span>
@@ -1804,6 +1842,34 @@
     line-height: 1;
   }
 
+  :global(.home-topbar) .home-notification-btn {
+    width: auto;
+    min-width: calc(38px * var(--n-hud-scale));
+    gap: calc(6px * var(--n-hud-scale));
+    padding-inline: calc(10px * var(--n-hud-scale));
+  }
+
+  .home-notification-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: calc(18px * var(--n-hud-scale));
+    height: calc(18px * var(--n-hud-scale));
+    padding: 0 calc(6px * var(--n-hud-scale));
+    border-radius: 999px;
+    border: 1px solid rgba(211, 196, 255, 0.42);
+    background: var(--n-gradient-primary);
+    color: #17131f;
+    box-shadow:
+      0 0 calc(18px * var(--n-hud-scale)) rgba(184, 167, 234, 0.42),
+      inset 0 1px 0 rgba(255, 255, 255, 0.28);
+    font-family: var(--font-sans);
+    font-size: calc(10px * var(--n-hud-scale));
+    font-weight: 900;
+    letter-spacing: 0.02em;
+    line-height: 1;
+  }
+
   .home-history-view {
     display: flex;
     min-height: 100%;
@@ -1814,11 +1880,9 @@
 
   .home-history-view__content {
     min-height: 0;
-    border-radius: calc(24px * var(--n-hud-scale));
-    border: 1px solid rgba(72, 69, 79, 0.14);
-    background:
-      linear-gradient(180deg, rgba(30, 28, 36, 0.82), rgba(24, 23, 24, 0.94)),
-      rgba(28, 27, 27, 0.62);
+    border-radius: calc(12px * var(--n-hud-scale));
+    border: 0;
+    background: transparent;
     overflow: hidden;
   }
 

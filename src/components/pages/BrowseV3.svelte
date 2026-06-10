@@ -2048,28 +2048,64 @@
       .join(" ");
   }
 
-  function recommendationBadge(item: RecommendationItem) {
+  function getRecommendationBannerInfo(item: RecommendationItem) {
     if (activeContentType === "novels") {
       const hardcoverScore = recommendationHardcoverScore(item);
       if (hardcoverScore && hardcoverScore.value > 0) {
-        return `HC ${formatHardcoverBadgeScore(hardcoverScore.value)}`;
+        return {
+          tracker: "hardcover",
+          score: formatHardcoverBadgeScore(hardcoverScore.value)
+        };
       }
       const sourceScore = item.candidate.providers
         .filter((provider) => provider.kind === "source" && provider.score && provider.score.confidence > 0)
         .map((provider) => ({ provider, score: provider.score! }))
         .sort((a, b) => b.score.confidence - a.score.confidence)[0];
       if (sourceScore) {
-        return `SRC ${formatSourceBadgeScore(sourceScore.score.value)}`;
+        return {
+          tracker: "source",
+          score: formatSourceBadgeScore(sourceScore.score.value)
+        };
       }
       return null;
     }
 
     if (item.badge) {
-      const key = item.badge.iconKeys[0]?.toUpperCase().includes("MAL") ? "MAL" : item.badge.iconKeys[0]?.toUpperCase().includes("ANI") ? "AL" : "SYNC";
-      return `${key} ${item.badge.displayScore}`;
+      const key = item.badge.iconKeys[0]?.toLowerCase() ?? "";
+      let trackerType = "tracker";
+      if (key.includes("mal") || key.includes("myanimelist")) {
+        trackerType = "myanimelist";
+      } else if (key.includes("ani") || key.includes("anilist")) {
+        trackerType = "anilist";
+      } else if (key.includes("kitsu")) {
+        trackerType = "kitsu";
+      } else if (key.includes("bangumi")) {
+        trackerType = "bangumi";
+      } else if (key.includes("mangaupdates")) {
+        trackerType = "mangaupdates";
+      } else if (key.includes("hardcover")) {
+        trackerType = "hardcover";
+      }
+      return {
+        tracker: trackerType,
+        score: item.badge.displayScore
+      };
     }
     return null;
   }
+
+  function getTrackerBgColor(tracker: string): string {
+    switch (tracker) {
+      case "anilist": return "#0b1622";
+      case "myanimelist": return "#2e51a2";
+      case "kitsu": return "#ef5a3a";
+      case "mangaupdates": return "#2f6e91";
+      case "bangumi": return "#ff3599";
+      case "hardcover": return "#ff9f43";
+      default: return "#4c4078";
+    }
+  }
+
 
   function recommendationHardcoverScore(item: RecommendationItem) {
     return item.candidate.providers
@@ -4801,28 +4837,85 @@
                 {#if section.items.length > 0}
                   <div class="searchRecommendationRow" data-search-row={section.key} onscroll={(event) => handleSearchRailScroll(section.key, event)}>
                     {#each section.items as item (item.candidate.id)}
-                      {@const badge = recommendationBadge(item)}
+                      {@const bannerInfo = getRecommendationBannerInfo(item)}
                       <button
                         class="n-library-card"
                         onclick={() => openSearchRecommendation(item)}
                       >
-                        <div class="n-library-card__cover">
-                          {#if hasSearchCover(item.candidate)}
-                            <img
-                              src={thumbUrl(item.candidate.coverUrl)}
-                              alt={item.candidate.title}
-                              loading="lazy"
-                              decoding="async"
-                              fetchpriority="low"
-                              onerror={() => markSearchCoverFailed(item.candidate)}
-                            />
-                          {:else}
-                            <div class="searchCoverPlaceholder" aria-hidden="true">
-                              <span>{item.candidate.title}</span>
+                        <div class="card-cover-container searchRecommendationCard">
+                          <div class="n-library-card__cover">
+                            {#if hasSearchCover(item.candidate)}
+                              <img
+                                src={thumbUrl(item.candidate.coverUrl)}
+                                alt={item.candidate.title}
+                                loading="lazy"
+                                decoding="async"
+                                fetchpriority="low"
+                                onerror={() => markSearchCoverFailed(item.candidate)}
+                              />
+                            {:else}
+                              <div class="searchCoverPlaceholder" aria-hidden="true">
+                                <span>{item.candidate.title}</span>
+                              </div>
+                            {/if}
+                          </div>
+                          {#if bannerInfo}
+                            <div class="source-metric-banner" aria-label="Tracker rating banner">
+                              <span
+                                class="source-metric-flag"
+                                aria-label={bannerInfo.tracker}
+                                style="background-color: {getTrackerBgColor(bannerInfo.tracker)};"
+                              >
+                                {#if bannerInfo.tracker === "anilist"}
+                                  <!-- AniList Icon -->
+                                  <svg viewBox="0 0 24 24" class="source-metric-flag-img" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M24 17.53v2.421c0 .71-.391 1.101-1.1 1.101h-5l-.057-.165L11.84 3.736c.106-.502.46-.788 1.053-.788h2.422c.71 0 1.1.391 1.1 1.1v12.38H22.9c.71 0 1.1.392 1.1 1.101z" fill="#02a9ff"/>
+                                    <path d="M11.034 2.947l6.337 18.104h-4.918l-1.052-3.131H6.019l-1.077 3.131H0L6.361 2.948h4.673zm-.66 10.96-1.69-5.014-1.541 5.015h3.23z" fill="#fff"/>
+                                  </svg>
+                                {:else if bannerInfo.tracker === "myanimelist"}
+                                  <!-- MyAnimeList Icon -->
+                                  <svg viewBox="0 0 24 24" class="source-metric-flag-img" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M14.921 6.479c-.82 0-3.683 0-4.947 3.156-.662 1.652-.986 4.812.876 7.886l1.934-1.41s-.767-1.095-1.083-3.191h2.897l.022 3.19h2.604V8.835h-2.581v2.043l-2.46-.023s.413-2.408 2.877-2.336h2.454l-.572-2.04ZM0 6.528v9.624h2.348v-5.84l2.031 2.664 2.047-2.652v5.828h2.336V6.528H6.437L4.368 9.474 2.31 6.528Zm18.447.022v9.583h5.022L24 14.09h-3.232V6.55Z" fill="#fff"/>
+                                  </svg>
+                                {:else if bannerInfo.tracker === "kitsu"}
+                                  <!-- Kitsu Icon -->
+                                  <svg viewBox="0 0 24 24" class="source-metric-flag-img" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M1.429 5.441a12.478 12.478 0 0 0 1.916 2.056c.011.011.022.011.022.022.452.387 1.313.947 1.937 1.173 0 0 3.886 1.496 4.091 1.582a1.4 1.4 0 0 0 .237.075.694.694 0 0 0 .808-.549c.011-.065.022-.172.022-.248V5.161c.011-.667-.205-1.679-.398-2.239 0-.011-.011-.022-.011-.032A11.979 11.979 0 0 0 8.824.36L8.781.285a.697.697 0 0 0-.958-.162c-.054.032-.086.075-.129.119L7.608.36a4.743 4.743 0 0 0-.786 3.412 8.212 8.212 0 0 0-.775.463c-.043.032-.42.291-.71.56A4.803 4.803 0 0 0 1.87 4.3c-.043.011-.097.021-.14.032-.054.022-.107.043-.151.076a.702.702 0 0 0-.193.958l.043.075zM8.222 1.07c.366.614.678 1.249.925 1.917-.495.086-.98.215-1.453.388a3.918 3.918 0 0 1 .528-2.305zM4.658 5.463a7.467 7.467 0 0 0-.893 1.216 11.68 11.68 0 0 1-1.453-1.55 3.825 3.825 0 0 1 2.346.334zm13.048-.302a7.673 7.673 0 0 0-2.347-.474 7.583 7.583 0 0 0-3.811.818l-.215.108v3.918c0 .054 0 .258-.032.431a1.535 1.535 0 0 1-.646.98 1.545 1.545 0 0 1-1.152.247 2.618 2.618 0 0 1-.409-.118 747.6 747.6 0 0 1-3.402-1.313 8.9 8.9 0 0 0-.323-.129 30.597 30.597 0 0 0-3.822 3.832l-.075.086a.698.698 0 0 0 .538 1.098.676.676 0 0 0 .42-.118c.011-.011.022-.022.043-.032 1.313-.947 2.756-1.712 4.284-2.325a.7.7 0 0 1 .818.13.704.704 0 0 1 .054.915l-.237.388a20.277 20.277 0 0 0-1.97 4.306l-.032.129a.646.646 0 0 0 .108.538.713.713 0 0 0 .549.301.657.657 0 0 0 .42-.118c.054-.043.108-.086.151-.14l.043-.065a18.95 18.95 0 0 1 1.765-2.153 20.156 20.156 0 0 1 10.797-6.018c.032-.011.065-.011.097-.011.237.011.42.215.409.452a.424.424 0 0 1-.344.398c-3.908.829-10.948 5.469-8.483 12.208.043.108.075.172.129.269a.71.71 0 0 0 .538.301.742.742 0 0 0 .657-.398c.398-.754 1.152-1.593 3.326-2.497 6.061-2.508 7.062-6.093 7.17-8.364v-.129a7.716 7.716 0 0 0-5.016-7.451zm-6.083 17.762c-.56-1.669-.506-3.283.151-4.823 1.26 2.035 3.456 2.207 3.456 2.207-2.25.937-3.133 1.863-3.607 2.616z" fill="#fff"/>
+                                  </svg>
+                                {:else if bannerInfo.tracker === "mangaupdates"}
+                                  <!-- MangaUpdates Icon -->
+                                  <svg viewBox="0 0 24 24" class="source-metric-flag-img" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M4.5 0C2.02 0 0 2.02 0 4.5v15C0 21.98 2.02 24 4.5 24h15c2.48 0 4.5-2.02 4.5-4.5v-15C24 2.02 21.98 0 19.5 0Zm0 1.5h15c1.675 0 3 1.325 3 3v15c0 1.675-1.325 3-3 3h-15c-1.675 0-3-1.325-3-3v-15c0-1.675 1.325-3 3-3zm12.791.595c-.475 0-.87.132-1.187.401-.3.253-.552.587-.758 1-.222.443-.39.901-.501 1.376-.111.475-.228.944-.355 1.403-.412 1.568-.84 3.127-1.283 4.68a36.509 36.509 0 0 1-1.64 4.56 35.575 35.575 0 0 1-1.093-5.059 37.104 37.104 0 0 1-.355-5.156c0-.206.015-.402.047-.592.032-.206.047-.412.047-.618a1.385 1.385 0 0 0-.689-1.236 2.084 2.084 0 0 0-.688-.308c-.253-.08-.5-.12-.738-.12-.333 0-.641.071-.926.214a2.9 2.9 0 0 0-.759.547 3.62 3.62 0 0 0-.548.783 3.629 3.629 0 0 0-.307.879 35.408 35.408 0 0 0-.405 2.115c-.095.696-.245 1.4-.45 2.112a51.043 51.043 0 0 1-.786 2.353c-.285.84-.563 1.687-.832 2.543-.27.854-.499 1.708-.689 2.563-.19.84-.284 1.632-.284 2.376 0 .349.023.698.07 1.046.064.333.176.633.335.902.158.27.372.484.641.642.27.174.608.26 1.02.26.443 0 .785-.116 1.022-.354.253-.221.437-.54.548-.952.143-.555.214-1.11.214-1.664.016-.57.061-1.13.14-1.685.096-.76.261-1.496.499-2.209.253-.712.538-1.426.855-2.138.238.903.493 1.789.762 2.66.285.871.53 1.76.735 2.663.08.333.15.671.214 1.02.063.332.15.666.26.999.143.443.365.845.666 1.21.3.364.706.547 1.213.547.316 0 .64-.048.972-.143.349-.08.65-.23.903-.451.11-.095.215-.238.31-.428s.182-.397.261-.618a6.432 6.432 0 0 0 .38-1.187c.096-.364.182-.736.262-1.116.079-.38.173-.752.284-1.116.126-.444.27-.88.427-1.307.175-.443.35-.879.525-1.306.222-.587.428-1.18.618-1.782.19-.602.37-1.206.545-1.807.19.76.317 1.519.38 2.279.064.76.102 1.53.118 2.306l.097 2.302c.047.76.149 1.522.307 2.283.095.459.268.846.522 1.163.269.316.659.474 1.166.474.412 0 .743-.094.996-.284.253-.19.452-.427.595-.712.142-.285.236-.604.284-.952.047-.347.073-.688.073-1.02v-.002c0-1.013-.079-2.008-.237-2.989a39.692 39.692 0 0 0-.548-2.994 39.075 39.075 0 0 1-.642-3.516 29.924 29.924 0 0 1-.214-3.565c0-.253.01-.498.027-.735.031-.254.047-.506.047-.76 0-.347-.08-.633-.238-.855a1.46 1.46 0 0 0-.57-.547 2.233 2.233 0 0 0-.81-.285 3.931 3.931 0 0 0-.855-.093z" fill="#fff"/>
+                                  </svg>
+                                {:else if bannerInfo.tracker === "bangumi"}
+                                  <!-- Bangumi Icon -->
+                                  <svg viewBox="0 0 362 410" class="source-metric-flag-img" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M284.083 6.56177C285.982 3.84619 289.723 3.18424 292.438 5.08325C295.154 6.9823 295.816 10.7232 293.917 13.4387L209.476 134.189C209.505 134.201 209.535 134.213 209.564 134.225C216.298 137.014 222.416 141.103 227.569 146.256C229.071 147.758 230.483 149.343 231.798 151H332C348.569 151 362 164.432 362 181V346C362 362.569 348.568 376 332 376H175.275L133.035 407.974C129.358 410.756 124.255 410.665 120.681 407.751C117.107 404.837 115.989 399.856 117.975 395.695L127.37 376H44C19.6996 376 0.000189693 356.301 0 332V181C0 164.432 13.4315 151 30 151H144.853C146.168 149.343 147.579 147.758 149.081 146.256C153.375 141.962 158.338 138.407 163.769 135.728L45.2051 14.1897C42.8914 11.8178 42.9388 8.01922 45.3105 5.70532C47.6826 3.39156 51.481 3.43886 53.7949 5.81079L176.243 131.331C180.2 130.449 184.252 130 188.325 130C191.323 130 194.309 130.243 197.255 130.723L284.083 6.56177ZM127 400L158.707 376H138.449L127 400ZM44 167C36.268 167 30 173.268 30 181V332C30.0002 339.732 36.2681 346 44 346H332C339.732 346 346 339.732 346 332V181C346 173.268 339.732 167 332 167H44Z" fill="#ff3599"/>
+                                    <path d="M332 167C339.732 167 346 173.268 346 181V332C346 339.732 339.732 346 332 346H198.34L127 400L152.762 346H44C36.268 346 30 339.732 30 332V181C30 173.268 36.268 167 44 167H332Z" fill="white"/>
+                                    <path d="M220 232C221.437 232 222.764 232.771 223.476 234.02C224.187 235.268 224.174 236.803 223.441 238.039L191.441 292.039C190.721 293.255 189.413 294 188 294C186.587 294 185.279 293.255 184.559 292.039L152.559 238.039C151.826 236.803 151.813 235.268 152.524 234.02C153.236 232.771 154.563 232 156 232H220ZM312 279C314.209 279 316 280.791 316 283C316 285.209 314.209 287 312 287H248.5C246.291 287 244.5 285.209 244.5 283C244.5 280.791 246.291 279 248.5 279H312ZM127.5 278.5C129.709 278.5 131.5 280.291 131.5 282.5C131.5 284.709 129.709 286.5 127.5 286.5H64C61.7909 286.5 60 284.709 60 282.5C60 280.291 61.7909 278.5 64 278.5H127.5ZM188 282.153L212.979 240H163.021L188 282.153ZM312 265C314.209 265 316 266.791 316 269C316 271.209 314.209 273 312 273H248.5C246.291 273 244.5 271.209 244.5 269C244.5 266.791 246.291 265 248.5 265H312ZM127.5 264.5C129.709 264.5 131.5 266.291 131.5 268.5C131.5 270.709 129.709 272.5 127.5 272.5H64C61.7909 272.5 60 270.709 60 268.5C60 266.291 61.7909 264.5 64 264.5H127.5ZM310.498 207.793C312.546 206.963 314.877 207.951 315.707 209.998C316.537 212.046 315.549 214.377 313.502 215.207L264.65 235L313.502 254.793C315.549 255.623 316.537 257.954 315.707 260.002C314.877 262.049 312.546 263.037 310.498 262.207L252.498 238.707C250.988 238.095 250 236.629 250 235C250 233.371 250.988 231.905 252.498 231.293L310.498 207.793ZM60.293 209.498C61.1225 207.451 63.4545 206.463 65.502 207.293L123.502 230.793C125.012 231.405 126 232.871 126 234.5C126 236.129 125.012 237.595 123.502 238.207L65.502 261.707C63.4545 262.537 61.1225 261.549 60.293 259.502C59.4634 257.454 60.4506 255.123 62.498 254.293L111.35 234.5L62.498 214.707C60.4506 213.877 59.4634 211.546 60.293 209.498Z" fill="#ff3599"/>
+                                  </svg>
+                                {:else if bannerInfo.tracker === "hardcover"}
+                                  <!-- Hardcover Icon -->
+                                  <svg viewBox="0 0 24 24" class="source-metric-flag-img" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M7.5 6.5v11H16c.8 0 1.5-.7 1.5-1.5V8c0-.8-.7-1.5-1.5-1.5H7.5zm2.8 2.8h4.7v.9h-4.7v-.9zm0 2.8h4.7v.9h-4.7v-.9z" fill="#fff"/>
+                                  </svg>
+                                {:else}
+                                  <!-- Fallback Icon -->
+                                  <svg viewBox="0 0 24 24" class="source-metric-flag-img" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M12 6.5l1.6 3.3 3.6.5-2.6 2.5.6 3.6-3.2-1.7-3.2 1.7.6-3.6-2.6-2.5 3.6-.5L12 6.5z" fill="#fff"/>
+                                  </svg>
+                                {/if}
+                              </span>
+                              <div class="source-metric-pill has-flag">
+                                <span class="source-metric-downloaded has-flag pill-only" aria-label="Score">
+                                  <span class="source-metric-score-val">{bannerInfo.score}</span>
+                                  <!-- Golden Star Icon -->
+                                  <svg viewBox="0 0 24 24" class="source-metric-star-img" fill="#ffb800" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/>
+                                  </svg>
+                                </span>
+                              </div>
                             </div>
-                          {/if}
-                          {#if badge}
-                            <span class="searchTrackerBadge">{badge}</span>
                           {/if}
                         </div>
                         <div class="n-library-card__info">
@@ -5929,7 +6022,6 @@
     color: rgba(188, 166, 255, 0.96);
     font-size: 18px;
   }
-  .searchTrackerBadge,
   .searchTastePills span {
     display: inline-flex;
     align-items: center;
@@ -5954,8 +6046,8 @@
     overflow-x: auto;
     overscroll-behavior-x: contain;
     scroll-snap-type: x proximity;
-    scroll-padding-inline: 2px clamp(28px, 2vw, 44px);
-    padding: 2px clamp(26px, 1.7vw, 36px) 12px 0;
+    scroll-padding-inline: 8px clamp(28px, 2vw, 44px);
+    padding: 12px clamp(26px, 1.7vw, 36px) 12px 8px;
     scrollbar-width: thin;
     scrollbar-color: rgba(184, 167, 234, 0.24) transparent;
   }
@@ -5974,7 +6066,6 @@
     width: clamp(118px, 22cqw, 180px);
     height: calc((clamp(118px, 22cqw, 180px) / 0.7) + 74px);
     min-width: 0;
-    overflow: hidden;
     scroll-snap-align: start;
   }
   .searchRecommendationRow .n-library-card__cover {
@@ -6000,16 +6091,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .searchTrackerBadge {
-    position: absolute;
-    top: 8px;
-    left: 8px;
-    min-height: 18px;
-    padding: 0 7px;
-    border-radius: 8px;
-    background: rgba(20, 18, 28, 0.82);
-    backdrop-filter: blur(8px);
   }
   .searchCoverPlaceholder {
     display: flex;

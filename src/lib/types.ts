@@ -12,6 +12,7 @@ export interface Category {
 
 export interface Manga {
   id: number;
+  sourceId?: string | null;
   title: string;
   thumbnailUrl: string;
   inLibrary: boolean;

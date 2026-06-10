@@ -41,6 +41,7 @@
   } from "../../lib/novels/packages";
   import { addToast, bumpContentSetupVersion, setExtensionsPanelHint, store } from "../../store/state.svelte";
   import { ensureExtensionRepo, RECOMMENDED_EXTENSION_REPO } from "../../lib/defaultRepos";
+  import { ensureServerAwakeFor, maybeStandbyLocalServer } from "../../lib/serverLifecycle";
   import { detectSetupState, type SetupState } from "../../lib/setupState";
   import { mockSettingsStore, type MockExtensionSettingsPatch } from "../../store/mockSettingsStore";
   import NocturneState from "../shared/NocturneState.svelte";
@@ -123,16 +124,19 @@
   const updateCount = $derived(extensions.filter((extension) => extension.hasUpdate).length);
   const updateAllLabel = $derived(updateCount > 0 ? `Update all (${updateCount})` : "Update all");
 
-  const effectiveSearch = $derived(topbarSearch ?? search);
+  const topbarSearchTerm = $derived((topbarSearch ?? "").trim());
+  const localSearchTerm = $derived(search.trim());
+  const effectiveSearch = $derived(topbarSearchTerm || localSearchTerm);
 
   const filtered = $derived(extensions.filter((extension) => {
-    const query = effectiveSearch.trim().toLowerCase();
+    const query = effectiveSearch.toLowerCase();
     const matchesSearch =
       !query ||
       extension.name.toLowerCase().includes(query) ||
       extension.lang.toLowerCase().includes(query) ||
       extension.pkgName.toLowerCase().includes(query);
     const matchesFilter =
+      query && filter === "installed" ? true :
       filter === "installed" ? extension.isInstalled :
       filter === "available" ? !extension.isInstalled :
       filter === "updates" ? extension.hasUpdate :
@@ -173,8 +177,60 @@
     setupState = await detectSetupState(store.settings);
   }
 
+  async function ensureMangaServerAwake() {
+    if (isNovelMode) return true;
+    return ensureServerAwakeFor("browse", {
+      serverUrl: store.runtimeServerUrl ?? store.settings.serverUrl,
+      binary: store.settings.serverBinary,
+    });
+  }
+
+  function extensionErrorMessage(error: unknown) {
+    return error instanceof Error ? error.message : String(error || "Extension operation failed");
+  }
+
+  function isLockedExtensionFileError(error: unknown) {
+    const message = extensionErrorMessage(error).toLowerCase();
+    return (
+      message.includes("being used by another process") ||
+      message.includes("arquivo já está sendo usado") ||
+      message.includes("process cannot access the file")
+    );
+  }
+
+  async function recoverLockedExtensionInstall(extension: ManagedExtension) {
+    addToast({
+      kind: "info",
+      title: "Restarting extension manager",
+      body: `${extension.name} is already cached, but Suwayomi is holding the file. Aethon will restart the local server and check again.`,
+      duration: 6000,
+    });
+
+    await maybeStandbyLocalServer({
+      serverUrl: store.runtimeServerUrl ?? store.settings.serverUrl,
+      binary: store.settings.serverBinary,
+    }).catch(() => false);
+
+    const woke = await ensureMangaServerAwake();
+    if (!woke) {
+      throw new Error("Suwayomi could not be restarted. Restart Aethon and try installing the extension again.");
+    }
+
+    await loadExtensions();
+    const refreshed = extensions.find((item) => item.pkgName === extension.pkgName);
+    if (refreshed?.isInstalled) return refreshed;
+
+    await gql(UPDATE_EXTENSION, { id: extension.pkgName, install: true }, undefined, 60000);
+    await loadExtensions();
+    return extensions.find((item) => item.pkgName === extension.pkgName) ?? refreshed ?? extension;
+  }
+
   async function loadMangaExtensions() {
     try {
+      if (!(await ensureMangaServerAwake())) {
+        extensions = [];
+        return;
+      }
       const data = await gql<{ extensions: { nodes: Extension[] } }>(GET_EXTENSIONS);
       extensions = data.extensions.nodes.map(toManagedMangaExtension);
     } catch (error) {
@@ -234,6 +290,7 @@
         await loadNovelExtensions();
         return;
       }
+      if (!(await ensureMangaServerAwake())) return;
       const data = await gql<{ fetchExtensions: { extensions: Extension[] } }>(FETCH_EXTENSIONS);
       extensions = data.fetchExtensions.extensions.map(toManagedMangaExtension);
     } catch (error) {
@@ -247,6 +304,10 @@
   async function loadRepos() {
     reposLoading = true;
     try {
+      if (!(await ensureMangaServerAwake())) {
+        repos = [];
+        return;
+      }
       const data = await gql<{ settings: { extensionRepos: string[] } }>(GET_SETTINGS);
       repos = data.settings.extensionRepos ?? [];
     } catch (error) {
@@ -260,6 +321,7 @@
   async function saveRepos(updated: string[]) {
     savingRepos = true;
     try {
+      if (!(await ensureMangaServerAwake())) return;
       const data = await gql<{ setSettings: { settings: { extensionRepos: string[] } } }>(
         SET_EXTENSION_REPOS,
         { repos: updated },
@@ -409,6 +471,7 @@
   }
 
   async function mutate(fn: () => Promise<unknown>, pkgName: string) {
+    if (!(await ensureMangaServerAwake())) return false;
     working = new Set(working).add(pkgName);
     let ok = true;
     try {
@@ -417,6 +480,12 @@
     } catch (error) {
       ok = false;
       console.error(error);
+      addToast({
+        kind: "error",
+        title: "Extension action failed",
+        body: extensionErrorMessage(error),
+        duration: 6000,
+      });
     }
     await loadExtensions();
     working.delete(pkgName);
@@ -459,18 +528,62 @@
       return;
     }
     const firstInstallFlow = setupState?.kind === "no_installed_extensions";
-    const didInstall = await mutate(
-      () => gql(UPDATE_EXTENSION, { id: extension.pkgName, install: true }),
-      extension.pkgName,
-    );
-    if (!didInstall) return;
+    working = new Set(working).add(extension.pkgName);
+    let installedExtension: ManagedExtension | null = null;
+    try {
+      if (!(await ensureMangaServerAwake())) {
+        throw new Error("Suwayomi is not available right now.");
+      }
+      await gql(UPDATE_EXTENSION, { id: extension.pkgName, install: true }, undefined, 60000);
+      bumpContentSetupVersion();
+      await loadExtensions();
+      installedExtension = extensions.find((item) => item.pkgName === extension.pkgName) ?? {
+        ...extension,
+        isInstalled: true,
+        hasUpdate: false,
+      };
+    } catch (error) {
+      if (isLockedExtensionFileError(error)) {
+        try {
+          installedExtension = await recoverLockedExtensionInstall(extension);
+          bumpContentSetupVersion();
+        } catch (recoveryError) {
+          console.error(recoveryError);
+          addToast({
+            kind: "error",
+            title: "Extension install needs restart",
+            body: extensionErrorMessage(recoveryError),
+            duration: 8000,
+          });
+          installedExtension = null;
+        }
+      } else {
+        console.error(error);
+        addToast({
+          kind: "error",
+          title: "Could not install extension",
+          body: extensionErrorMessage(error),
+          duration: 7000,
+        });
+      }
+    } finally {
+      working.delete(extension.pkgName);
+      working = new Set(working);
+    }
+
+    if (!installedExtension) return;
 
     mockSettingsStore.refreshConfig(extension.pkgName, {
-      ...extension,
+      ...installedExtension,
       isInstalled: true,
       hasUpdate: false,
     });
     selectedPkgName = extension.pkgName;
+    addToast({
+      kind: "success",
+      title: "Extension installed",
+      body: `${extension.name} is ready to use.`,
+    });
 
     if (firstInstallFlow) {
       filter = "installed";
@@ -498,6 +611,10 @@
     installError = null;
     installSuccess = false;
     try {
+      if (!(await ensureMangaServerAwake())) {
+        installError = "Suwayomi is not available right now.";
+        return;
+      }
       await gql(INSTALL_EXTERNAL_EXTENSION, { url });
       installSuccess = true;
       externalUrl = "";
@@ -689,7 +806,7 @@
 
   $effect(() => {
     filter;
-    search;
+    effectiveSearch;
     loading;
 
     if (loading) {

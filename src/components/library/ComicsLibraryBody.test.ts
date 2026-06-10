@@ -146,7 +146,8 @@ describe("ComicsLibraryBody", () => {
 
     const card = screen.getByRole("button", { name: /Returned From Reader/i });
     expect(card.getAttribute("data-card-id")).toBe("comic:7");
-    expect(card.textContent).toContain("CH 3");
+    expect(card.textContent).toContain("3");
+    expect(card.textContent).not.toContain("🌐");
     expect(card.textContent).toContain("Source One");
     expect(card.textContent).toContain("Reading");
     expect(card.textContent).not.toContain("Unknown");

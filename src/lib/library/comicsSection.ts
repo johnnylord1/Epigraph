@@ -15,7 +15,7 @@ import {
 } from "./completion";
 import { getCategoryDisplayName, isCompletedCategory, normalizeCategories } from "./categories";
 import { dedupeMangaById, shouldHideNsfw } from "../util";
-import type { Category, Manga } from "../types";
+import type { Category, Manga, Source } from "../types";
 import type {
   LibraryFilter,
   LibrarySortDir,
@@ -88,7 +88,7 @@ export const COMICS_STATUS_OPTIONS: LibraryFilterOptionVM[] = [
 ];
 
 function normalizeCategoryNodes(nodes: Manga[] | undefined): Manga[] {
-  return dedupeMangaById((nodes ?? []).filter((manga) => manga.inLibrary));
+  return dedupeMangaById(nodes ?? []);
 }
 
 function buildSectionTabs(librarySection: LibrarySectionKind) {
@@ -133,7 +133,11 @@ export function buildCanonicalCategoryMangaMap(
   for (const [categoryId, nodes] of rawCategoryMangaMap) {
     map.set(
       categoryId,
-      dedupeMangaById(nodes.map((manga) => canonicalById.get(manga.id) ?? manga)),
+      dedupeMangaById(
+        nodes
+          .map((manga) => canonicalById.get(manga.id) ?? (manga.inLibrary === false || !manga.title ? null : manga))
+          .filter((manga): manga is Manga => Boolean(manga)),
+      ),
     );
   }
 
@@ -297,18 +301,30 @@ export function buildComicsLibraryCardVm(
     selectedIds?: ReadonlySet<number>;
     trackedCompletedIds?: ReadonlySet<number>;
     trackedChapterTotalsByMangaId?: ReadonlyMap<number, number>;
+    sources?: Source[];
   },
 ) {
   const unreadCount = Math.max(0, manga.unreadCount ?? 0);
   const chapterCount = Math.max(0, manga.chapterCount ?? 0);
-  const downloadedCount = Math.max(0, manga.downloadCount ?? 0);
   const readCount = chapterCount > 0 ? Math.max(0, chapterCount - unreadCount) : 0;
-  const flagLabel = manga.source?.lang ?? manga.source?.displayName ?? manga.source?.name ?? "SRC";
+
+  let resolvedSource = manga.source;
+  if (!resolvedSource && manga.sourceId && options.sources) {
+    const found = options.sources.find((s) => String(s.id) === String(manga.sourceId));
+    if (found) {
+      resolvedSource = {
+        id: found.id,
+        name: found.name,
+        lang: found.lang,
+        displayName: found.displayName,
+      };
+    }
+  }
 
   return {
     id: createComicLibraryCardId(manga.id),
     title: manga.title,
-    subtitle: manga.author ?? manga.source?.displayName ?? manga.source?.name ?? "",
+    subtitle: manga.author ?? resolvedSource?.displayName ?? resolvedSource?.name ?? "",
     coverSrc: manga.thumbnailUrl ?? null,
     coverFit: options.cropCovers ? "cover" as const : "contain" as const,
     badges: [
@@ -316,16 +332,11 @@ export function buildComicsLibraryCardVm(
         kind: "unread" as const,
         label: `CH ${unreadCount}`,
       }] : []),
-      ...(downloadedCount > 0 && unreadCount === 0 ? [{
+      ...((manga.downloadCount ?? 0) > 0 && unreadCount === 0 ? [{
         kind: "download" as const,
         label: "Local",
       }] : []),
     ],
-    sourceMetricBanner: downloadedCount > 0 || unreadCount > 0 ? {
-      flagLabel,
-      downloadedCount,
-      newCount: unreadCount,
-    } : null,
     metaChips: [
       buildComicsReadingStateLabel(
         manga,
@@ -341,6 +352,12 @@ export function buildComicsLibraryCardVm(
     selectable: true,
     selected: options.selectedIds?.has(manga.id) ?? false,
     disabled: false,
+    sourceMetricBanner: {
+      flagLabel: resolvedSource?.lang ?? "",
+      downloadedCount: Math.max(0, manga.downloadCount ?? 0),
+      newCount: unreadCount,
+      sourceName: resolvedSource?.displayName ?? resolvedSource?.name ?? null,
+    },
   };
 }
 
