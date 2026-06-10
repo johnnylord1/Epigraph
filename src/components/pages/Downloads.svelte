@@ -669,8 +669,8 @@
             <span class="material-symbols-outlined" aria-hidden="true">filter_list</span>
           </button>
           {#if filterPanelOpen}
-            <div class="downloads-menu-panel downloads-filter-panel" role="menu">
-              <p class="downloads-menu-label">Show</p>
+            <div class="downloads-menu-panel downloads-filter-panel n-popover-surface n-popover-menu" role="menu">
+              <p class="n-popover-label">Show</p>
               {#each [
                 { id: "all", label: "All", count: queueSize },
                 { id: "downloading", label: "Active", count: activeCount },
@@ -681,7 +681,7 @@
               ] as option}
                 <button
                   type="button"
-                  class="downloads-menu-item"
+                  class="n-popover-item"
                   class:is-selected={downloadFilter === option.id}
                   role="menuitemradio"
                   aria-checked={downloadFilter === option.id}
@@ -707,11 +707,11 @@
             <span class="material-symbols-outlined" aria-hidden="true">more_vert</span>
           </button>
           {#if morePanelOpen}
-            <div class="downloads-menu-panel downloads-more-panel" role="menu">
-              <p class="downloads-menu-label">Queue actions</p>
+            <div class="downloads-menu-panel downloads-more-panel n-popover-surface n-popover-menu" role="menu">
+              <p class="n-popover-label">Queue actions</p>
               <button
                 type="button"
-                class="downloads-menu-item"
+                class="n-popover-item"
                 role="menuitem"
                 disabled={finishedCount === 0 || clearingFinished}
                 onclick={clearFinished}
@@ -721,7 +721,7 @@
               </button>
               <button
                 type="button"
-                class="downloads-menu-item"
+                class="n-popover-item"
                 role="menuitem"
                 disabled={failedCount === 0 || retryingFailed}
                 onclick={retryFailed}
@@ -731,7 +731,7 @@
               </button>
               <button
                 type="button"
-                class="downloads-menu-item"
+                class="n-popover-item"
                 role="menuitem"
                 disabled={openingFolder}
                 onclick={openDownloadsFolder}
@@ -984,62 +984,6 @@
     right: 0;
     z-index: 120;
     width: min(230px, calc(100vw - 32px));
-    padding: 8px;
-    border: 1px solid rgba(202, 196, 208, 0.08);
-    border-radius: calc(16px * var(--n-hud-scale));
-    background: rgba(31, 29, 39, 0.94);
-    box-shadow:
-      0 18px 42px rgba(0, 0, 0, 0.44),
-      inset 0 1px 0 rgba(255, 255, 255, 0.025);
-    backdrop-filter: blur(18px) saturate(130%);
-  }
-
-  .downloads-menu-label {
-    margin: 2px 8px 7px;
-    color: rgba(202, 196, 208, 0.42);
-    font-family: var(--font-ui);
-    font-size: calc(10px * var(--n-hud-scale));
-    font-weight: 800;
-    letter-spacing: 0.15em;
-    text-transform: uppercase;
-  }
-
-  .downloads-menu-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    width: 100%;
-    min-height: calc(34px * var(--n-hud-scale));
-    padding: 0 calc(10px * var(--n-hud-scale));
-    border: 0;
-    border-radius: calc(11px * var(--n-hud-scale));
-    background: transparent;
-    color: rgba(238, 235, 242, 0.9);
-    font-family: var(--font-ui);
-    font-size: calc(12px * var(--n-hud-scale));
-    font-weight: 700;
-    cursor: pointer;
-    text-align: left;
-  }
-
-  .downloads-menu-item:hover:not(:disabled),
-  .downloads-menu-item.is-selected {
-    background: rgba(184, 167, 234, 0.12);
-    color: var(--n-on-surface);
-  }
-
-  .downloads-menu-item:disabled {
-    cursor: default;
-    opacity: 0.44;
-  }
-
-  .downloads-menu-item small {
-    color: rgba(202, 196, 208, 0.52);
-    font-size: calc(10px * var(--n-hud-scale));
-    font-weight: 800;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
   }
 
   .downloads-scroll {

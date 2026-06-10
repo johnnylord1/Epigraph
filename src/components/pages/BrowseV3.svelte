@@ -5124,12 +5124,12 @@
               <span class="material-symbols-outlined" aria-hidden="true">expand_more</span>
             </button>
             {#if catalogLanguagePickerOpen}
-              <div class="browseInlinePicker browseLanguagePicker">
+              <div class="browseInlinePicker browseLanguagePicker n-popover-surface n-popover-menu">
                 {#if src_selectedLang !== "all"}
-                  <button onclick={() => { src_selectedLang = "all"; catalogLanguagePickerOpen = false; }}>All languages</button>
+                  <button class="n-popover-item" onclick={() => { src_selectedLang = "all"; catalogLanguagePickerOpen = false; }}>All languages</button>
                 {/if}
                 {#each src_availableLangs.filter((lang) => lang !== src_selectedLang) as lang (lang)}
-                  <button onclick={() => { src_selectedLang = lang; catalogLanguagePickerOpen = false; }}>{lang.toUpperCase()}</button>
+                  <button class="n-popover-item" onclick={() => { src_selectedLang = lang; catalogLanguagePickerOpen = false; }}>{lang.toUpperCase()}</button>
                 {/each}
               </div>
             {/if}
@@ -5141,15 +5141,15 @@
               <span class="material-symbols-outlined" aria-hidden="true">expand_more</span>
             </button>
             {#if catalogSourcePickerOpen}
-              <div class="browseInlinePicker browseSourcePicker">
+              <div class="browseInlinePicker browseSourcePicker n-popover-surface n-popover-menu">
                 {#if discoverSelectedSource}
-                  <button onclick={() => { discoverSelectedSource = ""; catalogSourcePickerOpen = false; }}>
+                  <button class="n-popover-item" onclick={() => { discoverSelectedSource = ""; catalogSourcePickerOpen = false; }}>
                     <span>All sources</span>
                     <span>ALL</span>
                   </button>
                 {/if}
                 {#each src_visibleSources.filter((src) => src.id !== discoverSelectedSource) as src (src.id)}
-                  <button onclick={() => selectDiscoverSourceFilter(src)}>
+                  <button class="n-popover-item" onclick={() => selectDiscoverSourceFilter(src)}>
                     <span>{sourceNameWithoutLanguage(src)}</span>
                     <span>{src.lang.toUpperCase()}</span>
                   </button>
@@ -5165,26 +5165,26 @@
             </button>
             <p class="browseFieldHint">{discoverFocusedTracker ? "Browsing this tracker catalog instead of extension sources." : "Turn on a tracker catalog when you want AniList/MAL discovery."}</p>
             {#if catalogTrackingPickerOpen}
-              <div class="browseInlinePicker browseTrackingPicker">
+              <div class="browseInlinePicker browseTrackingPicker n-popover-surface n-popover-menu">
                 {#if discoverSelectedTracker !== null}
-                  <button onclick={() => { discoverSelectedTracker = null; catalogTrackingPickerOpen = false; }}>
+                  <button class="n-popover-item" onclick={() => { discoverSelectedTracker = null; catalogTrackingPickerOpen = false; }}>
                     <span>Tracking off</span>
                     <span>OFF</span>
                   </button>
                 {/if}
                 {#if loadingTrackers}
-                  <button disabled>
+                  <button class="n-popover-item" disabled>
                     <span>Loading tracking...</span>
                     <span></span>
                   </button>
                 {:else if trackingFilterOptions.length === 0}
-                  <button disabled>
+                  <button class="n-popover-item" disabled>
                     <span>No tracking ready</span>
                     <span></span>
                   </button>
                 {:else}
                   {#each trackingFilterOptions.filter((tracker) => tracker.id !== discoverSelectedTracker) as tracker (tracker.id)}
-                    <button onclick={() => selectDiscoverTrackerFilter(tracker)}>
+                    <button class="n-popover-item" onclick={() => selectDiscoverTrackerFilter(tracker)}>
                       <span>{tracker.name}</span>
                       <span>ON</span>
                     </button>
@@ -6755,72 +6755,14 @@
     left: 0;
     right: 0;
     z-index: 90;
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
     max-height: min(204px, 38vh);
     overflow-y: auto;
-    padding: 5px;
-    border: 1px solid rgba(184, 167, 234, 0.22);
-    border-radius: 11px;
-    background:
-      linear-gradient(180deg, rgba(18, 17, 23, 0.99), rgba(10, 10, 14, 0.99)),
-      rgba(10, 10, 14, 0.99);
-    box-shadow:
-      0 12px 26px rgba(0, 0, 0, 0.48),
-      0 0 0 1px rgba(255, 255, 255, 0.014);
-    animation: browsePickerIn 130ms ease both;
-    scrollbar-width: thin;
-    scrollbar-color: rgba(184, 167, 234, 0.34) transparent;
-  }
-  .browseInlinePicker::-webkit-scrollbar {
-    width: 5px;
-  }
-  .browseInlinePicker::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  .browseInlinePicker::-webkit-scrollbar-thumb {
-    border-radius: 999px;
-    background: rgba(184, 167, 234, 0.28);
-  }
-  .browseInlinePicker button {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    min-height: 30px;
-    padding: 0 10px;
-    border: 0;
-    border-radius: 7px;
-    background: transparent;
-    color: rgba(229, 226, 225, 0.64);
-    font-size: 11px;
-    font-weight: 700;
-    text-align: left;
-    cursor: pointer;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .browseInlinePicker button span:first-child {
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
   .searchTastePills span.is-muted {
     grid-column: 1 / -1;
     color: rgba(229, 226, 225, 0.48);
     font-weight: 620;
     text-transform: none;
-  }
-  .browseInlinePicker button span:last-child {
-    flex-shrink: 0;
-    color: rgba(229, 226, 225, 0.34);
-    font-size: 10px;
-    letter-spacing: 0.08em;
-  }
-  .browseInlinePicker button:hover {
-    background: rgba(184, 167, 234, 0.09);
-    color: rgba(238, 235, 242, 0.94);
   }
   .browseLanguagePicker {
     display: flex;
@@ -6830,16 +6772,6 @@
     justify-content: flex-start;
     text-align: left;
     font-size: 11px;
-  }
-  @keyframes browsePickerIn {
-    from {
-      opacity: 0;
-      transform: translateY(-4px) scale(0.985);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0) scale(1);
-    }
   }
   .browseToggleRow {
     display: flex;

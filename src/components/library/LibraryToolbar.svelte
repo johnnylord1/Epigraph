@@ -160,7 +160,7 @@
           <GridFour size={15} weight={displayPanelOpen ? "fill" : "bold"} />
         </button>
         {#if displayPanelOpen}
-        <div class="dropdown-panel display-panel" role="menu">
+        <div class="dropdown-panel display-panel n-popover-surface n-popover-menu" role="menu">
             <LibraryDisplayPopover
               settings={displaySettings}
               panel="all"
@@ -184,13 +184,13 @@
           <SortAscending size={15} weight={sortPanelOpen ? "fill" : "bold"} />
         </button>
         {#if sortPanelOpen}
-        <div class="dropdown-panel sort-panel" role="menu">
-          <p class="panel-label">{sortLabel}</p>
+        <div class="dropdown-panel sort-panel n-popover-surface n-popover-menu" role="menu">
+          <p class="n-popover-label">{sortLabel}</p>
           {#each toolbar.sortOptions as option}
             <button
               type="button"
-              class="panel-item"
-              class:panel-item-active={toolbar.sortMode === option.id}
+              class="n-popover-item"
+              class:n-popover-item--active={toolbar.sortMode === option.id}
               role="menuitem"
               onclick={() => {
                 onSortModeChange(option.id);
@@ -209,7 +209,7 @@
           {/each}
           <button
             type="button"
-            class="panel-item dir-toggle"
+            class="n-popover-item dir-toggle"
             role="menuitem"
             onclick={onSortDirToggle}
           >
@@ -223,7 +223,7 @@
 
           {#if bookTypeOptions.length}
             <div class="book-type-section">
-              <p class="panel-label">Book type</p>
+              <p class="n-popover-label">Book type</p>
               <BooksTypeSelector options={bookTypeOptions} onSelect={onBookTypeChange} />
             </div>
           {/if}
@@ -242,13 +242,13 @@
           <Funnel size={15} weight={filterPanelOpen ? "fill" : "bold"} />
         </button>
         {#if filterPanelOpen}
-          <div class="dropdown-panel filter-panel" role="menu">
-            <p class="panel-label">{filterLabel}</p>
+          <div class="dropdown-panel filter-panel n-popover-surface n-popover-menu" role="menu">
+            <p class="n-popover-label">{filterLabel}</p>
             {#each toolbar.filterOptions as option}
               <button
                 type="button"
-                class="panel-item"
-                class:panel-item-active={toolbar.filterValue === option.id}
+                class="n-popover-item"
+                class:n-popover-item--active={toolbar.filterValue === option.id}
                 role="menuitem"
                 onclick={() => {
                   onFilterChange(option.id);
@@ -318,16 +318,6 @@
     right: 0;
     z-index: 10;
     min-width: min(296px, calc(100vw - 32px));
-    background: rgba(36, 33, 43, 0.88);
-    backdrop-filter: blur(10px);
-    border: 1px solid rgba(202, 196, 208, 0.08);
-    border-radius: 18px;
-    padding: 8px;
-    box-shadow:
-      0 18px 42px rgba(0, 0, 0, 0.42),
-      0 2px 8px rgba(0, 0, 0, 0.22),
-      inset 0 1px 0 rgba(255, 255, 255, 0.02);
-    animation: fadeIn 160ms cubic-bezier(0.18, 0.92, 0.2, 1) both;
   }
 
   .display-panel {
@@ -343,57 +333,6 @@
     .toolbar-cluster {
       justify-self: start;
     }
-  }
-
-  .panel-label {
-    font-family: var(--font-ui);
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    color: rgba(202, 196, 208, 0.42);
-    padding: 4px 8px 6px;
-  }
-
-  .panel-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    width: 100%;
-    padding: 8px 10px;
-    border-radius: 12px;
-    border: none;
-    background: transparent;
-    color: rgba(233, 229, 239, 0.9);
-    font-family: var(--font-ui);
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-    text-align: left;
-    transition:
-      background 140ms ease,
-      color 140ms ease,
-      transform 140ms ease,
-      box-shadow 140ms ease;
-    gap: 8px;
-  }
-
-  .panel-item:hover {
-    background: rgba(184, 167, 234, 0.08);
-    color: var(--n-on-surface);
-    transform: translateY(-1px);
-  }
-
-  .panel-item-active {
-    color: var(--n-on-primary);
-    background: var(--n-gradient-primary);
-    outline: 1px solid rgba(184, 167, 234, 0.24);
-    font-weight: 700;
-    box-shadow: 0 4px 14px rgba(184, 167, 234, 0.2);
-  }
-
-  .panel-item-active:hover {
-    background: var(--n-gradient-primary);
   }
 
   .dir-toggle {
@@ -417,10 +356,5 @@
 
   .dropdown-panel :global(.n-popover-panel) {
     gap: 12px;
-  }
-
-  @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
   }
 </style>

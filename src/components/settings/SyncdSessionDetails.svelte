@@ -147,7 +147,7 @@
   {#if open}
     <div
       id={popoverId}
-      class="syncd-session-popover"
+      class="syncd-session-popover n-popover-surface"
       role="dialog"
       aria-modal="false"
       aria-labelledby={headingId}
@@ -365,11 +365,6 @@
     z-index: 20;
     width: min(360px, 88vw);
     padding: 10px 11px 11px;
-    border-radius: 16px;
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    background: linear-gradient(180deg, rgba(17, 18, 20, 0.98), rgba(14, 15, 17, 0.98));
-    backdrop-filter: blur(14px);
-    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.42);
     display: flex;
     flex-direction: column;
     gap: 10px;
