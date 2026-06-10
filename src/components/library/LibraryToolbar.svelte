@@ -334,7 +334,7 @@
     min-width: min(352px, calc(100vw - 32px));
   }
 
-  @media (max-width: 720px) {
+  @media (max-width: 520px) {
     .toolbar,
     .toolbar--actions-only {
       justify-content: flex-start;

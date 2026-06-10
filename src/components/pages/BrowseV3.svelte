@@ -7058,10 +7058,11 @@
       padding: 18px clamp(14px, 3vw, 22px) 36px;
     }
     .searchCanvas {
+      --search-card-width: clamp(118px, 21vw, 148px);
       --search-rail-width: 100%;
-      --search-panel-width: 100%;
-      grid-template-columns: 1fr;
-      justify-content: stretch;
+      --search-panel-width: clamp(168px, 28vw, 220px);
+      grid-template-columns: minmax(0, 1fr) minmax(var(--search-panel-width), var(--search-panel-width));
+      justify-content: start;
     }
     .searchMainColumn,
     .searchRecommendationSection,
@@ -7074,36 +7075,31 @@
       align-items: flex-start;
     }
     .searchInsightPanel {
-      position: static;
-      display: grid;
-      grid-template-columns: 1fr;
-      justify-self: stretch;
-      width: 100%;
+      position: sticky;
+      display: flex;
+      justify-self: center;
+      width: var(--search-panel-width);
     }
     .searchInsightCard {
-      display: grid;
-      grid-template-columns: minmax(0, 1.35fr) minmax(210px, 0.65fr);
-      column-gap: 22px;
-      row-gap: 14px;
-      align-items: start;
+      display: block;
       padding: 18px;
     }
     .searchPanelTitle {
-      grid-column: 1 / -1;
+      grid-column: auto;
     }
     .searchPanelLabel {
-      margin-top: 0;
+      margin-top: 18px;
     }
     .searchTastePills {
       grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
       gap: 8px 10px;
     }
     .searchKnownToggle {
-      grid-column: 2;
-      grid-row: 2 / span 2;
-      margin-top: 0;
-      padding-top: 0;
-      border-top: 0;
+      grid-column: auto;
+      grid-row: auto;
+      margin-top: 18px;
+      padding-top: 14px;
+      border-top: 1px solid rgba(255, 255, 255, 0.045);
     }
     .searchDiversity {
       grid-column: 1 / -1;
@@ -7182,7 +7178,7 @@
 
   @media (max-width: 900px) {
     .searchCanvas {
-      --search-card-width: clamp(132px, 28vw, 158px);
+      --search-card-width: clamp(118px, 21vw, 148px);
       --search-rail-width: 100%;
     }
   }
@@ -7190,7 +7186,17 @@
   @media (max-width: 520px) {
     .searchCanvas {
       --search-card-width: 132px;
+      --search-panel-width: 100%;
       --search-rail-width: 100%;
+      grid-template-columns: 1fr;
+      justify-content: stretch;
+    }
+    .searchInsightPanel {
+      position: static;
+      display: grid;
+      grid-template-columns: 1fr;
+      justify-self: stretch;
+      width: 100%;
     }
   }
 

@@ -1868,7 +1868,7 @@
     }
   }
 
-  @media (max-width: 720px) {
+  @media (max-width: 520px) {
     .home-continue-grid,
     .home-quick-actions {
       grid-template-columns: 1fr;
@@ -1887,7 +1887,7 @@
     }
   }
 
-  @media (max-width: 520px) {
+  @media (max-width: 460px) {
     .home-continue-card {
       flex-direction: column;
     }

@@ -3254,7 +3254,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 @media (max-width: 760px) {
   .aethon-port--settings {
     --settings-group-rail-width: calc(64px * var(--n-hud-scale));
-    --settings-subnav-width: minmax(0, 1fr);
+    --settings-subnav-width: calc(112px * var(--n-hud-scale));
     --settings-shell-padding-x: calc(10px * var(--n-hud-scale));
     --settings-pane-header-pad-x: calc(16px * var(--n-hud-scale));
     --settings-pane-body-pad-x: calc(16px * var(--n-hud-scale));
@@ -3291,6 +3291,12 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
     justify-content: center;
     width: calc(42px * var(--n-hud-scale));
     padding-inline: 0;
+  }
+}
+
+@media (max-width: 520px) {
+  .aethon-port--settings {
+    --settings-subnav-width: minmax(0, 1fr);
   }
 
   .aethon-port--settings .settings-workbench {
@@ -3338,9 +3344,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
     white-space: nowrap;
     padding-inline: calc(10px * var(--n-hud-scale));
   }
-}
 
-@media (max-width: 640px) {
   .aethon-port--settings {
     --settings-pane-header-pad-x: calc(12px * var(--n-hud-scale));
     --settings-pane-body-pad-x: calc(12px * var(--n-hud-scale));
@@ -3384,5 +3388,4 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
     flex-direction: column;
   }
 }
-
 

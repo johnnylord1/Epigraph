@@ -1328,31 +1328,7 @@
     line-height: var(--leading-base);
   }
 
-  @media (max-width: 860px) {
-    .library-hero__top {
-      align-items: flex-start;
-    }
-
-    .library-hero__collections-row {
-      align-items: stretch;
-      flex-direction: column;
-    }
-
-    .library-hero__toolbar {
-      justify-content: flex-start;
-      width: 100%;
-    }
-  }
-
   @media (max-width: 620px) {
-    .library-hero__top {
-      flex-direction: column;
-    }
-
-    .library-count-pill {
-      align-self: flex-start;
-    }
-
     .chip-divider {
       display: none;
     }

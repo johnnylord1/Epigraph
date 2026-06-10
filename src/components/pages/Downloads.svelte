@@ -871,7 +871,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: calc(24px * var(--n-hud-scale));
+    gap: clamp(10px, 2vw, calc(24px * var(--n-hud-scale)));
     margin: calc(24px * var(--n-hud-scale)) 0;
     padding: calc(16px * var(--n-hud-scale));
     border: 1px solid rgba(72, 69, 79, 0.05);
@@ -883,16 +883,16 @@
   .downloads-summary__cluster {
     display: flex;
     align-items: center;
-    gap: calc(24px * var(--n-hud-scale));
+    gap: clamp(10px, 1.8vw, calc(24px * var(--n-hud-scale)));
     min-width: 0;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
   }
 
   .downloads-summary__metric {
     display: flex;
     flex-direction: column;
     gap: calc(4px * var(--n-hud-scale));
-    min-width: calc(120px * var(--n-hud-scale));
+    min-width: clamp(52px, 11vw, calc(120px * var(--n-hud-scale)));
   }
 
   .downloads-summary__metric span {
@@ -901,6 +901,9 @@
     font-weight: 800;
     letter-spacing: 0.18em;
     text-transform: uppercase;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .downloads-summary__metric strong {
@@ -908,6 +911,9 @@
     font-size: calc(12px * var(--n-hud-scale));
     font-weight: 800;
     line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .downloads-summary__accent {
@@ -923,7 +929,8 @@
   .downloads-summary__actions {
     display: flex;
     gap: calc(8px * var(--n-hud-scale));
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    flex-shrink: 0;
   }
 
   .downloads-summary__button {
@@ -931,7 +938,7 @@
     min-height: calc(40px * var(--n-hud-scale));
     justify-content: center;
     border-radius: calc(12px * var(--n-hud-scale));
-    padding-inline: calc(20px * var(--n-hud-scale));
+    padding-inline: clamp(10px, 1.8vw, calc(20px * var(--n-hud-scale)));
     font-size: calc(12px * var(--n-hud-scale));
     font-weight: 700;
     letter-spacing: 0;
@@ -1189,7 +1196,7 @@
     height: calc(48px * var(--n-hud-scale));
   }
 
-  @media (max-width: 1180px) {
+  @media (max-width: 520px) {
     .downloads-summary {
       flex-direction: column;
       align-items: flex-start;
@@ -1200,7 +1207,7 @@
     }
   }
 
-  @media (max-width: 720px) {
+  @media (max-width: 520px) {
     .downloads-scroll {
       padding: 0 calc(24px * var(--n-hud-scale));
     }
