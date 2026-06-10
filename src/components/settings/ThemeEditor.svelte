@@ -7,7 +7,6 @@
     type ThemeMotionPreset,
     type ThemeTokens,
     DEFAULT_HUD_THEME_TOKENS,
-    DEFAULT_THEME_TOKENS,
     NOCTURNE_HUD_THEME_TOKENS,
     NOCTURNE_THEME_TOKENS,
     THEME_MOTION_VARS,
@@ -142,16 +141,16 @@
       if (existing) {
         return {
           name: existing.name,
-          tokens: { ...DEFAULT_THEME_TOKENS, ...existing.tokens },
-          hud: { ...DEFAULT_HUD_THEME_TOKENS, ...(existing.hud ?? {}) },
+          tokens: { ...NOCTURNE_THEME_TOKENS, ...existing.tokens },
+          hud: { ...NOCTURNE_HUD_THEME_TOKENS, ...(existing.hud ?? {}) },
           motion: existing.motion ?? "soft",
         };
       }
     }
     return {
       name: "My Theme",
-      tokens: { ...DEFAULT_THEME_TOKENS },
-      hud: { ...DEFAULT_HUD_THEME_TOKENS },
+      tokens: { ...NOCTURNE_THEME_TOKENS },
+      hud: { ...NOCTURNE_HUD_THEME_TOKENS },
       motion: "soft",
     };
   }
@@ -176,7 +175,7 @@
   }
 
   function parseHudNumber(token: keyof HudThemeTokens): number {
-    return Number.parseFloat(String(hud[token]).replace("px", "")) || Number.parseFloat(DEFAULT_HUD_THEME_TOKENS[token]) || 0;
+    return Number.parseFloat(String(hud[token]).replace("px", "")) || Number.parseFloat(NOCTURNE_HUD_THEME_TOKENS[token]) || 0;
   }
 
   function setHudNumeric(token: keyof HudThemeTokens, value: number, unit: "px" | "") {
@@ -241,8 +240,8 @@
         const data = JSON.parse(text);
         if (!data.tokens || typeof data.tokens !== "object") throw new Error("Invalid theme file — missing tokens");
         if (typeof data.name === "string") themeName = data.name;
-        tokens      = { ...DEFAULT_THEME_TOKENS, ...data.tokens };
-        hud         = { ...DEFAULT_HUD_THEME_TOKENS, ...(data.hud ?? {}) };
+        tokens      = { ...NOCTURNE_THEME_TOKENS, ...data.tokens };
+        hud         = { ...NOCTURNE_HUD_THEME_TOKENS, ...(data.hud ?? {}) };
         motion      = (data.motion === "minimal" || data.motion === "soft" || data.motion === "expressive") ? data.motion : "soft";
         importError = null;
       } catch (e: any) {
@@ -254,8 +253,8 @@
   }
 
   function resetToDefaults() {
-    tokens = { ...DEFAULT_THEME_TOKENS };
-    hud = { ...DEFAULT_HUD_THEME_TOKENS };
+    tokens = { ...NOCTURNE_THEME_TOKENS };
+    hud = { ...NOCTURNE_HUD_THEME_TOKENS };
     motion = "soft";
   }
 
@@ -304,7 +303,7 @@
           <DownloadSimple size={13} />
           <span>Export</span>
         </button>
-        <button class="te-action-btn te-ghost" onclick={resetToDefaults} title="Reset all to dark defaults">
+        <button class="te-action-btn te-ghost" onclick={resetToDefaults} title="Reset all to Nocturne defaults">
           Reset
         </button>
         {#if editingId}

@@ -129,7 +129,7 @@
 /* ─────────────────────────────────────────────
    Themes
    Applied via data-theme on <html>.
-   "dark" = default (no overrides needed, inherits :root).
+   "nocturne" is the app default. "dark" remains the base fallback theme.
    ───────────────────────────────────────────── */
 
 /* ── High Contrast (dark base, sharper text) ── */

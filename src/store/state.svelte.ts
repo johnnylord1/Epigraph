@@ -547,7 +547,7 @@ export const DEFAULT_SETTINGS: Settings = {
   overlayBars:            false,
   readerDebounceMs:       120,
   autoBookmark:           true,
-  theme:                  "dark",
+  theme:                  "nocturne",
   libraryBranches:        true,
   renderLimit:            48,
   heroSlots:              [null, null, null, null],
@@ -700,6 +700,8 @@ function mergeSettings(saved: any): Settings {
   const savedServerUrl = normalizeServerUrl(saved?.settings?.serverUrl);
   const coercedDefaultProfileId = savedDefaultProfileId === "test" ? "main" : savedDefaultProfileId ?? DEFAULT_SETTINGS.defaultLocalProfileId;
   const coercedServerUrl = savedServerUrl === "http://127.0.0.1:4667" ? "http://127.0.0.1:4567" : savedServerUrl ?? DEFAULT_SETTINGS.serverUrl;
+  const savedTheme = saved?.settings?.theme;
+  const coercedTheme = savedTheme === undefined || savedTheme === "dark" ? DEFAULT_SETTINGS.theme : savedTheme;
 
   return {
     ...DEFAULT_SETTINGS,
@@ -733,6 +735,7 @@ function mergeSettings(saved: any): Settings {
     },
     defaultLocalProfileId: coercedDefaultProfileId,
     serverUrl:             coercedServerUrl,
+    theme:                 coercedTheme,
     launchIntoLibrary:    saved?.settings?.launchIntoLibrary ?? DEFAULT_SETTINGS.launchIntoLibrary,
     filterBlockedTags:    saved?.settings?.filterBlockedTags ?? DEFAULT_SETTINGS.filterBlockedTags,
     adultContentTags:     saved?.settings?.adultContentTags     ?? DEFAULT_SETTINGS.adultContentTags,
@@ -1562,7 +1565,7 @@ class Store {
   deleteCustomTheme(id: string) {
     const next = this.settings.customThemes.filter(t => t.id !== id);
     const wasActive = this.settings.theme === id;
-    this.settings = { ...this.settings, customThemes: next, theme: wasActive ? "dark" : this.settings.theme };
+    this.settings = { ...this.settings, customThemes: next, theme: wasActive ? "nocturne" : this.settings.theme };
   }
 
   /**

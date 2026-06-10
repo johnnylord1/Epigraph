@@ -317,6 +317,7 @@ describe("Settings", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Reset all settings" }));
 
     expect(store.settings.discordRpc).toBe(DEFAULT_SETTINGS.discordRpc);
+    expect(store.settings.theme).toBe("nocturne");
     expect(screen.getByText("Reset settings")).toBeTruthy();
   });
 

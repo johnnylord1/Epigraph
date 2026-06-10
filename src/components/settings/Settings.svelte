@@ -362,19 +362,19 @@
   }
 
   function themeLabel(value: string | null | undefined): string {
-    const normalized = value ?? "dark";
+    const normalized = value ?? "nocturne";
     const builtIn = THEMES.find((theme) => theme.id === normalized);
     if (builtIn) return builtIn.label;
     const custom = (store.settings.customThemes ?? []).find((theme) => theme.id === normalized);
-    return custom?.name ?? "Dark";
+    return custom?.name ?? "Nocturne";
   }
   const THEMES: { id: Theme; label: string; description: string; swatches: string[] }[] = [
-    { id: "dark",           label: "Dark",           description: "Default near-black",            swatches: ["#101010","#151515","#a8c4a8","#f0efec"] },
+    { id: "nocturne",       label: "Nocturne",       description: "Default lunar graphite HUD",    swatches: ["#080813","#0d0d1b","#8f82e6","#f1eefc"] },
+    { id: "dark",           label: "Dark",           description: "Classic near-black",            swatches: ["#101010","#151515","#a8c4a8","#f0efec"] },
     { id: "high-contrast",  label: "High Contrast",  description: "Darker base, sharper text",     swatches: ["#080808","#111111","#bcd8bc","#ffffff"] },
     { id: "light",          label: "Light",          description: "Warm off-white",                swatches: ["#f4f2ee","#faf8f4","#2a5a2a","#1a1916"] },
     { id: "light-contrast", label: "Light Contrast", description: "Light with maximum contrast",   swatches: ["#ece8e2","#f5f2ec","#183818","#080806"] },
     { id: "midnight",       label: "Midnight",       description: "Deep blue-black tint",          swatches: ["#0c1020","#101428","#a8b4e8","#eeeef8"] },
-    { id: "nocturne",       label: "Nocturne",       description: "Lunar graphite HUD",           swatches: ["#080813","#0d0d1b","#8f82e6","#f1eefc"] },
     { id: "warm",           label: "Warm",           description: "Amber and sepia tones",         swatches: ["#16130c","#1c1810","#e0b860","#f5f0e0"] },
   ];
   let tab: Tab          = $state("general");
@@ -3577,7 +3577,7 @@
                         {#each THEMES as theme}
                           <button
                             class="select-option"
-                            class:active={(store.settings.theme ?? "dark") === theme.id}
+                            class:active={(store.settings.theme ?? "nocturne") === theme.id}
                             type="button"
                             onclick={() => {
                               updateSettings({ theme: theme.id });
