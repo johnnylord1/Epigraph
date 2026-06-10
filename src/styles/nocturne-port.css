@@ -503,64 +503,6 @@
   }
 }
 
-:root {
-  --hud-scale: 1;
-  --n-hud-scale: var(--hud-scale);
-  --n-bg: #131313;
-  --n-bg-top: #15151a;
-  --n-surface-container-low: #1c1b1b;
-  --n-surface-container: #201f1f;
-  --n-surface-container-high: #2a2a2a;
-  --n-surface-container-highest: #353534;
-  --n-primary: #d3c4ff;
-  --n-primary-container: #b8a7ea;
-  --n-on-primary: #352660;
-  --n-on-primary-container: #483a74;
-  --n-on-surface: #e5e2e1;
-  --n-on-surface-variant: #cac4d0;
-  --n-outline-variant: #48454f;
-  --n-line: rgba(202, 196, 208, 0.08);
-  --n-line-strong: rgba(202, 196, 208, 0.14);
-  --n-gradient-primary: linear-gradient(135deg, #b8a7ea 0%, #d3c4ff 100%);
-  --n-gradient-bg:
-    radial-gradient(circle at top center, rgba(184, 167, 234, 0.08), transparent 34%),
-    linear-gradient(180deg, #15151a 0%, #131313 100%);
-  --n-duration-fast: 140ms;
-  --n-duration-normal: 200ms;
-  --n-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --n-topbar-height-base: 56px;
-  --n-sidebar-width-base: 76px;
-  --n-topbar-height: calc(var(--n-topbar-height-base) * var(--n-hud-scale));
-  --n-sidebar-width: calc(var(--n-sidebar-width-base) * var(--n-hud-scale));
-  --n-sidebar-rail-width: calc(62px * var(--n-hud-scale));
-  --n-sidebar-edge-x: calc(6px * var(--n-hud-scale));
-  --n-sidebar-edge-y: calc(14px * var(--n-hud-scale));
-  --n-sidebar-radius: calc(24px * var(--n-hud-scale));
-  --n-sidebar-padding-y: calc(24px * var(--n-hud-scale));
-  --n-sidebar-gap: calc(8px * var(--n-hud-scale));
-  --n-sidebar-btn-size: calc(44px * var(--n-hud-scale));
-  --n-sidebar-btn-radius: calc(14px * var(--n-hud-scale));
-  --n-brand-size: calc(62px * var(--n-hud-scale));
-  --n-brand-offset-top: calc(-12px * var(--n-hud-scale));
-  --n-brand-offset-bottom: calc(28px * var(--n-hud-scale));
-  --n-topbar-pad-x: calc(28px * var(--n-hud-scale));
-  --n-topbar-gap: calc(20px * var(--n-hud-scale));
-  --n-search-width: calc(300px * var(--n-hud-scale));
-  --n-search-width-focus: calc(380px * var(--n-hud-scale));
-  --n-search-height: calc(44px * var(--n-hud-scale));
-  --n-search-icon-offset: calc(14px * var(--n-hud-scale));
-  --n-search-icon-size: calc(17px * var(--n-hud-scale));
-  --n-search-padding-right: calc(16px * var(--n-hud-scale));
-  --n-search-padding-left: calc(42px * var(--n-hud-scale));
-  --n-icon-btn-size: calc(36px * var(--n-hud-scale));
-  --n-icon-btn-radius: calc(10px * var(--n-hud-scale));
-  --n-toolbar-cluster-radius: calc(14px * var(--n-hud-scale));
-  --n-toolbar-cluster-padding: calc(3px * var(--n-hud-scale));
-  --n-toolbar-icon-btn-size: calc(18px * var(--n-hud-scale));
-  --n-toolbar-divider-height: calc(14px * var(--n-hud-scale));
-  --n-segmented-height: calc(32px * var(--n-hud-scale));
-}
-
 .aethon-app-shell {
   background: var(--n-gradient-bg), #131313;
   color: var(--n-on-surface);
@@ -1647,27 +1589,6 @@ html[data-aethon-motion="idle"] .n-topbar {
 }
 
 .aethon-port--settings {
-  --n-bg: #131313;
-  --n-bg-top: #15151a;
-  --n-surface-container-low: #1c1b1b;
-  --n-surface-container: #201f1f;
-  --n-surface-container-high: #2a2a2a;
-  --n-surface-container-highest: #353534;
-  --n-primary: #d3c4ff;
-  --n-primary-container: #b8a7ea;
-  --n-on-primary: #352660;
-  --n-on-primary-container: #483a74;
-  --n-on-surface: #e5e2e1;
-  --n-on-surface-variant: #cac4d0;
-  --n-outline-variant: #48454f;
-  --n-line: rgba(202, 196, 208, 0.08);
-  --n-line-strong: rgba(202, 196, 208, 0.14);
-  --n-gradient-primary: linear-gradient(135deg, #b8a7ea 0%, #d3c4ff 100%);
-  --n-gradient-bg:
-    radial-gradient(circle at top center, rgba(184, 167, 234, 0.08), transparent 34%),
-    linear-gradient(180deg, #15151a 0%, #131313 100%);
-  --n-duration-fast: 140ms;
-  --n-duration-normal: 200ms;
   --n-topbar-height: calc(56px * var(--n-hud-scale));
   --settings-group-rail-width: calc(184px * var(--n-hud-scale));
   --settings-subnav-width: calc(146px * var(--n-hud-scale));

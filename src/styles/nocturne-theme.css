@@ -1,0 +1,119 @@
+/* Aethon Nocturne Theme
+   Single editable source for the current Nocturne identity used by the app.
+
+   docs/mockups/stitch-nocturne-isolated/nocturne-base.css is historical reference only.
+*/
+
+[data-theme="nocturne"] {
+  --bg-void:      #020205;
+  --bg-base:      #080813;
+  --bg-surface:   #0d0d1b;
+  --bg-raised:    #141326;
+  --bg-overlay:   #1b1930;
+  --bg-subtle:    #24213c;
+
+  --border-dim:    #19172a;
+  --border-base:   #28243f;
+  --border-strong: #393355;
+  --border-focus:  #8173d6;
+
+  --text-primary:   #f1eefc;
+  --text-secondary: #cfc8ec;
+  --text-muted:     #948bac;
+  --text-faint:     #5a536f;
+  --text-disabled:  #2d2a3b;
+
+  --accent:         #8f82e6;
+  --accent-dim:     #3a315f;
+  --accent-muted:   #211b3b;
+  --accent-fg:      #d7d0ff;
+  --accent-bright:  #b8adff;
+
+  --color-error:    #cf8aa0;
+  --color-error-bg: #24121b;
+  --color-success:  #8acfa6;
+  --color-info:     #91a7e8;
+  --color-info-bg:  #12172c;
+
+  --hud-control-height:        28px;
+  --hud-icon-button-size:      28px;
+  --hud-control-radius:        8px;
+  --hud-chip-radius:           var(--radius-full);
+  --hud-popover-radius:        12px;
+  --hud-status-radius:         var(--radius-full);
+  --hud-toast-radius:          12px;
+  --hud-chapter-row-radius:    9px;
+  --hud-surface-opacity:       0.96;
+  --hud-sidebar-width:         56px;
+  --hud-toolbar-gap:           6px;
+  --hud-reader-chrome-opacity: 0.92;
+  --hud-selection-bg:          #211b3b;
+  --hud-selection-border:      #4c4078;
+  --hud-progress-height:       2px;
+}
+
+:root {
+  --hud-scale: 1;
+  --n-hud-scale: var(--hud-scale);
+
+  --n-bg: #131313;
+  --n-bg-top: #15151a;
+  --n-surface-container-low: #1c1b1b;
+  --n-surface-container: #201f1f;
+  --n-surface-container-high: #2a2a2a;
+  --n-surface-container-highest: #353534;
+
+  --n-primary: #d3c4ff;
+  --n-primary-container: #b8a7ea;
+  --n-on-primary: #352660;
+  --n-on-primary-container: #483a74;
+  --n-on-surface: #e5e2e1;
+  --n-on-surface-variant: #cac4d0;
+  --n-outline-variant: #48454f;
+  --n-line: rgba(202, 196, 208, 0.08);
+  --n-line-strong: rgba(202, 196, 208, 0.14);
+
+  --n-gradient-primary: linear-gradient(135deg, #b8a7ea 0%, #d3c4ff 100%);
+  --n-gradient-bg:
+    radial-gradient(circle at top center, rgba(184, 167, 234, 0.08), transparent 34%),
+    linear-gradient(180deg, #15151a 0%, #131313 100%);
+
+  --n-duration-fast: 140ms;
+  --n-duration-normal: 200ms;
+  --n-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  --n-topbar-height-base: 56px;
+  --n-sidebar-width-base: 76px;
+  --n-topbar-height: calc(var(--n-topbar-height-base) * var(--n-hud-scale));
+  --n-sidebar-width: calc(var(--n-sidebar-width-base) * var(--n-hud-scale));
+  --n-sidebar-rail-width: calc(62px * var(--n-hud-scale));
+  --n-sidebar-edge-x: calc(6px * var(--n-hud-scale));
+  --n-sidebar-edge-y: calc(14px * var(--n-hud-scale));
+  --n-sidebar-radius: calc(24px * var(--n-hud-scale));
+  --n-sidebar-padding-y: calc(24px * var(--n-hud-scale));
+  --n-sidebar-gap: calc(8px * var(--n-hud-scale));
+  --n-sidebar-btn-size: calc(44px * var(--n-hud-scale));
+  --n-sidebar-btn-radius: calc(14px * var(--n-hud-scale));
+
+  --n-brand-size: calc(62px * var(--n-hud-scale));
+  --n-brand-offset-top: calc(-12px * var(--n-hud-scale));
+  --n-brand-offset-bottom: calc(28px * var(--n-hud-scale));
+
+  --n-topbar-pad-x: calc(28px * var(--n-hud-scale));
+  --n-topbar-gap: calc(20px * var(--n-hud-scale));
+  --n-search-width: calc(300px * var(--n-hud-scale));
+  --n-search-width-focus: calc(380px * var(--n-hud-scale));
+  --n-search-height: calc(44px * var(--n-hud-scale));
+  --n-search-icon-offset: calc(14px * var(--n-hud-scale));
+  --n-search-icon-size: calc(17px * var(--n-hud-scale));
+  --n-search-padding-right: calc(16px * var(--n-hud-scale));
+  --n-search-padding-left: calc(42px * var(--n-hud-scale));
+
+  --n-icon-btn-size: calc(36px * var(--n-hud-scale));
+  --n-icon-btn-radius: calc(10px * var(--n-hud-scale));
+  --n-toolbar-cluster-radius: calc(14px * var(--n-hud-scale));
+  --n-toolbar-cluster-padding: calc(3px * var(--n-hud-scale));
+  --n-toolbar-icon-btn-size: calc(18px * var(--n-hud-scale));
+  --n-toolbar-divider-height: calc(14px * var(--n-hud-scale));
+  --n-segmented-height: calc(32px * var(--n-hud-scale));
+}
