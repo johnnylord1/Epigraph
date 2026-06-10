@@ -225,7 +225,7 @@
   }
 
   .card.n-library-card {
-    gap: calc(7px * var(--n-hud-scale, 1));
+    gap: var(--library-card-info-gap, calc(7px * var(--n-hud-scale, 1)));
     border-radius: 0;
     transition: transform 160ms ease, filter 160ms ease;
   }
@@ -302,7 +302,7 @@
   }
 
   .cover-wrap.n-library-card__cover {
-    border-radius: calc(16px * var(--n-hud-scale, 1));
+    border-radius: var(--library-card-cover-radius, calc(16px * var(--n-hud-scale, 1)));
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.05);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
@@ -381,15 +381,15 @@
 
   .badge.n-library-card__badge {
     min-width: auto;
-    min-height: calc(20px * var(--n-hud-scale, 1));
-    height: calc(20px * var(--n-hud-scale, 1));
-    padding: 0 calc(7px * var(--n-hud-scale, 1));
+    min-height: var(--library-card-badge-height, calc(20px * var(--n-hud-scale, 1)));
+    height: var(--library-card-badge-height, calc(20px * var(--n-hud-scale, 1)));
+    padding: 0 var(--library-card-badge-padding-x, calc(7px * var(--n-hud-scale, 1)));
     border-radius: 9999px;
     background: rgba(36, 33, 43, 0.9);
     border: 1px solid rgba(184, 167, 234, 0.12);
     color: var(--n-primary, var(--accent-fg));
     font-family: var(--font-ui);
-    font-size: 9px;
+    font-size: var(--library-card-badge-font-size, 9px);
     font-weight: 800;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -398,18 +398,18 @@
 
   .n-library-card__cover > .n-library-card__badge {
     position: absolute;
-    top: var(--sp-2);
-    right: var(--sp-2);
+    top: var(--library-card-badge-inset, var(--sp-2));
+    right: var(--library-card-badge-inset, var(--sp-2));
     display: inline-flex;
     align-items: center;
-    min-height: calc(20px * var(--n-hud-scale, 1));
-    padding: 0 calc(7px * var(--n-hud-scale, 1));
+    min-height: var(--library-card-badge-height, calc(20px * var(--n-hud-scale, 1)));
+    padding: 0 var(--library-card-badge-padding-x, calc(7px * var(--n-hud-scale, 1)));
     border-radius: 9999px;
     background: rgba(36, 33, 43, 0.9);
     border: 1px solid rgba(184, 167, 234, 0.12);
     color: var(--n-primary, var(--accent-fg));
     font-family: var(--font-ui);
-    font-size: 9px;
+    font-size: var(--library-card-badge-font-size, 9px);
     font-weight: 800;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -475,13 +475,13 @@
   .card-copy {
     display: flex;
     flex-direction: column;
-    gap: var(--sp-1);
-    margin-top: var(--sp-2);
+    gap: var(--library-card-copy-gap, var(--sp-1));
+    margin-top: var(--library-card-copy-margin-top, var(--sp-2));
     min-width: 0;
   }
 
   .card-copy.n-library-card__info {
-    gap: 3px;
+    gap: var(--library-card-meta-gap, 3px);
     margin-top: 0;
   }
 
@@ -511,7 +511,7 @@
   .title.n-library-card__title {
     min-height: calc(var(--leading-snug) * 2em);
     color: rgba(255, 255, 255, 0.92);
-    font-size: var(--text-xs);
+    font-size: var(--library-card-title-font-size, var(--text-xs));
     font-weight: var(--weight-medium);
     line-height: var(--leading-snug);
     text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
@@ -538,7 +538,7 @@
   }
 
   .subtitle.n-library-card__author {
-    font-size: 9px;
+    font-size: var(--library-card-meta-font-size, 9px);
     letter-spacing: var(--tracking-wide);
     text-transform: uppercase;
     color: rgba(255, 255, 255, 0.45);
@@ -555,7 +555,7 @@
   .n-library-card__author,
   .n-library-card__vol {
     font-family: var(--font-ui);
-    font-size: 9px;
+    font-size: var(--library-card-meta-font-size, 9px);
     letter-spacing: var(--tracking-wide);
     text-transform: uppercase;
     color: rgba(255, 255, 255, 0.45);

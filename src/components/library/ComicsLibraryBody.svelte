@@ -749,7 +749,10 @@
   .content {
     flex: 1;
     overflow-y: auto;
-    padding: var(--sp-5) var(--sp-6) var(--sp-6);
+    padding:
+      var(--library-content-padding-top, var(--sp-5))
+      var(--library-shell-padding-x, var(--sp-6))
+      var(--library-content-padding-bottom, var(--sp-6));
     min-height: 0;
     -webkit-overflow-scrolling: touch;
   }
@@ -757,7 +760,7 @@
   .grid-skeleton {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-    gap: var(--sp-4);
+    gap: var(--library-grid-column-gap, var(--sp-4));
   }
 
   .load-more-row {

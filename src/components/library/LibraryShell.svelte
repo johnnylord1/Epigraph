@@ -144,6 +144,42 @@
 
 <style>
   .root {
+    --library-shell-padding-x: clamp(18px, 3.1vw, 40px);
+    --library-hero-padding-top: clamp(10px, 1.25vw, 14px);
+    --library-hero-stack-gap: clamp(10px, 1.25vw, 16px);
+    --library-hero-top-gap: clamp(14px, 2.1vw, 32px);
+    --library-collections-row-gap: clamp(12px, 1.7vw, 24px);
+    --library-chip-stack-gap: clamp(6px, 0.8vw, 8px);
+    --library-chip-gap: clamp(7px, 1vw, 12px);
+    --library-system-chip-gap: clamp(5px, 0.7vw, 8px);
+    --library-system-chip-indent: clamp(8px, 1.2vw, 18px);
+    --library-chip-height: clamp(24px, 2.8vw, 32px);
+    --library-chip-padding-x: clamp(10px, 1.4vw, 18px);
+    --library-chip-font-size: clamp(9px, 1.02vw, 11px);
+    --library-title-size: clamp(1.72rem, 4.6vw, 2.2rem);
+    --library-grid-row-gap: clamp(26px, 4.2vw, 40px);
+    --library-grid-column-gap: clamp(14px, 2.2vw, 24px);
+    --library-grid-compact-row-gap: clamp(22px, 3.5vw, 32px);
+    --library-grid-compact-column-gap: clamp(10px, 1.7vw, 18px);
+    --library-content-padding-top: clamp(14px, 2.4vw, 20px);
+    --library-content-padding-bottom: clamp(18px, 2.9vw, 24px);
+    --library-toolbar-gap: clamp(8px, 1.4vw, 12px);
+    --library-toolbar-cluster-gap: clamp(6px, 1vw, 8px);
+    --library-toolbar-height: clamp(34px, 4.8vw, 44px);
+    --library-icon-btn-size: clamp(30px, 4.5vw, 36px);
+    --library-card-min-grid: clamp(104px, 18vw, 140px);
+    --library-card-max-grid: clamp(126px, 22vw, 180px);
+    --library-card-min-compact: clamp(88px, 15vw, 116px);
+    --library-card-max-compact: clamp(108px, 18vw, 150px);
+    --library-card-cover-radius: clamp(10px, 1.8vw, 16px);
+    --library-card-info-gap: clamp(4px, 0.8vw, 7px);
+    --library-card-copy-margin-top: clamp(4px, 0.9vw, 8px);
+    --library-card-title-font-size: clamp(10px, 1.45vw, var(--text-xs));
+    --library-card-meta-font-size: clamp(7.5px, 1.1vw, 9px);
+    --library-card-badge-height: clamp(16px, 2.4vw, 20px);
+    --library-card-badge-padding-x: clamp(5px, 1vw, 7px);
+    --library-card-badge-font-size: clamp(7px, 1vw, 9px);
+    --library-card-badge-inset: clamp(5px, 1vw, 8px);
     position: relative;
     display: flex;
     flex-direction: column;

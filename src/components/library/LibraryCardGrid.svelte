@@ -44,8 +44,8 @@
       ? ""
       : [
           `--library-columns:${Math.max(1, effectiveColumns)};`,
-          `--library-card-min:${viewMode === "compact_grid" ? 116 : 140}px;`,
-          `--library-card-max:${viewMode === "compact_grid" ? 150 : 180}px;`,
+          `--library-card-min:${viewMode === "compact_grid" ? "var(--library-card-min-compact, 104px)" : "var(--library-card-min-grid, 120px)"};`,
+          `--library-card-max:${viewMode === "compact_grid" ? "var(--library-card-max-compact, 150px)" : "var(--library-card-max-grid, 180px)"};`,
         ].join(""),
   );
 </script>
@@ -75,14 +75,14 @@
     z-index: 1;
     isolation: isolate;
     display: grid;
-    grid-template-columns: repeat(var(--library-columns, 1), minmax(0, 1fr));
-    gap: 40px 24px;
+    grid-template-columns: repeat(var(--library-columns, 1), minmax(var(--library-card-min, 120px), var(--library-card-max, 1fr)));
+    gap: var(--library-grid-row-gap, 40px) var(--library-grid-column-gap, 24px);
     align-items: start;
     justify-content: start;
   }
 
   .grid-compact {
-    gap: 32px 18px;
+    gap: var(--library-grid-compact-row-gap, 32px) var(--library-grid-compact-column-gap, 18px);
   }
 
   .grid-list {
