@@ -3,6 +3,11 @@
   import { Books, CheckSquare, Folder, FolderSimplePlus, Trash, X } from "phosphor-svelte";
   import { thumbUrl } from "../../lib/client";
   import { createComicLibraryCardId } from "../../lib/library/cardIdentity";
+  import {
+    cacheLibraryCoverFromServer,
+    getCachedLibraryCoverUrl,
+    libraryCoverCacheKey,
+  } from "../../lib/library/coverCache";
   import { buildComicsLibraryCardVm } from "../../lib/library/comicsSection";
   import { computeLibraryLayout, type LibraryPreferredGridColumns, type LibraryViewMode } from "../../lib/libraryDisplay";
   import type { ComicsSectionVM } from "../../lib/library/contracts";
@@ -73,6 +78,8 @@
   let bulkMoveOpen = $state(false);
   let failedCoverIds = $state(new Set<number>());
   let coverRetryCounts = $state(new Map<number, number>());
+  let cachedCoverUrls = $state(new Map<number, string>());
+  let coverCacheCheckedIds = $state(new Set<number>());
   let renderVisible = $state(0);
   let loadMoreSentinel: HTMLDivElement | null = $state(null);
   let loadMoreObserver: IntersectionObserver | null = $state(null);
@@ -84,7 +91,10 @@
   const coverSessionSeed = Math.random().toString(36).slice(2);
   const coverRetryTimers = new Map<number, ReturnType<typeof setTimeout>>();
   const coverRecoveryTimers = new Map<number, ReturnType<typeof setTimeout>>();
+  const coverCacheInflight = new Set<string>();
+  const coverCacheWritesInflight = new Set<number>();
   let lastCoverRecoveryVersions = new Map<number, number>();
+  let lastCoverCacheScopeKey = "";
 
   const mangaByCardId = $derived(
     new Map(mangas.map((manga) => [createComicLibraryCardId(manga.id), manga])),
@@ -272,10 +282,18 @@
       nextRetries.delete(manga.id);
       coverRetryCounts = nextRetries;
     }
+
+    if (!cachedCoverUrls.has(manga.id)) {
+      void cacheCoverAfterServerLoad(manga);
+    }
   }
 
   function hasUsableCover(manga: Manga): boolean {
-    return !!manga.thumbnailUrl && !failedCoverIds.has(manga.id);
+    return (
+      !!manga.thumbnailUrl &&
+      !failedCoverIds.has(manga.id) &&
+      (cachedCoverUrls.has(manga.id) || coverCacheCheckedIds.has(manga.id))
+    );
   }
 
   function getCoverSignature(manga: Manga): string {
@@ -286,6 +304,8 @@
 
   function getCoverSrc(manga: Manga): string {
     if (!manga.thumbnailUrl) return "";
+    const cached = cachedCoverUrls.get(manga.id);
+    if (cached) return cached;
     const base = thumbUrl(manga.thumbnailUrl);
     const sig = getCoverSignature(manga);
     const retry = coverRetryCounts.get(manga.id) ?? 0;
@@ -296,6 +316,50 @@
     ];
     if (retry > 0) params.push(`aethon_cover_retry=${retry}`);
     return `${base}${base.includes("?") ? "&" : "?"}${params.join("&")}`;
+  }
+
+  function coverCacheScope() {
+    return {
+      profileId: store.runtimeResolvedLocalProfileId,
+      serverUrl: store.runtimeServerUrl,
+    };
+  }
+
+  async function loadCachedCoverForManga(manga: Manga) {
+    const scope = coverCacheScope();
+    const key = libraryCoverCacheKey(scope, manga);
+    if (coverCacheInflight.has(key)) return;
+    coverCacheInflight.add(key);
+    try {
+      const cached = await getCachedLibraryCoverUrl(scope, manga);
+      if (cached) {
+        const next = new Map(cachedCoverUrls);
+        next.set(manga.id, cached);
+        cachedCoverUrls = next;
+      }
+      const nextChecked = new Set(coverCacheCheckedIds);
+      nextChecked.add(manga.id);
+      coverCacheCheckedIds = nextChecked;
+    } finally {
+      coverCacheInflight.delete(key);
+    }
+  }
+
+  async function cacheCoverAfterServerLoad(manga: Manga) {
+    if (coverCacheWritesInflight.has(manga.id)) return;
+    coverCacheWritesInflight.add(manga.id);
+    try {
+      const cached = await cacheLibraryCoverFromServer(coverCacheScope(), manga);
+      if (!cached) return;
+      const next = new Map(cachedCoverUrls);
+      next.set(manga.id, cached);
+      cachedCoverUrls = next;
+      const nextChecked = new Set(coverCacheCheckedIds);
+      nextChecked.add(manga.id);
+      coverCacheCheckedIds = nextChecked;
+    } finally {
+      coverCacheWritesInflight.delete(manga.id);
+    }
   }
 
   function handleContentScroll() {
@@ -387,6 +451,23 @@
 
     if (renderVisible > total) {
       renderVisible = total;
+    }
+  });
+
+  $effect(() => {
+    const profileId = store.runtimeResolvedLocalProfileId;
+    const serverUrl = store.runtimeServerUrl;
+    const scopeKey = `${profileId ?? ""}::${serverUrl ?? ""}`;
+    if (lastCoverCacheScopeKey && lastCoverCacheScopeKey !== scopeKey) {
+      cachedCoverUrls = new Map();
+      coverCacheCheckedIds = new Set();
+      coverCacheInflight.clear();
+      coverCacheWritesInflight.clear();
+    }
+    lastCoverCacheScopeKey = scopeKey;
+    for (const manga of renderedMangas) {
+      if (!manga.thumbnailUrl || cachedCoverUrls.has(manga.id) || coverCacheCheckedIds.has(manga.id)) continue;
+      void loadCachedCoverForManga(manga);
     }
   });
 

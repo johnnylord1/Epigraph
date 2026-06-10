@@ -174,6 +174,9 @@ const READER_WEBVIEW_INIT_SCRIPT: &str = r#"
   }).observe(document.documentElement, { childList: true, subtree: true });
 })();
 "#;
+
+const LIBRARY_COVER_CACHE_MAX_BYTES: u64 = 256 * 1024 * 1024;
+const LIBRARY_COVER_MAX_DOWNLOAD_BYTES: u64 = 5 * 1024 * 1024;
 const NOVEL_RUNTIME_HOST_LABEL: &str = "novel-runtime-host";
 
 struct RunningServer {
@@ -840,6 +843,220 @@ fn books_data_dir() -> PathBuf {
         }
     }
     suwayomi_data_dir().join("books")
+}
+
+fn library_cover_cache_dir() -> PathBuf {
+    suwayomi_data_dir().join("library-cover-cache")
+}
+
+fn library_cover_cache_key(
+    profile_id: &str,
+    server_url: &str,
+    manga_id: i64,
+    thumbnail_url: &str,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(profile_id.trim().to_ascii_lowercase().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(server_url.trim().to_ascii_lowercase().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(manga_id.to_string().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(thumbnail_url.trim().as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn library_cover_extension_from_content_type(content_type: Option<&str>) -> Option<&'static str> {
+    let normalized = content_type?.split(';').next()?.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "image/jpeg" | "image/jpg" => Some("jpg"),
+        "image/png" => Some("png"),
+        "image/webp" => Some("webp"),
+        "image/gif" => Some("gif"),
+        _ => None,
+    }
+}
+
+fn library_cover_extension_from_url(raw: &str) -> Option<&'static str> {
+    let parsed = Url::parse(raw).ok()?;
+    let path = parsed.path().to_ascii_lowercase();
+    if path.ends_with(".jpg") || path.ends_with(".jpeg") {
+        Some("jpg")
+    } else if path.ends_with(".png") {
+        Some("png")
+    } else if path.ends_with(".webp") {
+        Some("webp")
+    } else if path.ends_with(".gif") {
+        Some("gif")
+    } else {
+        None
+    }
+}
+
+fn library_cover_cache_candidates(key: &str) -> Vec<PathBuf> {
+    ["webp", "jpg", "png", "gif"]
+        .into_iter()
+        .map(|ext| library_cover_cache_dir().join(format!("{key}.{ext}")))
+        .collect()
+}
+
+fn find_cached_library_cover_path(key: &str) -> Option<PathBuf> {
+    library_cover_cache_candidates(key)
+        .into_iter()
+        .find(|path| path.is_file())
+}
+
+fn resolve_library_cover_asset_path(
+    request: &Request<Vec<u8>>,
+) -> Result<PathBuf, Response<Cow<'static, [u8]>>> {
+    let encoded_path = request.uri().path();
+    if encoded_path.len() <= 1 {
+        return Err(book_asset_error(
+            StatusCode::BAD_REQUEST,
+            "Missing library cover path.",
+        ));
+    }
+
+    let decoded_path = percent_decode(&encoded_path.as_bytes()[1..])
+        .decode_utf8_lossy()
+        .to_string();
+    if decoded_path.is_empty() {
+        return Err(book_asset_error(
+            StatusCode::BAD_REQUEST,
+            "Missing library cover path.",
+        ));
+    }
+
+    let candidate = PathBuf::from(decoded_path);
+    let root = library_cover_cache_dir();
+    let canonical_root = root.canonicalize().map_err(|_| {
+        book_asset_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Library cover cache root is unavailable.",
+        )
+    })?;
+    let canonical_candidate = candidate
+        .canonicalize()
+        .map_err(|_| book_asset_error(StatusCode::NOT_FOUND, "Library cover was not found."))?;
+
+    if !canonical_candidate.starts_with(&canonical_root) {
+        return Err(book_asset_error(
+            StatusCode::FORBIDDEN,
+            "Library cover is outside the allowed scope.",
+        ));
+    }
+
+    Ok(canonical_candidate)
+}
+
+fn trim_library_cover_cache_to_limit(max_bytes: u64) -> Result<(), String> {
+    let root = library_cover_cache_dir();
+    if !root.is_dir() {
+        return Ok(());
+    }
+
+    let mut entries: Vec<(PathBuf, u64, SystemTime)> = fs::read_dir(&root)
+        .map_err(|err| err.to_string())?
+        .filter_map(|entry| {
+            let path = entry.ok()?.path();
+            let metadata = fs::metadata(&path).ok()?;
+            if !metadata.is_file() {
+                return None;
+            }
+            let modified = metadata.modified().unwrap_or(UNIX_EPOCH);
+            Some((path, metadata.len(), modified))
+        })
+        .collect();
+
+    let mut total: u64 = entries.iter().map(|(_, size, _)| *size).sum();
+    if total <= max_bytes {
+        return Ok(());
+    }
+
+    entries.sort_by_key(|(_, _, modified)| *modified);
+    for (path, size, _) in entries {
+        if total <= max_bytes {
+            break;
+        }
+        if fs::remove_file(&path).is_ok() {
+            total = total.saturating_sub(size);
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn get_cached_library_cover(
+    profile_id: String,
+    server_url: String,
+    manga_id: i64,
+    thumbnail_url: String,
+) -> Result<Option<String>, String> {
+    fs::create_dir_all(library_cover_cache_dir()).map_err(|err| err.to_string())?;
+    let key = library_cover_cache_key(&profile_id, &server_url, manga_id, &thumbnail_url);
+    Ok(find_cached_library_cover_path(&key).map(|path| path.to_string_lossy().into_owned()))
+}
+
+#[tauri::command]
+async fn cache_library_cover(
+    profile_id: String,
+    server_url: String,
+    manga_id: i64,
+    thumbnail_url: String,
+    cover_url: String,
+    auth_header: Option<String>,
+) -> Result<Option<String>, String> {
+    let parsed_url = Url::parse(cover_url.trim()).map_err(|err| err.to_string())?;
+    if !matches!(parsed_url.scheme(), "http" | "https") {
+        return Ok(None);
+    }
+
+    let root = library_cover_cache_dir();
+    fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+    let key = library_cover_cache_key(&profile_id, &server_url, manga_id, &thumbnail_url);
+    if let Some(path) = find_cached_library_cover_path(&key) {
+        return Ok(Some(path.to_string_lossy().into_owned()));
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|err| err.to_string())?;
+    let mut request = client.get(parsed_url);
+    if let Some(header) = auth_header.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        request = request.header(reqwest::header::AUTHORIZATION, header);
+    }
+
+    let response = request.send().await.map_err(|err| err.to_string())?;
+    if !response.status().is_success() {
+        return Ok(None);
+    }
+
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.to_string());
+    let ext = library_cover_extension_from_content_type(content_type.as_deref())
+        .or_else(|| library_cover_extension_from_url(&cover_url))
+        .unwrap_or("jpg");
+    let bytes = response.bytes().await.map_err(|err| err.to_string())?;
+    if bytes.is_empty() || bytes.len() as u64 > LIBRARY_COVER_MAX_DOWNLOAD_BYTES {
+        return Ok(None);
+    }
+
+    for candidate in library_cover_cache_candidates(&key) {
+        let _ = fs::remove_file(candidate);
+    }
+
+    let target = root.join(format!("{key}.{ext}"));
+    let tmp = root.join(format!("{key}.{ext}.tmp"));
+    fs::write(&tmp, &bytes).map_err(|err| err.to_string())?;
+    fs::rename(&tmp, &target).map_err(|err| err.to_string())?;
+    let _ = trim_library_cover_cache_to_limit(LIBRARY_COVER_CACHE_MAX_BYTES);
+
+    Ok(Some(target.to_string_lossy().into_owned()))
 }
 
 pub(crate) fn book_library_state_path() -> Result<PathBuf, String> {
@@ -1543,6 +1760,37 @@ fn serve_book_asset(request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
     match read_book_asset_bytes(&path, start, end) {
         Ok(bytes) => builder.body(Cow::Owned(bytes)).unwrap(),
         Err(response) => response,
+    }
+}
+
+fn serve_library_cover_asset(request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
+    if request.method().as_str().eq_ignore_ascii_case("OPTIONS") {
+        return book_asset_preflight_response();
+    }
+
+    let path = match resolve_library_cover_asset_path(&request) {
+        Ok(path) => path,
+        Err(response) => return response,
+    };
+
+    let metadata = match fs::metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(_) => return book_asset_error(StatusCode::NOT_FOUND, "Library cover could not be read."),
+    };
+    let file_len = metadata.len();
+
+    let builder = book_asset_response_builder(StatusCode::OK)
+        .header(CONTENT_TYPE, book_asset_content_type(&path))
+        .header("Cache-Control", "public, max-age=31536000, immutable")
+        .header(CONTENT_LENGTH, file_len.to_string());
+
+    if request.method().as_str().eq_ignore_ascii_case("HEAD") {
+        return builder.body(Cow::Owned(Vec::new())).unwrap();
+    }
+
+    match fs::read(&path) {
+        Ok(bytes) => builder.body(Cow::Owned(bytes)).unwrap(),
+        Err(_) => book_asset_error(StatusCode::NOT_FOUND, "Library cover could not be read."),
     }
 }
 
@@ -4362,6 +4610,7 @@ pub fn run() {
     ensure_dev_webview2_debug_port();
     let app = tauri::Builder::default()
         .register_uri_scheme_protocol("book", |_ctx, request| serve_book_asset(request))
+        .register_uri_scheme_protocol("cover", |_ctx, request| serve_library_cover_asset(request))
         .plugin(tauri_plugin_drpc::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_os::init())
@@ -4423,6 +4672,8 @@ pub fn run() {
             read_file_base64,
             write_file_base64,
             compute_file_sha256,
+            get_cached_library_cover,
+            cache_library_cover,
             copy_book_import,
             write_book_asset,
             write_book_cover,
