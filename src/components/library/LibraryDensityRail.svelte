@@ -7,7 +7,7 @@
     onSelect?: (value: LibraryPreferredGridColumns) => void;
   };
 
-  const DENSITY_OPTIONS: LibraryPreferredGridColumns[] = ["auto", 2, 3, 4, 5, 6];
+  const DENSITY_OPTIONS: LibraryPreferredGridColumns[] = ["auto", 4, 5, 6, 7, 8, 9, 10];
 
   let {
     value,

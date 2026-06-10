@@ -87,5 +87,6 @@ describe("LibraryCardGrid", () => {
 
     const grid = container.querySelector(".grid");
     expect(grid?.getAttribute("style")).toContain("--library-columns: 4");
+    expect(grid?.getAttribute("style")).not.toContain("--library-card-max");
   });
 });

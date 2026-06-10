@@ -49,7 +49,7 @@ describe("libraryDisplay", () => {
   it("clamps explicit preferred columns on narrow windows", () => {
     const layout = computeLibraryLayout({
       availableWidth: 760,
-      preferredColumns: 12,
+      preferredColumns: 10,
       mode: "grid",
     });
 
@@ -59,17 +59,17 @@ describe("libraryDisplay", () => {
   it("allows denser layouts on large windows", () => {
     const layout = computeLibraryLayout({
       availableWidth: 1920,
-      preferredColumns: 12,
+      preferredColumns: 10,
       mode: "compact_grid",
     });
 
-    expect(layout.effectiveColumns).toBe(12);
+    expect(layout.effectiveColumns).toBe(10);
   });
 
   it("ignores columns in list mode", () => {
     const layout = computeLibraryLayout({
       availableWidth: 640,
-      preferredColumns: 12,
+      preferredColumns: 10,
       mode: "list",
     });
 

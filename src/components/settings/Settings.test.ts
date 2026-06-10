@@ -324,7 +324,7 @@ describe("Settings", () => {
     expect(densitySlider).toBeTruthy();
     expect(densitySlider.className).toContain("settings-density-slider__range");
     expect(densitySlider.getAttribute("min")).toBe("0");
-    expect(densitySlider.getAttribute("max")).toBe("9");
+    expect(densitySlider.getAttribute("max")).toBe("7");
     expect(densitySlider.getAttribute("step")).toBe("1");
 
     await fireEvent.input(densitySlider, { currentTarget: { value: "1" }, target: { value: "1" } });

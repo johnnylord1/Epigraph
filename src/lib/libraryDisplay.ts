@@ -10,9 +10,7 @@ export type LibraryPreferredGridColumns =
   | 7
   | 8
   | 9
-  | 10
-  | 11
-  | 12;
+  | 10;
 
 export interface LibraryDisplaySpec {
   mode: LibraryViewMode;
@@ -58,7 +56,7 @@ const DISPLAY_SPECS: Record<LibraryViewMode, LibraryDisplaySpec> = {
 };
 
 function clampColumns(value: number): number {
-  return Math.max(1, Math.min(12, Math.floor(value)));
+  return Math.max(1, Math.min(10, Math.floor(value)));
 }
 
 function widthForColumns(availableWidth: number, columns: number, gap: number): number {

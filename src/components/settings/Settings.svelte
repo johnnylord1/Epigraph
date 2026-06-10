@@ -341,12 +341,12 @@
   function libraryDensityLabel(value: Settings["libraryPreferredGridColumns"]): string {
     return value === "auto" ? "Auto" : `${value} cols`;
   }
-  const LIBRARY_DENSITY_OPTIONS: Settings["libraryPreferredGridColumns"][] = ["auto", 4, 5, 6, 7, 8, 9, 10, 11, 12];
+  const LIBRARY_DENSITY_OPTIONS: Settings["libraryPreferredGridColumns"][] = ["auto", 4, 5, 6, 7, 8, 9, 10];
   function libraryDensityOptionLabel(value: Settings["libraryPreferredGridColumns"]): string {
     return value === "auto" ? "Auto" : String(value);
   }
   function getLibraryDensityOptionIndex(value: Settings["libraryPreferredGridColumns"]): number {
-    return LIBRARY_DENSITY_OPTIONS.findIndex((option) => option === value);
+    return Math.max(0, LIBRARY_DENSITY_OPTIONS.findIndex((option) => option === value));
   }
   function libraryDensityOptionFromIndex(index: number): Settings["libraryPreferredGridColumns"] {
     const clampedIndex = Math.max(0, Math.min(LIBRARY_DENSITY_OPTIONS.length - 1, index));
