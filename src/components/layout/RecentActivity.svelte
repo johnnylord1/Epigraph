@@ -1,7 +1,13 @@
 <script lang="ts">
   import { ClockCounterClockwise, Trash, Play } from "phosphor-svelte";
   import { thumbUrl } from "../../lib/client";
-  import { store, clearHistory, clearSystemNotifications, setActiveManga } from "../../store/state.svelte";
+  import {
+    store,
+    clearHistory,
+    clearLibraryUpdateNotifications,
+    clearSystemNotifications,
+    setActiveManga,
+  } from "../../store/state.svelte";
   import type { Manga } from "../../lib/types";
   import type { HistoryEntry, LibraryUpdateNotification, SystemNotification } from "../../store/state.svelte";
 
@@ -155,7 +161,9 @@
 
   function handleClear() {
     if (!confirmClear) { confirmClear = true; setTimeout(() => confirmClear = false, 3000); return; }
-    if (activeTab === "system") {
+    if (activeTab === "updates") {
+      clearLibraryUpdateNotifications();
+    } else if (activeTab === "system") {
       clearSystemNotifications();
     } else {
       clearHistory();
@@ -188,9 +196,9 @@
         </button>
       </div>
 
-      {#if (activeTab === "history" && store.history.length > 0) || (activeTab === "system" && systemEntries.length > 0)}
+      {#if (activeTab === "updates" && updateEntries.length > 0) || (activeTab === "history" && store.history.length > 0) || (activeTab === "system" && systemEntries.length > 0)}
         <button class="clear-btn" class:confirm={confirmClear} onclick={handleClear}
-          title={confirmClear ? "Click again to confirm" : activeTab === "system" ? "Clear system notifications" : "Clear history"}>
+          title={confirmClear ? "Click again to confirm" : activeTab === "updates" ? "Clear update notifications" : activeTab === "system" ? "Clear system notifications" : "Clear history"}>
           <Trash size={14} weight="light" />
           <span>{confirmClear ? "Confirm" : "Clear"}</span>
         </button>
