@@ -347,6 +347,7 @@
   let bootStartedAt = Date.now();
   let shellReadyAt = $state<number | null>(null);
   let lastDownloadEventAt = $state(Date.now());
+  let lastRuntimeTrimAt = 0;
   let libraryBootstrapScopeKey: string | null = null;
   let libraryBootstrapInFlight: Promise<void> | null = null;
   let automaticLibraryUpdateInFlight: Promise<void> | null = null;
@@ -1503,9 +1504,27 @@
 
   const idleEvents = ["mousemove", "mousedown", "keydown", "touchstart", "wheel"] as const;
 
-  function trimIdleMemory() {
-    cache.trimExpired();
+  function trimRuntimeMemory(options: { forceGc?: boolean; minIntervalMs?: number } = {}) {
+    const now = Date.now();
+    const minIntervalMs = options.minIntervalMs ?? 15_000;
+    if (now - lastRuntimeTrimAt < minIntervalMs) return;
+    lastRuntimeTrimAt = now;
+
+    cache.trimExpired(now);
     trimImageCache(false);
+
+    if (options.forceGc) {
+      const maybeGc = (globalThis as typeof globalThis & { gc?: () => void }).gc;
+      if (typeof maybeGc === "function") {
+        window.setTimeout(() => {
+          try {
+            maybeGc();
+          } catch (error) {
+            console.warn("Unable to run background JavaScript GC:", error);
+          }
+        }, 250);
+      }
+    }
   }
 
   function scheduleUiMotionPause() {
@@ -1520,7 +1539,7 @@
     uiMotionIdleTimer = window.setTimeout(() => {
       if (!pageHidden) {
         uiMotionActive = false;
-        trimIdleMemory();
+        trimRuntimeMemory();
       }
     }, 5_000);
   }
@@ -2370,7 +2389,7 @@
       pageHidden = document.hidden || !appWindowFocused;
       uiMotionActive = !pageHidden;
       if (pageHidden) {
-        trimIdleMemory();
+        trimRuntimeMemory({ forceGc: true, minIntervalMs: 5_000 });
       }
       scheduleUiMotionPause();
       updateRuntimeDiagnosticsBridge();
