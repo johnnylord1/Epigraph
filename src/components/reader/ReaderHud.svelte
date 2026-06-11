@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import { X, CaretLeft, CaretRight, BookmarkSimple, SlidersHorizontal } from "phosphor-svelte";
+  import { store } from "../../store/state.svelte";
 
   type Props = {
     title?: string;
@@ -52,7 +53,9 @@
 
 <div class="root" role="presentation" onmousemove={onMouseMove}>
   <!-- Main Reading Viewport Content -->
-  {@render children?.()}
+  <div class="reader-viewport-wrapper" style="filter: brightness({store.settings.readerBrightness ?? 1.0});">
+    {@render children?.()}
+  </div>
 
   <!-- Floating UI HUD Overlay -->
   <div class="reader-hud-overlay" class:hidden={!uiVisible}>
@@ -78,7 +81,7 @@
     <div class="reader-capsule-bar">
       <!-- 1. Close/Exit -->
       <button class="capsule-btn" onclick={onclose} title="Close reader">
-        <X size={15} weight="regular" />
+        <X size={17} weight="regular" />
       </button>
 
       <!-- 2. Page Indicator -->
@@ -107,20 +110,20 @@
 
       <!-- 4. Navigation Arrows -->
       <button class="capsule-btn" onclick={onprev} disabled={prevDisabled} title="Previous">
-        <CaretLeft size={14} weight="regular" />
+        <CaretLeft size={16} weight="regular" />
       </button>
       <button class="capsule-btn" onclick={onnext} disabled={nextDisabled} title="Next">
-        <CaretRight size={14} weight="regular" />
+        <CaretRight size={16} weight="regular" />
       </button>
 
       <!-- 5. Bookmark Toggle -->
       <button class="capsule-btn" class:active={isBookmarked} onclick={onbookmark} title="Bookmark">
-        <BookmarkSimple size={15} weight={isBookmarked ? "fill" : "regular"} />
+        <BookmarkSimple size={17} weight={isBookmarked ? "fill" : "regular"} />
       </button>
 
       <!-- 6. Settings Cog -->
       <button class="capsule-btn" class:active={toolsOpen} onclick={() => toolsOpen = !toolsOpen} title="Settings">
-        <SlidersHorizontal size={15} weight="regular" />
+        <SlidersHorizontal size={17} weight="regular" />
       </button>
     </div>
   </div>
@@ -148,6 +151,16 @@
     color: var(--reader-text);
     font-family: Manrope, Inter, "Segoe UI", sans-serif;
     transform: translateZ(0);
+  }
+
+  .reader-viewport-wrapper {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
   }
 
   .reader-hud-overlay {
@@ -207,10 +220,10 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    width: min(500px, calc(100% - 32px));
-    height: 44px;
-    background: var(--reader-panel);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    width: min(600px, calc(100% - 32px));
+    height: 52px;
+    background: rgba(26, 26, 30, 0.97);
+    border: 1px solid rgba(255, 255, 255, 0.05);
     border-radius: 9999px;
     padding: 0 12px;
     box-shadow:
@@ -223,8 +236,8 @@
   .capsule-btn {
     display: inline-grid;
     place-items: center;
-    width: 30px;
-    height: 30px;
+    width: 36px;
+    height: 36px;
     border: 1px solid rgba(255, 255, 255, 0.05);
     border-radius: 9999px;
     color: var(--reader-muted);
@@ -259,11 +272,11 @@
 
   /* Progress Label */
   .capsule-progress-label {
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 600;
     color: var(--reader-muted);
     letter-spacing: 0.05em;
-    min-width: 44px;
+    min-width: 50px;
     text-align: center;
     white-space: nowrap;
   }
@@ -321,13 +334,14 @@
   .reader-settings-popover {
     pointer-events: auto;
     position: absolute;
-    bottom: 56px;
+    bottom: 76px;
+    right: 16px;
     z-index: 100;
     width: min(270px, calc(100vw - 32px));
     max-height: calc(100vh - 120px);
     overflow-y: auto;
-    background: rgba(15, 15, 18, 0.96);
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(26, 26, 30, 0.97);
+    border: 1px solid rgba(255, 255, 255, 0.05);
     border-radius: 12px;
     padding: 10px 12px;
     box-shadow:
@@ -335,6 +349,13 @@
       inset 0 1px 0 rgba(255, 255, 255, 0.02);
     backdrop-filter: blur(20px) saturate(140%);
     animation: popoverIn 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  @media (min-width: 1040px) {
+    .reader-settings-popover {
+      right: auto;
+      left: calc(50% + 250px);
+    }
   }
 
   @keyframes popoverIn {
@@ -362,7 +383,7 @@
     justify-content: space-between;
     gap: 10px;
     min-height: 24px;
-    border-top: 1px solid rgba(255, 255, 255, 0.04);
+    border-top: 1px solid rgba(255, 255, 255, 0.025);
     padding-top: 6px;
   }
 
@@ -388,7 +409,7 @@
   .reader-settings-popover :global(.popover-segmented) {
     display: flex;
     background: rgba(0, 0, 0, 0.45);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.05);
     border-radius: 5px;
     padding: 1.5px;
     overflow: hidden;
@@ -414,11 +435,11 @@
   .reader-settings-popover :global(.popover-segment.active) {
     color: var(--reader-text);
     background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.08);
   }
 
   .reader-settings-popover :global(.popover-btn) {
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.05);
     background: rgba(0, 0, 0, 0.45);
     color: var(--reader-text);
     font-size: 9.5px;
@@ -431,7 +452,7 @@
 
   .reader-settings-popover :global(.popover-btn:hover:not(:disabled)) {
     color: var(--reader-text);
-    border-color: rgba(255, 255, 255, 0.18);
+    border-color: rgba(255, 255, 255, 0.12);
     background: rgba(255, 255, 255, 0.06);
   }
 
@@ -441,7 +462,7 @@
   }
 
   .reader-settings-popover :global(.popover-select) {
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.05);
     background: rgba(0, 0, 0, 0.45);
     color: var(--reader-text);
     font-size: 9.5px;
@@ -455,7 +476,7 @@
   .reader-settings-popover :global(.popover-stepper) {
     display: flex;
     align-items: center;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.05);
     border-radius: 4px;
     overflow: hidden;
     background: rgba(0, 0, 0, 0.45);
@@ -489,7 +510,7 @@
     color: var(--reader-text);
     min-width: 36px;
     text-align: center;
-    border-inline: 1px solid rgba(255, 255, 255, 0.1);
+    border-inline: 1px solid rgba(255, 255, 255, 0.05);
     line-height: 20px;
   }
 

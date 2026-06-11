@@ -43,6 +43,7 @@
     store,
     updateSettings,
   } from "../../store/state.svelte";
+  import ReaderBrightnessControl from "./ReaderBrightnessControl.svelte";
   import { getServerAuthHeader } from "../../lib/client";
   import { requiresAuthenticatedMediaFetch } from "../../lib/imageCache";
   import NocturneState from "../shared/NocturneState.svelte";
@@ -1120,6 +1121,7 @@
 >
   {#snippet settingsPopover()}
     <dl>
+      <ReaderBrightnessControl />
       {#if activeBook?.subtype === "epub"}
         <div>
           <dt>ThemePreset</dt>
@@ -1224,7 +1226,7 @@
         <div>
           <dt>Full Width</dt>
           <dd>
-            <button class="popover-toggle" class:active={store.settings.proseReaderFullWidth} onclick={() => updateSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}></button>
+            <button class="popover-toggle" type="button" aria-label="Toggle full width reading" title="Toggle full width reading" class:active={store.settings.proseReaderFullWidth} onclick={() => updateSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}></button>
           </dd>
         </div>
       {:else if activeBook?.subtype === "pdf"}
@@ -1247,7 +1249,7 @@
         <div>
           <dt>Dark PDF</dt>
           <dd>
-            <button class="popover-toggle" class:active={pdfDarkMode} onclick={() => updateSettings({ pdfDarkMode: !pdfDarkMode })}></button>
+            <button class="popover-toggle" type="button" aria-label="Toggle dark PDF mode" title="Toggle dark PDF mode" class:active={pdfDarkMode} onclick={() => updateSettings({ pdfDarkMode: !pdfDarkMode })}></button>
           </dd>
         </div>
         <div>
@@ -1262,7 +1264,7 @@
         <div>
           <dt>Full Width</dt>
           <dd>
-            <button class="popover-toggle" class:active={store.settings.proseReaderFullWidth} onclick={() => updateSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}></button>
+            <button class="popover-toggle" type="button" aria-label="Toggle full width reading" title="Toggle full width reading" class:active={store.settings.proseReaderFullWidth} onclick={() => updateSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}></button>
           </dd>
         </div>
       {/if}
@@ -1371,7 +1373,7 @@
   }
 
   .book-viewer.pdf-dark .pdf-stage canvas,
-  .book-viewer.pdf-dark .pdf-page-wrapper canvas {
+  .book-viewer.pdf-dark :global(.pdf-page-wrapper canvas) {
     filter: invert(1) hue-rotate(180deg) contrast(0.92);
   }
 
@@ -1428,7 +1430,7 @@
     position: relative;
   }
 
-  .pdf-page-wrapper canvas {
+  :global(.pdf-page-wrapper canvas) {
     display: block;
     background: #f2eee6;
     border-radius: 10px;

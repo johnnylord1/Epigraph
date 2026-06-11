@@ -19,6 +19,7 @@
   import { setReading } from "../../lib/discord";
   import type { FitMode } from "../../store/state.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
+  import ReaderBrightnessControl from "./ReaderBrightnessControl.svelte";
   import ReaderHud from "./ReaderHud.svelte";
 
   const AVG_MIN_PER_PAGE = 0.33;
@@ -990,6 +991,7 @@
           </div>
         </dd>
       </div>
+      <ReaderBrightnessControl />
       <div>
         <dt>Direction</dt>
         <dd>
@@ -1002,14 +1004,14 @@
       <div>
         <dt>Contrast</dt>
         <dd>
-          <button class="popover-toggle" class:active={store.settings.optimizeContrast} onclick={() => updateSettings({ optimizeContrast: !store.settings.optimizeContrast })}></button>
+          <button class="popover-toggle" type="button" aria-label="Toggle contrast optimization" title="Toggle contrast optimization" class:active={store.settings.optimizeContrast} onclick={() => updateSettings({ optimizeContrast: !store.settings.optimizeContrast })}></button>
         </dd>
       </div>
       {#if style === "double"}
         <div>
           <dt>Offset Spreads</dt>
           <dd>
-            <button class="popover-toggle" class:active={store.settings.offsetDoubleSpreads} onclick={() => updateSettings({ offsetDoubleSpreads: !store.settings.offsetDoubleSpreads })}></button>
+            <button class="popover-toggle" type="button" aria-label="Toggle offset spreads" title="Toggle offset spreads" class:active={store.settings.offsetDoubleSpreads} onclick={() => updateSettings({ offsetDoubleSpreads: !store.settings.offsetDoubleSpreads })}></button>
           </dd>
         </div>
       {/if}
@@ -1017,7 +1019,7 @@
         <div>
           <dt>Page Gap</dt>
           <dd>
-            <button class="popover-toggle" class:active={store.settings.pageGap} onclick={() => updateSettings({ pageGap: !store.settings.pageGap })}></button>
+            <button class="popover-toggle" type="button" aria-label="Toggle page gap" title="Toggle page gap" class:active={store.settings.pageGap} onclick={() => updateSettings({ pageGap: !store.settings.pageGap })}></button>
           </dd>
         </div>
       {/if}

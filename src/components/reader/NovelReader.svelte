@@ -16,6 +16,7 @@
   } from "../../lib/novels/libraryState";
   import { readInstalledNovelChapter } from "../../lib/novels/sources";
   import NocturneState from "../shared/NocturneState.svelte";
+  import ReaderBrightnessControl from "./ReaderBrightnessControl.svelte";
   import ReaderHud from "./ReaderHud.svelte";
 
   let loading = $state(false);
@@ -242,6 +243,7 @@
   >
     {#snippet settingsPopover()}
       <dl>
+        <ReaderBrightnessControl />
         <div>
           <dt>Theme</dt>
           <dd>
@@ -333,7 +335,7 @@
         <div>
           <dt>Full Width</dt>
           <dd>
-            <button class="popover-toggle" class:active={store.settings.proseReaderFullWidth} onclick={() => updateSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}></button>
+            <button class="popover-toggle" type="button" aria-label="Toggle full width reading" title="Toggle full width reading" class:active={store.settings.proseReaderFullWidth} onclick={() => updateSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}></button>
           </dd>
         </div>
       </dl>

@@ -438,6 +438,7 @@ export interface Settings {
   chapterSortDir:          ChapterSortDir;
   chapterSortMode:         ChapterSortMode;
   chapterPageSize:         number;
+  readerBrightness:        number;
   /**
    * UI zoom level — unitless float multiplier applied on top of the
    * platform scale factor from the OS/monitor. 1.0 = no user adjustment.
@@ -562,6 +563,7 @@ export const DEFAULT_SETTINGS: Settings = {
   chapterSortDir:         "desc",
   chapterSortMode:        "source",
   chapterPageSize:        25,
+  readerBrightness:       1.0,
   uiZoom:                 1.0,
   compactSidebar:         false,
   gpuAcceleration:        true,
