@@ -479,8 +479,32 @@
     const rendition = book.renderTo(hostEl, {
       width: "100%",
       height: "100%",
-      flow: "paginated",
+      flow: store.settings.bookReaderFlow === "scrolled" ? "scrolled" : "paginated",
+      manager: store.settings.bookReaderFlow === "scrolled" ? "continuous" : "default",
       spread: "none",
+    });
+
+    rendition.hooks.content.register((contents: any) => {
+      const doc = contents.document;
+      doc.addEventListener("click", (e: MouseEvent) => {
+        if ((e.target as HTMLElement).closest("a, button")) return;
+        const width = doc.documentElement.clientWidth;
+        const x = e.clientX;
+        if (store.settings.bookReaderFlow === "scrolled") {
+          showUi();
+          return;
+        }
+        if (x < width * 0.3) {
+          goPrev();
+        } else if (x > width * 0.7) {
+          goNext();
+        } else {
+          showUi();
+        }
+      });
+      doc.addEventListener("keydown", (e: KeyboardEvent) => {
+        onKey(e);
+      });
     });
 
     currentBookRef = book;
@@ -712,7 +736,12 @@
     }
     if (pageNumber > 1) {
       pageNumber -= 1;
-      void renderPdfPage(pageNumber);
+      if (store.settings.bookReaderFlow === "scrolled") {
+        const el = document.querySelector(`.pdf-page-wrapper[data-page="${pageNumber}"]`);
+        el?.scrollIntoView({ behavior: "smooth" });
+      } else {
+        void renderPdfPage(pageNumber);
+      }
     }
   }
 
@@ -724,7 +753,12 @@
     }
     if (pageNumber < totalPages) {
       pageNumber += 1;
-      void renderPdfPage(pageNumber);
+      if (store.settings.bookReaderFlow === "scrolled") {
+        const el = document.querySelector(`.pdf-page-wrapper[data-page="${pageNumber}"]`);
+        el?.scrollIntoView({ behavior: "smooth" });
+      } else {
+        void renderPdfPage(pageNumber);
+      }
     }
   }
 
@@ -742,7 +776,12 @@
       return;
     }
     pageNumber = Math.max(1, Math.min(totalPages, value));
-    void renderPdfPage(pageNumber);
+    if (store.settings.bookReaderFlow === "scrolled") {
+      const el = document.querySelector(`.pdf-page-wrapper[data-page="${pageNumber}"]`);
+      el?.scrollIntoView({ behavior: "smooth" });
+    } else {
+      void renderPdfPage(pageNumber);
+    }
   }
 
   function adjustZoom(delta: number) {
@@ -796,12 +835,22 @@
     }
     if (event.key === "ArrowLeft") {
       event.preventDefault();
-      goPrev();
+      if (store.settings.bookReaderFlow === "scrolled" && activeBook?.subtype === "pdf") {
+        const viewerEl = document.querySelector(".book-viewer");
+        viewerEl?.scrollBy({ top: -viewerEl.clientHeight * 0.85, behavior: "smooth" });
+      } else {
+        goPrev();
+      }
       return;
     }
     if (event.key === "ArrowRight" || event.key === " ") {
       event.preventDefault();
-      goNext();
+      if (store.settings.bookReaderFlow === "scrolled" && activeBook?.subtype === "pdf") {
+        const viewerEl = document.querySelector(".book-viewer");
+        viewerEl?.scrollBy({ top: viewerEl.clientHeight * 0.85, behavior: "smooth" });
+      } else {
+        goNext();
+      }
       return;
     }
     if (event.ctrlKey && (event.key === "=" || event.key === "+")) {
@@ -827,6 +876,7 @@
 
   $effect(() => {
     const book = activeBook;
+    const flow = store.settings.bookReaderFlow;
     if (!book) return;
     if (auditOpenBookId !== book.id) {
       auditOpenBookId = book.id;
@@ -901,6 +951,131 @@
     };
   });
 
+  function handleViewerClick(e: MouseEvent) {
+    if ((e.target as HTMLElement).closest("button, input, select, a")) return;
+    
+    if (store.settings.bookReaderFlow === "scrolled") {
+      showUi();
+      return;
+    }
+
+    const width = window.innerWidth;
+    const x = e.clientX;
+    if (x < width * 0.3) {
+      goPrev();
+    } else if (x > width * 0.7) {
+      goNext();
+    } else {
+      showUi();
+    }
+  }
+
+  function lazyRenderPdfPage(node: HTMLElement, pageNum: number) {
+    let observer: IntersectionObserver | null = null;
+    let localRenderTask: any = null;
+    let canvas: HTMLCanvasElement | null = null;
+    let isIntersecting = false;
+
+    async function render() {
+      if (!currentPdfDoc || canvas) return;
+
+      canvas = document.createElement("canvas");
+      node.appendChild(canvas);
+
+      try {
+        const page = await currentPdfDoc.getPage(pageNum);
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+
+        const nativeViewport = page.getViewport({ scale: 1 });
+        const availableWidth = Math.max(320, (node.clientWidth || window.innerWidth) - 48);
+        const availableHeight = Math.max(320, window.innerHeight - 150);
+        const fitScale = pdfFitMode === "actual"
+          ? 1
+          : pdfFitMode === "page"
+            ? Math.min(availableWidth / nativeViewport.width, availableHeight / nativeViewport.height)
+            : availableWidth / nativeViewport.width;
+        const baseScale = Math.max(0.1, zoom) * Math.max(0.1, fitScale);
+        const baseViewport = page.getViewport({ scale: baseScale });
+        const dpr = window.devicePixelRatio || 1;
+        const pixelRatio = dpr * dpr;
+        const requestedPixels = baseViewport.width * baseViewport.height * pixelRatio;
+        const pixelClamp = requestedPixels > MAX_PDF_CANVAS_PIXELS
+          ? Math.sqrt(MAX_PDF_CANVAS_PIXELS / requestedPixels)
+          : 1;
+        const viewport = page.getViewport({ scale: baseScale * pixelClamp });
+
+        canvas.width = Math.max(1, Math.floor(viewport.width * dpr));
+        canvas.height = Math.max(1, Math.floor(viewport.height * dpr));
+        canvas.style.width = `${viewport.width}px`;
+        canvas.style.height = `${viewport.height}px`;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+        localRenderTask = page.render({ canvasContext: ctx, viewport });
+        await localRenderTask.promise;
+      } catch (err: any) {
+        if (err?.name !== "RenderingCancelledException") {
+          console.error(err);
+        }
+      } finally {
+        localRenderTask = null;
+      }
+    }
+
+    function cleanup() {
+      if (localRenderTask) {
+        try {
+          localRenderTask.cancel();
+        } catch {}
+        localRenderTask = null;
+      }
+      if (canvas) {
+        canvas.remove();
+        canvas = null;
+      }
+    }
+
+    observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        isIntersecting = entry.isIntersecting;
+        if (isIntersecting) {
+          pageNumber = pageNum;
+          progressPercent = totalPages > 1 ? (pageNumber - 1) / (totalPages - 1) : 1;
+          persistProgress({
+            location: null,
+            href: null,
+            progressPercent,
+            pageIndex: pageNumber,
+            totalPages,
+            sectionLabel: resolvePdfSectionLabel(pdfSections, pageNumber),
+            renderer: "pdf",
+          });
+          void render();
+        } else {
+          cleanup();
+        }
+      });
+    }, {
+      rootMargin: "80% 0px 80% 0px",
+      threshold: 0.05
+    });
+
+    observer.observe(node);
+
+    return {
+      update(params: any) {
+        cleanup();
+        if (isIntersecting) {
+          void render();
+        }
+      },
+      destroy() {
+        observer?.disconnect();
+        cleanup();
+      }
+    };
+  }
+
   onDestroy(() => {
     if (auditOpenBookId && !auditCloseSent) {
       auditReader("books.reader.closed", { reason: "destroy" });
@@ -912,69 +1087,184 @@
 </script>
 
 <ReaderHud
-  overlayBars={false}
-  {uiVisible}
+  bind:toolsOpen={toolsOpen}
+  title={activeBook?.title ?? "Book"}
+  chapterTitle={currentSectionLabel ?? activeBook?.subtype.toUpperCase() ?? "BOOK"}
+  progressLabel={progressLabel}
+  sliderValue={sliderValue}
+  sliderMax={sliderMax}
+  sliderPct={sliderPct}
+  bookmarkPct={currentBookmark ? bookmarkPct : null}
+  isBookmarked={isBookmarked}
+  prevDisabled={loading || !canPrev}
+  nextDisabled={loading || !canNext}
+  uiVisible={uiVisible}
   onMouseMove={(event) => { if (event.clientY < 60 || window.innerHeight - event.clientY < 60) showUi(); }}
+  onclose={() => requestClose("toolbar")}
+  onprev={goPrev}
+  onnext={goNext}
+  onjump={jumpToSliderValue}
+  onbookmark={toggleBookmark}
 >
-  {#snippet topbarLeft()}
-    <button class="icon-btn" onclick={() => requestClose("toolbar")} title="Close reader">
-      <X size={15} weight="light" />
-    </button>
-    <div class="reader-title">
-      <strong>{activeBook?.title ?? "Book"}</strong>
-      <span>{currentSectionLabel ?? activeBook?.subtype.toUpperCase() ?? "BOOK"} - {progressLabel}</span>
-    </div>
-  {/snippet}
-
-  {#snippet topbarRight()}
-    <div class="top-sep"></div>
-    <span class="reader-progress-text">{progressLabel}</span>
-    <div class="zoom-wrap">
-      <div class="zoom-inline">
-        <button class="zoom-step-btn" onclick={() => adjustZoom(-ZOOM_STEP)} title="Zoom out" disabled={zoom <= ZOOM_MIN}>
-          <MagnifyingGlassMinus size={13} weight="light" />
-        </button>
-        <button class="zoom-pct-btn" onclick={() => (zoomOpen = !zoomOpen)} title="Click to adjust zoom">
-          {zoomPct}%
-        </button>
-        <button class="zoom-step-btn" onclick={() => adjustZoom(ZOOM_STEP)} title="Zoom in" disabled={zoom >= ZOOM_MAX}>
-          <MagnifyingGlassPlus size={13} weight="light" />
-        </button>
-      </div>
-      {#if zoomOpen}
-        <div class="zoom-popover">
-          <div class="zoom-slider-row">
+  {#snippet settingsPopover()}
+    <dl>
+      {#if activeBook?.subtype === "epub"}
+        <div>
+          <dt>ThemePreset</dt>
+          <dd>
+            <div class="popover-color-swatches">
+              <button class="popover-swatch" style="background:#efe1c9;" class:active={proseTheme === "sepia"} onclick={() => updateSettings({ proseReaderTheme: "sepia" })} title="Sepia"></button>
+              <button class="popover-swatch" style="background:#000000;" class:active={proseTheme === "oled"} onclick={() => updateSettings({ proseReaderTheme: "oled" })} title="OLED"></button>
+              <button class="popover-swatch" style="background:#09080d;" class:active={proseTheme === "dark"} onclick={() => updateSettings({ proseReaderTheme: "dark" })} title="Dark"></button>
+              <button class="popover-swatch" style="background:#f5f1ea;" class:active={proseTheme === "light"} onclick={() => updateSettings({ proseReaderTheme: "light" })} title="Light"></button>
+              <button class="popover-swatch" style="background:#17121c;" class:active={proseTheme === "nocturne"} onclick={() => updateSettings({ proseReaderTheme: "nocturne" })} title="Nocturne"></button>
+            </div>
+          </dd>
+        </div>
+        <div>
+          <dt>Text Color</dt>
+          <dd>
             <input
-              type="range"
-              class="zoom-slider"
-              min={50}
-              max={400}
-              step={10}
-              value={zoomPct}
-              oninput={(event) => updateSettings({ readerZoom: clampZoom(Number(event.currentTarget.value) / 100) })}
+              class="popover-color-picker"
+              type="color"
+              value={prosePalette.text}
+              onchange={(event) => updateProseColor("text", event.currentTarget.value)}
+              title="Text color"
             />
-          </div>
-          <button class="zoom-reset" onclick={resetZoom} disabled={zoom === 1}>Reset</button>
+          </dd>
+        </div>
+        <div>
+          <dt>Paper Color</dt>
+          <dd>
+            <input
+              class="popover-color-picker"
+              type="color"
+              value={prosePalette.surface}
+              onchange={(event) => updateProseColor("background", event.currentTarget.value)}
+              title="Page background"
+            />
+          </dd>
+        </div>
+        <div>
+          <dt>Font Family</dt>
+          <dd>
+            <select
+              class="popover-select"
+              value={proseFontFamily}
+              onchange={(event) => updateSettings({ proseReaderFontFamily: event.currentTarget.value })}
+            >
+              <option value="Georgia, serif">Georgia</option>
+              <option value="Merriweather, Georgia, serif">Merriweather</option>
+              <option value="Inter, sans-serif">Inter</option>
+              <option value="Atkinson Hyperlegible, Inter, sans-serif">Atkinson</option>
+              <option value='"Segoe UI", sans-serif'>Segoe UI</option>
+            </select>
+          </dd>
+        </div>
+        <div>
+          <dt>Font Size</dt>
+          <dd>
+            <div class="popover-stepper">
+              <button class="popover-step-btn" onclick={() => updateFontSize(-1)}>−</button>
+              <span class="popover-step-val">{proseFontSize}px</span>
+              <button class="popover-step-btn" onclick={() => updateFontSize(1)}>+</button>
+            </div>
+          </dd>
+        </div>
+        <div>
+          <dt>Line Height</dt>
+          <dd>
+            <div class="popover-stepper">
+              <button class="popover-step-btn" onclick={() => updateLineHeight(-0.05)}>−</button>
+              <span class="popover-step-val">{proseLineHeight.toFixed(2)}</span>
+              <button class="popover-step-btn" onclick={() => updateLineHeight(0.05)}>+</button>
+            </div>
+          </dd>
+        </div>
+        <div>
+          <dt>Align</dt>
+          <dd>
+            <div class="popover-segmented">
+              <button class="popover-segment" class:active={proseTextAlign === "left"} onclick={() => updateSettings({ proseReaderTextAlign: "left" })}>Left</button>
+              <button class="popover-segment" class:active={proseTextAlign === "justify"} onclick={() => updateSettings({ proseReaderTextAlign: "justify" })}>Justified</button>
+            </div>
+          </dd>
+        </div>
+        <div>
+          <dt>Width</dt>
+          <dd>
+            <div class="popover-stepper">
+              <button class="popover-step-btn" onclick={() => updateContentWidth(-40)}>−</button>
+              <span class="popover-step-val">{proseContentWidth}px</span>
+              <button class="popover-step-btn" onclick={() => updateContentWidth(40)}>+</button>
+            </div>
+          </dd>
+        </div>
+        <div>
+          <dt>Flow</dt>
+          <dd>
+            <div class="popover-segmented">
+              <button class="popover-segment" class:active={store.settings.bookReaderFlow !== "scrolled"} onclick={() => updateSettings({ bookReaderFlow: "paginated" })}>Page</button>
+              <button class="popover-segment" class:active={store.settings.bookReaderFlow === "scrolled"} onclick={() => updateSettings({ bookReaderFlow: "scrolled" })}>Scroll</button>
+            </div>
+          </dd>
+        </div>
+        <div>
+          <dt>Full Width</dt>
+          <dd>
+            <button class="popover-toggle" class:active={store.settings.proseReaderFullWidth} onclick={() => updateSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}></button>
+          </dd>
+        </div>
+      {:else if activeBook?.subtype === "pdf"}
+        <div>
+          <dt>Fit Mode</dt>
+          <dd>
+            <button class="popover-btn" onclick={cyclePdfFit}>{pdfFitMode}</button>
+          </dd>
+        </div>
+        <div>
+          <dt>Zoom</dt>
+          <dd>
+            <div class="popover-stepper">
+              <button class="popover-step-btn" onclick={() => adjustZoom(-ZOOM_STEP)} disabled={zoom <= ZOOM_MIN}>−</button>
+              <span class="popover-step-val">{Math.round(zoom * 100)}%</span>
+              <button class="popover-step-btn" onclick={() => adjustZoom(ZOOM_STEP)} disabled={zoom >= ZOOM_MAX}>+</button>
+            </div>
+          </dd>
+        </div>
+        <div>
+          <dt>Dark PDF</dt>
+          <dd>
+            <button class="popover-toggle" class:active={pdfDarkMode} onclick={() => updateSettings({ pdfDarkMode: !pdfDarkMode })}></button>
+          </dd>
+        </div>
+        <div>
+          <dt>Flow</dt>
+          <dd>
+            <div class="popover-segmented">
+              <button class="popover-segment" class:active={store.settings.bookReaderFlow !== "scrolled"} onclick={() => updateSettings({ bookReaderFlow: "paginated" })}>Page</button>
+              <button class="popover-segment" class:active={store.settings.bookReaderFlow === "scrolled"} onclick={() => updateSettings({ bookReaderFlow: "scrolled" })}>Scroll</button>
+            </div>
+          </dd>
+        </div>
+        <div>
+          <dt>Full Width</dt>
+          <dd>
+            <button class="popover-toggle" class:active={store.settings.proseReaderFullWidth} onclick={() => updateSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}></button>
+          </dd>
         </div>
       {/if}
-    </div>
-    <span class="mode-status">
-      <BookOpen size={14} weight="light" />
-      <span class="mode-label">{activeBook?.subtype ?? "book"}</span>
-    </span>
-    <button class="icon-btn" class:active={isBookmarked} onclick={toggleBookmark} title={isBookmarked ? "Remove bookmark" : "Bookmark this position"}>
-      <Bookmark size={15} weight={isBookmarked ? "fill" : "regular"} />
-    </button>
-    <button class="icon-btn" class:active={toolsOpen} onclick={() => toolsOpen = !toolsOpen} title="Reader tools">
-      <SlidersHorizontal size={15} weight="light" />
-    </button>
+    </dl>
   {/snippet}
 
   <div
     class="viewer book-viewer"
     class:pdf={activeBook?.subtype === "pdf"}
     class:pdf-dark={pdfDarkMode}
+    class:full-width-panel={store.settings.proseReaderFullWidth}
     style={`--prose-page-bg:${prosePalette.bg};--prose-bg:${prosePalette.surface};--prose-text:${prosePalette.text};--prose-content-width:${proseContentWidth}px;`}
+    onclick={handleViewerClick}
+    role="presentation"
   >
     {#if waitingForBookHydration}
       <div class="center-overlay">
@@ -985,9 +1275,19 @@
     {#if activeBook?.subtype === "epub"}
       <div class="epub-host" bind:this={hostEl}></div>
     {:else if activeBook?.subtype === "pdf"}
-      <div class="pdf-stage">
-        <canvas bind:this={canvasEl}></canvas>
-      </div>
+      {#if store.settings.bookReaderFlow === "scrolled"}
+        <div class="pdf-scroll-stage">
+          {#each Array.from({ length: totalPages }, (_, i) => i + 1) as pageNum}
+            <div class="pdf-page-wrapper" data-page={pageNum} use:lazyRenderPdfPage={{ zoom, pdfFitMode }}>
+              <!-- Canvas is dynamically appended in the lazyRenderPdfPage action -->
+            </div>
+          {/each}
+        </div>
+      {:else}
+        <div class="pdf-stage">
+          <canvas bind:this={canvasEl}></canvas>
+        </div>
+      {/if}
     {/if}
 
     {#if loading}
@@ -1008,192 +1308,6 @@
       </div>
     {/if}
   </div>
-
-  {#snippet sidePanel()}
-    {#if toolsOpen && uiVisible}
-      <aside class="reader-tools-panel" aria-label="Book reader tools">
-        <div class="reader-tools-panel__header">
-          <span class="reader-tools-panel__eyebrow">Book tools</span>
-          <strong>{activeBook?.subtype === "pdf" ? "PDF pages" : "EPUB flow"}</strong>
-          <button class="reader-tools-panel__close" type="button" onclick={() => toolsOpen = false} title="Hide tools">
-            <X size={13} weight="light" />
-          </button>
-        </div>
-
-        <div class="reader-tools-segment" aria-label="Book quick actions">
-          <button type="button" onclick={goPrev} disabled={loading || !canPrev}>Prev</button>
-          <button type="button" class:active={isBookmarked} onclick={toggleBookmark}>Mark</button>
-          <button type="button" onclick={goNext} disabled={loading || !canNext}>Next</button>
-        </div>
-
-        <dl class="reader-tools-list">
-          <div>
-            <dt>Section</dt>
-            <dd>{currentSectionLabel ?? "Current"}</dd>
-          </div>
-          <div>
-            <dt>Zoom</dt>
-            <dd>
-              <div class="reader-tools-zoom">
-                <button type="button" onclick={() => adjustZoom(-ZOOM_STEP)} disabled={zoom <= ZOOM_MIN}><MagnifyingGlassMinus size={12} weight="light" /></button>
-                <button type="button" onclick={resetZoom}>{zoomPct}%</button>
-                <button type="button" onclick={() => adjustZoom(ZOOM_STEP)} disabled={zoom >= ZOOM_MAX}><MagnifyingGlassPlus size={12} weight="light" /></button>
-              </div>
-            </dd>
-          </div>
-          <div>
-            <dt>Progress</dt>
-            <dd>{progressLabel}</dd>
-          </div>
-          <div>
-            <dt>Bookmark</dt>
-            <dd>{isBookmarked ? "Saved" : "Not saved"}</dd>
-          </div>
-          {#if activeBook?.subtype === "epub"}
-            <div>
-              <dt>Theme</dt>
-              <dd><button type="button" onclick={cycleProseTheme}>{proseTheme}</button></dd>
-            </div>
-            <div>
-              <dt>Font</dt>
-              <dd>
-                <select
-                  class="reader-tools-select"
-                  value={proseFontFamily}
-                  onchange={(event) => updateSettings({ proseReaderFontFamily: event.currentTarget.value })}
-                >
-                  <option value="Georgia, serif">Georgia</option>
-                  <option value="Merriweather, Georgia, serif">Merriweather</option>
-                  <option value="Inter, sans-serif">Inter</option>
-                  <option value="Atkinson Hyperlegible, Inter, sans-serif">Atkinson</option>
-                  <option value='"Segoe UI", sans-serif'>Segoe UI</option>
-                </select>
-              </dd>
-            </div>
-            <div>
-              <dt>Size</dt>
-              <dd>
-                <div class="reader-tools-zoom">
-                  <button type="button" onclick={() => updateFontSize(-1)}>-</button>
-                  <button type="button">{proseFontSize}px</button>
-                  <button type="button" onclick={() => updateFontSize(1)}>+</button>
-                </div>
-              </dd>
-            </div>
-            <div>
-              <dt>Line</dt>
-              <dd>
-                <div class="reader-tools-zoom">
-                  <button type="button" onclick={() => updateLineHeight(-0.05)}>-</button>
-                  <button type="button">{proseLineHeight.toFixed(2)}</button>
-                  <button type="button" onclick={() => updateLineHeight(0.05)}>+</button>
-                </div>
-              </dd>
-            </div>
-            <div>
-              <dt>Align</dt>
-              <dd><button type="button" onclick={() => updateSettings({ proseReaderTextAlign: proseTextAlign === "justify" ? "left" : "justify" })}>{proseTextAlign}</button></dd>
-            </div>
-            <div>
-              <dt>Width</dt>
-              <dd>
-                <div class="reader-tools-zoom">
-                  <button type="button" onclick={() => updateContentWidth(-40)}>-</button>
-                  <button type="button">{proseContentWidth}px</button>
-                  <button type="button" onclick={() => updateContentWidth(40)}>+</button>
-                </div>
-              </dd>
-            </div>
-            <div>
-              <dt>Text</dt>
-              <dd>
-                <input
-                  class="reader-tools-color"
-                  type="color"
-                  value={prosePalette.text}
-                  onchange={(event) => updateProseColor("text", event.currentTarget.value)}
-                  title="Text color"
-                />
-              </dd>
-            </div>
-            <div>
-              <dt>Paper</dt>
-              <dd>
-                <input
-                  class="reader-tools-color"
-                  type="color"
-                  value={prosePalette.surface}
-                  onchange={(event) => updateProseColor("background", event.currentTarget.value)}
-                  title="Page background"
-                />
-              </dd>
-            </div>
-          {:else if activeBook?.subtype === "pdf"}
-            <div>
-              <dt>Fit</dt>
-              <dd><button type="button" onclick={cyclePdfFit}>{pdfFitMode}</button></dd>
-            </div>
-            <div>
-              <dt>Page</dt>
-              <dd>
-                <input
-                  class="reader-tools-number"
-                  type="number"
-                  min="1"
-                  max={totalPages}
-                  value={pageNumber}
-                  onchange={(event) => jumpToSliderValue(Number(event.currentTarget.value))}
-                />
-              </dd>
-            </div>
-            <div>
-              <dt>Dark PDF</dt>
-              <dd><button type="button" onclick={() => updateSettings({ pdfDarkMode: !pdfDarkMode })}>{pdfDarkMode ? "On" : "Off"}</button></dd>
-            </div>
-          {/if}
-        </dl>
-      </aside>
-    {/if}
-  {/snippet}
-
-  {#snippet bottombar()}
-    <button class="nav-btn" onclick={goPrev} disabled={loading || !canPrev}>
-      <ArrowLeft size={13} weight="light" />
-    </button>
-
-    <div class="progress-block">
-      <div class="progress-meta">
-        <span>{activeBook?.subtype === "pdf" ? `Page ${pageNumber} of ${totalPages}` : `Progress ${sliderValue}%`}</span>
-        <strong>{progressLabel}</strong>
-      </div>
-      <div class="slider-wrap" role="presentation">
-        <div class="slider-track-bg">
-          <div class="slider-fill" style="width: {sliderPct}%"></div>
-        </div>
-        {#if isBookmarked && currentBookmark}
-          <div
-            class="slider-checkpoint bookmark-checkpoint"
-            style="left: {bookmarkPct}%"
-            title={activeBook?.subtype === "pdf" && currentBookmark.pageIndex ? `Bookmark: Page ${currentBookmark.pageIndex}` : "Bookmark"}
-          ></div>
-        {/if}
-        <input
-          type="range"
-          class="slider-input"
-          min={1}
-          max={sliderMax}
-          step={1}
-          value={sliderValue}
-          oninput={(event) => jumpToSliderValue(Number(event.currentTarget.value))}
-          aria-label={activeBook?.subtype === "pdf" ? `Page ${pageNumber} of ${totalPages}` : `Progress ${sliderValue}%`}
-        />
-      </div>
-    </div>
-
-    <button class="nav-btn" onclick={goNext} disabled={loading || !canNext}>
-      <ArrowRight size={13} weight="light" />
-    </button>
-  {/snippet}
 </ReaderHud>
 
 <style>
@@ -1205,8 +1319,8 @@
     justify-content: center;
     position: relative;
     background:
-      radial-gradient(circle at 45% 18%, rgba(185, 156, 255, 0.1), transparent 30%),
-      linear-gradient(180deg, var(--prose-page-bg, var(--bg-void)), #050507 62%, var(--prose-page-bg, var(--bg-void)));
+      radial-gradient(circle at 45% 18%, rgba(255, 255, 255, 0.015), transparent 30%),
+      linear-gradient(180deg, var(--prose-page-bg, var(--bg-void)), #050505 62%, var(--prose-page-bg, var(--bg-void)));
     color: var(--text-muted);
   }
 
@@ -1244,7 +1358,8 @@
       0 0 0 1px rgba(255, 255, 255, 0.08);
   }
 
-  .book-viewer.pdf-dark .pdf-stage canvas {
+  .book-viewer.pdf-dark .pdf-stage canvas,
+  .book-viewer.pdf-dark .pdf-page-wrapper canvas {
     filter: invert(1) hue-rotate(180deg) contrast(0.92);
   }
 
@@ -1263,4 +1378,50 @@
     background: rgba(0, 0, 0, 0.72);
   }
 
+  /* Full Width Reading Panel */
+  .book-viewer.full-width-panel .epub-host {
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .book-viewer.full-width-panel .pdf-scroll-stage,
+  .book-viewer.full-width-panel .pdf-stage {
+    width: 100%;
+    max-width: 100%;
+    padding: 0;
+  }
+
+  /* PDF Scrolled Continuous Reading Mode */
+  .pdf-scroll-stage {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--sp-4);
+    width: 100%;
+    height: auto;
+    padding: var(--sp-4) 0;
+  }
+
+  .pdf-page-wrapper {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 100%;
+    min-height: 500px;
+    position: relative;
+  }
+
+  .pdf-page-wrapper canvas {
+    display: block;
+    background: #f2eee6;
+    border-radius: 10px;
+    box-shadow:
+      0 12px 32px rgba(0, 0, 0, 0.4),
+      0 0 0 1px rgba(255, 255, 255, 0.08);
+  }
 </style>

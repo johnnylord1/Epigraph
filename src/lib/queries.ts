@@ -373,6 +373,46 @@ export const UPDATE_CATEGORY = `
   }
 `;
 
+export const UPDATE_CATEGORY_UPDATE_RULE = `
+  mutation UpdateCategoryUpdateRule($id: Int!, $includeInUpdate: IncludeOrExclude!) {
+    updateCategory(input: { id: $id, patch: { includeInUpdate: $includeInUpdate } }) {
+      category {
+        id
+        name
+        order
+        default
+        includeInUpdate
+        includeInDownload
+      }
+    }
+  }
+`;
+
+export const SET_LIBRARY_UPDATE_RULES = `
+  mutation SetLibraryUpdateRules(
+    $excludeCompleted: Boolean!
+    $excludeEntryWithUnreadChapters: Boolean!
+    $excludeNotStarted: Boolean!
+    $excludeUnreadChapters: Boolean!
+  ) {
+    setSettings(input: {
+      settings: {
+        excludeCompleted: $excludeCompleted
+        excludeEntryWithUnreadChapters: $excludeEntryWithUnreadChapters
+        excludeNotStarted: $excludeNotStarted
+        excludeUnreadChapters: $excludeUnreadChapters
+      }
+    }) {
+      settings {
+        excludeCompleted
+        excludeEntryWithUnreadChapters
+        excludeNotStarted
+        excludeUnreadChapters
+      }
+    }
+  }
+`;
+
 export const DELETE_CATEGORY = `
   mutation DeleteCategory($id: Int!) {
     deleteCategory(input: { categoryId: $id }) {

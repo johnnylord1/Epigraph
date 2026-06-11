@@ -1,9 +1,9 @@
 <script lang="ts">
   import { ClockCounterClockwise, Trash, Play } from "phosphor-svelte";
   import { thumbUrl } from "../../lib/client";
-  import { store, clearHistory, setActiveManga } from "../../store/state.svelte";
+  import { store, clearHistory, clearSystemNotifications, setActiveManga } from "../../store/state.svelte";
   import type { Manga } from "../../lib/types";
-  import type { HistoryEntry, LibraryUpdateNotification } from "../../store/state.svelte";
+  import type { HistoryEntry, LibraryUpdateNotification, SystemNotification } from "../../store/state.svelte";
 
   type ActivityTab = "all" | "updates" | "history" | "system";
 
@@ -27,13 +27,6 @@
     const yest = new Date(now); yest.setDate(now.getDate() - 1);
     if (d.toDateString() === yest.toDateString()) return "Yesterday";
     return d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-  }
-
-  function formatReadTime(m: number): string {
-    if (m < 1)  return "< 1 min";
-    if (m < 60) return `${m} min`;
-    const h = Math.floor(m / 60), r = m % 60;
-    return r === 0 ? `${h}h` : `${h}h ${r}m`;
   }
 
   function plural(count: number, singular: string, pluralLabel = `${singular}s`): string {
@@ -65,13 +58,7 @@
     readAt: number;
   }
 
-  interface SystemEntry {
-    id: string;
-    kind: "success" | "error" | "info" | "download";
-    title: string;
-    body: string;
-    readAt: number;
-  }
+  type SystemEntry = SystemNotification;
 
   function buildSessions(entries: HistoryEntry[]): Session[] {
     if (!entries.length) return [];
@@ -128,48 +115,9 @@
   });
 
   const systemEntries = $derived.by(() => {
-    const entries: SystemEntry[] = store.toasts
-      .map((toast): SystemEntry => ({
-        id: `toast:${toast.id}`,
-        kind: toast.kind,
-        title: toast.title,
-        body: toast.body ?? "",
-        readAt: toast.updatedAt ?? Date.now(),
-      }))
-      .sort((left, right) => right.readAt - left.readAt);
-
-    const lastSync = store.settings.lastLibraryUpdateAt;
-    if (lastSync) {
-      entries.push({
-        id: "system:last-library-update",
-        kind: "success",
-        title: "Library sync completed",
-        body: `Automatic updates every ${store.settings.libraryUpdateIntervalHours ?? 12}h.`,
-        readAt: lastSync,
-      });
-    }
-
-    entries.push({
-      id: "system:auto-updates",
-      kind: store.settings.autoLibraryUpdatesEnabled ? "success" : "info",
-      title: store.settings.autoLibraryUpdatesEnabled ? "Automatic library updates enabled" : "Automatic library updates disabled",
-      body: store.settings.autoLibraryUpdatesEnabled
-        ? `Next checks use the ${store.settings.libraryUpdateIntervalHours ?? 12}h interval.`
-        : "Manual refresh is still available from Library.",
-      readAt: lastSync ?? Date.now(),
-    });
-
-    entries.push({
-      id: "system:standby",
-      kind: store.settings.localServerStandbyEnabled ? "info" : "download",
-      title: store.settings.localServerStandbyEnabled ? "Local server standby is active" : "Local server standby is disabled",
-      body: store.settings.localServerStandbyEnabled
-        ? `Server can sleep after ${store.settings.localServerStandbyIdleMin ?? 10} min idle.`
-        : "The embedded server will stay awake while the app is open.",
-      readAt: lastSync ?? Date.now(),
-    });
-
-    return entries.sort((left, right) => right.readAt - left.readAt).slice(0, 40);
+    return [...store.systemNotifications]
+      .sort((left, right) => right.createdAt - left.createdAt)
+      .slice(0, 80);
   });
 
   const totalVisibleCount = $derived(updateEntries.length + sessions.length + systemEntries.length);
@@ -207,7 +155,12 @@
 
   function handleClear() {
     if (!confirmClear) { confirmClear = true; setTimeout(() => confirmClear = false, 3000); return; }
-    clearHistory(); confirmClear = false;
+    if (activeTab === "system") {
+      clearSystemNotifications();
+    } else {
+      clearHistory();
+    }
+    confirmClear = false;
   }
 </script>
 
@@ -235,40 +188,15 @@
         </button>
       </div>
 
-      {#if activeTab === "history" && store.history.length > 0}
+      {#if (activeTab === "history" && store.history.length > 0) || (activeTab === "system" && systemEntries.length > 0)}
         <button class="clear-btn" class:confirm={confirmClear} onclick={handleClear}
-          title={confirmClear ? "Click again to confirm" : "Clear history"}>
+          title={confirmClear ? "Click again to confirm" : activeTab === "system" ? "Clear system notifications" : "Clear history"}>
           <Trash size={14} weight="light" />
           <span>{confirmClear ? "Confirm" : "Clear"}</span>
         </button>
       {/if}
     </div>
   </header>
-
-  {#if store.readingStats.totalChaptersRead > 0}
-    <section class="summary" aria-label="Reading summary">
-      <div class="chip">
-        <span>{store.readingStats.currentStreakDays}</span>
-        day streak
-      </div>
-      <div class="chip">
-        <span>{store.readingStats.totalChaptersRead}</span>
-        {store.readingStats.totalChaptersRead === 1 ? "chapter" : "chapters"}
-      </div>
-      <div class="chip">
-        <span>{formatReadTime(store.readingStats.totalMinutesRead)}</span>
-        read time
-      </div>
-      <div class="chip">
-        <span>{store.readingStats.totalMangaRead}</span>
-        {store.readingStats.totalMangaRead === 1 ? "series" : "series"}
-      </div>
-      <div class="chip">
-        Best streak:
-        <span>{store.readingStats.longestStreakDays}d</span>
-      </div>
-    </section>
-  {/if}
 
   <main class="activity-body">
     {#if activeTab === "all" || activeTab === "updates"}
@@ -402,7 +330,7 @@
                   <span class="item-title">{entry.title}</span>
                   {#if entry.body}<span class="item-subtitle">{entry.body}</span>{/if}
                 </div>
-                <span class="item-time">{timeAgo(entry.readAt)}</span>
+                <span class="item-time">{timeAgo(entry.createdAt)}</span>
               </article>
             {/each}
           </div>
@@ -566,32 +494,6 @@
     color: inherit;
     font-size: calc(10px * var(--n-hud-scale));
     line-height: 1;
-  }
-
-  .summary {
-    display: flex;
-    flex-wrap: wrap;
-    gap: calc(10px * var(--n-hud-scale));
-    padding: calc(18px * var(--n-hud-scale)) calc(28px * var(--n-hud-scale)) calc(8px * var(--n-hud-scale));
-    flex-shrink: 0;
-  }
-
-  .chip {
-    display: inline-flex;
-    align-items: center;
-    gap: calc(8px * var(--n-hud-scale));
-    min-height: calc(34px * var(--n-hud-scale));
-    padding: 0 calc(12px * var(--n-hud-scale));
-    border-radius: 999px;
-    background: var(--activity-panel-soft);
-    color: var(--activity-text);
-    font-size: calc(13px * var(--n-hud-scale));
-    font-weight: 700;
-  }
-
-  .chip span {
-    color: var(--activity-accent);
-    font-weight: 850;
   }
 
   .activity-body {
@@ -865,7 +767,6 @@
 
   @media (max-width: 620px) {
     .activity-head,
-    .summary,
     .activity-body {
       padding-inline: calc(18px * var(--n-hud-scale));
     }

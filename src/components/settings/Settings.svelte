@@ -44,7 +44,7 @@
   import type { AethonNovelRuntimeState } from "../../lib/backup/novelsBackup";
   import { findMissingSourceExtensionSuggestions, type MissingSourceExtensionSuggestion } from "../../lib/extensionSourceMap";
   import { normalizeCategories } from "../../lib/library/categories";
-  import { GET_CATEGORIES, CREATE_CATEGORY, UPDATE_CATEGORY, DELETE_CATEGORY, UPDATE_CATEGORY_ORDER, GET_LIBRARY, GET_LIBRARY_TRACKING_SUMMARY, GET_SOURCES } from "../../lib/queries";
+  import { GET_CATEGORIES, CREATE_CATEGORY, UPDATE_CATEGORY, UPDATE_CATEGORY_UPDATE_RULE, DELETE_CATEGORY, UPDATE_CATEGORY_ORDER, GET_LIBRARY, GET_LIBRARY_TRACKING_SUMMARY, GET_SOURCES } from "../../lib/queries";
   import { GET_DOWNLOADS_PATH, SET_DOWNLOADS_PATH, SET_LOCAL_SOURCE_PATH, GET_TRACKERS, LOGIN_TRACKER_OAUTH, LOGIN_TRACKER_CREDENTIALS, LOGOUT_TRACKER, GET_TRACKER_RECORDS, GET_SERVER_SECURITY, SET_SERVER_AUTH, SET_SOCKS_PROXY, SET_FLARESOLVERR, CREATE_BACKUP, RESTORE_BACKUP, GET_RESTORE_STATUS, UPDATE_EXTENSION } from "../../lib/queries";
   import { buildRestoreReadiness } from "../../lib/reconciliation/readiness";
   import { normalizeTrackerOAuthInput, trackerOAuthParamName } from "../../lib/trackerOAuth";
@@ -2378,6 +2378,35 @@
     }
     editingId = null; editingName = "";
   }
+  async function toggleComicFolderUpdates(category: Category) {
+    const nextIncludeInUpdate = category.includeInUpdate === "EXCLUDE" ? "UNSET" : "EXCLUDE";
+    setCategories(store.categories.map((entry) => (
+      entry.id === category.id
+        ? { ...entry, includeInUpdate: nextIncludeInUpdate }
+        : entry
+    )));
+    try {
+      const res = await gql<{ updateCategory: { category: Category } }>(UPDATE_CATEGORY_UPDATE_RULE, {
+        id: category.id,
+        includeInUpdate: nextIncludeInUpdate,
+      });
+      setCategories(store.categories.map((entry) => (
+        entry.id === category.id
+          ? { ...entry, ...res.updateCategory.category }
+          : entry
+      )));
+      addToast({
+        kind: "success",
+        title: nextIncludeInUpdate === "EXCLUDE" ? "Folder excluded from updates" : "Folder included in updates",
+        body: nextIncludeInUpdate === "EXCLUDE"
+          ? `${category.name} will be skipped during Library updates.`
+          : `${category.name} will be checked during Library updates.`,
+      });
+    } catch (e: any) {
+      catsError = e?.message ?? "Failed to update folder rule";
+      await loadCategories();
+    }
+  }
   async function deleteFolder(id: string | number) {
     if (categoryDomain === "books") {
       const result = deleteBooksCategory(
@@ -3835,6 +3864,164 @@
                 </div>
               </div>
             </div>
+
+            <div class="settings-card settings-card--wide">
+              <p class="settings-card__title">Prose Reader Defaults (EPUB &amp; Novels)</p>
+              <div class="settings-card__stack">
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Default Font Family</p>
+                    <p class="settings-mini-row__hint">Select default typeface for novels and books.</p>
+                  </div>
+                  <div class="select-wrap" id="prose-font">
+                    <button class="select-btn" type="button" onclick={() => toggleSelect("prose-font")}>
+                      <span>{store.settings.proseReaderFontFamily ? (store.settings.proseReaderFontFamily.split(",")[0].replace(/"/g, "")) : "Georgia"}</span>
+                      <svg class="select-caret" class:open={selectOpen === "prose-font"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
+                    </button>
+                    {#if selectOpen === "prose-font"}
+                      <div class="select-menu">
+                        {#each [["Georgia, serif", "Georgia"], ["Merriweather, Georgia, serif", "Merriweather"], ["Inter, sans-serif", "Inter"], ["Atkinson Hyperlegible, Inter, sans-serif", "Atkinson"], ['"Segoe UI", sans-serif', "Segoe UI"]] as [v, l]}
+                          <button class="select-option" class:active={(store.settings.proseReaderFontFamily ?? "Georgia, serif") === v} onclick={() => { updateSettings({ proseReaderFontFamily: v }); selectOpen = null; }}>{l}</button>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Default Font Size</p>
+                    <p class="settings-mini-row__hint">Adjust text size in pixels.</p>
+                  </div>
+                  <div class="step-controls">
+                    <button class="step-btn" type="button" onclick={() => updateSettings({ proseReaderFontSize: Math.max(12, (store.settings.proseReaderFontSize ?? 18) - 1) })} disabled={(store.settings.proseReaderFontSize ?? 18) <= 12}>-</button>
+                    <span class="step-val">{store.settings.proseReaderFontSize ?? 18}px</span>
+                    <button class="step-btn" type="button" onclick={() => updateSettings({ proseReaderFontSize: Math.min(32, (store.settings.proseReaderFontSize ?? 18) + 1) })} disabled={(store.settings.proseReaderFontSize ?? 18) >= 32}>+</button>
+                  </div>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Default Line Height</p>
+                    <p class="settings-mini-row__hint">Spacing between text lines.</p>
+                  </div>
+                  <div class="step-controls">
+                    <button class="step-btn" type="button" onclick={() => updateSettings({ proseReaderLineHeight: Math.round(Math.max(1.2, (store.settings.proseReaderLineHeight ?? 1.75) - 0.05) * 100) / 100 })} disabled={(store.settings.proseReaderLineHeight ?? 1.75) <= 1.2}>-</button>
+                    <span class="step-val">{(store.settings.proseReaderLineHeight ?? 1.75).toFixed(2)}</span>
+                    <button class="step-btn" type="button" onclick={() => updateSettings({ proseReaderLineHeight: Math.round(Math.min(2.4, (store.settings.proseReaderLineHeight ?? 1.75) + 0.05) * 100) / 100 })} disabled={(store.settings.proseReaderLineHeight ?? 1.75) >= 2.4}>+</button>
+                  </div>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Default Column Width</p>
+                    <p class="settings-mini-row__hint">Constrain max width of the text block.</p>
+                  </div>
+                  <div class="step-controls">
+                    <button class="step-btn" type="button" onclick={() => updateSettings({ proseReaderContentWidth: Math.max(520, (store.settings.proseReaderContentWidth ?? 760) - 40) })} disabled={(store.settings.proseReaderContentWidth ?? 760) <= 520}>-</button>
+                    <span class="step-val">{store.settings.proseReaderContentWidth ?? 760}px</span>
+                    <button class="step-btn" type="button" onclick={() => updateSettings({ proseReaderContentWidth: Math.min(980, (store.settings.proseReaderContentWidth ?? 760) + 40) })} disabled={(store.settings.proseReaderContentWidth ?? 760) >= 980}>+</button>
+                  </div>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Text Alignment</p>
+                    <p class="settings-mini-row__hint">Choose left-aligned or justified spacing.</p>
+                  </div>
+                  <div class="n-inline-segmented">
+                    <button class="n-inline-segment" class:is-selected={(store.settings.proseReaderTextAlign ?? "left") === "left"} type="button" onclick={() => updateSettings({ proseReaderTextAlign: "left" })}>Left</button>
+                    <button class="n-inline-segment" class:is-selected={(store.settings.proseReaderTextAlign ?? "left") === "justify"} type="button" onclick={() => updateSettings({ proseReaderTextAlign: "justify" })}>Justify</button>
+                  </div>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Prose Reader Theme</p>
+                    <p class="settings-mini-row__hint">Select colors for text and background canvas.</p>
+                  </div>
+                  <div class="select-wrap" id="prose-theme">
+                    <button class="select-btn" type="button" onclick={() => toggleSelect("prose-theme")}>
+                      <span>{(store.settings.proseReaderTheme ?? "nocturne").toUpperCase()}</span>
+                      <svg class="select-caret" class:open={selectOpen === "prose-theme"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
+                    </button>
+                    {#if selectOpen === "prose-theme"}
+                      <div class="select-menu">
+                        {#each [["nocturne","Nocturne"], ["dark","Dark"], ["sepia","Sepia"], ["light","Light"], ["oled","OLED"]] as [v, l]}
+                          <button class="select-option" class:active={(store.settings.proseReaderTheme ?? "nocturne") === v} onclick={() => { updateSettings({ proseReaderTheme: v as any }); selectOpen = null; }}>{l}</button>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Custom Palette Colors</p>
+                    <p class="settings-mini-row__hint">Adjust text color (left) and paper background (right) directly.</p>
+                  </div>
+                  <div style="display: flex; gap: 8px;">
+                    <input
+                      type="color"
+                      value={store.settings.proseReaderTextColor || "#efe9de"}
+                      onchange={(e) => updateSettings({ proseReaderTheme: "nocturne", proseReaderTextColor: e.currentTarget.value })}
+                      style="width: 24px; height: 24px; border: 1px solid rgba(255, 255, 255, 0.1); padding: 0; background: transparent; cursor: pointer; border-radius: 9999px; overflow: hidden;"
+                      title="Custom text color"
+                    />
+                    <input
+                      type="color"
+                      value={store.settings.proseReaderBackgroundColor || "#17121c"}
+                      onchange={(e) => updateSettings({ proseReaderTheme: "nocturne", proseReaderBackgroundColor: e.currentTarget.value })}
+                      style="width: 24px; height: 24px; border: 1px solid rgba(255, 255, 255, 0.1); padding: 0; background: transparent; cursor: pointer; border-radius: 9999px; overflow: hidden;"
+                      title="Custom paper color"
+                    />
+                  </div>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Book Reader Flow</p>
+                    <p class="settings-mini-row__hint">Choose paginated pages or vertical continuous scroll.</p>
+                  </div>
+                  <div class="n-inline-segmented">
+                    <button class="n-inline-segment" class:is-selected={(store.settings.bookReaderFlow ?? "paginated") === "paginated"} type="button" onclick={() => updateSettings({ bookReaderFlow: "paginated" })}>Paginated</button>
+                    <button class="n-inline-segment" class:is-selected={(store.settings.bookReaderFlow ?? "paginated") === "scrolled"} type="button" onclick={() => updateSettings({ bookReaderFlow: "scrolled" })}>Continuous</button>
+                  </div>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Full Width Reading Panel</p>
+                    <p class="settings-mini-row__hint">Expand EPUB, PDF, and Novel text areas to the edge of the screen.</p>
+                  </div>
+                  <button role="switch" aria-checked={store.settings.proseReaderFullWidth ?? false} aria-label="Full Width Reading Panel" class="settings-toggle" class:is-on={store.settings.proseReaderFullWidth ?? false} type="button" onclick={() => updateSettings({ proseReaderFullWidth: !(store.settings.proseReaderFullWidth ?? false) })}></button>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-card">
+              <p class="settings-card__title">PDF Defaults</p>
+              <div class="settings-card__stack">
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Default PDF Fit Mode</p>
+                    <p class="settings-mini-row__hint">Choose default viewport layout for PDF pages.</p>
+                  </div>
+                  <div class="select-wrap" id="pdf-fit">
+                    <button class="select-btn" type="button" onclick={() => toggleSelect("pdf-fit")}>
+                      <span>{store.settings.pdfFitMode || "width"}</span>
+                      <svg class="select-caret" class:open={selectOpen === "pdf-fit"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
+                    </button>
+                    {#if selectOpen === "pdf-fit"}
+                      <div class="select-menu">
+                        {#each [["width","Width"], ["page","Page"], ["actual","Actual"]] as [v, l]}
+                          <button class="select-option" class:active={(store.settings.pdfFitMode ?? "width") === v} onclick={() => { updateSettings({ pdfFitMode: v as any }); selectOpen = null; }}>{l}</button>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">PDF Dark Mode</p>
+                    <p class="settings-mini-row__hint">Enable dark mode canvas filter by default.</p>
+                  </div>
+                  <button role="switch" aria-checked={store.settings.pdfDarkMode ?? false} aria-label="PDF Dark Mode" class="settings-toggle" class:is-on={store.settings.pdfDarkMode ?? false} type="button" onclick={() => updateSettings({ pdfDarkMode: !(store.settings.pdfDarkMode ?? false) })}></button>
+                </div>
+              </div>
+            </div>
           </div>
         </section>
         <section
@@ -5036,7 +5223,7 @@
                 </div>
                 <p class="settings-card__intro">
                   {categoryDomain === "comics"
-                    ? "Comics categories stay synced with Suwayomi and other clients."
+                    ? "Comics categories stay synced with Suwayomi. Library updates check every title except folders marked as excluded."
                     : "Books categories are local to Aethon and stay separate from Comics."}
                 </p>
                 {#if categoryDomain === "comics" && catsError}
@@ -5075,9 +5262,18 @@
                           {:else}
                             <div class="settings-mini-row__body">
                               <p class="settings-mini-row__label">{cat.name}</p>
-                              <p class="settings-mini-row__hint">{cat.mangas?.nodes.length ?? 0} manga{(store.settings.defaultLibraryCategoryId ?? null) === cat.id ? " / default" : ""}{(store.settings.hiddenCategoryIds ?? []).includes(cat.id) ? " / hidden from Saved" : ""}</p>
+                              <p class="settings-mini-row__hint">{cat.mangas?.nodes.length ?? 0} manga{(store.settings.defaultLibraryCategoryId ?? null) === cat.id ? " / default" : ""}{(store.settings.hiddenCategoryIds ?? []).includes(cat.id) ? " / hidden from Saved" : ""}{cat.includeInUpdate === "EXCLUDE" ? " / skipped by updates" : ""}</p>
                             </div>
                             <div class="settings-section-actions settings-inline-actions settings-inline-actions--dense">
+                              <button
+                                class="n-btn n-btn--sm n-btn-ghost settings-folder-action"
+                                class:folder-update-excluded={cat.includeInUpdate === "EXCLUDE"}
+                                type="button"
+                                onclick={() => toggleComicFolderUpdates(cat)}
+                                title={cat.includeInUpdate === "EXCLUDE" ? "Include this folder in Library updates" : "Exclude this folder from Library updates"}
+                              >
+                                {cat.includeInUpdate === "EXCLUDE" ? "Skip updates" : "Update"}
+                              </button>
                               <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" class:folder-default-active={(store.settings.defaultLibraryCategoryId ?? null) === cat.id} type="button" onclick={() => updateSettings({ defaultLibraryCategoryId: (store.settings.defaultLibraryCategoryId ?? null) === cat.id ? null : cat.id })} title={(store.settings.defaultLibraryCategoryId ?? null) === cat.id ? "Remove as default category" : "Set as default category"}><Star size={13} weight={(store.settings.defaultLibraryCategoryId ?? null) === cat.id ? "fill" : "light"} /></button>
                               <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" class:folder-hidden={(store.settings.hiddenCategoryIds ?? []).includes(cat.id)} type="button" onclick={() => toggleHiddenCategory(cat.id)} title={(store.settings.hiddenCategoryIds ?? []).includes(cat.id) ? "Show in Saved tab" : "Hide from Saved tab"}>{#if (store.settings.hiddenCategoryIds ?? []).includes(cat.id)}<EyeSlash size={13} weight="light" />{:else}<Eye size={13} weight="light" />{/if}</button>
                               <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" type="button" onclick={() => moveCategory(cat.id, -1)} disabled={i === 0} title="Move up">Up</button>
@@ -6299,6 +6495,10 @@
   .folder-delete:hover:not(:disabled) { color: var(--color-error) !important; }
   .folder-hidden { opacity: 0.35; }
   .folder-default-active { color: var(--accent-fg) !important; }
+  .folder-update-excluded {
+    color: var(--color-warning, #eacb8a) !important;
+    border-color: rgba(234, 203, 138, 0.24) !important;
+  }
   .release-list { display: flex; flex-direction: column; gap: 1px; padding: 0 var(--sp-1); }
   .release-row {
     border-radius: var(--radius-md);

@@ -21,7 +21,7 @@
   let loading = $state(false);
   let error = $state<string | null>(null);
   let chapterHtml = $state("");
-  let toolsOpen = $state(true);
+  let toolsOpen = $state(false);
   let libraryState = $state(peekNovelLibraryState({
     profileId: store.runtimeResolvedLocalProfileId,
     serverUrl: store.runtimeServerUrl,
@@ -221,45 +221,125 @@
 </script>
 
 {#if activeReader}
-  <ReaderHud overlayBars={false} uiVisible={true}>
-    {#snippet topbarLeft()}
-      <button class="icon-btn" onclick={closeNovelReader} title="Close reader">
-        <X size={15} weight="light" />
-      </button>
-      <button class="icon-btn" onclick={() => openRelativeChapter("prev")} disabled={!previousChapter} title="Previous chapter">
-        <CaretLeft size={14} weight="light" />
-      </button>
-      <button class="icon-btn" onclick={() => openRelativeChapter("next")} disabled={!nextChapter} title="Next chapter">
-        <CaretRight size={14} weight="light" />
-      </button>
-      <div class="reader-title">
-        <strong>{currentNovel?.title ?? "Novel source"}</strong>
-        <span>{activeReader.chapterTitle}</span>
-      </div>
+  <ReaderHud
+    bind:toolsOpen={toolsOpen}
+    title={currentNovel?.title ?? "Novel"}
+    chapterTitle={activeReader?.chapterTitle ?? ""}
+    progressLabel={progressLabel}
+    sliderValue={sliderValue}
+    sliderMax={sliderMax}
+    sliderPct={sliderPct}
+    bookmarkPct={currentChapterBookmarked ? sliderPct : null}
+    isBookmarked={currentChapterBookmarked}
+    prevDisabled={loading || !previousChapter}
+    nextDisabled={loading || !nextChapter}
+    uiVisible={true}
+    onclose={closeNovelReader}
+    onprev={() => openRelativeChapter("prev")}
+    onnext={() => openRelativeChapter("next")}
+    onjump={(val) => openChapterByIndex(val - 1)}
+    onbookmark={toggleCurrentChapterBookmark}
+  >
+    {#snippet settingsPopover()}
+      <dl>
+        <div>
+          <dt>Theme</dt>
+          <dd>
+            <div class="popover-color-swatches">
+              <button class="popover-swatch" style="background:#efe1c9;" class:active={proseTheme === "sepia"} onclick={() => updateSettings({ proseReaderTheme: "sepia" })} title="Sepia"></button>
+              <button class="popover-swatch" style="background:#000000;" class:active={proseTheme === "oled"} onclick={() => updateSettings({ proseReaderTheme: "oled" })} title="OLED"></button>
+              <button class="popover-swatch" style="background:#09080d;" class:active={proseTheme === "dark"} onclick={() => updateSettings({ proseReaderTheme: "dark" })} title="Dark"></button>
+              <button class="popover-swatch" style="background:#f5f1ea;" class:active={proseTheme === "light"} onclick={() => updateSettings({ proseReaderTheme: "light" })} title="Light"></button>
+              <button class="popover-swatch" style="background:#17121c;" class:active={proseTheme === "nocturne"} onclick={() => updateSettings({ proseTheme: "nocturne" })} title="Nocturne"></button>
+            </div>
+          </dd>
+        </div>
+        <div>
+          <dt>Text Color</dt>
+          <dd>
+            <input
+              class="popover-color-picker"
+              type="color"
+              value={prosePalette.text}
+              onchange={(event) => updateProseColor("text", event.currentTarget.value)}
+              title="Text color"
+            />
+          </dd>
+        </div>
+        <div>
+          <dt>Paper Color</dt>
+          <dd>
+            <input
+              class="popover-color-picker"
+              type="color"
+              value={prosePalette.surface}
+              onchange={(event) => updateProseColor("background", event.currentTarget.value)}
+              title="Page background"
+            />
+          </dd>
+        </div>
+        <div>
+          <dt>Font</dt>
+          <dd>
+            <select
+              class="popover-select"
+              value={proseFontFamily}
+              onchange={(event) => updateSettings({ proseReaderFontFamily: event.currentTarget.value })}
+            >
+              <option value="Georgia, serif">Georgia</option>
+              <option value="Merriweather, Georgia, serif">Merriweather</option>
+              <option value="Inter, sans-serif">Inter</option>
+              <option value="Atkinson Hyperlegible, Inter, sans-serif">Atkinson</option>
+              <option value='"Segoe UI", sans-serif'>Segoe UI</option>
+            </select>
+          </dd>
+        </div>
+        <div>
+          <dt>Size</dt>
+          <dd>
+            <div class="popover-stepper">
+              <button class="popover-step-btn" onclick={() => updateFontSize(-1)}>−</button>
+              <span class="popover-step-val">{proseFontSize}px</span>
+              <button class="popover-step-btn" onclick={() => updateFontSize(1)}>+</button>
+            </div>
+          </dd>
+        </div>
+        <div>
+          <dt>Line</dt>
+          <dd>
+            <div class="popover-stepper">
+              <button class="popover-step-btn" onclick={() => updateLineHeight(-0.05)}>−</button>
+              <span class="popover-step-val">{proseLineHeight.toFixed(2)}</span>
+              <button class="popover-step-btn" onclick={() => updateLineHeight(0.05)}>+</button>
+            </div>
+          </dd>
+        </div>
+        <div>
+          <dt>Align</dt>
+          <dd>
+            <button class="popover-btn" onclick={() => updateSettings({ proseReaderTextAlign: proseTextAlign === "justify" ? "left" : "justify" })}>{proseTextAlign}</button>
+          </dd>
+        </div>
+        <div>
+          <dt>Width</dt>
+          <dd>
+            <div class="popover-stepper">
+              <button class="popover-step-btn" onclick={() => updateContentWidth(-40)}>−</button>
+              <span class="popover-step-val">{proseContentWidth}px</span>
+              <button class="popover-step-btn" onclick={() => updateContentWidth(40)}>+</button>
+            </div>
+          </dd>
+        </div>
+        <div>
+          <dt>Full Width</dt>
+          <dd>
+            <button class="popover-toggle" class:active={store.settings.proseReaderFullWidth} onclick={() => updateSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}></button>
+          </dd>
+        </div>
+      </dl>
     {/snippet}
 
-    {#snippet topbarRight()}
-      <div class="top-sep"></div>
-      <span class="reader-progress-text">{progressLabel}</span>
-      <span class="mode-status" title="Novel reader">
-        <BookOpen size={14} weight="light" />
-        <span class="mode-label">Novel</span>
-      </span>
-      <button
-        class="icon-btn"
-        class:active={currentChapterBookmarked}
-        onclick={toggleCurrentChapterBookmark}
-        disabled={!getNovelLibraryEntry(libraryState, activeReader.novelId)}
-        title={currentChapterBookmarked ? "Remove bookmark" : "Bookmark this chapter"}
-      >
-        <BookmarkSimple size={15} weight={currentChapterBookmarked ? "fill" : "regular"} />
-      </button>
-      <button class="icon-btn" class:active={toolsOpen} onclick={() => toolsOpen = !toolsOpen} title="Reader tools">
-        <SlidersHorizontal size={15} weight="light" />
-      </button>
-    {/snippet}
-
-    <div class="viewer novel-viewer" style={`--prose-page-bg:${prosePalette.bg};`}>
+    <div class="viewer novel-viewer" class:full-width-panel={store.settings.proseReaderFullWidth} style={`--prose-page-bg:${prosePalette.bg};`}>
       {#if loading}
         <div class="center-overlay">
           <CircleNotch size={20} weight="light" class="anim-spin" style="color:var(--text-faint)" />
@@ -299,163 +379,6 @@
         >{@html chapterHtml}</article>
       {/if}
     </div>
-
-    {#snippet sidePanel()}
-      {#if toolsOpen}
-        <aside class="reader-tools-panel" aria-label="Novel reader tools">
-          <div class="reader-tools-panel__header">
-            <span class="reader-tools-panel__eyebrow">Novel tools</span>
-            <strong>Chapter view</strong>
-            <button class="reader-tools-panel__close" type="button" onclick={() => toolsOpen = false} title="Hide tools">
-              <X size={13} weight="light" />
-            </button>
-          </div>
-
-          <div class="reader-tools-segment" aria-label="Novel quick actions">
-            <button type="button" onclick={() => openRelativeChapter("prev")} disabled={loading || !previousChapter}>Prev</button>
-            <button
-              type="button"
-              class:active={currentChapterBookmarked}
-              onclick={toggleCurrentChapterBookmark}
-              disabled={!getNovelLibraryEntry(libraryState, activeReader.novelId)}
-            >Mark</button>
-            <button type="button" onclick={() => openRelativeChapter("next")} disabled={loading || !nextChapter}>Next</button>
-          </div>
-
-          <dl class="reader-tools-list">
-            <div>
-              <dt>Chapter</dt>
-              <dd>{sliderValue} / {sliderMax}</dd>
-            </div>
-            <div>
-              <dt>Progress</dt>
-              <dd>{progressLabel}</dd>
-            </div>
-            <div>
-              <dt>Library</dt>
-              <dd>{getNovelLibraryEntry(libraryState, activeReader.novelId) ? "Saved" : "Source"}</dd>
-            </div>
-            <div>
-              <dt>Bookmark</dt>
-              <dd>{currentChapterBookmarked ? "Saved" : "Not saved"}</dd>
-            </div>
-            <div>
-              <dt>Theme</dt>
-              <dd><button type="button" onclick={cycleProseTheme}>{proseTheme}</button></dd>
-            </div>
-            <div>
-              <dt>Font</dt>
-              <dd>
-                <select
-                  class="reader-tools-select"
-                  value={proseFontFamily}
-                  onchange={(event) => updateSettings({ proseReaderFontFamily: event.currentTarget.value })}
-                >
-                  <option value="Georgia, serif">Georgia</option>
-                  <option value="Merriweather, Georgia, serif">Merriweather</option>
-                  <option value="Inter, sans-serif">Inter</option>
-                  <option value="Atkinson Hyperlegible, Inter, sans-serif">Atkinson</option>
-                  <option value='"Segoe UI", sans-serif'>Segoe UI</option>
-                </select>
-              </dd>
-            </div>
-            <div>
-              <dt>Size</dt>
-              <dd>
-                <div class="reader-tools-zoom">
-                  <button type="button" onclick={() => updateFontSize(-1)}>-</button>
-                  <button type="button">{proseFontSize}px</button>
-                  <button type="button" onclick={() => updateFontSize(1)}>+</button>
-                </div>
-              </dd>
-            </div>
-            <div>
-              <dt>Line</dt>
-              <dd>
-                <div class="reader-tools-zoom">
-                  <button type="button" onclick={() => updateLineHeight(-0.05)}>-</button>
-                  <button type="button">{proseLineHeight.toFixed(2)}</button>
-                  <button type="button" onclick={() => updateLineHeight(0.05)}>+</button>
-                </div>
-              </dd>
-            </div>
-            <div>
-              <dt>Align</dt>
-              <dd><button type="button" onclick={() => updateSettings({ proseReaderTextAlign: proseTextAlign === "justify" ? "left" : "justify" })}>{proseTextAlign}</button></dd>
-            </div>
-            <div>
-              <dt>Width</dt>
-              <dd>
-                <div class="reader-tools-zoom">
-                  <button type="button" onclick={() => updateContentWidth(-40)}>-</button>
-                  <button type="button">{proseContentWidth}px</button>
-                  <button type="button" onclick={() => updateContentWidth(40)}>+</button>
-                </div>
-              </dd>
-            </div>
-            <div>
-              <dt>Text</dt>
-              <dd>
-                <input
-                  class="reader-tools-color"
-                  type="color"
-                  value={prosePalette.text}
-                  onchange={(event) => updateProseColor("text", event.currentTarget.value)}
-                  title="Text color"
-                />
-              </dd>
-            </div>
-            <div>
-              <dt>Paper</dt>
-              <dd>
-                <input
-                  class="reader-tools-color"
-                  type="color"
-                  value={prosePalette.surface}
-                  onchange={(event) => updateProseColor("background", event.currentTarget.value)}
-                  title="Page background"
-                />
-              </dd>
-            </div>
-          </dl>
-        </aside>
-      {/if}
-    {/snippet}
-
-    {#snippet bottombar()}
-      <button class="nav-btn" onclick={() => openRelativeChapter("prev")} disabled={loading || !previousChapter}>
-        <ArrowLeft size={13} weight="light" />
-      </button>
-
-      <div class="progress-block">
-        <div class="progress-meta">
-          <span>Chapter {sliderValue} of {sliderMax}</span>
-          <strong>{progressLabel}</strong>
-        </div>
-        <div class="slider-wrap" role="presentation">
-          <div class="slider-track-bg">
-            <div class="slider-fill" style="width: {sliderPct}%"></div>
-          </div>
-          {#if currentChapterBookmarked}
-            <div class="slider-checkpoint bookmark-checkpoint" style="left: {sliderPct}%" title="Bookmarked chapter"></div>
-          {/if}
-          <input
-            type="range"
-            class="slider-input"
-            min={1}
-            max={sliderMax}
-            step={1}
-            value={sliderValue}
-            oninput={(event) => openChapterByIndex(Number(event.currentTarget.value) - 1)}
-            aria-label={`Chapter ${sliderValue} of ${sliderMax}`}
-          />
-        </div>
-      </div>
-
-      <button class="nav-btn" onclick={() => openRelativeChapter("next")} disabled={loading || !nextChapter}>
-        <ArrowRight size={13} weight="light" />
-      </button>
-    {/snippet}
   </ReaderHud>
 {/if}
 
@@ -466,8 +389,8 @@
     overflow-x: hidden;
     position: relative;
     background:
-      radial-gradient(circle at 45% 18%, rgba(185, 156, 255, 0.1), transparent 30%),
-      linear-gradient(180deg, var(--prose-page-bg, var(--bg-void)), #050507 62%, var(--prose-page-bg, var(--bg-void)));
+      radial-gradient(circle at 45% 18%, rgba(255, 255, 255, 0.015), transparent 30%),
+      linear-gradient(180deg, var(--prose-page-bg, var(--bg-void)), #050505 62%, var(--prose-page-bg, var(--bg-void)));
     color: var(--prose-text, var(--text-primary));
   }
 
@@ -485,6 +408,16 @@
     line-height: var(--prose-line-height, 1.75);
     font-size: var(--prose-font-size, 18px);
     text-align: var(--prose-align, left);
+  }
+
+  .novel-viewer.full-width-panel .reader-body {
+    width: 100%;
+    max-width: 100%;
+    min-height: 100%;
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
   }
 
   .reader-body :global(p),

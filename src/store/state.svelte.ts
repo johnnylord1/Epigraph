@@ -327,6 +327,14 @@ export interface LibraryUpdateNotification {
   createdAt: number;
 }
 
+export interface SystemNotification {
+  id: string;
+  kind: "success" | "error" | "info" | "download";
+  title: string;
+  body?: string;
+  createdAt: number;
+}
+
 export interface ReadingStats {
   totalChaptersRead: number;
   totalMangaRead:    number;
@@ -359,6 +367,18 @@ export interface Toast {
   duration?: number;
   action?:   { label: string; run: () => void };
   updatedAt?: number;
+}
+
+export interface LibraryUpdateProgress {
+  kind:      "download" | "success" | "error";
+  title:     string;
+  body:      string;
+  active:    boolean;
+  duration?: number;
+  current?:  number;
+  total?:    number;
+  percent?:  number;
+  updatedAt: number;
 }
 
 export interface ActiveDownload {
@@ -400,6 +420,8 @@ export interface Settings {
   proseReaderBackgroundColor: string;
   proseReaderTheme:        ProseReaderTheme;
   proseReaderTextAlign:    ProseReaderAlign;
+  bookReaderFlow:          "paginated" | "scrolled";
+  proseReaderFullWidth:    boolean;
   pdfFitMode:              PdfFitMode;
   pdfDarkMode:             boolean;
   pageGap:                 boolean;
@@ -522,6 +544,8 @@ export const DEFAULT_SETTINGS: Settings = {
   proseReaderBackgroundColor: "#17121c",
   proseReaderTheme:       "nocturne",
   proseReaderTextAlign:   "left",
+  bookReaderFlow:         "paginated",
+  proseReaderFullWidth:   false,
   pdfFitMode:             "width",
   pdfDarkMode:            false,
   pageGap:                true,
@@ -830,6 +854,24 @@ function normalizeLoadedLibraryUpdateNotification(entry: any): LibraryUpdateNoti
   };
 }
 
+function normalizeLoadedSystemNotification(entry: any): SystemNotification | null {
+  if (!entry || typeof entry !== "object") return null;
+  const createdAt = Number(entry.createdAt);
+  if (!Number.isFinite(createdAt)) return null;
+  const kind = entry.kind === "success" || entry.kind === "error" || entry.kind === "download" ? entry.kind : "info";
+  const title = String(entry.title ?? "").trim();
+  if (!title) return null;
+  return {
+    id: typeof entry.id === "string" && entry.id.trim()
+      ? entry.id
+      : `system:${createdAt}:${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`,
+    kind,
+    title,
+    body: typeof entry.body === "string" && entry.body.trim() ? entry.body : undefined,
+    createdAt,
+  };
+}
+
 function buildLibraryUpdateNotifications(
   before: Manga[],
   after: Manga[],
@@ -948,6 +990,13 @@ class Store {
           .filter((entry: LibraryUpdateNotification | null): entry is LibraryUpdateNotification => Boolean(entry))
       : [],
   );
+  systemNotifications: SystemNotification[] = $state(
+    Array.isArray(saved?.systemNotifications)
+      ? saved.systemNotifications
+          .map(normalizeLoadedSystemNotification)
+          .filter((entry: SystemNotification | null): entry is SystemNotification => Boolean(entry))
+      : [],
+  );
   books:             BookEntry[]      = $state(reconciledSavedBooks.books);
   bookProgress:      BookProgress[]   = $state(reconciledSavedBooks.bookProgress);
   bookBookmarks:     BookBookmarkEntry[] = $state(savedBookLibraryState.bookBookmarks.map(normalizeLoadedBookBookmark));
@@ -998,6 +1047,8 @@ class Store {
   activeDownloads:   ActiveDownload[] = $state([]);
   pausedDownloads:   PausedDownloadItem[] = $state([]);
   toasts:            Toast[]          = $state([]);
+  libraryUpdateProgress: LibraryUpdateProgress | null = $state(null);
+  libraryUpdateInFlight: boolean = $state(false);
   activeChapter:     Chapter | null   = $state(null);
   activeChapterList: Chapter[]        = $state([]);
   // UI-only: synced from Tauri window events in App.svelte. Not persisted.
@@ -1041,6 +1092,7 @@ class Store {
         $effect(() => { persist({ libraryFilter: this.libraryFilter }); });
         $effect(() => { persist({ history:       this.history       }); });
         $effect(() => { persist({ libraryUpdateNotifications: this.libraryUpdateNotifications }); });
+        $effect(() => { persist({ systemNotifications: this.systemNotifications }); });
         $effect(() => { persist({ readLog:       this.readLog       }); });
       $effect(() => { persist({ bookmarks:     this.bookmarks     }); });
       $effect(() => { persist({ readingStats:  this.readingStats  }); });
@@ -1322,6 +1374,26 @@ class Store {
 
   clearHistory()                        { this.history = []; this.readLog = []; bumpContentSetupVersion(); }
   clearLibraryUpdateNotifications()     { this.libraryUpdateNotifications = []; }
+  clearSystemNotifications()            { this.systemNotifications = []; }
+  addSystemNotification(entry: Omit<SystemNotification, "id" | "createdAt"> & { id?: string; createdAt?: number }) {
+    const createdAt = Number(entry.createdAt ?? Date.now());
+    const stableId = entry.id
+      ?? `system:${createdAt}:${entry.kind}:${entry.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
+    const notification: SystemNotification = {
+      id: stableId,
+      kind: entry.kind,
+      title: entry.title,
+      body: entry.body,
+      createdAt,
+    };
+    this.systemNotifications = [
+      notification,
+      ...this.systemNotifications.filter((current) => current.id !== stableId),
+    ]
+      .sort((left, right) => right.createdAt - left.createdAt)
+      .slice(0, 200);
+    return notification;
+  }
   recordLibraryUpdateNotifications(before: Manga[], after: Manga[], createdAt = Date.now()) {
     const entries = buildLibraryUpdateNotifications(before, after, createdAt);
     if (!entries.length) return [];
@@ -1517,20 +1589,28 @@ class Store {
     this.settings = { ...this.settings, heroSlots: slots };
   }
 
-  addToast(toast: Omit<Toast, "id">) {
+  addToast(toast: Omit<Toast, "id"> & { id?: string }) {
     const body = toast.body ?? "";
     const isDownloadLike = toast.kind === "download" || /download/i.test(toast.title);
     const existing = this.toasts.find(t =>
-      t.kind === toast.kind
-      && t.title === toast.title
-      && (isDownloadLike || (t.body ?? "") === body),
+      t.id === toast.id
+      || (
+        t.kind === toast.kind
+        && t.title === toast.title
+        && (isDownloadLike || (t.body ?? "") === body)
+      ),
     );
-    const id = existing?.id ?? Math.random().toString(36).slice(2);
+    const id = toast.id ?? existing?.id ?? Math.random().toString(36).slice(2);
     const next = { ...existing, ...toast, id, updatedAt: Date.now() };
     this.toasts = [...this.toasts.filter(t => t.id !== id), next].slice(-5);
+    return id;
   }
 
   dismissToast(id: string)                      { this.toasts = this.toasts.filter(x => x.id !== id); }
+  setLibraryUpdateProgress(progress: Omit<LibraryUpdateProgress, "updatedAt"> | null) {
+    this.libraryUpdateProgress = progress ? { ...progress, updatedAt: Date.now() } : null;
+  }
+  setLibraryUpdateInFlight(next: boolean)      { this.libraryUpdateInFlight = next; }
   setCategories(cats: Category[])              {
     this.categories = cats;
     cache.set(CACHE_KEYS.CATEGORIES, cats, CACHE_GROUPS.LIBRARY);
@@ -1884,6 +1964,10 @@ export function closeReader()                                            { store
 export function addHistory(entry: HistoryEntry, completed?: boolean, minutes?: number) { store.addHistory(entry, completed, minutes); }
 export function recordLibraryUpdateNotifications(before: Manga[], after: Manga[], createdAt?: number) { return store.recordLibraryUpdateNotifications(before, after, createdAt); }
 export function clearLibraryUpdateNotifications()                         { store.clearLibraryUpdateNotifications(); }
+export function addSystemNotification(entry: Omit<SystemNotification, "id" | "createdAt"> & { id?: string; createdAt?: number }) {
+  return store.addSystemNotification(entry);
+}
+export function clearSystemNotifications()                                { store.clearSystemNotifications(); }
 export function clearHistory()                                           { store.clearHistory(); }
 export function clearHistoryForManga(mangaId: number)                    { store.clearHistoryForManga(mangaId); }
 export function upsertBook(entry: BookEntry)                             { store.upsertBook(entry); }
@@ -1908,8 +1992,10 @@ export function linkManga(idA: number, idB: number)                      { store
 export function unlinkManga(idA: number, idB: number)                    { store.unlinkManga(idA, idB); }
 export function getLinkedMangaIds(mangaId: number)                       { return store.getLinkedMangaIds(mangaId); }
 export function setHeroSlot(i: 1|2|3, mangaId: number | null)            { store.setHeroSlot(i, mangaId); }
-export function addToast(toast: Omit<Toast, "id">)                       { store.addToast(toast); }
+export function addToast(toast: Omit<Toast, "id"> & { id?: string })     { return store.addToast(toast); }
 export function dismissToast(id: string)                                 { store.dismissToast(id); }
+export function setLibraryUpdateProgress(progress: Omit<LibraryUpdateProgress, "updatedAt"> | null) { store.setLibraryUpdateProgress(progress); }
+export function setLibraryUpdateInFlight(next: boolean) { store.setLibraryUpdateInFlight(next); }
 export function setCategories(cats: Category[])                           { store.setCategories(cats); }
 export function setLibraryMangaSnapshot(next: Manga[])                    { store.setLibraryMangaSnapshot(next); }
 export function setLibraryBootstrap(status: LibraryBootstrapStatus, scopeKey: string | null, trackingSummary: TrackerCompletionTracker[] | null = null) {

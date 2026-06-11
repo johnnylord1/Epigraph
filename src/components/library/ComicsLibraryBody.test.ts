@@ -1,9 +1,15 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Category, Manga } from "../../lib/types";
 import type { ComicsSectionVM } from "../../lib/library/contracts";
 import { store } from "../../store/state.svelte";
 import ComicsLibraryBody from "./ComicsLibraryBody.svelte";
+
+vi.mock("../../lib/library/coverCache", () => ({
+  cacheLibraryCoverFromServer: vi.fn(async () => null),
+  getCachedLibraryCoverUrl: vi.fn(async () => null),
+  libraryCoverCacheKey: vi.fn((_scope, manga: Manga) => `test-cover:${manga.id}`),
+}));
 
 describe("ComicsLibraryBody", () => {
   afterEach(() => cleanup());
@@ -218,5 +224,77 @@ describe("ComicsLibraryBody", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: /Paged Manga 3/i }));
     expect(store.activeManga?.id).toBe(3);
+  });
+
+  test("keeps a broken cover on the placeholder after one recovery attempt", async () => {
+    const manga = {
+      id: 55,
+      title: "Broken Cover Manga",
+      thumbnailUrl: "/covers/broken.jpg",
+      inLibrary: true,
+      unreadCount: 0,
+      chapterCount: 10,
+      source: { id: "source-1", displayName: "Source One" },
+    } as Manga;
+    const onCoverErrorDetected = vi.fn();
+
+    const vm: ComicsSectionVM = {
+      kind: "comics",
+      sectionTabs: [],
+      collections: [],
+      toolbar: {
+        searchValue: "",
+        searchPlaceholder: "Search",
+        sortMode: "az",
+        sortDir: "asc",
+        sortOptions: [],
+        filterValue: "ALL",
+        filterOptions: [],
+      },
+      loading: false,
+      error: null,
+      emptyMessage: "Empty",
+      cards: [],
+      selectionEnabled: true,
+      selectedIds: new Set(),
+      showBulkBar: false,
+    };
+
+    const props = {
+      vm,
+      mangas: [manga],
+      categories: [],
+      categoryMangaMap: new Map<number, Manga[]>(),
+      renderLimit: 48,
+      viewKey: "library",
+      onCoverErrorDetected,
+      coverRecoveryVersions: new Map<number, number>(),
+    };
+
+    const { container, rerender } = render(ComicsLibraryBody, { props });
+
+    await waitFor(() => expect(container.querySelector("img.cover")).toBeTruthy());
+    await fireEvent.error(container.querySelector("img.cover")!);
+
+    expect(onCoverErrorDetected).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(container.querySelector("img.cover")).toBeNull());
+
+    await rerender({
+      ...props,
+      coverRecoveryVersions: new Map([[55, 1]]),
+    });
+
+    await waitFor(() => expect(container.querySelector("img.cover")).toBeTruthy());
+    await fireEvent.error(container.querySelector("img.cover")!);
+
+    expect(onCoverErrorDetected).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(container.querySelector("img.cover")).toBeNull());
+
+    await rerender({
+      ...props,
+      coverRecoveryVersions: new Map([[55, 2]]),
+    });
+
+    await waitFor(() => expect(container.querySelector("img.cover")).toBeNull());
   });
 });

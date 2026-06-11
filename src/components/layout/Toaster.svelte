@@ -1,10 +1,12 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { store, dismissToast } from "../../store/state.svelte";
-  import type { Toast } from "../../store/state.svelte";
+  import { store, dismissToast, setLibraryUpdateProgress } from "../../store/state.svelte";
+  import type { LibraryUpdateProgress, Toast } from "../../store/state.svelte";
 
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const timerVersions = new Map<string, number>();
+  let libraryUpdateTimer: ReturnType<typeof setTimeout> | null = null;
+  let libraryUpdateTimerVersion = 0;
 
   function schedule(t: Toast) {
     const version = t.updatedAt ?? 0;
@@ -17,8 +19,32 @@
     timers.set(t.id, setTimeout(() => dismissToast(t.id), dur));
   }
 
+  function scheduleLibraryUpdate(progress: LibraryUpdateProgress) {
+    const version = progress.updatedAt ?? 0;
+    if (libraryUpdateTimer && libraryUpdateTimerVersion === version) return;
+    if (libraryUpdateTimer) clearTimeout(libraryUpdateTimer);
+    const dur = progress.duration ?? (progress.active ? 0 : 2500);
+    if (dur === 0) {
+      libraryUpdateTimer = null;
+      libraryUpdateTimerVersion = version;
+      return;
+    }
+    libraryUpdateTimerVersion = version;
+    libraryUpdateTimer = setTimeout(() => {
+      setLibraryUpdateProgress(null);
+      libraryUpdateTimer = null;
+    }, dur);
+  }
+
   $effect(() => {
     store.toasts.forEach(schedule);
+    if (store.libraryUpdateProgress) {
+      scheduleLibraryUpdate(store.libraryUpdateProgress);
+    } else if (libraryUpdateTimer) {
+      clearTimeout(libraryUpdateTimer);
+      libraryUpdateTimer = null;
+      libraryUpdateTimerVersion = 0;
+    }
     for (const id of timers.keys()) {
       if (!store.toasts.some(t => t.id === id)) {
         clearTimeout(timers.get(id));
@@ -32,6 +58,8 @@
     timers.forEach(clearTimeout);
     timers.clear();
     timerVersions.clear();
+    if (libraryUpdateTimer) clearTimeout(libraryUpdateTimer);
+    libraryUpdateTimer = null;
   });
 
   const icons: Record<Toast["kind"], string> = {
@@ -42,8 +70,38 @@
   };
 </script>
 
-{#if store.toasts.length}
+{#if store.toasts.length || store.libraryUpdateProgress}
   <div class="toaster" aria-live="polite">
+    {#if store.libraryUpdateProgress}
+      {@const p = store.libraryUpdateProgress}
+      <div
+        class="toast toast-{p.kind} toast-persistent library-update-toast"
+        role="status"
+        style="--toast-duration: 0ms"
+      >
+        <div class="accent-bar"></div>
+        <span class="icon">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d={icons[p.kind]} />
+          </svg>
+        </span>
+        <div class="body">
+          <p class="title">{p.title}</p>
+          <p class="sub">{p.body}</p>
+          {#if typeof p.percent === "number"}
+            <div class="library-progress-track" aria-hidden="true">
+              <div class="library-progress-fill" style={`width: ${Math.max(0, Math.min(100, p.percent))}%`}></div>
+            </div>
+          {/if}
+        </div>
+        <button class="toast-close" aria-label="Dismiss library update progress" onclick={() => setLibraryUpdateProgress(null)}>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+            <path d="M18 6 6 18M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+    {/if}
     {#each store.toasts as t (t.id)}
       <div
         class="toast toast-{t.kind}"
@@ -201,6 +259,27 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .library-update-toast .body {
+    gap: 5px;
+  }
+
+  .library-progress-track {
+    width: 100%;
+    height: 3px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: rgba(201, 181, 255, 0.12);
+    box-shadow: inset 0 0 0 1px rgba(201, 181, 255, 0.04);
+  }
+
+  .library-progress-fill {
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, rgba(201, 181, 255, 0.92), rgba(164, 134, 255, 0.8));
+    box-shadow: 0 0 14px rgba(201, 181, 255, 0.28);
+    transition: width 220ms ease;
   }
 
   .toast-action {

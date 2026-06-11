@@ -4,27 +4,24 @@
   type Props = {
     domain: "comics" | "books";
     uiVisible?: boolean;
+    isBookmarked?: boolean;
   };
 
-  let { domain, uiVisible = true }: Props = $props();
+  let { domain, uiVisible = true, isBookmarked = false }: Props = $props();
 </script>
 
-<ReaderHud {uiVisible}>
-  {#snippet topbarLeft()}
-    <span data-testid="hud-title">{domain} title</span>
-  {/snippet}
-
-  {#snippet topbarRight()}
-    <button class="icon-btn" data-testid="hud-action">{domain} action</button>
-  {/snippet}
-
+<ReaderHud
+  title={`${domain} title`}
+  chapterTitle={`${domain} chapter`}
+  progressLabel={`${domain} progress`}
+  sliderValue={5}
+  sliderMax={10}
+  sliderPct={50}
+  {isBookmarked}
+  {uiVisible}
+>
   <div data-testid="hud-content">{domain} content</div>
-
-  {#snippet bottombar()}
-    <button class="nav-btn">Prev</button>
-    <div class="slider-wrap">
-      <input class="slider-input" type="range" min="1" max="10" value="5" aria-label="{domain} progress" />
-    </div>
-    <button class="nav-btn">Next</button>
+  {#snippet settingsPopover()}
+    <div data-testid="hud-settings-popover">settings content</div>
   {/snippet}
 </ReaderHud>

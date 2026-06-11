@@ -1,654 +1,306 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import { X, CaretLeft, CaretRight, BookmarkSimple, SlidersHorizontal } from "phosphor-svelte";
 
   type Props = {
-    overlayBars?: boolean;
+    title?: string;
+    chapterTitle?: string;
+    progressLabel?: string;
+    sliderValue?: number;
+    sliderMax?: number;
+    sliderPct?: number;
+    bookmarkPct?: number | null;
+    isBookmarked?: boolean;
+    prevDisabled?: boolean;
+    nextDisabled?: boolean;
     uiVisible?: boolean;
+    rtl?: boolean;
     onMouseMove?: (event: MouseEvent) => void;
-    topbarLeft?: Snippet;
-    topbarRight?: Snippet;
-    sidePanel?: Snippet;
-    bottombar?: Snippet;
+    onclose?: () => void;
+    onprev?: () => void;
+    onnext?: () => void;
+    onjump?: (val: number) => void;
+    onbookmark?: () => void;
+    settingsPopover?: Snippet;
     children?: Snippet;
   };
 
   let {
-    overlayBars = false,
+    title = "",
+    chapterTitle = "",
+    progressLabel = "",
+    sliderValue = 1,
+    sliderMax = 1,
+    sliderPct = 0,
+    bookmarkPct = null,
+    isBookmarked = false,
+    prevDisabled = false,
+    nextDisabled = false,
     uiVisible = true,
+    rtl = false,
     onMouseMove = () => {},
-    topbarLeft,
-    topbarRight,
-    sidePanel,
-    bottombar,
+    onclose = () => {},
+    onprev = () => {},
+    onnext = () => {},
+    onjump = () => {},
+    onbookmark = () => {},
+    settingsPopover,
     children,
+    toolsOpen = $bindable(false),
   }: Props = $props();
 </script>
 
-<div class="root" class:overlay-bars={overlayBars} role="presentation" onmousemove={onMouseMove}>
-  <div class="topbar" class:hidden={!uiVisible}>
-    <div class="topbar-left">
-      {@render topbarLeft?.()}
-    </div>
-    <div class="topbar-right">
-      {@render topbarRight?.()}
-    </div>
-  </div>
-
+<div class="root" role="presentation" onmousemove={onMouseMove}>
+  <!-- Main Reading Viewport Content -->
   {@render children?.()}
-  {@render sidePanel?.()}
 
-  <div class="bottombar" class:hidden={!uiVisible}>
-    {@render bottombar?.()}
+  <!-- Floating UI HUD Overlay -->
+  <div class="reader-hud-overlay" class:hidden={!uiVisible}>
+    <!-- Series / Chapter Title Metadata (Centered above capsule) -->
+    {#if title || chapterTitle}
+      <div class="reader-metadata-title">
+        <span class="series-title">{title}</span>
+        {#if title && chapterTitle}
+          <span class="metadata-sep">—</span>
+        {/if}
+        <span class="chapter-title">{chapterTitle}</span>
+      </div>
+    {/if}
+
+    <!-- Configuration Popover Card (Centered above capsule) -->
+    {#if toolsOpen && settingsPopover}
+      <div class="reader-settings-popover">
+        {@render settingsPopover()}
+      </div>
+    {/if}
+
+    <!-- Bottom Unified Capsule Bar -->
+    <div class="reader-capsule-bar">
+      <!-- 1. Close/Exit -->
+      <button class="capsule-btn" onclick={onclose} title="Close reader">
+        <X size={17} weight="regular" />
+      </button>
+
+      <!-- 2. Page Indicator -->
+      <span class="capsule-progress-label">{progressLabel}</span>
+
+      <!-- 3. Sleek Progress Seekbar -->
+      <div class="capsule-slider-wrap">
+        <div class="capsule-slider-track">
+          <div class="capsule-slider-fill" style="width: {rtl ? 100 - sliderPct : sliderPct}%"></div>
+        </div>
+        {#if bookmarkPct !== null && bookmarkPct !== undefined}
+          <div class="capsule-slider-checkpoint" style="left: {rtl ? 100 - bookmarkPct : bookmarkPct}%"></div>
+        {/if}
+        <input
+          type="range"
+          class="capsule-slider-input"
+          min={1}
+          max={sliderMax}
+          step={1}
+          value={sliderValue}
+          dir={rtl ? "rtl" : "ltr"}
+          oninput={(event) => onjump(Number(event.currentTarget.value))}
+          aria-label="Seek page/chapter"
+        />
+      </div>
+
+      <!-- 4. Navigation Arrows -->
+      <button class="capsule-btn" onclick={onprev} disabled={prevDisabled} title="Previous">
+        <CaretLeft size={16} weight="regular" />
+      </button>
+      <button class="capsule-btn" onclick={onnext} disabled={nextDisabled} title="Next">
+        <CaretRight size={16} weight="regular" />
+      </button>
+
+      <!-- 5. Bookmark Toggle -->
+      <button class="capsule-btn" class:active={isBookmarked} onclick={onbookmark} title="Bookmark">
+        <BookmarkSimple size={17} weight={isBookmarked ? "fill" : "regular"} />
+      </button>
+
+      <!-- 6. Settings Cog -->
+      <button class="capsule-btn" class:active={toolsOpen} onclick={() => toolsOpen = !toolsOpen} title="Settings">
+        <SlidersHorizontal size={17} weight="regular" />
+      </button>
+    </div>
   </div>
 </div>
 
 <style>
   .root {
-    --reader-void: var(--n-background, #131313);
-    --reader-panel: rgba(20, 19, 38, 0.92);
-    --reader-panel-soft: rgba(255, 255, 255, 0.02);
-    --reader-line: rgba(202, 196, 208, 0.08);
-    --reader-line-strong: rgba(184, 167, 234, 0.16);
-    --reader-text: var(--n-on-surface, #f1eefc);
-    --reader-muted: rgba(207, 200, 236, 0.74);
-    --reader-faint: rgba(148, 139, 172, 0.62);
-    --reader-accent: var(--n-primary, #b8a7ea);
-    --reader-accent-2: var(--accent-bright, #b8adff);
-    --reader-active-ink: #211b3b;
+    --reader-void: #050505;
+    --reader-panel: #131316;
+    --reader-line: #282830;
+    --reader-line-strong: #383842;
+    --reader-text: #f5f4fa;
+    --reader-muted: #b9b5cc;
+    --reader-faint: #918da5;
+    --reader-accent: #8f82e6;
+    --reader-accent-dim: #2c2547;
+    --reader-accent-bright: #ab9fff;
     position: fixed;
     inset: 0;
     z-index: var(--z-reader);
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    background:
-      var(--n-gradient-bg, linear-gradient(180deg, #15151a 0%, #131313 100%)),
-      var(--reader-void);
+    background: radial-gradient(circle at top center, rgba(255, 255, 255, 0.015), transparent 45%), linear-gradient(180deg, #0a0a0c 0%, #050506 100%);
     color: var(--reader-text);
     font-family: Manrope, Inter, "Segoe UI", sans-serif;
     transform: translateZ(0);
   }
 
-  .root::after {
-    content: "";
+  .reader-hud-overlay {
     position: absolute;
     inset: 0;
+    z-index: 10;
     pointer-events: none;
-    background:
-      linear-gradient(90deg, rgba(255, 255, 255, 0.018), transparent 18%, transparent 82%, rgba(255, 255, 255, 0.012)),
-      repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.01) 0 1px, transparent 1px 9px);
-    opacity: 0.22;
-  }
-
-  .overlay-bars .topbar {
-    position: absolute;
-    top: 14px;
-    left: 16px;
-    right: 16px;
-    z-index: 40;
-    margin: 0;
-  }
-
-  .overlay-bars .bottombar {
-    position: absolute;
-    bottom: 14px;
-    left: 16px;
-    right: 16px;
-    z-index: 40;
-    margin: 0;
-  }
-
-  .overlay-bars :global(.viewer) {
-    height: 100%;
-  }
-
-  .topbar,
-  .bottombar {
-    border: 0;
-    background:
-      linear-gradient(180deg, rgba(19, 19, 19, 0.72), rgba(19, 19, 19, 0.48)),
-      rgba(20, 19, 30, 0.42);
-    box-shadow: none;
-    backdrop-filter: blur(24px) saturate(160%);
-    position: relative;
-    z-index: 3;
-    transition: opacity 220ms ease, transform 220ms ease;
-  }
-
-  .topbar {
     display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    min-height: 56px;
-    height: 56px;
-    margin: 0;
-    padding: 0 18px;
-    border-bottom: 1px solid var(--reader-line);
-    border-radius: 0;
+    padding-bottom: 24px;
+    transition: opacity 220ms ease;
   }
 
-  .bottombar {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    min-height: 54px;
-    height: 54px;
-    margin: 0;
-    padding: 8px 16px;
-    border-top: 1px solid var(--reader-line);
-    border-radius: 0;
-  }
-
-  .topbar.hidden,
-  .bottombar.hidden {
+  .reader-hud-overlay.hidden {
     opacity: 0;
     pointer-events: none;
-    transform: translateY(-4px);
   }
 
-  .bottombar.hidden {
-    transform: translateY(4px);
-  }
-
-  .topbar-left,
-  .topbar-right {
+  /* Series / Chapter Title Overlay (Centered above capsule) */
+  .reader-metadata-title {
+    pointer-events: auto;
     display: flex;
     align-items: center;
-    min-width: 0;
-  }
-
-  .topbar-left,
-  .topbar-right,
-  .topbar :global(.mode-extras) {
-    gap: 5px;
-  }
-
-  .topbar-left {
+    gap: 8px;
+    margin-bottom: 14px;
+    background: rgba(10, 10, 14, 0.9);
+    border: 1px solid rgba(143, 130, 230, 0.25);
+    border-radius: 9999px;
+    padding: 8px 16px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--reader-faint);
+    box-shadow: 
+      0 6px 20px rgba(0, 0, 0, 0.35),
+      0 0 10px rgba(143, 130, 230, 0.05);
+    backdrop-filter: blur(8px);
+    white-space: nowrap;
+    text-overflow: ellipsis;
     overflow: hidden;
+    max-width: 90%;
   }
 
-  .topbar-right {
-    justify-content: flex-end;
-  }
-
-  .topbar :global(.icon-btn),
-  .topbar :global(.mode-btn),
-  .bottombar :global(.nav-btn) {
+  .reader-metadata-title .series-title {
     color: var(--reader-muted);
-    border: 1px solid rgba(202, 196, 208, 0.06);
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0.01)),
-      rgba(255, 255, 255, 0.018);
-    box-shadow: none;
-    transition:
-      color 150ms ease,
-      background 150ms ease,
-      border-color 150ms ease,
-      transform 150ms ease,
-      box-shadow 150ms ease;
   }
 
-  .topbar :global(.icon-btn),
-  .bottombar :global(.nav-btn) {
+  .reader-metadata-title .chapter-title {
+    color: var(--reader-text);
+    font-weight: 800;
+  }
+
+  .reader-metadata-title .metadata-sep {
+    color: rgba(143, 130, 230, 0.4);
+  }
+
+  /* Unified Bottom Capsule Bar */
+  .reader-capsule-bar {
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: min(520px, calc(100% - 32px));
+    height: 54px;
+    background: var(--reader-panel);
+    border: 1px solid rgba(143, 130, 230, 0.28);
+    border-radius: 9999px;
+    padding: 0 16px;
+    box-shadow:
+      0 16px 48px rgba(0, 0, 0, 0.6),
+      0 0 16px rgba(143, 130, 230, 0.06),
+      inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    backdrop-filter: blur(20px) saturate(140%);
+  }
+
+  /* Capsule Buttons */
+  .capsule-btn {
     display: inline-grid;
     place-items: center;
-    width: 32px;
-    height: 32px;
+    width: 34px;
+    height: 34px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 9999px;
+    color: var(--reader-muted);
+    background: rgba(255, 255, 255, 0.02);
+    cursor: pointer;
     flex-shrink: 0;
-    border-radius: 10px;
+    transition:
+      color 150ms ease,
+      border-color 150ms ease,
+      background 150ms ease,
+      transform 150ms ease;
   }
 
-  .topbar :global(.mode-btn) {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    min-height: 30px;
-    padding: 0 10px;
-    flex-shrink: 0;
-    border-radius: 10px;
-    font-family: Manrope, Inter, "Segoe UI", sans-serif;
-    font-size: 10px;
-    font-weight: 850;
-    letter-spacing: 0.065em;
-  }
-
-  .topbar :global(.mode-status) {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    min-height: 30px;
-    padding: 0 10px;
-    flex-shrink: 0;
-    border: 1px solid rgba(202, 196, 208, 0.06);
-    border-radius: 10px;
-    color: var(--reader-faint);
-    background: rgba(255, 255, 255, 0.018);
-    font-family: Manrope, Inter, "Segoe UI", sans-serif;
-    font-size: 10px;
-    font-weight: 850;
-    letter-spacing: 0.065em;
-  }
-
-  .topbar :global(.icon-btn:hover:not(:disabled)),
-  .topbar :global(.mode-btn:hover:not(:disabled)),
-  .bottombar :global(.nav-btn:hover:not(:disabled)) {
+  .capsule-btn:hover:not(:disabled) {
     color: var(--reader-text);
-    border-color: var(--reader-line-strong);
-    background:
-      linear-gradient(180deg, rgba(184, 167, 234, 0.11), rgba(184, 167, 234, 0.04)),
-      rgba(184, 167, 234, 0.035);
+    border-color: rgba(143, 130, 230, 0.35);
+    background: rgba(143, 130, 230, 0.12);
     transform: translateY(-1px);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.05),
-      0 4px 12px rgba(0, 0, 0, 0.12);
   }
 
-  .topbar :global(.icon-btn.active),
-  .topbar :global(.mode-btn.active) {
-    color: var(--reader-text);
-    color: var(--reader-accent);
-    border-color: rgba(184, 167, 234, 0.16);
-    background: rgba(184, 167, 234, 0.1);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.06),
-      0 8px 18px rgba(0, 0, 0, 0.18);
+  .capsule-btn.active {
+    color: var(--reader-accent-bright);
+    background: var(--reader-accent-dim);
+    border-color: rgba(143, 130, 230, 0.5);
   }
 
-  .topbar :global(button:disabled),
-  .bottombar :global(button:disabled) {
+  .capsule-btn:disabled {
     opacity: 0.22;
     cursor: default;
+    border-color: transparent;
   }
 
-  .topbar :global(.ch-label) {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    min-width: 0;
-    margin-left: 5px;
-    overflow: hidden;
-    color: var(--reader-faint);
-    font-family: Manrope, Inter, "Segoe UI", sans-serif;
+  /* Progress Label */
+  .capsule-progress-label {
     font-size: 11px;
-    font-weight: 750;
-    letter-spacing: 0.045em;
-    white-space: nowrap;
-  }
-
-  .topbar :global(.reader-title) {
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    margin-left: 5px;
-  }
-
-  .topbar :global(.reader-title strong) {
-    max-width: 520px;
-    overflow: hidden;
-    color: var(--reader-text);
-    font-size: 13px;
-    font-weight: 850;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    letter-spacing: 0;
-  }
-
-  .topbar :global(.reader-title span) {
-    overflow: hidden;
-    color: var(--reader-faint);
-    font-size: 10px;
-    font-weight: 750;
-    letter-spacing: 0.045em;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .topbar :global(.ch-title) {
-    max-width: 520px;
-    overflow: hidden;
-    color: var(--reader-text);
-    font-size: 13px;
-    font-weight: 850;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    letter-spacing: 0;
-  }
-
-  .topbar :global(.ch-sep),
-  .topbar :global(.page-label),
-  .topbar :global(.reader-progress-text) {
-    color: var(--reader-faint);
-  }
-
-  .topbar :global(.page-label) {
-    display: none;
-    font-family: Manrope, Inter, "Segoe UI", sans-serif;
-    font-size: 10px;
-    font-weight: 750;
-    letter-spacing: 0.045em;
-    white-space: nowrap;
-  }
-
-  .topbar :global(.top-sep) {
-    width: 1px;
-    height: 18px;
-    margin: 0 4px;
-    background: var(--reader-line);
-  }
-
-  .topbar :global(.zoom-wrap) {
-    position: relative;
-    flex-shrink: 0;
-  }
-
-  .topbar :global(.zoom-inline) {
-    display: flex;
-    align-items: center;
-    gap: 1px;
-    overflow: hidden;
-    border: 1px solid rgba(202, 196, 208, 0.06);
-    border-radius: 10px;
-    background: var(--reader-panel-soft);
-  }
-
-  .topbar :global(.zoom-step-btn),
-  .topbar :global(.zoom-pct-btn) {
-    height: 28px;
-    color: var(--reader-muted);
-    font-family: Manrope, Inter, "Segoe UI", sans-serif;
-    font-size: 10px;
-    font-weight: 850;
-    letter-spacing: 0.045em;
-  }
-
-  .topbar :global(.zoom-step-btn) {
-    width: 26px;
-  }
-
-  .topbar :global(.zoom-pct-btn) {
-    min-width: 42px;
-    padding: 0 8px;
-    border-inline: 1px solid var(--reader-line);
-  }
-
-  .topbar :global(.zoom-popover) {
-    position: absolute;
-    top: calc(100% + 6px);
-    left: 50%;
-    z-index: 100;
-    min-width: 168px;
-    translate: -50% 0;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding: 10px;
-    border: 1px solid var(--reader-line-strong);
-    border-radius: 12px;
-    background: rgba(20, 19, 38, 0.96);
-    box-shadow: 0 20px 56px rgba(0, 0, 0, 0.48);
-    animation: readerHudScaleIn 160ms ease both;
-  }
-
-  .topbar :global(.zoom-slider) {
-    width: 100%;
-    height: 4px;
-    appearance: none;
-    -webkit-appearance: none;
-    border-radius: 999px;
-    background: rgba(212, 204, 230, 0.12);
-  }
-
-  .topbar :global(.zoom-slider::-webkit-slider-thumb) {
-    -webkit-appearance: none;
-    width: 12px;
-    height: 12px;
-    border-radius: 999px;
-    background: var(--reader-accent);
-  }
-
-  .topbar :global(.zoom-reset) {
-    min-height: 28px;
-    border: 1px solid rgba(202, 196, 208, 0.06);
-    border-radius: 10px;
-    color: var(--reader-muted);
-    font-family: Manrope, Inter, "Segoe UI", sans-serif;
-    font-size: 10px;
-    font-weight: 850;
-    letter-spacing: 0.045em;
-  }
-
-  :global(.reader-tools-panel) {
-    position: absolute;
-    top: 72px;
-    right: 20px;
-    z-index: 12;
-    width: min(236px, calc(100vw - 40px));
-    padding: 14px;
-    border: 1px solid var(--reader-line-strong);
-    border-radius: 16px;
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.008)),
-      rgba(20, 19, 38, 0.94);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.04),
-      0 24px 72px rgba(0, 0, 0, 0.54);
-    backdrop-filter: blur(28px) saturate(165%);
-    font-family: Manrope, Inter, "Segoe UI", sans-serif;
-    animation: readerToolsIn 180ms ease both;
-  }
-
-  :global(.reader-tools-panel__header) {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 3px 8px;
-    align-items: center;
-    padding: 0 0 8px;
-  }
-
-  :global(.reader-tools-panel__eyebrow) {
-    grid-column: 1;
-    font-family: Manrope, Inter, "Segoe UI", sans-serif;
-    font-size: 9px;
     font-weight: 800;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--reader-accent);
-  }
-
-  :global(.reader-tools-panel__header strong) {
-    grid-column: 1;
-    font-size: 12px;
-    color: var(--reader-text);
-  }
-
-  :global(.reader-tools-panel__close) {
-    grid-column: 2;
-    grid-row: 1 / span 2;
-    display: grid;
-    place-items: center;
-    width: 28px;
-    height: 28px;
-    border: 1px solid var(--reader-line);
-    border-radius: 10px;
     color: var(--reader-muted);
-    background: rgba(255, 255, 255, 0.018);
-    transition: color 180ms ease, border-color 180ms ease, background 180ms ease;
-  }
-
-  :global(.reader-tools-panel__close:hover) {
-    color: var(--reader-text);
-    border-color: var(--reader-line-strong);
-    background: rgba(201, 181, 255, 0.08);
-  }
-
-  :global(.reader-tools-segment) {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 3px;
-    padding: 4px;
-    border: 1px solid rgba(212, 204, 230, 0.075);
-    border-radius: 12px;
-    background: rgba(255, 255, 255, 0.018);
-  }
-
-  :global(.reader-tools-segment button),
-  :global(.reader-tools-list button) {
-    min-height: 28px;
-    border-radius: 10px;
-    font-family: Manrope, Inter, "Segoe UI", sans-serif;
-    font-size: 10px;
-    font-weight: 800;
     letter-spacing: 0.05em;
-    color: var(--reader-muted);
-    transition: background 180ms ease, color 180ms ease, transform 180ms ease;
+    min-width: 50px;
+    text-align: center;
+    white-space: nowrap;
   }
 
-  :global(.reader-tools-segment button.active) {
-    color: var(--reader-text);
-    color: var(--reader-accent);
-    background: rgba(184, 167, 234, 0.1);
-  }
-
-  :global(.reader-tools-segment button:disabled),
-  :global(.reader-tools-list button:disabled) {
-    opacity: 0.32;
-    cursor: default;
-  }
-
-  :global(.reader-tools-segment button:not(.active):hover),
-  :global(.reader-tools-list button:hover:not(:disabled)) {
-    color: var(--reader-text);
-    background: rgba(184, 167, 234, 0.06);
-  }
-
-  :global(.reader-tools-list) {
-    margin: 8px 0 0;
-  }
-
-  :global(.reader-tools-list div) {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    min-height: 38px;
-    border-top: 1px solid var(--reader-line);
-  }
-
-  :global(.reader-tools-list dt) {
-    font-family: Manrope, Inter, "Segoe UI", sans-serif;
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.05em;
-    color: var(--reader-faint);
-  }
-
-  :global(.reader-tools-list dd) {
-    margin: 0;
-    color: var(--reader-muted);
-    font-family: Manrope, Inter, "Segoe UI", sans-serif;
-    font-size: 10px;
-    font-weight: 800;
-    text-align: right;
-  }
-
-  :global(.reader-tools-list dd > button) {
-    padding: 0 8px;
-    color: var(--reader-text);
-  }
-
-  :global(.reader-tools-select),
-  :global(.reader-tools-number),
-  :global(.reader-tools-color) {
-    max-width: 112px;
-    min-height: 28px;
-    border: 1px solid var(--reader-line);
-    border-radius: 10px;
-    background: rgba(255, 255, 255, 0.018);
-    color: var(--reader-text);
-    font-family: Manrope, Inter, "Segoe UI", sans-serif;
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.03em;
-  }
-
-  :global(.reader-tools-select) {
-    padding: 0 7px;
-  }
-
-  :global(.reader-tools-number) {
-    width: 58px;
-    padding: 0 6px;
-    text-align: right;
-  }
-
-  :global(.reader-tools-color) {
-    width: 44px;
-    padding: 3px;
-    cursor: pointer;
-  }
-
-  :global(.reader-tools-zoom) {
-    display: flex;
-    align-items: center;
-    gap: 3px;
-  }
-
-  .bottombar :global(.progress-block) {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .bottombar :global(.progress-meta) {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 7px;
-  }
-
-  .bottombar :global(.progress-meta span) {
-    color: var(--reader-faint);
-    font-family: Manrope, Inter, "Segoe UI", sans-serif;
-    font-size: 10px;
-    font-weight: 750;
-    letter-spacing: 0.045em;
-  }
-
-  .bottombar :global(.progress-meta strong) {
-    color: var(--reader-accent);
-    font-family: Manrope, Inter, "Segoe UI", sans-serif;
-    font-size: 12px;
-    font-weight: 850;
-  }
-
-  .bottombar :global(.slider-wrap) {
+  /* Sleek Progress Seekbar */
+  .capsule-slider-wrap {
     flex: 1;
     position: relative;
     display: flex;
     align-items: center;
-    height: 12px;
+    height: 100%;
     cursor: pointer;
   }
 
-  .bottombar :global(.slider-track-bg) {
+  .capsule-slider-track {
     position: absolute;
     left: 0;
     right: 0;
     height: 4px;
-    overflow: hidden;
     border-radius: 999px;
-    background: rgba(212, 204, 230, 0.12);
+    background: rgba(255, 255, 255, 0.08);
+    overflow: hidden;
   }
 
-  .bottombar :global(.slider-fill) {
+  .capsule-slider-fill {
     height: 100%;
     border-radius: inherit;
-    background: linear-gradient(90deg, var(--reader-accent), var(--reader-accent-2));
+    background: linear-gradient(90deg, var(--reader-accent), var(--reader-accent-bright));
   }
 
-  .bottombar :global(.slider-input) {
+  .capsule-slider-input {
     position: absolute;
     inset: 0;
     z-index: 2;
@@ -659,7 +311,7 @@
     cursor: pointer;
   }
 
-  .bottombar :global(.slider-checkpoint) {
+  .capsule-slider-checkpoint {
     position: absolute;
     top: 50%;
     z-index: 1;
@@ -667,61 +319,254 @@
     height: 12px;
     border-radius: 999px;
     transform: translate(-50%, -50%);
-    background: rgba(199, 178, 255, 0.38);
+    background: var(--reader-accent-bright);
     pointer-events: none;
   }
 
-  .bottombar :global(.bookmark-checkpoint) {
-    background: var(--reader-accent);
-  }
-
-  .bottombar :global(.slider-tooltip) {
+  /* Configuration Popover Card */
+  .reader-settings-popover {
+    pointer-events: auto;
     position: absolute;
-    bottom: calc(100% + 2px);
-    z-index: 10;
-    transform: translateX(-50%);
-    padding: 2px 6px;
-    border: 1px solid var(--reader-line);
-    border-radius: 999px;
-    background: rgba(15, 14, 21, 0.96);
-    color: var(--reader-muted);
-    font-family: Manrope, Inter, "Segoe UI", sans-serif;
-    font-size: 10px;
-    letter-spacing: 0.045em;
-    white-space: nowrap;
-    pointer-events: none;
+    bottom: 88px;
+    z-index: 100;
+    width: min(340px, calc(100vw - 32px));
+    max-height: calc(100vh - 140px);
+    overflow-y: auto;
+    background: rgba(19, 19, 22, 0.96);
+    border: 1px solid rgba(143, 130, 230, 0.28);
+    border-radius: 18px;
+    padding: 18px;
+    box-shadow:
+      0 24px 64px rgba(0, 0, 0, 0.7),
+      0 0 20px rgba(143, 130, 230, 0.08),
+      inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    backdrop-filter: blur(20px) saturate(140%);
+    animation: popoverIn 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
-  @keyframes readerHudScaleIn {
+  @keyframes popoverIn {
     from {
       opacity: 0;
-      transform: scale(0.97);
+      transform: translateY(6px) scale(0.98);
     }
     to {
       opacity: 1;
-      transform: scale(1);
+      transform: translateY(0) scale(1);
     }
   }
 
-  @media (max-width: 1180px) {
+  /* Universal Popover styling details for slots */
+  .reader-settings-popover :global(dl) {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
   }
 
-  @media (max-width: 720px) {
-    .topbar,
-    .bottombar {
-      margin-inline: 0;
-      border-radius: 0;
-    }
+  .reader-settings-popover :global(dl > div) {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 32px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    padding-top: 10px;
+  }
 
-    .topbar :global(.mode-label),
-    .topbar :global(.ch-sep),
-    .topbar :global(.page-label) {
-      display: none;
-    }
+  .reader-settings-popover :global(dl > div:first-child) {
+    border-top: 0;
+    padding-top: 0;
+  }
 
-    .topbar :global(.mode-btn) {
-      min-width: 32px;
-      padding: 0 8px;
-    }
+  .reader-settings-popover :global(dt) {
+    font-size: 11px;
+    font-weight: 800;
+    color: var(--reader-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .reader-settings-popover :global(dd) {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .reader-settings-popover :global(.popover-segmented) {
+    display: flex;
+    background: rgba(0, 0, 0, 0.45);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 8px;
+    padding: 2px;
+    overflow: hidden;
+  }
+
+  .reader-settings-popover :global(.popover-segment) {
+    border: 0;
+    background: transparent;
+    color: var(--reader-muted);
+    font-size: 10.5px;
+    font-weight: 800;
+    padding: 5px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: color 150ms, background 150ms;
+  }
+
+  .reader-settings-popover :global(.popover-segment:hover) {
+    color: var(--reader-text);
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  .reader-settings-popover :global(.popover-segment.active) {
+    color: var(--reader-accent-bright);
+    background: rgba(143, 130, 230, 0.42);
+    border: 1px solid rgba(143, 130, 230, 0.15);
+  }
+
+  .reader-settings-popover :global(.popover-btn) {
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: rgba(0, 0, 0, 0.45);
+    color: var(--reader-text);
+    font-size: 11px;
+    font-weight: 800;
+    padding: 5px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: color 150ms, border-color 150ms, background 150ms;
+  }
+
+  .reader-settings-popover :global(.popover-btn:hover:not(:disabled)) {
+    color: var(--reader-text);
+    border-color: rgba(143, 130, 230, 0.45);
+    background: rgba(143, 130, 230, 0.12);
+  }
+
+  .reader-settings-popover :global(.popover-btn:disabled) {
+    opacity: 0.3;
+    cursor: default;
+  }
+
+  .reader-settings-popover :global(.popover-select) {
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: rgba(0, 0, 0, 0.45);
+    color: var(--reader-text);
+    font-size: 11px;
+    font-weight: 700;
+    padding: 5px 8px;
+    border-radius: 6px;
+    outline: none;
+    max-width: 140px;
+  }
+
+  .reader-settings-popover :global(.popover-stepper) {
+    display: flex;
+    align-items: center;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 6px;
+    overflow: hidden;
+    background: rgba(0, 0, 0, 0.45);
+  }
+
+  .reader-settings-popover :global(.popover-step-btn) {
+    border: 0;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--reader-text);
+    width: 24px;
+    height: 24px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+  }
+
+  .reader-settings-popover :global(.popover-step-btn:hover:not(:disabled)) {
+    background: rgba(143, 130, 230, 0.15);
+    color: var(--reader-accent-bright);
+  }
+
+  .reader-settings-popover :global(.popover-step-btn:disabled) {
+    opacity: 0.25;
+  }
+
+  .reader-settings-popover :global(.popover-step-val) {
+    font-size: 11px;
+    font-weight: 850;
+    color: var(--reader-text);
+    min-width: 48px;
+    text-align: center;
+    border-inline: 1px solid rgba(255, 255, 255, 0.16);
+    line-height: 24px;
+  }
+
+  .reader-settings-popover :global(.popover-color-swatches) {
+    display: flex;
+    gap: 5px;
+  }
+
+  .reader-settings-popover :global(.popover-swatch) {
+    width: 16px;
+    height: 16px;
+    border-radius: 9999px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    cursor: pointer;
+    padding: 0;
+    transition: transform 120ms;
+  }
+
+  .reader-settings-popover :global(.popover-swatch:hover) {
+    transform: scale(1.2);
+  }
+
+  .reader-settings-popover :global(.popover-swatch.active) {
+    border: 2px solid var(--reader-accent-bright);
+    transform: scale(1.15);
+  }
+
+  .reader-settings-popover :global(.popover-color-picker) {
+    width: 22px;
+    height: 22px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    padding: 0;
+    background: transparent;
+    cursor: pointer;
+    border-radius: 9999px;
+    overflow: hidden;
+  }
+
+  .reader-settings-popover :global(.popover-toggle) {
+    width: 34px;
+    height: 18px;
+    border-radius: 9999px;
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    background: rgba(0, 0, 0, 0.45);
+    position: relative;
+    cursor: pointer;
+    padding: 0;
+    transition: background-color 150ms, border-color 150ms;
+  }
+
+  .reader-settings-popover :global(.popover-toggle::after) {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+    border-radius: 9999px;
+    background: var(--reader-muted);
+    transition: transform 150ms, background-color 150ms;
+  }
+
+  .reader-settings-popover :global(.popover-toggle.active) {
+    background-color: var(--reader-accent-dim);
+    border-color: var(--reader-accent);
+  }
+
+  .reader-settings-popover :global(.popover-toggle.active::after) {
+    transform: translateX(16px);
+    background-color: var(--reader-accent-bright);
   }
 </style>

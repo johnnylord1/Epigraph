@@ -166,3 +166,28 @@
 - Directed inline SVGs to use `object-fit: contain !important` to guarantee icons are never clipped or distorted by the slanted edge, while preserving `object-fit: cover` for country flags.
 - Adjusted the left padding of `.source-metric-downloaded.has-flag` to `6.5cqw` to align with the new `-5cqw` flag overlap margin, preventing any text overlap.
 - Increased the transparency of the frosted glass background to `0.65` in dark mode (`rgba(245, 243, 255, 0.65)`) and `0.75` in light mode (`rgba(15, 12, 30, 0.75)`) as requested.
+
+## 2026-06-10 - Unified Capsule Reader HUD and Global Settings Sync
+- Standardized all desktop readers (Manga, EPUB, PDF, Web Novel) to share a single base structure in `ReaderHud.svelte` featuring a bottom floating capsule bar (`#0d0d1b` background, `94%` opacity, `#393355` border) and centered metadata floating slightly above the capsule.
+- Embedded reader-specific preferences within a Svelte-snippet floating popover card positioned above the capsule.
+- Isolated reader styling entirely inside Svelte components instead of modifying the global `nocturne-port.css` stylesheet, avoiding global namespace pollution and improving style encapsulation.
+- Synchronized all reader preferences (page style, reading direction, preloading, prose typography, custom palettes, and PDF settings) to be reactive with both the active popover controls and the global `Settings > Reader` view defaults.
+
+## 2026-06-10 - Reader HUD mockup visual alignment and load stabilization
+- Refined `ReaderHud.svelte` styling to match the mockup 1:1:
+  - Root background set to a desaturated dark slate gradient (`#181824` to `#101016`) with a subtle radial lavender highlight (`rgba(143, 130, 230, 0.08)`).
+  - Capsule bar background set to `#13131c` with a `#393355` border, and compacted to `width: min(480px, calc(100% - 32px))` to make it sleek.
+  - Capsule buttons modified to use fully transparent backgrounds and borderless designs by default, showing soft background overlays (`rgba(255, 255, 255, 0.05)`) only on hover and active states.
+- Restored and validated the full `ReaderHud` integration in `Reader.svelte` (Manga) after previous git checkout discards.
+- Hardened manga loading by adding a 4-second timeout safeguard in `measureAspect` within `Reader.svelte` to resolve image aspect ratio checks and prevent layout freezes/infinite spinner hangs when Tauri HTTP fetches stall.
+
+## 2026-06-10 - Reader HUD toolsOpen and auto-hide timer synchronized
+- Integrated the internal `toolsOpen` state of `ReaderHud` as a Svelte 5 bindable prop to allow parent components (`Reader`, `BookReader`, `NovelReader`) to dynamically monitor its open state.
+- Modified the parent auto-hide `showUi()` timer to immediately return and bypass HUD scheduling while the settings popover is open.
+- Introduced a reactive `$effect` in parents to immediately reveal the HUD and clear any pending timers when the popover opens, and schedule standard auto-hide timers when it is closed. This prevents the settings popover from fading out and becoming unclickable during active user interaction.
+
+## 2026-06-10 - Reader HUD panel backgrounds unified and contrast enhanced
+- Refined the reader void background to a pure desaturated black/grey scale gradient (`#0a0a0c` to `#050506`, with radial highlight `rgba(255, 255, 255, 0.015)`) across Comics, Book, and Novel reader viewports to eliminate purple/violet tints.
+- Unified the background and border styling for both the settings popover and the download modal to matching grey colors (`#242428` / `rgba(36, 36, 40, 0.96)` background, `#42424b` border) which are identical and slightly lighter than before.
+- Enhanced the visual contrast of all interactive panel controls (segmented switches, action buttons, dropdown selects, page steppers, and list options) in relation to the panels and HUD by applying distinct borders (`rgba(255, 255, 255, 0.18)`) and backgrounds (`rgba(255, 255, 255, 0.08)` or `rgba(0, 0, 0, 0.24)` / active `rgba(143, 130, 230, 0.35)`) to clearly separate them.
+- Restyled the download manager modal in `Reader.svelte` to match the exact compact button dimensions, border-radii (`8px`), padding, and smaller font parameters of the settings popover, replacing the large light buttons with clean dark contrast cards (`rgba(0, 0, 0, 0.2)`) and matching borders.

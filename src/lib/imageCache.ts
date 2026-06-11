@@ -118,6 +118,26 @@ async function getHttpModule(): Promise<HttpModule> {
   return httpModulePromise;
 }
 
+function fetchWithTimeout(
+  fetchFn: typeof import("@tauri-apps/plugin-http").fetch,
+  url: string,
+  init: RequestInit,
+  timeoutMs = 4000,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  return fetchFn(url, { ...init, signal: controller.signal })
+    .then((res) => {
+      clearTimeout(timer);
+      return res;
+    })
+    .catch((err) => {
+      clearTimeout(timer);
+      throw err;
+    });
+}
+
 async function ensureResolvedBlobEntry(url: string): Promise<CacheEntry> {
   const authHeader = getServerAuthHeader();
   if (!authHeader) {
@@ -157,7 +177,7 @@ async function ensureResolvedBlobEntry(url: string): Promise<CacheEntry> {
 
   const request = getHttpModule()
     .then(({ fetch }) =>
-      fetch(url, {
+      fetchWithTimeout(fetch, url, {
         headers: {
           Authorization: authHeader,
         },

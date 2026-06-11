@@ -49,12 +49,16 @@
 
   const pageComponentPromises = new Map<PageKey, Promise<any>>();
   const detailComponentPromises = new Map<DetailKey, Promise<any>>();
+  const pageComponentCache = new Map<PageKey, any>();
+  const detailComponentCache = new Map<DetailKey, any>();
   let pageComponent = $state<any>(null);
   let pageKey = $state<PageKey | null>(null);
+  let pageLoadedKey = $state<PageKey | null>(null);
   let pageError = $state<string | null>(null);
   let pageLoadRequestId = 0;
   let detailComponent = $state<any>(null);
   let detailKey = $state<DetailKey | null>(null);
+  let detailLoadedKey = $state<DetailKey | null>(null);
   let detailError = $state<string | null>(null);
   let detailLoadRequestId = 0;
 
@@ -76,13 +80,26 @@
     pageKey = nextKey;
     pageError = null;
 
+    const cachedComponent = pageComponentCache.get(nextKey);
+    if (cachedComponent) {
+      pageComponent = cachedComponent;
+      pageLoadedKey = nextKey;
+      return;
+    }
+
+    pageComponent = null;
+    pageLoadedKey = null;
+
     try {
       const component = await getCachedComponent(pageComponentPromises, nextKey, pageLoaders[nextKey]);
       if (requestId !== pageLoadRequestId) return;
+      pageComponentCache.set(nextKey, component);
       pageComponent = component;
+      pageLoadedKey = nextKey;
     } catch (error) {
       if (requestId !== pageLoadRequestId) return;
       pageComponent = null;
+      pageLoadedKey = null;
       pageError = error instanceof Error ? error.message : String(error);
       console.error(`Failed to load page "${nextKey}":`, error);
     }
@@ -93,13 +110,26 @@
     detailKey = nextKey;
     detailError = null;
 
+    const cachedComponent = detailComponentCache.get(nextKey);
+    if (cachedComponent) {
+      detailComponent = cachedComponent;
+      detailLoadedKey = nextKey;
+      return;
+    }
+
+    detailComponent = null;
+    detailLoadedKey = null;
+
     try {
       const component = await getCachedComponent(detailComponentPromises, nextKey, detailLoaders[nextKey]);
       if (requestId !== detailLoadRequestId) return;
+      detailComponentCache.set(nextKey, component);
       detailComponent = component;
+      detailLoadedKey = nextKey;
     } catch (error) {
       if (requestId !== detailLoadRequestId) return;
       detailComponent = null;
+      detailLoadedKey = null;
       detailError = error instanceof Error ? error.message : String(error);
       console.error(`Failed to load detail page "${nextKey}":`, error);
     }
@@ -114,6 +144,7 @@
     if (navPage === "settings" || navPage === "downloads") {
       detailKey = null;
       detailComponent = null;
+      detailLoadedKey = null;
       detailError = null;
       return;
     }
@@ -130,6 +161,7 @@
 
     detailKey = null;
     detailComponent = null;
+    detailLoadedKey = null;
   });
 
   onMount(() => {
@@ -162,7 +194,7 @@
             }]}
           />
         </div>
-      {:else if pageComponent && pageKey === navPage}
+      {:else if pageComponent && pageLoadedKey === navPage}
         {@const Page = pageComponent}
         <Page
           {onOpenThemeEditor}
@@ -184,7 +216,7 @@
     {/key}
 
     {#if navPage !== "settings" && navPage !== "downloads" && !readerActive}
-      {#if detailComponent && ((detailKey === "series" && store.activeManga) || (detailKey === "book" && hasActiveBook))}
+      {#if detailComponent && ((detailLoadedKey === "series" && store.activeManga) || (detailLoadedKey === "book" && hasActiveBook))}
         {@const DetailPage = detailComponent}
         <div class="detail-layer">
           <DetailPage />

@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/svelte";
+import { cleanup, render, screen, fireEvent } from "@testing-library/svelte";
 import { afterEach, describe, expect, it } from "vitest";
 import ReaderHudFixture from "./ReaderHud.test.fixture.svelte";
 
@@ -14,26 +14,25 @@ describe("ReaderHud", () => {
       },
     });
 
-    expect(screen.getByTestId("hud-title").textContent).toBe("comics title");
-    expect(screen.getByTestId("hud-action").textContent).toBe("comics action");
-    expect(screen.getByLabelText("comics progress")).not.toBeNull();
-    expect(container.querySelector(".topbar")).not.toBeNull();
-    expect(container.querySelector(".bottombar")).not.toBeNull();
+    expect(container.querySelector(".series-title")?.textContent).toBe("comics title");
+    expect(container.querySelector(".chapter-title")?.textContent).toBe("comics chapter");
+    expect(screen.getByText("comics progress")).not.toBeNull();
+    expect(container.querySelector(".reader-capsule-bar")).not.toBeNull();
   });
 
   it("renders the same HUD chrome with books adapter content", () => {
-    render(ReaderHudFixture, {
+    const { container } = render(ReaderHudFixture, {
       props: {
         domain: "books",
       },
     });
 
-    expect(screen.getByTestId("hud-title").textContent).toBe("books title");
-    expect(screen.getByTestId("hud-action").textContent).toBe("books action");
-    expect(screen.getByLabelText("books progress")).not.toBeNull();
+    expect(container.querySelector(".series-title")?.textContent).toBe("books title");
+    expect(container.querySelector(".chapter-title")?.textContent).toBe("books chapter");
+    expect(screen.getByText("books progress")).not.toBeNull();
   });
 
-  it("hides top and bottom chrome without unmounting adapter content", () => {
+  it("hides HUD chrome overlay without unmounting adapter content", () => {
     const { container } = render(ReaderHudFixture, {
       props: {
         domain: "books",
@@ -41,8 +40,27 @@ describe("ReaderHud", () => {
       },
     });
 
-    expect(container.querySelector(".topbar")?.classList.contains("hidden")).toBe(true);
-    expect(container.querySelector(".bottombar")?.classList.contains("hidden")).toBe(true);
+    expect(container.querySelector(".reader-hud-overlay")?.classList.contains("hidden")).toBe(true);
     expect(screen.getByTestId("hud-content").textContent).toBe("books content");
+  });
+
+  it("toggles settings popover on cog click", async () => {
+    const { container } = render(ReaderHudFixture, {
+      props: {
+        domain: "books",
+        uiVisible: true,
+      },
+    });
+
+    // Popover is initially closed
+    expect(screen.queryByTestId("hud-settings-popover")).toBeNull();
+
+    // Click settings button (cog button is the one with title "Settings")
+    const settingsBtn = container.querySelector('button[title="Settings"]');
+    expect(settingsBtn).not.toBeNull();
+    if (settingsBtn) {
+      await fireEvent.click(settingsBtn);
+      expect(screen.getByTestId("hud-settings-popover")).not.toBeNull();
+    }
   });
 });

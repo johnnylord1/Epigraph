@@ -80,6 +80,7 @@
   let bulkMoveOpen = $state(false);
   let failedCoverIds = $state(new Set<number>());
   let coverRetryCounts = $state(new Map<number, number>());
+  let coverWakeAttemptedIds = $state(new Set<number>());
   let cachedCoverUrls = $state(new Map<number, string>());
   let coverCacheCheckedIds = $state(new Set<number>());
   let renderVisible = $state(0);
@@ -222,42 +223,23 @@
   function handleCoverError(cardId: string) {
     const manga = mangaByCardId.get(cardId);
     if (!manga || failedCoverIds.has(manga.id)) return;
-    onCoverErrorDetected(manga.id);
 
-    const attempts = coverRetryCounts.get(manga.id) ?? 0;
-    if (attempts < 2) {
-      if (coverRetryTimers.has(manga.id)) return;
+    if (cachedCoverUrls.has(manga.id)) {
+      const nextCached = new Map(cachedCoverUrls);
+      nextCached.delete(manga.id);
+      cachedCoverUrls = nextCached;
+    }
 
-      const timer = setTimeout(() => {
-        coverRetryTimers.delete(manga.id);
-        const nextRetries = new Map(coverRetryCounts);
-        nextRetries.set(manga.id, attempts + 1);
-        coverRetryCounts = nextRetries;
-      }, 900 * (attempts + 1));
-
-      coverRetryTimers.set(manga.id, timer);
-      return;
+    if (!coverWakeAttemptedIds.has(manga.id)) {
+      const nextWakeAttempted = new Set(coverWakeAttemptedIds);
+      nextWakeAttempted.add(manga.id);
+      coverWakeAttemptedIds = nextWakeAttempted;
+      onCoverErrorDetected(manga.id);
     }
 
     const nextFailed = new Set(failedCoverIds);
     nextFailed.add(manga.id);
     failedCoverIds = nextFailed;
-
-    if (coverRecoveryTimers.has(manga.id)) return;
-
-    const recoveryTimer = setTimeout(() => {
-      coverRecoveryTimers.delete(manga.id);
-
-      const nextFailures = new Set(failedCoverIds);
-      nextFailures.delete(manga.id);
-      failedCoverIds = nextFailures;
-
-      const nextRetries = new Map(coverRetryCounts);
-      nextRetries.set(manga.id, (nextRetries.get(manga.id) ?? 0) + 1);
-      coverRetryCounts = nextRetries;
-    }, 15000);
-
-    coverRecoveryTimers.set(manga.id, recoveryTimer);
   }
 
   function handleCoverLoad(cardId: string) {
@@ -284,6 +266,12 @@
       const nextRetries = new Map(coverRetryCounts);
       nextRetries.delete(manga.id);
       coverRetryCounts = nextRetries;
+    }
+
+    if (coverWakeAttemptedIds.has(manga.id)) {
+      const nextWakeAttempted = new Set(coverWakeAttemptedIds);
+      nextWakeAttempted.delete(manga.id);
+      coverWakeAttemptedIds = nextWakeAttempted;
     }
 
     if (!cachedCoverUrls.has(manga.id)) {
@@ -464,6 +452,9 @@
     if (lastCoverCacheScopeKey && lastCoverCacheScopeKey !== scopeKey) {
       cachedCoverUrls = new Map();
       coverCacheCheckedIds = new Set();
+      failedCoverIds = new Set();
+      coverRetryCounts = new Map();
+      coverWakeAttemptedIds = new Set();
       coverCacheInflight.clear();
       coverCacheWritesInflight.clear();
     }
@@ -497,8 +488,11 @@
         clearTimeout(recoveryTimer);
         coverRecoveryTimers.delete(mangaId);
       }
-      nextFailures.delete(mangaId);
-      nextRetries.set(mangaId, (nextRetries.get(mangaId) ?? 0) + 1);
+      const attempts = nextRetries.get(mangaId) ?? 0;
+      if (attempts < 1) {
+        nextFailures.delete(mangaId);
+        nextRetries.set(mangaId, attempts + 1);
+      }
     }
     failedCoverIds = nextFailures;
     coverRetryCounts = nextRetries;
@@ -515,7 +509,7 @@
     exitSelectMode();
     resetRenderedPage();
     setLibraryScrollTop(0);
-    if (contentEl) contentEl.scrollTo({ top: 0 });
+    if (typeof contentEl?.scrollTo === "function") contentEl.scrollTo({ top: 0 });
   });
 
   $effect(() => {
@@ -547,7 +541,11 @@
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         if (!contentEl) return;
-        contentEl.scrollTo({ top: targetTop });
+        if (typeof contentEl.scrollTo === "function") {
+          contentEl.scrollTo({ top: targetTop });
+        } else {
+          contentEl.scrollTop = targetTop;
+        }
         pendingScrollRestore = false;
         pendingCardRestore = false;
       });

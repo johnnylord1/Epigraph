@@ -98,35 +98,33 @@
       }
     }
 
+    if (!normalized) return "🌐";
+
+    if (normalized.startsWith("pt") || normalized.includes("portug") || normalized === "po" || normalized === "por") {
+      return "🇧🇷";
+    }
+    if (normalized.startsWith("en") || normalized.includes("english") || normalized === "gb") {
+      return "🇬🇧";
+    }
+    if (normalized.startsWith("ja") || normalized.includes("japan") || normalized.includes("日本語")) {
+      return "🇯🇵";
+    }
+    if (normalized.startsWith("ko") || normalized.includes("korean") || normalized.includes("한국어")) {
+      return "🇰🇷";
+    }
+    if (normalized.startsWith("es") || normalized.includes("spani") || normalized.includes("españ") || normalized.includes("espan")) {
+      return "🇪🇸";
+    }
+    if (normalized.startsWith("zh") || normalized.includes("chin") || normalized.includes("中文")) {
+      return "🇨🇳";
+    }
+    if (normalized.startsWith("fr") || normalized.includes("frenc") || normalized.includes("franç") || normalized.includes("franc")) {
+      return "🇫🇷";
+    }
+
     // Split regional subtags (e.g., pt-br -> pt, en-us -> en)
     const baseLang = normalized.split(/[-_]/)[0];
-
-    switch (baseLang) {
-      case "en":
-      case "gb":
-      case "english":
-        return "🇬🇧";
-      case "pt":
-      case "portuguese":
-        return "🇧🇷";
-      case "ja":
-      case "japanese":
-        return "🇯🇵";
-      case "ko":
-      case "korean":
-        return "🇰🇷";
-      case "es":
-      case "spanish":
-        return "🇪🇸";
-      case "zh":
-      case "chinese":
-        return "🇨🇳";
-      case "fr":
-      case "french":
-        return "🇫🇷";
-      default:
-        return baseLang ? baseLang.substring(0, 2).toUpperCase() : "🌐";
-    }
+    return baseLang ? baseLang.substring(0, 2).toUpperCase() : "🌐";
   }
 
   function getCountryCode(lang: string | null | undefined, sourceName?: string | null): string | null {
@@ -152,37 +150,32 @@
 
     if (!normalized) return null;
 
+    if (normalized.startsWith("pt") || normalized.includes("portug") || normalized === "po" || normalized === "por") {
+      return "br";
+    }
+    if (normalized.startsWith("en") || normalized.includes("english") || normalized === "gb") {
+      return "gb";
+    }
+    if (normalized.startsWith("ja") || normalized.includes("japan") || normalized.includes("日本語")) {
+      return "jp";
+    }
+    if (normalized.startsWith("ko") || normalized.includes("korean") || normalized.includes("한국어")) {
+      return "kr";
+    }
+    if (normalized.startsWith("es") || normalized.includes("spani") || normalized.includes("españ") || normalized.includes("espan")) {
+      return "es";
+    }
+    if (normalized.startsWith("zh") || normalized.includes("chin") || normalized.includes("中文")) {
+      return "cn";
+    }
+    if (normalized.startsWith("fr") || normalized.includes("frenc") || normalized.includes("franç") || normalized.includes("franc")) {
+      return "fr";
+    }
+
     // Split regional subtags (e.g., pt-br -> pt, en-us -> en)
     const baseLang = normalized.split(/[-_]/)[0];
-
-    // Map language codes to country codes for flagcdn
-    switch (baseLang) {
-      case "en":
-      case "english":
-      case "gb":
-        return "gb";
-      case "pt":
-      case "portuguese":
-        return "br";
-      case "ja":
-      case "japanese":
-        return "jp";
-      case "ko":
-      case "korean":
-        return "kr";
-      case "zh":
-      case "chinese":
-        return "cn";
-      case "es":
-      case "spanish":
-        return "es";
-      case "fr":
-      case "french":
-        return "fr";
-      default:
-        // If the base language is a 2-character code, use it. Otherwise return null.
-        return baseLang.length === 2 ? baseLang : null;
-    }
+    // If the base language is a 2-character code, use it. Otherwise return null.
+    return baseLang.length === 2 ? baseLang : null;
   }
 </script>
 

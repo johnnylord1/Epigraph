@@ -884,6 +884,7 @@
     {#snippet right()}
       <button
         class="n-icon-btn home-notification-btn"
+        class:has-new-activity={newActivityCount > 0}
         type="button"
         title="Recent activity"
         aria-label={newActivityCount > 0 ? `Recent activity, ${newActivityCount} new` : "Recent activity"}
@@ -1282,7 +1283,7 @@
     border: 1px solid transparent;
     background: transparent;
     color: var(--n-primary-container);
-    font-size: calc(10px * var(--n-hud-scale));
+    font-size: calc(12px * var(--n-hud-scale));
     font-weight: 800;
     letter-spacing: 0.18em;
     text-transform: uppercase;
@@ -1843,31 +1844,39 @@
   }
 
   :global(.home-topbar) .home-notification-btn {
-    width: auto;
+    position: relative;
+    width: calc(38px * var(--n-hud-scale));
     min-width: calc(38px * var(--n-hud-scale));
-    gap: calc(6px * var(--n-hud-scale));
-    padding-inline: calc(10px * var(--n-hud-scale));
+    padding-inline: 0;
   }
 
   .home-notification-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: calc(18px * var(--n-hud-scale));
-    height: calc(18px * var(--n-hud-scale));
-    padding: 0 calc(6px * var(--n-hud-scale));
-    border-radius: 999px;
-    border: 1px solid rgba(211, 196, 255, 0.42);
-    background: var(--n-gradient-primary);
-    color: #17131f;
-    box-shadow:
-      0 0 calc(18px * var(--n-hud-scale)) rgba(184, 167, 234, 0.42),
-      inset 0 1px 0 rgba(255, 255, 255, 0.28);
+    position: absolute;
+    top: calc(6px * var(--n-hud-scale));
+    right: calc(7px * var(--n-hud-scale));
+    display: block;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #c9adff;
+    text-shadow:
+      0 0 calc(7px * var(--n-hud-scale)) rgba(190, 164, 255, 0.95),
+      0 0 calc(14px * var(--n-hud-scale)) rgba(155, 117, 255, 0.58);
     font-family: var(--font-sans);
-    font-size: calc(10px * var(--n-hud-scale));
+    font-size: calc(13px * var(--n-hud-scale));
     font-weight: 900;
-    letter-spacing: 0.02em;
+    letter-spacing: 0;
     line-height: 1;
+    pointer-events: none;
+  }
+
+  :global(.home-topbar) .home-notification-btn.has-new-activity .material-symbols-outlined {
+    color: #c9adff;
+    text-shadow:
+      0 0 calc(8px * var(--n-hud-scale)) rgba(190, 164, 255, 0.95),
+      0 0 calc(18px * var(--n-hud-scale)) rgba(155, 117, 255, 0.64);
+    font-variation-settings: "FILL" 0, "wght" 500, "GRAD" 0, "opsz" 20;
   }
 
   .home-history-view {

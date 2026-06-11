@@ -26,6 +26,7 @@
     GET_RESTORE_STATUS,
     GET_TRACKERS,
     RESTORE_BACKUP,
+    SET_LIBRARY_UPDATE_RULES,
     UPDATE_LIBRARY,
     UPDATE_EXTENSION,
   } from "./lib/queries";
@@ -43,7 +44,10 @@
     setLibrarySection,
     setLibraryMangaSnapshot,
     setLibraryTrackingSummarySnapshot,
+    setLibraryUpdateInFlight,
+    setLibraryUpdateProgress,
     recordLibraryUpdateNotifications,
+    addSystemNotification,
     refreshAppReadingStateFromPersistence,
     setRuntimeSettingsTab,
     setSettingsOpen,
@@ -59,7 +63,13 @@
   import { initRpc, setIdle, clearReading, destroyRpc } from "./lib/discord";
   import { cache, CACHE_GROUPS, CACHE_KEYS, DEFAULT_TTL_MS } from "./lib/cache";
   import { normalizeCategories } from "./lib/library/categories";
+  import { reconcileMangaCountsFromChapters } from "./lib/library/chapterCounts";
   import { loadLibrarySnapshot, saveLibrarySnapshot } from "./lib/library/snapshot";
+  import {
+    subscribeLibraryUpdateStatus,
+    type LibraryUpdateMangaPatch,
+    type LibraryUpdateSubscription,
+  } from "./lib/suwayomiUpdaterSubscription";
   import {
     ensureServerAwakeFor,
     isLoopbackServerUrl,
@@ -360,7 +370,7 @@
     };
   }
 
-  function preloadLibrarySnapshot() {
+  function preloadLibrarySnapshot(force = false) {
     if (!store.runtimeResolvedLocalProfileId || !store.runtimeServerUrl) return null;
 
     const scopeKey = `${store.runtimeResolvedLocalProfileId}::${store.runtimeServerUrl}`;
@@ -386,13 +396,21 @@
       return libraryBootstrapInFlight;
     }
     if (
-      libraryBootstrapScopeKey === scopeKey
+      !force
+      && libraryBootstrapScopeKey === scopeKey
       && store.libraryBootstrapScopeKey === scopeKey
       && store.libraryBootstrapStatus === "ready"
       && store.libraryMangaSnapshot.length > 0
       && store.categories.length > 0
     ) {
       return null;
+    }
+
+    if (
+      libraryBootstrapScopeKey === scopeKey
+      && libraryBootstrapInFlight
+    ) {
+      return libraryBootstrapInFlight;
     }
 
     libraryBootstrapScopeKey = scopeKey;
@@ -486,7 +504,7 @@
     if (msUntilNextLibraryUpdate() <= 5 * 60 * 1000) return;
     if (!store.runtimeServerUrl || !isLoopbackServerUrl(store.runtimeServerUrl)) return;
     if (shouldKeepServerAwake()) return;
-    if (automaticLibraryUpdateInFlight) return;
+    if (automaticLibraryUpdateInFlight || store.libraryUpdateInFlight) return;
 
     standbyInFlight = true;
     try {
@@ -501,52 +519,233 @@
 
   async function runAutomaticLibraryUpdate(reason: "startup" | "focus" | "interval") {
     if (automaticLibraryUpdateInFlight) return automaticLibraryUpdateInFlight;
+    if (store.libraryUpdateInFlight) return null;
     if (!store.runtimeResolvedLocalProfileId || !store.runtimeServerUrl) return null;
     if (!nextLibraryUpdateDue()) return null;
     if (shouldKeepServerAwake() && reason !== "startup") return null;
 
+    setLibraryUpdateInFlight(true);
     automaticLibraryUpdateInFlight = (async () => {
+      let progressSubscription: LibraryUpdateSubscription | null = null;
       const beforeUpdate = [...store.libraryMangaSnapshot];
-      const awake = await ensureServerAwakeFor("auto-library-update", {
-        serverUrl: store.runtimeServerUrl,
-        binary: store.settings.serverBinary,
-      });
-      if (!awake) return;
-      await gql(UPDATE_LIBRARY, { categories: undefined });
-      await waitForLibraryUpdateToSettle();
-      const updatedAt = Date.now();
-      updateSettings({ lastLibraryUpdateAt: updatedAt });
-      cache.clearGroup(CACHE_GROUPS.LIBRARY);
-      await preloadLibrarySnapshot();
-      const entries = recordLibraryUpdateNotifications(beforeUpdate, store.libraryMangaSnapshot, updatedAt);
-      if (entries.length > 0) {
-        addToast({
-          kind: "success",
-          title: "New chapters found",
-          body: `${entries.reduce((sum, entry) => sum + entry.chapterDelta, 0)} new chapters added across ${entries.length} titles.`,
+      try {
+        setLibraryUpdateProgress({
+          kind: "download",
+          title: "Library update",
+          body: "Automatic library update is starting.",
+          active: true,
+          duration: 0,
         });
+        const awake = await ensureServerAwakeFor("auto-library-update", {
+          serverUrl: store.runtimeServerUrl,
+          binary: store.settings.serverBinary,
+        });
+        if (!awake) return;
+        await ensureAethonLibraryUpdateRules();
+        progressSubscription = subscribeLibraryUpdateStatus(
+          (event) => {
+            setLibraryUpdateProgress({
+              kind: "download",
+              title: "Library update",
+              body: formatAutomaticLibraryUpdateProgress(event.jobsInfo),
+              active: true,
+              duration: 0,
+              ...automaticLibraryUpdateProgressNumbers(event.jobsInfo),
+            });
+            applyAutomaticLibraryUpdatePatches(event.mangaUpdates);
+          },
+          (subscriptionError) => {
+            console.warn("Could not receive automatic Library update patches:", subscriptionError);
+          },
+        );
+        const updateResult = await gql<any>(UPDATE_LIBRARY, { categories: undefined });
+        await waitForLibraryUpdateToSettle(updateResult?.updateLibrary?.updateStatus?.jobsInfo);
+        const updatedAt = Date.now();
+        updateSettings({ lastLibraryUpdateAt: updatedAt });
+        progressSubscription?.close();
+        progressSubscription = null;
+        cache.clearGroup(CACHE_GROUPS.LIBRARY);
+        await preloadLibrarySnapshot(true);
+        await reconcileLibrarySnapshotCountsFromChapters();
+        const entries = recordLibraryUpdateNotifications(beforeUpdate, store.libraryMangaSnapshot, updatedAt);
+        addSystemNotification({
+          kind: "success",
+          title: entries.length > 0 ? "New chapters found" : "Library sync completed",
+          body: entries.length > 0
+            ? `${entries.reduce((sum, entry) => sum + entry.chapterDelta, 0)} new chapters added across ${entries.length} titles.`
+            : `Automatic updates every ${store.settings.libraryUpdateIntervalHours ?? 12}h.`,
+          createdAt: updatedAt,
+        });
+        if (entries.length > 0) {
+          addToast({
+            kind: "success",
+            title: "New chapters found",
+            body: `${entries.reduce((sum, entry) => sum + entry.chapterDelta, 0)} new chapters added across ${entries.length} titles.`,
+          });
+        }
+        setLibraryUpdateProgress({
+          kind: "success",
+          title: "Library update",
+          body: "Library update finished.",
+          active: false,
+          duration: 1800,
+        });
+        await maybeStandbyAfterIdle("auto-library-update");
+      } finally {
+        progressSubscription?.close();
       }
-      await maybeStandbyAfterIdle("auto-library-update");
     })()
       .catch((error) => {
         console.warn("Automatic library update failed:", error);
+        addSystemNotification({
+          kind: "error",
+          title: "Automatic library update failed",
+          body: error instanceof Error ? error.message : "Aethon could not refresh your library.",
+        });
+        setLibraryUpdateProgress({
+          kind: "error",
+          title: "Library update",
+          body: "Automatic library update failed.",
+          active: false,
+          duration: 2200,
+        });
       })
       .finally(() => {
         automaticLibraryUpdateInFlight = null;
+        setLibraryUpdateInFlight(false);
       });
 
     return automaticLibraryUpdateInFlight;
   }
 
-  async function waitForLibraryUpdateToSettle(timeoutMs = 8 * 60 * 1000) {
+  function formatAutomaticLibraryUpdateProgress(jobsInfo: any) {
+    const finished = Number(jobsInfo?.finishedJobs ?? 0);
+    const total = Number(jobsInfo?.totalJobs ?? 0);
+    const skippedMangas = Number(jobsInfo?.skippedMangasCount ?? 0);
+    if (total > 0) {
+      const current = Math.max(0, Math.min(total, finished));
+      const percent = Math.max(0, Math.min(100, Math.round((current / total) * 100)));
+      const skipped = skippedMangas > 0 ? `, ${skippedMangas} skipped by folder rules` : "";
+      return current <= 0 && jobsInfo?.isRunning
+        ? `Starting update for ${total} titles${skipped}.`
+        : `Checking titles ${current}/${total} · ${percent}%${skipped}.`;
+    }
+    return jobsInfo?.isRunning ? "Suwayomi is checking your library." : "Preparing library update.";
+  }
+
+  function automaticLibraryUpdateProgressNumbers(jobsInfo: any) {
+    const total = Number(jobsInfo?.totalJobs ?? 0);
+    if (!Number.isFinite(total) || total <= 0) return undefined;
+    const current = Math.max(0, Math.min(total, Number(jobsInfo?.finishedJobs ?? 0)));
+    return {
+      current,
+      total,
+      percent: Math.max(0, Math.min(100, Math.round((current / total) * 100))),
+    };
+  }
+
+  function applyAutomaticLibraryUpdatePatches(patches: LibraryUpdateMangaPatch[]) {
+    if (!patches.length || store.libraryMangaSnapshot.length === 0) return;
+    const patchById = new Map<number, LibraryUpdateMangaPatch["manga"]>();
+    for (const patch of patches) {
+      const manga = patch.manga;
+      if (!manga?.id) continue;
+      patchById.set(Number(manga.id), manga);
+    }
+    if (!patchById.size) return;
+
+    let changed = false;
+    const patched = store.libraryMangaSnapshot.map((manga) => {
+      const patch = patchById.get(manga.id);
+      if (!patch) return manga;
+      changed = true;
+      return {
+        ...manga,
+        title: patch.title ?? manga.title,
+        thumbnailUrl: patch.thumbnailUrl ?? manga.thumbnailUrl,
+        unreadCount: patch.unreadCount ?? manga.unreadCount,
+        downloadCount: patch.downloadCount ?? manga.downloadCount,
+        chapterCount: patch.chapters?.totalCount ?? manga.chapterCount,
+      };
+    });
+
+    if (!changed) return;
+    setLibraryMangaSnapshot(patched);
+    cache.set(CACHE_KEYS.LIBRARY, patched, CACHE_GROUPS.LIBRARY);
+  }
+
+  async function waitForLibraryUpdateToSettle(initialJobsInfo: any = null, timeoutMs = 8 * 60 * 1000) {
     const startedAt = Date.now();
+    let observedRunning = Boolean(initialJobsInfo?.isRunning);
+    let observedJobs = Number(initialJobsInfo?.totalJobs ?? 0) > 0 || Number(initialJobsInfo?.finishedJobs ?? 0) > 0;
+
     while (Date.now() - startedAt < timeoutMs) {
       const status = await gql<any>(GET_LIBRARY_UPDATE_STATUS).catch(() => null);
       const jobsInfo = status?.libraryUpdateStatus?.jobsInfo;
-      if (!jobsInfo?.isRunning) return jobsInfo ?? null;
-      await new Promise((resolve) => setTimeout(resolve, 2500));
+      if (jobsInfo) {
+        observedRunning ||= Boolean(jobsInfo.isRunning);
+        observedJobs ||= Number(jobsInfo.totalJobs ?? 0) > 0 || Number(jobsInfo.finishedJobs ?? 0) > 0;
+      }
+      if (!jobsInfo?.isRunning && (observedRunning || observedJobs)) {
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        return jobsInfo ?? initialJobsInfo ?? null;
+      }
+      if (!jobsInfo?.isRunning && Date.now() - startedAt > 5000) return jobsInfo ?? initialJobsInfo ?? null;
+      await new Promise((resolve) => setTimeout(jobsInfo?.isRunning ? 2500 : 500));
     }
     return null;
+  }
+
+  async function ensureAethonLibraryUpdateRules() {
+    await gql(SET_LIBRARY_UPDATE_RULES, {
+      excludeCompleted: false,
+      excludeEntryWithUnreadChapters: false,
+      excludeNotStarted: false,
+      excludeUnreadChapters: false,
+    }).catch((error) => {
+      console.warn("Could not update Suwayomi library update rules:", error);
+    });
+  }
+
+  async function reconcileLibrarySnapshotCountsFromChapters() {
+    const current = store.libraryMangaSnapshot;
+    if (!current.length) return { changedIds: [] as number[], failedIds: [] as number[] };
+
+    const result = await reconcileMangaCountsFromChapters(
+      current,
+      async (mangaId) => {
+        const data = await gql<{ chapters: { nodes: Chapter[] } }>(
+          GET_CHAPTERS,
+          { mangaId },
+          undefined,
+          12000,
+        );
+        return data.chapters.nodes;
+      },
+      { concurrency: 4 },
+    );
+
+    if (result.changedIds.length > 0) {
+      setLibraryMangaSnapshot(result.mangas);
+      cache.set(CACHE_KEYS.LIBRARY, result.mangas, CACHE_GROUPS.LIBRARY);
+      saveLibrarySnapshot(
+        {
+          profileId: store.runtimeResolvedLocalProfileId,
+          serverUrl: store.runtimeServerUrl,
+        },
+        {
+          mangas: result.mangas,
+          categories: normalizeCategories(store.categories),
+          trackingSummary: store.libraryTrackingSummarySnapshot,
+        },
+      );
+    }
+
+    if (result.failedIds.length > 0) {
+      console.warn(`Could not reconcile chapter counts for ${result.failedIds.length} library titles.`);
+    }
+
+    return { changedIds: result.changedIds, failedIds: result.failedIds };
   }
 
   function updateRuntimeDiagnosticsBridge() {

@@ -123,11 +123,20 @@
     return new Promise(res => {
       const img = new Image();
       let release: (() => void) | null = null;
+      let resolved = false;
       const finish = (value: number) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timeoutId);
         release?.();
         release = null;
         res(value);
       };
+
+      const timeoutId = setTimeout(() => {
+        finish(0.67);
+      }, 4000);
+
       img.onload  = () => {
         const r = img.naturalHeight > 0 ? img.naturalWidth / img.naturalHeight : 0.67;
         rememberAspect(url, r);
@@ -136,10 +145,12 @@
       img.onerror = () => finish(0.67);
       acquireResolvedMediaUrl(url)
         .then((lease) => {
+          if (resolved) { lease.release(); return; }
           release = lease.release;
           img.src = lease.resolvedUrl;
         })
         .catch(() => {
+          if (resolved) return;
           img.src = url;
         });
     });
@@ -181,7 +192,7 @@
   let error: string | null = $state(null);
   let dlOpen           = $state(false);
   let zoomOpen         = $state(false);
-  let toolsOpen        = $state(true);
+  let toolsOpen        = $state(false);
   let uiVisible        = $state(true);
   let pageReady        = $state(false);
   let pageGroups: number[][] = $state([]);
@@ -800,8 +811,23 @@
   function showUi() {
     uiVisible = true;
     if (hideTimer) clearTimeout(hideTimer);
-    hideTimer = setTimeout(() => uiVisible = false, 3000);
+    if (toolsOpen) return;
+    hideTimer = setTimeout(() => {
+      if (!toolsOpen) uiVisible = false;
+    }, 3000);
   }
+
+  $effect(() => {
+    if (toolsOpen) {
+      uiVisible = true;
+      if (hideTimer) {
+        clearTimeout(hideTimer);
+        hideTimer = null;
+      }
+    } else {
+      showUi();
+    }
+  });
 
   function onWheel(e: WheelEvent) {
     if (!e.ctrlKey) return;
@@ -915,65 +941,103 @@
 </script>
 
 <ReaderHud
-  {overlayBars}
-  {uiVisible}
+  bind:toolsOpen={toolsOpen}
+  title={store.activeManga?.title}
+  chapterTitle={displayChapter?.name}
+  progressLabel={loading ? "..." : `${sliderPage} / ${sliderMax}`}
+  sliderValue={sliderPage}
+  sliderMax={sliderMax}
+  sliderPct={sliderPct}
+  bookmarkPct={isBookmarked && currentBookmark ? (sliderMax > 1 ? ((currentBookmark.pageNumber - 1) / (sliderMax - 1)) * 100 : 0) : null}
+  isBookmarked={isBookmarked}
+  prevDisabled={loading || (style === "longstrip" ? !adjacent.prev : (store.pageNumber === 1 && !adjacent.prev))}
+  nextDisabled={loading || (style === "longstrip" ? !adjacent.next : (store.pageNumber === lastPage && !adjacent.next))}
+  uiVisible={uiVisible}
+  rtl={rtl}
   onMouseMove={(e) => { if (e.clientY < 60 || window.innerHeight - e.clientY < 60) showUi(); }}
+  onclose={exitReader}
+  onprev={goPrev}
+  onnext={goNext}
+  onjump={jumpToPage}
+  onbookmark={toggleBookmark}
 >
-  {#snippet topbarLeft()}
-        <button class="icon-btn" onclick={exitReader} title="Close reader"><X size={15} weight="light" /></button>
-      <button class="icon-btn" onclick={() => { if (adjacent.prev) { maybeMarkCurrentRead(); openReader(adjacent.prev, store.activeChapterList); } }} disabled={!adjacent.prev}>
-        <CaretLeft size={14} weight="light" />
-      </button>
-      <button class="icon-btn" onclick={() => { if (adjacent.next) { maybeMarkCurrentRead(); openReader(adjacent.next, store.activeChapterList); } }} disabled={!adjacent.next}>
-        <CaretRight size={14} weight="light" />
-      </button>
-      <div class="reader-title">
-        <strong>{store.activeManga?.title}</strong>
-        <span>{displayChapter?.name}</span>
+  {#snippet settingsPopover()}
+    <dl>
+      <div>
+        <dt>Layout</dt>
+        <dd>
+          <div class="popover-segmented">
+            <button class="popover-segment" class:active={style === "single"} onclick={() => updateSettings({ pageStyle: "single" })}>Single</button>
+            <button class="popover-segment" class:active={style === "double"} onclick={() => updateSettings({ pageStyle: "double" })}>Double</button>
+            <button class="popover-segment" class:active={style === "longstrip"} onclick={() => updateSettings({ pageStyle: "longstrip" })}>Strip</button>
+            <button class="popover-segment" class:active={style === "fade"} onclick={() => updateSettings({ pageStyle: "fade" })}>Fade</button>
+          </div>
+        </dd>
       </div>
-  {/snippet}
-
-  {#snippet topbarRight()}
-      <div class="top-sep"></div>
-      <span class="reader-progress-text">{store.pageNumber} / {visibleChunkLastPage || "…"} - {sliderPct.toFixed(0)}%</span>
-
-      <button class="mode-btn" class:active={rtl} onclick={() => updateSettings({ readingDirection: rtl ? "ltr" : "rtl" })}>
-        <ArrowsLeftRight size={14} weight="light" /><span class="mode-label">{rtl ? "RTL" : "LTR"}</span>
-      </button>
-
-      <button class="mode-btn" onclick={cycleStyle} title="Cycle view mode">
-        {#if style === "single"}<Square size={14} weight="light" />
-        {:else if style === "fade"}<MonitorPlay size={14} weight="light" />
-        {:else if style === "double"}<BookOpen size={14} weight="light" />
-        {:else}<Rows size={14} weight="light" />{/if}
-        <span class="mode-label">{style === "longstrip" ? "Longstrip" : style === "single" ? "Single" : style === "double" ? "Double" : "Fade"}</span>
-      </button>
-
-      <div class="mode-extras">
-        {#if style === "longstrip" || style === "double"}
-          <button
-            class="mode-btn"
-            class:active={style === "longstrip" ? store.settings.pageGap || autoNext : store.settings.offsetDoubleSpreads}
-            onclick={() => style === "longstrip"
-              ? updateSettings({ pageGap: !store.settings.pageGap })
-              : updateSettings({ offsetDoubleSpreads: !store.settings.offsetDoubleSpreads })}
-          >
-            <span class="mode-label">{style === "longstrip" ? "Gap Auto" : "Offset"}</span>
-          </button>
-        {/if}
+      <div>
+        <dt>Fit Mode</dt>
+        <dd>
+          <button class="popover-btn" onclick={cycleFit}>{fitLabel}</button>
+        </dd>
       </div>
-
-      <button class="mode-btn" onclick={() => dlOpen = true}>
-        <Download size={14} weight="light" />
-      </button>
-
-      <button class="icon-btn" class:active={isBookmarked} onclick={toggleBookmark} title={isBookmarked ? "Remove bookmark" : "Bookmark this page"}>
-          <Bookmark size={15} weight={isBookmarked ? "fill" : "regular"} />
-        </button>
-
-      <button class="icon-btn" class:active={toolsOpen} onclick={() => toolsOpen = !toolsOpen} title="Reader tools">
-        <SlidersHorizontal size={15} weight="light" />
-      </button>
+      <div>
+        <dt>Zoom</dt>
+        <dd>
+          <div class="popover-stepper">
+            <button class="popover-step-btn" onclick={() => adjustZoom(-ZOOM_STEP)} disabled={zoom <= ZOOM_MIN}>−</button>
+            <span class="popover-step-val">{Math.round(zoom * 100)}%</span>
+            <button class="popover-step-btn" onclick={() => adjustZoom(ZOOM_STEP)} disabled={zoom >= ZOOM_MAX}>+</button>
+          </div>
+        </dd>
+      </div>
+      <div>
+        <dt>Direction</dt>
+        <dd>
+          <div class="popover-segmented">
+            <button class="popover-segment" class:active={!rtl} onclick={() => updateSettings({ readingDirection: "ltr" })}>LTR</button>
+            <button class="popover-segment" class:active={rtl} onclick={() => updateSettings({ readingDirection: "rtl" })}>RTL</button>
+          </div>
+        </dd>
+      </div>
+      <div>
+        <dt>Contrast</dt>
+        <dd>
+          <button class="popover-toggle" class:active={store.settings.optimizeContrast} onclick={() => updateSettings({ optimizeContrast: !store.settings.optimizeContrast })}></button>
+        </dd>
+      </div>
+      {#if style === "double"}
+        <div>
+          <dt>Offset Spreads</dt>
+          <dd>
+            <button class="popover-toggle" class:active={store.settings.offsetDoubleSpreads} onclick={() => updateSettings({ offsetDoubleSpreads: !store.settings.offsetDoubleSpreads })}></button>
+          </dd>
+        </div>
+      {/if}
+      {#if style === "longstrip"}
+        <div>
+          <dt>Page Gap</dt>
+          <dd>
+            <button class="popover-toggle" class:active={store.settings.pageGap} onclick={() => updateSettings({ pageGap: !store.settings.pageGap })}></button>
+          </dd>
+        </div>
+      {/if}
+      <div>
+        <dt>Preload Pages</dt>
+        <dd>
+          <div class="popover-stepper">
+            <button class="popover-step-btn" onclick={() => updateSettings({ preloadPages: Math.max(0, (store.settings.preloadPages ?? 2) - 1) })} disabled={(store.settings.preloadPages ?? 2) <= 0}>−</button>
+            <span class="popover-step-val">{store.settings.preloadPages ?? 2}</span>
+            <button class="popover-step-btn" onclick={() => updateSettings({ preloadPages: Math.min(10, (store.settings.preloadPages ?? 2) + 1) })} disabled={(store.settings.preloadPages ?? 2) >= 10}>+</button>
+          </div>
+        </dd>
+      </div>
+      <div>
+        <dt>Downloads</dt>
+        <dd>
+          <button class="popover-btn" onclick={() => dlOpen = true}>Open Manager</button>
+        </dd>
+      </div>
+    </dl>
   {/snippet}
 
   {#if showResumeBanner}
@@ -985,7 +1049,6 @@
       onclick={() => { resumeVisible = false; resumeFading = false; }}
     >
       <span>Bookmark at page {resumePage}</span>
-
     </button>
   {/if}
 
@@ -1000,7 +1063,6 @@
     onwheel={(e) => { if (e.ctrlKey) e.preventDefault(); }}
     onkeydown={(e) => { if (e.key === " " && style === "longstrip") { e.preventDefault(); containerEl?.scrollBy({ top: containerEl.clientHeight * 0.85, behavior: "smooth" }); } }}
   >
-
     {#if loading}
       <div class="center-overlay"><CircleNotch size={20} weight="light" class="anim-spin" style="color:var(--text-faint)" /></div>
     {/if}
@@ -1032,9 +1094,9 @@
     {/if}
 
     {#if style === "longstrip"}
-        {#each stripToRender as chunk}
-          {#each chunk.urls as url, i}
-            <img
+      {#each stripToRender as chunk}
+        {#each chunk.urls as url, i}
+          <img
             use:resolvedImage={url}
             alt="{chunk.chapterName} – Page {i + 1}"
             data-local-page={i + 1}
@@ -1077,115 +1139,6 @@
       <img use:resolvedImage={store.pageUrls[store.pageNumber - 1]} alt="Page {store.pageNumber}" class={imgCls} decoding="async" />
     {/if}
   </div>
-
-  {#snippet sidePanel()}
-    {#if toolsOpen && uiVisible}
-      <aside class="reader-tools-panel" aria-label="Manga reader tools">
-        <div class="reader-tools-panel__header">
-          <span class="reader-tools-panel__eyebrow">Manga tools</span>
-          <strong>{style === "single" ? "Single page" : style === "double" ? "Double page" : style === "fade" ? "Fade page" : "Long strip"}</strong>
-          <button class="reader-tools-panel__close" type="button" onclick={() => toolsOpen = false} title="Hide tools">
-            <X size={13} weight="light" />
-          </button>
-        </div>
-
-        <div class="reader-tools-segment" aria-label="Reader mode">
-          <button type="button" class:active={style === "single"} onclick={() => updateSettings({ pageStyle: "single" })}>Single</button>
-          <button type="button" class:active={style === "double"} onclick={() => updateSettings({ pageStyle: "double" })}>Double</button>
-          <button type="button" class:active={style === "longstrip"} onclick={() => updateSettings({ pageStyle: "longstrip" })}>Strip</button>
-        </div>
-
-        <dl class="reader-tools-list">
-          <div>
-            <dt>Fit</dt>
-            <dd><button type="button" onclick={cycleFit}>{fitLabel}</button></dd>
-          </div>
-          <div>
-            <dt>Zoom</dt>
-            <dd>
-              <div class="reader-tools-zoom">
-                <button type="button" onclick={() => adjustZoom(-ZOOM_STEP)} disabled={zoom <= ZOOM_MIN}><MagnifyingGlassMinus size={12} weight="light" /></button>
-                <button type="button" onclick={resetZoom}>{zoomPct}%</button>
-                <button type="button" onclick={() => adjustZoom(ZOOM_STEP)} disabled={zoom >= ZOOM_MAX}><MagnifyingGlassPlus size={12} weight="light" /></button>
-              </div>
-            </dd>
-          </div>
-          <div>
-            <dt>Direction</dt>
-            <dd><button type="button" onclick={() => updateSettings({ readingDirection: rtl ? "ltr" : "rtl" })}>{rtl ? "Right to left" : "Left to right"}</button></dd>
-          </div>
-          <div>
-            <dt>Downloaded</dt>
-            <dd>{store.activeChapter?.isDownloaded ? "Ready" : "Not saved"}</dd>
-          </div>
-        </dl>
-      </aside>
-    {/if}
-  {/snippet}
-
-  {#snippet bottombar()}
-    <button class="nav-btn" onclick={goPrev} disabled={loading || (style === "longstrip" ? !adjacent.prev : (store.pageNumber === 1 && !adjacent.prev))}>
-      <ArrowLeft size={13} weight="light" />
-    </button>
-
-    <div class="progress-block">
-      <div class="progress-meta">
-        <span>Page {sliderPage} of {sliderMax}</span>
-        <strong>{sliderPct.toFixed(0)}%</strong>
-      </div>
-      {#if sliderMax > 1}
-        <div
-          class="slider-wrap"
-          class:dragging={sliderDragging}
-          onmouseenter={() => sliderHover = true}
-          onmouseleave={() => { sliderHover = false; }}
-          role="presentation"
-        >
-          <div class="slider-track-bg">
-            <div class="slider-fill" style="width: {rtl ? 100 - sliderPct : sliderPct}%"></div>
-          </div>
-          {#if isBookmarked && currentBookmark}
-            {@const bPct = sliderMax > 1 ? ((currentBookmark.pageNumber - 1) / (sliderMax - 1)) * 100 : 0}
-            <div
-              class="slider-checkpoint bookmark-checkpoint"
-              style="left: {rtl ? 100 - bPct : bPct}%"
-              title="Bookmark: Page {currentBookmark.pageNumber}"
-            ></div>
-          {/if}
-          <input
-            type="range"
-            class="slider-input"
-            min={1}
-            max={sliderMax}
-            step={1}
-            value={sliderPage}
-            dir={rtl ? "rtl" : "ltr"}
-            oninput={onSliderInput}
-            onmousedown={() => sliderDragging = true}
-            onmouseup={() => sliderDragging = false}
-            ontouchstart={() => sliderDragging = true}
-            ontouchend={() => sliderDragging = false}
-            aria-label="Page {sliderPage} of {sliderMax}"
-          />
-          {#if sliderHover || sliderDragging}
-            <div class="slider-tooltip" style="left: {rtl ? 100 - sliderPct : sliderPct}%">
-              {sliderPage} / {sliderMax}
-            </div>
-          {/if}
-        </div>
-      {:else}
-        <div class="slider-wrap is-static" aria-hidden="true">
-          <div class="slider-track-bg">
-            <div class="slider-fill" style="width: {rtl ? 100 - sliderPct : sliderPct}%"></div>
-          </div>
-        </div>
-      {/if}
-    </div>
-
-    <button class="nav-btn" onclick={goNext} disabled={loading || (style === "longstrip" ? !adjacent.next : (store.pageNumber === lastPage && !adjacent.next))}>
-      <ArrowRight size={13} weight="light" />
-    </button>
-  {/snippet}
 
   {#if dlOpen && store.activeChapter}
     {@const queueable = adjacent.remaining.filter(c => !c.isDownloaded)}
@@ -1281,18 +1234,109 @@
   .resume-jump:hover { background: rgba(184, 167, 234, 0.14); border-color: rgba(184, 167, 234, 0.24); transform: translateY(-1px); }
 
   .dl-backdrop { position: fixed; inset: 0; z-index: calc(var(--z-reader) + 10); display: flex; align-items: flex-start; justify-content: flex-end; padding: 48px var(--sp-4) 0; }
-  .dl-modal { background: rgba(20, 19, 38, 0.96); border: 1px solid rgba(184, 167, 234, 0.16); border-radius: 16px; padding: 14px; min-width: 236px; display: flex; flex-direction: column; gap: 4px; box-shadow: 0 24px 72px rgba(0,0,0,0.54); backdrop-filter: blur(28px) saturate(165%); animation: scaleIn var(--t-fast) both; transform-origin: top right; }
-  .dl-title { font-family: Manrope, Inter, "Segoe UI", sans-serif; font-size: 9px; font-weight: 850; color: var(--accent-fg); letter-spacing: 0.18em; text-transform: uppercase; padding: 2px 4px 10px; border-bottom: 1px solid rgba(202, 196, 208, 0.08); margin-bottom: 4px; }
-  .dl-option { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; width: 100%; padding: 9px 10px; border-radius: 12px; font-family: Manrope, Inter, "Segoe UI", sans-serif; font-size: 12px; font-weight: 780; color: var(--text-secondary); background: transparent; border: 1px solid transparent; cursor: pointer; text-align: left; transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast), transform var(--t-fast); }
-  .dl-option:hover:not(:disabled) { background: rgba(184, 167, 234, 0.06); border-color: rgba(184, 167, 234, 0.12); color: var(--text-primary); transform: translateY(-1px); }
-  .dl-option:disabled { opacity: 0.3; cursor: default; }
-  .dl-sub { font-size: 10px; color: var(--text-faint); letter-spacing: 0.04em; }
-  .dl-row { display: flex; align-items: center; gap: var(--sp-2); }
-  .dl-stepper { display: flex; align-items: center; gap: 2px; background: rgba(255, 255, 255, 0.018); border: 1px solid rgba(202, 196, 208, 0.08); border-radius: 10px; overflow: hidden; flex-shrink: 0; }
-  .dl-step-btn { display: flex; align-items: center; justify-content: center; width: 24px; height: 30px; font-size: var(--text-base); color: var(--text-muted); background: none; border: none; cursor: pointer; line-height: 1; transition: color var(--t-fast), background var(--t-fast); }
-  .dl-step-btn:hover:not(:disabled) { color: var(--text-primary); background: rgba(184, 167, 234, 0.08); }
+  .dl-modal {
+    background: var(--reader-panel);
+    border: 1px solid var(--reader-line-strong);
+    border-radius: 16px;
+    padding: 12px;
+    min-width: 220px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    box-shadow:
+      0 24px 72px rgba(0, 0, 0, 0.54),
+      inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(28px) saturate(165%);
+    animation: scaleIn var(--t-fast) both;
+    transform-origin: top right;
+  }
+  .dl-title {
+    font-family: Manrope, Inter, "Segoe UI", sans-serif;
+    font-size: 9px;
+    font-weight: 850;
+    color: var(--reader-muted);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    padding: 2px 4px 6px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    margin-bottom: 4px;
+  }
+  .dl-option {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    width: 100%;
+    padding: 6px 10px;
+    border-radius: 8px;
+    font-family: Manrope, Inter, "Segoe UI", sans-serif;
+    font-size: 10px;
+    font-weight: 750;
+    color: var(--reader-text);
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    cursor: pointer;
+    text-align: left;
+    transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast), transform var(--t-fast);
+  }
+  .dl-option:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.22);
+    color: var(--reader-text);
+    transform: translateY(-1px);
+  }
+  .dl-option:disabled {
+    opacity: 0.3;
+    background: rgba(0, 0, 0, 0.1);
+    border-color: rgba(255, 255, 255, 0.04);
+    cursor: default;
+  }
+  .dl-sub { font-size: 8px; color: var(--reader-faint); letter-spacing: 0.04em; }
+  .dl-row { display: flex; align-items: stretch; gap: 6px; width: 100%; }
+  .dl-row .dl-option { flex: 1; min-width: 0; }
+  .dl-stepper {
+    display: flex;
+    align-items: center;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  .dl-step-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 100%;
+    min-height: 28px;
+    font-size: 12px;
+    color: var(--reader-muted);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    line-height: 1;
+    transition: color var(--t-fast), background var(--t-fast);
+  }
+  .dl-step-btn:hover:not(:disabled) {
+    color: var(--reader-text);
+    background: rgba(255, 255, 255, 0.06);
+  }
   .dl-step-btn:disabled { opacity: 0.25; cursor: default; }
-  .dl-step-val { font-family: Manrope, Inter, "Segoe UI", sans-serif; font-size: 10px; font-weight: 850; color: var(--text-secondary); min-width: 24px; text-align: center; letter-spacing: 0.055em; }
+  .dl-step-val {
+    font-family: Manrope, Inter, "Segoe UI", sans-serif;
+    font-size: 9px;
+    font-weight: 850;
+    color: var(--reader-text);
+    min-width: 22px;
+    text-align: center;
+    letter-spacing: 0.055em;
+    border-inline: 1px solid rgba(255, 255, 255, 0.12);
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
 
   @keyframes scaleIn { from { opacity: 0; transform: scale(0.97) } to { opacity: 1; transform: scale(1) } }
   @keyframes readerToolsIn { from { opacity: 0; transform: translateY(-6px) scale(0.98) } to { opacity: 1; transform: translateY(0) scale(1) } }
