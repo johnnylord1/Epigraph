@@ -34,6 +34,15 @@
     type LibraryUpdateSubscription,
   } from "../../lib/suwayomiUpdaterSubscription";
   import {
+    applyLibraryUpdateMangaPatches as applySharedLibraryUpdateMangaPatches,
+    ensureAethonLibraryUpdateRules as ensureSharedAethonLibraryUpdateRules,
+    formatLibraryUpdateProgress as formatSharedLibraryUpdateProgress,
+    formatLibraryUpdateWaiting as formatSharedLibraryUpdateWaiting,
+    libraryUpdateProgressNumbers as sharedLibraryUpdateProgressNumbers,
+    showLibraryUpdateProgress as showSharedLibraryUpdateProgress,
+    waitForLibraryUpdateToSettle as waitForSharedLibraryUpdateToSettle,
+  } from "../../lib/library/updateRuntime";
+  import {
     buildComicsSectionState,
     COMICS_SORT_OPTIONS,
     COMICS_STATUS_OPTIONS,
@@ -1180,22 +1189,6 @@
     return undefined;
   }
 
-  function showManualLibraryUpdateProgress(
-    body: string,
-    duration = 0,
-    progress?: { current: number; total: number; percent: number },
-  ) {
-    const lowerBody = body.toLowerCase();
-    setLibraryUpdateProgress({
-      kind: lowerBody.includes("failed") ? "error" : lowerBody.includes("finished") ? "success" : "download",
-      title: "Library update",
-      body,
-      active: duration === 0,
-      duration,
-      ...progress,
-    });
-  }
-
   function formatLibraryUpdateProgress(jobsInfo: any) {
     const finished = Number(jobsInfo?.finishedJobs ?? 0);
     const total = Number(jobsInfo?.totalJobs ?? 0);
@@ -1328,7 +1321,7 @@
 
   async function refreshLibraryManually() {
     if (manualRefreshInFlight || store.libraryUpdateInFlight) {
-      showManualLibraryUpdateProgress("Library update already running.");
+      showSharedLibraryUpdateProgress("Library update already running.");
       addToast({
         kind: "info",
         title: "Library update already running",
@@ -1344,25 +1337,25 @@
       if (store.librarySection === "comics") {
         const beforeUpdate = [...store.libraryMangaSnapshot];
         const liveChangedMangaIds = new Set<number>();
-        showManualLibraryUpdateProgress("Waking Suwayomi and preparing update.");
+        showSharedLibraryUpdateProgress("Waking Suwayomi and preparing update.");
         const awake = await ensureServerAwakeFor("manual-library-update", {
           serverUrl: store.runtimeServerUrl,
           binary: store.settings.serverBinary,
         });
         if (!awake) throw new Error("Suwayomi is not reachable.");
 
-        showManualLibraryUpdateProgress("Applying Aethon update rules.");
-        await ensureAethonLibraryUpdateRules();
-        showManualLibraryUpdateProgress("Suwayomi is checking your library.");
+        showSharedLibraryUpdateProgress("Applying Aethon update rules.");
+        await ensureSharedAethonLibraryUpdateRules();
+        showSharedLibraryUpdateProgress("Suwayomi is checking your library.");
         progressSubscription = subscribeLibraryUpdateStatus(
           (event) => {
             const { jobsInfo, mangaUpdates } = event;
-            showManualLibraryUpdateProgress(
-              formatLibraryUpdateProgress(jobsInfo),
+            showSharedLibraryUpdateProgress(
+              formatSharedLibraryUpdateProgress(jobsInfo),
               0,
-              libraryUpdateProgressNumbers(jobsInfo),
+              sharedLibraryUpdateProgressNumbers(jobsInfo),
             );
-            for (const mangaId of applyLiveMangaUpdatePatches(mangaUpdates)) {
+            for (const mangaId of applySharedLibraryUpdateMangaPatches(mangaUpdates)) {
               liveChangedMangaIds.add(mangaId);
             }
           },
@@ -1373,14 +1366,14 @@
         const updateResult = await gql<any>(UPDATE_LIBRARY, { categories: manualUpdateCategoryIds() });
         const initialJobsInfo = updateResult?.updateLibrary?.updateStatus?.jobsInfo;
         let lastLiveLibraryRefreshAt = 0;
-        await waitForLibraryUpdateToSettle(
+        await waitForSharedLibraryUpdateToSettle(
           initialJobsInfo,
           8 * 60 * 1000,
           (jobsInfo) => {
-            showManualLibraryUpdateProgress(
-              formatLibraryUpdateProgress(jobsInfo),
+            showSharedLibraryUpdateProgress(
+              formatSharedLibraryUpdateProgress(jobsInfo),
               0,
-              libraryUpdateProgressNumbers(jobsInfo),
+              sharedLibraryUpdateProgressNumbers(jobsInfo),
             );
             const now = Date.now();
             if (jobsInfo?.isRunning && now - lastLiveLibraryRefreshAt >= 5000) {
@@ -1391,23 +1384,24 @@
             }
           },
           (elapsedMs) => {
-            showManualLibraryUpdateProgress(formatLibraryUpdateWaiting(elapsedMs));
+            void elapsedMs;
+            showSharedLibraryUpdateProgress(formatSharedLibraryUpdateWaiting());
           },
         );
         progressSubscription?.close();
         progressSubscription = null;
         const updatedAt = Date.now();
         updateSettings({ lastLibraryUpdateAt: updatedAt });
-        showManualLibraryUpdateProgress("Refreshing local Library data.");
+        showSharedLibraryUpdateProgress("Refreshing local Library data.");
         cache.clearGroup(CACHE_GROUPS.LIBRARY);
         await waitForLibraryLoadIdle();
         await loadData();
         if (liveChangedMangaIds.size > 0) {
-          showManualLibraryUpdateProgress("Reconciling changed titles.");
+          showSharedLibraryUpdateProgress("Reconciling changed titles.");
           await reconcileCurrentLibraryCountsFromChapters(liveChangedMangaIds);
         }
         const entries = recordLibraryUpdateNotifications(beforeUpdate, store.libraryMangaSnapshot, updatedAt);
-        showManualLibraryUpdateProgress("Library update finished.", 1800);
+        showSharedLibraryUpdateProgress("Library update finished.", 1800);
         addSystemNotification({
           kind: "success",
           title: entries.length > 0 ? "New chapters found" : "Library sync completed",
@@ -1432,7 +1426,7 @@
       }
     } catch (refreshError) {
       console.error(refreshError);
-      showManualLibraryUpdateProgress("Library update failed.", 1800);
+      showSharedLibraryUpdateProgress("Library update failed.", 1800);
       addToast({
         kind: "error",
         title: "Could not update library",

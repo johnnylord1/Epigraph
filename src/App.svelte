@@ -71,6 +71,14 @@
     type LibraryUpdateSubscription,
   } from "./lib/suwayomiUpdaterSubscription";
   import {
+    applyLibraryUpdateMangaPatches,
+    ensureAethonLibraryUpdateRules as ensureSharedAethonLibraryUpdateRules,
+    formatLibraryUpdateProgress as formatSharedLibraryUpdateProgress,
+    libraryUpdateProgressNumbers as sharedLibraryUpdateProgressNumbers,
+    showLibraryUpdateProgress as showSharedLibraryUpdateProgress,
+    waitForLibraryUpdateToSettle as waitForSharedLibraryUpdateToSettle,
+  } from "./lib/library/updateRuntime";
+  import {
     ensureServerAwakeFor,
     isLoopbackServerUrl,
     maybeStandbyLocalServer,
@@ -204,6 +212,9 @@
   let bootReadyNotified = false;
   let lastSyncdRevalidatedProfileId = $state<string | null>(null);
   let syncdRevalidationInFlightProfileId = $state<string | null>(null);
+  const lockEnabled = $derived(
+    store.settings.appLockEnabled && (store.settings.appLockPin?.length ?? 0) >= 4,
+  );
   const showIdleSplash = $derived(
     idle
       && lockEnabled
@@ -529,37 +540,38 @@
       let progressSubscription: LibraryUpdateSubscription | null = null;
       const beforeUpdate = [...store.libraryMangaSnapshot];
       try {
-        setLibraryUpdateProgress({
-          kind: "download",
-          title: "Library update",
-          body: "Automatic library update is starting.",
-          active: true,
-          duration: 0,
-        });
+        showSharedLibraryUpdateProgress("Automatic library update is starting.");
         const awake = await ensureServerAwakeFor("auto-library-update", {
           serverUrl: store.runtimeServerUrl,
           binary: store.settings.serverBinary,
         });
         if (!awake) return;
-        await ensureAethonLibraryUpdateRules();
+        await ensureSharedAethonLibraryUpdateRules();
         progressSubscription = subscribeLibraryUpdateStatus(
           (event) => {
-            setLibraryUpdateProgress({
-              kind: "download",
-              title: "Library update",
-              body: formatAutomaticLibraryUpdateProgress(event.jobsInfo),
-              active: true,
-              duration: 0,
-              ...automaticLibraryUpdateProgressNumbers(event.jobsInfo),
-            });
-            applyAutomaticLibraryUpdatePatches(event.mangaUpdates);
+            showSharedLibraryUpdateProgress(
+              formatSharedLibraryUpdateProgress(event.jobsInfo),
+              0,
+              sharedLibraryUpdateProgressNumbers(event.jobsInfo),
+            );
+            applyLibraryUpdateMangaPatches(event.mangaUpdates);
           },
           (subscriptionError) => {
             console.warn("Could not receive automatic Library update patches:", subscriptionError);
           },
         );
         const updateResult = await gql<any>(UPDATE_LIBRARY, { categories: undefined });
-        await waitForLibraryUpdateToSettle(updateResult?.updateLibrary?.updateStatus?.jobsInfo);
+        await waitForSharedLibraryUpdateToSettle(
+          updateResult?.updateLibrary?.updateStatus?.jobsInfo,
+          8 * 60 * 1000,
+          (jobsInfo) => {
+            showSharedLibraryUpdateProgress(
+              formatSharedLibraryUpdateProgress(jobsInfo),
+              0,
+              sharedLibraryUpdateProgressNumbers(jobsInfo),
+            );
+          },
+        );
         const updatedAt = Date.now();
         updateSettings({ lastLibraryUpdateAt: updatedAt });
         progressSubscription?.close();
@@ -583,13 +595,7 @@
             body: `${entries.reduce((sum, entry) => sum + entry.chapterDelta, 0)} new chapters added across ${entries.length} titles.`,
           });
         }
-        setLibraryUpdateProgress({
-          kind: "success",
-          title: "Library update",
-          body: "Library update finished.",
-          active: false,
-          duration: 1800,
-        });
+        showSharedLibraryUpdateProgress("Library update finished.", 1800);
         await maybeStandbyAfterIdle("auto-library-update");
       } finally {
         progressSubscription?.close();
@@ -602,13 +608,7 @@
           title: "Automatic library update failed",
           body: error instanceof Error ? error.message : "Aethon could not refresh your library.",
         });
-        setLibraryUpdateProgress({
-          kind: "error",
-          title: "Library update",
-          body: "Automatic library update failed.",
-          active: false,
-          duration: 2200,
-        });
+        showSharedLibraryUpdateProgress("Automatic library update failed.", 2200);
       })
       .finally(() => {
         automaticLibraryUpdateInFlight = null;

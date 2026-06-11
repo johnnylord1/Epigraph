@@ -1,0 +1,187 @@
+import { getServerAuthHeader, getServerUrl, gql } from "../client";
+import { cache, CACHE_GROUPS, CACHE_KEYS } from "../cache";
+import { GET_LIBRARY_UPDATE_STATUS, SET_LIBRARY_UPDATE_RULES } from "../queries";
+import type { LibraryUpdateMangaPatch } from "../suwayomiUpdaterSubscription";
+import { setLibraryMangaSnapshot, setLibraryUpdateProgress, store } from "../../store/state.svelte";
+
+export interface LibraryUpdateProgressNumbers {
+  current: number;
+  total: number;
+  percent: number;
+}
+
+export function libraryUpdateProgressNumbers(jobsInfo: any): LibraryUpdateProgressNumbers | undefined {
+  const total = Number(jobsInfo?.totalJobs ?? 0);
+  if (!Number.isFinite(total) || total <= 0) return undefined;
+  const current = Math.max(0, Math.min(total, Number(jobsInfo?.finishedJobs ?? 0)));
+  return {
+    current,
+    total,
+    percent: Math.max(0, Math.min(100, Math.round((current / total) * 100))),
+  };
+}
+
+export function formatLibraryUpdateProgress(jobsInfo: any) {
+  const finished = Number(jobsInfo?.finishedJobs ?? 0);
+  const total = Number(jobsInfo?.totalJobs ?? 0);
+  const skippedMangas = Number(jobsInfo?.skippedMangasCount ?? 0);
+  if (total > 0) {
+    const skipped = skippedMangas > 0 ? `, ${skippedMangas} skipped by folder rules` : "";
+    if (finished <= 0 && jobsInfo?.isRunning) {
+      return `Starting update for ${total} titles${skipped}.`;
+    }
+    const current = Math.min(Math.max(0, finished), total);
+    const percent = Math.max(0, Math.min(100, Math.round((current / total) * 100)));
+    return `Checking titles ${current}/${total} - ${percent}%${skipped}.`;
+  }
+  if (jobsInfo?.isRunning) return "Suwayomi is checking your library.";
+  return "Preparing library update.";
+}
+
+export function formatLibraryUpdateWaiting() {
+  return "Waiting for Suwayomi progress.";
+}
+
+export function showLibraryUpdateProgress(
+  body: string,
+  duration = 0,
+  progress?: LibraryUpdateProgressNumbers,
+) {
+  const lowerBody = body.toLowerCase();
+  setLibraryUpdateProgress({
+    kind: lowerBody.includes("failed") ? "error" : lowerBody.includes("finished") ? "success" : "download",
+    title: "Library update",
+    body,
+    active: duration === 0,
+    duration,
+    ...progress,
+  });
+}
+
+export function applyLibraryUpdateMangaPatches(patches: LibraryUpdateMangaPatch[]) {
+  if (!patches.length || store.libraryMangaSnapshot.length === 0) return [] as number[];
+  const patchById = new Map<number, LibraryUpdateMangaPatch["manga"]>();
+  for (const patch of patches) {
+    const manga = patch.manga;
+    if (!manga?.id) continue;
+    patchById.set(Number(manga.id), manga);
+  }
+  if (!patchById.size) return [] as number[];
+
+  const changedIds: number[] = [];
+  const patched = store.libraryMangaSnapshot.map((manga) => {
+    const patch = patchById.get(manga.id);
+    if (!patch) return manga;
+    changedIds.push(manga.id);
+    return {
+      ...manga,
+      title: patch.title ?? manga.title,
+      thumbnailUrl: patch.thumbnailUrl ?? manga.thumbnailUrl,
+      unreadCount: patch.unreadCount ?? manga.unreadCount,
+      downloadCount: patch.downloadCount ?? manga.downloadCount,
+      chapterCount: patch.chapters?.totalCount ?? manga.chapterCount,
+    };
+  });
+
+  if (changedIds.length) {
+    setLibraryMangaSnapshot(patched);
+    cache.set(CACHE_KEYS.LIBRARY, patched, CACHE_GROUPS.LIBRARY);
+  }
+  return changedIds;
+}
+
+export async function fetchLibraryUpdateStatusDirect(timeoutMs = 3500) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const auth = getServerAuthHeader();
+  try {
+    const response = await fetch(`${getServerUrl()}/api/graphql`, {
+      method: "POST",
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-cache",
+        ...(auth ? { Authorization: auth } : {}),
+      },
+      body: JSON.stringify({
+        query: `
+          query LibraryUpdateStatusLive {
+            libraryUpdateStatus {
+              jobsInfo {
+                isRunning
+                finishedJobs
+                totalJobs
+                skippedCategoriesCount
+                skippedMangasCount
+              }
+            }
+          }
+        `,
+      }),
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`Suwayomi HTTP ${response.status}`);
+    const json = await response.json();
+    if (json.errors?.length) throw new Error(json.errors[0]?.message ?? "Could not read library update status.");
+    return json.data?.libraryUpdateStatus?.jobsInfo ?? null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function readLibraryUpdateStatusLive() {
+  const directStatus = await fetchLibraryUpdateStatusDirect(2500).catch((directError) => {
+    console.warn("Could not poll Library update status directly:", directError);
+    return null;
+  });
+  if (directStatus) return directStatus;
+
+  return gql<any>(GET_LIBRARY_UPDATE_STATUS, undefined, undefined, 2500)
+    .then((status) => status?.libraryUpdateStatus?.jobsInfo ?? null)
+    .catch((clientError) => {
+      console.warn("Could not poll Library update status through app client:", clientError);
+      return null;
+    });
+}
+
+export async function waitForLibraryUpdateToSettle(
+  initialJobsInfo: any = null,
+  timeoutMs = 8 * 60 * 1000,
+  onProgress?: (jobsInfo: any) => void,
+  onWaiting?: (elapsedMs: number) => void,
+) {
+  const startedAt = Date.now();
+  let observedRunning = Boolean(initialJobsInfo?.isRunning);
+  let observedJobs = Number(initialJobsInfo?.totalJobs ?? 0) > 0 || Number(initialJobsInfo?.finishedJobs ?? 0) > 0;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const jobsInfo = await readLibraryUpdateStatusLive();
+    if (jobsInfo) {
+      observedRunning ||= Boolean(jobsInfo.isRunning);
+      observedJobs ||= Number(jobsInfo.totalJobs ?? 0) > 0 || Number(jobsInfo.finishedJobs ?? 0) > 0;
+      onProgress?.(jobsInfo);
+    } else {
+      onWaiting?.(Date.now() - startedAt);
+    }
+
+    if (!jobsInfo?.isRunning && (observedRunning || observedJobs)) {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      return jobsInfo ?? initialJobsInfo ?? null;
+    }
+    if (!jobsInfo?.isRunning && Date.now() - startedAt > 5000) return jobsInfo ?? initialJobsInfo ?? null;
+    await new Promise((resolve) => setTimeout(jobsInfo?.isRunning ? 2500 : 500));
+  }
+
+  return null;
+}
+
+export async function ensureAethonLibraryUpdateRules() {
+  await gql(SET_LIBRARY_UPDATE_RULES, {
+    excludeCompleted: false,
+    excludeEntryWithUnreadChapters: false,
+    excludeNotStarted: false,
+    excludeUnreadChapters: false,
+  }).catch((error) => {
+    console.warn("Could not update Suwayomi library update rules:", error);
+  });
+}
