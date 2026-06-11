@@ -353,6 +353,8 @@
   let automaticLibraryUpdateInFlight: Promise<void> | null = null;
   let standbyInFlight = false;
 
+  const AUTOMATIC_LIBRARY_UPDATE_SETTLE_MS = 3 * 60 * 1000;
+
   type RuntimeDiagnosticsSnapshot = {
     bootMs: number | null;
     shellReady: boolean;
@@ -529,11 +531,22 @@
     }
   }
 
+  function canRunAutomaticLibraryUpdateNow(reason: "startup" | "focus" | "interval") {
+    if (reason === "startup" && Date.now() - bootStartedAt < AUTOMATIC_LIBRARY_UPDATE_SETTLE_MS) {
+      return false;
+    }
+    if (!pageHidden && !idle && Date.now() - lastInteractionAt < AUTOMATIC_LIBRARY_UPDATE_SETTLE_MS) {
+      return false;
+    }
+    return true;
+  }
+
   async function runAutomaticLibraryUpdate(reason: "startup" | "focus" | "interval") {
     if (automaticLibraryUpdateInFlight) return automaticLibraryUpdateInFlight;
     if (store.libraryUpdateInFlight) return null;
     if (!store.runtimeResolvedLocalProfileId || !store.runtimeServerUrl) return null;
     if (!nextLibraryUpdateDue()) return null;
+    if (!canRunAutomaticLibraryUpdateNow(reason)) return null;
     if (shouldKeepServerAwake() && reason !== "startup") return null;
 
     setLibraryUpdateInFlight(true);
@@ -2554,7 +2567,7 @@
             !runtimeAttachOnly &&
             isLoopback &&
             store.settings.autoStartServer &&
-            (!store.settings.localServerStandbyEnabled || !hasSnapshot || nextLibraryUpdateDue());
+            (!store.settings.localServerStandbyEnabled || !hasSnapshot);
         } catch {
           shouldAutoStartServer = false;
         }
