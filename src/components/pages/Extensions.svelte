@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { MagnifyingGlass, ArrowsClockwise, Plus, CircleNotch, CaretRight, CaretDown, X, Check, GitBranch } from "phosphor-svelte";
   import { gql, thumbUrl } from "../../lib/client";
   import { GET_EXTENSIONS, FETCH_EXTENSIONS, UPDATE_EXTENSION, INSTALL_EXTERNAL_EXTENSION, GET_SETTINGS, SET_EXTENSION_REPOS } from "../../lib/queries";
@@ -9,6 +9,7 @@
   import NocturneState from "../shared/NocturneState.svelte";
   import { detectSetupState, type SetupState } from "../../lib/setupState";
   import { ensureExtensionRepo, RECOMMENDED_EXTENSION_REPO } from "../../lib/defaultRepos";
+  import { SERVER_READY_EVENT } from "../../lib/serverLifecycle";
 
   type Filter = "installed" | "available" | "updates" | "all";
   type Panel  = null | "apk" | "repos";
@@ -173,6 +174,20 @@
   });
 
   $effect(() => { untrack(() => Promise.all([fetchFromRepo(), refreshSetupState()]).finally(() => { loading = false; })); });
+
+  onMount(() => {
+    const handleServerReady = () => {
+      void Promise.all([
+        loadRepos(),
+        fetchFromRepo(),
+        refreshSetupState(),
+      ]).finally(() => {
+        loading = false;
+      });
+    };
+    window.addEventListener(SERVER_READY_EVENT, handleServerReady);
+    return () => window.removeEventListener(SERVER_READY_EVENT, handleServerReady);
+  });
 
   const filtered = $derived(extensions.filter((e) => {
     const q = search.toLowerCase();

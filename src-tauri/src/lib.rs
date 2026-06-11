@@ -1544,6 +1544,12 @@ server.maxSourcesInParallel = 6
     }
 
     #[test]
+    fn local_server_java_args_do_not_disable_bytecode_verification() {
+        let args = local_server_java_args(Path::new("C:\\fake\\Suwayomi-Server.jar"));
+        assert!(!args.iter().any(|arg| arg == "-noverify"));
+    }
+
+    #[test]
     fn resolve_local_server_target_marks_main_and_test_profiles() {
         let main_target = LaunchTargetInfo {
             server_url_override: Some("http://127.0.0.1:4567".to_string()),
@@ -3175,9 +3181,8 @@ server.extensionRepos = []
 
 const LOCAL_SERVER_JAVA_XMS: &str = "96m";
 const LOCAL_SERVER_JAVA_XMX: &str = "320m";
-const LOCAL_SERVER_JAVA_VERIFY_FLAG: &str = "-noverify";
 const LOCAL_SERVER_JAVA_TOOL_OPTIONS: &str =
-    "-Djava.awt.headless=true -Xms96m -Xmx320m -XX:+UseG1GC -noverify";
+    "-Djava.awt.headless=true -Xms96m -Xmx320m -XX:+UseG1GC";
 
 fn local_server_java_args(jar: &Path) -> Vec<String> {
     vec![
@@ -3185,7 +3190,6 @@ fn local_server_java_args(jar: &Path) -> Vec<String> {
         format!("-Xms{LOCAL_SERVER_JAVA_XMS}"),
         format!("-Xmx{LOCAL_SERVER_JAVA_XMX}"),
         "-XX:+UseG1GC".to_string(),
-        LOCAL_SERVER_JAVA_VERIFY_FLAG.to_string(),
         "-jar".to_string(),
         jar.to_string_lossy().into_owned(),
     ]

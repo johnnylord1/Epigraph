@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { LibraryUpdateIntensity } from "../store/state.svelte";
 
+export const SERVER_READY_EVENT = "aethon:server-ready";
+
 export type ServerWakeReason =
   | "startup"
   | "manual-library-update"
@@ -16,6 +18,16 @@ export interface ServerLifecycleInput {
   serverUrl: string | null | undefined;
   binary?: string | null;
   updateIntensity?: LibraryUpdateIntensity | null;
+}
+
+export function notifyServerReady(serverUrl: string | null | undefined) {
+  if (!serverUrl || typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(SERVER_READY_EVENT, {
+    detail: {
+      serverUrl,
+      at: Date.now(),
+    },
+  }));
 }
 
 export function isLoopbackServerUrl(serverUrl: string | null | undefined) {
@@ -44,7 +56,10 @@ export async function ensureServerAwakeFor(
 ) {
   const serverUrl = input.serverUrl ?? null;
   if (!serverUrl) return false;
-  if (await probeServerHealth(serverUrl)) return true;
+  if (await probeServerHealth(serverUrl)) {
+    notifyServerReady(serverUrl);
+    return true;
+  }
   if (!isLoopbackServerUrl(serverUrl)) return false;
 
   await invoke<void>("spawn_server", {
@@ -54,7 +69,10 @@ export async function ensureServerAwakeFor(
   });
 
   for (let attempt = 0; attempt < 30; attempt += 1) {
-    if (await probeServerHealth(serverUrl)) return true;
+    if (await probeServerHealth(serverUrl)) {
+      notifyServerReady(serverUrl);
+      return true;
+    }
     await new Promise((resolve) => setTimeout(resolve, attempt < 5 ? 600 : 1000));
   }
 

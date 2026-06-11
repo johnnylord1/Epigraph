@@ -11,6 +11,7 @@
   import SetupStatusCard from "../shared/SetupStatusCard.svelte";
   import SourcesView from "./SourcesView.svelte";
   import { detectSetupState, type SetupState } from "../../lib/setupState";
+  import { SERVER_READY_EVENT } from "../../lib/serverLifecycle";
   import { ensureExtensionRepo, RECOMMENDED_EXTENSION_REPO } from "../../lib/defaultRepos";
   import AppTopbar from "../layout/AppTopbar.svelte";
   import WindowControlsInline from "../layout/WindowControlsInline.svelte";
@@ -2739,9 +2740,25 @@
     const recommendationsTimer = window.setTimeout(() => {
       searchRecommendationsReady = true;
     }, 1_800);
+    const handleServerReady = () => {
+      void refreshSetupState();
+      void refreshSources();
+      void refreshTrackers();
+      void refreshSearchProfileLibrary();
+      void refreshSearchTrackRecords();
+      void refreshSearchHardcoverRecords();
+      void loadNovelLibraryState({
+        profileId: store.runtimeResolvedLocalProfileId,
+        serverUrl: store.runtimeServerUrl,
+      }).then((state) => {
+        novelLibraryState = state;
+      }).catch(() => {});
+    };
+    window.addEventListener(SERVER_READY_EVENT, handleServerReady);
     document.addEventListener("pointerdown", handleBrowsePointerDown);
     return () => {
       window.clearTimeout(recommendationsTimer);
+      window.removeEventListener(SERVER_READY_EVENT, handleServerReady);
       document.removeEventListener("pointerdown", handleBrowsePointerDown);
     };
   });

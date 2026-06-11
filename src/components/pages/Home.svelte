@@ -32,6 +32,7 @@
   import AppTopbar from "../layout/AppTopbar.svelte";
   import WindowControlsInline from "../layout/WindowControlsInline.svelte";
   import { detectSetupState, type SetupState } from "../../lib/setupState";
+  import { SERVER_READY_EVENT } from "../../lib/serverLifecycle";
 
   function timeAgo(ts: number): string {
     const diff = Date.now() - ts;
@@ -207,12 +208,19 @@
     void loadLibrary();
     scheduleHomeMetaLoad();
     void refreshSetupState();
+    const handleServerReady = () => {
+      void loadLibrary();
+      scheduleHomeMetaLoad();
+      void refreshSetupState();
+    };
+    window.addEventListener(SERVER_READY_EVENT, handleServerReady);
     const unsubLibrary = cache.subscribe(CACHE_KEYS.LIBRARY, () => loadLibrary());
     const unsubTracking = cache.subscribe(CACHE_KEYS.LIBRARY_TRACKING_SUMMARY, () => loadLibrary());
     const unsubSources = cache.subscribe(CACHE_KEYS.SOURCES, () => loadHomeMeta());
     return () => {
       document.body.classList.remove("aethon-home-search-engaged");
       cancelScheduledHomeMetaLoad();
+      window.removeEventListener(SERVER_READY_EVENT, handleServerReady);
       unsubLibrary();
       unsubTracking();
       unsubSources();

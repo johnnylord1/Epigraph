@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { onMount, untrack } from "svelte";
   import {
     ArrowsClockwise,
     CaretDown,
@@ -41,7 +41,7 @@
   } from "../../lib/novels/packages";
   import { addToast, bumpContentSetupVersion, setExtensionsPanelHint, store } from "../../store/state.svelte";
   import { ensureExtensionRepo, RECOMMENDED_EXTENSION_REPO } from "../../lib/defaultRepos";
-  import { ensureServerAwakeFor, maybeStandbyLocalServer } from "../../lib/serverLifecycle";
+  import { ensureServerAwakeFor, maybeStandbyLocalServer, SERVER_READY_EVENT } from "../../lib/serverLifecycle";
   import { detectSetupState, type SetupState } from "../../lib/setupState";
   import { mockSettingsStore, type MockExtensionSettingsPatch } from "../../store/mockSettingsStore";
   import NocturneState from "../shared/NocturneState.svelte";
@@ -847,6 +847,21 @@
     ]).finally(() => {
       loading = false;
     }));
+  });
+
+  onMount(() => {
+    const handleServerReady = () => {
+      if (isNovelMode) return;
+      void Promise.all([
+        fetchFromRepo(),
+        loadRepos(),
+        refreshSetupState(),
+      ]).finally(() => {
+        loading = false;
+      });
+    };
+    window.addEventListener(SERVER_READY_EVENT, handleServerReady);
+    return () => window.removeEventListener(SERVER_READY_EVENT, handleServerReady);
   });
 
   $effect(() => {

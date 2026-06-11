@@ -87,6 +87,7 @@
     ensureServerAwakeFor,
     isLoopbackServerUrl,
     maybeStandbyLocalServer,
+    notifyServerReady,
   } from "./lib/serverLifecycle";
   import { loadNovelRepositoryState } from "./lib/novels/repositoryState";
   import {
@@ -2304,6 +2305,7 @@
     shellReady = true;
     shellReadyAt = Date.now();
     startupSplashVisible = false;
+    notifyServerReady(store.runtimeServerUrl);
     applyStartupLandingPage();
     await applyPendingAuditAethonBackupPlan().catch((error) => {
       console.warn("Unified backup planning audit failed:", error);
