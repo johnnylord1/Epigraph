@@ -80,6 +80,7 @@
   let filter: Filter = $state("installed");
   let search = $state("");
   let working = $state(new Set<string>());
+  let operationErrors = $state(new Map<string, string>());
   let expanded = $state(new Set<string>());
   let selectedPkgName = $state<string | null>(null);
   let utilityPanel: UtilityPanel = $state(null);
@@ -473,36 +474,51 @@
   async function mutate(fn: () => Promise<unknown>, pkgName: string) {
     if (!(await ensureMangaServerAwake())) return false;
     working = new Set(working).add(pkgName);
+    operationErrors = new Map(operationErrors).set(pkgName, "");
     let ok = true;
     try {
       await fn();
       bumpContentSetupVersion();
+      await loadExtensions();
     } catch (error) {
       ok = false;
       console.error(error);
+      const message = extensionErrorMessage(error);
+      operationErrors = new Map(operationErrors).set(pkgName, message);
       addToast({
         kind: "error",
         title: "Extension action failed",
-        body: extensionErrorMessage(error),
+        body: message,
         duration: 6000,
       });
+    } finally {
+      working.delete(pkgName);
+      working = new Set(working);
     }
-    await loadExtensions();
-    working.delete(pkgName);
-    working = new Set(working);
     return ok;
   }
 
   async function installExtension(extension: ManagedExtension) {
     if (extension.kind === "novels") {
-      if (!novelRepositoryState || !extension.novelPluginId || !extension.novelRepositoryId) return;
+      if (!novelRepositoryState || !extension.novelPluginId || !extension.novelRepositoryId) {
+        const message = "Novel repository metadata is not loaded yet. Refresh novel sources and try again.";
+        operationErrors = new Map(operationErrors).set(extension.pkgName, message);
+        addToast({ kind: "error", title: "Could not install novel source", body: message });
+        return;
+      }
       const entry = novelRepositoryState.catalogEntries.find((item) => (
         item.pluginId === extension.novelPluginId
         && item.repositoryId === extension.novelRepositoryId
       ));
-      if (!entry) return;
+      if (!entry) {
+        const message = "This novel source is no longer present in the cached repository catalog.";
+        operationErrors = new Map(operationErrors).set(extension.pkgName, message);
+        addToast({ kind: "error", title: "Could not install novel source", body: message });
+        return;
+      }
 
       working = new Set(working).add(extension.pkgName);
+      operationErrors = new Map(operationErrors).set(extension.pkgName, "");
       try {
         const nextState = await installNovelCatalogPlugin({
           state: novelRepositoryState,
@@ -514,12 +530,19 @@
         });
         await saveNovelState(nextState);
         selectedPkgName = extension.pkgName;
+        addToast({
+          kind: "success",
+          title: extension.hasUpdate ? "Novel source updated" : "Novel source installed",
+          body: `${extension.name} is ready to use.`,
+        });
       } catch (error) {
         console.error(error);
+        const message = error instanceof Error ? error.message : "Aethon could not install this novel plugin.";
+        operationErrors = new Map(operationErrors).set(extension.pkgName, message);
         addToast({
           kind: "error",
           title: "Could not install novel source",
-          body: error instanceof Error ? error.message : "Aethon could not install this novel plugin.",
+          body: message,
         });
       } finally {
         working.delete(extension.pkgName);
@@ -529,6 +552,7 @@
     }
     const firstInstallFlow = setupState?.kind === "no_installed_extensions";
     working = new Set(working).add(extension.pkgName);
+    operationErrors = new Map(operationErrors).set(extension.pkgName, "");
     let installedExtension: ManagedExtension | null = null;
     try {
       if (!(await ensureMangaServerAwake())) {
@@ -549,6 +573,7 @@
           bumpContentSetupVersion();
         } catch (recoveryError) {
           console.error(recoveryError);
+          operationErrors = new Map(operationErrors).set(extension.pkgName, extensionErrorMessage(recoveryError));
           addToast({
             kind: "error",
             title: "Extension install needs restart",
@@ -559,6 +584,7 @@
         }
       } else {
         console.error(error);
+        operationErrors = new Map(operationErrors).set(extension.pkgName, extensionErrorMessage(error));
         addToast({
           kind: "error",
           title: "Could not install extension",
@@ -768,6 +794,24 @@
   function installFromList(event: MouseEvent, extension: ManagedExtension) {
     event.stopPropagation();
     void installExtension(extension);
+  }
+
+  function actionLabelFor(extension: ManagedExtension) {
+    if (working.has(extension.pkgName)) return extension.hasUpdate ? "Updating..." : "Installing...";
+    if (extension.hasUpdate) return "Update";
+    if (extension.isInstalled) return "Remove";
+    return "Install";
+  }
+
+  function runVariantAction(event: MouseEvent, extension: ManagedExtension) {
+    event.stopPropagation();
+    if (extension.hasUpdate) {
+      void updateExtension(event, extension);
+    } else if (extension.isInstalled) {
+      void removeExtension(event, extension);
+    } else {
+      void installExtension(extension);
+    }
   }
 
   function toggleExpand(event: MouseEvent, base: string) {
@@ -1165,14 +1209,25 @@
               {/if}
             </div>
 
+            {#if operationErrors.get(primary.pkgName)}
+              <p class="extensionOperationError">{operationErrors.get(primary.pkgName)}</p>
+            {/if}
+
             {#if isExpanded && hasVariants}
               <div class="variantList">
                 {#each variants as variant}
-                  <button
-                    type="button"
+                  <div
                     class="variantRow"
                     class:selected={selectedPkgName === variant.pkgName}
+                    role="button"
+                    tabindex="0"
                     onclick={(event) => {
+                      event.stopPropagation();
+                      openExtensionSettings(variant);
+                    }}
+                    onkeydown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
                       event.stopPropagation();
                       openExtensionSettings(variant);
                     }}
@@ -1181,7 +1236,18 @@
                     <strong>{variant.name}</strong>
                     <small>v{variant.versionName}</small>
                     {#if variant.hasUpdate}<em>Update</em>{/if}
-                  </button>
+                    <button
+                      type="button"
+                      class="variantAction"
+                      disabled={working.has(variant.pkgName)}
+                      onclick={(event) => runVariantAction(event, variant)}
+                    >
+                      {actionLabelFor(variant)}
+                    </button>
+                  </div>
+                  {#if operationErrors.get(variant.pkgName)}
+                    <p class="extensionOperationError extensionOperationErrorVariant">{operationErrors.get(variant.pkgName)}</p>
+                  {/if}
                 {/each}
               </div>
             {/if}
@@ -1508,7 +1574,8 @@
   .inlineForm button,
   .toolbarActionBtn,
   .actionBtn,
-  .ghostBtn {
+  .ghostBtn,
+  .variantAction {
     min-height: 26px;
     border-radius: 8px;
     padding: 0 10px;
@@ -1518,7 +1585,8 @@
 
   .inlineForm button,
   .toolbarActionBtn,
-  .actionBtn {
+  .actionBtn,
+  .variantAction {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1529,7 +1597,8 @@
 
   .inlineForm button:disabled,
   .toolbarActionBtn:disabled,
-  .actionBtn:disabled {
+  .actionBtn:disabled,
+  .variantAction:disabled {
     opacity: 0.52;
   }
 
@@ -1553,6 +1622,24 @@
   .ghostBtn:hover {
     color: rgba(255, 148, 148, 0.82);
     border-color: rgba(255, 148, 148, 0.18);
+  }
+
+  .variantAction {
+    min-height: 24px;
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+
+  .extensionOperationError {
+    grid-column: 1 / -1;
+    margin: -2px 0 0 46px;
+    color: rgba(255, 148, 148, 0.82);
+    font-size: 10px;
+    font-weight: 650;
+  }
+
+  .extensionOperationErrorVariant {
+    margin: -2px 0 2px 10px;
   }
 
   .repoList {
