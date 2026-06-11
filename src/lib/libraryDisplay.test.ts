@@ -56,6 +56,16 @@ describe("libraryDisplay", () => {
     expect(layout.effectiveColumns).toBe(4);
   });
 
+  it("normalizes legacy explicit densities below four", () => {
+    const layout = computeLibraryLayout({
+      availableWidth: 760,
+      preferredColumns: 2 as never,
+      mode: "grid",
+    });
+
+    expect(layout.effectiveColumns).toBe(4);
+  });
+
   it("allows denser layouts on large windows", () => {
     const layout = computeLibraryLayout({
       availableWidth: 1920,

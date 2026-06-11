@@ -2,8 +2,6 @@ export type LibraryViewMode = "grid" | "compact_grid" | "list";
 
 export type LibraryPreferredGridColumns =
   | "auto"
-  | 2
-  | 3
   | 4
   | 5
   | 6
@@ -56,7 +54,7 @@ const DISPLAY_SPECS: Record<LibraryViewMode, LibraryDisplaySpec> = {
 };
 
 function clampColumns(value: number): number {
-  return Math.max(1, Math.min(10, Math.floor(value)));
+  return Math.max(4, Math.min(10, Math.floor(value)));
 }
 
 function widthForColumns(availableWidth: number, columns: number, gap: number): number {
@@ -67,7 +65,7 @@ function widthForColumns(availableWidth: number, columns: number, gap: number): 
 function getMaxColumnsForWidth(availableWidth: number, minCardWidth: number, gap: number): number {
   if (availableWidth <= 0) return 1;
   const raw = Math.floor((availableWidth + gap) / (minCardWidth + gap));
-  return clampColumns(Math.max(1, raw));
+  return Math.max(1, Math.min(10, raw));
 }
 
 export function getLibraryDisplaySpec(mode: LibraryViewMode): LibraryDisplaySpec {
