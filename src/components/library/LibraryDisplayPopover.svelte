@@ -176,7 +176,7 @@
     font-weight: 700;
     letter-spacing: 0.09em;
     text-transform: uppercase;
-    color: rgba(207, 199, 226, 0.68);
+    color: var(--n-popover-label);
   }
 
   .n-popover-note {
@@ -185,7 +185,7 @@
     font-size: 12.5px;
     font-weight: 680;
     letter-spacing: 0;
-    color: rgba(229, 226, 225, 0.58);
+    color: var(--n-popover-text);
   }
 
   .n-popover-meta {
@@ -194,7 +194,7 @@
     font-weight: 720;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: rgba(218, 207, 255, 0.76);
+    color: var(--n-popover-meta);
     white-space: nowrap;
   }
 
@@ -228,8 +228,8 @@
     gap: 4px;
     padding: 4px;
     border-radius: 9999px;
-    background: rgba(255, 255, 255, 0.055);
-    border: 1px solid rgba(255, 255, 255, 0.045);
+    background: var(--n-popover-control-bg);
+    border: 1px solid var(--n-popover-control-border);
   }
 
   .n-mini-switch button {
@@ -239,7 +239,7 @@
     border-radius: 9999px;
     border: none;
     background: transparent;
-    color: rgba(229, 226, 225, 0.62);
+    color: var(--n-popover-text);
     font-family: var(--font-sans);
     font-size: 11.5px;
     font-weight: 720;
@@ -254,8 +254,8 @@
   }
 
   .n-mini-switch button:hover:not(.is-selected) {
-    color: #fff;
-    background: rgba(255, 255, 255, 0.05);
+    color: var(--n-popover-text-strong);
+    background: var(--n-popover-item-hover);
   }
 
   .n-mini-switch button.is-selected {
