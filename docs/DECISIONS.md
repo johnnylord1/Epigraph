@@ -196,3 +196,16 @@
 - Implemented image load error (`onerror`) handling on the source language flag `<img>` inside `LibraryCard.svelte`.
 - If the flag image fails to load (due to lack of internet connection, offline development, or domain blocking), Svelte immediately catches the error, updates local component state, and gracefully falls back to displaying the native Unicode text/emoji flag (`getLanguageFlag`).
 - On Windows systems, this gracefully displays the fallback text regional indicators (like "BR", "PT", "GB") instead of rendering a broken image icon with raw alt text like "PO", ensuring visual integrity and clean rendering under any network conditions.
+
+## 2026-06-11 - Reader settings popover compacted and server authentication fixes implemented
+- Addressed user feedback regarding the reader settings popover sizing and prominence:
+  - Reduced settings popover width to `min(270px, calc(100vw - 32px))` and padding to `10px 12px` for a much more compact, subtle layout.
+  - Softened row heights, gap spacing (`6px`), and component labels by removing the shouty all-caps conversion (`text-transform: none;` on `dt` labels) and reducing font-weight to a clean `500` (Medium).
+  - Restyled segmented buttons, stepper controls, action buttons, selects, and toggles to be more subtle, desaturated, and lower contrast.
+  - Replaced the bright neon purple active states of toggles with desaturated white/translucent accents (`rgba(255, 255, 255, 0.12)` background, `0.85` opacity selector knob).
+- Resolved Book/Chapter loading errors when Suwayomi basic authentication is enabled:
+  - Passed custom request authorization headers to `epubjs` and `pdfjs` loaders.
+  - Refactored `createPdfDocumentInit` inside `src/lib/books/pdf.ts` to accept an optional `authHeader` string, avoiding circular imports.
+  - Propagated authorization headers to `ePub` instantiations in `BookReader.svelte` and `BookDetail.svelte`, and to `createPdfDocumentInit` in `BookReader.svelte`.
+  - Increased `fetchWithTimeout` timeout safeguard from a restrictive `4s` to `60s` in `src/lib/imageCache.ts` to prevent premature loading aborts on slower connections or large files.
+
