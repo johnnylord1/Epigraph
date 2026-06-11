@@ -79,6 +79,7 @@
     waitForLibraryUpdateToSettle as waitForSharedLibraryUpdateToSettle,
   } from "./lib/library/updateRuntime";
   import {
+    configureLocalServerRuntime,
     ensureServerAwakeFor,
     isLoopbackServerUrl,
     maybeStandbyLocalServer,
@@ -364,6 +365,7 @@
     lastDownloadEventAgeMs: number;
     cache: ReturnType<typeof cache.stats>;
     imageCache: ReturnType<typeof getImageCacheStats>;
+    serverStandbyEligibleReason: string;
   };
 
   type RuntimeDiagnosticsBridge = {
@@ -381,6 +383,7 @@
       lastDownloadEventAgeMs: Math.max(0, Date.now() - lastDownloadEventAt),
       cache: cache.stats(),
       imageCache: getImageCacheStats(),
+      serverStandbyEligibleReason: serverStandbyEligibilityReason(),
     };
   }
 
@@ -494,6 +497,18 @@
     );
   }
 
+  function serverStandbyEligibilityReason() {
+    if (!store.settings.localServerStandbyEnabled) return "standby disabled";
+    if (!idle) return "app is active";
+    const standbyIdleMin = Math.max(1, Number(store.settings.localServerStandbyIdleMin ?? 10));
+    if (Date.now() - lastInteractionAt < standbyIdleMin * 60 * 1000) return "waiting for idle timeout";
+    if (msUntilNextLibraryUpdate() <= 5 * 60 * 1000) return "next library update is due soon";
+    if (!store.runtimeServerUrl || !isLoopbackServerUrl(store.runtimeServerUrl)) return "server is external or missing";
+    if (shouldKeepServerAwake()) return "server-backed surface is active";
+    if (automaticLibraryUpdateInFlight || store.libraryUpdateInFlight) return "library update is running";
+    return "eligible";
+  }
+
   function nextLibraryUpdateDue(now = Date.now()) {
     if (!store.settings.autoLibraryUpdatesEnabled) return false;
     const intervalHours = Math.max(1, Number(store.settings.libraryUpdateIntervalHours ?? 12));
@@ -558,6 +573,7 @@
         const awake = await ensureServerAwakeFor("auto-library-update", {
           serverUrl: store.runtimeServerUrl,
           binary: store.settings.serverBinary,
+          updateIntensity: store.settings.libraryUpdateIntensity,
         });
         if (!awake) return;
         await ensureSharedAethonLibraryUpdateRules();
@@ -2580,6 +2596,7 @@
         invoke<void>("spawn_server", {
           binary: store.settings.serverBinary,
           serverUrl: effectiveServerUrl,
+          updateIntensity: store.settings.libraryUpdateIntensity,
         }).catch((err: any) => {
           if (err?.kind === "NotConfigured") {
             notConfigured = true;
@@ -2645,6 +2662,16 @@
 
   $effect(() => {
     if (!shellReady || isNovelRuntimeHostWindow) return;
+    void configureLocalServerRuntime({
+      serverUrl: store.runtimeServerUrl,
+      updateIntensity: store.settings.libraryUpdateIntensity,
+    }).catch((error) => {
+      console.warn("Could not apply local Suwayomi runtime profile:", error);
+    });
+  });
+
+  $effect(() => {
+    if (!shellReady || isNovelRuntimeHostWindow) return;
     if (!store.runtimeServerUrl) return;
     const needsServer =
       store.navPage === "search"
@@ -2663,6 +2690,7 @@
     void ensureServerAwakeFor(reason, {
       serverUrl: store.runtimeServerUrl,
       binary: store.settings.serverBinary,
+      updateIntensity: store.settings.libraryUpdateIntensity,
     }).catch((error) => {
       console.warn("Could not wake Suwayomi for active surface:", error);
     });

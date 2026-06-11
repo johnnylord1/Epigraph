@@ -349,6 +349,7 @@
         await ensureServerAwakeFor("library-category-members", {
           serverUrl: store.runtimeServerUrl,
           binary: store.settings.serverBinary,
+          updateIntensity: store.settings.libraryUpdateIntensity,
         });
         return ensureCompletedCategory((await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES_WITH_MANGA_IDS)).categories.nodes);
       },
@@ -1341,6 +1342,7 @@
         const awake = await ensureServerAwakeFor("manual-library-update", {
           serverUrl: store.runtimeServerUrl,
           binary: store.settings.serverBinary,
+          updateIntensity: store.settings.libraryUpdateIntensity,
         });
         if (!awake) throw new Error("Suwayomi is not reachable.");
 
@@ -1460,6 +1462,7 @@
       const awake = await ensureServerAwakeFor("library-covers", {
         serverUrl: store.runtimeServerUrl,
         binary: store.settings.serverBinary,
+        updateIntensity: store.settings.libraryUpdateIntensity,
       });
       if (awake) {
         bumpCoverRecoveryVersions(pendingCoverRecoveryIds);

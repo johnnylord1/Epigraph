@@ -53,9 +53,9 @@ fn is_tracker_oauth_callback(url: &Url) -> bool {
         .any(|(key, value)| matches!(key.as_ref(), "code" | "access_token") && !value.is_empty())
         || url.fragment().is_some_and(|fragment| {
             let params = url::form_urlencoded::parse(fragment.as_bytes());
-            params
-                .into_iter()
-                .any(|(key, value)| matches!(key.as_ref(), "code" | "access_token") && !value.is_empty())
+            params.into_iter().any(|(key, value)| {
+                matches!(key.as_ref(), "code" | "access_token") && !value.is_empty()
+            })
         })
 }
 
@@ -237,8 +237,19 @@ struct RuntimeDiagnostics {
     java_pid: Option<u32>,
     java_memory_bytes: Option<u64>,
     java_virtual_memory_bytes: Option<u64>,
+    java_cpu_percent: Option<f32>,
+    local_server_profile: Option<String>,
+    server_conf: Option<ServerConfDiagnostics>,
     total_processes: usize,
     startup_diagnostics_enabled: bool,
+}
+
+#[derive(Serialize)]
+struct ServerConfDiagnostics {
+    global_update_interval: Option<String>,
+    max_sources_in_parallel: Option<String>,
+    web_ui_enabled: Option<String>,
+    web_ui_update_check_interval: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -253,6 +264,36 @@ pub enum SpawnError {
 enum LocalServerProfile {
     Main,
     Test,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LocalServerUpdateIntensity {
+    Eco,
+    Balanced,
+    Fast,
+}
+
+impl LocalServerUpdateIntensity {
+    fn from_option(value: Option<&str>) -> Self {
+        match value
+            .unwrap_or("balanced")
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "eco" => Self::Eco,
+            "fast" => Self::Fast,
+            _ => Self::Balanced,
+        }
+    }
+
+    fn max_sources_in_parallel(self) -> u8 {
+        match self {
+            Self::Eco => 1,
+            Self::Balanced => 2,
+            Self::Fast => 3,
+        }
+    }
 }
 
 impl LocalServerProfile {
@@ -1024,7 +1065,11 @@ async fn cache_library_cover(
         .build()
         .map_err(|err| err.to_string())?;
     let mut request = client.get(parsed_url);
-    if let Some(header) = auth_header.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(header) = auth_header
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         request = request.header(reqwest::header::AUTHORIZATION, header);
     }
 
@@ -1451,6 +1496,54 @@ mod tests {
     }
 
     #[test]
+    fn patches_suwayomi_runtime_conf_for_balanced_updates() {
+        let patched = patch_suwayomi_runtime_conf(
+            r#"server.webUIEnabled = true
+server.initialOpenInBrowserEnabled = true
+server.systemTrayEnabled = true
+server.globalUpdateInterval = 12
+server.webUIUpdateCheckInterval = 23
+server.maxSourcesInParallel = 6
+"#
+            .to_string(),
+            "\"127.0.0.1\"",
+            4567,
+            LocalServerUpdateIntensity::Balanced,
+        );
+
+        assert!(patched.contains("server.webUIEnabled = false"));
+        assert!(patched.contains("server.initialOpenInBrowserEnabled = false"));
+        assert!(patched.contains("server.systemTrayEnabled = false"));
+        assert!(patched.contains("server.globalUpdateInterval = 0"));
+        assert!(patched.contains("server.webUIUpdateCheckInterval = 0"));
+        assert!(patched.contains("server.maxSourcesInParallel = 2"));
+    }
+
+    #[test]
+    fn maps_update_intensity_to_source_parallelism() {
+        assert_eq!(
+            LocalServerUpdateIntensity::from_option(Some("eco")).max_sources_in_parallel(),
+            1
+        );
+        assert_eq!(
+            LocalServerUpdateIntensity::from_option(Some("balanced")).max_sources_in_parallel(),
+            2
+        );
+        assert_eq!(
+            LocalServerUpdateIntensity::from_option(Some("fast")).max_sources_in_parallel(),
+            3
+        );
+        assert_eq!(
+            LocalServerUpdateIntensity::from_option(Some("unknown")).max_sources_in_parallel(),
+            2
+        );
+        assert_eq!(
+            LocalServerUpdateIntensity::from_option(None).max_sources_in_parallel(),
+            2
+        );
+    }
+
+    #[test]
     fn resolve_local_server_target_marks_main_and_test_profiles() {
         let main_target = LaunchTargetInfo {
             server_url_override: Some("http://127.0.0.1:4567".to_string()),
@@ -1775,7 +1868,9 @@ fn serve_library_cover_asset(request: Request<Vec<u8>>) -> Response<Cow<'static,
 
     let metadata = match fs::metadata(&path) {
         Ok(metadata) => metadata,
-        Err(_) => return book_asset_error(StatusCode::NOT_FOUND, "Library cover could not be read."),
+        Err(_) => {
+            return book_asset_error(StatusCode::NOT_FOUND, "Library cover could not be read.")
+        }
     };
     let file_len = metadata.len();
 
@@ -2330,6 +2425,38 @@ fn probe_server_health(server_url: String) -> bool {
     probe_local_server(&server_url, Duration::from_millis(800))
 }
 
+fn read_conf_value(contents: &str, key: &str) -> Option<String> {
+    contents
+        .lines()
+        .find_map(|line| {
+            let trimmed = line.trim();
+            let (line_key, raw_value) = trimmed.split_once('=')?;
+            if line_key.trim() != key {
+                return None;
+            }
+            Some(
+                raw_value
+                    .split('#')
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .trim_matches('"')
+                    .to_string(),
+            )
+        })
+        .filter(|value| !value.is_empty())
+}
+
+fn read_server_conf_diagnostics(root_dir: &Path) -> Option<ServerConfDiagnostics> {
+    let contents = std::fs::read_to_string(root_dir.join("server.conf")).ok()?;
+    Some(ServerConfDiagnostics {
+        global_update_interval: read_conf_value(&contents, "server.globalUpdateInterval"),
+        max_sources_in_parallel: read_conf_value(&contents, "server.maxSourcesInParallel"),
+        web_ui_enabled: read_conf_value(&contents, "server.webUIEnabled"),
+        web_ui_update_check_interval: read_conf_value(&contents, "server.webUIUpdateCheckInterval"),
+    })
+}
+
 #[tauri::command]
 fn get_runtime_diagnostics(app: tauri::AppHandle) -> RuntimeDiagnostics {
     let mut system = System::new_all();
@@ -2341,19 +2468,37 @@ fn get_runtime_diagnostics(app: tauri::AppHandle) -> RuntimeDiagnostics {
     let app_virtual_memory_bytes = app_process
         .map(|process| process.virtual_memory())
         .unwrap_or(0);
-    let app_cpu_percent = app_process.map(|process| process.cpu_usage()).unwrap_or(0.0);
+    let app_cpu_percent = app_process
+        .map(|process| process.cpu_usage())
+        .unwrap_or(0.0);
 
-    let java_pid = {
+    let local_server_root = {
         let state = app.state::<ServerState>();
         let guard = state.0.lock().unwrap();
-        guard.as_ref()
+        guard
+            .as_ref()
             .and_then(|running| running.owner_path.parent().map(Path::to_path_buf))
-            .and_then(|root_dir| find_java_pid_for_rootdir(&root_dir))
     };
+    let java_pid = local_server_root
+        .as_ref()
+        .and_then(|root_dir| find_java_pid_for_rootdir(root_dir));
     let java_process = java_pid.and_then(|pid| system.process(Pid::from_u32(pid)));
     let java_memory_bytes = java_process.map(|process: &sysinfo::Process| process.memory());
     let java_virtual_memory_bytes =
         java_process.map(|process: &sysinfo::Process| process.virtual_memory());
+    let java_cpu_percent = java_process.map(|process: &sysinfo::Process| process.cpu_usage());
+    let local_server_profile = local_server_root.as_ref().and_then(|root| {
+        if root == &local_server_profile_root(LocalServerProfile::Main) {
+            Some("main".to_string())
+        } else if root == &local_server_profile_root(LocalServerProfile::Test) {
+            Some("test".to_string())
+        } else {
+            None
+        }
+    });
+    let server_conf = local_server_root
+        .as_ref()
+        .and_then(|root| read_server_conf_diagnostics(root));
 
     RuntimeDiagnostics {
         app_pid,
@@ -2363,6 +2508,9 @@ fn get_runtime_diagnostics(app: tauri::AppHandle) -> RuntimeDiagnostics {
         java_pid,
         java_memory_bytes,
         java_virtual_memory_bytes,
+        java_cpu_percent,
+        local_server_profile,
+        server_conf,
         total_processes: system.processes().len(),
         startup_diagnostics_enabled: startup_diagnostics_enabled(),
     }
@@ -2869,7 +3017,8 @@ fn write_book_library_state(contents: String, app: tauri::AppHandle) -> Result<S
     let next_contents = fs::read_to_string(&path).map_err(|err| err.to_string())?;
     tauri::async_runtime::spawn(async move {
         if let Err(error) =
-            syncd_replication::notify_book_state_written(&app, previous_contents, &next_contents).await
+            syncd_replication::notify_book_state_written(&app, previous_contents, &next_contents)
+                .await
         {
             eprintln!("syncd replication book notify failed: {error}");
         }
@@ -3018,8 +3167,9 @@ server.electronPath = ""
 server.debugLogsEnabled = false
 server.downloadAsCbz = true
 server.autoDownloadNewChapters = false
-server.globalUpdateInterval = 12
-server.maxSourcesInParallel = 3
+server.globalUpdateInterval = 0
+server.webUIUpdateCheckInterval = 0
+server.maxSourcesInParallel = 2
 server.extensionRepos = []
 "#;
 
@@ -3041,7 +3191,12 @@ fn local_server_java_args(jar: &Path) -> Vec<String> {
     ]
 }
 
-fn seed_server_conf(data_dir: &Path, profile: LocalServerProfile, port: u16) {
+fn seed_server_conf(
+    data_dir: &Path,
+    profile: LocalServerProfile,
+    port: u16,
+    update_intensity: LocalServerUpdateIntensity,
+) {
     let conf_path = data_dir.join("server.conf");
     let exposure_mode = suwayomi_lan::load_and_sanitize(data_dir, profile.key())
         .unwrap_or(suwayomi_lan::LanExposureMode::LoopbackOnly);
@@ -3052,10 +3207,11 @@ fn seed_server_conf(data_dir: &Path, profile: LocalServerProfile, port: u16) {
             eprintln!("Could not create Suwayomi data dir: {e}");
             return;
         }
-        let initial = patch_conf_key(
-            patch_conf_key(DEFAULT_SERVER_CONF.to_string(), "server.ip", &server_ip),
-            "server.port",
-            &port.to_string(),
+        let initial = patch_suwayomi_runtime_conf(
+            DEFAULT_SERVER_CONF.to_string(),
+            &server_ip,
+            port,
+            update_intensity,
         );
         if let Err(e) = std::fs::write(&conf_path, initial) {
             eprintln!("Could not write server.conf: {e}");
@@ -3067,23 +3223,30 @@ fn seed_server_conf(data_dir: &Path, profile: LocalServerProfile, port: u16) {
         return;
     };
 
-    let patched = patch_conf_key(
-        patch_conf_key(
-            patch_conf_key(
-                patch_conf_key(contents, "server.webUIEnabled", "false"),
-                "server.initialOpenInBrowserEnabled",
-                "false",
-            ),
-            "server.systemTrayEnabled",
-            "false",
-        ),
-        "server.ip",
-        &server_ip,
-    );
-    let patched = patch_conf_key(patched, "server.port", &port.to_string());
-    let patched = patch_conf_key(patched, "server.maxSourcesInParallel", "3");
+    let patched = patch_suwayomi_runtime_conf(contents, &server_ip, port, update_intensity);
 
     let _ = std::fs::write(&conf_path, patched);
+}
+
+fn patch_suwayomi_runtime_conf(
+    contents: String,
+    server_ip: &str,
+    port: u16,
+    update_intensity: LocalServerUpdateIntensity,
+) -> String {
+    let mut patched = patch_conf_key(contents, "server.webUIEnabled", "false");
+    patched = patch_conf_key(patched, "server.initialOpenInBrowserEnabled", "false");
+    patched = patch_conf_key(patched, "server.systemTrayEnabled", "false");
+    patched = patch_conf_key(patched, "server.webUIUpdateCheckInterval", "0");
+    patched = patch_conf_key(patched, "server.globalUpdateInterval", "0");
+    patched = patch_conf_key(patched, "server.autoDownloadNewChapters", "false");
+    patched = patch_conf_key(patched, "server.ip", server_ip);
+    patched = patch_conf_key(patched, "server.port", &port.to_string());
+    patch_conf_key(
+        patched,
+        "server.maxSourcesInParallel",
+        &update_intensity.max_sources_in_parallel().to_string(),
+    )
 }
 
 fn patch_conf_key(text: String, key: &str, value: &str) -> String {
@@ -3116,7 +3279,12 @@ fn sanitize_suwayomi_lan_state() {
         if !root.exists() {
             continue;
         }
-        seed_server_conf(&root, profile, default_local_server_port(profile));
+        seed_server_conf(
+            &root,
+            profile,
+            default_local_server_port(profile),
+            LocalServerUpdateIntensity::Balanced,
+        );
     }
 }
 
@@ -3205,7 +3373,12 @@ fn schedule_suwayomi_lan_session_watchers(app: &tauri::AppHandle) {
             }
 
             let _ = suwayomi_lan::clear_temporary_session(&root);
-            seed_server_conf(&root, profile, default_local_server_port(profile));
+            seed_server_conf(
+                &root,
+                profile,
+                default_local_server_port(profile),
+                LocalServerUpdateIntensity::Balanced,
+            );
             kill_tachidesk(&app, Some(&server_url));
         });
     }
@@ -3216,7 +3389,12 @@ fn clear_suwayomi_lan_state() {
         let root = local_server_profile_root(profile);
         let _ = suwayomi_lan::clear_temporary_session(&root);
         if root.exists() {
-            seed_server_conf(&root, profile, default_local_server_port(profile));
+            seed_server_conf(
+                &root,
+                profile,
+                default_local_server_port(profile),
+                LocalServerUpdateIntensity::Balanced,
+            );
         }
     }
 }
@@ -3226,9 +3404,7 @@ fn suwayomi_data_dir() -> PathBuf {
     {
         std::env::var_os("APPDATA")
             .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                dirs::data_dir().unwrap_or_else(|| PathBuf::from("C:\\ProgramData"))
-            })
+            .unwrap_or_else(|| dirs::data_dir().unwrap_or_else(|| PathBuf::from("C:\\ProgramData")))
             .join("aethon")
     }
     #[cfg(target_os = "macos")]
@@ -3665,6 +3841,7 @@ fn resolve_server_binary(
 fn spawn_server(
     binary: String,
     server_url: String,
+    update_intensity: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<(), SpawnError> {
     {
@@ -3676,6 +3853,7 @@ fn spawn_server(
 
     let launch_target = app.state::<LaunchTarget>().0.clone();
     let mut target = resolve_local_server_target(&launch_target, Some(server_url.as_str()))?;
+    let update_intensity = LocalServerUpdateIntensity::from_option(update_intensity.as_deref());
     if target.attach_only {
         return Err(SpawnError::AttachOnlyTarget(
             "Audit targets are attach-only and never auto-start a local server.".to_string(),
@@ -3884,7 +4062,7 @@ fn spawn_server(
         ),
     }
 
-    seed_server_conf(&data_dir, target.profile, target.port);
+    seed_server_conf(&data_dir, target.profile, target.port, update_intensity);
     do_log(&mut log, "[spawn_server] server.conf seeded");
 
     let mut invocation = match resolve_server_binary(&binary, &app, &mut log) {
@@ -4160,6 +4338,27 @@ fn spawn_server(
             Err(SpawnError::SpawnFailed(e.to_string()))
         }
     }
+}
+
+#[tauri::command]
+fn configure_local_server_runtime(
+    server_url: String,
+    update_intensity: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<(), SpawnError> {
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    let mut target = resolve_local_server_target(&launch_target, Some(server_url.as_str()))?;
+    if target.attach_only {
+        return Ok(());
+    }
+    target.root_dir = ensure_suwayomi_data_dir(target.profile);
+    seed_server_conf(
+        &target.root_dir,
+        target.profile,
+        target.port,
+        LocalServerUpdateIntensity::from_option(update_intensity.as_deref()),
+    );
+    Ok(())
 }
 
 #[tauri::command]
@@ -4681,6 +4880,7 @@ pub fn run() {
             write_book_cover,
             remove_book_assets,
             spawn_server,
+            configure_local_server_runtime,
             kill_server,
             get_platform_ui_scale,
             get_flaresolverr_local_status,

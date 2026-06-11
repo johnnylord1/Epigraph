@@ -106,23 +106,70 @@ async function collectWebViewDiagnostics() {
       await page.waitForTimeout(500);
     }
 
-    const diagnostics = await page.evaluate(() => ({
-      title: document.title,
-      url: location.href,
-      state: window.__aethonAudit?.getState?.() ?? null,
-      runtime: window.__AETHON_DIAGNOSTICS__?.getSnapshot?.() ?? null,
-      memory: performance.memory ? {
-        usedJsHeapMb: Math.round(performance.memory.usedJSHeapSize / 1024 / 1024 * 10) / 10,
-        totalJsHeapMb: Math.round(performance.memory.totalJSHeapSize / 1024 / 1024 * 10) / 10,
-        jsHeapLimitMb: Math.round(performance.memory.jsHeapSizeLimit / 1024 / 1024 * 10) / 10,
-      } : null,
-      dom: {
-        elements: document.querySelectorAll("*").length,
-        images: document.images.length,
-        canvases: document.querySelectorAll("canvas").length,
-        runningAnimations: document.getAnimations().filter((animation) => animation.playState === "running").length,
-      },
-    }));
+    const diagnostics = await page.evaluate(async () => {
+      const runtime = window.__AETHON_DIAGNOSTICS__?.getSnapshot?.() ?? null;
+      let backend = null;
+      let libraryUpdateStatus = null;
+
+      try {
+        backend = await window.__AETHON_DIAGNOSTICS__?.getBackendSnapshot?.();
+      } catch (error) {
+        backend = { error: error instanceof Error ? error.message : String(error) };
+      }
+
+      const serverUrl = runtime?.serverUrl ?? window.__aethonAudit?.getState?.()?.serverUrl;
+      if (serverUrl) {
+        try {
+          const response = await fetch(`${serverUrl}/api/graphql`, {
+            method: "POST",
+            cache: "no-store",
+            headers: {
+              "Content-Type": "application/json",
+              "Cache-Control": "no-cache",
+            },
+            body: JSON.stringify({
+              query: `
+                query MeasureLibraryUpdateStatus {
+                  libraryUpdateStatus {
+                    jobsInfo {
+                      isRunning
+                      finishedJobs
+                      totalJobs
+                      skippedCategoriesCount
+                      skippedMangasCount
+                    }
+                  }
+                }
+              `,
+            }),
+          });
+          const json = await response.json();
+          libraryUpdateStatus = json.data?.libraryUpdateStatus?.jobsInfo ?? null;
+        } catch (error) {
+          libraryUpdateStatus = { error: error instanceof Error ? error.message : String(error) };
+        }
+      }
+
+      return {
+        title: document.title,
+        url: location.href,
+        state: window.__aethonAudit?.getState?.() ?? null,
+        runtime,
+        backend,
+        libraryUpdateStatus,
+        memory: performance.memory ? {
+          usedJsHeapMb: Math.round(performance.memory.usedJSHeapSize / 1024 / 1024 * 10) / 10,
+          totalJsHeapMb: Math.round(performance.memory.totalJSHeapSize / 1024 / 1024 * 10) / 10,
+          jsHeapLimitMb: Math.round(performance.memory.jsHeapSizeLimit / 1024 / 1024 * 10) / 10,
+        } : null,
+        dom: {
+          elements: document.querySelectorAll("*").length,
+          images: document.images.length,
+          canvases: document.querySelectorAll("canvas").length,
+          runningAnimations: document.getAnimations().filter((animation) => animation.playState === "running").length,
+        },
+      };
+    });
     await browser.close();
     return { available: true, cdp, forcedGc: hasFlag("--gc"), ...diagnostics };
   } catch (error) {

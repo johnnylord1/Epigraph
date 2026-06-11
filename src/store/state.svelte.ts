@@ -28,6 +28,8 @@ import type { LibraryPreferredGridColumns, LibraryViewMode } from "../lib/librar
 import type { MangaReaderPreference } from "../lib/reader/scanlator";
 import type { ActiveNovelDetailState, ActiveNovelReaderState } from "../lib/novels/domain";
 
+export type LibraryUpdateIntensity = "eco" | "balanced" | "fast";
+
 export type PageStyle        = "single" | "double" | "longstrip" | "fade";
 export type FitMode          = "width" | "height" | "screen" | "original";
 export type LibraryFilter    = "all" | "library" | "downloaded" | string;
@@ -453,6 +455,7 @@ export interface Settings {
   autoStartServer:         boolean;
   autoLibraryUpdatesEnabled: boolean;
   libraryUpdateIntervalHours: number;
+  libraryUpdateIntensity:  LibraryUpdateIntensity;
   localServerStandbyEnabled: boolean;
   localServerStandbyIdleMin: number;
   lastLibraryUpdateAt?:    number;
@@ -573,6 +576,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoStartServer:        true,
   autoLibraryUpdatesEnabled: true,
   libraryUpdateIntervalHours: 12,
+  libraryUpdateIntensity: "balanced",
   localServerStandbyEnabled: true,
   localServerStandbyIdleMin: 10,
   lastLibraryUpdateAt:    undefined,
@@ -654,6 +658,10 @@ function normalizeBlockedTags(value: unknown): string[] {
     legacyTags.length === tags.length && legacyTags.every((tag, index) => tag === tags[index]),
   );
   return legacy ? [] : [...new Set(tags)];
+}
+
+function normalizeLibraryUpdateIntensity(value: unknown): LibraryUpdateIntensity {
+  return value === "eco" || value === "fast" ? value : "balanced";
 }
 
 function cloneDefaultSettings(): Settings {
@@ -775,6 +783,7 @@ function mergeSettings(saved: any): Settings {
     serverUrl:             coercedServerUrl,
     theme:                 coercedTheme,
     launchIntoLibrary:    saved?.settings?.launchIntoLibrary ?? DEFAULT_SETTINGS.launchIntoLibrary,
+    libraryUpdateIntensity: normalizeLibraryUpdateIntensity(saved?.settings?.libraryUpdateIntensity),
     filterBlockedTags:    saved?.settings?.filterBlockedTags ?? DEFAULT_SETTINGS.filterBlockedTags,
     adultContentTags:     saved?.settings?.adultContentTags     ?? DEFAULT_SETTINGS.adultContentTags,
     nsfwFilteredTags:     normalizeBlockedTags(saved?.settings?.nsfwFilteredTags),

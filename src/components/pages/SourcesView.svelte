@@ -183,6 +183,7 @@
     return ensureServerAwakeFor("browse", {
       serverUrl: store.runtimeServerUrl ?? store.settings.serverUrl,
       binary: store.settings.serverBinary,
+      updateIntensity: store.settings.libraryUpdateIntensity,
     });
   }
 

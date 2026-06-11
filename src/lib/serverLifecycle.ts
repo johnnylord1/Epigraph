@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { LibraryUpdateIntensity } from "../store/state.svelte";
 
 export type ServerWakeReason =
   | "startup"
@@ -14,6 +15,7 @@ export type ServerWakeReason =
 export interface ServerLifecycleInput {
   serverUrl: string | null | undefined;
   binary?: string | null;
+  updateIntensity?: LibraryUpdateIntensity | null;
 }
 
 export function isLoopbackServerUrl(serverUrl: string | null | undefined) {
@@ -48,6 +50,7 @@ export async function ensureServerAwakeFor(
   await invoke<void>("spawn_server", {
     binary: input.binary ?? "",
     serverUrl,
+    updateIntensity: input.updateIntensity ?? "balanced",
   });
 
   for (let attempt = 0; attempt < 30; attempt += 1) {
@@ -57,6 +60,16 @@ export async function ensureServerAwakeFor(
 
   console.warn(`Suwayomi did not wake for ${reason}.`);
   return false;
+}
+
+export async function configureLocalServerRuntime(input: ServerLifecycleInput) {
+  const serverUrl = input.serverUrl ?? null;
+  if (!isLoopbackServerUrl(serverUrl)) return false;
+  await invoke<void>("configure_local_server_runtime", {
+    serverUrl,
+    updateIntensity: input.updateIntensity ?? "balanced",
+  });
+  return true;
 }
 
 export async function maybeStandbyLocalServer(input: ServerLifecycleInput) {

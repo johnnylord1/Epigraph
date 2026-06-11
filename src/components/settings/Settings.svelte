@@ -310,6 +310,18 @@
     return hours === 1 ? "Every hour" : `Every ${hours} hours`;
   }
 
+  function libraryUpdateIntensityLabel(value: Settings["libraryUpdateIntensity"] | null | undefined): string {
+    if (value === "eco") return "Eco";
+    if (value === "fast") return "Fast";
+    return "Balanced";
+  }
+
+  function libraryUpdateIntensityHint(value: Settings["libraryUpdateIntensity"] | null | undefined): string {
+    if (value === "eco") return "Lowest CPU/network use. Updates finish more slowly.";
+    if (value === "fast") return "Checks more sources in parallel. Uses more CPU while updating.";
+    return "Recommended balance between update speed and system load.";
+  }
+
   function pageStyleLabel(value: Settings["pageStyle"]): string {
     const normalized = value === "double" ? "single" : value;
     return PAGE_STYLE_LABELS[normalized] ?? PAGE_STYLE_LABELS.single;
@@ -3381,6 +3393,35 @@
                             }}
                           >
                             {libraryUpdateIntervalLabel(hours)}
+                          </button>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Update intensity</p>
+                    <p class="settings-mini-row__hint">{libraryUpdateIntensityHint(store.settings.libraryUpdateIntensity)}</p>
+                  </div>
+                  <div class="select-wrap" id="general-library-update-intensity">
+                    <button class="select-btn" type="button" onclick={() => toggleSelect("general-library-update-intensity")}>
+                      <span>{libraryUpdateIntensityLabel(store.settings.libraryUpdateIntensity)}</span>
+                      <svg class="select-caret" class:open={selectOpen === "general-library-update-intensity"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
+                    </button>
+                    {#if selectOpen === "general-library-update-intensity"}
+                      <div class="select-menu">
+                        {#each ["eco", "balanced", "fast"] as intensity}
+                          <button
+                            class="select-option"
+                            class:active={(store.settings.libraryUpdateIntensity ?? "balanced") === intensity}
+                            type="button"
+                            onclick={() => {
+                              updateSettings({ libraryUpdateIntensity: intensity as Settings["libraryUpdateIntensity"] });
+                              selectOpen = null;
+                            }}
+                          >
+                            {libraryUpdateIntensityLabel(intensity as Settings["libraryUpdateIntensity"])}
                           </button>
                         {/each}
                       </div>
