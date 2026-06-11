@@ -41,7 +41,8 @@
 - **Settings Screen Shell (`Settings.svelte`)**: COMPLETED. Global `n-shell`, topbar, sidebar, and Svelte component `<style>` block correctly implement Nocturne tokens.
 - **Settings Screen Panes**: COMPLETED. Mapped all DOM structures and categories to modern Nocturne layout.
 - **Card/Thumbnail Information Overlay Banner**: COMPLETED. Consolidated overlay banner implemented in Svelte/CSS, fully responsive and dynamically adaptive to all themes. Updated to use CSS Container Queries (`cqw` units) so the banner dimensions scale dynamically relative to the card size. Resolved the resolver relation bug of Suwayomi by fetching the active sources list in parallel and resolving `sourceId` on the frontend layer. Refined the horizontal width of the flag (`width: 20cqw` and `height: 13cqw`), added a slanted diagonal `/` right-edge transition parallel to the unread count transition, flattened the left side of the pill when the flag is present, rounded both sides of the flag in flag-only state, mathematically aligned the visible widths of the downloaded and unread counts, and visually centered the count numbers perfectly inside them. Standardized overlay banner CSS rules globally in `nocturne-port.css` and replaced search recommendation text badges with the new floating banner layout showing tracker logo flag icons (AniList, MyAnimeList, Hardcover, Kitsu, MangaUpdates, Bangumi) and ratings. Resolved banner clipping on the search page by removing `overflow: hidden` from the search recommendation `.n-library-card` button and adding responsive headroom padding-top (`12px`) and padding-left (`8px`) to `.searchRecommendationRow`. Polished flag proportions and tracker icon sizes: expanded the flag section size to `20cqw` width and `13cqw` height, adding custom paddings to keep tracker icons at full scale without clipping, and forcing `object-fit: contain` on SVG tracker logos while keeping `object-fit: cover` for flagcdn country images. Increased frosted glass transparency (`0.65` opacity in dark mode, `0.75` in light mode) for improved aesthetics. Unit tests and production build validated successfully, and resolved flag display on Windows by adding an `onerror` fallback that replaces broken images with native text flags/emojis.
-- **Unified Capsule Reader & Settings Sync**: COMPLETED. Refactored all reader screens (Manga/Comic, EPUB/PDF, Web Novel) to share a bottom floating capsule pill bar and centered settings popover layout matching mockup. Mapped all reader configuration options to Svelte reactive bindings, added hex swatches, and synced all defaults in Settings > Reader tab. Refined backgrounds to a pure desaturated black/grey scale void gradient (`#0a0a0c` to `#050506`) with a very subtle radial highlight (`rgba(255, 255, 255, 0.015)`). Unified Settings popover and download modal backgrounds to identical, slightly lighter grey colors (`#242428` / `rgba(36, 36, 40, 0.96)`) with matching borders (`#42424b`). Enhanced the visual contrast of all interactive panel controls (buttons, selectors, dropdowns, switches, and page steppers) by giving them distinct borders (`rgba(255, 255, 255, 0.18)`) and backgrounds (`rgba(255, 255, 255, 0.08)`) to clearly separate them from the panel backgrounds. Restyled the download manager modal (`Reader.svelte`) to match the exact compact button dimensions, border-radii (`8px`), padding, and font sizes of the settings popover, replacing the large light buttons with clean dark contrast cards (`rgba(0, 0, 0, 0.2)`) and matching borders. Hardened manga page loading by introducing a 4-second timeout safeguard inside `measureAspect` in `Reader.svelte` to prevent layout freezes/infinite spinner hangs when media fetches stall. Bound settingsPopover toolsOpen state dynamically to avoid autohide conflicts on all readers, resolving the unclickable popover controls bug in the dev application. Verified clean production build and 330 passing unit tests. Compacted the settings popover to a subtle `270px` width, simplified labels to normal case, and softened font-weight to `500` (Medium). Replaced neon active toggle styling with desaturated white translucent accents. Resolved authenticated book/chapter fetch failures on Suwayomi instances by propagating authentication headers to the `epubjs` and `pdfjs` loaders. Increased the default `fetchWithTimeout` safeguard to `60s` in `src/lib/imageCache.ts` to prevent premature aborts during large book file downloads.
+- **Unified Capsule Reader & Settings Sync**: COMPLETED. Refactored all reader screens (Manga/Comic, EPUB/PDF, Web Novel) to share a bottom floating capsule pill bar and centered settings popover layout matching mockup. Mapped all reader configuration options to Svelte reactive bindings, added hex swatches, and synced all defaults in Settings > Reader tab. Refined backgrounds to a pure desaturated black/grey scale void gradient (`#0a0a0c` to `#050506`) with a very subtle radial highlight (`rgba(255, 255, 255, 0.015)`). Unified Settings popover and download modal backgrounds to identical, slightly lighter grey colors (`#242428` / `rgba(36, 36, 40, 0.96)`) with matching borders (`#42424b`). Enhanced the visual contrast of all interactive panel controls (buttons, selectors, dropdowns, switches, and page steppers) by giving them distinct borders (`rgba(255, 255, 255, 0.18)`) and backgrounds (`rgba(255, 255, 255, 0.08)`) to clearly separate them from the panel backgrounds. Restyled the download manager modal (`Reader.svelte`) to match the exact compact button dimensions, border-radii (`8px`), padding, and font sizes of the settings popover, replacing the large light buttons with clean dark contrast cards (`rgba(0, 0, 0, 0.2)`) and matching borders. Hardened manga page loading by introducing a 4-second timeout safeguard inside `measureAspect` in `Reader.svelte` to prevent layout freezes/infinite spinner hangs when media fetches stall. Bound settingsPopover toolsOpen state dynamically to avoid autohide conflicts on all readers, resolving the unclickable popover controls bug in the dev application. Verified clean production build and 332 passing unit tests. Compacted the settings popover to a subtle `270px` width, simplified labels to normal case, and softened font-weight to `500` (Medium). Replaced neon active toggle styling with desaturated white translucent accents. Resolved authenticated book/chapter fetch failures on Suwayomi instances by propagating authentication headers to the `epubjs` and `pdfjs` loaders. Increased the default `fetchWithTimeout` safeguard to `60s` in `src/lib/imageCache.ts` to prevent premature aborts during large book file downloads. Repositioned the popover above the capsule bar by increasing bottom offset to `76px` (leaving a clean `8px` gap). Softened the popover background to standard Nocturne graphite (`rgba(26, 26, 30, 0.97)`), made the outer border desaturated (`rgba(255, 255, 255, 0.05)`), and made the inner dividers (`rgba(255, 255, 255, 0.025)`) and control borders (`rgba(255, 255, 255, 0.05)`) extremely faint. Aligned settings popover horizontally to the right edge of the capsule bar (`right: max(16px, calc(50% - 250px))`) to keep centered metadata (title/chapter label) visible. Unified the capsule bar background to match the popover panels' graphite theme (`rgba(26, 26, 30, 0.97)`) and softened its border to `1px solid rgba(255, 255, 255, 0.05)`.
+
 
 
 ## Current Blockers
@@ -142,6 +143,43 @@
 ## Parallel Agent Notes
 - I did not find separate repo artifacts or standalone code/doc commits attributable to other subagents in the workspace
 - Historical parallel-agent sync research is now superseded by the closed syncd implementation and native proof
+
+## 2026-06-11 Runtime Performance Baseline
+- Dev desktop measurement after the stabilization/refactor pass:
+  - total Aethon working set: ~1.37 GB
+  - Java/Suwayomi working set: ~559 MB with `-Xms96m -Xmx320m -XX:+UseG1GC`
+  - WebView renderer working set: ~336 MB
+  - WebView GPU process working set: ~257 MB
+  - Rust shell working set: ~43 MB
+- Idle CPU over a 60s sample is low:
+  - total: ~0.4% of one core
+  - Java/Suwayomi: ~0.3% of one core
+  - WebView browser: ~0.1% of one core
+- Frontend heap after explicit Chromium GC:
+  - used JS heap: ~80 MB
+  - DOM elements: ~298
+  - running animations: 0
+  - image cache entries: 0
+- Conclusion:
+  - current high RAM in dev is not primarily live JavaScript object retention
+  - remaining large buckets are native Java/Suwayomi, WebView renderer, and WebView GPU memory
+  - next aggressive reductions should be measured in release before changing GPU flags or server lifecycle defaults
+
+## 2026-06-11 Stabilization Final Audit
+- Automated verification:
+  - `npm run test:unit`: 69 files passed, 334 tests passed
+  - `npm run test:browser`: 5 files passed, 14 tests passed
+  - `npm run build`: passed
+- Desktop dev smoke after restart:
+  - Home, Library, Browse, Downloads, Settings, Recent Activity, and Library return navigation all changed on the first click
+  - Library rendered 48 visible cards and 96 images in the tested viewport with 0 broken images
+  - Manga Reader opened from Home resume/detail flow, loaded 32 images, and exited cleanly with Escape
+  - BookReader opened from Home resume after a dev-server restart; the earlier `504 Outdated Optimize Dep` was confirmed as stale Vite optimized dependency state
+  - Browse > Novels loaded 62 LNReader recommendations after candidate/rating preparation, with 0 broken images and no UI errors
+- Remaining non-blocking observations:
+  - EPUB content can log sandboxed `about:srcdoc` script-block messages, which is expected because the reader blocks book-embedded scripts
+  - Browse manga recommendation loading can still warn when a Cloudflare-protected source blocks a request; fallback behavior remains active
+  - Build still reports existing Vite dynamic/static import chunk warnings for shared modules
 
 ## Reference Docs
 - Historical refactor detail: [`docs/LIBRARY_SHARED_SHELL_REFACTOR.md`](docs/LIBRARY_SHARED_SHELL_REFACTOR.md)

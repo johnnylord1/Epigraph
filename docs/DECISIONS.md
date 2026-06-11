@@ -209,3 +209,25 @@
   - Propagated authorization headers to `ePub` instantiations in `BookReader.svelte` and `BookDetail.svelte`, and to `createPdfDocumentInit` in `BookReader.svelte`.
   - Increased `fetchWithTimeout` timeout safeguard from a restrictive `4s` to `60s` in `src/lib/imageCache.ts` to prevent premature loading aborts on slower connections or large files.
 
+## 2026-06-11 - Reader settings popover positioning and border styling refined
+- Resolved popover overlap issue by increasing `bottom` offset from `56px` to `76px` in `ReaderHud.svelte`. This positions the settings popover cleanly above the compact `44px` capsule bar (which rises up to `68px` from overlay bottom) with a comfortable `8px` gap, preventing visual obstruction.
+- Aligned settings popover horizontally to the right edge of the capsule bar using `right: max(16px, calc(50% - 250px));` in `ReaderHud.svelte`. This prevents the popover card from covering centered viewport metadata (such as chapter title and page number labels).
+- Matched the capsule bar tone and styling to the settings popover:
+  - Transitioned the bottom capsule bar background from `--reader-panel` (`#131316`) to standard Nocturne graphite (`rgba(26, 26, 30, 0.97)`).
+  - Subtly desaturated capsule bar border from `1px solid rgba(255, 255, 255, 0.08)` to `1px solid rgba(255, 255, 255, 0.05)`.
+- Softened popover dark theme aesthetics to prevent it from looking too stark:
+  - Transitioned popover background from a flat black (`rgba(15, 15, 18, 0.96)`) to a rich graphite slate (`rgba(26, 26, 30, 0.97)`), matching standard Nocturne panel surfaces.
+  - Subtly desaturated outer border to `rgba(255, 255, 255, 0.05)`.
+  - Replaced high-contrast row dividers with faint `rgba(255, 255, 255, 0.025)` borders to soften visual borders.
+  - Lowered control borders (segmented, stepper, select, button inputs) from `rgba(255, 255, 255, 0.1)` to `rgba(255, 255, 255, 0.05)`, removing "industrial" outlines.
+
+## 2026-06-11 - Runtime memory trim limited to idle/background states
+- Centralized runtime memory trimming in `App.svelte` so expired query cache entries and unused image cache entries are trimmed through one throttled path.
+- Kept the operation passive while the user is active; routine trim runs only after UI motion goes idle.
+- Added a stronger background path when the page/window is hidden:
+  - trims expired cache entries
+  - trims non-leased image cache entries
+  - invokes exposed Chromium JavaScript GC only in the hidden/background path
+- Deliberately avoided disabling WebView GPU acceleration or lowering UX quality in this round because the measured idle CPU is already low and the remaining RAM is mostly native Java/WebView/GPU memory.
+
+
