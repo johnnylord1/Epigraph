@@ -33,6 +33,15 @@
     onCoverError,
   }: Props = $props();
   let suppressNextClick = false;
+  let flagImageFailed = $state(false);
+
+  $effect(() => {
+    if (vm.sourceMetricBanner) {
+      vm.sourceMetricBanner.flagLabel;
+      vm.sourceMetricBanner.sourceName;
+    }
+    flagImageFailed = false;
+  });
 
   const showOverlayBadges = $derived(viewMode !== "list");
   const primaryGridBadge = $derived(
@@ -280,13 +289,16 @@
             class:flag-only={!(vm.sourceMetricBanner.downloadedCount > 0 || vm.sourceMetricBanner.newCount > 0)}
             aria-label="Source language"
           >
-            {#if getCountryCode(vm.sourceMetricBanner.flagLabel, vm.sourceMetricBanner.sourceName)}
+            {#if getCountryCode(vm.sourceMetricBanner.flagLabel, vm.sourceMetricBanner.sourceName) && !flagImageFailed}
               <img
                 class="source-metric-flag-img"
                 src="https://flagcdn.com/w40/{getCountryCode(vm.sourceMetricBanner.flagLabel, vm.sourceMetricBanner.sourceName)}.png"
                 alt={vm.sourceMetricBanner.flagLabel}
                 loading="lazy"
                 draggable="false"
+                onerror={() => {
+                  flagImageFailed = true;
+                }}
               />
             {:else}
               {getLanguageFlag(vm.sourceMetricBanner.flagLabel, vm.sourceMetricBanner.sourceName)}

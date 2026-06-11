@@ -11,6 +11,7 @@ export type PdfDocumentInit = {
   disableRange: boolean;
   disableStream: boolean;
   disableAutoFetch: boolean;
+  httpHeaders?: Record<string, string>;
 };
 
 type PdfJsLike = {
@@ -79,14 +80,22 @@ const defaultDeps: PdfImportDeps = {
   writeBookCover,
 };
 
-export function createPdfDocumentInit(sourceUrl: string): PdfDocumentInit {
-  return {
+export function createPdfDocumentInit(sourceUrl: string, authHeader?: string | null): PdfDocumentInit {
+  const init: PdfDocumentInit = {
     url: sourceUrl,
     disableWorker: true,
     disableRange: false,
     disableStream: false,
     disableAutoFetch: false,
   };
+
+  if (authHeader) {
+    init.httpHeaders = {
+      Authorization: authHeader,
+    };
+  }
+
+  return init;
 }
 
 export function configurePdfJsWorker(pdfjsLib: PdfJsLike): void {

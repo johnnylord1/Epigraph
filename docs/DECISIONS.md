@@ -191,3 +191,8 @@
 - Unified the background and border styling for both the settings popover and the download modal to matching grey colors (`#242428` / `rgba(36, 36, 40, 0.96)` background, `#42424b` border) which are identical and slightly lighter than before.
 - Enhanced the visual contrast of all interactive panel controls (segmented switches, action buttons, dropdown selects, page steppers, and list options) in relation to the panels and HUD by applying distinct borders (`rgba(255, 255, 255, 0.18)`) and backgrounds (`rgba(255, 255, 255, 0.08)` or `rgba(0, 0, 0, 0.24)` / active `rgba(143, 130, 230, 0.35)`) to clearly separate them.
 - Restyled the download manager modal in `Reader.svelte` to match the exact compact button dimensions, border-radii (`8px`), padding, and smaller font parameters of the settings popover, replacing the large light buttons with clean dark contrast cards (`rgba(0, 0, 0, 0.2)`) and matching borders.
+
+## 2026-06-11 - Robust source flag image loading fallback implemented
+- Implemented image load error (`onerror`) handling on the source language flag `<img>` inside `LibraryCard.svelte`.
+- If the flag image fails to load (due to lack of internet connection, offline development, or domain blocking), Svelte immediately catches the error, updates local component state, and gracefully falls back to displaying the native Unicode text/emoji flag (`getLanguageFlag`).
+- On Windows systems, this gracefully displays the fallback text regional indicators (like "BR", "PT", "GB") instead of rendering a broken image icon with raw alt text like "PO", ensuring visual integrity and clean rendering under any network conditions.

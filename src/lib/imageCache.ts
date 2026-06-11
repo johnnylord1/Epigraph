@@ -122,7 +122,7 @@ function fetchWithTimeout(
   fetchFn: typeof import("@tauri-apps/plugin-http").fetch,
   url: string,
   init: RequestInit,
-  timeoutMs = 4000,
+  timeoutMs = 60000,
 ): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);

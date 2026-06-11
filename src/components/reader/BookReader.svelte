@@ -43,6 +43,8 @@
     store,
     updateSettings,
   } from "../../store/state.svelte";
+  import { getServerAuthHeader } from "../../lib/client";
+  import { requiresAuthenticatedMediaFetch } from "../../lib/imageCache";
   import NocturneState from "../shared/NocturneState.svelte";
   import ReaderHud from "./ReaderHud.svelte";
 
@@ -475,7 +477,16 @@
     });
     const ePub = await loadEpubFactory();
     if (token !== loadToken || activeBook.subtype !== "epub") return;
-    const book = ePub(sourceUrl);
+    const ePubOptions: any = {};
+    if (requiresAuthenticatedMediaFetch(sourceUrl)) {
+      const authHeader = getServerAuthHeader();
+      if (authHeader) {
+        ePubOptions.requestHeaders = {
+          Authorization: authHeader,
+        };
+      }
+    }
+    const book = ePub(sourceUrl, ePubOptions);
     const rendition = book.renderTo(hostEl, {
       width: "100%",
       height: "100%",
@@ -652,7 +663,8 @@
     });
     const pdfjsLib = await loadPdfJs();
     if (token !== loadToken || activeBook.subtype !== "pdf") return;
-    const pdf = await pdfjsLib.getDocument(createPdfDocumentInit(sourceUrl)).promise;
+    const authHeader = requiresAuthenticatedMediaFetch(sourceUrl) ? getServerAuthHeader() : null;
+    const pdf = await pdfjsLib.getDocument(createPdfDocumentInit(sourceUrl, authHeader)).promise;
     if (token !== loadToken) {
       await pdf.destroy();
       return;

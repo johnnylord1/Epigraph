@@ -78,7 +78,7 @@
     <div class="reader-capsule-bar">
       <!-- 1. Close/Exit -->
       <button class="capsule-btn" onclick={onclose} title="Close reader">
-        <X size={17} weight="regular" />
+        <X size={15} weight="regular" />
       </button>
 
       <!-- 2. Page Indicator -->
@@ -107,20 +107,20 @@
 
       <!-- 4. Navigation Arrows -->
       <button class="capsule-btn" onclick={onprev} disabled={prevDisabled} title="Previous">
-        <CaretLeft size={16} weight="regular" />
+        <CaretLeft size={14} weight="regular" />
       </button>
       <button class="capsule-btn" onclick={onnext} disabled={nextDisabled} title="Next">
-        <CaretRight size={16} weight="regular" />
+        <CaretRight size={14} weight="regular" />
       </button>
 
       <!-- 5. Bookmark Toggle -->
       <button class="capsule-btn" class:active={isBookmarked} onclick={onbookmark} title="Bookmark">
-        <BookmarkSimple size={17} weight={isBookmarked ? "fill" : "regular"} />
+        <BookmarkSimple size={15} weight={isBookmarked ? "fill" : "regular"} />
       </button>
 
       <!-- 6. Settings Cog -->
       <button class="capsule-btn" class:active={toolsOpen} onclick={() => toolsOpen = !toolsOpen} title="Settings">
-        <SlidersHorizontal size={17} weight="regular" />
+        <SlidersHorizontal size={15} weight="regular" />
       </button>
     </div>
   </div>
@@ -174,23 +174,18 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 14px;
+    margin-bottom: 12px;
     background: rgba(10, 10, 14, 0.9);
-    border: 1px solid rgba(143, 130, 230, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 9999px;
-    padding: 8px 16px;
-    font-size: 12px;
-    font-weight: 700;
+    padding: 6px 14px;
+    font-size: 11px;
+    font-weight: 600;
     letter-spacing: 0.04em;
     color: var(--reader-faint);
     box-shadow: 
-      0 6px 20px rgba(0, 0, 0, 0.35),
-      0 0 10px rgba(143, 130, 230, 0.05);
+      0 4px 16px rgba(0, 0, 0, 0.45);
     backdrop-filter: blur(8px);
-    white-space: nowrap;
-    text-overflow: ellipsis;
-    overflow: hidden;
-    max-width: 90%;
   }
 
   .reader-metadata-title .series-title {
@@ -199,11 +194,11 @@
 
   .reader-metadata-title .chapter-title {
     color: var(--reader-text);
-    font-weight: 800;
+    font-weight: 600;
   }
 
   .reader-metadata-title .metadata-sep {
-    color: rgba(143, 130, 230, 0.4);
+    color: rgba(255, 255, 255, 0.2);
   }
 
   /* Unified Bottom Capsule Bar */
@@ -212,16 +207,15 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    width: min(520px, calc(100% - 32px));
-    height: 54px;
+    width: min(500px, calc(100% - 32px));
+    height: 44px;
     background: var(--reader-panel);
-    border: 1px solid rgba(143, 130, 230, 0.28);
+    border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 9999px;
-    padding: 0 16px;
+    padding: 0 12px;
     box-shadow:
-      0 16px 48px rgba(0, 0, 0, 0.6),
-      0 0 16px rgba(143, 130, 230, 0.06),
-      inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      0 12px 32px rgba(0, 0, 0, 0.5),
+      inset 0 1px 0 rgba(255, 255, 255, 0.03);
     backdrop-filter: blur(20px) saturate(140%);
   }
 
@@ -229,8 +223,8 @@
   .capsule-btn {
     display: inline-grid;
     place-items: center;
-    width: 34px;
-    height: 34px;
+    width: 30px;
+    height: 30px;
     border: 1px solid rgba(255, 255, 255, 0.05);
     border-radius: 9999px;
     color: var(--reader-muted);
@@ -246,15 +240,15 @@
 
   .capsule-btn:hover:not(:disabled) {
     color: var(--reader-text);
-    border-color: rgba(143, 130, 230, 0.35);
-    background: rgba(143, 130, 230, 0.12);
+    border-color: rgba(255, 255, 255, 0.15);
+    background: rgba(255, 255, 255, 0.06);
     transform: translateY(-1px);
   }
 
   .capsule-btn.active {
-    color: var(--reader-accent-bright);
-    background: var(--reader-accent-dim);
-    border-color: rgba(143, 130, 230, 0.5);
+    color: var(--reader-text);
+    background: var(--reader-line-strong);
+    border-color: rgba(255, 255, 255, 0.2);
   }
 
   .capsule-btn:disabled {
@@ -265,11 +259,11 @@
 
   /* Progress Label */
   .capsule-progress-label {
-    font-size: 11px;
-    font-weight: 800;
+    font-size: 10px;
+    font-weight: 600;
     color: var(--reader-muted);
     letter-spacing: 0.05em;
-    min-width: 50px;
+    min-width: 44px;
     text-align: center;
     white-space: nowrap;
   }
@@ -327,19 +321,18 @@
   .reader-settings-popover {
     pointer-events: auto;
     position: absolute;
-    bottom: 88px;
+    bottom: 56px;
     z-index: 100;
-    width: min(340px, calc(100vw - 32px));
-    max-height: calc(100vh - 140px);
+    width: min(270px, calc(100vw - 32px));
+    max-height: calc(100vh - 120px);
     overflow-y: auto;
-    background: rgba(19, 19, 22, 0.96);
-    border: 1px solid rgba(143, 130, 230, 0.28);
-    border-radius: 18px;
-    padding: 18px;
+    background: rgba(15, 15, 18, 0.96);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 12px;
+    padding: 10px 12px;
     box-shadow:
-      0 24px 64px rgba(0, 0, 0, 0.7),
-      0 0 20px rgba(143, 130, 230, 0.08),
-      inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      0 12px 32px rgba(0, 0, 0, 0.5),
+      inset 0 1px 0 rgba(255, 255, 255, 0.02);
     backdrop-filter: blur(20px) saturate(140%);
     animation: popoverIn 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
   }
@@ -360,17 +353,17 @@
     margin: 0;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 6px;
   }
 
   .reader-settings-popover :global(dl > div) {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
-    min-height: 32px;
-    border-top: 1px solid rgba(255, 255, 255, 0.05);
-    padding-top: 10px;
+    gap: 10px;
+    min-height: 24px;
+    border-top: 1px solid rgba(255, 255, 255, 0.04);
+    padding-top: 6px;
   }
 
   .reader-settings-popover :global(dl > div:first-child) {
@@ -379,11 +372,10 @@
   }
 
   .reader-settings-popover :global(dt) {
-    font-size: 11px;
-    font-weight: 800;
+    font-size: 10px;
+    font-weight: 500;
     color: var(--reader-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.02em;
   }
 
   .reader-settings-popover :global(dd) {
@@ -396,9 +388,9 @@
   .reader-settings-popover :global(.popover-segmented) {
     display: flex;
     background: rgba(0, 0, 0, 0.45);
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    border-radius: 8px;
-    padding: 2px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 5px;
+    padding: 1.5px;
     overflow: hidden;
   }
 
@@ -406,41 +398,41 @@
     border: 0;
     background: transparent;
     color: var(--reader-muted);
-    font-size: 10.5px;
-    font-weight: 800;
-    padding: 5px 10px;
-    border-radius: 6px;
+    font-size: 9.5px;
+    font-weight: 500;
+    padding: 3px 6px;
+    border-radius: 3px;
     cursor: pointer;
     transition: color 150ms, background 150ms;
   }
 
   .reader-settings-popover :global(.popover-segment:hover) {
     color: var(--reader-text);
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.06);
   }
 
   .reader-settings-popover :global(.popover-segment.active) {
-    color: var(--reader-accent-bright);
-    background: rgba(143, 130, 230, 0.42);
-    border: 1px solid rgba(143, 130, 230, 0.15);
+    color: var(--reader-text);
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.12);
   }
 
   .reader-settings-popover :global(.popover-btn) {
-    border: 1px solid rgba(255, 255, 255, 0.16);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     background: rgba(0, 0, 0, 0.45);
     color: var(--reader-text);
-    font-size: 11px;
-    font-weight: 800;
-    padding: 5px 10px;
-    border-radius: 6px;
+    font-size: 9.5px;
+    font-weight: 500;
+    padding: 3px 6px;
+    border-radius: 4px;
     cursor: pointer;
     transition: color 150ms, border-color 150ms, background 150ms;
   }
 
   .reader-settings-popover :global(.popover-btn:hover:not(:disabled)) {
     color: var(--reader-text);
-    border-color: rgba(143, 130, 230, 0.45);
-    background: rgba(143, 130, 230, 0.12);
+    border-color: rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.06);
   }
 
   .reader-settings-popover :global(.popover-btn:disabled) {
@@ -449,42 +441,42 @@
   }
 
   .reader-settings-popover :global(.popover-select) {
-    border: 1px solid rgba(255, 255, 255, 0.16);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     background: rgba(0, 0, 0, 0.45);
     color: var(--reader-text);
-    font-size: 11px;
-    font-weight: 700;
-    padding: 5px 8px;
-    border-radius: 6px;
+    font-size: 9.5px;
+    font-weight: 500;
+    padding: 3px 5px;
+    border-radius: 4px;
     outline: none;
-    max-width: 140px;
+    max-width: 130px;
   }
 
   .reader-settings-popover :global(.popover-stepper) {
     display: flex;
     align-items: center;
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
     overflow: hidden;
     background: rgba(0, 0, 0, 0.45);
   }
 
   .reader-settings-popover :global(.popover-step-btn) {
     border: 0;
-    background: rgba(255, 255, 255, 0.04);
+    background: rgba(255, 255, 255, 0.03);
     color: var(--reader-text);
-    width: 24px;
-    height: 24px;
-    font-size: 13px;
-    font-weight: 700;
+    width: 20px;
+    height: 20px;
+    font-size: 11px;
+    font-weight: 500;
     cursor: pointer;
     display: grid;
     place-items: center;
   }
 
   .reader-settings-popover :global(.popover-step-btn:hover:not(:disabled)) {
-    background: rgba(143, 130, 230, 0.15);
-    color: var(--reader-accent-bright);
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--reader-text);
   }
 
   .reader-settings-popover :global(.popover-step-btn:disabled) {
@@ -492,13 +484,13 @@
   }
 
   .reader-settings-popover :global(.popover-step-val) {
-    font-size: 11px;
-    font-weight: 850;
+    font-size: 9.5px;
+    font-weight: 500;
     color: var(--reader-text);
-    min-width: 48px;
+    min-width: 36px;
     text-align: center;
-    border-inline: 1px solid rgba(255, 255, 255, 0.16);
-    line-height: 24px;
+    border-inline: 1px solid rgba(255, 255, 255, 0.1);
+    line-height: 20px;
   }
 
   .reader-settings-popover :global(.popover-color-swatches) {
@@ -521,13 +513,13 @@
   }
 
   .reader-settings-popover :global(.popover-swatch.active) {
-    border: 2px solid var(--reader-accent-bright);
+    border: 2px solid rgba(255, 255, 255, 0.6);
     transform: scale(1.15);
   }
 
   .reader-settings-popover :global(.popover-color-picker) {
-    width: 22px;
-    height: 22px;
+    width: 18px;
+    height: 18px;
     border: 1px solid rgba(255, 255, 255, 0.2);
     padding: 0;
     background: transparent;
@@ -537,10 +529,10 @@
   }
 
   .reader-settings-popover :global(.popover-toggle) {
-    width: 34px;
-    height: 18px;
+    width: 28px;
+    height: 15px;
     border-radius: 9999px;
-    border: 1px solid rgba(255, 255, 255, 0.28);
+    border: 1px solid rgba(255, 255, 255, 0.2);
     background: rgba(0, 0, 0, 0.45);
     position: relative;
     cursor: pointer;
@@ -551,22 +543,22 @@
   .reader-settings-popover :global(.popover-toggle::after) {
     content: "";
     position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 12px;
-    height: 12px;
+    top: 1.5px;
+    left: 1.5px;
+    width: 10px;
+    height: 10px;
     border-radius: 9999px;
     background: var(--reader-muted);
     transition: transform 150ms, background-color 150ms;
   }
 
   .reader-settings-popover :global(.popover-toggle.active) {
-    background-color: var(--reader-accent-dim);
-    border-color: var(--reader-accent);
+    background-color: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.3);
   }
 
   .reader-settings-popover :global(.popover-toggle.active::after) {
-    transform: translateX(16px);
-    background-color: var(--reader-accent-bright);
+    transform: translateX(13px);
+    background-color: rgba(255, 255, 255, 0.85);
   }
 </style>

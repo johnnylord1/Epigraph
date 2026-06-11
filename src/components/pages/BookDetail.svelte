@@ -54,6 +54,8 @@
   import NocturneState from "../shared/NocturneState.svelte";
   import NovelTrackingPanel from "../shared/NovelTrackingPanel.svelte";
   import SeriesDetailV3Shell from "../shared/SeriesDetailV3Shell.svelte";
+  import { getServerAuthHeader } from "../../lib/client";
+  import { requiresAuthenticatedMediaFetch } from "../../lib/imageCache";
 
   const SECTIONS_PER_PAGE = 25;
   let epubFactoryPromise: Promise<typeof import("epubjs").default> | null = null;
@@ -476,7 +478,16 @@
         classification: currentPreviewProbe?.classification ?? null,
       });
       const ePub = await loadEpubFactory();
-      const book = ePub(source.sourceUrl);
+      const ePubOptions: any = {};
+      if (requiresAuthenticatedMediaFetch(source.sourceUrl)) {
+        const authHeader = getServerAuthHeader();
+        if (authHeader) {
+          ePubOptions.requestHeaders = {
+            Authorization: authHeader,
+          };
+        }
+      }
+      const book = ePub(source.sourceUrl, ePubOptions);
       const rendition = book.renderTo(host, {
         width: "100%",
         height: "100%",
