@@ -7,6 +7,10 @@
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
   import { gql, gqlUpload } from "./lib/client";
   import { getServerTargetInfo } from "./lib/serverTarget";
+  import {
+    shouldAutoStartManagedServer,
+    shouldBootFromLibrarySnapshot,
+  } from "./lib/serverBootPolicy";
   import ReaderPage from "./components/reader/Reader.svelte";
   import {
     DEFAULT_LOCAL_PROFILE_ID,
@@ -2337,13 +2341,16 @@
   }
 
   function canBootFromLibrarySnapshot() {
-    if (!store.settings.localServerStandbyEnabled) return false;
     if (!store.runtimeResolvedLocalProfileId || !store.runtimeServerUrl) return false;
-    if (runtimeAttachOnly) return false;
-    return Boolean(loadLibrarySnapshot({
+    return shouldBootFromLibrarySnapshot({
+      standbyEnabled: store.settings.localServerStandbyEnabled,
+      attachOnly: runtimeAttachOnly,
+      updateDue: nextLibraryUpdateDue(),
+      hasSnapshot: Boolean(loadLibrarySnapshot({
       profileId: store.runtimeResolvedLocalProfileId,
       serverUrl: store.runtimeServerUrl,
-    }));
+      })),
+    });
   }
 
   function startProbe() {
@@ -2356,7 +2363,7 @@
 
     async function probe() {
       if (cancelProbe) return;
-      if (canBootFromLibrarySnapshot() && !nextLibraryUpdateDue()) {
+      if (canBootFromLibrarySnapshot()) {
         cancelProbe = true;
         await finishStartupAfterProbe();
         void preloadLibrarySnapshot();
@@ -2579,11 +2586,14 @@
             profileId: store.runtimeResolvedLocalProfileId,
             serverUrl: effectiveServerUrl,
           }));
-          shouldAutoStartServer =
-            !runtimeAttachOnly &&
-            isLoopback &&
-            store.settings.autoStartServer &&
-            (!store.settings.localServerStandbyEnabled || !hasSnapshot);
+          shouldAutoStartServer = shouldAutoStartManagedServer({
+            attachOnly: runtimeAttachOnly,
+            isLoopback,
+            autoStartServer: store.settings.autoStartServer,
+            standbyEnabled: store.settings.localServerStandbyEnabled,
+            hasSnapshot,
+            updateDue: nextLibraryUpdateDue(),
+          });
         } catch {
           shouldAutoStartServer = false;
         }
