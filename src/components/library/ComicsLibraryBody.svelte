@@ -8,6 +8,12 @@
     getCachedLibraryCoverUrl,
     libraryCoverCacheKey,
   } from "../../lib/library/coverCache";
+  import {
+    clearLibraryCoverFailed,
+    createLibraryCoverStateKey,
+    hasLibraryCoverFailed,
+    markLibraryCoverFailed,
+  } from "../../lib/library/coverFailure";
   import { buildComicsLibraryCardVm } from "../../lib/library/comicsSection";
   import { computeLibraryLayout, type LibraryPreferredGridColumns, type LibraryViewMode } from "../../lib/libraryDisplay";
   import type { ComicsSectionVM } from "../../lib/library/contracts";
@@ -78,11 +84,11 @@
   let selectedIds = $state(new Set<number>());
   let bulkWorking = $state(false);
   let bulkMoveOpen = $state(false);
-  let failedCoverIds = $state(new Set<number>());
-  let coverRetryCounts = $state(new Map<number, number>());
-  let coverWakeAttemptedIds = $state(new Set<number>());
-  let cachedCoverUrls = $state(new Map<number, string>());
-  let coverCacheCheckedIds = $state(new Set<number>());
+  let failedCoverKeys = $state(new Set<string>());
+  let coverRetryCounts = $state(new Map<string, number>());
+  let coverWakeAttemptedKeys = $state(new Set<string>());
+  let cachedCoverUrls = $state(new Map<string, string>());
+  let coverCacheCheckedKeys = $state(new Set<string>());
   let renderVisible = $state(0);
   let loadMoreSentinel: HTMLDivElement | null = $state(null);
   let loadMoreObserver: IntersectionObserver | null = $state(null);
@@ -91,11 +97,10 @@
   let pendingCardRestore = false;
   let prevActiveMangaId: number | null = null;
   let longPressTimer: ReturnType<typeof setTimeout> | null = null;
-  const coverSessionSeed = Math.random().toString(36).slice(2);
   const coverRetryTimers = new Map<number, ReturnType<typeof setTimeout>>();
   const coverRecoveryTimers = new Map<number, ReturnType<typeof setTimeout>>();
   const coverCacheInflight = new Set<string>();
-  const coverCacheWritesInflight = new Set<number>();
+  const coverCacheWritesInflight = new Set<string>();
   let lastCoverRecoveryVersions = new Map<number, number>();
   let lastCoverCacheScopeKey = "";
 
@@ -222,39 +227,44 @@
 
   function handleCoverError(cardId: string) {
     const manga = mangaByCardId.get(cardId);
-    if (!manga || failedCoverIds.has(manga.id)) return;
+    if (!manga) return;
+    const coverKey = getCoverStateKey(manga);
+    if (isCoverFailed(manga)) return;
 
-    if (cachedCoverUrls.has(manga.id)) {
+    if (cachedCoverUrls.has(coverKey)) {
       const nextCached = new Map(cachedCoverUrls);
-      nextCached.delete(manga.id);
+      nextCached.delete(coverKey);
       cachedCoverUrls = nextCached;
     }
 
-    if (!coverWakeAttemptedIds.has(manga.id)) {
-      const nextWakeAttempted = new Set(coverWakeAttemptedIds);
-      nextWakeAttempted.add(manga.id);
-      coverWakeAttemptedIds = nextWakeAttempted;
+    if (!coverWakeAttemptedKeys.has(coverKey)) {
+      const nextWakeAttempted = new Set(coverWakeAttemptedKeys);
+      nextWakeAttempted.add(coverKey);
+      coverWakeAttemptedKeys = nextWakeAttempted;
       onCoverErrorDetected(manga.id);
     }
 
-    const nextFailed = new Set(failedCoverIds);
-    nextFailed.add(manga.id);
-    failedCoverIds = nextFailed;
+    markLibraryCoverFailed(coverKey);
+    const nextFailed = new Set(failedCoverKeys);
+    nextFailed.add(coverKey);
+    failedCoverKeys = nextFailed;
   }
 
   function handleCoverLoad(cardId: string) {
     const manga = mangaByCardId.get(cardId);
     if (!manga) return;
+    const coverKey = getCoverStateKey(manga);
 
     if (coverRetryTimers.has(manga.id)) {
       clearTimeout(coverRetryTimers.get(manga.id)!);
       coverRetryTimers.delete(manga.id);
     }
 
-    if (failedCoverIds.has(manga.id)) {
-      const nextFailed = new Set(failedCoverIds);
-      nextFailed.delete(manga.id);
-      failedCoverIds = nextFailed;
+    if (isCoverFailed(manga)) {
+      clearLibraryCoverFailed(coverKey);
+      const nextFailed = new Set(failedCoverKeys);
+      nextFailed.delete(coverKey);
+      failedCoverKeys = nextFailed;
     }
 
     if (coverRecoveryTimers.has(manga.id)) {
@@ -262,29 +272,39 @@
       coverRecoveryTimers.delete(manga.id);
     }
 
-    if (coverRetryCounts.has(manga.id)) {
+    if (coverRetryCounts.has(coverKey)) {
       const nextRetries = new Map(coverRetryCounts);
-      nextRetries.delete(manga.id);
+      nextRetries.delete(coverKey);
       coverRetryCounts = nextRetries;
     }
 
-    if (coverWakeAttemptedIds.has(manga.id)) {
-      const nextWakeAttempted = new Set(coverWakeAttemptedIds);
-      nextWakeAttempted.delete(manga.id);
-      coverWakeAttemptedIds = nextWakeAttempted;
+    if (coverWakeAttemptedKeys.has(coverKey)) {
+      const nextWakeAttempted = new Set(coverWakeAttemptedKeys);
+      nextWakeAttempted.delete(coverKey);
+      coverWakeAttemptedKeys = nextWakeAttempted;
     }
 
-    if (!cachedCoverUrls.has(manga.id)) {
+    if (!cachedCoverUrls.has(coverKey)) {
       void cacheCoverAfterServerLoad(manga);
     }
   }
 
   function hasUsableCover(manga: Manga): boolean {
+    const coverKey = getCoverStateKey(manga);
     return (
       !!manga.thumbnailUrl &&
-      !failedCoverIds.has(manga.id) &&
-      (cachedCoverUrls.has(manga.id) || coverCacheCheckedIds.has(manga.id))
+      !isCoverFailed(manga) &&
+      (cachedCoverUrls.has(coverKey) || coverCacheCheckedKeys.has(coverKey))
     );
+  }
+
+  function getCoverStateKey(manga: Manga): string {
+    return createLibraryCoverStateKey(manga, coverScopeKey());
+  }
+
+  function isCoverFailed(manga: Manga): boolean {
+    const coverKey = getCoverStateKey(manga);
+    return failedCoverKeys.has(coverKey) || hasLibraryCoverFailed(coverKey);
   }
 
   function getCoverSignature(manga: Manga): string {
@@ -295,14 +315,13 @@
 
   function getCoverSrc(manga: Manga): string {
     if (!manga.thumbnailUrl) return "";
-    const cached = cachedCoverUrls.get(manga.id);
+    const cached = cachedCoverUrls.get(getCoverStateKey(manga));
     if (cached) return cached;
     const base = thumbUrl(manga.thumbnailUrl);
     const sig = getCoverSignature(manga);
-    const retry = coverRetryCounts.get(manga.id) ?? 0;
+    const retry = coverRetryCounts.get(getCoverStateKey(manga)) ?? 0;
     const params = [
       `aethon_cover_sig=${sig}`,
-      `aethon_cover_session=${coverSessionSeed}`,
       `aethon_cover_recovery=${coverRecoveryVersions.get(manga.id) ?? 0}`,
     ];
     if (retry > 0) params.push(`aethon_cover_retry=${retry}`);
@@ -316,6 +335,10 @@
     };
   }
 
+  function coverScopeKey() {
+    return `${store.runtimeResolvedLocalProfileId ?? ""}::${store.runtimeServerUrl ?? ""}`;
+  }
+
   async function loadCachedCoverForManga(manga: Manga) {
     const scope = coverCacheScope();
     const key = libraryCoverCacheKey(scope, manga);
@@ -324,32 +347,34 @@
     try {
       const cached = await getCachedLibraryCoverUrl(scope, manga);
       if (cached) {
+        const coverKey = getCoverStateKey(manga);
         const next = new Map(cachedCoverUrls);
-        next.set(manga.id, cached);
+        next.set(coverKey, cached);
         cachedCoverUrls = next;
       }
-      const nextChecked = new Set(coverCacheCheckedIds);
-      nextChecked.add(manga.id);
-      coverCacheCheckedIds = nextChecked;
+      const nextChecked = new Set(coverCacheCheckedKeys);
+      nextChecked.add(getCoverStateKey(manga));
+      coverCacheCheckedKeys = nextChecked;
     } finally {
       coverCacheInflight.delete(key);
     }
   }
 
   async function cacheCoverAfterServerLoad(manga: Manga) {
-    if (coverCacheWritesInflight.has(manga.id)) return;
-    coverCacheWritesInflight.add(manga.id);
+    const coverKey = getCoverStateKey(manga);
+    if (coverCacheWritesInflight.has(coverKey)) return;
+    coverCacheWritesInflight.add(coverKey);
     try {
       const cached = await cacheLibraryCoverFromServer(coverCacheScope(), manga);
       if (!cached) return;
       const next = new Map(cachedCoverUrls);
-      next.set(manga.id, cached);
+      next.set(coverKey, cached);
       cachedCoverUrls = next;
-      const nextChecked = new Set(coverCacheCheckedIds);
-      nextChecked.add(manga.id);
-      coverCacheCheckedIds = nextChecked;
+      const nextChecked = new Set(coverCacheCheckedKeys);
+      nextChecked.add(coverKey);
+      coverCacheCheckedKeys = nextChecked;
     } finally {
-      coverCacheWritesInflight.delete(manga.id);
+      coverCacheWritesInflight.delete(coverKey);
     }
   }
 
@@ -451,16 +476,17 @@
     const scopeKey = `${profileId ?? ""}::${serverUrl ?? ""}`;
     if (lastCoverCacheScopeKey && lastCoverCacheScopeKey !== scopeKey) {
       cachedCoverUrls = new Map();
-      coverCacheCheckedIds = new Set();
-      failedCoverIds = new Set();
+      coverCacheCheckedKeys = new Set();
+      failedCoverKeys = new Set();
       coverRetryCounts = new Map();
-      coverWakeAttemptedIds = new Set();
+      coverWakeAttemptedKeys = new Set();
       coverCacheInflight.clear();
       coverCacheWritesInflight.clear();
     }
     lastCoverCacheScopeKey = scopeKey;
     for (const manga of renderedMangas) {
-      if (!manga.thumbnailUrl || cachedCoverUrls.has(manga.id) || coverCacheCheckedIds.has(manga.id)) continue;
+      const coverKey = getCoverStateKey(manga);
+      if (!manga.thumbnailUrl || cachedCoverUrls.has(coverKey) || coverCacheCheckedKeys.has(coverKey)) continue;
       void loadCachedCoverForManga(manga);
     }
   });
@@ -475,9 +501,12 @@
     lastCoverRecoveryVersions = new Map(coverRecoveryVersions);
     if (!changedIds.length) return;
 
-    const nextFailures = new Set(failedCoverIds);
+    const nextFailures = new Set(failedCoverKeys);
     const nextRetries = new Map(coverRetryCounts);
     for (const mangaId of changedIds) {
+      const manga = mangas.find((entry) => entry.id === mangaId);
+      if (!manga) continue;
+      const coverKey = getCoverStateKey(manga);
       const retryTimer = coverRetryTimers.get(mangaId);
       if (retryTimer) {
         clearTimeout(retryTimer);
@@ -488,13 +517,14 @@
         clearTimeout(recoveryTimer);
         coverRecoveryTimers.delete(mangaId);
       }
-      const attempts = nextRetries.get(mangaId) ?? 0;
+      const attempts = nextRetries.get(coverKey) ?? 0;
       if (attempts < 1) {
-        nextFailures.delete(mangaId);
-        nextRetries.set(mangaId, attempts + 1);
+        clearLibraryCoverFailed(coverKey);
+        nextFailures.delete(coverKey);
+        nextRetries.set(coverKey, attempts + 1);
       }
     }
-    failedCoverIds = nextFailures;
+    failedCoverKeys = nextFailures;
     coverRetryCounts = nextRetries;
   });
 
