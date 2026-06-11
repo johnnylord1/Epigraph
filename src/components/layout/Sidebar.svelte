@@ -21,17 +21,10 @@
 
   function navigate(id: Exclude<NavPage, "settings">) {
     setNavPage(id);
-    store.activeManga = null;
-    store.genreFilter = "";
-    if (id !== "search") store.activeSource = null;
   }
 
   function goHome() {
     openHomeDashboard();
-    store.activeSource = null;
-    store.activeManga = null;
-    store.libraryFilter = "library";
-    store.genreFilter = "";
   }
 </script>
 

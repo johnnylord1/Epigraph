@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { openHomeDashboard, setNavPage, store } from "./state.svelte";
+import { openHomeDashboard, openHomeHistory, openSearchSources, setNavPage, setSettingsOpen, store } from "./state.svelte";
 
 describe("navigation subscriptions", () => {
   afterEach(() => {
@@ -50,6 +50,72 @@ describe("navigation subscriptions", () => {
     expect(store.activeSource).toBeNull();
     expect(store.genreFilter).toBe("");
     expect(store.libraryFilter).toBe("library");
+  });
+
+  test("setNavPage clears active detail and reader state deterministically", () => {
+    store.activeManga = { id: 42, title: "Test", thumbnailUrl: "" } as never;
+    store.activeBookId = "book-1";
+    store.activeBookReaderId = "reader-1";
+    store.activeNovelDetail = { novelId: "novel-1" } as never;
+    store.activeNovelReader = { novelId: "novel-1" } as never;
+    store.activeChapter = { id: 99 } as never;
+    store.activeChapterList = [{ id: 99 } as never];
+    store.activeSource = { id: "source-1" } as never;
+    store.homePanelHint = "history";
+
+    setNavPage("search");
+
+    expect(store.navPage).toBe("search");
+    expect(store.activeManga).toBeNull();
+    expect(store.activeBookId).toBeNull();
+    expect(store.activeBookReaderId).toBeNull();
+    expect(store.activeNovelDetail).toBeNull();
+    expect(store.activeNovelReader).toBeNull();
+    expect(store.activeChapter).toBeNull();
+    expect(store.activeChapterList).toEqual([]);
+    expect(store.activeSource).toBeNull();
+    expect(store.homePanelHint).toBeNull();
+  });
+
+  test("shortcut navigation clears detail state while applying hints", () => {
+    store.activeManga = { id: 42, title: "Test", thumbnailUrl: "" } as never;
+    store.activeSource = { id: "source-1" } as never;
+    store.activeBookReaderId = "reader-1";
+
+    openSearchSources("extensions", "repos");
+
+    expect(store.navPage).toBe("search");
+    expect(store.searchTabHint).toBe("sources");
+    expect(store.searchSourcesPaneHint).toBe("extensions");
+    expect(store.extensionsPanelHint).toBe("repos");
+    expect(store.activeManga).toBeNull();
+    expect(store.activeSource).toBeNull();
+    expect(store.activeBookReaderId).toBeNull();
+
+    store.activeManga = { id: 43, title: "Another", thumbnailUrl: "" } as never;
+    openHomeHistory();
+
+    expect(store.navPage).toBe("home");
+    expect(store.homePanelHint).toBe("history");
+    expect(store.activeManga).toBeNull();
+  });
+
+  test("opening settings clears transient detail state and returns to the last page", () => {
+    setNavPage("library");
+    store.activeManga = { id: 42, title: "Test", thumbnailUrl: "" } as never;
+    store.activeSource = { id: "source-1" } as never;
+
+    setSettingsOpen(true);
+
+    expect(store.navPage).toBe("settings");
+    expect(store.settingsOpen).toBe(true);
+    expect(store.activeManga).toBeNull();
+    expect(store.activeSource).toBeNull();
+
+    setSettingsOpen(false);
+
+    expect(store.navPage).toBe("library");
+    expect(store.settingsOpen).toBe(false);
   });
 
   test("navigation clears lingering search-engaged body classes", () => {

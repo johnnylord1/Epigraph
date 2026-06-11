@@ -1627,11 +1627,7 @@ class Store {
   }
   setActiveDownloads(next: ActiveDownload[])     { this.activeDownloads  = next; bumpContentSetupVersion(); }
   setPausedDownloads(next: PausedDownloadItem[]) { this.pausedDownloads = next; }
-  setNavPage(next: NavPage) {
-    if (next !== "settings") this.lastPrimaryNavPage = next;
-    clearSearchEngagedBodyClasses();
-    this.navPage = next;
-    this.settingsOpen = next === "settings";
+  clearActiveDetailState() {
     this.activeManga = null;
     this.activeBookId = null;
     this.activeBookReaderId = null;
@@ -1640,6 +1636,17 @@ class Store {
     this.activeChapter = null;
     this.activeChapterList = [];
     this.activeSource = null;
+  }
+  preparePrimaryNavigation(next: NavPage) {
+    if (next !== "settings") this.lastPrimaryNavPage = next;
+    clearSearchEngagedBodyClasses();
+    this.clearActiveDetailState();
+    this.homePanelHint = null;
+  }
+  setNavPage(next: NavPage) {
+    this.preparePrimaryNavigation(next);
+    this.navPage = next;
+    this.settingsOpen = next === "settings";
     this.emitNavigationChange();
   }
 
@@ -1708,6 +1715,9 @@ class Store {
   setSettingsOpen(next: boolean) {
     if (next) {
       if (this.navPage !== "settings") this.lastPrimaryNavPage = this.navPage;
+      clearSearchEngagedBodyClasses();
+      this.clearActiveDetailState();
+      this.homePanelHint = null;
       this.navPage = "settings";
       this.settingsOpen = true;
       this.emitNavigationChange();
@@ -1886,68 +1896,59 @@ class Store {
   }
 
   openSearchKeyword() {
+    this.preparePrimaryNavigation("search");
     this.navPage = "search";
     this.settingsOpen = false;
     this.searchTabHint = "keyword";
     this.searchBrowseHint = null;
     this.searchSourcesPaneHint = null;
-    this.homePanelHint = null;
     this.emitNavigationChange();
   }
 
   openSearchBrowseFeatured(genre?: string | null) {
+    this.preparePrimaryNavigation("search");
     this.navPage = "search";
     this.settingsOpen = false;
     this.searchTabHint = "browse";
     this.searchBrowseHint = "featured";
     this.searchSourcesPaneHint = null;
-    this.homePanelHint = null;
-    this.activeSource = null;
     if (genre) this.genreFilter = genre;
     this.emitNavigationChange();
   }
 
   openSearchBrowseTags() {
+    this.preparePrimaryNavigation("search");
     this.navPage = "search";
     this.settingsOpen = false;
     this.searchTabHint = "browse";
     this.searchBrowseHint = "tags";
     this.searchSourcesPaneHint = null;
-    this.homePanelHint = null;
-    this.activeSource = null;
     this.emitNavigationChange();
   }
 
   openSearchSources(panel: SearchSourcesPane = "browse", repoPanel: "repos" | null = null) {
+    this.preparePrimaryNavigation("search");
     this.navPage = "search";
     this.settingsOpen = false;
     this.searchTabHint = "sources";
     this.searchBrowseHint = null;
     this.searchSourcesPaneHint = panel;
     this.extensionsPanelHint = repoPanel;
-    this.homePanelHint = null;
     this.emitNavigationChange();
   }
 
   openHomeDashboard() {
-    clearSearchEngagedBodyClasses();
+    this.preparePrimaryNavigation("home");
     this.navPage = "home";
     this.settingsOpen = false;
     this.homePanelHint = null;
-    this.activeManga = null;
-    this.activeBookId = null;
-    this.activeBookReaderId = null;
-    this.activeNovelDetail = null;
-    this.activeNovelReader = null;
-    this.activeChapter = null;
-    this.activeChapterList = [];
-    this.activeSource = null;
     this.genreFilter = "";
     this.libraryFilter = "library";
     this.emitNavigationChange();
   }
 
   openHomeHistory() {
+    this.preparePrimaryNavigation("home");
     this.navPage = "home";
     this.settingsOpen = false;
     this.homePanelHint = "history";
