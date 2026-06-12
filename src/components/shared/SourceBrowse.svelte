@@ -4,7 +4,7 @@
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import { FETCH_SOURCE_MANGA, UPDATE_MANGA, GET_CATEGORIES, CREATE_CATEGORY, UPDATE_MANGA_CATEGORIES } from "../../lib/queries";
   import { fetchSourceMangaSearchWithFallback } from "../../lib/manga/sourceSearch";
-  import { store, setActiveSource, setActiveManga, setNavPage } from "../../store/state.svelte";
+  import { store, setActiveSource, openMangaDetail } from "../../store/state.svelte";
   import type { Manga, Category } from "../../lib/types";
   import ContextMenu, { type MenuEntry } from "../shared/ContextMenu.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
@@ -142,7 +142,7 @@
   {:else}
     <div class="grid">
       {#each mangas as m (m.id)}
-        <button class="card" onclick={() => { setActiveManga(m); setNavPage("library"); }}
+        <button class="card" onclick={() => openMangaDetail(m)}
           oncontextmenu={(e) => openCtx(e, m)}>
           <div class="cover-wrap">
             <img src={resolveMangaCoverUrl(m, { context: "source", persistence: "memory" })} alt={m.title} class="cover" />

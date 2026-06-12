@@ -6,7 +6,7 @@
     clearHistory,
     clearLibraryUpdateNotifications,
     clearSystemNotifications,
-    setActiveManga,
+    openMangaDetail,
   } from "../../store/state.svelte";
   import type { Manga } from "../../lib/types";
   import type { HistoryEntry, LibraryUpdateNotification, SystemNotification } from "../../store/state.svelte";
@@ -138,7 +138,7 @@
   });
 
   function resume(session: Session) {
-    setActiveManga({
+    openMangaDetail({
       id:           session.mangaId,
       title:        session.mangaTitle,
       thumbnailUrl: session.thumbnailUrl,
@@ -153,7 +153,7 @@
       thumbnailUrl: entry.notification.thumbnailUrl,
       inLibrary: true,
     };
-    setActiveManga({
+    openMangaDetail({
       ...manga,
       inLibrary: true,
     } as Manga);

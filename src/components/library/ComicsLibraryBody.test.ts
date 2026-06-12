@@ -108,6 +108,7 @@ describe("ComicsLibraryBody", () => {
       downloadCount: 0,
       unreadCount: 3,
       chapterCount: 10,
+      status: "ONGOING",
       source: { id: "source-1", displayName: "Source One" },
     } as Manga;
 
@@ -155,7 +156,7 @@ describe("ComicsLibraryBody", () => {
     expect(card.textContent).toContain("3");
     expect(card.textContent).not.toContain("🌐");
     expect(card.textContent).toContain("Source One");
-    expect(card.textContent).toContain("Reading");
+    expect(card.textContent).toContain("Ongoing");
     expect(card.textContent).not.toContain("Unknown");
 
     await fireEvent.click(card);

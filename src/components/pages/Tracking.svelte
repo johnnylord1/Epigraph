@@ -10,7 +10,7 @@
     UNBIND_TRACK,
     FETCH_TRACK,
   } from "../../lib/queries";
-  import { addToast, setActiveManga, setNavPage, store } from "../../store/state.svelte";
+  import { addToast, openMangaDetail, store } from "../../store/state.svelte";
   import type { Tracker, TrackRecord } from "../../lib/types";
   import NocturneState from "../shared/NocturneState.svelte";
 
@@ -193,8 +193,7 @@
 
   function openManga(record: FlatRecord) {
     if (!record.manga) return;
-    setActiveManga(record.manga as any);
-    setNavPage("library");
+    openMangaDetail(record.manga as any);
   }
 
   function openChapterEditor(record: FlatRecord) {

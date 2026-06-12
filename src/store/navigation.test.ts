@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { openHomeDashboard, openHomeHistory, openSearchSources, setNavPage, setSettingsOpen, store } from "./state.svelte";
+import { openBookReader, openHomeDashboard, openHomeHistory, openMangaDetail, openReader, openSearchSources, setNavPage, setSettingsOpen, store } from "./state.svelte";
 
 describe("navigation subscriptions", () => {
   afterEach(() => {
@@ -9,6 +9,11 @@ describe("navigation subscriptions", () => {
     store.activeBookReaderId = null;
     store.activeNovelDetail = null;
     store.activeNovelReader = null;
+    store.activeChapter = null;
+    store.activeChapterList = [];
+    store.previewManga = null;
+    store.pageUrls = [];
+    store.pageNumber = 1;
   });
 
   test("emits when navPage changes", () => {
@@ -75,6 +80,67 @@ describe("navigation subscriptions", () => {
     expect(store.activeChapterList).toEqual([]);
     expect(store.activeSource).toBeNull();
     expect(store.homePanelHint).toBeNull();
+  });
+
+  test("openMangaDetail navigates to library without clearing the selected manga", () => {
+    store.activeBookId = "book-1";
+    store.activeBookReaderId = "book-1";
+    store.activeNovelDetail = { novelId: "novel-1" } as never;
+    store.activeNovelReader = { novelId: "novel-1" } as never;
+    store.activeChapter = { id: 99 } as never;
+    store.activeChapterList = [{ id: 99 } as never];
+    store.previewManga = { id: 11, title: "Preview", thumbnailUrl: "" } as never;
+    store.activeSource = { id: "source-1" } as never;
+
+    openMangaDetail({ id: 42, title: "Opened", thumbnailUrl: "" } as never);
+
+    expect(store.navPage).toBe("library");
+    expect(store.librarySection).toBe("comics");
+    expect(store.activeManga?.id).toBe(42);
+    expect(store.activeBookId).toBeNull();
+    expect(store.activeBookReaderId).toBeNull();
+    expect(store.activeNovelDetail).toBeNull();
+    expect(store.activeNovelReader).toBeNull();
+    expect(store.activeChapter).toBeNull();
+    expect(store.activeChapterList).toEqual([]);
+    expect(store.previewManga).toBeNull();
+    expect(store.activeSource).toBeNull();
+  });
+
+  test("reader entry points clear competing reader and detail state", () => {
+    store.activeBookId = "book-1";
+    store.activeBookReaderId = "book-1";
+    store.activeNovelDetail = { novelId: "novel-1" } as never;
+    store.activeNovelReader = { novelId: "novel-1" } as never;
+
+    openReader(
+      { id: 99, mangaId: 42, name: "Chapter 1" } as never,
+      [{ id: 99, mangaId: 42, name: "Chapter 1" } as never],
+      { id: 42, title: "Manga", thumbnailUrl: "" } as never,
+    );
+
+    expect(store.activeManga?.id).toBe(42);
+    expect(store.activeChapter?.id).toBe(99);
+    expect(store.activeBookId).toBeNull();
+    expect(store.activeBookReaderId).toBeNull();
+    expect(store.activeNovelDetail).toBeNull();
+    expect(store.activeNovelReader).toBeNull();
+
+    store.activeManga = { id: 42, title: "Manga", thumbnailUrl: "" } as never;
+    store.activeNovelDetail = { novelId: "novel-1" } as never;
+    store.activeNovelReader = { novelId: "novel-1" } as never;
+    store.activeChapter = { id: 99 } as never;
+    store.activeChapterList = [{ id: 99 } as never];
+
+    openBookReader("book-2");
+
+    expect(store.activeBookId).toBe("book-2");
+    expect(store.activeBookReaderId).toBe("book-2");
+    expect(store.activeManga).toBeNull();
+    expect(store.activeNovelDetail).toBeNull();
+    expect(store.activeNovelReader).toBeNull();
+    expect(store.activeChapter).toBeNull();
+    expect(store.activeChapterList).toEqual([]);
   });
 
   test("shortcut navigation clears detail state while applying hints", () => {

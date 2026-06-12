@@ -834,12 +834,12 @@
       const chapters = [...data.chapters.nodes].sort((a, b) => a.sourceOrder - b.sourceOrder);
       const chapter = chapters.find((candidate) => candidate.id === entry.chapterId) ?? chapters[0];
       if (chapter) {
-        store.activeManga = {
+        const mangaContext = {
           id: entry.mangaId,
           title: entry.mangaTitle,
           thumbnailUrl: entry.thumbnailUrl,
         } as any;
-        openReader(chapter, chapters as any);
+        openReader(chapter, chapters as any, mangaContext);
       }
     } catch {
       store.activeManga = {

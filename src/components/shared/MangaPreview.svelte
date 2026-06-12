@@ -7,7 +7,7 @@
   import { cache, CACHE_KEYS } from "../../lib/cache";
   import { getCategoryDisplayName, isCompletedCategory, normalizeCategories } from "../../lib/library/categories";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
-  import { store, openReader, addToast, linkManga, unlinkManga, setPreviewManga, setActiveManga, openSearchBrowseFeatured, checkAndMarkCompleted as storeCheckAndMarkCompleted } from "../../store/state.svelte";
+  import { store, openReader, addToast, linkManga, unlinkManga, setPreviewManga, openMangaDetail, openSearchBrowseFeatured, checkAndMarkCompleted as storeCheckAndMarkCompleted } from "../../store/state.svelte";
   import NocturneState from "./NocturneState.svelte";
   import type { Manga, Chapter, Category } from "../../lib/types";
 
@@ -172,8 +172,7 @@
 
   function openSeriesDetail() {
     if (!displayManga) return;
-    setActiveManga(displayManga);
-    setNavPage("library");
+    openMangaDetail(displayManga);
     close();
   }
 

@@ -1263,6 +1263,10 @@ class Store {
     // context for Discord RPC (setReading) and any other manga-aware logic.
     // Callers that already set store.activeManga directly may omit this arg.
     if (manga) this.activeManga = manga;
+    this.activeBookId = null;
+    this.activeBookReaderId = null;
+    this.activeNovelDetail = null;
+    this.activeNovelReader = null;
     const resolvedManga = manga ?? this.activeManga;
     if (resolvedManga && resolvedManga.id === chapter.mangaId) {
       this.addHistory({
@@ -1293,7 +1297,11 @@ class Store {
   }
 
   openBookReader(bookId: string) {
+    this.activeManga = null;
+    this.activeBookId = bookId;
     this.activeBookReaderId = bookId;
+    this.activeNovelDetail = null;
+    this.activeNovelReader = null;
     this.activeChapter      = null;
     this.activeChapterList  = [];
     this.pageUrls           = [];
@@ -1659,7 +1667,10 @@ class Store {
     this.activeNovelReader = null;
     this.activeChapter = null;
     this.activeChapterList = [];
+    this.previewManga = null;
     this.activeSource = null;
+    this.pageUrls = [];
+    this.pageNumber = 1;
   }
   preparePrimaryNavigation(next: NavPage) {
     if (next !== "settings") this.lastPrimaryNavPage = next;
@@ -1671,6 +1682,15 @@ class Store {
     this.preparePrimaryNavigation(next);
     this.navPage = next;
     this.settingsOpen = next === "settings";
+    this.emitNavigationChange();
+  }
+
+  openMangaDetail(next: Manga) {
+    this.preparePrimaryNavigation("library");
+    this.navPage = "library";
+    this.settingsOpen = false;
+    this.librarySection = "comics";
+    this.activeManga = next;
     this.emitNavigationChange();
   }
 
@@ -1706,12 +1726,19 @@ class Store {
       this.activeBookReaderId = null;
       this.activeNovelDetail = null;
       this.activeNovelReader = null;
+      this.activeChapter = null;
+      this.activeChapterList = [];
+      this.pageUrls = [];
+      this.pageNumber = 1;
     }
   }
   setActiveBookId(next: string | null)           {
     this.activeBookId = next;
     if (next) {
       this.activeManga = null;
+      this.activeChapter = null;
+      this.activeChapterList = [];
+      this.activeBookReaderId = null;
       this.activeNovelDetail = null;
       this.activeNovelReader = null;
     }
@@ -1721,6 +1748,9 @@ class Store {
     if (next) {
       this.activeManga = null;
       this.activeBookId = null;
+      this.activeBookReaderId = null;
+      this.activeChapter = null;
+      this.activeChapterList = [];
     }
   }
   setActiveNovelReader(next: ActiveNovelReaderState | null) {
@@ -1729,6 +1759,10 @@ class Store {
       this.activeManga = null;
       this.activeBookId = null;
       this.activeBookReaderId = null;
+      this.activeChapter = null;
+      this.activeChapterList = [];
+      this.pageUrls = [];
+      this.pageNumber = 1;
     }
   }
   setPreviewManga(next: Manga | null)            { this.previewManga     = next; }
@@ -2038,6 +2072,7 @@ export function setLibraryFilter(next: LibraryFilter)                    { store
 export function setGenreFilter(next: string)                             { store.setGenreFilter(next); }
 export function setSearchPrefill(next: string)                           { store.setSearchPrefill(next); }
 export function setActiveManga(next: Manga | null)                       { store.setActiveManga(next); }
+export function openMangaDetail(next: Manga)                             { store.openMangaDetail(next); }
 export function setActiveBookId(next: string | null)                     { store.setActiveBookId(next); }
 export function openBookReader(bookId: string)                           { store.openBookReader(bookId); }
 export function closeBookReader()                                        { store.closeBookReader(); }
