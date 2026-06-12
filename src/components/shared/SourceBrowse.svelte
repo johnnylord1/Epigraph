@@ -1,6 +1,7 @@
 <script lang="ts">
   import { ArrowLeft, MagnifyingGlass, ArrowLeft as Prev, ArrowRight as Next, BookmarkSimple, FolderSimplePlus, Folder } from "phosphor-svelte";
-  import { gql, thumbUrl } from "../../lib/client";
+  import { gql } from "../../lib/client";
+  import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import { FETCH_SOURCE_MANGA, UPDATE_MANGA, GET_CATEGORIES, CREATE_CATEGORY, UPDATE_MANGA_CATEGORIES } from "../../lib/queries";
   import { fetchSourceMangaSearchWithFallback } from "../../lib/manga/sourceSearch";
   import { store, setActiveSource, setActiveManga, setNavPage } from "../../store/state.svelte";
@@ -144,7 +145,7 @@
         <button class="card" onclick={() => { setActiveManga(m); setNavPage("library"); }}
           oncontextmenu={(e) => openCtx(e, m)}>
           <div class="cover-wrap">
-            <img src={thumbUrl(m.thumbnailUrl)} alt={m.title} class="cover" />
+            <img src={resolveMangaCoverUrl(m, { context: "source", persistence: "memory" })} alt={m.title} class="cover" />
             {#if m.inLibrary}<span class="in-library-badge">In Library</span>{/if}
           </div>
           <p class="title">{m.title}</p>

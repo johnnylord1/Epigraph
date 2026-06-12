@@ -1,6 +1,6 @@
 <script lang="ts">
   import { ClockCounterClockwise, Trash, Play } from "phosphor-svelte";
-  import { thumbUrl } from "../../lib/client";
+  import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import {
     store,
     clearHistory,
@@ -221,7 +221,7 @@
             {#each updateEntries as entry (entry.id)}
               <button class="activity-item with-thumb event" onclick={() => openUpdate(entry)}>
                 <div class="thumb-wrap">
-                  <img src={thumbUrl(entry.manga?.thumbnailUrl ?? entry.notification.thumbnailUrl)} alt={entry.title} class="thumb" />
+                  <img src={resolveMangaCoverUrl(entry.manga ?? entry.notification.thumbnailUrl, { context: "activity", persistence: "persistent", cacheGeneration: store.libraryCoverCacheGeneration })} alt={entry.title} class="thumb" />
                   <span class="item-count">{entry.count}</span>
                 </div>
                 <div class="item-copy">
@@ -251,7 +251,7 @@
             {#each sessions.slice(0, 8) as session (session.latestChapterId)}
               <button class="activity-item with-thumb event" onclick={() => resume(session)}>
                 <div class="thumb-wrap">
-                  <img src={thumbUrl(session.thumbnailUrl)} alt={session.mangaTitle} class="thumb" />
+                  <img src={resolveMangaCoverUrl(session.thumbnailUrl, { context: "activity", persistence: "persistent", cacheGeneration: store.libraryCoverCacheGeneration })} alt={session.mangaTitle} class="thumb" />
                   {#if session.chapterCount > 1}
                     <span class="item-count">{session.chapterCount}</span>
                   {/if}
@@ -290,7 +290,7 @@
               {#each items as session (session.latestChapterId)}
                 <button class="activity-item with-thumb event" onclick={() => resume(session)}>
                   <div class="thumb-wrap">
-                    <img src={thumbUrl(session.thumbnailUrl)} alt={session.mangaTitle} class="thumb" />
+                    <img src={resolveMangaCoverUrl(session.thumbnailUrl, { context: "activity", persistence: "persistent", cacheGeneration: store.libraryCoverCacheGeneration })} alt={session.mangaTitle} class="thumb" />
                     {#if session.chapterCount > 1}
                       <span class="item-count">{session.chapterCount}</span>
                     {/if}

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { CircleNotch, ArrowSquareOut, ArrowsClockwise, X, Lock, MagnifyingGlass, Funnel } from "phosphor-svelte";
   import { gql, thumbUrl } from "../../lib/client";
+  import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import { cache, CACHE_GROUPS } from "../../lib/cache";
   import {
     GET_ALL_TRACKER_RECORDS,
@@ -8,7 +9,7 @@
     UNBIND_TRACK,
     FETCH_TRACK,
   } from "../../lib/queries";
-  import { addToast, setActiveManga, setNavPage } from "../../store/state.svelte";
+  import { addToast, setActiveManga, setNavPage, store } from "../../store/state.svelte";
   import type { Tracker, TrackRecord } from "../../lib/types";
   import NocturneState from "../shared/NocturneState.svelte";
 
@@ -359,7 +360,7 @@
               onkeydown={(e) => e.key === "Enter" && openManga(record)}
             >
               {#if record.manga?.thumbnailUrl}
-                <img src={thumbUrl(record.manga.thumbnailUrl)} alt={record.title} class="record-cover" loading="lazy" />
+                <img src={resolveMangaCoverUrl(record.manga, { context: "tracking", persistence: "persistent", cacheGeneration: store.libraryCoverCacheGeneration })} alt={record.title} class="record-cover" loading="lazy" />
               {:else}
                 <div class="record-cover record-cover-empty"></div>
               {/if}

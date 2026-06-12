@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { Books, CheckSquare, Folder, FolderSimplePlus, Trash, X } from "phosphor-svelte";
-  import { thumbUrl } from "../../lib/client";
   import { createComicLibraryCardId } from "../../lib/library/cardIdentity";
   import {
     cacheLibraryCoverFromServer,
@@ -15,6 +14,7 @@
     markLibraryCoverFailed,
   } from "../../lib/library/coverFailure";
   import { buildComicsLibraryCardVm } from "../../lib/library/comicsSection";
+  import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import { computeLibraryLayout, type LibraryPreferredGridColumns, type LibraryViewMode } from "../../lib/libraryDisplay";
   import type { ComicsSectionVM } from "../../lib/library/contracts";
   import { getCategoryDisplayName } from "../../lib/library/categories";
@@ -329,7 +329,11 @@
     if (!manga.thumbnailUrl) return "";
     const cached = cachedCoverUrls.get(getCoverStateKey(manga));
     if (cached) return cached;
-    const base = thumbUrl(manga.thumbnailUrl);
+    const base = resolveMangaCoverUrl(manga, {
+      context: "library",
+      persistence: "persistent",
+      cacheGeneration: coverCacheGeneration,
+    });
     const sig = getCoverSignature(manga);
     const retry = coverRetryCounts.get(getCoverStateKey(manga)) ?? 0;
     const params = [

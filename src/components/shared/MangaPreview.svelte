@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { X, BookmarkSimple, ArrowSquareOut, Play, CircleNotch, Books, CaretDown, FolderSimplePlus, Folder, LinkSimpleHorizontalBreak } from "phosphor-svelte";
-  import { gql, thumbUrl } from "../../lib/client";
+  import { gql } from "../../lib/client";
   import { GET_MANGA, GET_CHAPTERS, FETCH_MANGA, FETCH_CHAPTERS, UPDATE_MANGA, ENQUEUE_CHAPTERS_DOWNLOAD, GET_CATEGORIES, CREATE_CATEGORY, UPDATE_MANGA_CATEGORIES } from "../../lib/queries";
   import { GET_ALL_MANGA } from "../../lib/queries";
   import { cache, CACHE_KEYS } from "../../lib/cache";
   import { getCategoryDisplayName, isCompletedCategory, normalizeCategories } from "../../lib/library/categories";
+  import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import { store, openReader, addToast, linkManga, unlinkManga, setPreviewManga, setActiveManga, openSearchBrowseFeatured, checkAndMarkCompleted as storeCheckAndMarkCompleted } from "../../store/state.svelte";
   import NocturneState from "./NocturneState.svelte";
   import type { Manga, Chapter, Category } from "../../lib/types";
@@ -252,7 +253,15 @@
 
     <div class="cover-col">
       <div class="cover-wrap">
-        <img src={thumbUrl(store.previewManga.thumbnailUrl)} alt={displayManga?.title} class="cover" />
+        <img
+          src={resolveMangaCoverUrl(store.previewManga, {
+            context: "preview",
+            persistence: inLibrary ? "persistent" : "memory",
+            cacheGeneration: store.libraryCoverCacheGeneration,
+          })}
+          alt={displayManga?.title}
+          class="cover"
+        />
         {#if loadingDetail}
           <div class="cover-spinner"><CircleNotch size={18} weight="light" class="anim-spin" /></div>
         {/if}
@@ -451,7 +460,7 @@
           {#each linkPickerResults as m (m.id)}
             {@const isLinked = linkedIds.includes(m.id)}
             <button class="link-row" class:link-row-linked={isLinked} onclick={() => handleLink(m)}>
-              <img src={thumbUrl(m.thumbnailUrl)} alt={m.title} class="link-thumb" loading="lazy" decoding="async" />
+              <img src={resolveMangaCoverUrl(m, { context: "preview", persistence: "persistent", cacheGeneration: store.libraryCoverCacheGeneration })} alt={m.title} class="link-thumb" loading="lazy" decoding="async" />
               <div class="link-info">
                 <span class="link-manga-title">{m.title}</span>
                 {#if m.source?.displayName}<span class="link-source">{m.source.displayName}</span>{/if}

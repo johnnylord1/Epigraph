@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { BookmarkSimple, FolderSimplePlus, Folder, Sparkle, ArrowsClockwise } from "phosphor-svelte";
-  import { gql, thumbUrl } from "../../lib/client";
+  import { gql } from "../../lib/client";
+  import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import { GET_SOURCES, FETCH_SOURCE_MANGA, UPDATE_MANGA, GET_CATEGORIES, CREATE_CATEGORY, UPDATE_MANGA_CATEGORIES } from "../../lib/queries";
   import { cache, CACHE_KEYS } from "../../lib/cache";
   import { dedupeSources, dedupeMangaByTitle, dedupeMangaById, shouldHideNsfw, shouldHideSource } from "../../lib/util";
@@ -388,7 +389,7 @@
               oncontextmenu={(e) => openCtx(e, m)}
             >
               <div class="n-library-card__cover">
-                <img src={thumbUrl(m.thumbnailUrl)} alt={m.title} loading="lazy" decoding="async" />
+                <img src={resolveMangaCoverUrl(m, { context: "discover", persistence: "memory" })} alt={m.title} loading="lazy" decoding="async" />
                 {#if m.inLibrary}<span class="n-library-card__badge">In Library</span>{/if}
               </div>
               <div class="n-library-card__info">

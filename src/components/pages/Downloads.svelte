@@ -3,7 +3,8 @@
   import { invoke } from "@tauri-apps/api/core";
   import { open as openPath } from "@tauri-apps/plugin-shell";
   import { CircleNotch } from "phosphor-svelte";
-  import { gql, thumbUrl } from "../../lib/client";
+  import { gql } from "../../lib/client";
+  import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import AppTopbar from "../layout/AppTopbar.svelte";
   import WindowControlsInline from "../layout/WindowControlsInline.svelte";
   import {
@@ -848,7 +849,7 @@
                   <img
                     class="dl-row__image"
                     alt={manga.title}
-                    src={thumbUrl(manga.thumbnailUrl)}
+                    src={resolveMangaCoverUrl(manga, { context: "downloads", persistence: "persistent", cacheGeneration: store.libraryCoverCacheGeneration })}
                     loading="lazy"
                     decoding="async"
                   />

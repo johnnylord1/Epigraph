@@ -1,5 +1,6 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
-import { getServerAuthHeader, getServerUrl, thumbUrl } from "../client";
+import { getServerAuthHeader, getServerUrl } from "../client";
+import { resolveMangaCoverUrl } from "../manga/coverResolver";
 import type { Manga } from "../types";
 
 type CoverCacheScope = {
@@ -66,7 +67,7 @@ export async function cacheLibraryCoverFromServer(
     serverUrl: scopeServerUrl(scope),
     mangaId: manga.id,
     thumbnailUrl: cacheThumbnailUrl(scope, manga),
-    coverUrl: thumbUrl(manga.thumbnailUrl),
+    coverUrl: resolveMangaCoverUrl(manga, { context: "library", persistence: "persistent" }),
     authHeader: getServerAuthHeader(),
   }).catch(() => null);
 

@@ -1,7 +1,8 @@
 <script lang="ts">
   import { ArrowLeft, BookmarkSimple, FolderSimplePlus, Folder, CircleNotch } from "phosphor-svelte";
   import { untrack } from "svelte";
-  import { gql, thumbUrl } from "../../lib/client";
+  import { gql } from "../../lib/client";
+  import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import { GET_ALL_MANGA, GET_LIBRARY, GET_SOURCES, FETCH_SOURCE_MANGA, UPDATE_MANGA, GET_CATEGORIES, CREATE_CATEGORY, UPDATE_MANGA_CATEGORIES } from "../../lib/queries";
   import { cache, CACHE_KEYS, getPageSet } from "../../lib/cache";
   import { dedupeSources, dedupeMangaById, shouldHideNsfw } from "../../lib/util";
@@ -218,7 +219,7 @@
       {#each visibleItems as m (m.id)}
         <button class="card" onclick={() => setPreviewManga(m)} oncontextmenu={(e) => { e.stopPropagation(); openCtx(e, m); }}>
           <div class="cover-wrap">
-            <img src={thumbUrl(m.thumbnailUrl)} alt={m.title} class="cover" loading="lazy" decoding="async" />
+            <img src={resolveMangaCoverUrl(m, { context: "discover", persistence: m.inLibrary ? "persistent" : "memory", cacheGeneration: store.libraryCoverCacheGeneration })} alt={m.title} class="cover" loading="lazy" decoding="async" />
             {#if m.inLibrary}<span class="in-library-badge">Saved</span>{/if}
           </div>
           <p class="card-title">{m.title}</p>

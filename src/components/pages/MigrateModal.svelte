@@ -2,6 +2,7 @@
   import { X, MagnifyingGlass, CircleNotch, ArrowRight, Check, Warning, Sparkle, StackSimple } from "phosphor-svelte";
   import { untrack } from "svelte";
   import { gql, thumbUrl } from "../../lib/client";
+  import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import { GET_SOURCES, FETCH_CHAPTERS, GET_LIBRARY } from "../../lib/queries";
   import { fetchSourceMangaSearchWithFallback } from "../../lib/manga/sourceSearch";
   import { addToast, store } from "../../store/state.svelte";
@@ -491,7 +492,7 @@
                   onclick={() => selectMatch(m, similarity)}
                   disabled={loadingMatchId !== null}>
                   <div class="result-cover-wrap">
-                    <img src={thumbUrl(m.thumbnailUrl)} alt={m.title} class="result-cover" />
+                    <img src={resolveMangaCoverUrl(m, { context: "migration", persistence: "memory" })} alt={m.title} class="result-cover" />
                   </div>
                   <div class="result-info">
                     <span class="result-title">{m.title}</span>
@@ -591,7 +592,7 @@
           <div class="confirm-row">
             <div class="confirm-manga">
               <div class="confirm-cover-wrap">
-                <img src={thumbUrl(manga.thumbnailUrl)} alt={manga.title} class="confirm-cover" />
+                <img src={resolveMangaCoverUrl(manga, { context: "migration", persistence: "persistent", cacheGeneration: store.libraryCoverCacheGeneration })} alt={manga.title} class="confirm-cover" />
               </div>
               <p class="confirm-title">{manga.title}</p>
               <p class="confirm-source">{manga.source?.displayName ?? "Unknown"}</p>
@@ -604,7 +605,7 @@
 
             <div class="confirm-manga">
               <div class="confirm-cover-wrap">
-                <img src={thumbUrl(selectedMatch.manga.thumbnailUrl)} alt={selectedMatch.manga.title} class="confirm-cover" />
+                <img src={resolveMangaCoverUrl(selectedMatch.manga, { context: "migration", persistence: "memory" })} alt={selectedMatch.manga.title} class="confirm-cover" />
               </div>
               <p class="confirm-title">{selectedMatch.manga.title}</p>
               <p class="confirm-source">{selectedSource?.displayName ?? "Unknown"}</p>

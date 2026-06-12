@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, tick, untrack } from "svelte";
   import { gql, thumbUrl } from "../../lib/client";
+  import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import { GET_SOURCES, FETCH_SOURCE_MANGA, GET_TRACKERS, SEARCH_TRACKER, GET_LIBRARY, GET_ALL_TRACKER_RECORDS } from "../../lib/queries";
   import { fetchSourceMangaSearchWithFallback } from "../../lib/manga/sourceSearch";
   import { cache, CACHE_KEYS, getPageSet } from "../../lib/cache";
@@ -4929,7 +4930,7 @@
                           <div class="n-library-card__cover">
                             {#if hasSearchCover(item.candidate)}
                               <img
-                                src={thumbUrl(item.candidate.coverUrl)}
+                                src={resolveMangaCoverUrl(item.candidate.coverUrl, { context: "browse", persistence: "memory" })}
                                 alt={item.candidate.title}
                                 loading="lazy"
                                 decoding="async"
@@ -5163,7 +5164,7 @@
                     <button class="n-library-card" disabled={src_openingNovelPath !== null} onclick={() => openNovelSourceResult(source, result)}>
                       <div class="n-library-card__cover">
                         {#if result.coverUrl}
-                          <img src={thumbUrl(result.coverUrl)} alt={result.title} loading="lazy" decoding="async" />
+                          <img src={resolveMangaCoverUrl(result.coverUrl, { context: "browse", persistence: "memory" })} alt={result.title} loading="lazy" decoding="async" />
                         {:else}
                           <div class="coverFallback">Book</div>
                         {/if}
@@ -5234,7 +5235,7 @@
                   <button class="n-library-card" onclick={() => setPreviewManga(m)}>
                     <div class="n-library-card__cover">
                       <img
-                        src={thumbUrl(m.thumbnailUrl)}
+                        src={resolveMangaCoverUrl(m, { context: "browse", persistence: m.inLibrary ? "persistent" : "memory", cacheGeneration: store.libraryCoverCacheGeneration })}
                         alt={m.title}
                         loading="lazy"
                         decoding="async"
@@ -5508,7 +5509,7 @@
               {#each src_browseResults.filter(shouldShowCatalogManga) as m (m.id)}
                 <button class="n-library-card" onclick={() => setPreviewManga(m)}>
                   <div class="n-library-card__cover">
-                    <img src={thumbUrl(m.thumbnailUrl)} alt={m.title} loading="lazy" decoding="async" />
+                    <img src={resolveMangaCoverUrl(m, { context: "browse", persistence: m.inLibrary ? "persistent" : "memory", cacheGeneration: store.libraryCoverCacheGeneration })} alt={m.title} loading="lazy" decoding="async" />
                     {#if m.inLibrary}<span class="n-library-card__badge">In Library</span>{/if}
                   </div>
                   <div class="n-library-card__info">
@@ -5543,7 +5544,7 @@
                 <button class="n-library-card" disabled={src_openingNovelPath !== null} onclick={() => srcOpenNovelDetail(result)}>
                   <div class="n-library-card__cover">
                     {#if result.coverUrl}
-                      <img src={thumbUrl(result.coverUrl)} alt={result.title} loading="lazy" decoding="async" />
+                      <img src={resolveMangaCoverUrl(result.coverUrl, { context: "browse", persistence: "memory" })} alt={result.title} loading="lazy" decoding="async" />
                     {:else}
                       <div class="coverFallback">Book</div>
                     {/if}
@@ -5633,7 +5634,7 @@
                 {#each tag_mergedResults.filter(shouldShowCatalogManga) as m (m.id)}
                   <button class="n-library-card" onclick={() => setPreviewManga(m)}>
                     <div class="n-library-card__cover">
-                      <img src={thumbUrl(m.thumbnailUrl)} alt={m.title} loading="lazy" decoding="async" />
+                      <img src={resolveMangaCoverUrl(m, { context: "browse", persistence: m.inLibrary ? "persistent" : "memory", cacheGeneration: store.libraryCoverCacheGeneration })} alt={m.title} loading="lazy" decoding="async" />
                       {#if m.inLibrary}<span class="n-library-card__badge">In Library</span>{/if}
                     </div>
                     <div class="n-library-card__info">
@@ -5674,7 +5675,7 @@
                   <a class="n-library-card" href={item.trackingUrl ?? undefined} target="_blank" rel="noreferrer">
                     <div class="n-library-card__cover">
                       {#if item.coverUrl}
-                        <img src={thumbUrl(item.coverUrl)} alt={item.title} loading="lazy" decoding="async" />
+                        <img src={resolveMangaCoverUrl(item.coverUrl, { context: "browse", persistence: "memory" })} alt={item.title} loading="lazy" decoding="async" />
                       {:else}
                         <div class="coverFallback">Manga</div>
                       {/if}
@@ -5736,7 +5737,7 @@
                   <button class="n-library-card" disabled={src_openingNovelPath !== null} onclick={() => srcOpenNovelDetail(result)}>
                     <div class="n-library-card__cover">
                       {#if result.coverUrl}
-                        <img src={thumbUrl(result.coverUrl)} alt={result.title} loading="lazy" decoding="async" />
+                        <img src={resolveMangaCoverUrl(result.coverUrl, { context: "browse", persistence: "memory" })} alt={result.title} loading="lazy" decoding="async" />
                       {:else}
                         <div class="coverFallback">Book</div>
                       {/if}
@@ -5764,7 +5765,7 @@
                 {#each discoverMangaResults.filter(shouldShowCatalogManga) as m (m.id)}
                   <button class="n-library-card" onclick={() => setPreviewManga(m)}>
                     <div class="n-library-card__cover">
-                      <img src={thumbUrl(m.thumbnailUrl)} alt={m.title} loading="lazy" decoding="async" />
+                      <img src={resolveMangaCoverUrl(m, { context: "browse", persistence: m.inLibrary ? "persistent" : "memory", cacheGeneration: store.libraryCoverCacheGeneration })} alt={m.title} loading="lazy" decoding="async" />
                       {#if m.inLibrary}<span class="n-library-card__badge">In Library</span>{/if}
                     </div>
                     <div class="n-library-card__info">

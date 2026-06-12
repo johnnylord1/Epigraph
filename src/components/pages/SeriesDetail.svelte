@@ -1,12 +1,13 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import { BookmarkSimple, Download, CheckCircle, Circle, ArrowSquareOut, CircleNotch, Play, SortAscending, SortDescending, CaretDown, ArrowsClockwise, List, SquaresFour, FolderSimplePlus, Trash, DownloadSimple, X, LinkSimpleHorizontalBreak, ChartLineUp } from "phosphor-svelte";
-  import { gql, thumbUrl } from "../../lib/client";
+  import { gql } from "../../lib/client";
   import { GET_MANGA, GET_CHAPTERS, FETCH_CHAPTERS, ENQUEUE_DOWNLOAD, UPDATE_MANGA, MARK_CHAPTER_READ, MARK_CHAPTERS_READ, DELETE_DOWNLOADED_CHAPTERS, ENQUEUE_CHAPTERS_DOWNLOAD, GET_ALL_MANGA, GET_CATEGORIES, CREATE_CATEGORY, UPDATE_MANGA_CATEGORIES, GET_DOWNLOAD_STATUS, START_DOWNLOADER } from "../../lib/queries";
   import { cache, CACHE_KEYS, recordSourceAccess } from "../../lib/cache";
   import { getCategoryDisplayName, isCompletedCategory, normalizeCategories } from "../../lib/library/categories";
   import { dedupeMangaById, dedupeMangaByTitle } from "../../lib/util";
   import { buildReaderChapterList, effectiveScanlator, listScanlators, normalizeMangaReaderPreference, resolveReaderChapterTarget } from "../../lib/reader/scanlator";
+  import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import { store, addToast, updateSettings, openReader, setActiveManga, setSettingsOpen, openSearchBrowseFeatured, linkManga, unlinkManga, checkAndMarkCompleted as storeCheckAndMarkCompleted } from "../../store/state.svelte";
   import type { Manga, Chapter, Category, DownloadStatus } from "../../lib/types";
   import ContextMenu from "../shared/ContextMenu.svelte";
@@ -713,7 +714,11 @@
     mediaKind="manga"
     title={manga?.title ?? store.activeManga.title}
     subtitle={[manga?.author, manga?.artist].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(" / ") || null}
-    coverUrl={thumbUrl(store.activeManga.thumbnailUrl)}
+    coverUrl={resolveMangaCoverUrl(store.activeManga, {
+      context: "detail",
+      persistence: store.activeManga.inLibrary ? "persistent" : "memory",
+      cacheGeneration: store.libraryCoverCacheGeneration,
+    })}
     fallbackLabel="Manga"
     statusLabel={statusLabel}
     sourceLabel={manga?.source?.displayName ?? null}
@@ -1040,7 +1045,7 @@
             {#each linkPickerResults as m (m.id)}
               {@const isLinked = linkedIds.includes(m.id)}
               <button class="link-row" class:link-row-linked={isLinked} onclick={() => handleLink(m)}>
-                <img src={thumbUrl(m.thumbnailUrl)} alt={m.title} class="link-thumb" loading="lazy" decoding="async" />
+                <img src={resolveMangaCoverUrl(m, { context: "detail", persistence: "persistent", cacheGeneration: store.libraryCoverCacheGeneration })} alt={m.title} class="link-thumb" loading="lazy" decoding="async" />
                 <div class="link-info">
                   <span class="link-manga-title">{m.title}</span>
                   {#if m.source?.displayName}<span class="link-source">{m.source.displayName}</span>{/if}

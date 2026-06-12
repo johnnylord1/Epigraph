@@ -1,12 +1,13 @@
 ﻿<script lang="ts">
   import { onMount } from "svelte";
-  import { gql, thumbUrl } from "../../lib/client";
+  import { gql } from "../../lib/client";
   import { GET_LIBRARY, GET_CATEGORIES_SUMMARY, GET_LIBRARY_TRACKING_SUMMARY, GET_SOURCES, GET_TRACKERS, GET_EXTENSIONS } from "../../lib/queries";
   import { cache, CACHE_GROUPS, CACHE_KEYS, DEFAULT_TTL_MS } from "../../lib/cache";
   import { buildCompletedLibraryIds, collectTrackedChapterTotalsByMangaId, collectTrackedCompletedMangaIds, type TrackerCompletionTracker } from "../../lib/library/completion";
   import { isCompletedCategory, normalizeCategories } from "../../lib/library/categories";
   import { dedupeSources, shouldHideSource } from "../../lib/util";
   import { presentBook } from "../../lib/books/presentation";
+  import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import {
     store,
     openReader,
@@ -470,7 +471,11 @@
           subtitle: manga.author ?? "",
           metricValue: metric.value,
           metricLabel: metric.label,
-          coverUrl: thumbUrl(entry.thumbnailUrl),
+          coverUrl: resolveMangaCoverUrl(entry.thumbnailUrl, {
+            context: "home",
+            persistence: "persistent",
+            cacheGeneration: store.libraryCoverCacheGeneration,
+          }),
           progressPct: manga.chapterCount ? Math.min(92, Math.max(10, Math.round((Number(metric.value || 0) / Math.max(manga.chapterCount, 1)) * 100))) : 0,
           entry,
           manga,
@@ -562,7 +567,11 @@
       title: real.mangaTitle,
       subtitle: real.chapterName,
       meta: timeAgo(real.readAt),
-      coverUrl: thumbUrl(real.thumbnailUrl),
+      coverUrl: resolveMangaCoverUrl(real, {
+        context: "home",
+        persistence: "persistent",
+        cacheGeneration: store.libraryCoverCacheGeneration,
+      }),
       manga: libraryManga.find((candidate) => candidate.id === real.mangaId) ?? null,
       book: null,
       progress: null,
@@ -684,7 +693,11 @@
       title: real.title,
       subtitle: `${real.chapterCount ?? 0} chapters`,
       meta: "Done",
-      coverUrl: thumbUrl(real.thumbnailUrl),
+      coverUrl: resolveMangaCoverUrl(real, {
+        context: "home",
+        persistence: "persistent",
+        cacheGeneration: store.libraryCoverCacheGeneration,
+      }),
       manga: real,
       book: null,
       progress: null,
