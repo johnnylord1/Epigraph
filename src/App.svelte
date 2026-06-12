@@ -25,13 +25,10 @@
     GET_CATEGORIES_SUMMARY,
     GET_DOWNLOAD_STATUS,
     GET_LIBRARY,
-    GET_LIBRARY_UPDATE_STATUS,
     GET_LIBRARY_TRACKING_SUMMARY,
     GET_RESTORE_STATUS,
     GET_TRACKERS,
     RESTORE_BACKUP,
-    SET_LIBRARY_UPDATE_RULES,
-    UPDATE_LIBRARY,
     UPDATE_EXTENSION,
   } from "./lib/queries";
   import {
@@ -70,17 +67,8 @@
   import { reconcileMangaCountsFromChapters } from "./lib/library/chapterCounts";
   import { loadLibrarySnapshot, saveLibrarySnapshot } from "./lib/library/snapshot";
   import {
-    subscribeLibraryUpdateStatus,
-    type LibraryUpdateMangaPatch,
-    type LibraryUpdateSubscription,
-  } from "./lib/suwayomiUpdaterSubscription";
-  import {
-    applyLibraryUpdateMangaPatches,
-    ensureAethonLibraryUpdateRules as ensureSharedAethonLibraryUpdateRules,
-    formatLibraryUpdateProgress as formatSharedLibraryUpdateProgress,
-    libraryUpdateProgressNumbers as sharedLibraryUpdateProgressNumbers,
+    runSharedLibraryUpdate,
     showLibraryUpdateProgress as showSharedLibraryUpdateProgress,
-    waitForLibraryUpdateToSettle as waitForSharedLibraryUpdateToSettle,
   } from "./lib/library/updateRuntime";
   import {
     configureLocalServerRuntime,
@@ -571,70 +559,31 @@
 
     setLibraryUpdateInFlight(true);
     automaticLibraryUpdateInFlight = (async () => {
-      let progressSubscription: LibraryUpdateSubscription | null = null;
       const beforeUpdate = [...store.libraryMangaSnapshot];
-      try {
-        showSharedLibraryUpdateProgress("Automatic library update is starting.");
-        const awake = await ensureServerAwakeFor("auto-library-update", {
-          serverUrl: store.runtimeServerUrl,
-          binary: store.settings.serverBinary,
-          updateIntensity: store.settings.libraryUpdateIntensity,
-        });
-        if (!awake) return;
-        await ensureSharedAethonLibraryUpdateRules();
-        progressSubscription = subscribeLibraryUpdateStatus(
-          (event) => {
-            showSharedLibraryUpdateProgress(
-              formatSharedLibraryUpdateProgress(event.jobsInfo),
-              0,
-              sharedLibraryUpdateProgressNumbers(event.jobsInfo),
-            );
-            applyLibraryUpdateMangaPatches(event.mangaUpdates);
-          },
-          (subscriptionError) => {
-            console.warn("Could not receive automatic Library update patches:", subscriptionError);
-          },
-        );
-        const updateResult = await gql<any>(UPDATE_LIBRARY, { categories: undefined });
-        await waitForSharedLibraryUpdateToSettle(
-          updateResult?.updateLibrary?.updateStatus?.jobsInfo,
-          8 * 60 * 1000,
-          (jobsInfo) => {
-            showSharedLibraryUpdateProgress(
-              formatSharedLibraryUpdateProgress(jobsInfo),
-              0,
-              sharedLibraryUpdateProgressNumbers(jobsInfo),
-            );
-          },
-        );
-        const updatedAt = Date.now();
-        updateSettings({ lastLibraryUpdateAt: updatedAt });
-        progressSubscription?.close();
-        progressSubscription = null;
-        cache.clearGroup(CACHE_GROUPS.LIBRARY);
-        await preloadLibrarySnapshot(true);
-        await reconcileLibrarySnapshotCountsFromChapters();
-        const entries = recordLibraryUpdateNotifications(beforeUpdate, store.libraryMangaSnapshot, updatedAt);
-        addSystemNotification({
+      const updateRun = await runSharedLibraryUpdate({ reason: "auto-library-update" });
+      const updatedAt = updateRun.updatedAt;
+      updateSettings({ lastLibraryUpdateAt: updatedAt });
+      cache.clearGroup(CACHE_GROUPS.LIBRARY);
+      await preloadLibrarySnapshot(true);
+      await reconcileLibrarySnapshotCountsFromChapters();
+      const entries = recordLibraryUpdateNotifications(beforeUpdate, store.libraryMangaSnapshot, updatedAt);
+      addSystemNotification({
+        kind: "success",
+        title: entries.length > 0 ? "New chapters found" : "Library sync completed",
+        body: entries.length > 0
+          ? `${entries.reduce((sum, entry) => sum + entry.chapterDelta, 0)} new chapters added across ${entries.length} titles.`
+          : `Automatic updates every ${store.settings.libraryUpdateIntervalHours ?? 12}h.`,
+        createdAt: updatedAt,
+      });
+      if (entries.length > 0) {
+        addToast({
           kind: "success",
-          title: entries.length > 0 ? "New chapters found" : "Library sync completed",
-          body: entries.length > 0
-            ? `${entries.reduce((sum, entry) => sum + entry.chapterDelta, 0)} new chapters added across ${entries.length} titles.`
-            : `Automatic updates every ${store.settings.libraryUpdateIntervalHours ?? 12}h.`,
-          createdAt: updatedAt,
+          title: "New chapters found",
+          body: `${entries.reduce((sum, entry) => sum + entry.chapterDelta, 0)} new chapters added across ${entries.length} titles.`,
         });
-        if (entries.length > 0) {
-          addToast({
-            kind: "success",
-            title: "New chapters found",
-            body: `${entries.reduce((sum, entry) => sum + entry.chapterDelta, 0)} new chapters added across ${entries.length} titles.`,
-          });
-        }
-        showSharedLibraryUpdateProgress("Library update finished.", 1800);
-        await maybeStandbyAfterIdle("auto-library-update");
-      } finally {
-        progressSubscription?.close();
       }
+      showSharedLibraryUpdateProgress("Library update finished.", 1800);
+      await maybeStandbyAfterIdle("auto-library-update");
     })()
       .catch((error) => {
         console.warn("Automatic library update failed:", error);
@@ -666,80 +615,6 @@
         : `Checking titles ${current}/${total} · ${percent}%${skipped}.`;
     }
     return jobsInfo?.isRunning ? "Suwayomi is checking your library." : "Preparing library update.";
-  }
-
-  function automaticLibraryUpdateProgressNumbers(jobsInfo: any) {
-    const total = Number(jobsInfo?.totalJobs ?? 0);
-    if (!Number.isFinite(total) || total <= 0) return undefined;
-    const current = Math.max(0, Math.min(total, Number(jobsInfo?.finishedJobs ?? 0)));
-    return {
-      current,
-      total,
-      percent: Math.max(0, Math.min(100, Math.round((current / total) * 100))),
-    };
-  }
-
-  function applyAutomaticLibraryUpdatePatches(patches: LibraryUpdateMangaPatch[]) {
-    if (!patches.length || store.libraryMangaSnapshot.length === 0) return;
-    const patchById = new Map<number, LibraryUpdateMangaPatch["manga"]>();
-    for (const patch of patches) {
-      const manga = patch.manga;
-      if (!manga?.id) continue;
-      patchById.set(Number(manga.id), manga);
-    }
-    if (!patchById.size) return;
-
-    let changed = false;
-    const patched = store.libraryMangaSnapshot.map((manga) => {
-      const patch = patchById.get(manga.id);
-      if (!patch) return manga;
-      changed = true;
-      return {
-        ...manga,
-        title: patch.title ?? manga.title,
-        thumbnailUrl: patch.thumbnailUrl ?? manga.thumbnailUrl,
-        unreadCount: patch.unreadCount ?? manga.unreadCount,
-        downloadCount: patch.downloadCount ?? manga.downloadCount,
-        chapterCount: patch.chapters?.totalCount ?? manga.chapterCount,
-      };
-    });
-
-    if (!changed) return;
-    setLibraryMangaSnapshot(patched);
-    cache.set(CACHE_KEYS.LIBRARY, patched, CACHE_GROUPS.LIBRARY);
-  }
-
-  async function waitForLibraryUpdateToSettle(initialJobsInfo: any = null, timeoutMs = 8 * 60 * 1000) {
-    const startedAt = Date.now();
-    let observedRunning = Boolean(initialJobsInfo?.isRunning);
-    let observedJobs = Number(initialJobsInfo?.totalJobs ?? 0) > 0 || Number(initialJobsInfo?.finishedJobs ?? 0) > 0;
-
-    while (Date.now() - startedAt < timeoutMs) {
-      const status = await gql<any>(GET_LIBRARY_UPDATE_STATUS).catch(() => null);
-      const jobsInfo = status?.libraryUpdateStatus?.jobsInfo;
-      if (jobsInfo) {
-        observedRunning ||= Boolean(jobsInfo.isRunning);
-        observedJobs ||= Number(jobsInfo.totalJobs ?? 0) > 0 || Number(jobsInfo.finishedJobs ?? 0) > 0;
-      }
-      if (!jobsInfo?.isRunning && (observedRunning || observedJobs)) {
-        await new Promise((resolve) => setTimeout(resolve, 800));
-        return jobsInfo ?? initialJobsInfo ?? null;
-      }
-      if (!jobsInfo?.isRunning && Date.now() - startedAt > 5000) return jobsInfo ?? initialJobsInfo ?? null;
-      await new Promise((resolve) => setTimeout(jobsInfo?.isRunning ? 2500 : 500));
-    }
-    return null;
-  }
-
-  async function ensureAethonLibraryUpdateRules() {
-    await gql(SET_LIBRARY_UPDATE_RULES, {
-      excludeCompleted: false,
-      excludeEntryWithUnreadChapters: false,
-      excludeNotStarted: false,
-      excludeUnreadChapters: false,
-    }).catch((error) => {
-      console.warn("Could not update Suwayomi library update rules:", error);
-    });
   }
 
   async function reconcileLibrarySnapshotCountsFromChapters() {

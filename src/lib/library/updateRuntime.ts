@@ -1,7 +1,12 @@
 import { getServerAuthHeader, getServerUrl, gql } from "../client";
 import { cache, CACHE_GROUPS, CACHE_KEYS } from "../cache";
-import { GET_LIBRARY_UPDATE_STATUS, SET_LIBRARY_UPDATE_RULES } from "../queries";
-import type { LibraryUpdateMangaPatch } from "../suwayomiUpdaterSubscription";
+import { GET_LIBRARY_UPDATE_STATUS, SET_LIBRARY_UPDATE_RULES, UPDATE_LIBRARY } from "../queries";
+import {
+  subscribeLibraryUpdateStatus,
+  type LibraryUpdateMangaPatch,
+  type LibraryUpdateSubscription,
+} from "../suwayomiUpdaterSubscription";
+import { ensureServerAwakeFor, type ServerWakeReason } from "../serverLifecycle";
 import { setLibraryMangaSnapshot, setLibraryUpdateProgress, store } from "../../store/state.svelte";
 
 export interface LibraryUpdateProgressNumbers {
@@ -9,6 +14,22 @@ export interface LibraryUpdateProgressNumbers {
   total: number;
   percent: number;
 }
+
+export interface SharedLibraryUpdateRunOptions {
+  reason: Extract<ServerWakeReason, "manual-library-update" | "auto-library-update">;
+  categories?: number[];
+  timeoutMs?: number;
+  liveRefreshIntervalMs?: number;
+  onLiveRefresh?: () => Promise<void> | void;
+}
+
+export interface SharedLibraryUpdateRunResult {
+  updatedAt: number;
+  changedMangaIds: number[];
+  jobsInfo: any | null;
+}
+
+let activeLibraryUpdateRun: Promise<SharedLibraryUpdateRunResult> | null = null;
 
 export function libraryUpdatePercent(current: number, total: number) {
   if (!Number.isFinite(total) || total <= 0) return 0;
@@ -200,4 +221,89 @@ export async function ensureAethonLibraryUpdateRules() {
   }).catch((error) => {
     console.warn("Could not update Suwayomi library update rules:", error);
   });
+}
+
+export function isSharedLibraryUpdateRunning() {
+  return Boolean(activeLibraryUpdateRun);
+}
+
+export function runSharedLibraryUpdate(options: SharedLibraryUpdateRunOptions) {
+  if (activeLibraryUpdateRun) return activeLibraryUpdateRun;
+
+  activeLibraryUpdateRun = (async () => {
+    let progressSubscription: LibraryUpdateSubscription | null = null;
+    const changedMangaIds = new Set<number>();
+    let lastLiveRefreshAt = 0;
+
+    try {
+      showLibraryUpdateProgress(
+        options.reason === "auto-library-update"
+          ? "Automatic library update is starting."
+          : "Waking Suwayomi and preparing update.",
+      );
+      const awake = await ensureServerAwakeFor(options.reason, {
+        serverUrl: store.runtimeServerUrl,
+        binary: store.settings.serverBinary,
+        updateIntensity: store.settings.libraryUpdateIntensity,
+      });
+      if (!awake) throw new Error("Suwayomi is not reachable.");
+
+      showLibraryUpdateProgress("Applying Aethon update rules.");
+      await ensureAethonLibraryUpdateRules();
+      showLibraryUpdateProgress("Suwayomi is checking your library.");
+
+      progressSubscription = subscribeLibraryUpdateStatus(
+        (event) => {
+          showLibraryUpdateProgress(
+            formatLibraryUpdateProgress(event.jobsInfo),
+            0,
+            libraryUpdateProgressNumbers(event.jobsInfo),
+          );
+          for (const mangaId of applyLibraryUpdateMangaPatches(event.mangaUpdates)) {
+            changedMangaIds.add(mangaId);
+          }
+        },
+        (subscriptionError) => {
+          console.warn("Could not receive live Library update progress:", subscriptionError);
+        },
+      );
+
+      const updateResult = await gql<any>(UPDATE_LIBRARY, { categories: options.categories });
+      const initialJobsInfo = updateResult?.updateLibrary?.updateStatus?.jobsInfo;
+      const jobsInfo = await waitForLibraryUpdateToSettle(
+        initialJobsInfo,
+        options.timeoutMs ?? 8 * 60 * 1000,
+        (progressJobsInfo) => {
+          showLibraryUpdateProgress(
+            formatLibraryUpdateProgress(progressJobsInfo),
+            0,
+            libraryUpdateProgressNumbers(progressJobsInfo),
+          );
+          if (!progressJobsInfo?.isRunning || !options.onLiveRefresh) return;
+          const now = Date.now();
+          const refreshInterval = Math.max(1000, options.liveRefreshIntervalMs ?? 5000);
+          if (now - lastLiveRefreshAt < refreshInterval) return;
+          lastLiveRefreshAt = now;
+          void Promise.resolve(options.onLiveRefresh()).catch((liveRefreshError) => {
+            console.warn("Could not refresh Library during update:", liveRefreshError);
+          });
+        },
+        () => {
+          showLibraryUpdateProgress(formatLibraryUpdateWaiting());
+        },
+      );
+
+      const updatedAt = Date.now();
+      return {
+        updatedAt,
+        changedMangaIds: Array.from(changedMangaIds),
+        jobsInfo,
+      };
+    } finally {
+      progressSubscription?.close();
+      activeLibraryUpdateRun = null;
+    }
+  })();
+
+  return activeLibraryUpdateRun;
 }
