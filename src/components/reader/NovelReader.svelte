@@ -24,7 +24,7 @@
   let error = $state<string | null>(null);
   let chapterHtml = $state("");
   let toolsOpen = $state(false);
-  let activeSubPanel = $state<"main" | "tts">("main");
+  let activeSubPanel = $state<"main" | "appearance" | "typography" | "layout" | "tts">("main");
 
   $effect(() => {
     if (!toolsOpen) {
@@ -293,6 +293,124 @@
         <TtsControls controller={tts} onback={() => activeSubPanel = "main"} />
       {:else}
         <dl>
+          {#if activeSubPanel === "main"}
+            <div class="popover-tts-row" onclick={() => activeSubPanel = "appearance"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "appearance"; }}>
+              <dt>Appearance</dt>
+              <dd>{proseTheme} <span class="popover-chevron">&gt;</span></dd>
+            </div>
+            <div class="popover-tts-row" onclick={() => activeSubPanel = "typography"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "typography"; }}>
+              <dt>Typography</dt>
+              <dd>{proseFontSize}px · {proseLineHeight.toFixed(2)} <span class="popover-chevron">&gt;</span></dd>
+            </div>
+            <div class="popover-tts-row" onclick={() => activeSubPanel = "layout"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "layout"; }}>
+              <dt>Layout</dt>
+              <dd>{store.settings.proseReaderFullWidth ? "Full" : `${proseContentWidth}px`} · {proseTextAlign} <span class="popover-chevron">&gt;</span></dd>
+            </div>
+            <div class="popover-tts-row" onclick={() => activeSubPanel = "tts"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "tts"; }}>
+              <dt>Text to Speech</dt>
+              <dd>Configure <span class="popover-chevron">&gt;</span></dd>
+            </div>
+          {:else if activeSubPanel === "appearance"}
+            <div class="popover-tts-row" onclick={() => activeSubPanel = "main"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "main"; }}>
+              <dt>&lt; Back</dt>
+              <dd>Appearance</dd>
+            </div>
+            <div>
+              <dt>Theme</dt>
+              <dd>
+                <div class="popover-color-swatches" style="display: flex; flex-wrap: wrap; gap: 4px; max-width: 150px;">
+                  <button class="popover-swatch" style="background:#efe1c9;" class:active={proseTheme === "sepia"} onclick={() => updateSettings({ proseReaderTheme: "sepia" })} title="Sepia"></button>
+                  <button class="popover-swatch" style="background:#000000;" class:active={proseTheme === "oled"} onclick={() => updateSettings({ proseReaderTheme: "oled" })} title="OLED"></button>
+                  <button class="popover-swatch" style="background:#09080d;" class:active={proseTheme === "dark"} onclick={() => updateSettings({ proseReaderTheme: "dark" })} title="Dark"></button>
+                  <button class="popover-swatch" style="background:#f5f1ea;" class:active={proseTheme === "light"} onclick={() => updateSettings({ proseReaderTheme: "light" })} title="Light"></button>
+                  <button class="popover-swatch" style="background:#131316;" class:active={proseTheme === "nocturne"} onclick={() => updateSettings({ proseReaderTheme: "nocturne" })} title="Nocturne"></button>
+                  <button class="popover-swatch" style="background:#1e293b;" class:active={proseTheme === "slate"} onclick={() => updateSettings({ proseReaderTheme: "slate" })} title="Slate"></button>
+                  <button class="popover-swatch" style="background:#142217;" class:active={proseTheme === "forest"} onclick={() => updateSettings({ proseReaderTheme: "forest" })} title="Forest"></button>
+                  <button class="popover-swatch" style="background:#2e3440;" class:active={proseTheme === "nord"} onclick={() => updateSettings({ proseReaderTheme: "nord" })} title="Nord"></button>
+                  <button class="popover-swatch" style="background:#fbf5e6;" class:active={proseTheme === "warm"} onclick={() => updateSettings({ proseReaderTheme: "warm" })} title="Warm"></button>
+                </div>
+              </dd>
+            </div>
+            <div>
+              <dt>Text Color</dt>
+              <dd>
+                <input class="popover-color-picker" type="color" value={prosePalette.text} onchange={(event) => updateProseColor("text", event.currentTarget.value)} title="Text color" />
+              </dd>
+            </div>
+            <div>
+              <dt>Paper Color</dt>
+              <dd>
+                <input class="popover-color-picker" type="color" value={prosePalette.surface} onchange={(event) => updateProseColor("background", event.currentTarget.value)} title="Page background" />
+              </dd>
+            </div>
+          {:else if activeSubPanel === "typography"}
+            <div class="popover-tts-row" onclick={() => activeSubPanel = "main"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "main"; }}>
+              <dt>&lt; Back</dt>
+              <dd>Typography</dd>
+            </div>
+            <div>
+              <dt>Font</dt>
+              <dd>
+                <select class="popover-select" value={proseFontFamily} onchange={(event) => updateSettings({ proseReaderFontFamily: event.currentTarget.value })}>
+                  <option value="Georgia, serif">Georgia</option>
+                  <option value="Merriweather, Georgia, serif">Merriweather</option>
+                  <option value="'EB Garamond', serif">EB Garamond</option>
+                  <option value="Lora, serif">Lora</option>
+                  <option value="Literata, serif">Literata</option>
+                  <option value="Inter, sans-serif">Inter</option>
+                  <option value="Atkinson Hyperlegible, Inter, sans-serif">Atkinson</option>
+                  <option value='"Segoe UI", sans-serif'>Segoe UI</option>
+                </select>
+              </dd>
+            </div>
+            <div>
+              <dt>Size</dt>
+              <dd>
+                <div class="popover-stepper">
+                  <button class="popover-step-btn" onclick={() => updateFontSize(-1)} disabled={proseFontSize <= 12}>-</button>
+                  <span class="popover-step-val">{proseFontSize}px</span>
+                  <button class="popover-step-btn" onclick={() => updateFontSize(1)} disabled={proseFontSize >= 32}>+</button>
+                </div>
+              </dd>
+            </div>
+            <div>
+              <dt>Line</dt>
+              <dd>
+                <div class="popover-stepper">
+                  <button class="popover-step-btn" onclick={() => updateLineHeight(-0.05)} disabled={proseLineHeight <= 1.2}>-</button>
+                  <span class="popover-step-val">{proseLineHeight.toFixed(2)}</span>
+                  <button class="popover-step-btn" onclick={() => updateLineHeight(0.05)} disabled={proseLineHeight >= 2.4}>+</button>
+                </div>
+              </dd>
+            </div>
+          {:else if activeSubPanel === "layout"}
+            <div class="popover-tts-row" onclick={() => activeSubPanel = "main"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "main"; }}>
+              <dt>&lt; Back</dt>
+              <dd>Layout</dd>
+            </div>
+            <div>
+              <dt>Align</dt>
+              <dd>
+                <div class="popover-segmented">
+                  <button class="popover-segment" class:active={proseTextAlign === "left"} onclick={() => updateSettings({ proseReaderTextAlign: "left" })}>Left</button>
+                  <button class="popover-segment" class:active={proseTextAlign === "justify"} onclick={() => updateSettings({ proseReaderTextAlign: "justify" })}>Justified</button>
+                </div>
+              </dd>
+            </div>
+            <div>
+              <dt>Width</dt>
+              <dd style="display: flex; align-items: center; gap: 8px;">
+                <div class="popover-stepper">
+                  <button class="popover-step-btn" onclick={() => updateContentWidth(-40)} disabled={store.settings.proseReaderFullWidth}>-</button>
+                  <span class="popover-step-val" style={store.settings.proseReaderFullWidth ? "opacity: 0.5;" : ""}>
+                    {store.settings.proseReaderFullWidth ? "Full" : `${proseContentWidth}px`}
+                  </span>
+                  <button class="popover-step-btn" onclick={() => updateContentWidth(40)} disabled={store.settings.proseReaderFullWidth}>+</button>
+                </div>
+                <button class="popover-btn" class:active={store.settings.proseReaderFullWidth} onclick={() => updateSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}>Full</button>
+              </dd>
+            </div>
+          {:else if false}
           <div>
             <dt>Theme</dt>
             <dd>
@@ -395,9 +513,10 @@
             <dt style="color: var(--reader-text);">Text to Speech</dt>
             <dd style="color: var(--reader-accent-bright); font-weight: 600; display: flex; align-items: center; gap: 4px;">
               <span>Configure</span>
-              <span style="font-size: 10px;">&gt;</span>
+              <span class="popover-chevron">&gt;</span>
             </dd>
           </div>
+          {/if}
         </dl>
       {/if}
     {/snippet}

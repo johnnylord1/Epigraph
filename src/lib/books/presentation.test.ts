@@ -42,6 +42,7 @@ describe("presentBookWithCoverSrc", () => {
     expect(presented.authorLabel).toBe("Author");
     expect(presented.sectionCount).toBe(10);
     expect(presented.progressSummary).toBe("3 / 10 read");
+    expect(presented.sectionCountLabel).toBe("10 chapters");
   });
 
   it("prefers page count labels for PDFs without outline sections", () => {

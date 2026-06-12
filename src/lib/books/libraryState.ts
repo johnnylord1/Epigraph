@@ -84,6 +84,7 @@ function normalizeLoadedBook(book: any): BookEntry {
     title: String(book?.title ?? "Imported book"),
     author: typeof book?.author === "string" ? book.author : null,
     description: typeof book?.description === "string" ? book.description : null,
+    genres: Array.isArray(book?.genres) ? book.genres.filter((entry: unknown): entry is string => typeof entry === "string") : undefined,
     coverPath: typeof book?.coverPath === "string" ? book.coverPath : null,
     coverUrl: typeof book?.coverUrl === "string" ? book.coverUrl : undefined,
     subtype: book?.subtype === "pdf" ? "pdf" : "epub",

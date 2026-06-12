@@ -132,7 +132,7 @@
     displaySectionCount > 0 ? Math.min(displaySectionCount, Math.round(readPercent * displaySectionCount)) : 0
   ));
   const showProgress = $derived(activePresentation?.showProgress ?? (displaySectionCount > 0 || !!activeProgress));
-  const usesPagesLabel = $derived(activeBook?.subtype === "pdf");
+  const usesPagesLabel = $derived(activeBook?.subtype === "pdf" && detailSections.length === 0);
   const previewHeading = $derived(previewing ? "Preview" : (usesPagesLabel ? "Pages" : "Chapters"));
   const coverSrc = $derived(activePresentation?.coverSrc ?? (activeBook ? BookAssetResolver.resolveCoverSrc(activeBook) : null));
   const bookFileAvailable = $derived(activeBook ? hasBookLocalAsset(activeBook) : false);

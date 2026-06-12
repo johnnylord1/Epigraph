@@ -16,7 +16,7 @@ describe("recommendation adapters", () => {
     const manga = createManga({
       id: 42,
       title: "Dungeon Monarch",
-      genre: ["Action", "Dungeon"],
+      genre: ["Action", "Dungeon", "Manhwa"],
       unreadCount: 5,
       source: {
         id: "flame",
@@ -28,46 +28,44 @@ describe("recommendation adapters", () => {
     const seed = mangaToTasteProfileSeed(manga);
 
     expect(seed.id).toBe("manga:42");
-    expect(seed.tags).toEqual(["Action", "Dungeon"]);
+    expect(seed.tags).toEqual(["Action", "Dungeon", "Manhwa"]);
     expect(seed.contentType).toBe("manhwa");
     expect(seed.sourceId).toBe("flame");
     expect(seed.implicitWeight).toBeGreaterThan(0.4);
   });
 
-  it("uses scanlation source heuristics when inferring comic format", () => {
+  it("uses genre heuristics when inferring comic format", () => {
     const seed = mangaToTasteProfileSeed(createManga({
       id: 43,
       title: "Regression Tower",
-      genre: ["Action", "Fantasy"],
+      genre: ["Action", "Fantasy", "Webtoon"],
       source: {
-        id: "manganato-en",
-        name: "Manganato",
-        displayName: "Manganato (EN)",
+        id: "any-source",
+        name: "Any Source",
+        displayName: "Any Source",
       },
     }));
 
     expect(seed.contentType).toBe("manhwa");
   });
 
-  it("uses source language when source metadata does not name the comic format", () => {
+  it("uses title heuristics when genre metadata does not name the comic format", () => {
     const koreanSeed = mangaToTasteProfileSeed(createManga({
       id: 44,
-      title: "Tower Returner",
+      title: "Tower Returner (Korean)",
       source: {
         id: "source-ko",
         name: "Generic Source",
         displayName: "Generic Source",
-        lang: "ko",
       },
     }));
     const chineseSeed = mangaToTasteProfileSeed(createManga({
       id: 45,
-      title: "Cultivation Archive",
+      title: "Cultivation Archive (Chinese)",
       source: {
         id: "source-cn",
         name: "Generic Source",
         displayName: "Generic Source",
-        lang: "zh-CN",
       },
     }));
 

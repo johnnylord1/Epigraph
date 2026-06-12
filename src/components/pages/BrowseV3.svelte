@@ -12,6 +12,7 @@
   import NocturneState from "../shared/NocturneState.svelte";
   import SetupStatusCard from "../shared/SetupStatusCard.svelte";
   import SourcesView from "./SourcesView.svelte";
+  import TasteInsightsModal from "./TasteInsightsModal.svelte";
   import { detectSetupState, type SetupState } from "../../lib/setupState";
   import { SERVER_READY_EVENT } from "../../lib/serverLifecycle";
   import { ensureExtensionRepo, RECOMMENDED_EXTENSION_REPO } from "../../lib/defaultRepos";
@@ -36,6 +37,10 @@
   } from "../../lib/novels/hardcover";
   import {
     buildSearchRecommendations,
+    buildTasteProfile,
+    mangaToTasteProfileSeed,
+    novelToTasteProfileSeed,
+    bookToTasteProfileSeed,
     mangaToRecommendationCandidate,
     novelSourceResultToRecommendationCandidate,
     recommendationTitleKey,
@@ -1733,6 +1738,28 @@
 
   const searchDisplayedRecommendationCount = $derived(searchRecommendationItems.length);
 
+  let isInsightsOpen = $state(false);
+
+  const libraryOnlyProfile = $derived.by(() => {
+    const seeds: TasteProfileSeedItem[] = [];
+    seeds.push(
+      ...(searchLibraryManga ?? []).map((manga) =>
+        mangaToTasteProfileSeed(manga, { trackRecordsByMangaId: searchTrackRecordsByMangaId }),
+      )
+    );
+    seeds.push(
+      ...(novelLibraryState?.entries ?? []).map(novelToTasteProfileSeed)
+    );
+    seeds.push(
+      ...(store.books ?? []).map((book) =>
+        bookToTasteProfileSeed(book, {
+          progressByBookId: searchBookProgressById,
+        })
+      )
+    );
+    return buildTasteProfile(seeds);
+  });
+
   const searchHasAnyRecommendationCandidates = $derived.by(() =>
     activeContentType === "novels"
       ? searchHasLiveNovelRecommendationData
@@ -2013,31 +2040,64 @@
     manga: Manga | null | undefined,
     fallbackTitle = "",
   ): RecommendationCandidate["contentType"] {
+    const sourceName = (manga?.source?.displayName || manga?.source?.name || "").toLowerCase();
     const haystack = [
       fallbackTitle,
       manga?.title,
-      manga?.source?.displayName,
-      manga?.source?.name,
+      manga?.description ?? "",
       ...(manga?.genre ?? []),
     ]
       .filter(Boolean)
       .join(" ")
       .toLowerCase();
 
-    if (haystack.includes("manhua") || haystack.includes("chinese")) return "manhua";
+    // Dedicated manhwa/manhua sources
+    if (
+      sourceName.includes("asura")
+      || sourceName.includes("flame")
+      || sourceName.includes("reaper")
+      || sourceName.includes("void scans")
+    ) {
+      return "manhwa";
+    }
+
     if (
       haystack.includes("manhwa")
       || haystack.includes("korean")
       || haystack.includes("webtoon")
-      || haystack.includes("asura")
-      || haystack.includes("flame")
-      || haystack.includes("reaper")
-      || haystack.includes("void scans")
-      || haystack.includes("mangakakalot")
-      || haystack.includes("manganato")
+      || haystack.includes("regression")
+      || haystack.includes("murim")
+      || haystack.includes("necromancer")
+      || haystack.includes("dungeon")
+      || haystack.includes("system")
+      || haystack.includes("level up")
+      || haystack.includes("hunter")
+      || haystack.includes("tower")
+      || haystack.includes("gate")
+      || haystack.includes("ranker")
+      || haystack.includes("player")
+      || haystack.includes("constellation")
     ) return "manhwa";
-    const sourceLangType = inferComicTypeFromLanguage(manga?.source?.lang);
-    if (sourceLangType) return sourceLangType;
+
+    if (
+      haystack.includes("manhua")
+      || haystack.includes("chinese")
+      || haystack.includes("cultivation")
+      || haystack.includes("wuxia")
+      || haystack.includes("xianxia")
+      || haystack.includes("xuanhuan")
+    ) return "manhua";
+
+    // Fallback to source language if available and source is not a general aggregator
+    const isAggregator = sourceName.includes("mangakakalot")
+      || sourceName.includes("manganato")
+      || sourceName.includes("mangadex")
+      || sourceName.includes("mangalife");
+    if (!isAggregator) {
+      const sourceLangType = inferComicTypeFromLanguage(manga?.source?.lang);
+      if (sourceLangType) return sourceLangType;
+    }
+
     return "manga";
   }
 
@@ -5093,7 +5153,7 @@
                 {/each}
               </div>
 
-              <button class="searchInsightsButton" type="button">
+              <button class="searchInsightsButton" type="button" onclick={() => isInsightsOpen = true}>
                 <span class="material-symbols-outlined" aria-hidden="true">bar_chart</span>
                 View full insights
               </button>
@@ -5237,14 +5297,22 @@
               <div class="sourceRow">
                 {#each mangas.filter(shouldShowCatalogManga).slice(0, (store.settings.renderLimit ?? 48)) as m (m.id)}
                   <button class="n-library-card" onclick={() => setPreviewManga(m)}>
-                    <div class="n-library-card__cover">
-                      <img
-                        src={resolveMangaCoverUrl(m, { context: "browse", persistence: m.inLibrary ? "persistent" : "memory", cacheGeneration: store.libraryCoverCacheGeneration })}
-                        alt={m.title}
-                        loading="lazy"
-                        decoding="async"
-                      />
-                      {#if m.inLibrary}<span class="n-library-card__badge">In Library</span>{/if}
+                    <div class="card-cover-container">
+                      <div class="n-library-card__cover">
+                        <img
+                          src={resolveMangaCoverUrl(m, { context: "browse", persistence: m.inLibrary ? "persistent" : "memory", cacheGeneration: store.libraryCoverCacheGeneration })}
+                          alt={m.title}
+                          loading="lazy"
+                          decoding="async"
+                        />
+                      </div>
+                      {#if m.inLibrary}
+                        <div class="source-metric-banner" aria-label="In Library">
+                          <div class="source-metric-pill">
+                            <span class="source-metric-unread pill-only">In Library</span>
+                          </div>
+                        </div>
+                      {/if}
                     </div>
                     <div class="n-library-card__info">
                       <p class="n-library-card__title">{m.title}</p>
@@ -5512,9 +5580,17 @@
             <div class="tagGrid" onscroll={handleCatalogGridScroll}>
               {#each src_browseResults.filter(shouldShowCatalogManga) as m (m.id)}
                 <button class="n-library-card" onclick={() => setPreviewManga(m)}>
-                  <div class="n-library-card__cover">
-                    <img src={resolveMangaCoverUrl(m, { context: "browse", persistence: m.inLibrary ? "persistent" : "memory", cacheGeneration: store.libraryCoverCacheGeneration })} alt={m.title} loading="lazy" decoding="async" />
-                    {#if m.inLibrary}<span class="n-library-card__badge">In Library</span>{/if}
+                  <div class="card-cover-container">
+                    <div class="n-library-card__cover">
+                      <img src={resolveMangaCoverUrl(m, { context: "browse", persistence: m.inLibrary ? "persistent" : "memory", cacheGeneration: store.libraryCoverCacheGeneration })} alt={m.title} loading="lazy" decoding="async" />
+                    </div>
+                    {#if m.inLibrary}
+                      <div class="source-metric-banner" aria-label="In Library">
+                        <div class="source-metric-pill">
+                          <span class="source-metric-unread pill-only">In Library</span>
+                        </div>
+                      </div>
+                    {/if}
                   </div>
                   <div class="n-library-card__info">
                     <p class="n-library-card__title">{m.title}</p>
@@ -5637,9 +5713,17 @@
               <div class="tagGrid" onscroll={handleCatalogGridScroll}>
                 {#each tag_mergedResults.filter(shouldShowCatalogManga) as m (m.id)}
                   <button class="n-library-card" onclick={() => setPreviewManga(m)}>
-                    <div class="n-library-card__cover">
-                      <img src={resolveMangaCoverUrl(m, { context: "browse", persistence: m.inLibrary ? "persistent" : "memory", cacheGeneration: store.libraryCoverCacheGeneration })} alt={m.title} loading="lazy" decoding="async" />
-                      {#if m.inLibrary}<span class="n-library-card__badge">In Library</span>{/if}
+                    <div class="card-cover-container">
+                      <div class="n-library-card__cover">
+                        <img src={resolveMangaCoverUrl(m, { context: "browse", persistence: m.inLibrary ? "persistent" : "memory", cacheGeneration: store.libraryCoverCacheGeneration })} alt={m.title} loading="lazy" decoding="async" />
+                      </div>
+                      {#if m.inLibrary}
+                        <div class="source-metric-banner" aria-label="In Library">
+                          <div class="source-metric-pill">
+                            <span class="source-metric-unread pill-only">In Library</span>
+                          </div>
+                        </div>
+                      {/if}
                     </div>
                     <div class="n-library-card__info">
                       <p class="n-library-card__title">{m.title}</p>
@@ -5739,14 +5823,20 @@
               <div class="tagGrid" onscroll={handleCatalogGridScroll}>
                 {#each discoverNovelResults as result (`${result.sourceId}:${result.path}`)}
                   <button class="n-library-card" disabled={src_openingNovelPath !== null} onclick={() => srcOpenNovelDetail(result)}>
-                    <div class="n-library-card__cover">
-                      {#if result.coverUrl}
-                        <img src={resolveMangaCoverUrl(result.coverUrl, { context: "browse", persistence: "memory" })} alt={result.title} loading="lazy" decoding="async" />
-                      {:else}
-                        <div class="coverFallback">Book</div>
-                      {/if}
+                    <div class="card-cover-container">
+                      <div class="n-library-card__cover">
+                        {#if result.coverUrl}
+                          <img src={resolveMangaCoverUrl(result.coverUrl, { context: "browse", persistence: "memory" })} alt={result.title} loading="lazy" decoding="async" />
+                        {:else}
+                          <div class="coverFallback">Book</div>
+                        {/if}
+                      </div>
                       {#if novelLibraryState && isNovelInLibrary(novelLibraryState, createNovelLibraryId(result.sourceId, result.path))}
-                        <span class="n-library-card__badge">In Library</span>
+                        <div class="source-metric-banner" aria-label="In Library">
+                          <div class="source-metric-pill">
+                            <span class="source-metric-unread pill-only">In Library</span>
+                          </div>
+                        </div>
                       {/if}
                     </div>
                     <div class="n-library-card__info">
@@ -5768,9 +5858,17 @@
               <div class="tagGrid" onscroll={handleCatalogGridScroll}>
                 {#each discoverMangaResults.filter(shouldShowCatalogManga) as m (m.id)}
                   <button class="n-library-card" onclick={() => setPreviewManga(m)}>
-                    <div class="n-library-card__cover">
-                      <img src={resolveMangaCoverUrl(m, { context: "browse", persistence: m.inLibrary ? "persistent" : "memory", cacheGeneration: store.libraryCoverCacheGeneration })} alt={m.title} loading="lazy" decoding="async" />
-                      {#if m.inLibrary}<span class="n-library-card__badge">In Library</span>{/if}
+                    <div class="card-cover-container">
+                      <div class="n-library-card__cover">
+                        <img src={resolveMangaCoverUrl(m, { context: "browse", persistence: m.inLibrary ? "persistent" : "memory", cacheGeneration: store.libraryCoverCacheGeneration })} alt={m.title} loading="lazy" decoding="async" />
+                      </div>
+                      {#if m.inLibrary}
+                        <div class="source-metric-banner" aria-label="In Library">
+                          <div class="source-metric-pill">
+                            <span class="source-metric-unread pill-only">In Library</span>
+                          </div>
+                        </div>
+                      {/if}
                     </div>
                     <div class="n-library-card__info">
                       <p class="n-library-card__title">{m.title}</p>
@@ -5808,6 +5906,15 @@
     <div class="browseShell">
       <SourcesView contentType={activeContentType} topbarSearch={searchQuery} />
     </div>
+  {/if}
+
+  {#if isInsightsOpen && libraryOnlyProfile}
+    <TasteInsightsModal
+      profile={libraryOnlyProfile}
+      items={searchRecommendationItems}
+      contentType={activeContentType}
+      onClose={() => isInsightsOpen = false}
+    />
   {/if}
 </div>
 

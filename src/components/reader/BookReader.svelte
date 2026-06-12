@@ -19,7 +19,6 @@
   import {
     extractReflowedPage,
     getReflowElementKey,
-    pruneReflowedPages,
     type ReflowedPage,
   } from "../../lib/books/pdfReflow";
   import {
@@ -106,7 +105,14 @@
   const proseTextAlign = $derived(store.settings.proseReaderTextAlign ?? "left");
   const pdfFitMode = $derived(store.settings.pdfFitMode ?? "width");
   const pdfDarkMode = $derived(store.settings.pdfDarkMode ?? false);
-  const pdfReflowMode = $derived(store.settings.pdfReflowMode ?? false);
+  const pdfReflowMode = $derived(store.settings.pdfReflowMode ?? true);
+  const pdfReflowCleanBackgrounds = $derived(store.settings.pdfReflowCleanBackgrounds ?? true);
+  const pdfReflowIllustrationScale = $derived(store.settings.pdfReflowIllustrationScale ?? 1);
+  const reflowPageNumbers = $derived.by(() => {
+    const loaded = reflowedPages.map((entry) => entry.pageNumber);
+    const loading = Array.from(reflowLoadingPages);
+    return Array.from(new Set([...loaded, ...loading])).sort((left, right) => left - right);
+  });
   const prosePalette = $derived.by(() => {
     if (proseTheme === "light") return { text: "#19151d", bg: "#f5f1ea", surface: "#f8f4ec" };
     if (proseTheme === "sepia") return { text: "#2b2118", bg: "#efe1c9", surface: "#f6ead4" };
@@ -136,13 +142,26 @@
   let uiVisible = $state(true);
   let zoomOpen = $state(false);
   let toolsOpen = $state(true);
-  let activeSubPanel = $state<"main" | "tts">("main");
+  let activeSubPanel = $state<"main" | "pdf" | "appearance" | "typography" | "layout" | "display" | "images" | "tts">("main");
   const tts = createTtsController();
   let pageNumber = $state(1);
 
   $effect(() => {
     if (!toolsOpen) {
       activeSubPanel = "main";
+    }
+  });
+
+  $effect(() => {
+    const bookType = activeBook?.subtype;
+    const reflow = pdfReflowMode;
+    const loadedPageCount = reflowedPages.length;
+    if (bookType === "pdf" && reflow && loadedPageCount > 0) {
+      untrack(() => {
+        void refreshPdfReflowTtsProvider();
+      });
+    } else if (bookType === "pdf" && !reflow) {
+      untrack(() => tts.setProvider(null));
     }
   });
   let totalPages = $state(1);
@@ -153,6 +172,7 @@
   let canPrev = $state(false);
   let canNext = $state(false);
   let hideTimer: ReturnType<typeof setTimeout> | null = null;
+  let pointerInsideHud = false;
   let loadToken = 0;
   let currentBookRef: any = null;
   let currentRendition: any = null;
@@ -162,6 +182,7 @@
   let pendingPdfPage = false;
   let reflowedPages = $state<ReflowedPage[]>([]);
   let reflowLoadingPages = $state<Set<number>>(new Set());
+  let suspendReflowProgressUntil = 0;
   let auditOpenBookId: string | null = null;
   let auditCloseSent = false;
   let currentStage: BookRuntimeStage = $state("idle");
@@ -280,27 +301,76 @@
   }
 
   function cycleProseTheme() {
-    const themes = ["nocturne", "dark", "sepia", "light", "oled"] as const;
+    const themes = ["nocturne", "dark", "sepia", "light", "oled", "slate", "forest", "nord", "warm"] as const;
     const current = themes.indexOf(proseTheme as any);
     updateSettings({ proseReaderTheme: themes[(current + 1) % themes.length] });
   }
 
   function updateFontSize(delta: number) {
-    updateSettings({ proseReaderFontSize: Math.max(12, Math.min(32, proseFontSize + delta)) });
+    const patch = { proseReaderFontSize: Math.max(12, Math.min(32, proseFontSize + delta)) };
+    if (activeBook?.subtype === "pdf" && pdfReflowMode) updateAnchoredReaderSettings(patch);
+    else updateSettings(patch);
   }
 
   function updateLineHeight(delta: number) {
-    updateSettings({ proseReaderLineHeight: Math.round(Math.max(1.2, Math.min(2.4, proseLineHeight + delta)) * 100) / 100 });
+    const patch = { proseReaderLineHeight: Math.round(Math.max(1.2, Math.min(2.4, proseLineHeight + delta)) * 100) / 100 };
+    if (activeBook?.subtype === "pdf" && pdfReflowMode) updateAnchoredReaderSettings(patch);
+    else updateSettings(patch);
   }
 
   function updateContentWidth(delta: number) {
-    updateSettings({ proseReaderContentWidth: Math.max(520, Math.min(1600, proseContentWidth + delta)) });
+    const patch = { proseReaderContentWidth: Math.max(520, Math.min(1600, proseContentWidth + delta)) };
+    if (activeBook?.subtype === "pdf" && pdfReflowMode) updateAnchoredReaderSettings(patch);
+    else updateSettings(patch);
+  }
+
+  function updateIllustrationScale(delta: number) {
+    updateAnchoredReaderSettings({
+      pdfReflowIllustrationScale: Math.round(Math.max(0.5, Math.min(2, pdfReflowIllustrationScale + delta)) * 100) / 100,
+    });
   }
 
   function updateProseColor(key: "text" | "background", value: string) {
-    updateSettings(key === "text"
+    const patch = key === "text"
       ? { proseReaderTheme: "nocturne", proseReaderTextColor: value }
-      : { proseReaderTheme: "nocturne", proseReaderBackgroundColor: value });
+      : { proseReaderTheme: "nocturne", proseReaderBackgroundColor: value };
+    if (activeBook?.subtype === "pdf" && pdfReflowMode) updateAnchoredReaderSettings(patch);
+    else updateSettings(patch);
+  }
+
+  function getReflowScrollAnchor() {
+    if (!pdfReflowMode || activeBook?.subtype !== "pdf") return null;
+    const viewer = document.querySelector(".book-viewer") as HTMLElement | null;
+    if (!viewer) return null;
+    const viewerRect = viewer.getBoundingClientRect();
+    const elements = Array.from(document.querySelectorAll<HTMLElement>('.pdf-reflow-page [id^="pdf-page:"]'));
+    const anchor = elements.find((element) => element.getBoundingClientRect().bottom > viewerRect.top + 96) ?? elements[0];
+    if (!anchor) return null;
+    return {
+      id: anchor.id,
+      offset: anchor.getBoundingClientRect().top - viewerRect.top,
+      scrollTop: viewer.scrollTop,
+    };
+  }
+
+  async function preserveReflowScroll(anchor: ReturnType<typeof getReflowScrollAnchor>) {
+    if (!anchor) return;
+    await tick();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const viewer = document.querySelector(".book-viewer") as HTMLElement | null;
+    const element = document.getElementById(anchor.id);
+    if (!viewer || !element) return;
+    const viewerTop = viewer.getBoundingClientRect().top;
+    const nextOffset = element.getBoundingClientRect().top - viewerTop;
+    viewer.scrollTop += nextOffset - anchor.offset;
+    if (!Number.isFinite(viewer.scrollTop)) viewer.scrollTop = anchor.scrollTop;
+  }
+
+  function updateAnchoredReaderSettings(patch: Partial<typeof store.settings>) {
+    const anchor = getReflowScrollAnchor();
+    suspendReflowProgressUntil = Date.now() + 900;
+    updateSettings(patch);
+    void preserveReflowScroll(anchor);
   }
 
   function cyclePdfFit() {
@@ -330,8 +400,26 @@
     uiVisible = true;
     if (hideTimer) clearTimeout(hideTimer);
     hideTimer = setTimeout(() => {
+      if (pointerInsideHud || zoomOpen) {
+        hideTimer = null;
+        return;
+      }
       uiVisible = false;
     }, 3000);
+  }
+
+  function keepHudVisible() {
+    pointerInsideHud = true;
+    uiVisible = true;
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
+  }
+
+  function releaseHudVisibility() {
+    pointerInsideHud = false;
+    showUi();
   }
 
   function disposeReader() {
@@ -421,19 +509,17 @@
     return reflowedPages.find((entry) => entry.pageNumber === pageNum) ?? null;
   }
 
-  function trimReflowPages(centerPage = pageNumber) {
-    reflowedPages = pruneReflowedPages(reflowedPages, centerPage, 4);
-  }
-
   async function loadReflowPage(pageNum: number) {
     if (!currentPdfDoc || !currentPdfJsLib || pageNum < 1 || pageNum > totalPages) return;
     if (getReflowPage(pageNum) || reflowLoadingPages.has(pageNum)) return;
     reflowLoadingPages = new Set(reflowLoadingPages).add(pageNum);
     try {
       const page = await currentPdfDoc.getPage(pageNum);
-      const reflowed = await extractReflowedPage(page, pageNum, currentPdfJsLib);
+      const reflowed = await extractReflowedPage(page, pageNum, currentPdfJsLib, {
+        removeDecorativeBackgrounds: pdfReflowCleanBackgrounds,
+      });
       if (!getReflowPage(pageNum)) {
-        reflowedPages = pruneReflowedPages([...reflowedPages, reflowed], pageNumber, 4);
+        reflowedPages = [...reflowedPages, reflowed].sort((left, right) => left.pageNumber - right.pageNumber);
       }
     } catch (err) {
       console.error("Failed to reflow PDF page", pageNum, err);
@@ -444,13 +530,44 @@
     }
   }
 
-  function loadReflowPagesAround(centerPage = pageNumber) {
-    const start = Math.max(1, centerPage - 2);
+  async function loadReflowPagesAround(centerPage = pageNumber) {
     const end = Math.min(totalPages, centerPage + 2);
-    for (let page = start; page <= end; page += 1) {
+    await loadReflowPage(centerPage);
+    for (let offset = 1; offset <= 2; offset += 1) {
+      const next = centerPage + offset;
+      if (next <= end) void loadReflowPage(next);
+    }
+    void refreshPdfReflowTtsProvider();
+  }
+
+  async function refreshPdfReflowTtsProvider() {
+    if (activeBook?.subtype !== "pdf" || !pdfReflowMode) return;
+    await tick();
+    const stage = document.querySelector(".pdf-reflow-stage") as HTMLElement | null;
+    tts.setProvider(stage ? createDomTtsTextProvider(stage, "h1, h2, h3, p") : null);
+  }
+
+  async function loadPreviousReflowPages() {
+    if (!pdfReflowMode || !currentPdfDoc || reflowLoadingPages.size > 0) return;
+    const firstLoaded = reflowPageNumbers[0] ?? pageNumber;
+    if (firstLoaded <= 1) return;
+    const viewer = document.querySelector(".book-viewer") as HTMLElement | null;
+    const previousPages = [firstLoaded - 2, firstLoaded - 1].filter((entry) => entry >= 1);
+    const beforeHeight = viewer?.scrollHeight ?? 0;
+    const beforeTop = viewer?.scrollTop ?? 0;
+    await Promise.all(previousPages.map((entry) => loadReflowPage(entry)));
+    await tick();
+    if (viewer) {
+      viewer.scrollTop = beforeTop + Math.max(0, viewer.scrollHeight - beforeHeight);
+    }
+  }
+
+  function loadNextReflowPages() {
+    if (!pdfReflowMode || !currentPdfDoc) return;
+    const lastLoaded = reflowPageNumbers[reflowPageNumbers.length - 1] ?? pageNumber;
+    for (let page = lastLoaded + 1; page <= Math.min(totalPages, lastLoaded + 2); page += 1) {
       void loadReflowPage(page);
     }
-    trimReflowPages(centerPage);
   }
 
   function scrollToPdfPage(targetPage = pageNumber, behavior: ScrollBehavior = "smooth") {
@@ -655,7 +772,7 @@
   async function renderPdfPage(nextPage = pageNumber) {
     if (pdfReflowMode) {
       syncPdfProgress(nextPage);
-      loadReflowPagesAround(nextPage);
+      await loadReflowPagesAround(nextPage);
       await tick();
       scrollToPdfPage(nextPage, "auto");
       setStage("pdf.reflow.ready");
@@ -781,7 +898,7 @@
     pageNumber = Math.max(1, Math.min(totalPages, activeProgress?.pageIndex ?? 1));
     await tick();
     if (pdfReflowMode) {
-      loadReflowPagesAround(pageNumber);
+      await loadReflowPagesAround(pageNumber);
       await tick();
       scrollToPdfPage(pageNumber, "auto");
       syncPdfProgress(pageNumber);
@@ -1069,6 +1186,15 @@
     pdfFitMode;
     pdfDarkMode;
     pdfReflowMode;
+    pdfReflowCleanBackgrounds;
+    if (activeBook?.subtype === "pdf" && currentPdfDoc && pdfReflowMode) {
+      untrack(() => {
+        reflowedPages = [];
+        reflowLoadingPages = new Set();
+        loadReflowPagesAround(pageNumber);
+      });
+      return;
+    }
     if (activeBook?.subtype === "pdf" && currentPdfDoc && !pdfReflowMode) {
       untrack(() => {
         void renderPdfPage(pageNumber);
@@ -1094,20 +1220,31 @@
 
   function handleViewerClick(e: MouseEvent) {
     if ((e.target as HTMLElement).closest("button, input, select, a")) return;
-    
+
     if (store.settings.bookReaderFlow === "scrolled" || pdfReflowMode) {
-      showUi();
       return;
     }
 
     const width = window.innerWidth;
     const x = e.clientX;
     if (x < width * 0.3) {
+      e.stopPropagation();
       goPrev();
     } else if (x > width * 0.7) {
+      e.stopPropagation();
       goNext();
-    } else {
-      showUi();
+    }
+  }
+
+  function handleViewerWheel(event: WheelEvent) {
+    if (!pdfReflowMode || activeBook?.subtype !== "pdf") return;
+    const viewer = event.currentTarget as HTMLElement;
+    if (event.deltaY < 0 && viewer.scrollTop < 96) {
+      void loadPreviousReflowPages();
+      return;
+    }
+    if (event.deltaY > 0 && viewer.scrollHeight - viewer.scrollTop - viewer.clientHeight < 720) {
+      loadNextReflowPages();
     }
   }
 
@@ -1218,11 +1355,14 @@
     observer = new IntersectionObserver((entries) => {
       entries.forEach((entry) => {
         if (!entry.isIntersecting) return;
-        loadReflowPagesAround(pageNum);
+        if (Date.now() < suspendReflowProgressUntil) return;
         syncPdfProgress(pageNum);
+        if (pageNum >= (reflowPageNumbers[reflowPageNumbers.length - 1] ?? pageNum)) {
+          loadNextReflowPages();
+        }
       });
     }, {
-      rootMargin: "110% 0px 110% 0px",
+      rootMargin: "45% 0px 65% 0px",
       threshold: 0.05,
     });
 
@@ -1231,9 +1371,6 @@
     return {
       update(nextPage: number) {
         pageNum = nextPage;
-        if (node.getBoundingClientRect().top < window.innerHeight * 1.2) {
-          loadReflowPagesAround(pageNum);
-        }
       },
       destroy() {
         observer?.disconnect();
@@ -1328,6 +1465,8 @@
   nextDisabled={loading || !canNext}
   uiVisible={uiVisible}
   onMouseMove={(event) => { if (event.clientY < 60 || window.innerHeight - event.clientY < 60) showUi(); }}
+  onHudMouseEnter={keepHudVisible}
+  onHudMouseLeave={releaseHudVisibility}
   onclose={() => requestClose("toolbar")}
   onprev={goPrev}
   onnext={goNext}
@@ -1335,10 +1474,249 @@
   onbookmark={toggleBookmark}
 >
   {#snippet settingsPopover()}
-    {#if activeSubPanel === "tts" && activeBook?.subtype === "epub"}
+    {#if activeSubPanel === "tts" && (activeBook?.subtype === "epub" || (activeBook?.subtype === "pdf" && pdfReflowMode))}
       <TtsControls controller={tts} onback={() => activeSubPanel = "main"} />
     {:else}
       <dl>
+        {#if activeSubPanel === "main"}
+          {#if activeBook?.subtype === "pdf"}
+            <div class="popover-tts-row" onclick={() => activeSubPanel = "pdf"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "pdf"; }}>
+              <dt>PDF</dt>
+              <dd>{pdfReflowMode ? "Reflow" : "Canvas"} · {pdfReflowCleanBackgrounds ? "Clean" : "Original"} <span class="popover-chevron">&gt;</span></dd>
+            </div>
+            {#if pdfReflowMode}
+              <div class="popover-tts-row" onclick={() => activeSubPanel = "appearance"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "appearance"; }}>
+                <dt>Appearance</dt>
+                <dd>{proseTheme} <span class="popover-chevron">&gt;</span></dd>
+              </div>
+              <div class="popover-tts-row" onclick={() => activeSubPanel = "typography"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "typography"; }}>
+                <dt>Typography</dt>
+                <dd>{proseFontSize}px · {proseLineHeight.toFixed(2)} <span class="popover-chevron">&gt;</span></dd>
+              </div>
+              <div class="popover-tts-row" onclick={() => activeSubPanel = "layout"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "layout"; }}>
+                <dt>Layout</dt>
+                <dd>{store.settings.proseReaderFullWidth ? "Full" : `${proseContentWidth}px`} · {proseTextAlign} <span class="popover-chevron">&gt;</span></dd>
+              </div>
+              <div class="popover-tts-row" onclick={() => activeSubPanel = "images"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "images"; }}>
+                <dt>Images</dt>
+                <dd>{Math.round(pdfReflowIllustrationScale * 100)}% <span class="popover-chevron">&gt;</span></dd>
+              </div>
+              <div class="popover-tts-row" onclick={() => activeSubPanel = "tts"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "tts"; }}>
+                <dt>Text to Speech</dt>
+                <dd>Configure <span class="popover-chevron">&gt;</span></dd>
+              </div>
+            {:else}
+              <div class="popover-tts-row" onclick={() => activeSubPanel = "display"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "display"; }}>
+                <dt>Display</dt>
+                <dd>{pdfFitMode} · {Math.round(zoom * 100)}% <span class="popover-chevron">&gt;</span></dd>
+              </div>
+              <div class="popover-tts-row" onclick={() => activeSubPanel = "layout"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "layout"; }}>
+                <dt>Layout</dt>
+                <dd>{store.settings.bookReaderFlow === "scrolled" ? "Scroll" : "Page"} <span class="popover-chevron">&gt;</span></dd>
+              </div>
+            {/if}
+          {:else if activeBook?.subtype === "epub"}
+            <div class="popover-tts-row" onclick={() => activeSubPanel = "appearance"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "appearance"; }}>
+              <dt>Appearance</dt>
+              <dd>{proseTheme} <span class="popover-chevron">&gt;</span></dd>
+            </div>
+            <div class="popover-tts-row" onclick={() => activeSubPanel = "typography"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "typography"; }}>
+              <dt>Typography</dt>
+              <dd>{proseFontSize}px · {proseLineHeight.toFixed(2)} <span class="popover-chevron">&gt;</span></dd>
+            </div>
+            <div class="popover-tts-row" onclick={() => activeSubPanel = "layout"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "layout"; }}>
+              <dt>Layout</dt>
+              <dd>{store.settings.bookReaderFlow === "scrolled" ? "Scroll" : "Page"} · {store.settings.proseReaderFullWidth ? "Full" : `${proseContentWidth}px`} <span class="popover-chevron">&gt;</span></dd>
+            </div>
+            <div class="popover-tts-row" onclick={() => activeSubPanel = "tts"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "tts"; }}>
+              <dt>Text to Speech</dt>
+              <dd>Configure <span class="popover-chevron">&gt;</span></dd>
+            </div>
+          {/if}
+        {:else if activeSubPanel === "pdf" && activeBook?.subtype === "pdf"}
+          <div class="popover-tts-row" onclick={() => activeSubPanel = "main"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "main"; }}>
+            <dt>&lt; Back</dt>
+            <dd>PDF</dd>
+          </div>
+          <div>
+            <dt>Reflow</dt>
+            <dd>
+              <button class="popover-toggle" type="button" aria-label="Toggle PDF reflow mode" title="Toggle PDF reflow mode" class:active={pdfReflowMode} onclick={() => updateSettings({ pdfReflowMode: !pdfReflowMode })}></button>
+            </dd>
+          </div>
+          {#if pdfReflowMode}
+            <div>
+              <dt>Clean BG</dt>
+              <dd>
+                <button class="popover-toggle" type="button" aria-label="Remove PDF backgrounds and watermarks" title="Remove PDF backgrounds and watermarks" class:active={pdfReflowCleanBackgrounds} onclick={() => updateSettings({ pdfReflowCleanBackgrounds: !pdfReflowCleanBackgrounds })}></button>
+              </dd>
+            </div>
+          {:else}
+            <div>
+              <dt>Dark PDF</dt>
+              <dd>
+                <button class="popover-toggle" type="button" aria-label="Toggle dark PDF mode" title="Toggle dark PDF mode" class:active={pdfDarkMode} onclick={() => updateSettings({ pdfDarkMode: !pdfDarkMode })}></button>
+              </dd>
+            </div>
+          {/if}
+        {:else if activeSubPanel === "appearance"}
+          <div class="popover-tts-row" onclick={() => activeSubPanel = "main"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "main"; }}>
+            <dt>&lt; Back</dt>
+            <dd>Appearance</dd>
+          </div>
+          <div>
+            <dt>Theme</dt>
+            <dd>
+              <div class="popover-color-swatches" style="display: flex; flex-wrap: wrap; gap: 4px; max-width: 150px;">
+                <button class="popover-swatch" style="background:#efe1c9;" class:active={proseTheme === "sepia"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "sepia" }) : updateSettings({ proseReaderTheme: "sepia" })} title="Sepia"></button>
+                <button class="popover-swatch" style="background:#000000;" class:active={proseTheme === "oled"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "oled" }) : updateSettings({ proseReaderTheme: "oled" })} title="OLED"></button>
+                <button class="popover-swatch" style="background:#09080d;" class:active={proseTheme === "dark"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "dark" }) : updateSettings({ proseReaderTheme: "dark" })} title="Dark"></button>
+                <button class="popover-swatch" style="background:#f5f1ea;" class:active={proseTheme === "light"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "light" }) : updateSettings({ proseReaderTheme: "light" })} title="Light"></button>
+                <button class="popover-swatch" style="background:#131316;" class:active={proseTheme === "nocturne"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "nocturne" }) : updateSettings({ proseReaderTheme: "nocturne" })} title="Nocturne"></button>
+                <button class="popover-swatch" style="background:#1e293b;" class:active={proseTheme === "slate"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "slate" }) : updateSettings({ proseReaderTheme: "slate" })} title="Slate"></button>
+                <button class="popover-swatch" style="background:#142217;" class:active={proseTheme === "forest"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "forest" }) : updateSettings({ proseReaderTheme: "forest" })} title="Forest"></button>
+                <button class="popover-swatch" style="background:#2e3440;" class:active={proseTheme === "nord"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "nord" }) : updateSettings({ proseReaderTheme: "nord" })} title="Nord"></button>
+                <button class="popover-swatch" style="background:#fbf5e6;" class:active={proseTheme === "warm"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "warm" }) : updateSettings({ proseReaderTheme: "warm" })} title="Warm"></button>
+              </div>
+            </dd>
+          </div>
+          <div>
+            <dt>Text Color</dt>
+            <dd>
+              <input class="popover-color-picker" type="color" value={prosePalette.text} onchange={(event) => updateProseColor("text", event.currentTarget.value)} title="Text color" />
+            </dd>
+          </div>
+          <div>
+            <dt>Paper Color</dt>
+            <dd>
+              <input class="popover-color-picker" type="color" value={prosePalette.surface} onchange={(event) => updateProseColor("background", event.currentTarget.value)} title="Page background" />
+            </dd>
+          </div>
+        {:else if activeSubPanel === "typography"}
+          <div class="popover-tts-row" onclick={() => activeSubPanel = "main"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "main"; }}>
+            <dt>&lt; Back</dt>
+            <dd>Typography</dd>
+          </div>
+          <div>
+            <dt>Font</dt>
+            <dd>
+              <select class="popover-select" value={proseFontFamily} onchange={(event) => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderFontFamily: event.currentTarget.value }) : updateSettings({ proseReaderFontFamily: event.currentTarget.value })}>
+                <option value="Georgia, serif">Georgia</option>
+                <option value="Merriweather, Georgia, serif">Merriweather</option>
+                <option value="'EB Garamond', serif">EB Garamond</option>
+                <option value="Lora, serif">Lora</option>
+                <option value="Literata, serif">Literata</option>
+                <option value="Inter, sans-serif">Inter</option>
+                <option value="Atkinson Hyperlegible, Inter, sans-serif">Atkinson</option>
+                <option value='"Segoe UI", sans-serif'>Segoe UI</option>
+              </select>
+            </dd>
+          </div>
+          <div>
+            <dt>Text Size</dt>
+            <dd>
+              <div class="popover-stepper">
+                <button class="popover-step-btn" onclick={() => updateFontSize(-1)} disabled={proseFontSize <= 12}>-</button>
+                <span class="popover-step-val">{proseFontSize}px</span>
+                <button class="popover-step-btn" onclick={() => updateFontSize(1)} disabled={proseFontSize >= 32}>+</button>
+              </div>
+            </dd>
+          </div>
+          <div>
+            <dt>Line Height</dt>
+            <dd>
+              <div class="popover-stepper">
+                <button class="popover-step-btn" onclick={() => updateLineHeight(-0.05)} disabled={proseLineHeight <= 1.2}>-</button>
+                <span class="popover-step-val">{proseLineHeight.toFixed(2)}</span>
+                <button class="popover-step-btn" onclick={() => updateLineHeight(0.05)} disabled={proseLineHeight >= 2.4}>+</button>
+              </div>
+            </dd>
+          </div>
+        {:else if activeSubPanel === "layout"}
+          <div class="popover-tts-row" onclick={() => activeSubPanel = "main"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "main"; }}>
+            <dt>&lt; Back</dt>
+            <dd>Layout</dd>
+          </div>
+          {#if activeBook?.subtype === "epub" || pdfReflowMode}
+            <div>
+              <dt>Align</dt>
+              <dd>
+                <div class="popover-segmented">
+                  <button class="popover-segment" class:active={proseTextAlign === "left"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTextAlign: "left" }) : updateSettings({ proseReaderTextAlign: "left" })}>Left</button>
+                  <button class="popover-segment" class:active={proseTextAlign === "justify"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTextAlign: "justify" }) : updateSettings({ proseReaderTextAlign: "justify" })}>Justified</button>
+                </div>
+              </dd>
+            </div>
+            <div>
+              <dt>Width</dt>
+              <dd style="display: flex; align-items: center; gap: 8px;">
+                <div class="popover-stepper">
+                  <button class="popover-step-btn" onclick={() => updateContentWidth(-40)} disabled={store.settings.proseReaderFullWidth}>-</button>
+                  <span class="popover-step-val" style={store.settings.proseReaderFullWidth ? "opacity: 0.5;" : ""}>
+                    {store.settings.proseReaderFullWidth ? "Full" : `${proseContentWidth}px`}
+                  </span>
+                  <button class="popover-step-btn" onclick={() => updateContentWidth(40)} disabled={store.settings.proseReaderFullWidth}>+</button>
+                </div>
+                <button class="popover-btn" class:active={store.settings.proseReaderFullWidth} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth }) : updateSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}>Full</button>
+              </dd>
+            </div>
+          {/if}
+          {#if activeBook?.subtype === "epub" || !pdfReflowMode}
+            <div>
+              <dt>Flow</dt>
+              <dd>
+                <div class="popover-segmented">
+                  <button class="popover-segment" class:active={store.settings.bookReaderFlow !== "scrolled"} onclick={() => updateSettings({ bookReaderFlow: "paginated" })}>Page</button>
+                  <button class="popover-segment" class:active={store.settings.bookReaderFlow === "scrolled"} onclick={() => updateSettings({ bookReaderFlow: "scrolled" })}>Scroll</button>
+                </div>
+              </dd>
+            </div>
+          {/if}
+          {#if activeBook?.subtype === "pdf" && !pdfReflowMode}
+            <div>
+              <dt>Full Width</dt>
+              <dd>
+                <button class="popover-toggle" type="button" aria-label="Toggle full width reading" title="Toggle full width reading" class:active={store.settings.proseReaderFullWidth} onclick={() => updateSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}></button>
+              </dd>
+            </div>
+          {/if}
+        {:else if activeSubPanel === "display" && activeBook?.subtype === "pdf"}
+          <div class="popover-tts-row" onclick={() => activeSubPanel = "main"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "main"; }}>
+            <dt>&lt; Back</dt>
+            <dd>Display</dd>
+          </div>
+          <div>
+            <dt>Fit Mode</dt>
+            <dd>
+              <button class="popover-btn" onclick={cyclePdfFit}>{pdfFitMode}</button>
+            </dd>
+          </div>
+          <div>
+            <dt>Zoom</dt>
+            <dd>
+              <div class="popover-stepper">
+                <button class="popover-step-btn" onclick={() => adjustZoom(-ZOOM_STEP)} disabled={zoom <= ZOOM_MIN}>-</button>
+                <span class="popover-step-val">{Math.round(zoom * 100)}%</span>
+                <button class="popover-step-btn" onclick={() => adjustZoom(ZOOM_STEP)} disabled={zoom >= ZOOM_MAX}>+</button>
+              </div>
+            </dd>
+          </div>
+        {:else if activeSubPanel === "images" && activeBook?.subtype === "pdf" && pdfReflowMode}
+          <div class="popover-tts-row" onclick={() => activeSubPanel = "main"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "main"; }}>
+            <dt>&lt; Back</dt>
+            <dd>Images</dd>
+          </div>
+          <div>
+            <dt>Image Size</dt>
+            <dd>
+              <div class="popover-stepper">
+                <button class="popover-step-btn" onclick={() => updateIllustrationScale(-0.1)} disabled={pdfReflowIllustrationScale <= 0.5}>-</button>
+                <span class="popover-step-val">{Math.round(pdfReflowIllustrationScale * 100)}%</span>
+                <button class="popover-step-btn" onclick={() => updateIllustrationScale(0.1)} disabled={pdfReflowIllustrationScale >= 2}>+</button>
+              </div>
+            </dd>
+          </div>
+        {:else if false}
         {#if activeBook?.subtype === "epub"}
         <div>
           <dt>Theme</dt>
@@ -1454,7 +1832,7 @@
           <dt style="color: var(--reader-text);">Text to Speech</dt>
           <dd style="color: var(--reader-accent-bright); font-weight: 600; display: flex; align-items: center; gap: 4px;">
             <span>Configure</span>
-            <span style="font-size: 10px;">&gt;</span>
+            <span class="popover-chevron">&gt;</span>
           </dd>
         </div>
       {:else if activeBook?.subtype === "pdf"}
@@ -1464,6 +1842,7 @@
             <button class="popover-toggle" type="button" aria-label="Toggle PDF reflow mode" title="Toggle PDF reflow mode" class:active={pdfReflowMode} onclick={() => updateSettings({ pdfReflowMode: !pdfReflowMode })}></button>
           </dd>
         </div>
+        {#if !pdfReflowMode}
         <div>
           <dt>Fit Mode</dt>
           <dd>
@@ -1501,20 +1880,73 @@
             <button class="popover-toggle" type="button" aria-label="Toggle full width reading" title="Toggle full width reading" class:active={store.settings.proseReaderFullWidth} onclick={() => updateSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}></button>
           </dd>
         </div>
+        {/if}
         {#if pdfReflowMode}
           <div>
+            <dt>Clean BG</dt>
+            <dd>
+              <button
+                class="popover-toggle"
+                type="button"
+                aria-label="Remove PDF backgrounds and watermarks"
+                title="Remove PDF backgrounds and watermarks"
+                class:active={pdfReflowCleanBackgrounds}
+                onclick={() => updateSettings({ pdfReflowCleanBackgrounds: !pdfReflowCleanBackgrounds })}
+              ></button>
+            </dd>
+          </div>
+          <div>
             <dt>Theme</dt>
-            <dd><button class="popover-btn" onclick={cycleProseTheme}>{proseTheme}</button></dd>
+            <dd>
+              <div class="popover-color-swatches" style="display: flex; flex-wrap: wrap; gap: 4px; max-width: 150px;">
+                <button class="popover-swatch" style="background:#efe1c9;" class:active={proseTheme === "sepia"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "sepia" })} title="Sepia"></button>
+                <button class="popover-swatch" style="background:#000000;" class:active={proseTheme === "oled"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "oled" })} title="OLED"></button>
+                <button class="popover-swatch" style="background:#09080d;" class:active={proseTheme === "dark"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "dark" })} title="Dark"></button>
+                <button class="popover-swatch" style="background:#f5f1ea;" class:active={proseTheme === "light"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "light" })} title="Light"></button>
+                <button class="popover-swatch" style="background:#131316;" class:active={proseTheme === "nocturne"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "nocturne" })} title="Nocturne"></button>
+                <button class="popover-swatch" style="background:#1e293b;" class:active={proseTheme === "slate"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "slate" })} title="Slate"></button>
+                <button class="popover-swatch" style="background:#142217;" class:active={proseTheme === "forest"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "forest" })} title="Forest"></button>
+                <button class="popover-swatch" style="background:#2e3440;" class:active={proseTheme === "nord"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "nord" })} title="Nord"></button>
+                <button class="popover-swatch" style="background:#fbf5e6;" class:active={proseTheme === "warm"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "warm" })} title="Warm"></button>
+              </div>
+            </dd>
+          </div>
+          <div>
+            <dt>Text Color</dt>
+            <dd>
+              <input
+                class="popover-color-picker"
+                type="color"
+                value={prosePalette.text}
+                onchange={(event) => updateProseColor("text", event.currentTarget.value)}
+                title="Text color"
+              />
+            </dd>
+          </div>
+          <div>
+            <dt>Paper Color</dt>
+            <dd>
+              <input
+                class="popover-color-picker"
+                type="color"
+                value={prosePalette.surface}
+                onchange={(event) => updateProseColor("background", event.currentTarget.value)}
+                title="Page background"
+              />
+            </dd>
           </div>
           <div>
             <dt>Font</dt>
             <dd>
-              <select class="popover-select" value={proseFontFamily} onchange={(e) => updateSettings({ proseReaderFontFamily: (e.target as HTMLSelectElement).value })}>
+              <select class="popover-select" value={proseFontFamily} onchange={(e) => updateAnchoredReaderSettings({ proseReaderFontFamily: (e.target as HTMLSelectElement).value })}>
                 <option value="Georgia, serif">Georgia</option>
-                <option value="Atkinson Hyperlegible, Inter, sans-serif">Atkinson</option>
-                <option value="Inter, sans-serif">Inter</option>
                 <option value="Merriweather, Georgia, serif">Merriweather</option>
-                <option value="Lexend, Inter, sans-serif">Lexend</option>
+                <option value="'EB Garamond', serif">EB Garamond</option>
+                <option value="Lora, serif">Lora</option>
+                <option value="Literata, serif">Literata</option>
+                <option value="Inter, sans-serif">Inter</option>
+                <option value="Atkinson Hyperlegible, Inter, sans-serif">Atkinson</option>
+                <option value='"Segoe UI", sans-serif'>Segoe UI</option>
               </select>
             </dd>
           </div>
@@ -1538,7 +1970,47 @@
               </div>
             </dd>
           </div>
+          <div>
+            <dt>Align</dt>
+            <dd>
+              <div class="popover-segmented">
+                <button class="popover-segment" class:active={proseTextAlign === "left"} onclick={() => updateAnchoredReaderSettings({ proseReaderTextAlign: "left" })}>Left</button>
+                <button class="popover-segment" class:active={proseTextAlign === "justify"} onclick={() => updateAnchoredReaderSettings({ proseReaderTextAlign: "justify" })}>Justified</button>
+              </div>
+            </dd>
+          </div>
+          <div>
+            <dt>Width</dt>
+            <dd style="display: flex; align-items: center; gap: 8px;">
+              <div class="popover-stepper">
+                <button class="popover-step-btn" onclick={() => updateContentWidth(-40)} disabled={store.settings.proseReaderFullWidth}>-</button>
+                <span class="popover-step-val" style={store.settings.proseReaderFullWidth ? "opacity: 0.5;" : ""}>
+                  {store.settings.proseReaderFullWidth ? "Full" : `${proseContentWidth}px`}
+                </span>
+                <button class="popover-step-btn" onclick={() => updateContentWidth(40)} disabled={store.settings.proseReaderFullWidth}>+</button>
+              </div>
+              <button class="popover-btn" class:active={store.settings.proseReaderFullWidth} onclick={() => updateAnchoredReaderSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}>Full</button>
+            </dd>
+          </div>
+          <div>
+            <dt>Image Size</dt>
+            <dd>
+              <div class="popover-stepper">
+                <button class="popover-step-btn" onclick={() => updateIllustrationScale(-0.1)} disabled={pdfReflowIllustrationScale <= 0.5}>-</button>
+                <span class="popover-step-val">{Math.round(pdfReflowIllustrationScale * 100)}%</span>
+                <button class="popover-step-btn" onclick={() => updateIllustrationScale(0.1)} disabled={pdfReflowIllustrationScale >= 2}>+</button>
+              </div>
+            </dd>
+          </div>
+          <div class="popover-tts-row" onclick={() => activeSubPanel = "tts"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') activeSubPanel = "tts"; }}>
+            <dt style="color: var(--reader-text);">Text to Speech</dt>
+            <dd style="color: var(--reader-accent-bright); font-weight: 600; display: flex; align-items: center; gap: 4px;">
+              <span>Configure</span>
+              <span class="popover-chevron">&gt;</span>
+            </dd>
+          </div>
         {/if}
+      {/if}
       {/if}
     </dl>
     {/if}
@@ -1550,8 +2022,9 @@
     class:pdf-dark={pdfDarkMode}
     class:pdf-reflow={pdfReflowMode}
     class:full-width-panel={store.settings.proseReaderFullWidth}
-    style={`--prose-page-bg:${prosePalette.bg};--prose-bg:${prosePalette.surface};--prose-text:${prosePalette.text};--prose-content-width:${proseContentWidth}px;--prose-font-family:${proseFontFamily};--prose-font-size:${proseFontSize}px;--prose-line-height:${proseLineHeight};--prose-paragraph-spacing:${proseParagraphSpacing}em;--prose-text-align:${proseTextAlign};`}
+    style={`--prose-page-bg:${prosePalette.bg};--prose-bg:${prosePalette.surface};--prose-text:${prosePalette.text};--prose-content-width:${proseContentWidth}px;--prose-font-family:${proseFontFamily};--prose-font-size:${proseFontSize}px;--prose-line-height:${proseLineHeight};--prose-paragraph-spacing:${proseParagraphSpacing}em;--prose-text-align:${proseTextAlign};--pdf-reflow-image-scale:${pdfReflowIllustrationScale};`}
     onclick={handleViewerClick}
+    onwheel={handleViewerWheel}
     role="presentation"
   >
     {#if waitingForBookHydration}
@@ -1565,7 +2038,7 @@
     {:else if activeBook?.subtype === "pdf"}
       {#if pdfReflowMode}
         <div class="pdf-reflow-stage">
-          {#each Array.from({ length: totalPages }, (_, i) => i + 1) as pageNum}
+          {#each reflowPageNumbers as pageNum}
             {@const page = getReflowPage(pageNum)}
             <section class="pdf-reflow-page" data-page={pageNum} use:lazyRenderReflowPage={pageNum}>
               {#if page}
@@ -1576,7 +2049,7 @@
                     {:else if element.type === "paragraph"}
                       <p id={getReflowElementKey(pageNum, index)}>{element.text}</p>
                     {:else if element.type === "image"}
-                      <figure class="pdf-reflow-figure">
+                      <figure class="pdf-reflow-figure" id={getReflowElementKey(pageNum, index)}>
                         <canvas
                           aria-label={`Illustration from page ${pageNum}`}
                           width={element.width}
@@ -1771,14 +2244,17 @@
   .pdf-reflow-figure {
     display: flex;
     justify-content: center;
+    width: min(calc(100vw - 40px), calc(min(var(--prose-content-width, 760px), 760px) * var(--pdf-reflow-image-scale, 1)));
     margin: clamp(18px, 4vw, 40px) 0;
+    margin-left: 50%;
+    transform: translateX(-50%);
   }
 
   .pdf-reflow-figure canvas {
     display: block;
-    width: min(100%, 760px);
+    width: 100%;
     height: auto;
-    max-height: 78vh;
+    max-height: calc(86vh * var(--pdf-reflow-image-scale, 1));
     object-fit: contain;
     background: transparent;
     border-radius: 6px;

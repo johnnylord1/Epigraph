@@ -55,6 +55,7 @@ export function mergeCanonicalBookEntries(canonical: BookEntry, incoming: BookEn
     title: preferCanonicalString(canonical.title, incoming.title),
     author: preferCanonicalNullableString(canonical.author, incoming.author),
     description: preferCanonicalNullableString(canonical.description, incoming.description),
+    genres: preferCanonicalArray(canonical.genres, incoming.genres),
     coverPath: preferCanonicalNullableString(canonical.coverPath, incoming.coverPath),
     coverUrl: mergedCoverUrl ?? undefined,
     subtype: canonical.subtype,

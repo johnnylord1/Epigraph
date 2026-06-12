@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import { X, CaretLeft, CaretRight, BookmarkSimple, SlidersHorizontal, Sun } from "phosphor-svelte";
+  import { CaretLeft, CaretRight, BookmarkSimple, SlidersHorizontal, Sun } from "phosphor-svelte";
   import { store, updateSettings } from "../../store/state.svelte";
 
   type Props = {
@@ -17,6 +17,8 @@
     uiVisible?: boolean;
     rtl?: boolean;
     onMouseMove?: (event: MouseEvent) => void;
+    onHudMouseEnter?: () => void;
+    onHudMouseLeave?: () => void;
     onclose?: () => void;
     onprev?: () => void;
     onnext?: () => void;
@@ -40,6 +42,8 @@
     uiVisible = true,
     rtl = false,
     onMouseMove = () => {},
+    onHudMouseEnter = () => {},
+    onHudMouseLeave = () => {},
     onclose = () => {},
     onprev = () => {},
     onnext = () => {},
@@ -51,16 +55,55 @@
   }: Props = $props();
 
   let brightnessOpen = $state(false);
+  let manualHudVisible: boolean | null = $state(null);
+  const effectiveHudVisible = $derived(manualHudVisible ?? uiVisible);
+
+  function toggleHudFromViewport(event: MouseEvent) {
+    const target = event.target as HTMLElement;
+    const interactive = target.closest("button, input, select, a, .reader-capsule-bar, .reader-settings-popover, .reader-brightness-popover, .reader-back-link");
+    if (interactive) {
+      return;
+    }
+    manualHudVisible = !effectiveHudVisible;
+    if (manualHudVisible === false) {
+      toolsOpen = false;
+      brightnessOpen = false;
+    }
+  }
+
+  function toggleHudFromKeyboard(event: KeyboardEvent) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    manualHudVisible = !effectiveHudVisible;
+    if (manualHudVisible === false) {
+      toolsOpen = false;
+      brightnessOpen = false;
+    }
+  }
 </script>
 
 <div class="root" role="presentation" onmousemove={onMouseMove}>
   <!-- Main Reading Viewport Content -->
-  <div class="reader-viewport-wrapper" style="filter: brightness({store.settings.readerBrightness ?? 1.0});">
+  <div
+    class="reader-viewport-wrapper"
+    style="filter: brightness({store.settings.readerBrightness ?? 1.0});"
+    role="button"
+    tabindex="-1"
+    onclick={toggleHudFromViewport}
+    onkeydown={toggleHudFromKeyboard}
+  >
     {@render children?.()}
   </div>
 
   <!-- Floating UI HUD Overlay -->
-  <div class="reader-hud-overlay" class:hidden={!uiVisible}>
+  <div class="reader-hud-overlay" class:hidden={!effectiveHudVisible}>
+    <button class="reader-back-link" onclick={onclose} title="Back to library">
+      <span class="reader-back-icon" aria-hidden="true">
+        <CaretLeft size={14} weight="bold" />
+      </span>
+      <span>Library</span>
+    </button>
+
     <!-- Series / Chapter Title Metadata (Centered above capsule) -->
     {#if title || chapterTitle}
       <div class="reader-metadata-title">
@@ -74,14 +117,14 @@
 
     <!-- Configuration Popover Card (Centered above capsule) -->
     {#if toolsOpen && settingsPopover}
-      <div class="reader-settings-popover">
+      <div class="reader-settings-popover" role="presentation" onmouseenter={onHudMouseEnter} onmouseleave={onHudMouseLeave}>
         {@render settingsPopover()}
       </div>
     {/if}
 
     <!-- Brightness Popover Card (Floating above capsule) -->
     {#if brightnessOpen}
-      <div class="reader-brightness-popover">
+      <div class="reader-brightness-popover" role="presentation" onmouseenter={onHudMouseEnter} onmouseleave={onHudMouseLeave}>
         <Sun size={15} weight="regular" style="color: var(--reader-muted);" />
         <input
           type="range"
@@ -98,10 +141,10 @@
     {/if}
 
     <!-- Bottom Unified Capsule Bar -->
-    <div class="reader-capsule-bar">
-      <!-- 1. Close/Exit -->
-      <button class="capsule-btn" onclick={onclose} title="Close reader">
-        <X size={17} weight="regular" />
+    <div class="reader-capsule-bar" role="presentation" onmouseenter={onHudMouseEnter} onmouseleave={onHudMouseLeave}>
+      <!-- 1. Bookmark Toggle -->
+      <button class="capsule-btn" class:active={isBookmarked} onclick={onbookmark} title="Bookmark">
+        <BookmarkSimple size={17} weight={isBookmarked ? "fill" : "regular"} />
       </button>
 
       <!-- 2. Prev Navigation -->
@@ -138,12 +181,7 @@
         <CaretRight size={16} weight="regular" />
       </button>
 
-      <!-- 6. Bookmark Toggle -->
-      <button class="capsule-btn" class:active={isBookmarked} onclick={onbookmark} title="Bookmark">
-        <BookmarkSimple size={17} weight={isBookmarked ? "fill" : "regular"} />
-      </button>
-
-      <!-- 7. Brightness Toggle -->
+      <!-- 6. Brightness Toggle -->
       <button
         class="capsule-btn"
         class:active={brightnessOpen}
@@ -153,7 +191,7 @@
         <Sun size={17} weight="regular" />
       </button>
 
-      <!-- 8. Settings Cog -->
+      <!-- 7. Settings Cog -->
       <button class="capsule-btn" class:active={toolsOpen} onclick={() => { toolsOpen = !toolsOpen; brightnessOpen = false; }} title="Settings">
         <SlidersHorizontal size={17} weight="regular" />
       </button>
@@ -211,6 +249,57 @@
   .reader-hud-overlay.hidden {
     opacity: 0;
     pointer-events: none;
+  }
+
+  .reader-back-link {
+    pointer-events: auto;
+    position: absolute;
+    top: 34px;
+    left: 54px;
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 999px;
+    background: rgba(26, 26, 30, 0.97);
+    color: var(--reader-muted);
+    font-family: Manrope, Inter, "Segoe UI", sans-serif;
+    font-size: 13px;
+    font-weight: 650;
+    letter-spacing: 0.01em;
+    padding: 7px 14px 7px 8px;
+    cursor: pointer;
+    box-shadow:
+      0 12px 32px rgba(0, 0, 0, 0.5),
+      inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(20px) saturate(140%);
+    transition: color 150ms ease, background 150ms ease, transform 150ms ease, border-color 150ms ease;
+  }
+
+  .reader-back-link:hover {
+    color: var(--reader-text);
+    border-color: rgba(255, 255, 255, 0.15);
+    background: rgba(34, 34, 40, 0.97);
+    transform: translateX(-1px);
+  }
+
+  .reader-back-link:hover .reader-back-icon {
+    color: var(--reader-text);
+    border-color: rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .reader-back-icon {
+    color: var(--reader-muted);
+    display: inline-grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.02);
+    line-height: 1;
+    transition: color 150ms ease, background 150ms ease, border-color 150ms ease;
   }
 
   /* Series / Chapter Title Overlay (Centered above capsule) */
@@ -433,16 +522,16 @@
   .reader-settings-popover {
     pointer-events: auto;
     position: absolute;
-    bottom: 76px;
-    right: 16px;
+    bottom: 88px;
+    right: 22px;
     z-index: 100;
-    width: min(300px, calc(100vw - 32px));
+    width: min(276px, calc(100vw - 32px));
     max-height: calc(100vh - 120px);
     overflow-y: auto;
     background: rgba(26, 26, 30, 0.97);
     border: 1px solid rgba(255, 255, 255, 0.05);
     border-radius: 12px;
-    padding: 12px 14px;
+    padding: 10px 12px;
     box-shadow:
       0 12px 32px rgba(0, 0, 0, 0.5),
       inset 0 1px 0 rgba(255, 255, 255, 0.02);
@@ -453,7 +542,7 @@
   @media (min-width: 1120px) {
     .reader-settings-popover {
       right: auto;
-      left: calc(50% + 290px);
+      left: calc(50% + 258px);
     }
   }
 
@@ -690,13 +779,42 @@
 
   .reader-settings-popover :global(.popover-tts-row) {
     cursor: pointer;
-    transition: background 150ms ease;
+    transition: background 150ms ease, color 150ms ease;
     border-radius: 4px;
-    padding: 6px 8px;
-    margin: 0 -8px;
+    padding: 5px 7px;
+    margin: 0 -7px;
+  }
+
+  .reader-settings-popover :global(.popover-tts-row dt) {
+    color: var(--reader-text);
+  }
+
+  .reader-settings-popover :global(.popover-tts-row dd) {
+    color: var(--reader-muted);
+    font-size: 12px;
+    font-weight: 500;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    justify-items: end;
+    align-items: center;
+    column-gap: 6px;
+    min-width: 118px;
+    text-align: right;
   }
 
   .reader-settings-popover :global(.popover-tts-row:hover) {
     background: rgba(255, 255, 255, 0.04);
+  }
+
+  .reader-settings-popover :global(.popover-chevron) {
+    color: var(--reader-accent-bright);
+    font-size: 11px;
+    font-weight: 800;
+    line-height: 1;
+  }
+
+  .reader-settings-popover :global(.popover-tts-row:focus-visible) {
+    outline: 2px solid rgba(184, 167, 234, 0.55);
+    outline-offset: 2px;
   }
 </style>

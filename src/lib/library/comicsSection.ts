@@ -9,7 +9,6 @@ import type {
 } from "./contracts";
 import {
   buildCompletedLibraryIds,
-  isMangaFinishedReading,
   isMangaPublicationCompleted,
   isSourceUnknownStatus,
 } from "./completion";
@@ -276,23 +275,28 @@ function buildComicsEmptyMessage(libraryFilter: LibraryFilter, profileLabel?: st
 function formatSourceStatusLabel(status: string | null | undefined): string | null {
   const normalized = status?.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
   if (!normalized || isSourceUnknownStatus(normalized)) return null;
-  return normalized.toLowerCase().replace(/\b\w/g, (char) => char.toUpperCase());
+  const token = normalized.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  if (token === "COMPLETED" || token === "COMPLETE") return "Completed";
+  if (token === "CANCELLED" || token === "CANCELED") return "Cancelled";
+  if (token === "HIATUS") return "Hiatus";
+  if (token === "ONGOING") return "Ongoing";
+  return null;
 }
 
-export function buildComicsReadingStateLabel(
-  manga: Pick<Manga, "id" | "status" | "chapterCount" | "unreadCount">,
+export function buildComicsWorkStatusLabel(
+  manga: Pick<Manga, "id" | "status">,
   trackedCompletedIds: ReadonlySet<number> = new Set(),
-  trackedChapterTotalsByMangaId: ReadonlyMap<number, number> = new Map(),
+  _trackedChapterTotalsByMangaId: ReadonlyMap<number, number> = new Map(),
 ): string {
-  if (isMangaFinishedReading(manga, trackedCompletedIds, trackedChapterTotalsByMangaId)) return "Finished";
+  if (trackedCompletedIds.has(manga.id)) return "Finished";
 
   const publicationStatus = formatSourceStatusLabel(manga.status);
   if (publicationStatus) return publicationStatus;
 
-  if ((manga.unreadCount ?? 0) > 0) return "Reading";
-  if ((manga.chapterCount ?? 0) > 0) return "Up to date";
-  return "Plan to read";
+  return "Unknown";
 }
+
+export const buildComicsReadingStateLabel = buildComicsWorkStatusLabel;
 
 export function buildComicsLibraryCardVm(
   manga: Manga,
@@ -338,7 +342,7 @@ export function buildComicsLibraryCardVm(
       }] : []),
     ],
     metaChips: [
-      buildComicsReadingStateLabel(
+      buildComicsWorkStatusLabel(
         manga,
         options.trackedCompletedIds,
         options.trackedChapterTotalsByMangaId,

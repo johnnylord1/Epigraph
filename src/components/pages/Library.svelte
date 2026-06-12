@@ -11,6 +11,7 @@
     normalizeBooksCategorySelection,
   } from "../../lib/library/booksSection";
   import { buildNovelLibraryCards } from "../../lib/novels/libraryShelf";
+  import { loadHardcoverState, type HardcoverNovelTrackRecord } from "../../lib/novels/hardcover";
   import { hasBookLocalAsset } from "../../lib/books/availability";
   import {
     buildNovelDetailRecordFromLibrary,
@@ -136,6 +137,12 @@
     profileId: store.runtimeResolvedLocalProfileId,
     serverUrl: store.runtimeServerUrl,
   }));
+  let hardcoverTrackingRecords: HardcoverNovelTrackRecord[] = $state(
+    loadHardcoverState({
+      profileId: store.runtimeResolvedLocalProfileId,
+      serverUrl: store.runtimeServerUrl,
+    }).records,
+  );
   const libraryRuntimeReady = $derived(
     !!store.runtimeResolvedLocalProfileId && !!store.runtimeServerUrl,
   );
@@ -291,6 +298,10 @@
       profileId: store.runtimeResolvedLocalProfileId,
       serverUrl: store.runtimeServerUrl,
     };
+  }
+
+  function reloadHardcoverTrackingRecords() {
+    hardcoverTrackingRecords = loadHardcoverState(currentSnapshotScope()).records;
   }
 
   function categoriesWithSnapshotMembers(snapshot: PersistedLibrarySnapshot) {
@@ -634,6 +645,7 @@
     if (store.librarySection !== "books") return;
 
     untrack(() => {
+      reloadHardcoverTrackingRecords();
       void loadNovelLibraryState({
         profileId: store.runtimeResolvedLocalProfileId,
         serverUrl: store.runtimeServerUrl,
@@ -711,6 +723,7 @@
           sortMode: bookSortMode,
           sortDir: bookSortDir,
           statusFilter: bookStatusFilter,
+          hardcoverRecords: hardcoverTrackingRecords,
         })
       : null,
   );
@@ -1443,6 +1456,10 @@
     const unsubscribe = cache.subscribe(CACHE_KEYS.LIBRARY, () => {
       void loadData();
     });
+    const handleHardcoverStateChanged = () => {
+      reloadHardcoverTrackingRecords();
+    };
+    globalThis.addEventListener?.("aethon-hardcover-state-changed", handleHardcoverStateChanged);
 
     if (store.settings.defaultLibrarySection !== "last-used") {
       setLibrarySection(store.settings.defaultLibrarySection);
@@ -1455,6 +1472,7 @@
 
     return () => {
       unsubscribe();
+      globalThis.removeEventListener?.("aethon-hardcover-state-changed", handleHardcoverStateChanged);
       if (libraryLoadRetryTimer) {
         clearTimeout(libraryLoadRetryTimer);
         libraryLoadRetryTimer = null;

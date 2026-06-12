@@ -193,6 +193,7 @@
   let dlOpen           = $state(false);
   let zoomOpen         = $state(false);
   let toolsOpen        = $state(false);
+  let activeSubPanel   = $state<"main" | "reading" | "display" | "behavior" | "downloads">("main");
   let uiVisible        = $state(true);
   let pageReady        = $state(false);
   let pageGroups: number[][] = $state([]);
@@ -214,6 +215,7 @@
   let webViewWindowOpen = $state(false);
   let retryingAfterWebViewClose = false;
   let emptyReaderRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
+  let pointerInsideHud = false;
 
   function scheduleResumeDismiss() {
     if (resumeTimer)     clearTimeout(resumeTimer);
@@ -813,8 +815,22 @@
     if (hideTimer) clearTimeout(hideTimer);
     if (toolsOpen) return;
     hideTimer = setTimeout(() => {
-      if (!toolsOpen) uiVisible = false;
+      if (!toolsOpen && !pointerInsideHud) uiVisible = false;
     }, 3000);
+  }
+
+  function keepHudVisible() {
+    pointerInsideHud = true;
+    uiVisible = true;
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
+  }
+
+  function releaseHudVisibility() {
+    pointerInsideHud = false;
+    if (!toolsOpen) showUi();
   }
 
   $effect(() => {
@@ -825,6 +841,7 @@
         hideTimer = null;
       }
     } else {
+      activeSubPanel = "main";
       showUi();
     }
   });
@@ -881,8 +898,14 @@
   function handleTap(e: MouseEvent) {
     if (style === "longstrip") return;
     const x = e.clientX / window.innerWidth;
-    if (!rtl) { if (x > 0.6) goForward(); else if (x < 0.4) goBack(); }
-    else       { if (x < 0.4) goForward(); else if (x > 0.6) goBack(); }
+    if (!rtl) {
+      if (x > 0.6) { e.stopPropagation(); goForward(); }
+      else if (x < 0.4) { e.stopPropagation(); goBack(); }
+    }
+    else {
+      if (x < 0.4) { e.stopPropagation(); goForward(); }
+      else if (x > 0.6) { e.stopPropagation(); goBack(); }
+    }
   }
 
   async function runDl(fn: () => Promise<unknown>) {
@@ -960,9 +983,123 @@
   onnext={goNext}
   onjump={jumpToPage}
   onbookmark={toggleBookmark}
+  onHudMouseEnter={keepHudVisible}
+  onHudMouseLeave={releaseHudVisibility}
 >
   {#snippet settingsPopover()}
     <dl>
+      {#if activeSubPanel === "main"}
+        <div class="popover-tts-row" role="button" tabindex="0" onclick={() => activeSubPanel = "reading"} onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "reading"; }}>
+          <dt>Reading</dt>
+          <dd>{style === "longstrip" ? "Strip" : style === "double" ? "Double" : style === "fade" ? "Fade" : "Single"} · {rtl ? "RTL" : "LTR"} <span class="popover-chevron">&gt;</span></dd>
+        </div>
+        <div class="popover-tts-row" role="button" tabindex="0" onclick={() => activeSubPanel = "display"} onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "display"; }}>
+          <dt>Display</dt>
+          <dd>{fitLabel} · {zoomPct}% <span class="popover-chevron">&gt;</span></dd>
+        </div>
+        <div class="popover-tts-row" role="button" tabindex="0" onclick={() => activeSubPanel = "behavior"} onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "behavior"; }}>
+          <dt>Behavior</dt>
+          <dd>{store.settings.preloadPages ?? 2} preload <span class="popover-chevron">&gt;</span></dd>
+        </div>
+        <div class="popover-tts-row" role="button" tabindex="0" onclick={() => activeSubPanel = "downloads"} onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "downloads"; }}>
+          <dt>Downloads</dt>
+          <dd>Manager <span class="popover-chevron">&gt;</span></dd>
+        </div>
+      {:else if activeSubPanel === "reading"}
+        <div class="popover-tts-row" role="button" tabindex="0" onclick={() => activeSubPanel = "main"} onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "main"; }}>
+          <dt>&lt; Back</dt>
+          <dd>Reading</dd>
+        </div>
+        <div>
+          <dt>Style</dt>
+          <dd>
+            <div class="popover-segmented">
+              <button class="popover-segment" class:active={style === "single"} onclick={() => updateSettings({ pageStyle: "single" })}>Single</button>
+              <button class="popover-segment" class:active={style === "double"} onclick={() => updateSettings({ pageStyle: "double" })}>Double</button>
+              <button class="popover-segment" class:active={style === "longstrip"} onclick={() => updateSettings({ pageStyle: "longstrip" })}>Strip</button>
+              <button class="popover-segment" class:active={style === "fade"} onclick={() => updateSettings({ pageStyle: "fade" })}>Fade</button>
+            </div>
+          </dd>
+        </div>
+        <div>
+          <dt>Direction</dt>
+          <dd>
+            <div class="popover-segmented">
+              <button class="popover-segment" class:active={!rtl} onclick={() => updateSettings({ readingDirection: "ltr" })}>LTR</button>
+              <button class="popover-segment" class:active={rtl} onclick={() => updateSettings({ readingDirection: "rtl" })}>RTL</button>
+            </div>
+          </dd>
+        </div>
+      {:else if activeSubPanel === "display"}
+        <div class="popover-tts-row" role="button" tabindex="0" onclick={() => activeSubPanel = "main"} onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "main"; }}>
+          <dt>&lt; Back</dt>
+          <dd>Display</dd>
+        </div>
+        <div>
+          <dt>Fit Mode</dt>
+          <dd>
+            <button class="popover-btn" onclick={cycleFit}>{fitLabel}</button>
+          </dd>
+        </div>
+        <div>
+          <dt>Zoom</dt>
+          <dd>
+            <div class="popover-stepper">
+              <button class="popover-step-btn" onclick={() => adjustZoom(-ZOOM_STEP)} disabled={zoom <= ZOOM_MIN}>-</button>
+              <span class="popover-step-val">{zoomPct}%</span>
+              <button class="popover-step-btn" onclick={() => adjustZoom(ZOOM_STEP)} disabled={zoom >= ZOOM_MAX}>+</button>
+            </div>
+          </dd>
+        </div>
+        <div>
+          <dt>Contrast</dt>
+          <dd>
+            <button class="popover-toggle" type="button" aria-label="Toggle contrast optimization" title="Toggle contrast optimization" class:active={store.settings.optimizeContrast} onclick={() => updateSettings({ optimizeContrast: !store.settings.optimizeContrast })}></button>
+          </dd>
+        </div>
+        {#if style === "double"}
+          <div>
+            <dt>Spread Offset</dt>
+            <dd>
+              <button class="popover-toggle" type="button" aria-label="Toggle offset spreads" title="Toggle offset spreads" class:active={store.settings.offsetDoubleSpreads} onclick={() => updateSettings({ offsetDoubleSpreads: !store.settings.offsetDoubleSpreads })}></button>
+            </dd>
+          </div>
+        {/if}
+        {#if style === "longstrip"}
+          <div>
+            <dt>Page Gap</dt>
+            <dd>
+              <button class="popover-toggle" type="button" aria-label="Toggle page gap" title="Toggle page gap" class:active={store.settings.pageGap} onclick={() => updateSettings({ pageGap: !store.settings.pageGap })}></button>
+            </dd>
+          </div>
+        {/if}
+      {:else if activeSubPanel === "behavior"}
+        <div class="popover-tts-row" role="button" tabindex="0" onclick={() => activeSubPanel = "main"} onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "main"; }}>
+          <dt>&lt; Back</dt>
+          <dd>Behavior</dd>
+        </div>
+        <div>
+          <dt>Preload Pages</dt>
+          <dd>
+            <div class="popover-stepper">
+              <button class="popover-step-btn" onclick={() => updateSettings({ preloadPages: Math.max(0, (store.settings.preloadPages ?? 2) - 1) })} disabled={(store.settings.preloadPages ?? 2) <= 0}>-</button>
+              <span class="popover-step-val">{store.settings.preloadPages ?? 2}</span>
+              <button class="popover-step-btn" onclick={() => updateSettings({ preloadPages: Math.min(10, (store.settings.preloadPages ?? 2) + 1) })} disabled={(store.settings.preloadPages ?? 2) >= 10}>+</button>
+            </div>
+          </dd>
+        </div>
+      {:else if activeSubPanel === "downloads"}
+        <div class="popover-tts-row" role="button" tabindex="0" onclick={() => activeSubPanel = "main"} onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "main"; }}>
+          <dt>&lt; Back</dt>
+          <dd>Downloads</dd>
+        </div>
+        <div>
+          <dt>Manager</dt>
+          <dd>
+            <button class="popover-btn" onclick={() => dlOpen = true}>Open Manager</button>
+          </dd>
+        </div>
+      {:else if false}
       <div>
         <dt>Layout</dt>
         <dd>
@@ -1037,6 +1174,7 @@
           <button class="popover-btn" onclick={() => dlOpen = true}>Open Manager</button>
         </dd>
       </div>
+      {/if}
     </dl>
   {/snippet}
 

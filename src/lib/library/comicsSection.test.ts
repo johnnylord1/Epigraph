@@ -184,8 +184,9 @@ describe("buildComicsSectionState", () => {
     });
 
     expect(card.badges).toEqual([{ kind: "unread", label: "CH 12" }]);
-    expect(card.metaChips).toEqual(["Reading"]);
-    expect(buildComicsReadingStateLabel(unknownRead)).toBe("Up to date");
+    expect(card.metaChips).toEqual(["Unknown"]);
+    expect(buildComicsReadingStateLabel(unknownRead)).toBe("Unknown");
+    expect(buildComicsReadingStateLabel(finished)).toBe("Completed");
     expect(buildComicsReadingStateLabel(finished, new Set([3]), new Map([[3, 20]]))).toBe("Finished");
   });
 });

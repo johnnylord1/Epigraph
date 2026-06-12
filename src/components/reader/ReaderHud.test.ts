@@ -64,4 +64,42 @@ describe("ReaderHud", () => {
     }
   });
 
+  it("toggles HUD chrome when the reading viewport is clicked", async () => {
+    const { container } = render(ReaderHudFixture, {
+      props: {
+        domain: "books",
+        uiVisible: false,
+      },
+    });
+
+    const overlay = container.querySelector(".reader-hud-overlay");
+    const content = screen.getByTestId("hud-content");
+    expect(overlay?.classList.contains("hidden")).toBe(true);
+
+    await fireEvent.click(content);
+    expect(overlay?.classList.contains("hidden")).toBe(false);
+
+    await fireEvent.click(content);
+    expect(overlay?.classList.contains("hidden")).toBe(true);
+  });
+
+  it("does not toggle HUD chrome when an interactive control is clicked", async () => {
+    const { container } = render(ReaderHudFixture, {
+      props: {
+        domain: "books",
+        uiVisible: true,
+      },
+    });
+
+    const overlay = container.querySelector(".reader-hud-overlay");
+    const settingsBtn = container.querySelector('button[title="Settings"]');
+    expect(settingsBtn).not.toBeNull();
+
+    if (settingsBtn) {
+      await fireEvent.click(settingsBtn);
+      expect(overlay?.classList.contains("hidden")).toBe(false);
+      expect(screen.getByTestId("hud-settings-popover")).not.toBeNull();
+    }
+  });
+
 });

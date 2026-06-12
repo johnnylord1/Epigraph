@@ -88,26 +88,42 @@ describe("PDF illustration filtering", () => {
     expect(classifyPdfImage({ objectId: "illo", width: 320, height: 260 }, viewport)).toBe("illustration");
   });
 
-  it("extracts only image XObjects whose dimensions look like page content", () => {
+  it("uses drawn image dimensions from PDF transforms instead of intrinsic bitmap dimensions", () => {
     const candidates = collectPdfImageCandidates({
-      fnArray: [85, 85, 85, 83],
+      fnArray: [10, 12, 85, 11, 10, 12, 85, 11],
       argsArray: [
-        ["background", 620, 790],
-        ["ornament", 20, 20],
-        ["illustration", 320, 260],
-        ["mask", 320, 260],
+        [],
+        [600, 0, 0, 840, 0, 0],
+        ["full-page-illustration", 1504, 2124],
+        [],
+        [],
+        [320, 0, 0, 260, 40, 120],
+        ["inline-illustration", 1600, 1300],
+        [],
       ],
     }, viewport, {
+      save: 10,
+      restore: 11,
+      transform: 12,
       paintImageXObject: 85,
-      paintImageMaskXObject: 83,
     });
 
     expect(candidates).toEqual([
       {
-        objectId: "illustration",
+        objectId: "full-page-illustration",
+        width: 600,
+        height: 840,
+        intrinsicWidth: 1504,
+        intrinsicHeight: 2124,
+        operatorIndex: 2,
+      },
+      {
+        objectId: "inline-illustration",
         width: 320,
         height: 260,
-        operatorIndex: 2,
+        intrinsicWidth: 1600,
+        intrinsicHeight: 1300,
+        operatorIndex: 6,
       },
     ]);
   });
@@ -115,9 +131,22 @@ describe("PDF illustration filtering", () => {
   it("drops large page-width image washes on dense text pages", () => {
     const repeatedPageWash = { objectId: "page-bg", width: 578, height: 517 };
 
-    expect(shouldRetainImageWithText(repeatedPageWash, { width: 595.4, height: 841.8 }, 0)).toBe(true);
-    expect(shouldRetainImageWithText(repeatedPageWash, { width: 595.4, height: 841.8 }, 4)).toBe(true);
+    expect(shouldRetainImageWithText(repeatedPageWash, { width: 595.4, height: 841.8 }, 0)).toBe(false);
+    expect(shouldRetainImageWithText(repeatedPageWash, { width: 595.4, height: 841.8 }, 4, false)).toBe(true);
     expect(shouldRetainImageWithText(repeatedPageWash, { width: 595.4, height: 841.8 }, 17)).toBe(false);
+  });
+
+  it("can aggressively clean large watermarks on sparse text pages", () => {
+    const watermark = { objectId: "watermark", width: 578, height: 517 };
+    const viewport = { width: 595.4, height: 841.8 };
+    const landscapeViewport = { width: 841.8, height: 595.4 };
+    const fullPageIllustration = { objectId: "illustration", width: 595.4, height: 841.8 };
+
+    expect(shouldRetainImageWithText(watermark, viewport, 0, true)).toBe(false);
+    expect(shouldRetainImageWithText(watermark, landscapeViewport, 0, true)).toBe(false);
+    expect(shouldRetainImageWithText(watermark, viewport, 2, true)).toBe(false);
+    expect(shouldRetainImageWithText(watermark, viewport, 2, false)).toBe(true);
+    expect(shouldRetainImageWithText(fullPageIllustration, viewport, 0, true)).toBe(true);
   });
 });
 

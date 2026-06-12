@@ -472,7 +472,22 @@
 <style>
   .root { display: flex; flex-direction: column; height: 100%; overflow: hidden; animation: fadeIn 0.14s ease both; }
   .header { display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-4) var(--sp-6); border-bottom: 1px solid var(--border-dim); flex-shrink: 0; }
-  .setup-banner { padding: var(--sp-3) var(--sp-6) 0; flex-shrink: 0; }
+  .setup-banner {
+    position: fixed;
+    top: 68px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 9999;
+    width: min(1000px, calc(100% - 48px));
+    padding: 0;
+    pointer-events: none;
+    flex-shrink: 0;
+  }
+  .setup-banner :global(.n-state) {
+    width: 100%;
+    margin: 0;
+    pointer-events: auto;
+  }
   .header-right { display: flex; align-items: center; gap: var(--sp-2); margin-left: auto; }
   .heading { font-family: var(--font-ui); font-size: var(--text-xs); font-weight: var(--weight-normal); color: var(--text-faint); letter-spacing: var(--tracking-wider); text-transform: uppercase; }
   .header-actions { display: flex; gap: var(--sp-1); }

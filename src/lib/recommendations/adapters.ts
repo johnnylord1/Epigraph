@@ -365,27 +365,61 @@ function strongestMetric<T extends RecommendationProviderSignal["score"]>(curren
 }
 
 function inferMangaContentType(manga: Manga): RecommendationContentType {
+  const sourceName = (manga.source?.displayName || manga.source?.name || "").toLowerCase();
   const haystack = [
     manga.title,
-    manga.source?.displayName,
-    manga.source?.name,
+    manga.description ?? "",
     ...(manga.genre ?? []),
   ].join(" ").toLowerCase();
 
+  // Dedicated manhwa/manhua sources
+  if (
+    sourceName.includes("asura")
+    || sourceName.includes("flame")
+    || sourceName.includes("reaper")
+    || sourceName.includes("void scans")
+  ) {
+    return "manhwa";
+  }
+
+  // Work properties classification
   if (
     haystack.includes("manhwa")
     || haystack.includes("korean")
     || haystack.includes("webtoon")
-    || haystack.includes("asura")
-    || haystack.includes("flame")
-    || haystack.includes("reaper")
-    || haystack.includes("void scans")
-    || haystack.includes("mangakakalot")
-    || haystack.includes("manganato")
+    || haystack.includes("regression")
+    || haystack.includes("murim")
+    || haystack.includes("necromancer")
+    || haystack.includes("dungeon")
+    || haystack.includes("system")
+    || haystack.includes("level up")
+    || haystack.includes("hunter")
+    || haystack.includes("tower")
+    || haystack.includes("gate")
+    || haystack.includes("ranker")
+    || haystack.includes("player")
+    || haystack.includes("constellation")
   ) return "manhwa";
-  if (haystack.includes("manhua") || haystack.includes("chinese")) return "manhua";
-  const sourceLangType = inferComicTypeFromLanguage(manga.source?.lang);
-  if (sourceLangType) return sourceLangType;
+
+  if (
+    haystack.includes("manhua")
+    || haystack.includes("chinese")
+    || haystack.includes("cultivation")
+    || haystack.includes("wuxia")
+    || haystack.includes("xianxia")
+    || haystack.includes("xuanhuan")
+  ) return "manhua";
+
+  // Fallback to source language if available and source is not a general aggregator
+  const isAggregator = sourceName.includes("mangakakalot")
+    || sourceName.includes("manganato")
+    || sourceName.includes("mangadex")
+    || sourceName.includes("mangalife");
+  if (!isAggregator) {
+    const sourceLangType = inferComicTypeFromLanguage(manga.source?.lang);
+    if (sourceLangType) return sourceLangType;
+  }
+
   return "manga";
 }
 

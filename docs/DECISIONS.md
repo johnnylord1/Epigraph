@@ -256,3 +256,39 @@
   - Updated the Nocturne swatch background style to `#131316` and updated color pickers' default fallbacks.
 - Excluded browser-reliant `tts.test.ts` from default Node `unit` tests workspace in `vitest.workspace.ts` to prevent environment compilation failures.
 - Fully integrated EPUB TTS provider binding inside `BookReader.svelte`, dynamically refreshing the speech provider when contents are registered or relocated, and stopping speech upon navigation or closure.
+
+### 2026-06-12 - Spacing and overlap regression between country flags and unread badges resolved
+- Fixed a visual layout regression affecting cards in the Library and filtered search views: for items with a language flag and unread chapters but no downloaded chapters, the flag would overlap the unread count text.
+- Resolved this by increasing the `padding-left` of `.source-metric-unread.has-flag.pill-only` in `src/styles/nocturne-port.css` from `5cqw` to `8.5cqw` (matching the downloaded badge spacing), ensuring the unread count text is shifted sufficiently to clear the flag's right-slanted overlap under the new container query layout context.
+- Removed `content-visibility: auto` and `contain-intrinsic-size` from `.card.n-library-card` in `src/components/library/LibraryCard.svelte`. Svelte/CSS content-visibility implicitly applies a `contain: paint` rule to the card component, forcing the browser to clip any absolute positioned elements (like the overhanging banner) that float outside the card's top-left border bounds. Removing it restores correct overflow behavior for floating banners.
+
+## 2026-06-12 - Taste Insights Modal & Recommendation Analytics Integration
+- Created a premium, interactive Taste Insights modal overlay dashboard (`TasteInsightsModal.svelte`) for recommendation metrics.
+- Displayed detailed profile analytics: genre/tag affinity horizontal gauge meters (supporting positive preference gauges and negative avoidance weights), content type/format preferences match percentages, average scoring factors (personal affinity, consensus score, trending velocity, and novelty), and missing plugin/extension install recommendations.
+- Added direct navigation hooks: clicking "Browse Extensions" inside the modal calls `setNavPage("extensions")` and dismisses the modal.
+- Integrated the dashboard into `BrowseV3.svelte` via `isInsightsOpen` state, bound to the "View full insights" button click in the sidebar, and rendered as a modal overlay at the bottom of the template.
+- Normalized format match percentages by dividing each format's preference weight by the maximum format weight, avoiding overflow percentages (like 148848%) and ensuring correct relative matches (like 100%).
+- Expanded the Taste Insights modal dimension footprint (`max-width: 980px` and `max-height: 92vh`) and scaled up all fonts, tracks, circles, and gaps to present a spacious, premium dashboard view that fits normal screen heights without vertical scrolling.
+
+## 2026-06-12 - Discover Sidebar Spacings Compression
+- Compressed spacings, heights, and margins of the Discover filters sidebar (including `.catalogSidebar` and `.browseFilterSection`) to fit both the status segment, language picker, source picker, tracking configuration, toggles, and the complete genres tag grid inside standard viewports without vertical scrolling.
+- Reduced the sidebar paddings, picker fields, segment buttons heights (min-height to 30px / 24px), selection rows (min-height to 28px), active toggles (min-height to 26px), tag list items (min-height to 25px), and tag search wrapper heights.
+
+## 2026-06-12 - Non-pushing Setup Status Card Overlay Positioning
+- Fixed a layout pushing bug on the Browse, Extensions, and Sources pages: when the local Suwayomi server is offline, the setup error status card would render inline, pushing the resting layout components downwards and distorting the page structure.
+- Re-architected the containers (`.setup-banner` and `.setupWrap`) to float on top of the content using `position: fixed; top: 68px; left: 50%; transform: translateX(-50%); z-index: 9999; width: min(1000px, calc(100% - 48px));`.
+- Applied `pointer-events: none` on the containers to ensure the transparent regions remain completely click-through, and `pointer-events: auto` on the inner card (`:global(.n-state)`) so it receives button clicks and mouse interactions properly.
+
+## 2026-06-12 - Browse Switch Label Renaming to Comics/Books
+- Changed the segmented buttons text in `BrowseV3.svelte` from "Manga" -> "Comics" and "Novels" -> "Books" to unify user-facing content classification naming conventions between the Browse and Library tabs.
+- Updated Vitest assertions in `BrowseV3.test.ts` to query for `"Comics"` and `"Books"` buttons instead of `"Manga"` and `"Novels"`.
+
+## 2026-06-12 - Taste Insights Layout Alignment & Classification Heuristics Correction
+- Centered recommendation score breakdown circles horizontally inside the cards by declaring a flex column centering style rule on the `.breakdown-metric` parent container in `TasteInsightsModal.svelte`. This aligns the circular meters perfectly with the card headers and paragraph descriptions.
+- Hardened format classification heuristics: combined dedicated manhwa/manhua source matching (like `asura`, `flame`, `reaper`, `void scans`) with expanded work-specific keywords and description checks. For general aggregators (like `mangakakalot`, `manganato`, `mangadex`, `mangalife`), mapped classification strictly to work properties (title, description, genres) and ignored wholesale source name or language fallbacks. This resolves the only-manga recommendation bias and restores balanced manhwa/manhua recommendations.
+- Unified Taste Insights calculations to capture the profile's full insights from the entire user library unconditionally, aggregating all mangas, novels, and books rather than filtering by active tab content types.
+- Fixed a stale search query bug where switching between Comics/Books did not clear the topbar search query in BrowseV3, which caused Sources view tests to fail. Added automatic search query resetting on content type switch for all non-keyword views.
+- Imported the missing `TasteInsightsModal` inside `BrowseV3.svelte`, resolving the broken view full insights overlay button.
+- Updated all card lists inside `BrowseV3.svelte` to match the redesigned `.source-metric-banner` badge layout wrapped in `.card-cover-container`, aligning all search and catalog grids with the library styling.
+
+

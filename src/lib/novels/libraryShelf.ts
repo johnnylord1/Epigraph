@@ -6,9 +6,49 @@ import type {
   PersistedNovelLibraryEntry,
 } from "./domain";
 import type { AethonNovelProgressEntry } from "../backup/novelsBackup";
+import type { HardcoverNovelTrackRecord } from "./hardcover";
 
 export interface NovelShelfCard extends LibraryCardVM {
   novelId: string;
+}
+
+function formatNovelSourceStatus(status: string | null | undefined): string | null {
+  const normalized = status?.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!normalized || normalized.toLowerCase() === "unknown") return null;
+  const token = normalized.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  if (token === "FINISHED") return "Finished";
+  if (token === "COMPLETED" || token === "COMPLETE") return "Completed";
+  if (token === "CANCELLED" || token === "CANCELED") return "Cancelled";
+  if (token === "HIATUS") return "Hiatus";
+  if (token === "ONGOING") return "Ongoing";
+  return null;
+}
+
+function buildNovelWorkStatusLabel(
+  entry: PersistedNovelLibraryEntry,
+  hardcoverRecord: HardcoverNovelTrackRecord | undefined,
+): string {
+  const trackerStatus = formatNovelSourceStatus(hardcoverRecord?.workStatus);
+  if (trackerStatus) return trackerStatus;
+
+  const sourceStatus = formatNovelSourceStatus(entry.status);
+  if (sourceStatus) return sourceStatus;
+  return "Unknown";
+}
+
+function getHardcoverRecordByNovelId(
+  records: readonly HardcoverNovelTrackRecord[] | undefined,
+): ReadonlyMap<string, HardcoverNovelTrackRecord> {
+  const byNovelId = new Map<string, HardcoverNovelTrackRecord>();
+  for (const record of records ?? []) {
+    if (!record.sourceNovelId) continue;
+    byNovelId.set(record.sourceNovelId, record);
+  }
+  return byNovelId;
+}
+
+function buildNovelSourceLabel(entry: PersistedNovelLibraryEntry): string {
+  return entry.source?.sourceName ?? entry.source?.pluginName ?? "Source";
 }
 
 function getProgressByNovelId(progress: AethonNovelProgressEntry[]): ReadonlyMap<string, AethonNovelProgressEntry | undefined> {
@@ -98,6 +138,7 @@ export function buildNovelLibraryCards(input: {
   sortMode: BooksLibrarySortMode;
   sortDir: LibrarySortDir;
   statusFilter: BooksLibraryStatusFilter;
+  hardcoverRecords?: readonly HardcoverNovelTrackRecord[];
 }): {
   entries: PersistedNovelLibraryEntry[];
   cards: NovelShelfCard[];
@@ -105,6 +146,7 @@ export function buildNovelLibraryCards(input: {
 } {
   const progressByNovelId = getProgressByNovelId(input.progress);
   const readCounts = getReadCountsByNovelId(input.chapters);
+  const hardcoverRecordByNovelId = getHardcoverRecordByNovelId(input.hardcoverRecords);
   const searched = filterBySearch(input.entries, input.search);
   const statusFiltered = searched.filter((entry) => matchesStatus(entry, input.statusFilter, readCounts, progressByNovelId));
   const sorted = sortEntries(statusFiltered, progressByNovelId, input.sortMode, input.sortDir);
@@ -116,22 +158,24 @@ export function buildNovelLibraryCards(input: {
       const progressPercent = progressByNovelId.get(entry.id)?.progressPercent ?? (
         counts.total > 0 ? counts.read / counts.total : 0
       );
+      const chapterCount = Math.max(0, counts.total || entry.chapterCount);
+      const readCount = Math.max(0, Math.min(chapterCount, counts.read));
+      const unreadCount = Math.max(0, chapterCount - readCount);
 
       return {
         id: `novel-card:${entry.id}`,
         novelId: entry.id,
         title: entry.title,
-        subtitle: entry.author ?? entry.source?.sourceName ?? entry.source?.pluginName ?? "Novel source",
+        subtitle: buildNovelSourceLabel(entry),
         coverSrc: entry.coverUrl,
         coverFit: "cover",
-        badges: [{ kind: "subtype", label: "Source" }],
+        badges: [],
         metaChips: [
-          `${entry.chapterCount} chapters`,
-          entry.source?.lang?.toUpperCase?.() ?? "LN",
+          buildNovelWorkStatusLabel(entry, hardcoverRecordByNovelId.get(entry.id)),
         ],
-        progress: entry.chapterCount > 0 ? {
-          primaryLabel: `${counts.read} / ${counts.total || entry.chapterCount} read`,
-          secondaryLabel: `${Math.round(progressPercent * 100)}%`,
+        progress: chapterCount > 0 ? {
+          primaryLabel: String(readCount),
+          secondaryLabel: `/ ${chapterCount} chapters`,
           percent: progressPercent,
         } : null,
         selectable: false,
@@ -139,7 +183,7 @@ export function buildNovelLibraryCards(input: {
         sourceMetricBanner: {
           flagLabel: entry.source?.lang ?? "",
           downloadedCount: 0,
-          newCount: Math.max(0, counts.total - counts.read),
+          newCount: unreadCount,
           sourceName: entry.source?.sourceName ?? entry.source?.pluginName ?? null,
         },
       };

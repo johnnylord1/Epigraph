@@ -37,9 +37,9 @@ function formatPageCount(pageCount: number): string {
 
 function formatSectionCount(sectionCount: number, subtype: BookSubtype, pageCount: number): string {
   if (sectionCount <= 0) {
-    return subtype === "pdf" && pageCount > 0 ? formatPageCount(pageCount) : "No sections";
+    return subtype === "pdf" && pageCount > 0 ? formatPageCount(pageCount) : "No chapters";
   }
-  return `${sectionCount} ${sectionCount === 1 ? "section" : "sections"}`;
+  return `${sectionCount} ${sectionCount === 1 ? "chapter" : "chapters"}`;
 }
 
 export function presentBookWithCoverSrc(

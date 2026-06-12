@@ -8,6 +8,7 @@
   import { importLocalBookFile, isSupportedBookImportPath } from "../../lib/books/importFile";
   import type { BookEntry, BookProgress } from "../../lib/books/types";
   import { presentBookWithCoverSrc } from "../../lib/books/presentation";
+  import { getBookSectionCount } from "../../lib/books/summary";
   import { createBookLibraryCardId } from "../../lib/library/cardIdentity";
   import {
     createBooksCategory,
@@ -71,6 +72,23 @@
     new Map(store.bookProgress.map((progress: BookProgress) => [progress.bookId, progress])),
   );
 
+  function getBookChapterCount(book: BookEntry): number {
+    const sectionCount = getBookSectionCount(book);
+    if (sectionCount > 0) return sectionCount;
+    return book.subtype === "pdf" && typeof book.pageCount === "number" && book.pageCount > 0 ? 1 : 0;
+  }
+
+  function getBookReadChapterCount(book: BookEntry, progress: BookProgress | null | undefined): number {
+    const chapterCount = getBookChapterCount(book);
+    if (chapterCount <= 0) return 0;
+    const pct = Math.max(0, Math.min(1, progress?.progressPercent ?? 0));
+    return Math.max(0, Math.min(chapterCount, Math.round(pct * chapterCount)));
+  }
+
+  function formatBookFileSource(book: BookEntry): string {
+    return book.subtype.toUpperCase();
+  }
+
   const visibleBooks = $derived(books.slice(0, renderVisible));
   const visibleBookCards = $derived(
     visibleBooks.map((book) => {
@@ -80,33 +98,39 @@
         : BookAssetResolver.resolveCoverSrc(book);
       const presented = presentBookWithCoverSrc(book, progress, coverSrc);
       const hasLocalAsset = hasBookLocalAsset(book);
-      const badges = [{ kind: "subtype" as const, label: presented.subtypeLabel }];
-      if (!hasLocalAsset) {
-        badges.push({ kind: "status" as const, label: "Missing file" });
-      }
-      const metaChips = [presented.sectionCountLabel];
-      if (!hasLocalAsset) {
-        metaChips.push("Metadata only");
-      }
+      const chapterCount = getBookChapterCount(book);
+      const readCount = getBookReadChapterCount(book, progress);
+      const unreadCount = Math.max(0, chapterCount - readCount);
+      const badges = !hasLocalAsset
+        ? [{ kind: "status" as const, label: "Missing file" }]
+        : [];
+      const metaChips = [hasLocalAsset ? "Completed" : "Missing file"];
+      if (!hasLocalAsset) metaChips.push("Metadata only");
 
       return {
         id: createBookLibraryCardId(book.id),
         title: presented.title,
-        subtitle: presented.authorLabel,
+        subtitle: formatBookFileSource(book),
         coverSrc: presented.coverSrc,
         coverFit: "cover" as const,
         badges,
         metaChips,
         progress: presented.showProgress
           ? {
-              primaryLabel: presented.progressSummary,
-              secondaryLabel: presented.readPercentLabel,
-              percent: presented.readPercent,
+              primaryLabel: String(readCount),
+              secondaryLabel: chapterCount > 0 ? `/ ${chapterCount} chapters` : undefined,
+              percent: chapterCount > 0 ? Math.max(0, Math.min(1, readCount / chapterCount)) : presented.readPercent,
             }
           : null,
         selectable: false,
         selected: false,
         disabled: !hasLocalAsset,
+        sourceMetricBanner: {
+          flagLabel: "",
+          downloadedCount: 0,
+          newCount: unreadCount,
+          sourceName: null,
+        },
       };
     }),
   );

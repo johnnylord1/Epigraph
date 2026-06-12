@@ -31,12 +31,15 @@ export interface PdfImageCandidate {
   objectId: string;
   width: number;
   height: number;
+  intrinsicWidth?: number;
+  intrinsicHeight?: number;
   operatorIndex?: number;
 }
 
 export interface PdfReflowOptions {
   repeatedMarkers?: Set<string> | string[];
   headerFooterBandRatio?: number;
+  removeDecorativeBackgrounds?: boolean;
 }
 
 type NormalizedTextItem = {
@@ -58,6 +61,9 @@ type TextLine = {
 };
 
 type PdfOperatorIds = {
+  save?: number;
+  restore?: number;
+  transform?: number;
   paintImageXObject?: number;
   paintInlineImageXObject?: number;
   paintImageXObjectRepeat?: number;
@@ -71,6 +77,8 @@ const MIN_IMAGE_EDGE = 40;
 const MAX_BACKGROUND_AREA_RATIO = 0.9;
 const MIN_ILLUSTRATION_AREA_RATIO = 0.15;
 const MAX_ILLUSTRATION_AREA_RATIO = 0.85;
+
+type TransformMatrix = [number, number, number, number, number, number];
 
 function normalizeText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
@@ -246,11 +254,22 @@ export function shouldRetainImageWithText(
   image: PdfImageCandidate,
   viewport: PdfViewportLike,
   textElementCount: number,
+  removeDecorativeBackgrounds = true,
 ): boolean {
-  if (textElementCount < 8) return true;
   const pageArea = Math.max(1, viewport.width * viewport.height);
   const ratio = (image.width * image.height) / pageArea;
   const spansMostWidth = image.width >= viewport.width * 0.85;
+  const spansMostHeight = image.height >= viewport.height * 0.85;
+  const partialPageWash = (
+    ratio >= 0.45
+    && ratio <= 0.78
+    && ((spansMostWidth && image.height <= viewport.height * 0.72)
+      || (spansMostHeight && image.width <= viewport.width * 0.75))
+  );
+  if (removeDecorativeBackgrounds && partialPageWash) return false;
+  if (textElementCount <= 0) return true;
+  if (removeDecorativeBackgrounds && ratio >= 0.45 && spansMostWidth) return false;
+  if (textElementCount < 8) return true;
   return !(ratio >= 0.5 && spansMostWidth);
 }
 
@@ -271,6 +290,38 @@ function readImageDataDimensions(value: unknown): { width: number; height: numbe
   return null;
 }
 
+function multiplyTransform(left: TransformMatrix, right: TransformMatrix): TransformMatrix {
+  const [a, b, c, d, e, f] = left;
+  const [g, h, i, j, k, l] = right;
+  return [
+    a * g + c * h,
+    b * g + d * h,
+    a * i + c * j,
+    b * i + d * j,
+    a * k + c * l + e,
+    b * k + d * l + f,
+  ];
+}
+
+function readTransformMatrix(value: unknown): TransformMatrix | null {
+  if (!Array.isArray(value) || value.length < 6) return null;
+  const matrix = value.slice(0, 6).map(Number);
+  if (matrix.every((entry) => Number.isFinite(entry))) return matrix as TransformMatrix;
+  return null;
+}
+
+function getImageDisplaySize(transform: TransformMatrix, fallbackWidth: number, fallbackHeight: number): {
+  width: number;
+  height: number;
+} {
+  const width = Math.hypot(transform[0], transform[1]);
+  const height = Math.hypot(transform[2], transform[3]);
+  return {
+    width: Number.isFinite(width) && width > 0 ? width : fallbackWidth,
+    height: Number.isFinite(height) && height > 0 ? height : fallbackHeight,
+  };
+}
+
 export function collectPdfImageCandidates(
   operatorList: PdfOperatorListLike,
   viewport: PdfViewportLike,
@@ -289,19 +340,40 @@ export function collectPdfImageCandidates(
     ops.paintImageMaskXObjectRepeat,
   ].filter((op): op is number => typeof op === "number"));
   const candidates: PdfImageCandidate[] = [];
+  const transformStack: TransformMatrix[] = [];
+  let currentTransform: TransformMatrix = [1, 0, 0, 1, 0, 0];
 
   operatorList.fnArray.forEach((fn, index) => {
+    if (fn === ops.save) {
+      transformStack.push([...currentTransform] as TransformMatrix);
+      return;
+    }
+    if (fn === ops.restore) {
+      currentTransform = transformStack.pop() ?? [1, 0, 0, 1, 0, 0];
+      return;
+    }
+    if (fn === ops.transform) {
+      const matrix = readTransformMatrix(operatorList.argsArray[index]);
+      if (matrix) currentTransform = multiplyTransform(currentTransform, matrix);
+      return;
+    }
+
     if (maskOps.has(fn)) return;
     const args = operatorList.argsArray[index] ?? [];
     const firstArg = args[0];
 
     if (imageOps.has(fn) && typeof firstArg === "string") {
-      const width = Number(args[1]);
-      const height = Number(args[2]);
+      const intrinsicWidth = Number(args[1]);
+      const intrinsicHeight = Number(args[2]);
+      const fallbackWidth = Number.isFinite(intrinsicWidth) && intrinsicWidth > 0 ? intrinsicWidth : viewport.width * 0.5;
+      const fallbackHeight = Number.isFinite(intrinsicHeight) && intrinsicHeight > 0 ? intrinsicHeight : viewport.height * 0.5;
+      const displaySize = getImageDisplaySize(currentTransform, fallbackWidth, fallbackHeight);
       candidates.push({
         objectId: firstArg,
-        width: Number.isFinite(width) && width > 0 ? width : viewport.width * 0.5,
-        height: Number.isFinite(height) && height > 0 ? height : viewport.height * 0.5,
+        width: displaySize.width,
+        height: displaySize.height,
+        intrinsicWidth: fallbackWidth,
+        intrinsicHeight: fallbackHeight,
         operatorIndex: index,
       });
       return;
@@ -310,16 +382,22 @@ export function collectPdfImageCandidates(
     if (inlineImageOps.has(fn)) {
       const dimensions = readImageDataDimensions(firstArg);
       if (!dimensions) return;
+      const displaySize = getImageDisplaySize(currentTransform, dimensions.width, dimensions.height);
       candidates.push({
         objectId: `inline:${index}`,
-        width: dimensions.width,
-        height: dimensions.height,
+        width: displaySize.width,
+        height: displaySize.height,
+        intrinsicWidth: dimensions.width,
+        intrinsicHeight: dimensions.height,
         operatorIndex: index,
       });
     }
   });
 
-  return candidates.filter((candidate) => classifyPdfImage(candidate, viewport) === "illustration");
+  return candidates.filter((candidate) => {
+    const classification = classifyPdfImage(candidate, viewport);
+    return classification === "illustration" || classification === "background";
+  });
 }
 
 function getOps(pdfjsLib: unknown): PdfOperatorIds {
@@ -357,7 +435,12 @@ export async function extractReflowedPage(
   const textElements = assemblePdfTextElements(textContent.items ?? [], viewport, options);
   const imageCandidates = collectPdfImageCandidates(operatorList, viewport, getOps(pdfjsLib));
   const contentImages = imageCandidates.filter((candidate) => (
-    shouldRetainImageWithText(candidate, viewport, textElements.length)
+    shouldRetainImageWithText(
+      candidate,
+      viewport,
+      textElements.length,
+      options.removeDecorativeBackgrounds ?? true,
+    )
   ));
   const images = await Promise.all(contentImages.map(async (candidate) => {
     const data = await resolvePdfObject(page, candidate.objectId);
@@ -365,8 +448,10 @@ export async function extractReflowedPage(
     return {
       type: "image" as const,
       objectId: candidate.objectId,
-      width: dimensions.width,
-      height: dimensions.height,
+      width: candidate.width,
+      height: candidate.height,
+      intrinsicWidth: dimensions.width,
+      intrinsicHeight: dimensions.height,
     };
   }));
 
@@ -374,7 +459,7 @@ export async function extractReflowedPage(
     pageNumber,
     elements: [
       ...textElements,
-      ...images.filter((image) => classifyPdfImage(image, viewport) === "illustration"),
+      ...images,
     ],
   };
 }

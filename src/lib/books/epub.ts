@@ -226,6 +226,7 @@ export async function parseEpubArchive(buffer: ArrayBuffer, fallbackTitle: strin
     title: firstText(metadata.title, metadata["dc:title"]) ?? fallbackTitle,
     author: firstText(metadata.creator, metadata["dc:creator"]),
     description: firstText(metadata.description, metadata["dc:description"]),
+    genres: [],
     toc,
     spine,
     cover,

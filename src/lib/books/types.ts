@@ -26,6 +26,7 @@ export interface BookEntry {
   title: string;
   author: string | null;
   description: string | null;
+  genres?: string[];
   coverPath: string | null;
   /** Legacy migration-only field. Never use as an active render source. */
   coverUrl?: string | null;
@@ -76,6 +77,7 @@ export interface ParsedEpubBook {
   title: string;
   author: string | null;
   description: string | null;
+  genres: string[];
   toc: BookTocItem[];
   spine: BookSpineItem[];
   cover: ParsedBookCover | null;

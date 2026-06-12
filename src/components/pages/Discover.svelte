@@ -388,9 +388,17 @@
               onclick={() => setPreviewManga(m)}
               oncontextmenu={(e) => openCtx(e, m)}
             >
-              <div class="n-library-card__cover">
-                <img src={resolveMangaCoverUrl(m, { context: "discover", persistence: "memory" })} alt={m.title} loading="lazy" decoding="async" />
-                {#if m.inLibrary}<span class="n-library-card__badge">In Library</span>{/if}
+              <div class="card-cover-container">
+                <div class="n-library-card__cover">
+                  <img src={resolveMangaCoverUrl(m, { context: "discover", persistence: "memory" })} alt={m.title} loading="lazy" decoding="async" />
+                </div>
+                {#if m.inLibrary}
+                  <div class="source-metric-banner" aria-label="In Library">
+                    <div class="source-metric-pill">
+                      <span class="source-metric-unread pill-only">In Library</span>
+                    </div>
+                  </div>
+                {/if}
               </div>
               <div class="n-library-card__info">
                 <p class="n-library-card__title">{m.title}</p>
@@ -502,25 +510,6 @@
     object-fit: cover;
     display: block;
     transition: filter 160ms ease, transform 160ms ease;
-  }
-  .n-library-card__badge {
-    position: absolute;
-    top: var(--sp-2);
-    right: var(--sp-2);
-    display: inline-flex;
-    align-items: center;
-    min-height: 20px;
-    padding: 0 7px;
-    border-radius: 9999px;
-    background: rgba(36, 33, 43, 0.9);
-    border: 1px solid rgba(184, 167, 234, 0.12);
-    color: var(--n-primary);
-    font-family: var(--font-ui);
-    font-size: 9px;
-    font-weight: 800;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.18);
   }
   .n-library-card__info {
     display: flex;

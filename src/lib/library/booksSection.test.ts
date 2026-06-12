@@ -91,7 +91,10 @@ describe("buildBooksSectionState", () => {
     expect(state.filteredBooks.map((entry) => entry.id)).toEqual(["pdf-beta", "epub-alpha"]);
     expect(state.vm.cards.map((card) => card.id)).toEqual(["book:pdf-beta", "book:epub-alpha"]);
     expect(state.vm.cards[1].coverSrc).toBe("book://alpha");
-    expect(state.vm.cards[1].subtitle).toBe("Alice");
+    expect(state.vm.cards[1].subtitle).toBe("EPUB");
+    expect(state.vm.cards[1].metaChips).toEqual(["Completed"]);
+    expect(state.vm.cards[1].sourceMetricBanner?.newCount).toBe(3);
+    expect(state.vm.cards[1].progress?.secondaryLabel).toBe("/ 4 chapters");
     expect(state.vm.collections.map((entry) => entry.label)).toEqual(["All", "Favorites"]);
     expect(state.vm.typeOptions.map((entry) => entry.label)).toEqual(["All", "EPUB", "PDF", "Sources"]);
   });
@@ -192,6 +195,7 @@ describe("buildBooksSectionState", () => {
         badges: expect.arrayContaining([
           expect.objectContaining({ kind: "status", label: "Missing file" }),
         ]),
+        sourceMetricBanner: expect.objectContaining({ newCount: 2 }),
       }),
     );
   });

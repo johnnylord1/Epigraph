@@ -436,6 +436,8 @@ export interface Settings {
   pdfFitMode:              PdfFitMode;
   pdfDarkMode:             boolean;
   pdfReflowMode:           boolean;
+  pdfReflowCleanBackgrounds: boolean;
+  pdfReflowIllustrationScale: number;
   pageGap:                 boolean;
   optimizeContrast:        boolean;
   offsetDoubleSpreads:     boolean;
@@ -562,7 +564,9 @@ export const DEFAULT_SETTINGS: Settings = {
   proseReaderFullWidth:   false,
   pdfFitMode:             "width",
   pdfDarkMode:            false,
-  pdfReflowMode:          false,
+  pdfReflowMode:          true,
+  pdfReflowCleanBackgrounds: true,
+  pdfReflowIllustrationScale: 1,
   pageGap:                true,
   optimizeContrast:       false,
   offsetDoubleSpreads:    false,
@@ -965,6 +969,7 @@ function normalizeLoadedBook(book: any): BookEntry {
     title: String(book?.title ?? "Imported book"),
     author: typeof book?.author === "string" ? book.author : null,
     description: typeof book?.description === "string" ? book.description : null,
+    genres: Array.isArray(book?.genres) ? book.genres.filter((entry: unknown): entry is string => typeof entry === "string") : undefined,
     coverPath: typeof book?.coverPath === "string" ? book.coverPath : null,
     coverUrl: typeof book?.coverUrl === "string" ? book.coverUrl : undefined,
     subtype: book?.subtype === "pdf" ? "pdf" : "epub",

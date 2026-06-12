@@ -93,6 +93,7 @@ export async function importLocalBookFile(
         title: parsed.title,
         author: parsed.author,
         description: parsed.description,
+        genres: parsed.genres,
         coverPath,
         subtype,
         createdAt: existing?.createdAt ?? now,

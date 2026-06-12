@@ -22,6 +22,7 @@ describe("Hardcover novel tracking helpers", () => {
       release_year: 2018,
       rating: "4.37",
       ratings_count: 1200,
+      book_status: { name: "Finished" },
       contributions: [{ author: { name: "Cuttlefish" } }],
     });
 
@@ -34,6 +35,7 @@ describe("Hardcover novel tracking helpers", () => {
       description: "Victorian mystery fantasy.",
       releaseYear: 2018,
       url: "https://hardcover.app/books/lord-of-the-mysteries",
+      workStatus: "Finished",
     });
   });
 
@@ -95,6 +97,9 @@ describe("Hardcover novel tracking helpers", () => {
         id: 9,
         title: "A Court of Thorns and Roses",
         authors: [],
+        genres: [],
+        tags: [],
+        moods: [],
         coverUrl: null,
         description: null,
         releaseYear: null,
@@ -102,6 +107,7 @@ describe("Hardcover novel tracking helpers", () => {
         ratingsCount: 10,
         slug: "acotar",
         url: "https://hardcover.app/books/acotar",
+        workStatus: null,
       },
     ]);
 
@@ -114,6 +120,9 @@ describe("Hardcover novel tracking helpers", () => {
         id: 1,
         title: "Lord of the Mysteries",
         authors: [],
+        genres: [],
+        tags: [],
+        moods: [],
         coverUrl: null,
         description: null,
         releaseYear: null,
@@ -121,6 +130,7 @@ describe("Hardcover novel tracking helpers", () => {
         ratingsCount: 10,
         slug: "lord-of-the-mysteries",
         url: "https://hardcover.app/books/lord-of-the-mysteries",
+        workStatus: null,
       },
     ]);
 
@@ -132,8 +142,12 @@ describe("Hardcover novel tracking helpers", () => {
       bookId: 7,
       title: "The Wandering Inn",
       authors: ["Pirateaba"],
+      genres: [],
+      tags: [],
+      moods: [],
       coverUrl: "https://img.example/twi.jpg",
       status: "Currently Reading",
+      workStatus: "Ongoing",
       rating: 4.6,
       progress: 25,
       remoteUrl: "https://hardcover.app/books/the-wandering-inn",
@@ -156,8 +170,12 @@ describe("Hardcover novel tracking helpers", () => {
       bookId: 7,
       title: "The Wandering Inn",
       authors: ["Pirateaba"],
+      genres: [],
+      tags: [],
+      moods: [],
       coverUrl: "https://img.example/twi.jpg",
       status: "Currently Reading",
+      workStatus: "Ongoing",
       rating: 4.6,
       progress: 25,
       remoteUrl: "https://hardcover.app/books/the-wandering-inn",

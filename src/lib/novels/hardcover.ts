@@ -41,6 +41,12 @@ function writeBrowserStorage(key: string, value: string): boolean {
   }
 }
 
+function notifyHardcoverStateChanged(scopeKey: string): void {
+  try {
+    globalThis.dispatchEvent?.(new CustomEvent("aethon-hardcover-state-changed", { detail: { scopeKey } }));
+  } catch {}
+}
+
 export interface HardcoverAuthState {
   connected: boolean;
   token: string | null;
@@ -65,6 +71,7 @@ export interface HardcoverBookSearchResult {
   ratingsCount: number | null;
   slug: string | null;
   url: string | null;
+  workStatus: string | null;
 }
 
 export interface HardcoverNovelTrackRecord {
@@ -76,6 +83,7 @@ export interface HardcoverNovelTrackRecord {
   moods: string[];
   coverUrl: string | null;
   status: string | null;
+  workStatus: string | null;
   rating: number | null;
   progress: number | null;
   remoteUrl: string | null;
@@ -141,6 +149,10 @@ interface RawHardcoverBook {
       name?: unknown;
     } | null;
   }> | null;
+  book_status_id?: unknown;
+  book_status?: {
+    name?: unknown;
+  } | null;
 }
 
 export interface HardcoverBookSearchOptions {
@@ -228,6 +240,7 @@ export function saveHardcoverState(
   }
   parsed.scopes[normalized.scopeKey] = normalized;
   writeBrowserStorage(HARDCOVER_STORAGE_KEY, JSON.stringify(parsed));
+  notifyHardcoverStateChanged(normalized.scopeKey);
   return normalized;
 }
 
@@ -414,6 +427,8 @@ export async function getHardcoverUserBooks(
           cached_image
           rating
           ratings_count
+          book_status_id
+          book_status { name }
           contributions { author { name } }
         }
       }
@@ -450,6 +465,7 @@ export async function upsertHardcoverUserBook(
     moods: input.book.moods,
     coverUrl: input.book.coverUrl,
     status: input.status ?? "Want to Read",
+    workStatus: input.book.workStatus,
     rating: input.rating ?? input.book.rating,
     progress: input.progress ?? null,
     remoteUrl: input.book.url,
@@ -618,6 +634,7 @@ export function normalizeHardcoverBook(value: unknown): HardcoverBookSearchResul
     ratingsCount: coerceNumber(record.ratings_count),
     slug,
     url: slug ? `https://hardcover.app/books/${slug}` : `https://hardcover.app/books/${id}`,
+    workStatus: normalizeHardcoverWorkStatus(record.book_status?.name) ?? normalizeHardcoverBookStatusId(coerceNumber(record.book_status_id)),
   };
 }
 
@@ -630,8 +647,12 @@ function normalizeHardcoverUserBook(value: unknown): HardcoverNovelTrackRecord |
     bookId: book.id,
     title: book.title,
     authors: book.authors,
+    genres: book.genres,
+    tags: book.tags,
+    moods: book.moods,
     coverUrl: book.coverUrl,
     status: normalizeText(record.user_book_status?.status) ?? normalizeHardcoverStatusId(coerceNumber(record.status_id)),
+    workStatus: book.workStatus,
     rating: coerceNumber(record.rating) ?? book.rating,
     progress: coerceNumber(record.current_position),
     remoteUrl: book.url,
@@ -663,6 +684,8 @@ async function enrichHardcoverBookResults(
           release_year
           rating
           ratings_count
+          book_status_id
+          book_status { name }
           contributions {
             author { name }
           }
@@ -841,6 +864,7 @@ function hardcoverRecordToBookSearchResult(record: HardcoverNovelTrackRecord): H
     ratingsCount: null,
     slug: null,
     url: record.remoteUrl,
+    workStatus: record.workStatus,
   };
 }
 
@@ -863,6 +887,7 @@ function mergeHardcoverBookResult(
     ratingsCount: detail.ratingsCount ?? base.ratingsCount,
     slug: detail.slug ?? base.slug,
     url: detail.url ?? base.url,
+    workStatus: detail.workStatus ?? base.workStatus,
   };
 }
 
@@ -889,6 +914,7 @@ function normalizeHardcoverTrackRecord(value: unknown): HardcoverNovelTrackRecor
       : [],
     coverUrl: normalizeText(record.coverUrl),
     status: normalizeText(record.status),
+    workStatus: normalizeHardcoverWorkStatus(record.workStatus),
     rating: coerceNumber(record.rating),
     progress: coerceNumber(record.progress),
     remoteUrl: normalizeText(record.remoteUrl),
@@ -1274,6 +1300,29 @@ function normalizeHardcoverStatusId(statusId: number | null): string | null {
     case 2: return "Currently Reading";
     case 3: return "Read";
     case 4: return "Did Not Finish";
+    default: return null;
+  }
+}
+
+function normalizeHardcoverWorkStatus(status: string | null | undefined): string | null {
+  const normalized = status?.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!normalized || normalized.toLowerCase() === "unknown") return null;
+  const token = normalized.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  if (token === "FINISHED") return "Finished";
+  if (token === "COMPLETED" || token === "COMPLETE") return "Completed";
+  if (token === "CANCELLED" || token === "CANCELED") return "Cancelled";
+  if (token === "HIATUS") return "Hiatus";
+  if (token === "ONGOING") return "Ongoing";
+  return null;
+}
+
+function normalizeHardcoverBookStatusId(statusId: number | null): string | null {
+  switch (statusId) {
+    case 1: return "Unknown";
+    case 2: return "Ongoing";
+    case 3: return "Completed";
+    case 4: return "Hiatus";
+    case 5: return "Cancelled";
     default: return null;
   }
 }
