@@ -60,6 +60,8 @@
   let renderVisible = $state(0);
   let scrollReady = false;
   let viewStateReady = false;
+  let scrollPersistFrame: number | null = null;
+  let pendingScrollTop = 0;
 
   const bookByCardId = $derived(
     new Map(books.map((book) => [createBookLibraryCardId(book.id), book])),
@@ -331,8 +333,13 @@
 
   function handleContentScroll() {
     if (!contentEl) return;
-    setLibraryScrollTop(contentEl.scrollTop);
-    maybeLoadMore();
+    pendingScrollTop = contentEl.scrollTop;
+    if (scrollPersistFrame !== null) return;
+    scrollPersistFrame = requestAnimationFrame(() => {
+      scrollPersistFrame = null;
+      setLibraryScrollTop(pendingScrollTop);
+      maybeLoadMore();
+    });
   }
 
   onMount(() => {
@@ -371,6 +378,10 @@
 
     return () => {
       dropActive = false;
+      if (scrollPersistFrame !== null) {
+        cancelAnimationFrame(scrollPersistFrame);
+        scrollPersistFrame = null;
+      }
       resizeObserver?.disconnect();
       unlisten?.();
     };

@@ -167,4 +167,40 @@ describe("imageCache", () => {
     expect(revokeObjectUrlMock).toHaveBeenCalledWith("blob:first");
     expect(revokeObjectUrlMock).toHaveBeenCalledWith("blob:second");
   });
+
+  it("resolvedImage does not reapply the same failed source until the url changes", async () => {
+    let srcWrites = 0;
+    let errorHandler: (() => void) | null = null;
+    const node = {
+      _src: "",
+      get src() {
+        return this._src;
+      },
+      set src(value: string) {
+        srcWrites += 1;
+        this._src = value;
+      },
+      removeAttribute: vi.fn(),
+      addEventListener: vi.fn((event: string, handler: () => void) => {
+        if (event === "error") errorHandler = handler;
+      }),
+      removeEventListener: vi.fn(),
+    } as unknown as HTMLImageElement;
+
+    const action = resolvedImage(node, "https://example.test/broken.jpg");
+    await Promise.resolve();
+
+    expect(srcWrites).toBe(1);
+    errorHandler?.();
+
+    action.update?.("https://example.test/broken.jpg");
+    await Promise.resolve();
+
+    expect(srcWrites).toBe(1);
+
+    action.update?.("https://example.test/broken.jpg?retry=1");
+    await Promise.resolve();
+
+    expect(srcWrites).toBe(2);
+  });
 });

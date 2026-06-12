@@ -348,18 +348,42 @@ export function getImageCacheStats(): ImageCacheStats {
 export const resolvedImage: Action<HTMLImageElement, string | null | undefined> = (node, initialUrl) => {
   let requestToken = 0;
   let currentRelease: (() => void) | null = null;
+  let currentInputUrl = "";
+  let currentResolvedUrl = "";
+  let failedInputUrl = "";
 
   const releaseCurrent = () => {
     currentRelease?.();
     currentRelease = null;
   };
 
+  const rememberFailedInput = () => {
+    if (currentInputUrl) failedInputUrl = currentInputUrl;
+  };
+
+  node.addEventListener?.("error", rememberFailedInput);
+
   const applyUrl = async (nextUrl: string | null | undefined) => {
     const token = ++requestToken;
     const candidate = nextUrl ?? "";
+
+    if (candidate && candidate === currentInputUrl && candidate === failedInputUrl) {
+      return;
+    }
+
+    if (candidate && candidate === currentInputUrl && node.src === currentResolvedUrl) {
+      return;
+    }
+
+    if (candidate !== currentInputUrl) {
+      failedInputUrl = "";
+    }
+
+    currentInputUrl = candidate;
     releaseCurrent();
 
     if (!candidate) {
+      currentResolvedUrl = "";
       node.removeAttribute("src");
       return;
     }
@@ -388,6 +412,7 @@ export const resolvedImage: Action<HTMLImageElement, string | null | undefined> 
           authHeaderAttached: true,
         });
       }
+      currentResolvedUrl = lease.resolvedUrl;
       node.src = lease.resolvedUrl;
     } catch {
       if (token === requestToken) {
@@ -397,6 +422,7 @@ export const resolvedImage: Action<HTMLImageElement, string | null | undefined> 
           resultProtocol: protocolOf(candidate),
           authHeaderAttached: false,
         });
+        currentResolvedUrl = candidate;
         node.src = candidate;
       }
     }
@@ -410,6 +436,7 @@ export const resolvedImage: Action<HTMLImageElement, string | null | undefined> 
     },
     destroy() {
       requestToken += 1;
+      node.removeEventListener?.("error", rememberFailedInput);
       releaseCurrent();
     },
   };

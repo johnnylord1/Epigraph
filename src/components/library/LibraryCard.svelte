@@ -397,6 +397,8 @@
     gap: var(--library-card-info-gap, calc(7px * var(--n-hud-scale, 1)));
     border-radius: 0;
     transition: transform 160ms ease, filter 160ms ease;
+    content-visibility: auto;
+    contain-intrinsic-size: 320px 220px;
   }
 
   .card.n-library-card:hover {

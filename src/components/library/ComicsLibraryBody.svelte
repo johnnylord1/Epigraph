@@ -52,6 +52,7 @@
     onCreateCategory?: () => Promise<void> | void;
     onCoverErrorDetected?: (mangaId: number) => void;
     coverRecoveryVersions?: ReadonlyMap<number, number>;
+    coverCacheGeneration?: number;
   };
 
   let {
@@ -78,6 +79,7 @@
     onCreateCategory = async () => {},
     onCoverErrorDetected = () => {},
     coverRecoveryVersions = new Map(),
+    coverCacheGeneration = 0,
   }: Props = $props();
 
   let contentEl: HTMLDivElement | null = $state(null);
@@ -107,6 +109,8 @@
   const coverCacheWritesInflight = new Set<string>();
   let lastCoverRecoveryVersions = new Map<number, number>();
   let lastCoverCacheScopeKey = "";
+  let scrollPersistFrame: number | null = null;
+  let pendingScrollTop = 0;
 
   const mangaByCardId = $derived(
     new Map(mangas.map((manga) => [createComicLibraryCardId(manga.id), manga])),
@@ -340,11 +344,12 @@
     return {
       profileId: store.runtimeResolvedLocalProfileId,
       serverUrl: store.runtimeServerUrl,
+      coverCacheGeneration,
     };
   }
 
   function coverScopeKey() {
-    return `${store.runtimeResolvedLocalProfileId ?? ""}::${store.runtimeServerUrl ?? ""}`;
+    return `${store.runtimeResolvedLocalProfileId ?? ""}::${store.runtimeServerUrl ?? ""}::${coverCacheGeneration}`;
   }
 
   async function loadCachedCoverForManga(manga: Manga) {
@@ -388,8 +393,16 @@
 
   function handleContentScroll() {
     if (!contentEl) return;
-    setLibraryScrollTop(contentEl.scrollTop);
-    maybeLoadNextPage();
+    scheduleScrollTopPersistence(contentEl.scrollTop);
+  }
+
+  function scheduleScrollTopPersistence(scrollTop: number) {
+    pendingScrollTop = scrollTop;
+    if (scrollPersistFrame !== null) return;
+    scrollPersistFrame = requestAnimationFrame(() => {
+      scrollPersistFrame = null;
+      setLibraryScrollTop(pendingScrollTop);
+    });
   }
 
   function resetRenderedPage() {
@@ -481,7 +494,7 @@
   $effect(() => {
     const profileId = store.runtimeResolvedLocalProfileId;
     const serverUrl = store.runtimeServerUrl;
-    const scopeKey = `${profileId ?? ""}::${serverUrl ?? ""}`;
+    const scopeKey = `${profileId ?? ""}::${serverUrl ?? ""}::${coverCacheGeneration}`;
     if (lastCoverCacheScopeKey && lastCoverCacheScopeKey !== scopeKey) {
       cachedCoverUrls = new Map();
       coverCacheCheckedKeys = new Set();
@@ -660,7 +673,7 @@
           if (entries.some((entry) => entry.isIntersecting)) {
             loadNextPage();
           }
-        }, { root: null, rootMargin: "900px 0px" });
+        }, { root: contentEl, rootMargin: "900px 0px" });
         if (loadMoreSentinel) loadMoreObserver.observe(loadMoreSentinel);
       }
     });
@@ -675,6 +688,10 @@
       coverRecoveryTimers.clear();
       resizeObserver?.disconnect();
       loadMoreObserver?.disconnect();
+      if (scrollPersistFrame !== null) {
+        cancelAnimationFrame(scrollPersistFrame);
+        scrollPersistFrame = null;
+      }
       window.removeEventListener("keydown", onKeyDown);
     };
   });

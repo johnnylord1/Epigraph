@@ -47,6 +47,7 @@
     setLibraryTrackingSummarySnapshot,
     setLibraryUpdateInFlight,
     setLibraryUpdateProgress,
+    bumpLibraryCoverCacheGeneration,
     recordLibraryUpdateNotifications,
     addSystemNotification,
     refreshAppReadingStateFromPersistence,
@@ -565,6 +566,7 @@
       updateSettings({ lastLibraryUpdateAt: updatedAt });
       cache.clearGroup(CACHE_GROUPS.LIBRARY);
       await preloadLibrarySnapshot(true);
+      bumpLibraryCoverCacheGeneration();
       await reconcileLibrarySnapshotCountsFromChapters();
       const entries = recordLibraryUpdateNotifications(beforeUpdate, store.libraryMangaSnapshot, updatedAt);
       addSystemNotification({

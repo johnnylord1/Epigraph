@@ -5,6 +5,7 @@ import type { Manga } from "../types";
 type CoverCacheScope = {
   profileId?: string | null;
   serverUrl?: string | null;
+  coverCacheGeneration?: number | string | null;
 };
 
 const stableCoverUrls = new Map<string, string>();
@@ -17,12 +18,18 @@ function scopeServerUrl(scope: CoverCacheScope) {
   return scope.serverUrl?.trim() || getServerUrl();
 }
 
+function cacheThumbnailUrl(scope: CoverCacheScope, manga: Manga) {
+  const generation = `${scope.coverCacheGeneration ?? ""}`.trim();
+  if (!generation) return manga.thumbnailUrl ?? "";
+  return `${manga.thumbnailUrl ?? ""}::aethon-cover-generation:${generation}`;
+}
+
 function cacheLookupKey(scope: CoverCacheScope, manga: Manga) {
   return [
     scopeProfileId(scope).toLowerCase(),
     scopeServerUrl(scope).toLowerCase(),
     manga.id,
-    manga.thumbnailUrl ?? "",
+    cacheThumbnailUrl(scope, manga),
   ].join("::");
 }
 
@@ -43,7 +50,7 @@ export async function getCachedLibraryCoverUrl(
     profileId: scopeProfileId(scope),
     serverUrl: scopeServerUrl(scope),
     mangaId: manga.id,
-    thumbnailUrl: manga.thumbnailUrl,
+    thumbnailUrl: cacheThumbnailUrl(scope, manga),
   }).catch(() => null);
 
   return path ? coverPathAsUrl(path) : null;
@@ -58,7 +65,7 @@ export async function cacheLibraryCoverFromServer(
     profileId: scopeProfileId(scope),
     serverUrl: scopeServerUrl(scope),
     mangaId: manga.id,
-    thumbnailUrl: manga.thumbnailUrl,
+    thumbnailUrl: cacheThumbnailUrl(scope, manga),
     coverUrl: thumbUrl(manga.thumbnailUrl),
     authHeader: getServerAuthHeader(),
   }).catch(() => null);

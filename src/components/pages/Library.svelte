@@ -68,6 +68,7 @@
     setLibrarySection,
     setLibraryMangaSnapshot,
     setLibraryUpdateInFlight,
+    bumpLibraryCoverCacheGeneration,
     recordLibraryUpdateNotifications,
     addSystemNotification,
     store,
@@ -1220,6 +1221,7 @@
         cache.clearGroup(CACHE_GROUPS.LIBRARY);
         await waitForLibraryLoadIdle();
         await loadData();
+        bumpLibraryCoverCacheGeneration();
         if (updateRun.changedMangaIds.length > 0) {
           showSharedLibraryUpdateProgress("Reconciling changed titles.");
           await reconcileCurrentLibraryCountsFromChapters(updateRun.changedMangaIds);
@@ -1654,6 +1656,7 @@
         onCreateCategory={createCategoryOnly}
         onCoverErrorDetected={wakeServerForLibraryCovers}
         coverRecoveryVersions={coverRecoveryVersions}
+        coverCacheGeneration={store.libraryCoverCacheGeneration}
       />
     {/if}
   </LibraryShell>

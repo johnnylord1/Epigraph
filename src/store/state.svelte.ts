@@ -1071,6 +1071,7 @@ class Store {
   toasts:            Toast[]          = $state([]);
   libraryUpdateProgress: LibraryUpdateProgress | null = $state(null);
   libraryUpdateInFlight: boolean = $state(false);
+  libraryCoverCacheGeneration: number = $state(0);
   activeChapter:     Chapter | null   = $state(null);
   activeChapterList: Chapter[]        = $state([]);
   // UI-only: synced from Tauri window events in App.svelte. Not persisted.
@@ -1633,6 +1634,7 @@ class Store {
     this.libraryUpdateProgress = progress ? { ...progress, updatedAt: Date.now() } : null;
   }
   setLibraryUpdateInFlight(next: boolean)      { this.libraryUpdateInFlight = next; }
+  bumpLibraryCoverCacheGeneration()            { this.libraryCoverCacheGeneration += 1; }
   setCategories(cats: Category[])              {
     this.categories = cats;
     cache.set(CACHE_KEYS.CATEGORIES, cats, CACHE_GROUPS.LIBRARY);
@@ -2019,6 +2021,7 @@ export function addToast(toast: Omit<Toast, "id"> & { id?: string })     { retur
 export function dismissToast(id: string)                                 { store.dismissToast(id); }
 export function setLibraryUpdateProgress(progress: Omit<LibraryUpdateProgress, "updatedAt"> | null) { store.setLibraryUpdateProgress(progress); }
 export function setLibraryUpdateInFlight(next: boolean) { store.setLibraryUpdateInFlight(next); }
+export function bumpLibraryCoverCacheGeneration() { store.bumpLibraryCoverCacheGeneration(); }
 export function setCategories(cats: Category[])                           { store.setCategories(cats); }
 export function setLibraryMangaSnapshot(next: Manga[])                    { store.setLibraryMangaSnapshot(next); }
 export function setLibraryBootstrap(status: LibraryBootstrapStatus, scopeKey: string | null, trackingSummary: TrackerCompletionTracker[] | null = null) {
