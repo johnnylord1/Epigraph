@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import { MagnifyingGlass, ArrowsClockwise, Plus, CircleNotch, CaretRight, CaretDown, X, Check, GitBranch } from "phosphor-svelte";
-  import { gql, thumbUrl } from "../../lib/client";
+  import { gql } from "../../lib/client";
+  import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import { GET_EXTENSIONS, FETCH_EXTENSIONS, UPDATE_EXTENSION, INSTALL_EXTERNAL_EXTENSION, GET_SETTINGS, SET_EXTENSION_REPOS } from "../../lib/queries";
   import { store, addToast, bumpContentSetupVersion, setExtensionsPanelHint } from "../../store/state.svelte";
   import type { Extension } from "../../lib/types";
@@ -406,7 +407,7 @@
         {@const hasVariants = variants.length > 0}
         <div class="group">
           <div class="row">
-            <img src={thumbUrl(primary.iconUrl)} alt={primary.name} class="icon" loading="lazy" decoding="async" fetchpriority="low" onerror={(e) => (e.target as HTMLImageElement).style.display = "none"} />
+            <img src={resolveServiceIconUrl(primary.iconUrl, { kind: "extension" })} alt={primary.name} class="icon" loading="lazy" decoding="async" fetchpriority="low" onerror={(e) => applyServiceIconFallback(e, "extension")} />
             <div class="info">
               <span class="name">{base}</span>
               <span class="meta"><span class="lang-tag">{primary.lang.toUpperCase()}</span> v{primary.versionName}</span>

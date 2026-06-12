@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, tick, untrack } from "svelte";
-  import { gql, thumbUrl } from "../../lib/client";
+  import { gql } from "../../lib/client";
+  import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import { GET_SOURCES, FETCH_SOURCE_MANGA, GET_TRACKERS, SEARCH_TRACKER, GET_LIBRARY, GET_ALL_TRACKER_RECORDS } from "../../lib/queries";
   import { fetchSourceMangaSearchWithFallback } from "../../lib/manga/sourceSearch";
@@ -5119,12 +5120,12 @@
               <div class="sourceHeader">
                 {#if source.iconUrl}
                   <img
-                    src={thumbUrl(source.iconUrl)}
+                    src={resolveServiceIconUrl(source.iconUrl, { kind: source.contentKind === "novels" ? "extension" : "source" })}
+                    onerror={(event) => applyServiceIconFallback(event, source.contentKind === "novels" ? "extension" : "source")}
                     alt={source.name}
                     class="sourceIcon"
                     loading="lazy"
                     decoding="async"
-                    onerror={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                   />
                 {/if}
                 <span class="sourceName">{source.name}</span>
@@ -5190,12 +5191,12 @@
           <div class="sourceSection">
             <div class="sourceHeader">
               <img
-                src={thumbUrl(source.iconUrl)}
+                src={resolveServiceIconUrl(source.iconUrl, { kind: source.contentKind === "novels" ? "extension" : "source" })}
+                onerror={(event) => applyServiceIconFallback(event, source.contentKind === "novels" ? "extension" : "source")}
                 alt={source.displayName}
                 class="sourceIcon"
                 loading="lazy"
                 decoding="async"
-                onerror={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
               />
               <span class="sourceName">{source.displayName}</span>
               {#if hasMultipleLangs}
@@ -5437,24 +5438,24 @@
             <div class="splitSourceTitle">
               {#if src_activeSource}
                 <img
-                  src={thumbUrl(src_activeSource.iconUrl)}
+                  src={resolveServiceIconUrl(src_activeSource.iconUrl, { kind: "source" })}
+                  onerror={(event) => applyServiceIconFallback(event, "source")}
                   alt=""
                   class="splitSourceIcon"
                   loading="lazy"
                   decoding="async"
-                  onerror={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                 />
                 <span class="splitContentTitle">{src_activeSource.displayName}</span>
                 {#if src_activeSource.isNsfw}<span class="nsfwBadge">18+</span>{/if}
               {:else if src_activeNovelSource}
                 {#if src_activeNovelSource.iconUrl}
                   <img
-                    src={thumbUrl(src_activeNovelSource.iconUrl)}
+                    src={resolveServiceIconUrl(src_activeNovelSource.iconUrl, { kind: "extension" })}
+                    onerror={(event) => applyServiceIconFallback(event, "extension")}
                     alt=""
                     class="splitSourceIcon"
                     loading="lazy"
                     decoding="async"
-                    onerror={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                   />
                 {/if}
                 <span class="splitContentTitle">{src_activeNovelSource.name}</span>

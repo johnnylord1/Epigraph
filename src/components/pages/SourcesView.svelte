@@ -11,7 +11,8 @@
     Plus,
     X,
   } from "phosphor-svelte";
-  import { gql, thumbUrl } from "../../lib/client";
+  import { gql } from "../../lib/client";
+  import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import {
     FETCH_EXTENSIONS,
     GET_EXTENSIONS,
@@ -1169,11 +1170,11 @@
           >
             <img
               class="extensionCardIcon"
-              src={thumbUrl(primary.iconUrl ?? "")}
+              src={resolveServiceIconUrl(primary.iconUrl, { kind: "extension" })}
               alt=""
               loading="lazy"
               decoding="async"
-              onerror={(event) => ((event.target as HTMLImageElement).style.display = "none")}
+              onerror={(event) => applyServiceIconFallback(event, "extension")}
             />
             <div class="extensionCardCopy">
               <div class="extensionTitleRow">

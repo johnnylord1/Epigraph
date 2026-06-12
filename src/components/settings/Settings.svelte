@@ -8,7 +8,8 @@
   import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
   import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
   import { open as openUrl } from "@tauri-apps/plugin-shell";
-  import { gql, gqlUpload, thumbUrl, getServerAuthHeader, serverFileUrl } from "../../lib/client";
+  import { gql, gqlUpload, getServerAuthHeader, serverFileUrl } from "../../lib/client";
+  import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import {
     BUILTIN_LOCAL_PROFILES,
     DEFAULT_LOCAL_PROFILE_ID,
@@ -5382,7 +5383,7 @@
                   {#each trackers as tracker}
                     <div class="settings-row settings-mini-row settings-mini-row--tracker" class:tracker-row-active={tracker.isLoggedIn}>
                       <div class="tracker-identity">
-                        <img src={thumbUrl(tracker.icon)} alt={tracker.name} class="tracker-logo" />
+                        <img src={resolveServiceIconUrl(tracker, { kind: "tracker" })} alt={tracker.name} class="tracker-logo" onerror={(event) => applyServiceIconFallback(event, "tracker")} />
                         <div class="tracker-name-block">
                           <span class="tracker-label">{tracker.name}</span>
                           <span class="tracker-status-pill" class:pill-on={tracker.isLoggedIn}>
@@ -6228,7 +6229,7 @@
                         {@const isAllowed = ids.every((id) => allowed.includes(id))}
                         {@const isBlocked = ids.every((id) => blocked.includes(id))}
                         <div class="content-source-row" class:content-source-allowed={isAllowed} class:content-source-blocked={isBlocked}>
-                          <img src={thumbUrl(group.iconUrl)} alt="" class="content-source-icon" loading="lazy" decoding="async" />
+                          <img src={resolveServiceIconUrl(group.iconUrl, { kind: "source" })} alt="" class="content-source-icon" loading="lazy" decoding="async" onerror={(event) => applyServiceIconFallback(event, "source")} />
                           <div class="content-source-info">
                             <span class="content-source-name">{group.name}</span>
                             <span class="content-source-lang">{group.sources[0].isNsfw ? "NSFW · " : ""}{group.sources.length > 1 ? `${group.sources.length} languages` : group.sources[0].lang.toUpperCase()}</span>

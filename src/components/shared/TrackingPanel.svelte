@@ -1,6 +1,7 @@
 <script lang="ts">
   import { CircleNotch, X, MagnifyingGlass, ArrowSquareOut, Lock, LockOpen, ArrowsClockwise } from "phosphor-svelte";
-  import { gql, thumbUrl } from "../../lib/client";
+  import { gql } from "../../lib/client";
+  import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import { cache, CACHE_GROUPS } from "../../lib/cache";
   import {
     GET_TRACKERS,
@@ -275,7 +276,7 @@
             class:tab-active={activeTab === t.id}
             onclick={() => { activeTab = t.id; searchResults = []; }}
           >
-            <img src={thumbUrl(t.icon)} alt={t.name} class="tab-icon" />
+            <img src={resolveServiceIconUrl(t, { kind: "tracker" })} alt={t.name} class="tab-icon" onerror={(e) => applyServiceIconFallback(e, "tracker")} />
             {t.name}
             {#if rec}<span class="tab-dot"></span>{/if}
           </button>
@@ -295,7 +296,7 @@
 
                 <div class="record-identity">
                   {#if tracker}
-                    <img src={thumbUrl(tracker.icon)} alt={tracker.name} class="record-tracker-icon" />
+                    <img src={resolveServiceIconUrl(tracker, { kind: "tracker" })} alt={tracker.name} class="record-tracker-icon" onerror={(e) => applyServiceIconFallback(e, "tracker")} />
                   {/if}
                   {#if record.remoteUrl}
                     <a href={record.remoteUrl} target="_blank" rel="noreferrer" class="record-title">

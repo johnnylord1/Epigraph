@@ -1,6 +1,6 @@
 <script lang="ts">
   import { X } from "phosphor-svelte";
-  import { thumbUrl } from "../../lib/client";
+  import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import type { ManagedExtension } from "../../lib/managedExtensions";
   import type { MockExtensionSettings, MockExtensionSettingsPatch } from "../../store/mockSettingsStore";
 
@@ -56,11 +56,11 @@
     <div class="extensionIdentity">
       <img
         class="extensionIcon"
-        src={thumbUrl(extension.iconUrl ?? "")}
+        src={resolveServiceIconUrl(extension.iconUrl, { kind: "extension" })}
         alt=""
         loading="lazy"
         decoding="async"
-        onerror={(event) => ((event.target as HTMLImageElement).style.display = "none")}
+        onerror={(event) => applyServiceIconFallback(event, "extension")}
       />
       <div class="identityCopy">
         <p class="eyebrow">Extension settings</p>

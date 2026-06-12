@@ -1,6 +1,7 @@
 <script lang="ts">
   import { CircleNotch, ArrowSquareOut, ArrowsClockwise, X, Lock, MagnifyingGlass, Funnel } from "phosphor-svelte";
-  import { gql, thumbUrl } from "../../lib/client";
+  import { gql } from "../../lib/client";
+  import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import { cache, CACHE_GROUPS } from "../../lib/cache";
   import {
@@ -254,7 +255,7 @@
             class:tab-active={activeTrackerId === t.id}
             onclick={() => { activeTrackerId = Number(t.id); statusFilter = "all"; }}
           >
-            <img src={thumbUrl(t.icon)} alt={t.name} class="tab-tracker-icon" />
+            <img src={resolveServiceIconUrl(t, { kind: "tracker" })} alt={t.name} class="tab-tracker-icon" onerror={(e) => applyServiceIconFallback(e, "tracker")} />
             {t.name}
             <span class="tab-count">{count}</span>
           </button>
@@ -365,7 +366,7 @@
                 <div class="record-cover record-cover-empty"></div>
               {/if}
               <!-- Tracker badge -->
-              <img src={thumbUrl(tracker.icon)} alt={tracker.name} class="record-tracker-badge" />
+              <img src={resolveServiceIconUrl(tracker, { kind: "tracker" })} alt={tracker.name} class="record-tracker-badge" onerror={(e) => applyServiceIconFallback(e, "tracker")} />
             </div>
 
             <!-- Info -->
@@ -383,7 +384,7 @@
                 <div class="record-header-actions">
                   {#if activeTrackerId === "all"}
                     <span class="record-tracker-label">
-                      <img src={thumbUrl(record.tracker.icon)} alt={record.tracker.name} class="record-tracker-label-icon" />
+                      <img src={resolveServiceIconUrl(record.tracker, { kind: "tracker" })} alt={record.tracker.name} class="record-tracker-label-icon" onerror={(e) => applyServiceIconFallback(e, "tracker")} />
                       {record.tracker.name}
                     </span>
                   {/if}

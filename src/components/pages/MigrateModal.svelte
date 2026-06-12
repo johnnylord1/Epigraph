@@ -1,7 +1,8 @@
 <script lang="ts">
   import { X, MagnifyingGlass, CircleNotch, ArrowRight, Check, Warning, Sparkle, StackSimple } from "phosphor-svelte";
   import { untrack } from "svelte";
-  import { gql, thumbUrl } from "../../lib/client";
+  import { gql } from "../../lib/client";
+  import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import { GET_SOURCES, FETCH_CHAPTERS, GET_LIBRARY } from "../../lib/queries";
   import { fetchSourceMangaSearchWithFallback } from "../../lib/manga/sourceSearch";
@@ -417,8 +418,8 @@
                 class="source-row"
                 class:source-row-active={selectedSource?.id === src.id}
                 onclick={() => pickSource(src)}>
-                <img src={thumbUrl(src.iconUrl)} alt={src.name} class="source-icon"
-                  onerror={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                <img src={resolveServiceIconUrl(src, { kind: "source" })} alt={src.name} class="source-icon"
+                  onerror={(e) => applyServiceIconFallback(e, "source")} />
                 <div class="source-info">
                   <span class="source-name">{src.displayName}</span>
                   <span class="source-meta">{src.lang.toUpperCase()}{src.isNsfw ? " · NSFW" : ""}</span>
@@ -448,8 +449,8 @@
           <!-- Source context pill -->
           {#if selectedSource}
             <div class="search-context">
-              <img src={thumbUrl(selectedSource.iconUrl)} alt="" class="search-context-icon"
-                onerror={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+              <img src={resolveServiceIconUrl(selectedSource, { kind: "source" })} alt="" class="search-context-icon"
+                onerror={(e) => applyServiceIconFallback(e, "source")} />
               <span class="search-context-name">{selectedSource.displayName}</span>
               <button class="search-context-change" onclick={() => { step = "source"; results = []; }}>Change</button>
             </div>
