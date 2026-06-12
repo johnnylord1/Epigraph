@@ -42,7 +42,9 @@ pub async fn post_local_authority_token(
         request.profile_id.trim(),
     )
     .await
-    .map_err(|error| AppError::Internal(format!("Failed to issue local authority token: {error}")))?;
+    .map_err(|error| {
+        AppError::Internal(format!("Failed to issue local authority token: {error}"))
+    })?;
 
     Ok(Json(PairingTokenResponse {
         access_token: issued.access_token,
@@ -105,7 +107,10 @@ mod tests {
 
     fn router(state: SharedAppState) -> axum::Router {
         axum::Router::new()
-            .route("/v1/local/authority-token", axum::routing::post(post_local_authority_token))
+            .route(
+                "/v1/local/authority-token",
+                axum::routing::post(post_local_authority_token),
+            )
             .with_state(state)
     }
 
@@ -116,7 +121,9 @@ mod tests {
             .oneshot(
                 Request::post("/v1/local/authority-token")
                     .header("content-type", "application/json")
-                    .extension(ConnectInfo("192.168.1.7:4777".parse::<SocketAddr>().unwrap()))
+                    .extension(ConnectInfo(
+                        "192.168.1.7:4777".parse::<SocketAddr>().unwrap(),
+                    ))
                     .body(Body::from(
                         r#"{"profileId":"main","deviceId":"desktop-main"}"#,
                     ))
@@ -143,14 +150,14 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let payload: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(payload["profileId"], "main");
         assert_eq!(payload["grantedVia"], "local-authority");
         let scopes = payload["scopes"].as_array().unwrap();
         assert!(scopes.iter().any(|scope| scope == "books:global"));
-        assert!(scopes
-            .iter()
-            .any(|scope| scope == "novels:profile:main"));
+        assert!(scopes.iter().any(|scope| scope == "novels:profile:main"));
     }
 }

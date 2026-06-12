@@ -63,4 +63,5 @@ describe("ReaderHud", () => {
       expect(screen.getByTestId("hud-settings-popover")).not.toBeNull();
     }
   });
+
 });

@@ -1129,8 +1129,18 @@ pub async fn apply_book_category_mutation(
     let merged = merge_book_category(current.map(Into::into), entity_id, patch, client_lamport)?;
     let record = serde_json::to_value(&merged)?;
     let (server_version, applied_at_ms) = append_change_log_in_tx(
-        &mut tx, scope_id, None, "book.category", entity_id, "merge", merged.record_lamport, &session.device_id, Some(&record), retention_window,
-    ).await?;
+        &mut tx,
+        scope_id,
+        None,
+        "book.category",
+        entity_id,
+        "merge",
+        merged.record_lamport,
+        &session.device_id,
+        Some(&record),
+        retention_window,
+    )
+    .await?;
     sqlx::query(
         r#"INSERT INTO book_categories (
             scope_id, category_id, name, sort_order, record_updated_at_ms, record_updated_by_device_id, record_lamport, record_server_version
@@ -1192,11 +1202,37 @@ pub async fn delete_book_category_mutation(
         .bind(entity_id)
         .execute(&mut *tx)
         .await?;
-    let applied_lamport = tombstone.as_ref().map(|value| next_lamport(value.lamport, client_lamport)).unwrap_or(client_lamport);
+    let applied_lamport = tombstone
+        .as_ref()
+        .map(|value| next_lamport(value.lamport, client_lamport))
+        .unwrap_or(client_lamport);
     let (server_version, applied_at_ms) = append_change_log_in_tx(
-        &mut tx, scope_id, None, "book.category", entity_id, "delete", applied_lamport, &session.device_id, None, retention_window,
-    ).await?;
-    upsert_tombstone_in_tx(&mut tx, scope_id, None, "book.category", entity_id, &session.device_id, applied_lamport, applied_at_ms, server_version, retention_window, "book_category_deleted").await?;
+        &mut tx,
+        scope_id,
+        None,
+        "book.category",
+        entity_id,
+        "delete",
+        applied_lamport,
+        &session.device_id,
+        None,
+        retention_window,
+    )
+    .await?;
+    upsert_tombstone_in_tx(
+        &mut tx,
+        scope_id,
+        None,
+        "book.category",
+        entity_id,
+        &session.device_id,
+        applied_lamport,
+        applied_at_ms,
+        server_version,
+        retention_window,
+        "book_category_deleted",
+    )
+    .await?;
     tx.commit().await?;
     Ok(MutationWriteOutcome {
         envelope: ChangeEnvelope {
@@ -1233,20 +1269,33 @@ pub async fn apply_book_category_assignment_mutation(
     .bind(entity_id)
     .fetch_optional(&mut *tx)
     .await?;
-    let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "book.category_assignment", entity_id).await?;
+    let tombstone =
+        load_tombstone_in_tx(&mut tx, scope_id, "book.category_assignment", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
     }
     let merged = merge_book_category_assignment(
-        current.map(BookCategoryAssignmentRecord::try_from).transpose()?,
+        current
+            .map(BookCategoryAssignmentRecord::try_from)
+            .transpose()?,
         entity_id,
         patch,
         client_lamport,
     )?;
     let record = serde_json::to_value(&merged)?;
     let (server_version, applied_at_ms) = append_change_log_in_tx(
-        &mut tx, scope_id, None, "book.category_assignment", entity_id, "merge", merged.record_lamport, &session.device_id, Some(&record), retention_window,
-    ).await?;
+        &mut tx,
+        scope_id,
+        None,
+        "book.category_assignment",
+        entity_id,
+        "merge",
+        merged.record_lamport,
+        &session.device_id,
+        Some(&record),
+        retention_window,
+    )
+    .await?;
     sqlx::query(
         r#"INSERT INTO book_category_assignments (
             scope_id, book_id, category_ids_json, record_updated_at_ms, record_updated_by_device_id, record_lamport, record_server_version
@@ -1297,7 +1346,8 @@ pub async fn delete_book_category_assignment_mutation(
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
     let mut tx = pool.begin().await?;
-    let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "book.category_assignment", entity_id).await?;
+    let tombstone =
+        load_tombstone_in_tx(&mut tx, scope_id, "book.category_assignment", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
     }
@@ -1306,11 +1356,37 @@ pub async fn delete_book_category_assignment_mutation(
         .bind(entity_id)
         .execute(&mut *tx)
         .await?;
-    let applied_lamport = tombstone.as_ref().map(|value| next_lamport(value.lamport, client_lamport)).unwrap_or(client_lamport);
+    let applied_lamport = tombstone
+        .as_ref()
+        .map(|value| next_lamport(value.lamport, client_lamport))
+        .unwrap_or(client_lamport);
     let (server_version, applied_at_ms) = append_change_log_in_tx(
-        &mut tx, scope_id, None, "book.category_assignment", entity_id, "delete", applied_lamport, &session.device_id, None, retention_window,
-    ).await?;
-    upsert_tombstone_in_tx(&mut tx, scope_id, None, "book.category_assignment", entity_id, &session.device_id, applied_lamport, applied_at_ms, server_version, retention_window, "book_category_assignment_deleted").await?;
+        &mut tx,
+        scope_id,
+        None,
+        "book.category_assignment",
+        entity_id,
+        "delete",
+        applied_lamport,
+        &session.device_id,
+        None,
+        retention_window,
+    )
+    .await?;
+    upsert_tombstone_in_tx(
+        &mut tx,
+        scope_id,
+        None,
+        "book.category_assignment",
+        entity_id,
+        &session.device_id,
+        applied_lamport,
+        applied_at_ms,
+        server_version,
+        retention_window,
+        "book_category_assignment_deleted",
+    )
+    .await?;
     tx.commit().await?;
     Ok(MutationWriteOutcome {
         envelope: ChangeEnvelope {
@@ -1351,8 +1427,18 @@ pub async fn apply_book_library_ui_mutation(
     let merged = merge_book_library_ui(current.map(Into::into), entity_id, patch, client_lamport)?;
     let record = serde_json::to_value(&merged)?;
     let (server_version, applied_at_ms) = append_change_log_in_tx(
-        &mut tx, scope_id, None, "book.library_ui", entity_id, "merge", merged.record_lamport, &session.device_id, Some(&record), retention_window,
-    ).await?;
+        &mut tx,
+        scope_id,
+        None,
+        "book.library_ui",
+        entity_id,
+        "merge",
+        merged.record_lamport,
+        &session.device_id,
+        Some(&record),
+        retention_window,
+    )
+    .await?;
     sqlx::query(
         r#"INSERT INTO book_library_ui_state (
             scope_id, ui_state_id, active_category_id, type_filter, status_filter, search, sort_mode, sort_dir,
@@ -1427,11 +1513,26 @@ pub async fn apply_novel_entry_mutation(
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
     }
-    let merged = merge_novel_entry(current.map(NovelEntryRecord::try_from).transpose()?, entity_id, patch, client_lamport)?;
+    let merged = merge_novel_entry(
+        current.map(NovelEntryRecord::try_from).transpose()?,
+        entity_id,
+        patch,
+        client_lamport,
+    )?;
     let record = serde_json::to_value(&merged)?;
     let (server_version, applied_at_ms) = append_change_log_in_tx(
-        &mut tx, scope_id, Some(session.profile_id.as_str()), "novel.entry", entity_id, "merge", merged.record_lamport, &session.device_id, Some(&record), retention_window,
-    ).await?;
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        "novel.entry",
+        entity_id,
+        "merge",
+        merged.record_lamport,
+        &session.device_id,
+        Some(&record),
+        retention_window,
+    )
+    .await?;
     sqlx::query(
         r#"INSERT INTO novel_library_entries (
             scope_id, novel_id, identity_key, title, author, description, cover_url, external_novel_id, external_url,
@@ -1513,11 +1614,37 @@ pub async fn delete_novel_entry_mutation(
         .bind(entity_id)
         .execute(&mut *tx)
         .await?;
-    let applied_lamport = tombstone.as_ref().map(|value| next_lamport(value.lamport, client_lamport)).unwrap_or(client_lamport);
+    let applied_lamport = tombstone
+        .as_ref()
+        .map(|value| next_lamport(value.lamport, client_lamport))
+        .unwrap_or(client_lamport);
     let (server_version, applied_at_ms) = append_change_log_in_tx(
-        &mut tx, scope_id, Some(session.profile_id.as_str()), "novel.entry", entity_id, "delete", applied_lamport, &session.device_id, None, retention_window,
-    ).await?;
-    upsert_tombstone_in_tx(&mut tx, scope_id, Some(session.profile_id.as_str()), "novel.entry", entity_id, &session.device_id, applied_lamport, applied_at_ms, server_version, retention_window, "novel_deleted").await?;
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        "novel.entry",
+        entity_id,
+        "delete",
+        applied_lamport,
+        &session.device_id,
+        None,
+        retention_window,
+    )
+    .await?;
+    upsert_tombstone_in_tx(
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        "novel.entry",
+        entity_id,
+        &session.device_id,
+        applied_lamport,
+        applied_at_ms,
+        server_version,
+        retention_window,
+        "novel_deleted",
+    )
+    .await?;
     tx.commit().await?;
     Ok(MutationWriteOutcome {
         envelope: ChangeEnvelope {
@@ -1562,8 +1689,18 @@ pub async fn apply_novel_chapter_mutation(
     let merged = merge_novel_chapter(current.map(Into::into), entity_id, patch, client_lamport)?;
     let record = serde_json::to_value(&merged)?;
     let (server_version, applied_at_ms) = append_change_log_in_tx(
-        &mut tx, scope_id, Some(session.profile_id.as_str()), "novel.chapter", entity_id, "merge", merged.record_lamport, &session.device_id, Some(&record), retention_window,
-    ).await?;
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        "novel.chapter",
+        entity_id,
+        "merge",
+        merged.record_lamport,
+        &session.device_id,
+        Some(&record),
+        retention_window,
+    )
+    .await?;
     sqlx::query(
         r#"INSERT INTO novel_chapters (
             scope_id, chapter_id, novel_id, path, title, chapter_order_key, release_time_ms, unread,
@@ -1634,11 +1771,37 @@ pub async fn delete_novel_chapter_mutation(
         .bind(entity_id)
         .execute(&mut *tx)
         .await?;
-    let applied_lamport = tombstone.as_ref().map(|value| next_lamport(value.lamport, client_lamport)).unwrap_or(client_lamport);
+    let applied_lamport = tombstone
+        .as_ref()
+        .map(|value| next_lamport(value.lamport, client_lamport))
+        .unwrap_or(client_lamport);
     let (server_version, applied_at_ms) = append_change_log_in_tx(
-        &mut tx, scope_id, Some(session.profile_id.as_str()), "novel.chapter", entity_id, "delete", applied_lamport, &session.device_id, None, retention_window,
-    ).await?;
-    upsert_tombstone_in_tx(&mut tx, scope_id, Some(session.profile_id.as_str()), "novel.chapter", entity_id, &session.device_id, applied_lamport, applied_at_ms, server_version, retention_window, "novel_chapter_deleted").await?;
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        "novel.chapter",
+        entity_id,
+        "delete",
+        applied_lamport,
+        &session.device_id,
+        None,
+        retention_window,
+    )
+    .await?;
+    upsert_tombstone_in_tx(
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        "novel.chapter",
+        entity_id,
+        &session.device_id,
+        applied_lamport,
+        applied_at_ms,
+        server_version,
+        retention_window,
+        "novel_chapter_deleted",
+    )
+    .await?;
     tx.commit().await?;
     Ok(MutationWriteOutcome {
         envelope: ChangeEnvelope {
@@ -1683,8 +1846,18 @@ pub async fn apply_novel_history_mutation(
     let merged = merge_novel_history(current.map(Into::into), entity_id, patch, client_lamport)?;
     let record = serde_json::to_value(&merged)?;
     let (server_version, applied_at_ms) = append_change_log_in_tx(
-        &mut tx, scope_id, Some(session.profile_id.as_str()), "novel.history", entity_id, "merge", merged.record_lamport, &session.device_id, Some(&record), retention_window,
-    ).await?;
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        "novel.history",
+        entity_id,
+        "merge",
+        merged.record_lamport,
+        &session.device_id,
+        Some(&record),
+        retention_window,
+    )
+    .await?;
     sqlx::query(
         r#"INSERT INTO novel_history (
             scope_id, history_id, novel_id, chapter_id, chapter_title, chapter_order_key, locator, locator_sort_key,
@@ -1753,11 +1926,37 @@ pub async fn delete_novel_history_mutation(
         .bind(entity_id)
         .execute(&mut *tx)
         .await?;
-    let applied_lamport = tombstone.as_ref().map(|value| next_lamport(value.lamport, client_lamport)).unwrap_or(client_lamport);
+    let applied_lamport = tombstone
+        .as_ref()
+        .map(|value| next_lamport(value.lamport, client_lamport))
+        .unwrap_or(client_lamport);
     let (server_version, applied_at_ms) = append_change_log_in_tx(
-        &mut tx, scope_id, Some(session.profile_id.as_str()), "novel.history", entity_id, "delete", applied_lamport, &session.device_id, None, retention_window,
-    ).await?;
-    upsert_tombstone_in_tx(&mut tx, scope_id, Some(session.profile_id.as_str()), "novel.history", entity_id, &session.device_id, applied_lamport, applied_at_ms, server_version, retention_window, "novel_history_deleted").await?;
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        "novel.history",
+        entity_id,
+        "delete",
+        applied_lamport,
+        &session.device_id,
+        None,
+        retention_window,
+    )
+    .await?;
+    upsert_tombstone_in_tx(
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        "novel.history",
+        entity_id,
+        &session.device_id,
+        applied_lamport,
+        applied_at_ms,
+        server_version,
+        retention_window,
+        "novel_history_deleted",
+    )
+    .await?;
     tx.commit().await?;
     Ok(MutationWriteOutcome {
         envelope: ChangeEnvelope {
@@ -1801,12 +2000,15 @@ pub async fn apply_novel_classification_mutation(
     .bind(entity_id)
     .fetch_optional(&mut *tx)
     .await?;
-    let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "novel.classification", entity_id).await?;
+    let tombstone =
+        load_tombstone_in_tx(&mut tx, scope_id, "novel.classification", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
     }
     let merged = merge_novel_classification(
-        current.map(NovelClassificationRecord::try_from).transpose()?,
+        current
+            .map(NovelClassificationRecord::try_from)
+            .transpose()?,
         entity_id,
         patch,
         client_lamport,
@@ -1905,11 +2107,13 @@ pub async fn delete_novel_classification_mutation(
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
     }
-    sqlx::query("DELETE FROM novel_source_classification_records WHERE scope_id = ? AND plugin_id = ?")
-        .bind(scope_id)
-        .bind(entity_id)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "DELETE FROM novel_source_classification_records WHERE scope_id = ? AND plugin_id = ?",
+    )
+    .bind(scope_id)
+    .bind(entity_id)
+    .execute(&mut *tx)
+    .await?;
     let applied_lamport = tombstone
         .as_ref()
         .map(|value| next_lamport(value.lamport, client_lamport))

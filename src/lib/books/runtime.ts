@@ -23,7 +23,8 @@ export type BookRuntimeStage =
   | "epub.displayed"
   | "pdf.open.started"
   | "pdf.ready"
-  | "pdf.page.rendered";
+  | "pdf.page.rendered"
+  | "pdf.reflow.ready";
 
 export interface BookRuntimeSource {
   bookId: string;

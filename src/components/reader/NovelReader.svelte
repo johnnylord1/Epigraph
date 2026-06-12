@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { onDestroy, onMount, tick, untrack } from "svelte";
   import { ArrowLeft, ArrowRight, BookmarkSimple, BookOpen, CaretLeft, CaretRight, CircleNotch, SlidersHorizontal, X } from "phosphor-svelte";
   import { addToast, bumpContentSetupVersion, closeNovelReader, setActiveNovelDetail, store, updateSettings } from "../../store/state.svelte";
   import {
@@ -16,13 +16,23 @@
   } from "../../lib/novels/libraryState";
   import { readInstalledNovelChapter } from "../../lib/novels/sources";
   import NocturneState from "../shared/NocturneState.svelte";
-  import ReaderBrightnessControl from "./ReaderBrightnessControl.svelte";
   import ReaderHud from "./ReaderHud.svelte";
+  import TtsControls from "./TtsControls.svelte";
+  import { createDomTtsTextProvider, createTtsController } from "../../lib/reader/tts";
 
   let loading = $state(false);
   let error = $state<string | null>(null);
   let chapterHtml = $state("");
   let toolsOpen = $state(false);
+  let activeSubPanel = $state<"main" | "tts">("main");
+
+  $effect(() => {
+    if (!toolsOpen) {
+      activeSubPanel = "main";
+    }
+  });
+  let readerBodyEl: HTMLElement | null = $state(null);
+  const tts = createTtsController();
   let libraryState = $state(peekNovelLibraryState({
     profileId: store.runtimeResolvedLocalProfileId,
     serverUrl: store.runtimeServerUrl,
@@ -76,15 +86,19 @@
     if (proseTheme === "sepia") return { text: "#2b2118", bg: "#efe1c9", surface: "#f6ead4" };
     if (proseTheme === "oled") return { text: "#e8e2f4", bg: "#000000", surface: "#050507" };
     if (proseTheme === "dark") return { text: "#ece7f5", bg: "#09080d", surface: "#111019" };
+    if (proseTheme === "slate") return { text: "#f8fafc", bg: "#1e293b", surface: "#151d2a" };
+    if (proseTheme === "forest") return { text: "#e2ebd9", bg: "#142217", surface: "#0f1a12" };
+    if (proseTheme === "nord") return { text: "#e5e9f0", bg: "#2e3440", surface: "#242933" };
+    if (proseTheme === "warm") return { text: "#433422", bg: "#fbf5e6", surface: "#f3ebd8" };
     return {
-      text: store.settings.proseReaderTextColor ?? "#efe9de",
-      bg: store.settings.proseReaderBackgroundColor ?? "#17121c",
-      surface: store.settings.proseReaderBackgroundColor ?? "#17121c",
+      text: store.settings.proseReaderTextColor ?? "#ffffff",
+      bg: store.settings.proseReaderBackgroundColor ?? "#131316",
+      surface: store.settings.proseReaderBackgroundColor ?? "#131316",
     };
   });
 
   function cycleProseTheme() {
-    const themes = ["nocturne", "dark", "sepia", "light", "oled"] as const;
+    const themes = ["nocturne", "dark", "sepia", "light", "oled", "slate", "forest", "nord", "warm"] as const;
     const current = themes.indexOf(proseTheme as any);
     updateSettings({ proseReaderTheme: themes[(current + 1) % themes.length] });
   }
@@ -98,7 +112,7 @@
   }
 
   function updateContentWidth(delta: number) {
-    updateSettings({ proseReaderContentWidth: Math.max(520, Math.min(980, proseContentWidth + delta)) });
+    updateSettings({ proseReaderContentWidth: Math.max(520, Math.min(1600, proseContentWidth + delta)) });
   }
 
   function updateProseColor(key: "text" | "background", value: string) {
@@ -156,6 +170,15 @@
     }
   }
 
+  async function refreshTtsProvider() {
+    await tick();
+    if (!readerBodyEl || loading || error || !chapterHtml.trim()) {
+      tts.setProvider(null);
+      return;
+    }
+    tts.setProvider(createDomTtsTextProvider(readerBodyEl, "p, li, blockquote, h1, h2, h3, h4, h5, h6"));
+  }
+
   async function toggleCurrentChapterBookmark() {
     if (!activeReader || !getNovelLibraryEntry(libraryState, activeReader.novelId)) return;
     libraryState = await saveNovelLibraryState(toggleNovelChapterBookmark(libraryState, {
@@ -175,6 +198,7 @@
 
   function openChapter(target: NonNullable<typeof currentNovel>["chapters"][number] | null) {
     if (!activeReader || !target) return;
+    tts.stop();
     store.setActiveNovelReader({
       ...activeReader,
       chapterId: target.id,
@@ -185,6 +209,11 @@
 
   function openRelativeChapter(direction: "prev" | "next") {
     openChapter(direction === "prev" ? previousChapter : nextChapter);
+  }
+
+  function requestClose() {
+    tts.stop();
+    closeNovelReader();
   }
 
   function openChapterByIndex(index: number) {
@@ -210,6 +239,16 @@
     });
   });
 
+  $effect(() => {
+    chapterHtml;
+    loading;
+    error;
+    readerBodyEl;
+    untrack(() => {
+      void refreshTtsProvider();
+    });
+  });
+
   onMount(() => {
     if (!activeReader) {
       addToast({
@@ -218,6 +257,10 @@
         body: "No active chapter was selected.",
       });
     }
+  });
+
+  onDestroy(() => {
+    tts.destroy();
   });
 </script>
 
@@ -235,110 +278,128 @@
     prevDisabled={loading || !previousChapter}
     nextDisabled={loading || !nextChapter}
     uiVisible={true}
-    onclose={closeNovelReader}
+    onclose={requestClose}
     onprev={() => openRelativeChapter("prev")}
     onnext={() => openRelativeChapter("next")}
     onjump={(val) => openChapterByIndex(val - 1)}
     onbookmark={toggleCurrentChapterBookmark}
   >
+    {#snippet ttsControls()}
+      <TtsControls controller={tts} />
+    {/snippet}
+
     {#snippet settingsPopover()}
-      <dl>
-        <ReaderBrightnessControl />
-        <div>
-          <dt>Theme</dt>
-          <dd>
-            <div class="popover-color-swatches">
-              <button class="popover-swatch" style="background:#efe1c9;" class:active={proseTheme === "sepia"} onclick={() => updateSettings({ proseReaderTheme: "sepia" })} title="Sepia"></button>
-              <button class="popover-swatch" style="background:#000000;" class:active={proseTheme === "oled"} onclick={() => updateSettings({ proseReaderTheme: "oled" })} title="OLED"></button>
-              <button class="popover-swatch" style="background:#09080d;" class:active={proseTheme === "dark"} onclick={() => updateSettings({ proseReaderTheme: "dark" })} title="Dark"></button>
-              <button class="popover-swatch" style="background:#f5f1ea;" class:active={proseTheme === "light"} onclick={() => updateSettings({ proseReaderTheme: "light" })} title="Light"></button>
-              <button class="popover-swatch" style="background:#17121c;" class:active={proseTheme === "nocturne"} onclick={() => updateSettings({ proseTheme: "nocturne" })} title="Nocturne"></button>
-            </div>
-          </dd>
-        </div>
-        <div>
-          <dt>Text Color</dt>
-          <dd>
-            <input
-              class="popover-color-picker"
-              type="color"
-              value={prosePalette.text}
-              onchange={(event) => updateProseColor("text", event.currentTarget.value)}
-              title="Text color"
-            />
-          </dd>
-        </div>
-        <div>
-          <dt>Paper Color</dt>
-          <dd>
-            <input
-              class="popover-color-picker"
-              type="color"
-              value={prosePalette.surface}
-              onchange={(event) => updateProseColor("background", event.currentTarget.value)}
-              title="Page background"
-            />
-          </dd>
-        </div>
-        <div>
-          <dt>Font</dt>
-          <dd>
-            <select
-              class="popover-select"
-              value={proseFontFamily}
-              onchange={(event) => updateSettings({ proseReaderFontFamily: event.currentTarget.value })}
-            >
-              <option value="Georgia, serif">Georgia</option>
-              <option value="Merriweather, Georgia, serif">Merriweather</option>
-              <option value="Inter, sans-serif">Inter</option>
-              <option value="Atkinson Hyperlegible, Inter, sans-serif">Atkinson</option>
-              <option value='"Segoe UI", sans-serif'>Segoe UI</option>
-            </select>
-          </dd>
-        </div>
-        <div>
-          <dt>Size</dt>
-          <dd>
-            <div class="popover-stepper">
-              <button class="popover-step-btn" onclick={() => updateFontSize(-1)}>−</button>
-              <span class="popover-step-val">{proseFontSize}px</span>
-              <button class="popover-step-btn" onclick={() => updateFontSize(1)}>+</button>
-            </div>
-          </dd>
-        </div>
-        <div>
-          <dt>Line</dt>
-          <dd>
-            <div class="popover-stepper">
-              <button class="popover-step-btn" onclick={() => updateLineHeight(-0.05)}>−</button>
-              <span class="popover-step-val">{proseLineHeight.toFixed(2)}</span>
-              <button class="popover-step-btn" onclick={() => updateLineHeight(0.05)}>+</button>
-            </div>
-          </dd>
-        </div>
-        <div>
-          <dt>Align</dt>
-          <dd>
-            <button class="popover-btn" onclick={() => updateSettings({ proseReaderTextAlign: proseTextAlign === "justify" ? "left" : "justify" })}>{proseTextAlign}</button>
-          </dd>
-        </div>
-        <div>
-          <dt>Width</dt>
-          <dd>
-            <div class="popover-stepper">
-              <button class="popover-step-btn" onclick={() => updateContentWidth(-40)}>−</button>
-              <span class="popover-step-val">{proseContentWidth}px</span>
-              <button class="popover-step-btn" onclick={() => updateContentWidth(40)}>+</button>
-            </div>
-          </dd>
-        </div>
-        <div>
-          <dt>Full Width</dt>
-          <dd>
-            <button class="popover-toggle" type="button" aria-label="Toggle full width reading" title="Toggle full width reading" class:active={store.settings.proseReaderFullWidth} onclick={() => updateSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}></button>
-          </dd>
-        </div>
-      </dl>
+      {#if activeSubPanel === "tts"}
+        <TtsControls controller={tts} onback={() => activeSubPanel = "main"} />
+      {:else}
+        <dl>
+          <div>
+            <dt>Theme</dt>
+            <dd>
+              <div class="popover-color-swatches" style="display: flex; flex-wrap: wrap; gap: 4px; max-width: 150px;">
+                <button class="popover-swatch" style="background:#efe1c9;" class:active={proseTheme === "sepia"} onclick={() => updateSettings({ proseReaderTheme: "sepia" })} title="Sepia"></button>
+                <button class="popover-swatch" style="background:#000000;" class:active={proseTheme === "oled"} onclick={() => updateSettings({ proseReaderTheme: "oled" })} title="OLED"></button>
+                <button class="popover-swatch" style="background:#09080d;" class:active={proseTheme === "dark"} onclick={() => updateSettings({ proseReaderTheme: "dark" })} title="Dark"></button>
+                <button class="popover-swatch" style="background:#f5f1ea;" class:active={proseTheme === "light"} onclick={() => updateSettings({ proseReaderTheme: "light" })} title="Light"></button>
+                <button class="popover-swatch" style="background:#131316;" class:active={proseTheme === "nocturne"} onclick={() => updateSettings({ proseReaderTheme: "nocturne" })} title="Nocturne"></button>
+                <button class="popover-swatch" style="background:#1e293b;" class:active={proseTheme === "slate"} onclick={() => updateSettings({ proseReaderTheme: "slate" })} title="Slate"></button>
+                <button class="popover-swatch" style="background:#142217;" class:active={proseTheme === "forest"} onclick={() => updateSettings({ proseReaderTheme: "forest" })} title="Forest"></button>
+                <button class="popover-swatch" style="background:#2e3440;" class:active={proseTheme === "nord"} onclick={() => updateSettings({ proseReaderTheme: "nord" })} title="Nord"></button>
+                <button class="popover-swatch" style="background:#fbf5e6;" class:active={proseTheme === "warm"} onclick={() => updateSettings({ proseReaderTheme: "warm" })} title="Warm"></button>
+              </div>
+            </dd>
+          </div>
+          <div>
+            <dt>Text Color</dt>
+            <dd>
+              <input
+                class="popover-color-picker"
+                type="color"
+                value={prosePalette.text}
+                onchange={(event) => updateProseColor("text", event.currentTarget.value)}
+                title="Text color"
+              />
+            </dd>
+          </div>
+          <div>
+            <dt>Paper Color</dt>
+            <dd>
+              <input
+                class="popover-color-picker"
+                type="color"
+                value={prosePalette.surface}
+                onchange={(event) => updateProseColor("background", event.currentTarget.value)}
+                title="Page background"
+              />
+            </dd>
+          </div>
+          <div>
+            <dt>Font</dt>
+            <dd>
+              <select
+                class="popover-select"
+                value={proseFontFamily}
+                onchange={(event) => updateSettings({ proseReaderFontFamily: event.currentTarget.value })}
+              >
+                <option value="Georgia, serif">Georgia</option>
+                <option value="Merriweather, Georgia, serif">Merriweather</option>
+                <option value="'EB Garamond', serif">EB Garamond</option>
+                <option value="Lora, serif">Lora</option>
+                <option value="Literata, serif">Literata</option>
+                <option value="Inter, sans-serif">Inter</option>
+                <option value="Atkinson Hyperlegible, Inter, sans-serif">Atkinson</option>
+                <option value='"Segoe UI", sans-serif'>Segoe UI</option>
+              </select>
+            </dd>
+          </div>
+          <div>
+            <dt>Size</dt>
+            <dd>
+              <div class="popover-stepper">
+                <button class="popover-step-btn" onclick={() => updateFontSize(-1)}>−</button>
+                <span class="popover-step-val">{proseFontSize}px</span>
+                <button class="popover-step-btn" onclick={() => updateFontSize(1)}>+</button>
+              </div>
+            </dd>
+          </div>
+          <div>
+            <dt>Line</dt>
+            <dd>
+              <div class="popover-stepper">
+                <button class="popover-step-btn" onclick={() => updateLineHeight(-0.05)}>−</button>
+                <span class="popover-step-val">{proseLineHeight.toFixed(2)}</span>
+                <button class="popover-step-btn" onclick={() => updateLineHeight(0.05)}>+</button>
+              </div>
+            </dd>
+          </div>
+          <div>
+            <dt>Align</dt>
+            <dd>
+              <button class="popover-btn" onclick={() => updateSettings({ proseReaderTextAlign: proseTextAlign === "justify" ? "left" : "justify" })}>{proseTextAlign}</button>
+            </dd>
+          </div>
+          <div>
+            <dt>Width</dt>
+            <dd style="display: flex; align-items: center; gap: 8px;">
+              <div class="popover-stepper">
+                <button class="popover-step-btn" onclick={() => updateContentWidth(-40)} disabled={store.settings.proseReaderFullWidth}>−</button>
+                <span class="popover-step-val" style={store.settings.proseReaderFullWidth ? "opacity: 0.5;" : ""}>
+                  {store.settings.proseReaderFullWidth ? "Full" : `${proseContentWidth}px`}
+                </span>
+                <button class="popover-step-btn" onclick={() => updateContentWidth(40)} disabled={store.settings.proseReaderFullWidth}>+</button>
+              </div>
+              <button class="popover-btn" class:active={store.settings.proseReaderFullWidth} onclick={() => updateSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}>Full</button>
+            </dd>
+          </div>
+          <div class="popover-tts-row" onclick={() => activeSubPanel = "tts"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') activeSubPanel = "tts"; }}>
+            <dt style="color: var(--reader-text);">Text to Speech</dt>
+            <dd style="color: var(--reader-accent-bright); font-weight: 600; display: flex; align-items: center; gap: 4px;">
+              <span>Configure</span>
+              <span style="font-size: 10px;">&gt;</span>
+            </dd>
+          </div>
+        </dl>
+      {/if}
     {/snippet}
 
     <div class="viewer novel-viewer" class:full-width-panel={store.settings.proseReaderFullWidth} style={`--prose-page-bg:${prosePalette.bg};`}>
@@ -377,6 +438,7 @@
       {:else}
         <article
           class="reader-body prose"
+          bind:this={readerBodyEl}
           style={`--prose-font-size:${proseFontSize}px;--prose-line-height:${proseLineHeight};--prose-paragraph-spacing:${proseParagraphSpacing}em;--prose-content-width:${proseContentWidth}px;--prose-font-family:${proseFontFamily};--prose-text:${prosePalette.text};--prose-bg:${prosePalette.surface};--prose-page-bg:${prosePalette.bg};--prose-align:${proseTextAlign};`}
         >{@html chapterHtml}</article>
       {/if}
@@ -431,6 +493,13 @@
   .reader-body :global(img) {
     max-width: 100%;
     height: auto;
+  }
+
+  .reader-body :global(.tts-active-segment) {
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--reader-accent, #8f82e6) 20%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--reader-accent, #8f82e6) 22%, transparent);
+    transition: background 160ms ease, box-shadow 160ms ease;
   }
 
   .center-overlay {

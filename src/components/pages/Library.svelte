@@ -1523,6 +1523,28 @@
     await reloadCategories();
   }
 
+  async function bulkRemoveFromLibrary(mangaIds: number[]) {
+    const ids = Array.from(new Set(mangaIds.filter((id) => Number.isFinite(id))));
+    if (!ids.length) return;
+    const idSet = new Set(ids);
+    const results = await Promise.allSettled(ids.map((id) => gql(UPDATE_MANGA, { id, inLibrary: false })));
+    const failedIds = ids.filter((_, index) => results[index]?.status === "rejected");
+    const successfulIds = ids.filter((id) => !failedIds.includes(id));
+    if (successfulIds.length) {
+      const successSet = new Set(successfulIds);
+      setLibraryMangaSnapshot(allManga.filter((entry) => !successSet.has(entry.id)));
+      cache.clearGroup(CACHE_GROUPS.LIBRARY);
+      await reloadCategories();
+    }
+    if (failedIds.length) {
+      addToast({
+        kind: "error",
+        title: "Could not remove every title",
+        body: `${failedIds.length} of ${idSet.size} selected titles could not be removed.`,
+      });
+    }
+  }
+
   async function deleteAllDownloads(manga: Manga) {
     try {
       const data = await gql<{ chapters: { nodes: Chapter[] } }>(GET_CHAPTERS, { mangaId: manga.id });
@@ -1560,6 +1582,44 @@
     } catch (toggleError) {
       console.error(toggleError);
       await reloadCategories();
+    }
+  }
+
+  async function bulkToggleMangaCategory(mangaIds: number[], category: Category) {
+    const ids = Array.from(new Set(mangaIds.filter((id) => Number.isFinite(id))));
+    if (!ids.length) return;
+    const categories = categoriesHaveMangaMembers()
+      ? store.categories
+      : await hydrateCategoryMembers(false).catch(() => store.categories);
+    const currentCategory = categories.find((entry) => entry.id === category.id);
+    const currentIds = new Set((currentCategory?.mangas?.nodes ?? []).map((entry) => entry.id));
+    const addIds = ids.filter((id) => !currentIds.has(id));
+    const removeIds = ids.filter((id) => currentIds.has(id));
+    const mangaById = new Map(allManga.map((entry) => [entry.id, entry]));
+
+    setCategories(categories.map((entry) => {
+      if (entry.id !== category.id || !entry.mangas) return entry;
+      const removeSet = new Set(removeIds);
+      const nodes = [
+        ...entry.mangas.nodes.filter((node) => !removeSet.has(node.id)),
+        ...addIds.map((id) => mangaById.get(id)).filter((manga): manga is Manga => Boolean(manga)),
+      ];
+      return { ...entry, mangas: { nodes } };
+    }));
+
+    const mutations = [
+      ...addIds.map((mangaId) => gql(UPDATE_MANGA_CATEGORIES, { mangaId, addTo: [category.id], removeFrom: [] })),
+      ...removeIds.map((mangaId) => gql(UPDATE_MANGA_CATEGORIES, { mangaId, addTo: [], removeFrom: [category.id] })),
+    ];
+    const results = await Promise.allSettled(mutations);
+    await reloadCategories();
+    const failed = results.filter((result) => result.status === "rejected").length;
+    if (failed) {
+      addToast({
+        kind: "error",
+        title: "Could not update every folder item",
+        body: `${failed} of ${ids.length} selected titles could not be updated.`,
+      });
     }
   }
 
@@ -1800,6 +1860,8 @@
         onAddToLibrary={addToLibrary}
         onDeleteAllDownloads={deleteAllDownloads}
         onToggleCategory={toggleMangaCategory}
+        onBulkRemoveFromLibrary={bulkRemoveFromLibrary}
+        onBulkToggleCategory={bulkToggleMangaCategory}
         onCreateAndAssign={createAndAssign}
         onCreateCategory={createCategoryOnly}
         onCoverErrorDetected={wakeServerForLibraryCovers}

@@ -41,7 +41,16 @@ export type SearchSourcesPane = "browse" | "extensions" | "novels";
 export type ReadingDirection = "ltr" | "rtl";
 export type ChapterSortDir   = "desc" | "asc";
 export type ChapterSortMode  = "source" | "chapterNumber" | "uploadDate";
-export type ProseReaderTheme = "nocturne" | "dark" | "sepia" | "light" | "oled";
+export type ProseReaderTheme =
+  | "nocturne"
+  | "dark"
+  | "sepia"
+  | "light"
+  | "oled"
+  | "slate"
+  | "forest"
+  | "nord"
+  | "warm";
 export type ProseReaderAlign = "left" | "justify";
 export type PdfFitMode = "width" | "page" | "actual";
 
@@ -426,6 +435,7 @@ export interface Settings {
   proseReaderFullWidth:    boolean;
   pdfFitMode:              PdfFitMode;
   pdfDarkMode:             boolean;
+  pdfReflowMode:           boolean;
   pageGap:                 boolean;
   optimizeContrast:        boolean;
   offsetDoubleSpreads:     boolean;
@@ -544,14 +554,15 @@ export const DEFAULT_SETTINGS: Settings = {
   proseReaderLineHeight:  1.75,
   proseReaderParagraphSpacing: 1.1,
   proseReaderContentWidth: 760,
-  proseReaderTextColor:   "#efe9de",
-  proseReaderBackgroundColor: "#17121c",
+  proseReaderTextColor:   "#ffffff",
+  proseReaderBackgroundColor: "#131316",
   proseReaderTheme:       "nocturne",
   proseReaderTextAlign:   "left",
   bookReaderFlow:         "paginated",
   proseReaderFullWidth:   false,
   pdfFitMode:             "width",
   pdfDarkMode:            false,
+  pdfReflowMode:          false,
   pageGap:                true,
   optimizeContrast:       false,
   offsetDoubleSpreads:    false,

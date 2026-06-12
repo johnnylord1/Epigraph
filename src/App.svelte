@@ -2852,9 +2852,52 @@
     }
   }
 
+  function isKeyboardEditableTarget(target: EventTarget | null) {
+    if (!(target instanceof HTMLElement)) return false;
+    const tag = target.tagName.toLowerCase();
+    return tag === "input" || tag === "textarea" || tag === "select" || target.isContentEditable;
+  }
+
+  async function exitFullscreen() {
+    if (!win) return;
+    await win.setFullscreen(false).catch((error) => {
+      console.warn("Could not exit fullscreen:", error);
+    });
+    store.isFullscreen = await win.isFullscreen().catch(() => false);
+  }
+
+  async function toggleAppFullscreen() {
+    if (!win) return;
+    const next = !(await win.isFullscreen().catch(() => store.isFullscreen));
+    await win.setFullscreen(next).catch((error) => {
+      console.warn("Could not toggle fullscreen:", error);
+    });
+    store.isFullscreen = await win.isFullscreen().catch(() => next);
+  }
+
+  function handleGlobalFullscreenKey(e: KeyboardEvent) {
+    if (isKeyboardEditableTarget(e.target)) return;
+    if (e.key === "Escape" && store.isFullscreen) {
+      e.preventDefault();
+      e.stopPropagation();
+      void exitFullscreen();
+      return;
+    }
+    const bind = store.settings.keybinds?.toggleFullscreen ?? "f";
+    if (!e.ctrlKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === bind.toLowerCase()) {
+      e.preventDefault();
+      void toggleAppFullscreen();
+    }
+  }
+
   $effect(() => {
     window.addEventListener("keydown", handleZoomKey);
     return () => window.removeEventListener("keydown", handleZoomKey);
+  });
+
+  $effect(() => {
+    window.addEventListener("keydown", handleGlobalFullscreenKey, true);
+    return () => window.removeEventListener("keydown", handleGlobalFullscreenKey, true);
   });
 
   function handleRetry() {
@@ -2944,6 +2987,17 @@
         {/if}
       </div>
       <div class="aethon-search-dim-layer" aria-hidden="true"></div>
+      {#if store.isFullscreen}
+        <button
+          type="button"
+          class="fullscreen-exit-btn"
+          title="Exit fullscreen"
+          aria-label="Exit fullscreen"
+          onclick={() => void exitFullscreen()}
+        >
+          Exit fullscreen
+        </button>
+      {/if}
       {#if themeEditorOpen}
         {#if ThemeEditorComponent}
           {@const ThemeEditorView = ThemeEditorComponent}
@@ -2999,6 +3053,33 @@
     text-transform: uppercase;
   }
 
+  .fullscreen-exit-btn {
+    position: fixed;
+    top: 14px;
+    right: 14px;
+    z-index: 2147483500;
+    min-height: 34px;
+    padding: 0 12px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--accent-dim) 42%, var(--border-dim));
+    background: color-mix(in srgb, var(--bg-raised) 82%, transparent);
+    color: var(--accent-fg);
+    font-family: var(--font-ui);
+    font-size: var(--text-2xs);
+    font-weight: var(--weight-bold);
+    letter-spacing: var(--tracking-wide);
+    text-transform: uppercase;
+    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.34);
+    cursor: pointer;
+  }
+
+  .fullscreen-exit-btn:hover,
+  .fullscreen-exit-btn:focus-visible {
+    color: var(--text-primary);
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent-muted) 42%, var(--bg-raised));
+  }
+
   :global([data-aethon-motion="idle"] .aethon-app-shell .aethon-search-dim-layer) {
     opacity: 0 !important;
     backdrop-filter: none !important;
@@ -3013,6 +3094,22 @@
 
   :global([data-aethon-motion="idle"] .aethon-app-shell *:not(.anim-spin)) {
     animation-play-state: paused !important;
+  }
+
+  :global([data-aethon-motion="idle"] .aethon-app-shell .anim-spin) {
+    animation-play-state: paused !important;
+  }
+
+  :global([data-aethon-motion="idle"] .aethon-app-shell .n-topbar),
+  :global([data-aethon-motion="idle"] .aethon-app-shell .n-sidebar),
+  :global([data-aethon-motion="idle"] .aethon-app-shell .n-search),
+  :global([data-aethon-motion="idle"] .aethon-app-shell .n-popover),
+  :global([data-aethon-motion="idle"] .aethon-app-shell .content-header),
+  :global([data-aethon-motion="idle"] .aethon-app-shell .repoOverlayBackdrop),
+  :global([data-aethon-motion="idle"] .aethon-app-shell .modal),
+  :global([data-aethon-motion="idle"] .aethon-app-shell .backdrop) {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
   }
 
   :global([data-aethon-motion="idle"] .aethon-app-shell .settings-theme-preview__glow) {

@@ -1544,9 +1544,11 @@ server.maxSourcesInParallel = 6
     }
 
     #[test]
-    fn local_server_java_args_do_not_disable_bytecode_verification() {
+    fn local_server_java_args_enable_extension_bytecode_compatibility() {
         let args = local_server_java_args(Path::new("C:\\fake\\Suwayomi-Server.jar"));
-        assert!(!args.iter().any(|arg| arg == "-noverify"));
+        assert!(args.iter().any(|arg| arg == LOCAL_SERVER_JAVA_EXTENSION_COMPAT_FLAG));
+        assert!(args.iter().position(|arg| arg == LOCAL_SERVER_JAVA_EXTENSION_COMPAT_FLAG)
+            < args.iter().position(|arg| arg == "-jar"));
     }
 
     #[test]
@@ -3180,9 +3182,10 @@ server.extensionRepos = []
 "#;
 
 const LOCAL_SERVER_JAVA_XMS: &str = "96m";
-const LOCAL_SERVER_JAVA_XMX: &str = "320m";
+const LOCAL_SERVER_JAVA_XMX: &str = "512m";
+const LOCAL_SERVER_JAVA_EXTENSION_COMPAT_FLAG: &str = "-noverify";
 const LOCAL_SERVER_JAVA_TOOL_OPTIONS: &str =
-    "-Djava.awt.headless=true -Xms96m -Xmx320m -XX:+UseG1GC";
+    "-Djava.awt.headless=true -Xms96m -Xmx512m -XX:+UseG1GC";
 
 fn local_server_java_args(jar: &Path) -> Vec<String> {
     vec![
@@ -3190,6 +3193,7 @@ fn local_server_java_args(jar: &Path) -> Vec<String> {
         format!("-Xms{LOCAL_SERVER_JAVA_XMS}"),
         format!("-Xmx{LOCAL_SERVER_JAVA_XMX}"),
         "-XX:+UseG1GC".to_string(),
+        LOCAL_SERVER_JAVA_EXTENSION_COMPAT_FLAG.to_string(),
         "-jar".to_string(),
         jar.to_string_lossy().into_owned(),
     ]

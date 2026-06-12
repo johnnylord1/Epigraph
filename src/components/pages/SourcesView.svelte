@@ -842,7 +842,7 @@
     utilityPanel = null;
     loading = true;
     untrack(() => Promise.all([
-      fetchFromRepo(),
+      loadExtensions(),
       isNovelMode ? Promise.resolve() : refreshSetupState(),
     ]).finally(() => {
       loading = false;
@@ -853,7 +853,7 @@
     const handleServerReady = () => {
       if (isNovelMode) return;
       void Promise.all([
-        fetchFromRepo(),
+        loadExtensions(),
         loadRepos(),
         refreshSetupState(),
       ]).finally(() => {

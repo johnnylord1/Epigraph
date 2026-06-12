@@ -95,17 +95,19 @@
   const SEARCH_RECOMMENDATION_LIMIT_STEP = 7;
   const SEARCH_RECOMMENDATION_MAX_LIMIT = 420;
   const SEARCH_RECOMMENDATION_MIN_SECTION_FILL = 6;
-  const SEARCH_RECOMMENDATION_AUTOFILL_TARGET = 56;
-  const SEARCH_RECOMMENDATION_AUTOFILL_PAGE_LIMIT = 16;
+  const SEARCH_RECOMMENDATION_AUTOFILL_TARGET = 32;
+  const SEARCH_RECOMMENDATION_AUTOFILL_PAGE_LIMIT = 3;
   const SEARCH_RECOMMENDATION_PER_SOURCE_CAP = 60;
   const SEARCH_RECOMMENDATION_MANGA_SEED_CAP = 240;
   const SEARCH_RECOMMENDATION_NOVEL_SEED_CAP = 180;
   const SEARCH_RECOMMENDATION_PROVIDER_RESULT_CAP = 120;
   const SEARCH_RECOMMENDATION_SCROLL_THROTTLE_MS = 160;
   const SEARCH_RECOMMENDATION_DUPLICATE_PAGE_RETRY_LIMIT = 18;
+  const SEARCH_RECOMMENDATION_MANGA_AUTOFILL_DUPLICATE_RETRY_LIMIT = 3;
   const TRACKER_SCORE_ENRICHMENT_LIMIT = 32;
   const TRACKER_SCORE_BATCH_SIZE = 12;
-  const TRACKER_SCORE_MAL_FALLBACK_LIMIT = 8;
+  const TRACKER_SCORE_MAL_FALLBACK_LIMIT = 3;
+  const TRACKER_SCORE_MAL_RATE_LIMIT_COOLDOWN_MS = 5 * 60 * 1000;
   const HARDCOVER_SCORE_ENRICHMENT_LIMIT = 6;
   const HARDCOVER_SCORE_ENRICHMENT_CONCURRENCY = 1;
   const HARDCOVER_SCORE_ENRICHMENT_TIMEOUT_MS = 750;
@@ -123,6 +125,7 @@
   const NOVEL_DETAIL_ENRICHMENT_CONCURRENCY = 1;
   const NOVEL_DETAIL_ENRICHMENT_TIMEOUT_MS = 850;
   const trackerScoreSearchCache = new Map<string, TrackSearch[]>();
+  let malTrackerPausedUntil = 0;
   const hardcoverScoreSearchCache = new Map<string, RecommendationProviderSignal | null>();
   let searchHardcoverRecordsRefreshInFlight = false;
   let searchHardcoverRecordsRefreshFailedAt = 0;
@@ -574,6 +577,7 @@
 
   function selectContentType(next: "manga" | "novels") {
     if (activeContentType === next) return;
+    releaseSearchRecommendationTransientState();
     activeContentType = next;
     resetContentTypeTransientState();
     if (activeBrowseTab === "keyword" && kw_submitted) {
@@ -626,6 +630,49 @@
     searchRecommendationMoreTriggeredAt = new Map();
     searchRecommendationMoreRequestedWidths = new Map();
     searchRecommendationSectionOrder = new Map();
+  }
+
+  function releaseSearchRecommendationTransientState() {
+    clearHardcoverBackgroundTimer();
+    searchTrackerScoreAbortCtrl?.abort();
+    searchSourceSeedAbortCtrl?.abort();
+    searchTrackerScoreAbortCtrl = null;
+    searchSourceSeedAbortCtrl = null;
+
+    searchTrackerScoreResults = [];
+    searchTrackerTrendingResults = [];
+    searchTrackerRecordCandidates = [];
+    searchTrackerSeedItems = [];
+    searchSourceSeedResults = [];
+    searchFreshSourceSeedResults = [];
+    searchNovelSourceSeedResults = [];
+    searchHardcoverRecords = [];
+    searchHardcoverDiscoveryResults = [];
+    searchHardcoverScoreResults = new Map();
+    searchNovelDetailTagsByKey = new Map();
+    searchNovelDetailUpdatedAtByKey = new Map();
+    failedSearchCoverKeys = new Set();
+    searchRecommendationVisibleLimits = new Map();
+    searchRecommendationMoreLoadingKeys = new Set();
+    searchRecommendationMoreExhaustedKeys = new Set();
+    searchRecommendationMorePages = new Map();
+    searchRecommendationMoreTriggeredAt = new Map();
+    searchRecommendationMoreRequestedWidths = new Map();
+    searchRecommendationSectionOrder = new Map();
+
+    searchTrackerScoreLoading = false;
+    searchTrackerTrendingLoading = false;
+    searchHardcoverDiscoveryLoading = false;
+    searchHardcoverScoreLoading = false;
+    searchSourceSeedLoading = false;
+    searchMangaSeedAutofillLoading = false;
+    searchNovelSeedAutofillLoading = false;
+    searchMangaSeedAutofillKey = "";
+    searchMangaSeedAutofillPage = 1;
+    searchMangaSeedAutofillExhausted = false;
+    searchNovelSeedAutofillKey = "";
+    searchNovelSeedAutofillPage = 1;
+    searchNovelSeedAutofillExhausted = false;
   }
 
   function releaseBrowseTransientState() {
@@ -739,6 +786,9 @@
   }
 
   function selectBrowseTab(next: SearchTab) {
+    if (activeBrowseTab === "keyword" && next !== "keyword") {
+      releaseSearchRecommendationTransientState();
+    }
     activeBrowseTab = next;
     if (next === "keyword") {
       searchQuery = kw_query || kw_submitted;
@@ -1461,6 +1511,13 @@
     if (searchTrackerScoreExpectedKey === searchTrackerScoreKey) return;
     untrack(() => {
       void refreshSearchTrackerScores(searchTrackerScoreExpectedKey, searchTrackerScoreTitles, searchScoreTrackers);
+    });
+  });
+
+  $effect(() => {
+    store.libraryMangaSnapshot;
+    untrack(() => {
+      void refreshSearchProfileLibrary();
     });
   });
 
@@ -3077,7 +3134,6 @@
 
     const visibilitySettings = browseVisibilitySettings;
     const mangaLinks = store.settings.mangaLinks;
-    const fallbackTerms = ["action", "fantasy", "adventure", "romance"];
     const previousSeedCount = searchSourceSeedResults.length;
     const previousFreshCount = searchFreshSourceSeedResults.length;
     searchMangaSeedAutofillLoading = true;
@@ -3098,19 +3154,6 @@
         console.warn(`Search recommendations could not load ${type.toLowerCase()} page ${request.sourcePage} for ${entry.displayName}.`, error);
       }
 
-      if (type === "LATEST") return [] as Manga[];
-      for (const term of fallbackTerms) {
-        const fallback = await fetchSourceMangaSearchWithFallback({
-          sourceId: entry.mangaSource.id,
-          query: term,
-        });
-        const visible = withMangaSourceMetadata(
-          fallback.filter((manga) => !shouldHideNsfw(manga, visibilitySettings)),
-          entry,
-        );
-        if (visible.length > 0) return visible;
-      }
-
       return [] as Manga[];
     };
 
@@ -3125,7 +3168,7 @@
       const latestIncoming = latestSettled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
       if (popularIncoming.length === 0 && latestIncoming.length === 0) {
         searchMangaSeedAutofillPage = nextPage;
-        if (nextPage >= SEARCH_RECOMMENDATION_DUPLICATE_PAGE_RETRY_LIMIT) {
+        if (nextPage >= SEARCH_RECOMMENDATION_MANGA_AUTOFILL_DUPLICATE_RETRY_LIMIT) {
           searchMangaSeedAutofillExhausted = true;
         }
         return;
@@ -3146,7 +3189,7 @@
       searchMangaSeedAutofillPage = nextPage;
 
       if (nextSeedResults.length <= previousSeedCount && nextFreshResults.length <= previousFreshCount) {
-        if (nextPage >= SEARCH_RECOMMENDATION_DUPLICATE_PAGE_RETRY_LIMIT) {
+        if (nextPage >= SEARCH_RECOMMENDATION_MANGA_AUTOFILL_DUPLICATE_RETRY_LIMIT) {
           searchMangaSeedAutofillExhausted = true;
         }
       }
@@ -3650,6 +3693,14 @@
     return `${tracker.id}:${recommendationTitleKey(title, contentType)}`;
   }
 
+  function isMalTrackerPaused() {
+    return Date.now() < malTrackerPausedUntil;
+  }
+
+  function pauseMalTrackerRequests() {
+    malTrackerPausedUntil = Date.now() + TRACKER_SCORE_MAL_RATE_LIMIT_COOLDOWN_MS;
+  }
+
   function comparableRecommendationTitle(title: string) {
     return recommendationTitleKey(title, "manga")
       .replace(/^comic:/, "")
@@ -3771,10 +3822,15 @@
   }
 
   async function fetchMalTrackerCatalog(tracker: BrowseTrackerEntry, page: number) {
+    if (isMalTrackerPaused()) return [];
     const url = catalogFeed === "latest"
       ? `https://api.jikan.moe/v4/manga?page=${page}&limit=${TRACKER_CATALOG_PAGE_SIZE}&order_by=start_date&sort=desc`
       : `https://api.jikan.moe/v4/top/manga?page=${page}&limit=${TRACKER_CATALOG_PAGE_SIZE}${catalogFeed === "popular" ? "&filter=bypopularity" : ""}`;
     const response = await fetch(url, { headers: { Accept: "application/json" } });
+    if (response.status === 429) {
+      pauseMalTrackerRequests();
+      return [];
+    }
     if (!response.ok) throw new Error(`MyAnimeList catalog failed (${response.status})`);
     const data = await response.json();
     const items = (data?.data ?? []).filter((item: any) => item.mal_id && item.type !== "Anime");
@@ -3823,8 +3879,13 @@
   }
 
   async function fetchSearchTrendingMalCatalog(tracker: BrowseTrackerEntry, page: number) {
+    if (isMalTrackerPaused()) return [];
     const url = `https://api.jikan.moe/v4/top/manga?page=${page}&limit=${TRACKER_CATALOG_PAGE_SIZE}`;
     const response = await fetch(url, { headers: { Accept: "application/json" } });
+    if (response.status === 429) {
+      pauseMalTrackerRequests();
+      return [];
+    }
     if (!response.ok) throw new Error(`MyAnimeList trending catalog failed (${response.status})`);
     const data = await response.json();
     const items = (data?.data ?? []).filter((item: any) => item.mal_id && item.type !== "Anime");
@@ -3965,8 +4026,13 @@
   }
 
   async function fetchMalTrackerScoreByTitle(tracker: BrowseTrackerEntry, title: string, signal: AbortSignal) {
+    if (isMalTrackerPaused()) return [];
     const url = `https://api.jikan.moe/v4/manga?q=${encodeURIComponent(title)}&limit=5`;
     const response = await fetch(url, { headers: { Accept: "application/json" }, signal });
+    if (response.status === 429) {
+      pauseMalTrackerRequests();
+      return [];
+    }
     if (!response.ok) return [];
     const data = await response.json();
     const items = (data?.data ?? []).filter((item: any) => item.mal_id && item.type !== "Anime");
@@ -4786,7 +4852,7 @@
     </button>
   </div>
 
-  {#if setupState && setupState.kind !== "ready"}
+  {#if activeBrowseTab !== "source" && setupState && setupState.kind !== "ready"}
     <div class="setup-banner">
       <SetupStatusCard
         state={setupState}

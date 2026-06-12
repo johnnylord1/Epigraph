@@ -19,7 +19,6 @@
   import { setReading } from "../../lib/discord";
   import type { FitMode } from "../../store/state.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
-  import ReaderBrightnessControl from "./ReaderBrightnessControl.svelte";
   import ReaderHud from "./ReaderHud.svelte";
 
   const AVG_MIN_PER_PAGE = 0.33;
@@ -991,7 +990,6 @@
           </div>
         </dd>
       </div>
-      <ReaderBrightnessControl />
       <div>
         <dt>Direction</dt>
         <dd>

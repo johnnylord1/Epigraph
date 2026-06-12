@@ -10,6 +10,13 @@ export interface LibraryUpdateProgressNumbers {
   percent: number;
 }
 
+export function libraryUpdatePercent(current: number, total: number) {
+  if (!Number.isFinite(total) || total <= 0) return 0;
+  const boundedCurrent = Math.max(0, Math.min(total, current));
+  if (boundedCurrent >= total) return 100;
+  return Math.max(0, Math.min(99, Math.floor((boundedCurrent / total) * 100)));
+}
+
 export function libraryUpdateProgressNumbers(jobsInfo: any): LibraryUpdateProgressNumbers | undefined {
   const total = Number(jobsInfo?.totalJobs ?? 0);
   if (!Number.isFinite(total) || total <= 0) return undefined;
@@ -17,7 +24,7 @@ export function libraryUpdateProgressNumbers(jobsInfo: any): LibraryUpdateProgre
   return {
     current,
     total,
-    percent: Math.max(0, Math.min(100, Math.round((current / total) * 100))),
+    percent: jobsInfo?.isRunning && current >= total ? 99 : libraryUpdatePercent(current, total),
   };
 }
 
@@ -31,7 +38,13 @@ export function formatLibraryUpdateProgress(jobsInfo: any) {
       return `Starting update for ${total} titles${skipped}.`;
     }
     const current = Math.min(Math.max(0, finished), total);
-    const percent = Math.max(0, Math.min(100, Math.round((current / total) * 100)));
+    const percent = libraryUpdatePercent(current, total);
+    if (jobsInfo?.isRunning && current >= total) {
+      return `Finalizing update for ${total} titles${skipped}.`;
+    }
+    if (!jobsInfo?.isRunning && current >= total) {
+      return `Checked ${total}/${total} titles - complete${skipped}.`;
+    }
     return `Checking titles ${current}/${total} - ${percent}%${skipped}.`;
   }
   if (jobsInfo?.isRunning) return "Suwayomi is checking your library.";
@@ -156,10 +169,13 @@ export async function waitForLibraryUpdateToSettle(
 
   while (Date.now() - startedAt < timeoutMs) {
     const jobsInfo = await readLibraryUpdateStatusLive();
+    const hasMeaningfulJobs = Number(jobsInfo?.totalJobs ?? 0) > 0 || Number(jobsInfo?.finishedJobs ?? 0) > 0;
     if (jobsInfo) {
       observedRunning ||= Boolean(jobsInfo.isRunning);
-      observedJobs ||= Number(jobsInfo.totalJobs ?? 0) > 0 || Number(jobsInfo.finishedJobs ?? 0) > 0;
-      onProgress?.(jobsInfo);
+      observedJobs ||= hasMeaningfulJobs;
+      if (jobsInfo.isRunning || hasMeaningfulJobs) {
+        onProgress?.(jobsInfo);
+      }
     } else {
       onWaiting?.(Date.now() - startedAt);
     }

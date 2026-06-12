@@ -22,6 +22,41 @@ describe("library update runtime helpers", () => {
     });
   });
 
+  it("does not show 100 percent before the final title is finished", () => {
+    const jobsInfo = {
+      isRunning: true,
+      finishedJobs: 631,
+      totalJobs: 633,
+      skippedMangasCount: 0,
+    };
+
+    expect(formatLibraryUpdateProgress(jobsInfo)).toBe("Checking titles 631/633 - 99%.");
+    expect(libraryUpdateProgressNumbers(jobsInfo)).toEqual({
+      current: 631,
+      total: 633,
+      percent: 99,
+    });
+  });
+
+  it("uses complete copy only after all titles finish", () => {
+    expect(formatLibraryUpdateProgress({
+      isRunning: true,
+      finishedJobs: 633,
+      totalJobs: 633,
+    })).toBe("Finalizing update for 633 titles.");
+    expect(libraryUpdateProgressNumbers({
+      isRunning: true,
+      finishedJobs: 633,
+      totalJobs: 633,
+    })?.percent).toBe(99);
+
+    expect(formatLibraryUpdateProgress({
+      isRunning: false,
+      finishedJobs: 633,
+      totalJobs: 633,
+    })).toBe("Checked 633/633 titles - complete.");
+  });
+
   it("keeps waiting and preparation text stable", () => {
     expect(formatLibraryUpdateProgress({ isRunning: true, totalJobs: 0, finishedJobs: 0 }))
       .toBe("Suwayomi is checking your library.");

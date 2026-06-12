@@ -1326,7 +1326,6 @@ pub struct BookLibraryUiRow {
     pub record_server_version: i64,
 }
 
-
 #[allow(dead_code)]
 #[derive(Debug, Clone, FromRow)]
 pub struct BookProgressRow {

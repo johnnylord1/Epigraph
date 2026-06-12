@@ -230,4 +230,29 @@
   - invokes exposed Chromium JavaScript GC only in the hidden/background path
 - Deliberately avoided disabling WebView GPU acceleration or lowering UX quality in this round because the measured idle CPU is already low and the remaining RAM is mostly native Java/WebView/GPU memory.
 
+## 2026-06-11 - Reader settings popover positioning responsively adjusted, capsule bar scaled up, and app-wide brightness control added
+- Repositioned settings popover to open to the right of the settings button on widescreen desktop viewports (`min-width: 1120px`) using `left: calc(50% + 290px)` to keep metadata centered. On mobile/narrow viewports, aligned popover to the right edge of the screen (`right: 16px`).
+- Scaled up the unified bottom capsule bar:
+  - Expanded width limit from `min(600px, calc(100% - 32px))` to `min(680px, calc(100% - 32px))` for a wider, longer feel.
+  - Increased height from `44px` to `52px` for a larger, premium appearance.
+  - Scaled up capsule buttons from `30px` to `36px` and unified their respective icon sizes (from `15px`/`14px` to `17px`/`16px`).
+  - Increased page indicator progress label size to `11px` (min-width `50px`) for improved readability.
+- Added a global, persisted brightness adjustment option (`readerBrightness`, defaulting to `1.0` / 100%):
+  - Declared `readerBrightness` inside global `Settings` and `DEFAULT_SETTINGS` in `state.svelte.ts` to ensure settings are saved automatically.
+  - Implemented the brightness dimming filter (`filter: brightness(...)`) on a wrapped `.reader-viewport-wrapper` in `ReaderHud.svelte`. This applies the brightness level to all reader viewports (Manga, EPUB, PDF, Web Novel) while keeping the overlay HUD controls (buttons, seekbar, settings popover) fully bright and highly accessible.
+  - Integrated a draggable brightness range slider input (`min="0.2"`, `max="1.0"`, `step="0.05"`) directly in the bottom capsule bar for quick and intuitive adjustments.
+- Symmetrically rearranged the bottom capsule HUD controls around the progress seekbar (left group: Close, Prev, Progress Label; middle: Progress Seekbar; right group: Next, Bookmark, Brightness Slider, Settings). Kept border and background visible on disabled buttons by dimming opacity to 0.35.
+- Scaled up the settings popover font sizes: labels (`dt`) to `12px` and controls (select, steppers, buttons) to `11px` for enhanced readability.
+- Combined the reader page `Width` stepper and `Full Width` toggle into a single row, disabling the stepper when "Full" is active. Extended the maximum content width limit to `1600px`.
+- Loaded additional premium typefaces (EB Garamond, Lora, Literata) from Google Fonts and added four new color presets (Slate, Forest, Nord, Warm) to all reader settings.
 
+## 2026-06-12 - Reader HUD popovers refactored, TTS sub-panel integrated, default colors corrected
+- Made the brightness button in the bottom capsule bar clickable to toggle a clean, animated floating popover above the capsule bar containing the range slider.
+- Moved TTS controls into a dedicated settings sub-panel inside the settings popover, replacing the horizontal floating TTS bar. The main settings view has a "Text to Speech" row to enter this sub-panel (with playback controls, speed slider, voice select, status, and a Back button).
+- Synced and reorganized settings in `BookReader.svelte` to match `NovelReader.svelte` features: supported Slate, Nord, Forest, and Warm themes; added EB Garamond, Lora, and Literata font options; combined the Width and Full Width settings rows (extending maximum width to `1600px`); and removed the duplicate brightness stepper.
+- Corrected theme/color bugs:
+  - Changed default reader text color from cream/purple to white (`#ffffff`) and background from purple (`#17121c`) to graphite/dark grey (`#131316`).
+  - Fixed the Nocturne theme swatch in `NovelReader.svelte` to correctly update `proseReaderTheme` instead of `proseTheme`.
+  - Updated the Nocturne swatch background style to `#131316` and updated color pickers' default fallbacks.
+- Excluded browser-reliant `tts.test.ts` from default Node `unit` tests workspace in `vitest.workspace.ts` to prevent environment compilation failures.
+- Fully integrated EPUB TTS provider binding inside `BookReader.svelte`, dynamically refreshing the speech provider when contents are registered or relocated, and stopping speech upon navigation or closure.

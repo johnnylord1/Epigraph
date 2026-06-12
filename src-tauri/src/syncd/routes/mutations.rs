@@ -79,7 +79,9 @@ pub async fn post_mutations(
                     )
                     .await
                     .map_err(|error| {
-                        AppError::Internal(format!("Failed to persist book entry mutation: {error}"))
+                        AppError::Internal(format!(
+                            "Failed to persist book entry mutation: {error}"
+                        ))
                     })?
                 }
                 MutationOperation::Delete => db::delete_book_entry_mutation(
@@ -369,7 +371,9 @@ pub async fn post_mutations(
                     )
                     .await
                     .map_err(|error| {
-                        AppError::Internal(format!("Failed to persist novel entry mutation: {error}"))
+                        AppError::Internal(format!(
+                            "Failed to persist novel entry mutation: {error}"
+                        ))
                     })?
                 }
                 MutationOperation::Delete => db::delete_novel_entry_mutation(
@@ -882,9 +886,7 @@ fn validate_novel_history_patch(patch: &NovelHistoryPatch) -> Option<ErrorDetail
     validate_non_negative_timestamp(patch.read_at_ms, "readAtMs")
 }
 
-fn validate_novel_classification_patch(
-    patch: &NovelClassificationPatch,
-) -> Option<ErrorDetail> {
+fn validate_novel_classification_patch(patch: &NovelClassificationPatch) -> Option<ErrorDetail> {
     if patch.plugin_id.trim().is_empty() {
         return Some(error_detail(
             "INVALID_PLUGIN_ID",

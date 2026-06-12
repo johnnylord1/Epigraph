@@ -46,6 +46,8 @@
     onAddToLibrary?: (manga: Manga) => Promise<void> | void;
     onDeleteAllDownloads?: (manga: Manga) => Promise<void> | void;
     onToggleCategory?: (manga: Manga, category: Category) => Promise<void> | void;
+    onBulkRemoveFromLibrary?: (mangaIds: number[]) => Promise<void> | void;
+    onBulkToggleCategory?: (mangaIds: number[], category: Category) => Promise<void> | void;
     onCreateAndAssign?: (manga: Manga) => Promise<void> | void;
     onCreateCategory?: () => Promise<void> | void;
     onCoverErrorDetected?: (mangaId: number) => void;
@@ -70,6 +72,8 @@
     onAddToLibrary = async () => {},
     onDeleteAllDownloads = async () => {},
     onToggleCategory = async () => {},
+    onBulkRemoveFromLibrary = undefined,
+    onBulkToggleCategory = undefined,
     onCreateAndAssign = async () => {},
     onCreateCategory = async () => {},
     onCoverErrorDetected = () => {},
@@ -198,12 +202,14 @@
     bulkWorking = true;
     bulkMoveOpen = false;
     try {
-      await Promise.all(
-        [...selectedIds].map((id) => {
+      if (onBulkToggleCategory) {
+        await onBulkToggleCategory([...selectedIds], category);
+      } else {
+        for (const id of selectedIds) {
           const manga = mangas.find((entry) => entry.id === id);
-          return manga ? onToggleCategory(manga, category) : Promise.resolve();
-        }),
-      );
+          if (manga) await onToggleCategory(manga, category);
+        }
+      }
     } finally {
       bulkWorking = false;
       exitSelectMode();
@@ -213,12 +219,14 @@
   async function bulkRemoveFromLibrary() {
     bulkWorking = true;
     try {
-      await Promise.all(
-        [...selectedIds].map((id) => {
+      if (onBulkRemoveFromLibrary) {
+        await onBulkRemoveFromLibrary([...selectedIds]);
+      } else {
+        for (const id of selectedIds) {
           const manga = mangas.find((entry) => entry.id === id);
-          return manga ? onRemoveFromLibrary(manga) : Promise.resolve();
-        }),
-      );
+          if (manga) await onRemoveFromLibrary(manga);
+        }
+      }
     } finally {
       bulkWorking = false;
       exitSelectMode();

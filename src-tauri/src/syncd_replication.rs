@@ -26,9 +26,8 @@ use crate::syncd::models::{
 };
 use crate::syncd_desktop::{
     build_pinned_http_client, desktop_state_dir, is_connection_error, is_needs_reauth_error,
-    load_persisted_state, now_ms, revalidate_session, save_persisted_state,
-    PersistedSyncSession, SyncdDesktopConnectionStatus, SyncdDesktopPersistedState,
-    SyncdReconnectStatus,
+    load_persisted_state, now_ms, revalidate_session, save_persisted_state, PersistedSyncSession,
+    SyncdDesktopConnectionStatus, SyncdDesktopPersistedState, SyncdReconnectStatus,
 };
 use crate::{
     book_library_state_path, novel_library_state_path_for_target,
@@ -364,8 +363,11 @@ async fn emit_replication_state_for_profile(
     profile_id: &str,
 ) -> Result<(), String> {
     let state = load_replication_state()?;
-    app.emit(EVENT_REPLICATION_STATE, profile_snapshot(&state, profile_id))
-        .map_err(|error| error.to_string())
+    app.emit(
+        EVENT_REPLICATION_STATE,
+        profile_snapshot(&state, profile_id),
+    )
+    .map_err(|error| error.to_string())
 }
 
 fn emit_replication_error(app: &AppHandle, profile_id: &str, error: impl Into<String>) {
@@ -397,9 +399,7 @@ pub async fn syncd_get_replication_state(
 }
 
 #[tauri::command]
-pub async fn syncd_get_session_catalog(
-    profile_id: String,
-) -> Result<SyncdSessionCatalog, String> {
+pub async fn syncd_get_session_catalog(profile_id: String) -> Result<SyncdSessionCatalog, String> {
     let persisted = load_persisted_state()?;
     let replication = load_replication_state()?;
     Ok(build_session_catalog(&persisted, &replication, &profile_id))
@@ -412,11 +412,9 @@ pub async fn syncd_set_active_replication_session(
     state: State<'_, SyncdReplicationState>,
 ) -> Result<SyncdReplicationSnapshot, String> {
     let persisted = load_persisted_state()?;
-    if !persisted
-        .sessions
-        .iter()
-        .any(|session| session.local_profile_id == input.profile_id && session.session_key == input.session_key)
-    {
+    if !persisted.sessions.iter().any(|session| {
+        session.local_profile_id == input.profile_id && session.session_key == input.session_key
+    }) {
         return Err("The selected sync session no longer exists locally.".to_string());
     }
     let snapshot = update_profile_state(&input.profile_id, |profile| {
@@ -487,11 +485,9 @@ pub async fn syncd_revalidate_session(
     state: State<'_, SyncdReplicationState>,
 ) -> Result<SyncdReconnectStatus, String> {
     let mut persisted = load_persisted_state()?;
-    let Some(session) = persisted
-        .sessions
-        .iter_mut()
-        .find(|session| session.local_profile_id == input.profile_id && session.session_key == input.session_key)
-    else {
+    let Some(session) = persisted.sessions.iter_mut().find(|session| {
+        session.local_profile_id == input.profile_id && session.session_key == input.session_key
+    }) else {
         return Err("The selected sync session no longer exists locally.".to_string());
     };
     let result = revalidate_session(session).await;
@@ -529,7 +525,9 @@ pub async fn syncd_forget_persisted_session(
     });
     save_persisted_state(&persisted)?;
     let profile = profile_state_mut(&mut replication, &input.profile_id);
-    if profile.active_session_key.is_none() && choose_default_session(&persisted.sessions, &input.profile_id).is_none() {
+    if profile.active_session_key.is_none()
+        && choose_default_session(&persisted.sessions, &input.profile_id).is_none()
+    {
         profile.replication_status = SyncdReplicationStatus::Idle;
         profile.last_error = None;
     }
@@ -873,10 +871,7 @@ fn write_novel_classification_state(
     fs::write(path, payload).map_err(|error| error.to_string())
 }
 
-pub async fn bootstrap_runtime(
-    app: AppHandle,
-    state: SyncdReplicationState,
-) -> Result<(), String> {
+pub async fn bootstrap_runtime(app: AppHandle, state: SyncdReplicationState) -> Result<(), String> {
     let desktop = load_persisted_state()?;
     let mut replication = load_replication_state()?;
     let mut known_profiles = desktop
@@ -976,10 +971,8 @@ pub async fn ensure_local_authority_for_profile(
             body
         });
     }
-    let payload: LocalAuthorityTokenResponse = response
-        .json()
-        .await
-        .map_err(|error| error.to_string())?;
+    let payload: LocalAuthorityTokenResponse =
+        response.json().await.map_err(|error| error.to_string())?;
 
     {
         let mut runtime = state.runtime.lock().await;
@@ -1017,7 +1010,9 @@ pub async fn handle_new_approved_session(
             profile.last_error = None;
         }
     })?;
-    if snapshot.active_session_key.as_deref() == Some(session.session_key.as_str()) && !snapshot.paused {
+    if snapshot.active_session_key.as_deref() == Some(session.session_key.as_str())
+        && !snapshot.paused
+    {
         ensure_worker_for_profile(app, state, &session.local_profile_id).await?;
     } else {
         emit_replication_state_for_profile(app, &session.local_profile_id).await?;
@@ -1125,7 +1120,11 @@ async fn run_profile_worker(
                 return;
             }
         };
-        let profile = replication.profiles.get(&profile_id).cloned().unwrap_or_default();
+        let profile = replication
+            .profiles
+            .get(&profile_id)
+            .cloned()
+            .unwrap_or_default();
         if profile.paused {
             let _ = emit_replication_state_for_profile(&app, &profile_id).await;
             return;
@@ -1173,12 +1172,14 @@ async fn run_profile_worker(
                     .error
                     .clone()
                     .unwrap_or_else(|| "Session revalidation failed.".to_string());
-                let next_status =
-                    if matches!(revalidated.status, SyncdDesktopConnectionStatus::NeedsReauth) {
-                        SyncdReplicationStatus::NeedsReauth
-                    } else {
-                        SyncdReplicationStatus::Offline
-                    };
+                let next_status = if matches!(
+                    revalidated.status,
+                    SyncdDesktopConnectionStatus::NeedsReauth
+                ) {
+                    SyncdReplicationStatus::NeedsReauth
+                } else {
+                    SyncdReplicationStatus::Offline
+                };
                 let _ = update_profile_state(&profile_id, |profile| {
                     profile.replication_status = next_status;
                     profile.last_error = Some(message.clone());
@@ -1320,7 +1321,9 @@ async fn replay_and_stream_remote(
         .await
         {
             Ok(StreamExit::ReplayRequired) => continue,
-            Ok(StreamExit::Disconnected) => return Err("Live sync stream disconnected.".to_string()),
+            Ok(StreamExit::Disconnected) => {
+                return Err("Live sync stream disconnected.".to_string())
+            }
             Err(error) => return Err(error),
         }
     }
@@ -1377,16 +1380,11 @@ async fn replay_and_stream_local_authority(
             profile.last_error = None;
         });
         let _ = emit_replication_state_for_profile(app, profile_id).await;
-        match stream_live_events_local_authority(
-            app,
-            &launch_target,
-            profile_id,
-            authority,
-        )
-        .await
-        {
+        match stream_live_events_local_authority(app, &launch_target, profile_id, authority).await {
             Ok(StreamExit::ReplayRequired) => continue,
-            Ok(StreamExit::Disconnected) => return Err("Live sync stream disconnected.".to_string()),
+            Ok(StreamExit::Disconnected) => {
+                return Err("Live sync stream disconnected.".to_string())
+            }
             Err(error) => return Err(error),
         }
     }
@@ -1403,7 +1401,10 @@ async fn fetch_changes_remote(
         .query(&[("sinceVersion", since_version)])
         .header("Authorization", format!("Bearer {}", session.access_token))
         .header(CLIENT_VERSION_HEADER.as_str(), CLIENT_VERSION)
-        .header(CLIENT_PROTOCOL_HEADER.as_str(), CLIENT_PROTOCOL_VERSION.to_string())
+        .header(
+            CLIENT_PROTOCOL_HEADER.as_str(),
+            CLIENT_PROTOCOL_VERSION.to_string(),
+        )
         .send()
         .await
         .map_err(|error| error.to_string())?;
@@ -1412,7 +1413,9 @@ async fn fetch_changes_remote(
     }
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
-    let detail = serde_json::from_str::<ErrorBody>(&body).ok().map(|body| body.error);
+    let detail = serde_json::from_str::<ErrorBody>(&body)
+        .ok()
+        .map(|body| body.error);
     if let Some(detail) = detail {
         if detail.code == "REPLAY_WINDOW_EXPIRED" {
             return Err("Replication fell behind syncd's replay window and syncd still has no authoritative snapshot route for recovery.".to_string());
@@ -1433,9 +1436,15 @@ async fn fetch_changes_local_authority(
     let response = client
         .get(format!("{}/v1/changes", authority.local_base_url))
         .query(&[("sinceVersion", since_version)])
-        .header("Authorization", format!("Bearer {}", authority.access_token))
+        .header(
+            "Authorization",
+            format!("Bearer {}", authority.access_token),
+        )
         .header(CLIENT_VERSION_HEADER.as_str(), CLIENT_VERSION)
-        .header(CLIENT_PROTOCOL_HEADER.as_str(), CLIENT_PROTOCOL_VERSION.to_string())
+        .header(
+            CLIENT_PROTOCOL_HEADER.as_str(),
+            CLIENT_PROTOCOL_VERSION.to_string(),
+        )
         .send()
         .await
         .map_err(|error| error.to_string())?;
@@ -1444,7 +1453,9 @@ async fn fetch_changes_local_authority(
     }
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
-    let detail = serde_json::from_str::<ErrorBody>(&body).ok().map(|body| body.error);
+    let detail = serde_json::from_str::<ErrorBody>(&body)
+        .ok()
+        .map(|body| body.error);
     if let Some(detail) = detail {
         if detail.code == "REPLAY_WINDOW_EXPIRED" {
             return Err("Replication fell behind syncd's replay window and syncd still has no authoritative snapshot route for recovery.".to_string());
@@ -1470,12 +1481,18 @@ async fn stream_live_events(
         .get(format!("{origin}/v1/events"))
         .header("Authorization", format!("Bearer {}", session.access_token))
         .header(CLIENT_VERSION_HEADER.as_str(), CLIENT_VERSION)
-        .header(CLIENT_PROTOCOL_HEADER.as_str(), CLIENT_PROTOCOL_VERSION.to_string())
+        .header(
+            CLIENT_PROTOCOL_HEADER.as_str(),
+            CLIENT_PROTOCOL_VERSION.to_string(),
+        )
         .send()
         .await
         .map_err(|error| error.to_string())?;
     if !response.status().is_success() {
-        return Err(format!("Live sync stream failed with HTTP {}.", response.status()));
+        return Err(format!(
+            "Live sync stream failed with HTTP {}.",
+            response.status()
+        ));
     }
 
     let mut event_name = String::new();
@@ -1495,8 +1512,8 @@ async fn stream_live_events(
                 match event_name.as_str() {
                     "change" => {
                         let payload = data_lines.join("\n");
-                        let envelope =
-                            serde_json::from_str::<ChangeEnvelope>(&payload).map_err(|error| error.to_string())?;
+                        let envelope = serde_json::from_str::<ChangeEnvelope>(&payload)
+                            .map_err(|error| error.to_string())?;
                         apply_remote_envelopes(
                             app,
                             launch_target,
@@ -1534,14 +1551,23 @@ async fn stream_live_events_local_authority(
     let client = insecure_local_syncd_client()?;
     let response = client
         .get(format!("{}/v1/events", authority.local_base_url))
-        .header("Authorization", format!("Bearer {}", authority.access_token))
+        .header(
+            "Authorization",
+            format!("Bearer {}", authority.access_token),
+        )
         .header(CLIENT_VERSION_HEADER.as_str(), CLIENT_VERSION)
-        .header(CLIENT_PROTOCOL_HEADER.as_str(), CLIENT_PROTOCOL_VERSION.to_string())
+        .header(
+            CLIENT_PROTOCOL_HEADER.as_str(),
+            CLIENT_PROTOCOL_VERSION.to_string(),
+        )
         .send()
         .await
         .map_err(|error| error.to_string())?;
     if !response.status().is_success() {
-        return Err(format!("Live sync stream failed with HTTP {}.", response.status()));
+        return Err(format!(
+            "Live sync stream failed with HTTP {}.",
+            response.status()
+        ));
     }
 
     let mut event_name = String::new();
@@ -1763,12 +1789,14 @@ async fn apply_remote_envelopes(
             }
             _ => continue,
         }
-        profile
-            .per_entity_remote_clock
-            .insert(
-                remote_clock_key(&envelope.scope_id, &envelope.entity_type, &envelope.entity_id),
-                envelope.lamport,
-            );
+        profile.per_entity_remote_clock.insert(
+            remote_clock_key(
+                &envelope.scope_id,
+                &envelope.entity_type,
+                &envelope.entity_id,
+            ),
+            envelope.lamport,
+        );
         *checkpoint = Some(SyncdReplicationScopeCheckpoint {
             scope_id: envelope.scope_id.clone(),
             last_applied_server_version: envelope.server_version,
@@ -1939,7 +1967,9 @@ fn delete_book_entry(state: &mut PersistedBookLibraryState, book_id: &str) {
         .books
         .retain(|entry| book_entry_entity_id(entry).as_deref() != Some(book_id));
     state.book_progress.retain(|entry| entry.book_id != book_id);
-    state.book_bookmarks.retain(|entry| entry.book_id != book_id);
+    state
+        .book_bookmarks
+        .retain(|entry| entry.book_id != book_id);
     state.books_category_assignments.remove(book_id);
 }
 
@@ -2063,7 +2093,9 @@ fn upsert_novel_entry(state: &mut PersistedNovelLibraryState, record: NovelEntry
     let chapter_count = state
         .chapters
         .iter()
-        .filter(|entry| value_string_field(entry, "novelId").as_deref() == Some(record.novel_id.as_str()))
+        .filter(|entry| {
+            value_string_field(entry, "novelId").as_deref() == Some(record.novel_id.as_str())
+        })
         .count() as i64;
     let next = json!({
         "id": record.novel_id,
@@ -2220,11 +2252,9 @@ fn upsert_novel_classification(
         "classifiedAtMs": record.classified_at_ms,
     });
     let plugin_id = novel_classification_entity_id(&next).unwrap_or_default();
-    if let Some(index) = state
-        .records
-        .iter()
-        .position(|entry| novel_classification_entity_id(entry).as_deref() == Some(plugin_id.as_str()))
-    {
+    if let Some(index) = state.records.iter().position(|entry| {
+        novel_classification_entity_id(entry).as_deref() == Some(plugin_id.as_str())
+    }) {
         state.records[index] = next;
     } else {
         state.records.push(next);
@@ -2247,7 +2277,10 @@ fn bookmark_entity_id_for_book(entry: &LocalBookBookmark) -> String {
         .or_else(|| entry.href.clone())
         .or_else(|| entry.page_index.map(|value| value.to_string()))
         .unwrap_or_else(|| "unknown".to_string());
-    format!("book.bookmark::{}", hash_digest(&format!("{}::{locator}", entry.book_id)))
+    format!(
+        "book.bookmark::{}",
+        hash_digest(&format!("{}::{locator}", entry.book_id))
+    )
 }
 
 fn bookmark_entity_id_for_novel(entry: &LocalNovelBookmark) -> String {
@@ -2257,7 +2290,10 @@ fn bookmark_entity_id_for_novel(entry: &LocalNovelBookmark) -> String {
         .or_else(|| entry.chapter_id.clone())
         .or_else(|| entry.chapter_title.clone())
         .unwrap_or_else(|| "unknown".to_string());
-    format!("novel.bookmark::{}", hash_digest(&format!("{}::{locator}", entry.novel_id)))
+    format!(
+        "novel.bookmark::{}",
+        hash_digest(&format!("{}::{locator}", entry.novel_id))
+    )
 }
 
 fn remote_clock_key(scope_id: &str, entity_type: &str, entity_id: &str) -> String {
@@ -2374,9 +2410,11 @@ fn build_book_library_ui_patch(value: &Value) -> BookLibraryUiPatch {
     BookLibraryUiPatch {
         active_category_id: value_string_field(value, "activeCategoryId"),
         type_filter: value_string_field(value, "typeFilter").unwrap_or_else(|| "all".to_string()),
-        status_filter: value_string_field(value, "statusFilter").unwrap_or_else(|| "all".to_string()),
+        status_filter: value_string_field(value, "statusFilter")
+            .unwrap_or_else(|| "all".to_string()),
         search: value_string_field(value, "search").unwrap_or_default(),
-        sort_mode: value_string_field(value, "sortMode").unwrap_or_else(|| "recentlyAdded".to_string()),
+        sort_mode: value_string_field(value, "sortMode")
+            .unwrap_or_else(|| "recentlyAdded".to_string()),
         sort_dir: value_string_field(value, "sortDir").unwrap_or_else(|| "desc".to_string()),
     }
 }
@@ -2751,11 +2789,9 @@ async fn submit_mutations_for_active_profiles(
         let Some(active_key) = profile.active_session_key.as_deref() else {
             continue;
         };
-        let Some(session) = desktop
-            .sessions
-            .iter()
-            .find(|session| session.local_profile_id == *profile_id && session.session_key == active_key)
-        else {
+        let Some(session) = desktop.sessions.iter().find(|session| {
+            session.local_profile_id == *profile_id && session.session_key == active_key
+        }) else {
             replication_log(format!(
                 "submit_mutations skip profile_id={} reason=missing_active_session key={}",
                 profile_id, active_key
@@ -2811,9 +2847,15 @@ async fn post_mutations_for_local_authority(
     ));
     let response = client
         .post(format!("{}/v1/mutations", authority.local_base_url))
-        .header("Authorization", format!("Bearer {}", authority.access_token))
+        .header(
+            "Authorization",
+            format!("Bearer {}", authority.access_token),
+        )
         .header(CLIENT_VERSION_HEADER.as_str(), CLIENT_VERSION)
-        .header(CLIENT_PROTOCOL_HEADER.as_str(), CLIENT_PROTOCOL_VERSION.to_string())
+        .header(
+            CLIENT_PROTOCOL_HEADER.as_str(),
+            CLIENT_PROTOCOL_VERSION.to_string(),
+        )
         .json(&request)
         .send()
         .await
@@ -2868,7 +2910,10 @@ async fn post_mutations_for_session(
             .post(format!("{origin}/v1/mutations"))
             .header("Authorization", format!("Bearer {}", session.access_token))
             .header(CLIENT_VERSION_HEADER.as_str(), CLIENT_VERSION)
-            .header(CLIENT_PROTOCOL_HEADER.as_str(), CLIENT_PROTOCOL_VERSION.to_string())
+            .header(
+                CLIENT_PROTOCOL_HEADER.as_str(),
+                CLIENT_PROTOCOL_VERSION.to_string(),
+            )
             .json(&request)
             .send()
             .await;
@@ -2939,7 +2984,10 @@ mod tests {
             label: Some("Here".to_string()),
             saved_at: 10,
         };
-        assert_eq!(bookmark_entity_id_for_book(&entry), bookmark_entity_id_for_book(&entry));
+        assert_eq!(
+            bookmark_entity_id_for_book(&entry),
+            bookmark_entity_id_for_book(&entry)
+        );
     }
 
     #[test]
@@ -3274,7 +3322,10 @@ mod tests {
         profile.paused = false;
 
         let catalog = build_session_catalog(&persisted, &replication, "local-a");
-        assert_eq!(catalog.active_session_key.as_deref(), Some("session-active"));
+        assert_eq!(
+            catalog.active_session_key.as_deref(),
+            Some("session-active")
+        );
         assert_eq!(catalog.sessions.len(), 2);
 
         let active = catalog
@@ -3283,7 +3334,10 @@ mod tests {
             .find(|session| session.session_key == "session-active")
             .unwrap();
         assert!(active.is_active_for_sync);
-        assert_eq!(active.replication_status, Some(SyncdReplicationStatus::Live));
+        assert_eq!(
+            active.replication_status,
+            Some(SyncdReplicationStatus::Live)
+        );
         assert!(!active.actions.can_set_active);
         assert!(active.actions.can_pause);
         assert!(!active.actions.can_resume);
@@ -3312,7 +3366,10 @@ mod tests {
         save_replication_state(&state).unwrap();
         let loaded = load_replication_state().unwrap();
         assert_eq!(
-            loaded.profiles.get("local-a").and_then(|profile| profile.active_session_key.clone()),
+            loaded
+                .profiles
+                .get("local-a")
+                .and_then(|profile| profile.active_session_key.clone()),
             Some("session-a".to_string())
         );
         std::env::remove_var("AETHON_SYNCD_DESKTOP_STATE_DIR");

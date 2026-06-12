@@ -7,12 +7,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_util::StreamExt;
 use mdns_sd::{Receiver, ResolvedService, ServiceDaemon, ServiceEvent};
+use reqwest;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{ClientConfig, DigitallySignedStruct, Error as RustlsError, SignatureScheme};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::json;
-use reqwest;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -446,9 +446,7 @@ pub async fn syncd_connect_with_bootstrap(
         Err(error) => {
             automation_log(format!(
                 "connect failed stage=bootstrap_context session={} discovery_origin={} error={}",
-                bundle.pairing_session_id,
-                discovery_origin,
-                error
+                bundle.pairing_session_id, discovery_origin, error
             ));
             return Err(error);
         }
@@ -461,9 +459,7 @@ pub async fn syncd_connect_with_bootstrap(
         Err(error) => {
             automation_log(format!(
                 "connect failed stage=claim session={} discovery_origin={} error={}",
-                context.bundle.pairing_session_id,
-                discovery_origin,
-                error
+                context.bundle.pairing_session_id, discovery_origin, error
             ));
             return Err(error);
         }
@@ -1522,7 +1518,8 @@ fn automation_log_enabled() -> bool {
         Some("1") | Some("true") | Some("TRUE")
     ) || std::env::var_os("LOCALAPPDATA")
         .map(|value| {
-            value.to_string_lossy()
+            value
+                .to_string_lossy()
                 .contains("syncd-native-two-instance-automation")
         })
         .unwrap_or(false)

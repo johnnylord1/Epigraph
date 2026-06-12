@@ -18,7 +18,9 @@ use super::discovery::{
 };
 use super::middleware::require_authenticated_session;
 use super::models::AppState;
-use super::routes::{bootstrap, capabilities, discovery, events, health, local, mutations, pairing};
+use super::routes::{
+    bootstrap, capabilities, discovery, events, health, local, mutations, pairing,
+};
 use super::tls;
 
 pub async fn run() -> anyhow::Result<()> {
@@ -152,12 +154,12 @@ fn spawn_parent_watchdog(state: Arc<AppState>) {
         return;
     };
 
-  tokio::spawn(async move {
-      let mut ticker = tokio::time::interval(std::time::Duration::from_secs(5));
-      let mut system = System::new();
-      loop {
-        ticker.tick().await;
-        let refreshed = system
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(5));
+        let mut system = System::new();
+        loop {
+            ticker.tick().await;
+            let refreshed = system
                 .refresh_processes(ProcessesToUpdate::Some(&[Pid::from_u32(parent_pid)]), true);
             if refreshed == 0 || system.process(Pid::from_u32(parent_pid)).is_none() {
                 tracing::warn!(parent_pid, "syncd parent process missing; exiting sidecar");

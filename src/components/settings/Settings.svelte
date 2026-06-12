@@ -3921,7 +3921,7 @@
                     </button>
                     {#if selectOpen === "prose-font"}
                       <div class="select-menu">
-                        {#each [["Georgia, serif", "Georgia"], ["Merriweather, Georgia, serif", "Merriweather"], ["Inter, sans-serif", "Inter"], ["Atkinson Hyperlegible, Inter, sans-serif", "Atkinson"], ['"Segoe UI", sans-serif', "Segoe UI"]] as [v, l]}
+                        {#each [["Georgia, serif", "Georgia"], ["Merriweather, Georgia, serif", "Merriweather"], ["'EB Garamond', serif", "EB Garamond"], ["Lora, serif", "Lora"], ["Literata, serif", "Literata"], ["Inter, sans-serif", "Inter"], ["Atkinson Hyperlegible, Inter, sans-serif", "Atkinson"], ['"Segoe UI", sans-serif', "Segoe UI"]] as [v, l]}
                           <button class="select-option" class:active={(store.settings.proseReaderFontFamily ?? "Georgia, serif") === v} onclick={() => { updateSettings({ proseReaderFontFamily: v }); selectOpen = null; }}>{l}</button>
                         {/each}
                       </div>
@@ -3958,7 +3958,7 @@
                   <div class="step-controls">
                     <button class="step-btn" type="button" onclick={() => updateSettings({ proseReaderContentWidth: Math.max(520, (store.settings.proseReaderContentWidth ?? 760) - 40) })} disabled={(store.settings.proseReaderContentWidth ?? 760) <= 520}>-</button>
                     <span class="step-val">{store.settings.proseReaderContentWidth ?? 760}px</span>
-                    <button class="step-btn" type="button" onclick={() => updateSettings({ proseReaderContentWidth: Math.min(980, (store.settings.proseReaderContentWidth ?? 760) + 40) })} disabled={(store.settings.proseReaderContentWidth ?? 760) >= 980}>+</button>
+                    <button class="step-btn" type="button" onclick={() => updateSettings({ proseReaderContentWidth: Math.min(1600, (store.settings.proseReaderContentWidth ?? 760) + 40) })} disabled={(store.settings.proseReaderContentWidth ?? 760) >= 1600}>+</button>
                   </div>
                 </div>
                 <div class="settings-row settings-mini-row">
@@ -3983,7 +3983,7 @@
                     </button>
                     {#if selectOpen === "prose-theme"}
                       <div class="select-menu">
-                        {#each [["nocturne","Nocturne"], ["dark","Dark"], ["sepia","Sepia"], ["light","Light"], ["oled","OLED"]] as [v, l]}
+                        {#each [["nocturne","Nocturne"], ["dark","Dark"], ["sepia","Sepia"], ["light","Light"], ["oled","OLED"], ["slate","Slate"], ["forest","Forest"], ["nord","Nord"], ["warm","Warm"]] as [v, l]}
                           <button class="select-option" class:active={(store.settings.proseReaderTheme ?? "nocturne") === v} onclick={() => { updateSettings({ proseReaderTheme: v as any }); selectOpen = null; }}>{l}</button>
                         {/each}
                       </div>
@@ -3998,14 +3998,14 @@
                   <div style="display: flex; gap: 8px;">
                     <input
                       type="color"
-                      value={store.settings.proseReaderTextColor || "#efe9de"}
+                      value={store.settings.proseReaderTextColor || "#ffffff"}
                       onchange={(e) => updateSettings({ proseReaderTheme: "nocturne", proseReaderTextColor: e.currentTarget.value })}
                       style="width: 24px; height: 24px; border: 1px solid rgba(255, 255, 255, 0.1); padding: 0; background: transparent; cursor: pointer; border-radius: 9999px; overflow: hidden;"
                       title="Custom text color"
                     />
                     <input
                       type="color"
-                      value={store.settings.proseReaderBackgroundColor || "#17121c"}
+                      value={store.settings.proseReaderBackgroundColor || "#131316"}
                       onchange={(e) => updateSettings({ proseReaderTheme: "nocturne", proseReaderBackgroundColor: e.currentTarget.value })}
                       style="width: 24px; height: 24px; border: 1px solid rgba(255, 255, 255, 0.1); padding: 0; background: transparent; cursor: pointer; border-radius: 9999px; overflow: hidden;"
                       title="Custom paper color"

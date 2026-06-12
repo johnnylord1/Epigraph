@@ -164,6 +164,22 @@
   let saveStatus: "idle" | "saved" = $state("idle");
   let importError: string | null   = $state(null);
 
+  function toValidColorPickerValue(v: string): string {
+    if (!v || typeof v !== "string") return "#000000";
+    let clean = v.trim();
+    if (!clean.startsWith("#")) return "#000000";
+    if (clean.length === 4) {
+      return `#${clean[1]}${clean[1]}${clean[2]}${clean[2]}${clean[3]}${clean[3]}`.toLowerCase();
+    }
+    if (clean.length === 7) {
+      return clean.toLowerCase();
+    }
+    if (clean.length === 9) {
+      return clean.slice(0, 7).toLowerCase();
+    }
+    return "#000000";
+  }
+
   // ── CSS vars helper ───────────────────────────────────────────────────────
   function toCssVars(t: ThemeTokens, h: HudThemeTokens = hud, m: ThemeMotionPreset = motion): string {
     return [
@@ -421,7 +437,18 @@
               <div class="te-token-list">
                 {#each group.tokens as token}
                   <div class="te-token-row">
-                    <span class="te-color-swatch" style="background: {tokens[token]}"></span>
+                    <span class="te-color-swatch" style="background: {tokens[token]}; position: relative; cursor: pointer;">
+                      <input
+                        type="color"
+                        value={toValidColorPickerValue(tokens[token])}
+                        oninput={(e) => {
+                          const v = (e.target as HTMLInputElement).value;
+                          tokens = { ...tokens, [token]: v };
+                        }}
+                        class="te-color-picker-input"
+                        title="Choose color visually"
+                      />
+                    </span>
                     <span class="te-token-name">{TOKEN_LABELS[token]}</span>
                     <span class="te-token-key">{token}</span>
                     <input
@@ -501,7 +528,18 @@
             <div class="te-token-list">
               {#each ["hud-selection-bg", "hud-selection-border"] as token}
                 <div class="te-token-row">
-                  <span class="te-color-swatch" style="background: {hud[token as keyof HudThemeTokens]}"></span>
+                  <span class="te-color-swatch" style="background: {hud[token as keyof HudThemeTokens]}; position: relative; cursor: pointer;">
+                    <input
+                      type="color"
+                      value={toValidColorPickerValue(hud[token as keyof HudThemeTokens])}
+                      oninput={(e) => {
+                        const v = (e.target as HTMLInputElement).value;
+                        hud = { ...hud, [token]: v };
+                      }}
+                      class="te-color-picker-input"
+                      title="Choose color visually"
+                    />
+                  </span>
                   <span class="te-token-name">{HUD_TOKEN_LABELS[token as keyof HudThemeTokens]}</span>
                   <span class="te-token-key">{token}</span>
                   <input
@@ -939,6 +977,18 @@
     flex-shrink: 0;
     border: 1px solid rgba(255,255,255,0.12);
     box-shadow: 0 0 0 1px rgba(0,0,0,0.2);
+    position: relative;
+    cursor: pointer;
+  }
+  .te-color-picker-input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+    padding: 0;
+    border: 0;
   }
   .te-shape-swatch {
     background: var(--accent-muted);
