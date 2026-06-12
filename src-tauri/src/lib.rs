@@ -1546,9 +1546,14 @@ server.maxSourcesInParallel = 6
     #[test]
     fn local_server_java_args_enable_extension_bytecode_compatibility() {
         let args = local_server_java_args(Path::new("C:\\fake\\Suwayomi-Server.jar"));
-        assert!(args.iter().any(|arg| arg == LOCAL_SERVER_JAVA_EXTENSION_COMPAT_FLAG));
-        assert!(args.iter().position(|arg| arg == LOCAL_SERVER_JAVA_EXTENSION_COMPAT_FLAG)
-            < args.iter().position(|arg| arg == "-jar"));
+        assert!(args
+            .iter()
+            .any(|arg| arg == LOCAL_SERVER_JAVA_EXTENSION_COMPAT_FLAG));
+        assert!(
+            args.iter()
+                .position(|arg| arg == LOCAL_SERVER_JAVA_EXTENSION_COMPAT_FLAG)
+                < args.iter().position(|arg| arg == "-jar")
+        );
     }
 
     #[test]
@@ -2428,9 +2433,11 @@ fn probe_local_server(server_url: &str, timeout: Duration) -> bool {
     response_head.starts_with("HTTP/1.1 ") || response_head.starts_with("HTTP/1.0 ")
 }
 
+const LOCAL_SERVER_HEALTH_PROBE_TIMEOUT: Duration = Duration::from_millis(2500);
+
 #[tauri::command]
 fn probe_server_health(server_url: String) -> bool {
-    probe_local_server(&server_url, Duration::from_millis(800))
+    probe_local_server(&server_url, LOCAL_SERVER_HEALTH_PROBE_TIMEOUT)
 }
 
 fn read_conf_value(contents: &str, key: &str) -> Option<String> {
@@ -2599,7 +2606,7 @@ fn validate_server_owner(target: &LocalServerTarget, owner: &ServerOwner) -> Own
         return OwnerReuseDecision::Stale;
     }
 
-    if !probe_local_server(&target.server_url, Duration::from_millis(800)) {
+    if !probe_local_server(&target.server_url, LOCAL_SERVER_HEALTH_PROBE_TIMEOUT) {
         return OwnerReuseDecision::ConflictingLiveProcess;
     }
 
@@ -4014,7 +4021,7 @@ fn spawn_server(
     }
 
     if let Some(java_pid) = find_java_pid_for_rootdir(&data_dir) {
-        if probe_local_server(&target.server_url, Duration::from_millis(800)) {
+        if probe_local_server(&target.server_url, LOCAL_SERVER_HEALTH_PROBE_TIMEOUT) {
             let owner = ServerOwner {
                 profile_key: target.profile.key().to_string(),
                 root_dir: data_dir.to_string_lossy().into_owned(),
@@ -4133,7 +4140,7 @@ fn spawn_server(
                 append_timestamped_line(
                     diagnostic_log_path,
                     &format!(
-                        "probe target=POST {}/api/graphql timeoutMs=800",
+                        "probe target=POST {}/api/graphql timeoutMs=2500",
                         target.server_url
                     ),
                 );
@@ -4151,7 +4158,8 @@ fn spawn_server(
             let boot_started_at = std::time::Instant::now();
             for attempt in 1..=boot_probe_attempts {
                 let probe_started_at = std::time::Instant::now();
-                let probe_ok = probe_local_server(&target.server_url, Duration::from_millis(800));
+                let probe_ok =
+                    probe_local_server(&target.server_url, LOCAL_SERVER_HEALTH_PROBE_TIMEOUT);
                 let probe_elapsed_ms = probe_started_at.elapsed().as_millis();
                 let child_alive = process_is_alive(java_pid);
                 let listener_pid = if probe_ok {

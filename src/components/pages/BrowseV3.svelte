@@ -582,6 +582,9 @@
     releaseSearchRecommendationTransientState();
     activeContentType = next;
     resetContentTypeTransientState();
+    if (activeBrowseTab !== "keyword") {
+      searchQuery = "";
+    }
     if (activeBrowseTab === "keyword" && kw_submitted) {
       const hasCachedResults = next === "novels" ? kw_novelResults.length > 0 : kw_results.length > 0;
       if (!hasCachedResults) void kwDoSearch(kw_submitted);
@@ -4799,7 +4802,7 @@
           class:is-active={activeContentType === "manga"}
           onclick={() => selectContentType("manga")}
         >
-          Manga
+          Comics
         </button>
         <button
           type="button"
@@ -4807,7 +4810,7 @@
           class:is-active={activeContentType === "novels"}
           onclick={() => selectContentType("novels")}
         >
-          Novels
+          Books
         </button>
       </nav>
     {/snippet}

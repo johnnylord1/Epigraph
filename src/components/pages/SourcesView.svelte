@@ -51,6 +51,7 @@
 
   type Filter = "installed" | "available" | "updates" | "all";
   type UtilityPanel = null | "apk" | "repos" | "novelRepos";
+  type ExtensionOperation = "install" | "update" | "remove";
 
   let {
     contentType = "manga",
@@ -80,7 +81,7 @@
   let refreshing = $state(false);
   let filter: Filter = $state("installed");
   let search = $state("");
-  let working = $state(new Set<string>());
+  let activeOperations = $state(new Map<string, ExtensionOperation>());
   let operationErrors = $state(new Map<string, string>());
   let expanded = $state(new Set<string>());
   let selectedPkgName = $state<string | null>(null);
@@ -100,6 +101,7 @@
   let novelRepositoryState: PersistedNovelRepositoryState | null = $state(null);
   let updatingAll = $state(false);
   let refreshingNovelRepositoryId = $state<string | null>(null);
+  let extensionLoadRun = 0;
 
   const isNovelMode = $derived(contentType === "novels");
   const activeFilters = $derived(FILTERS);
@@ -145,6 +147,11 @@
       true;
     return matchesSearch && matchesFilter;
   }));
+  const sourceCountLabel = $derived(`${filtered.length} ${
+    filtered.length === 1
+      ? isNovelMode ? "source" : "extension"
+      : sourceNoun
+  }`);
 
   const groups = $derived.by(() => {
     const map = new Map<string, ManagedExtension[]>();
@@ -192,6 +199,32 @@
     return error instanceof Error ? error.message : String(error || "Extension operation failed");
   }
 
+  function startExtensionOperation(pkgName: string, operation: ExtensionOperation) {
+    const nextOperations = new Map(activeOperations);
+    nextOperations.set(pkgName, operation);
+    activeOperations = nextOperations;
+
+    const nextErrors = new Map(operationErrors);
+    nextErrors.delete(pkgName);
+    operationErrors = nextErrors;
+  }
+
+  function finishExtensionOperation(pkgName: string) {
+    const nextOperations = new Map(activeOperations);
+    nextOperations.delete(pkgName);
+    activeOperations = nextOperations;
+  }
+
+  function setExtensionOperationError(pkgName: string, message: string) {
+    const nextErrors = new Map(operationErrors);
+    nextErrors.set(pkgName, message);
+    operationErrors = nextErrors;
+  }
+
+  function isExtensionWorking(pkgName: string) {
+    return activeOperations.has(pkgName);
+  }
+
   function isLockedExtensionFileError(error: unknown) {
     const message = extensionErrorMessage(error).toLowerCase();
     return (
@@ -228,27 +261,41 @@
     return extensions.find((item) => item.pkgName === extension.pkgName) ?? refreshed ?? extension;
   }
 
-  async function loadMangaExtensions() {
+  function isCurrentExtensionLoad(run: number, mode: "manga" | "novels") {
+    return run === extensionLoadRun && (mode === "novels") === isNovelMode;
+  }
+
+  async function fetchMangaExtensionNodes() {
     try {
-      if (!(await ensureMangaServerAwake())) {
-        extensions = [];
-        return;
-      }
-      const data = await gql<{ extensions: { nodes: Extension[] } }>(GET_EXTENSIONS);
-      extensions = data.extensions.nodes.map(toManagedMangaExtension);
-    } catch (error) {
-      console.error(error);
-    } finally {
-      await refreshSetupState();
+      const data = await gql<{ extensions: { nodes: Extension[] } }>(GET_EXTENSIONS, undefined, undefined, 15000);
+      return data.extensions.nodes;
+    } catch (firstError) {
+      if (!(await ensureMangaServerAwake())) throw firstError;
+      const data = await gql<{ extensions: { nodes: Extension[] } }>(GET_EXTENSIONS, undefined, undefined, 15000);
+      return data.extensions.nodes;
     }
   }
 
-  async function loadNovelExtensions() {
+  async function loadMangaExtensions(run = ++extensionLoadRun) {
+    try {
+      const nodes = await fetchMangaExtensionNodes();
+      if (isCurrentExtensionLoad(run, "manga")) {
+        extensions = nodes.map(toManagedMangaExtension);
+      }
+    } catch (error) {
+      console.error(error);
+    } finally {
+      if (isCurrentExtensionLoad(run, "manga")) await refreshSetupState();
+    }
+  }
+
+  async function loadNovelExtensions(run = ++extensionLoadRun) {
     try {
       const state = await loadNovelRepositoryState({
         profileId: store.runtimeResolvedLocalProfileId,
         serverUrl: store.runtimeServerUrl,
       });
+      if (!isCurrentExtensionLoad(run, "novels")) return;
       novelRepositoryState = state;
       extensions = state.catalogEntries
         .slice()
@@ -262,25 +309,29 @@
         ));
     } catch (error) {
       console.error(error);
-      extensions = [];
-      novelRepositoryState = null;
+      if (isCurrentExtensionLoad(run, "novels")) {
+        extensions = [];
+        novelRepositoryState = null;
+      }
     } finally {
-      setupState = null;
+      if (isCurrentExtensionLoad(run, "novels")) setupState = null;
     }
   }
 
-  async function loadExtensions() {
+  async function loadExtensions(run = ++extensionLoadRun) {
     if (isNovelMode) {
-      await loadNovelExtensions();
+      await loadNovelExtensions(run);
       return;
     }
-    await loadMangaExtensions();
+    await loadMangaExtensions(run);
   }
 
   async function fetchFromRepo() {
+    const mode = isNovelMode ? "novels" : "manga";
+    const run = ++extensionLoadRun;
     refreshing = true;
     try {
-      if (isNovelMode) {
+      if (mode === "novels") {
         const state = await loadNovelRepositoryState({
           profileId: store.runtimeResolvedLocalProfileId,
           serverUrl: store.runtimeServerUrl,
@@ -290,17 +341,21 @@
           profileId: store.runtimeResolvedLocalProfileId,
           serverUrl: store.runtimeServerUrl,
         });
-        await loadNovelExtensions();
+        await loadNovelExtensions(run);
         return;
       }
       if (!(await ensureMangaServerAwake())) return;
       const data = await gql<{ fetchExtensions: { extensions: Extension[] } }>(FETCH_EXTENSIONS);
-      extensions = data.fetchExtensions.extensions.map(toManagedMangaExtension);
+      if (isCurrentExtensionLoad(run, "manga")) {
+        extensions = data.fetchExtensions.extensions.map(toManagedMangaExtension);
+      }
     } catch (error) {
       console.error(error);
     } finally {
-      refreshing = false;
-      if (!isNovelMode) await refreshSetupState();
+      if (isCurrentExtensionLoad(run, mode)) {
+        refreshing = false;
+        if (mode === "manga") await refreshSetupState();
+      }
     }
   }
 
@@ -473,10 +528,21 @@
     void saveRepos(repos.filter((repo) => repo !== url));
   }
 
-  async function mutate(fn: () => Promise<unknown>, pkgName: string) {
-    if (!(await ensureMangaServerAwake())) return false;
-    working = new Set(working).add(pkgName);
-    operationErrors = new Map(operationErrors).set(pkgName, "");
+  async function mutate(fn: () => Promise<unknown>, pkgName: string, operation: ExtensionOperation) {
+    startExtensionOperation(pkgName, operation);
+    if (!(await ensureMangaServerAwake())) {
+      const message = "Suwayomi is not available right now.";
+      setExtensionOperationError(pkgName, message);
+      addToast({
+        kind: "error",
+        title: "Extension action unavailable",
+        body: message,
+        duration: 6000,
+      });
+      finishExtensionOperation(pkgName);
+      await refreshSetupState();
+      return false;
+    }
     let ok = true;
     try {
       await fn();
@@ -486,7 +552,7 @@
       ok = false;
       console.error(error);
       const message = extensionErrorMessage(error);
-      operationErrors = new Map(operationErrors).set(pkgName, message);
+      setExtensionOperationError(pkgName, message);
       addToast({
         kind: "error",
         title: "Extension action failed",
@@ -494,8 +560,7 @@
         duration: 6000,
       });
     } finally {
-      working.delete(pkgName);
-      working = new Set(working);
+      finishExtensionOperation(pkgName);
     }
     return ok;
   }
@@ -504,7 +569,7 @@
     if (extension.kind === "novels") {
       if (!novelRepositoryState || !extension.novelPluginId || !extension.novelRepositoryId) {
         const message = "Novel repository metadata is not loaded yet. Refresh novel sources and try again.";
-        operationErrors = new Map(operationErrors).set(extension.pkgName, message);
+        setExtensionOperationError(extension.pkgName, message);
         addToast({ kind: "error", title: "Could not install novel source", body: message });
         return;
       }
@@ -514,13 +579,12 @@
       ));
       if (!entry) {
         const message = "This novel source is no longer present in the cached repository catalog.";
-        operationErrors = new Map(operationErrors).set(extension.pkgName, message);
+        setExtensionOperationError(extension.pkgName, message);
         addToast({ kind: "error", title: "Could not install novel source", body: message });
         return;
       }
 
-      working = new Set(working).add(extension.pkgName);
-      operationErrors = new Map(operationErrors).set(extension.pkgName, "");
+      startExtensionOperation(extension.pkgName, extension.hasUpdate ? "update" : "install");
       try {
         const nextState = await installNovelCatalogPlugin({
           state: novelRepositoryState,
@@ -540,21 +604,19 @@
       } catch (error) {
         console.error(error);
         const message = error instanceof Error ? error.message : "Aethon could not install this novel plugin.";
-        operationErrors = new Map(operationErrors).set(extension.pkgName, message);
+        setExtensionOperationError(extension.pkgName, message);
         addToast({
           kind: "error",
           title: "Could not install novel source",
           body: message,
         });
       } finally {
-        working.delete(extension.pkgName);
-        working = new Set(working);
+        finishExtensionOperation(extension.pkgName);
       }
       return;
     }
     const firstInstallFlow = setupState?.kind === "no_installed_extensions";
-    working = new Set(working).add(extension.pkgName);
-    operationErrors = new Map(operationErrors).set(extension.pkgName, "");
+    startExtensionOperation(extension.pkgName, extension.hasUpdate ? "update" : "install");
     let installedExtension: ManagedExtension | null = null;
     try {
       if (!(await ensureMangaServerAwake())) {
@@ -575,7 +637,7 @@
           bumpContentSetupVersion();
         } catch (recoveryError) {
           console.error(recoveryError);
-          operationErrors = new Map(operationErrors).set(extension.pkgName, extensionErrorMessage(recoveryError));
+          setExtensionOperationError(extension.pkgName, extensionErrorMessage(recoveryError));
           addToast({
             kind: "error",
             title: "Extension install needs restart",
@@ -586,7 +648,7 @@
         }
       } else {
         console.error(error);
-        operationErrors = new Map(operationErrors).set(extension.pkgName, extensionErrorMessage(error));
+        setExtensionOperationError(extension.pkgName, extensionErrorMessage(error));
         addToast({
           kind: "error",
           title: "Could not install extension",
@@ -595,8 +657,7 @@
         });
       }
     } finally {
-      working.delete(extension.pkgName);
-      working = new Set(working);
+      finishExtensionOperation(extension.pkgName);
     }
 
     if (!installedExtension) return;
@@ -684,7 +745,7 @@
     event.stopPropagation();
     if (extension.kind === "novels") {
       if (!novelRepositoryState || !extension.novelPluginId) return;
-      working = new Set(working).add(extension.pkgName);
+      startExtensionOperation(extension.pkgName, "remove");
       try {
         const nextState = await removeInstalledNovelPlugin(novelRepositoryState, extension.novelPluginId, {
           profileId: store.runtimeResolvedLocalProfileId,
@@ -694,25 +755,41 @@
         if (selectedPkgName === extension.pkgName) {
           selectedPkgName = null;
         }
+        addToast({
+          kind: "success",
+          title: "Novel source removed",
+          body: `${extension.name} was removed.`,
+        });
       } catch (error) {
         console.error(error);
+        setExtensionOperationError(
+          extension.pkgName,
+          error instanceof Error ? error.message : "Aethon could not remove this novel plugin.",
+        );
         addToast({
           kind: "error",
           title: "Could not remove novel source",
           body: error instanceof Error ? error.message : "Aethon could not remove this novel plugin.",
         });
       } finally {
-        working.delete(extension.pkgName);
-        working = new Set(working);
+        finishExtensionOperation(extension.pkgName);
       }
       return;
     }
     const didRemove = await mutate(
       () => gql(UPDATE_EXTENSION, { id: extension.pkgName, uninstall: true }),
       extension.pkgName,
+      "remove",
     );
     if (didRemove && selectedPkgName === extension.pkgName) {
       selectedPkgName = null;
+    }
+    if (didRemove) {
+      addToast({
+        kind: "success",
+        title: "Extension removed",
+        body: `${extension.name} was removed.`,
+      });
     }
   }
 
@@ -725,6 +802,7 @@
     const didUpdate = await mutate(
       () => gql(UPDATE_EXTENSION, { id: extension.pkgName, update: true }),
       extension.pkgName,
+      "update",
     );
     if (!didUpdate) return;
 
@@ -733,6 +811,11 @@
       hasUpdate: false,
     };
     mockSettingsStore.refreshConfig(extension.pkgName, refreshed);
+    addToast({
+      kind: "success",
+      title: "Extension updated",
+      body: `${extension.name} is up to date.`,
+    });
   }
 
   async function updateAllExtensions() {
@@ -740,7 +823,9 @@
     if (candidates.length === 0 || updatingAll) return;
 
     updatingAll = true;
-    working = new Set([...working, ...candidates.map((extension) => extension.pkgName)]);
+    for (const extension of candidates) {
+      startExtensionOperation(extension.pkgName, "update");
+    }
     try {
       if (isNovelMode) {
         if (!novelRepositoryState) return;
@@ -777,6 +862,11 @@
         bumpContentSetupVersion();
         await loadExtensions();
       }
+      addToast({
+        kind: "success",
+        title: "Extensions updated",
+        body: `${candidates.length} extension${candidates.length === 1 ? "" : "s"} checked.`,
+      });
     } catch (error) {
       console.error(error);
       addToast({
@@ -786,9 +876,8 @@
       });
     } finally {
       for (const extension of candidates) {
-        working.delete(extension.pkgName);
+        finishExtensionOperation(extension.pkgName);
       }
-      working = new Set(working);
       updatingAll = false;
     }
   }
@@ -799,7 +888,10 @@
   }
 
   function actionLabelFor(extension: ManagedExtension) {
-    if (working.has(extension.pkgName)) return extension.hasUpdate ? "Updating..." : "Installing...";
+    const operation = activeOperations.get(extension.pkgName);
+    if (operation === "update") return "Updating...";
+    if (operation === "remove") return "Removing...";
+    if (operation === "install") return "Installing...";
     if (extension.hasUpdate) return "Update";
     if (extension.isInstalled) return "Remove";
     return "Install";
@@ -839,14 +931,20 @@
 
   $effect(() => {
     contentType;
+    const mode = isNovelMode ? "novels" : "manga";
+    const run = ++extensionLoadRun;
     selectedPkgName = null;
     utilityPanel = null;
+    search = "";
     loading = true;
+    refreshing = false;
+    extensions = [];
+    if (mode === "manga") novelRepositoryState = null;
     untrack(() => Promise.all([
-      loadExtensions(),
-      isNovelMode ? Promise.resolve() : refreshSetupState(),
+      loadExtensions(run),
+      mode === "novels" ? Promise.resolve() : refreshSetupState(),
     ]).finally(() => {
-      loading = false;
+      if (isCurrentExtensionLoad(run, mode)) loading = false;
     }));
   });
 
@@ -897,7 +995,7 @@
       <div class="sourcesTitle">
         <p class="eyebrow">Sources</p>
         <h2>{sourceTitle}</h2>
-        <span>{filtered.length} {sourceNoun}</span>
+        <span>{sourceCountLabel}</span>
       </div>
 
       <div class="sourceTools">
@@ -1208,7 +1306,7 @@
             </div>
 
             <div class="cardActions">
-              {#if working.has(primary.pkgName)}
+              {#if isExtensionWorking(primary.pkgName)}
                 <CircleNotch size={16} weight="bold" class="anim-spin" />
               {:else if primary.hasUpdate}
                 <button class="actionBtn" type="button" onclick={(event) => updateExtension(event, primary)}>Update</button>
@@ -1256,7 +1354,7 @@
                     <button
                       type="button"
                       class="variantAction"
-                      disabled={working.has(variant.pkgName)}
+                      disabled={isExtensionWorking(variant.pkgName)}
                       onclick={(event) => runVariantAction(event, variant)}
                     >
                       {actionLabelFor(variant)}
@@ -1284,7 +1382,7 @@
     <ExtensionSettingsPanel
       extension={selectedExtension}
       config={selectedConfig}
-      busy={working.has(selectedExtension.pkgName)}
+      busy={isExtensionWorking(selectedExtension.pkgName)}
       onClose={() => (selectedPkgName = null)}
       onInstall={installExtension}
       onUpdateConfig={updateConfig}
@@ -1454,7 +1552,22 @@
     opacity: 0.45;
   }
 
-  .setupWrap,
+  .setupWrap {
+    position: fixed;
+    top: 68px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 9999;
+    width: min(1000px, calc(100% - 48px));
+    margin: 0;
+    pointer-events: none;
+  }
+  .setupWrap :global(.n-state) {
+    width: 100%;
+    margin: 0;
+    pointer-events: auto;
+  }
+
   .utilityPanel {
     margin: 10px 14px 0;
   }
