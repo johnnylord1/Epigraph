@@ -49,6 +49,7 @@
     setLibraryUpdateProgress,
     bumpLibraryCoverCacheGeneration,
     recordLibraryUpdateNotifications,
+    recordNovelUpdateNotifications,
     addSystemNotification,
     refreshAppReadingStateFromPersistence,
     setRuntimeSettingsTab,
@@ -569,19 +570,39 @@
       bumpLibraryCoverCacheGeneration();
       await reconcileLibrarySnapshotCountsFromChapters();
       const entries = recordLibraryUpdateNotifications(beforeUpdate, store.libraryMangaSnapshot, updatedAt);
+      const {
+        groupRefreshedNovelChaptersForNotifications,
+        refreshNovelLibraryFromSources,
+      } = await import("./lib/novels/libraryRefresh");
+      const novelsResult = await refreshNovelLibraryFromSources({
+        profileId: store.runtimeResolvedLocalProfileId,
+        serverUrl: store.runtimeServerUrl,
+      }, {
+        concurrency: 1,
+        downloadNewChapters: store.settings.downloadNewNovelChapters,
+        onlyOngoing: store.settings.onlyUpdateOngoingNovels,
+        pauseMs: 800,
+      });
+      const novelNotifications = recordNovelUpdateNotifications(
+        groupRefreshedNovelChaptersForNotifications(novelsResult.newChapterEntries),
+        updatedAt,
+      );
+      const totalNewChapters = entries.reduce((sum, entry) => sum + entry.chapterDelta, 0)
+        + novelNotifications.reduce((sum, entry) => sum + entry.chapterDelta, 0);
+      const totalUpdatedTitles = entries.length + novelNotifications.length;
       addSystemNotification({
         kind: "success",
-        title: entries.length > 0 ? "New chapters found" : "Library sync completed",
-        body: entries.length > 0
-          ? `${entries.reduce((sum, entry) => sum + entry.chapterDelta, 0)} new chapters added across ${entries.length} titles.`
+        title: totalUpdatedTitles > 0 ? "New chapters found" : "Library sync completed",
+        body: totalUpdatedTitles > 0
+          ? `${totalNewChapters} new chapters added across ${totalUpdatedTitles} titles.`
           : `Automatic updates every ${store.settings.libraryUpdateIntervalHours ?? 12}h.`,
         createdAt: updatedAt,
       });
-      if (entries.length > 0) {
+      if (totalUpdatedTitles > 0) {
         addToast({
           kind: "success",
           title: "New chapters found",
-          body: `${entries.reduce((sum, entry) => sum + entry.chapterDelta, 0)} new chapters added across ${entries.length} titles.`,
+          body: `${totalNewChapters} new chapters added across ${totalUpdatedTitles} titles.`,
         });
       }
       showSharedLibraryUpdateProgress("Library update finished.", 1800);

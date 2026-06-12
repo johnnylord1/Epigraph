@@ -44,6 +44,7 @@ function mapChapter(
     order: chapter.order,
     releaseTime: chapter.releaseTime,
     unread: chapter.unread,
+    updatedAt: chapter.updatedAt ?? null,
   };
 }
 
@@ -118,6 +119,7 @@ export function applyRestoredNovelsSnapshotToLibraryState(input: {
       order: chapter.order,
       releaseTime: chapter.releaseTime,
       unread: chapter.unread,
+      updatedAt: chapter.updatedAt ?? null,
     })),
     progress: input.restored.progress.map((entry) => ({ ...entry })),
     bookmarks: input.restored.bookmarks.map((entry) => ({ ...entry })),

@@ -288,9 +288,8 @@ export function buildComicsWorkStatusLabel(
   trackedCompletedIds: ReadonlySet<number> = new Set(),
   _trackedChapterTotalsByMangaId: ReadonlyMap<number, number> = new Map(),
 ): string {
-  if (trackedCompletedIds.has(manga.id)) return "Finished";
-
   const publicationStatus = formatSourceStatusLabel(manga.status);
+  if (publicationStatus === "Completed" && trackedCompletedIds.has(manga.id)) return "Finished";
   if (publicationStatus) return publicationStatus;
 
   return "Unknown";

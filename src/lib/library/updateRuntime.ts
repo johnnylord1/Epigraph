@@ -49,6 +49,12 @@ export function libraryUpdateProgressNumbers(jobsInfo: any): LibraryUpdateProgre
   };
 }
 
+function isLibraryUpdateComplete(jobsInfo: any): boolean {
+  const total = Number(jobsInfo?.totalJobs ?? 0);
+  const finished = Number(jobsInfo?.finishedJobs ?? 0);
+  return !jobsInfo?.isRunning && total > 0 && finished >= total;
+}
+
 export function formatLibraryUpdateProgress(jobsInfo: any) {
   const finished = Number(jobsInfo?.finishedJobs ?? 0);
   const total = Number(jobsInfo?.totalJobs ?? 0);
@@ -83,7 +89,7 @@ export function showLibraryUpdateProgress(
 ) {
   const lowerBody = body.toLowerCase();
   setLibraryUpdateProgress({
-    kind: lowerBody.includes("failed") ? "error" : lowerBody.includes("finished") ? "success" : "download",
+    kind: lowerBody.includes("failed") ? "error" : lowerBody.includes("finished") || lowerBody.includes("complete") ? "success" : "download",
     title: "Library update",
     body,
     active: duration === 0,
@@ -254,9 +260,10 @@ export function runSharedLibraryUpdate(options: SharedLibraryUpdateRunOptions) {
 
       progressSubscription = subscribeLibraryUpdateStatus(
         (event) => {
+          const complete = isLibraryUpdateComplete(event.jobsInfo);
           showLibraryUpdateProgress(
             formatLibraryUpdateProgress(event.jobsInfo),
-            0,
+            complete ? 1800 : 0,
             libraryUpdateProgressNumbers(event.jobsInfo),
           );
           for (const mangaId of applyLibraryUpdateMangaPatches(event.mangaUpdates)) {
@@ -274,9 +281,10 @@ export function runSharedLibraryUpdate(options: SharedLibraryUpdateRunOptions) {
         initialJobsInfo,
         options.timeoutMs ?? 8 * 60 * 1000,
         (progressJobsInfo) => {
+          const complete = isLibraryUpdateComplete(progressJobsInfo);
           showLibraryUpdateProgress(
             formatLibraryUpdateProgress(progressJobsInfo),
-            0,
+            complete ? 1800 : 0,
             libraryUpdateProgressNumbers(progressJobsInfo),
           );
           if (!progressJobsInfo?.isRunning || !options.onLiveRefresh) return;

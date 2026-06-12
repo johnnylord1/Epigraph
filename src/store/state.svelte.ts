@@ -328,7 +328,9 @@ export interface ReadLogEntry {
 
 export interface LibraryUpdateNotification {
   id: string;
-  mangaId: number;
+  kind?: "comics" | "novels";
+  mangaId?: number;
+  novelId?: string;
   mangaTitle: string;
   thumbnailUrl: string;
   sourceName: string;
@@ -336,6 +338,7 @@ export interface LibraryUpdateNotification {
   previousChapterCount: number;
   nextChapterCount: number;
   createdAt: number;
+  chapterTitles?: string[];
 }
 
 export interface SystemNotification {
@@ -468,6 +471,8 @@ export interface Settings {
   autoLibraryUpdatesEnabled: boolean;
   libraryUpdateIntervalHours: number;
   libraryUpdateIntensity:  LibraryUpdateIntensity;
+  downloadNewNovelChapters: boolean;
+  onlyUpdateOngoingNovels: boolean;
   localServerStandbyEnabled: boolean;
   localServerStandbyIdleMin: number;
   lastLibraryUpdateAt?:    number;
@@ -592,6 +597,8 @@ export const DEFAULT_SETTINGS: Settings = {
   autoLibraryUpdatesEnabled: true,
   libraryUpdateIntervalHours: 12,
   libraryUpdateIntensity: "balanced",
+  downloadNewNovelChapters: false,
+  onlyUpdateOngoingNovels: false,
   localServerStandbyEnabled: true,
   localServerStandbyIdleMin: 10,
   lastLibraryUpdateAt:    undefined,
@@ -799,6 +806,8 @@ function mergeSettings(saved: any): Settings {
     theme:                 coercedTheme,
     launchIntoLibrary:    saved?.settings?.launchIntoLibrary ?? DEFAULT_SETTINGS.launchIntoLibrary,
     libraryUpdateIntensity: normalizeLibraryUpdateIntensity(saved?.settings?.libraryUpdateIntensity),
+    downloadNewNovelChapters: saved?.settings?.downloadNewNovelChapters === true,
+    onlyUpdateOngoingNovels: saved?.settings?.onlyUpdateOngoingNovels === true,
     filterBlockedTags:    saved?.settings?.filterBlockedTags ?? DEFAULT_SETTINGS.filterBlockedTags,
     adultContentTags:     saved?.settings?.adultContentTags     ?? DEFAULT_SETTINGS.adultContentTags,
     nsfwFilteredTags:     normalizeBlockedTags(saved?.settings?.nsfwFilteredTags),
@@ -852,24 +861,32 @@ function normalizeLoadedReadLogEntry(entry: any): ReadLogEntry | null {
 
 function normalizeLoadedLibraryUpdateNotification(entry: any): LibraryUpdateNotification | null {
   if (!entry || typeof entry !== "object") return null;
+  const kind = entry.kind === "novels" ? "novels" : "comics";
   const mangaId = Number(entry.mangaId);
+  const novelId = typeof entry.novelId === "string" && entry.novelId.trim() ? entry.novelId.trim() : null;
   const chapterDelta = Number(entry.chapterDelta);
   const previousChapterCount = Number(entry.previousChapterCount);
   const nextChapterCount = Number(entry.nextChapterCount);
   const createdAt = Number(entry.createdAt);
   if (
-    !Number.isFinite(mangaId)
+    (kind === "comics" && !Number.isFinite(mangaId))
+    || (kind === "novels" && !novelId)
     || !Number.isFinite(chapterDelta)
     || chapterDelta <= 0
     || !Number.isFinite(previousChapterCount)
     || !Number.isFinite(nextChapterCount)
     || !Number.isFinite(createdAt)
   ) return null;
+  const chapterTitles = Array.isArray(entry.chapterTitles)
+    ? entry.chapterTitles.filter((title: unknown): title is string => typeof title === "string" && title.trim().length > 0).map((title: string) => title.trim()).slice(0, 5)
+    : undefined;
   return {
     id: typeof entry.id === "string" && entry.id.trim()
       ? entry.id
-      : `library-update:${mangaId}:${createdAt}`,
-    mangaId,
+      : kind === "novels" ? `novel-update:${novelId}:${createdAt}` : `library-update:${mangaId}:${createdAt}`,
+    kind,
+    mangaId: Number.isFinite(mangaId) ? mangaId : undefined,
+    novelId: novelId ?? undefined,
     mangaTitle: String(entry.mangaTitle ?? ""),
     thumbnailUrl: String(entry.thumbnailUrl ?? ""),
     sourceName: String(entry.sourceName ?? "Library"),
@@ -877,6 +894,7 @@ function normalizeLoadedLibraryUpdateNotification(entry: any): LibraryUpdateNoti
     previousChapterCount,
     nextChapterCount,
     createdAt,
+    chapterTitles,
   };
 }
 
@@ -915,6 +933,7 @@ function buildLibraryUpdateNotifications(
       const sourceName = manga.source?.displayName || manga.source?.name || "Library";
       return {
         id: `library-update:${manga.id}:${createdAt}:${previousChapterCount}:${nextChapterCount}`,
+        kind: "comics" as const,
         mangaId: manga.id,
         mangaTitle: manga.title,
         thumbnailUrl: manga.thumbnailUrl ?? "",
@@ -923,6 +942,44 @@ function buildLibraryUpdateNotifications(
         previousChapterCount,
         nextChapterCount,
         createdAt,
+      };
+    })
+    .filter((entry): entry is LibraryUpdateNotification => Boolean(entry))
+    .sort((left, right) => right.chapterDelta - left.chapterDelta || left.mangaTitle.localeCompare(right.mangaTitle));
+}
+
+export interface NovelUpdateNotificationInput {
+  novelId: string;
+  novelTitle: string;
+  thumbnailUrl?: string | null;
+  sourceName?: string | null;
+  chapterTitles: string[];
+  previousChapterCount: number;
+  nextChapterCount: number;
+}
+
+function buildNovelUpdateNotificationEntries(
+  updates: NovelUpdateNotificationInput[],
+  createdAt = Date.now(),
+): LibraryUpdateNotification[] {
+  return updates
+    .map((update) => {
+      const novelId = String(update.novelId ?? "").trim();
+      const chapterTitles = [...new Set(update.chapterTitles.map((title) => String(title ?? "").trim()).filter(Boolean))].slice(0, 5);
+      const chapterDelta = chapterTitles.length;
+      if (!novelId || chapterDelta <= 0) return null;
+      return {
+        id: `novel-update:${novelId}:${createdAt}:${chapterTitles.join("|")}`,
+        kind: "novels" as const,
+        novelId,
+        mangaTitle: String(update.novelTitle ?? "Unknown title"),
+        thumbnailUrl: String(update.thumbnailUrl ?? ""),
+        sourceName: String(update.sourceName ?? "Novels"),
+        chapterDelta,
+        previousChapterCount: Math.max(0, Number(update.previousChapterCount ?? 0)),
+        nextChapterCount: Math.max(0, Number(update.nextChapterCount ?? 0)),
+        createdAt,
+        chapterTitles,
       };
     })
     .filter((entry): entry is LibraryUpdateNotification => Boolean(entry))
@@ -1432,6 +1489,15 @@ class Store {
   }
   recordLibraryUpdateNotifications(before: Manga[], after: Manga[], createdAt = Date.now()) {
     const entries = buildLibraryUpdateNotifications(before, after, createdAt);
+    if (!entries.length) return [];
+    const existingKeys = new Set(this.libraryUpdateNotifications.map((entry) => entry.id));
+    const nextEntries = entries.filter((entry) => !existingKeys.has(entry.id));
+    if (!nextEntries.length) return [];
+    this.libraryUpdateNotifications = [...nextEntries, ...this.libraryUpdateNotifications].slice(0, 200);
+    return nextEntries;
+  }
+  recordNovelUpdateNotifications(updates: NovelUpdateNotificationInput[], createdAt = Date.now()) {
+    const entries = buildNovelUpdateNotificationEntries(updates, createdAt);
     if (!entries.length) return [];
     const existingKeys = new Set(this.libraryUpdateNotifications.map((entry) => entry.id));
     const nextEntries = entries.filter((entry) => !existingKeys.has(entry.id));
@@ -2027,6 +2093,7 @@ export function openReader(chapter: Chapter, chapterList: Chapter[], manga?: Man
 export function closeReader()                                            { store.closeReader(); }
 export function addHistory(entry: HistoryEntry, completed?: boolean, minutes?: number) { store.addHistory(entry, completed, minutes); }
 export function recordLibraryUpdateNotifications(before: Manga[], after: Manga[], createdAt?: number) { return store.recordLibraryUpdateNotifications(before, after, createdAt); }
+export function recordNovelUpdateNotifications(updates: NovelUpdateNotificationInput[], createdAt?: number) { return store.recordNovelUpdateNotifications(updates, createdAt); }
 export function clearLibraryUpdateNotifications()                         { store.clearLibraryUpdateNotifications(); }
 export function addSystemNotification(entry: Omit<SystemNotification, "id" | "createdAt"> & { id?: string; createdAt?: number }) {
   return store.addSystemNotification(entry);

@@ -52,11 +52,16 @@ function hardcover(overrides: Partial<HardcoverNovelTrackRecord> = {}): Hardcove
 function cards(input: {
   entries: PersistedNovelLibraryEntry[];
   hardcoverRecords?: HardcoverNovelTrackRecord[];
+  progressPercent?: number;
 }) {
   return buildNovelLibraryCards({
     entries: input.entries,
     chapters: [],
-    progress: [],
+    progress: input.progressPercent == null ? [] : [{
+      novelId: input.entries[0]?.id ?? "",
+      progressPercent: input.progressPercent,
+      updatedAt: 1,
+    }],
     search: "",
     sortMode: "az",
     sortDir: "asc",
@@ -91,5 +96,21 @@ describe("buildNovelLibraryCards", () => {
     });
 
     expect(card?.metaChips).toEqual(["Unknown"]);
+  });
+
+  it("derives Finished only when the work is completed and reading progress is complete", () => {
+    const [completedCard] = cards({
+      entries: [novel()],
+      hardcoverRecords: [hardcover({ sourceNovelId: "novel:source:lotm", workStatus: "Completed" })],
+      progressPercent: 0.5,
+    });
+    const [finishedCard] = cards({
+      entries: [novel()],
+      hardcoverRecords: [hardcover({ sourceNovelId: "novel:source:lotm", workStatus: "Completed" })],
+      progressPercent: 1,
+    });
+
+    expect(completedCard?.metaChips).toEqual(["Completed"]);
+    expect(finishedCard?.metaChips).toEqual(["Finished"]);
   });
 });

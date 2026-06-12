@@ -38,6 +38,7 @@ export interface NovelMigrationChapterSnapshot {
   order: number;
   releaseTime: number | null;
   unread: boolean;
+  updatedAt?: number | null;
 }
 
 export interface NovelMigrationEntrySnapshot {

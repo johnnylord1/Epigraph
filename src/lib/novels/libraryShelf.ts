@@ -16,8 +16,7 @@ function formatNovelSourceStatus(status: string | null | undefined): string | nu
   const normalized = status?.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
   if (!normalized || normalized.toLowerCase() === "unknown") return null;
   const token = normalized.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-  if (token === "FINISHED") return "Finished";
-  if (token === "COMPLETED" || token === "COMPLETE") return "Completed";
+  if (token === "FINISHED" || token === "COMPLETED" || token === "COMPLETE") return "Completed";
   if (token === "CANCELLED" || token === "CANCELED") return "Cancelled";
   if (token === "HIATUS") return "Hiatus";
   if (token === "ONGOING") return "Ongoing";
@@ -27,12 +26,13 @@ function formatNovelSourceStatus(status: string | null | undefined): string | nu
 function buildNovelWorkStatusLabel(
   entry: PersistedNovelLibraryEntry,
   hardcoverRecord: HardcoverNovelTrackRecord | undefined,
+  isReadFinished: boolean,
 ): string {
   const trackerStatus = formatNovelSourceStatus(hardcoverRecord?.workStatus);
-  if (trackerStatus) return trackerStatus;
+  if (trackerStatus) return trackerStatus === "Completed" && isReadFinished ? "Finished" : trackerStatus;
 
   const sourceStatus = formatNovelSourceStatus(entry.status);
-  if (sourceStatus) return sourceStatus;
+  if (sourceStatus) return sourceStatus === "Completed" && isReadFinished ? "Finished" : sourceStatus;
   return "Unknown";
 }
 
@@ -171,7 +171,7 @@ export function buildNovelLibraryCards(input: {
         coverFit: "cover",
         badges: [],
         metaChips: [
-          buildNovelWorkStatusLabel(entry, hardcoverRecordByNovelId.get(entry.id)),
+          buildNovelWorkStatusLabel(entry, hardcoverRecordByNovelId.get(entry.id), progressPercent >= 0.98),
         ],
         progress: chapterCount > 0 ? {
           primaryLabel: String(readCount),

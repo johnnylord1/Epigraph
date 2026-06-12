@@ -3431,6 +3431,36 @@
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Only update ongoing novels</p>
+                    <p class="settings-mini-row__hint">Skip completed, cancelled, hiatus, and unknown novel statuses during Books refresh.</p>
+                  </div>
+                  <button
+                    class="settings-toggle"
+                    class:is-on={store.settings.onlyUpdateOngoingNovels}
+                    type="button"
+                    role="switch"
+                    aria-checked={store.settings.onlyUpdateOngoingNovels}
+                    aria-label="Only update ongoing novels"
+                    onclick={() => updateSettings({ onlyUpdateOngoingNovels: !store.settings.onlyUpdateOngoingNovels })}
+                  ></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Download new novel chapters</p>
+                    <p class="settings-mini-row__hint">Save newly discovered source chapters for offline reading; keep off to avoid unexpected storage use.</p>
+                  </div>
+                  <button
+                    class="settings-toggle"
+                    class:is-on={store.settings.downloadNewNovelChapters}
+                    type="button"
+                    role="switch"
+                    aria-checked={store.settings.downloadNewNovelChapters}
+                    aria-label="Download new novel chapters"
+                    onclick={() => updateSettings({ downloadNewNovelChapters: !store.settings.downloadNewNovelChapters })}
+                  ></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
                     <p class="settings-mini-row__label">Local server standby</p>
                     <p class="settings-mini-row__hint">Let Aethon stop Suwayomi after idle while Library can use its local snapshot.</p>
                   </div>

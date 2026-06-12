@@ -11,7 +11,7 @@
     normalizeBooksCategorySelection,
   } from "../../lib/library/booksSection";
   import { buildNovelLibraryCards } from "../../lib/novels/libraryShelf";
-  import { loadHardcoverState, type HardcoverNovelTrackRecord } from "../../lib/novels/hardcover";
+  import { getHardcoverUserBooks, loadHardcoverState, type HardcoverNovelTrackRecord } from "../../lib/novels/hardcover";
   import { hasBookLocalAsset } from "../../lib/books/availability";
   import {
     buildNovelDetailRecordFromLibrary,
@@ -20,6 +20,10 @@
     loadNovelLibraryState,
     peekNovelLibraryState,
   } from "../../lib/novels/libraryState";
+  import {
+    groupRefreshedNovelChaptersForNotifications,
+    refreshNovelLibraryFromSources,
+  } from "../../lib/novels/libraryRefresh";
   import { collectTrackedChapterTotalsByMangaId, collectTrackedCompletedMangaIds } from "../../lib/library/completion";
   import {
     COMPLETED_CATEGORY_NAME,
@@ -71,6 +75,7 @@
     setLibraryUpdateInFlight,
     bumpLibraryCoverCacheGeneration,
     recordLibraryUpdateNotifications,
+    recordNovelUpdateNotifications,
     addSystemNotification,
     store,
     updateSettings,
@@ -126,6 +131,8 @@
   let dropTargetTabId = $state<string | null>(null);
   let loadDataInFlight = false;
   let manualRefreshInFlight = $state(false);
+  let refreshDialogOpen = $state(false);
+  let refreshDialogBusy = $state<"active" | "all" | null>(null);
   let coverWakeInFlight: Promise<void> | null = null;
   let coverRecoveryVersions = $state(new Map<number, number>());
   const pendingCoverRecoveryIds = new Set<number>();
@@ -143,6 +150,7 @@
       serverUrl: store.runtimeServerUrl,
     }).records,
   );
+  let hardcoverRecordsRefreshInFlight = false;
   const libraryRuntimeReady = $derived(
     !!store.runtimeResolvedLocalProfileId && !!store.runtimeServerUrl,
   );
@@ -302,6 +310,23 @@
 
   function reloadHardcoverTrackingRecords() {
     hardcoverTrackingRecords = loadHardcoverState(currentSnapshotScope()).records;
+  }
+
+  async function refreshHardcoverTrackingRecords() {
+    const scope = currentSnapshotScope();
+    const state = loadHardcoverState(scope);
+    hardcoverTrackingRecords = state.records;
+    if (!state.auth.connected || !state.auth.token || hardcoverRecordsRefreshInFlight) return;
+
+    hardcoverRecordsRefreshInFlight = true;
+    try {
+      hardcoverTrackingRecords = await getHardcoverUserBooks(scope);
+    } catch (refreshError) {
+      console.warn("Could not refresh Hardcover tracking records for Books library.", refreshError);
+      hardcoverTrackingRecords = loadHardcoverState(scope).records;
+    } finally {
+      hardcoverRecordsRefreshInFlight = false;
+    }
   }
 
   function categoriesWithSnapshotMembers(snapshot: PersistedLibrarySnapshot) {
@@ -645,7 +670,7 @@
     if (store.librarySection !== "books") return;
 
     untrack(() => {
-      reloadHardcoverTrackingRecords();
+      void refreshHardcoverTrackingRecords();
       void loadNovelLibraryState({
         profileId: store.runtimeResolvedLocalProfileId,
         serverUrl: store.runtimeServerUrl,
@@ -1207,7 +1232,109 @@
     return "Preparing library update.";
   }
 
-  async function refreshLibraryManually() {
+  function openLibraryRefreshDialog() {
+    if (manualRefreshInFlight || store.libraryUpdateInFlight) {
+      showSharedLibraryUpdateProgress("Library update already running.");
+      addToast({
+        kind: "info",
+        title: "Library update already running",
+        body: "Aethon is already checking your library.",
+        duration: 2400,
+      });
+      return;
+    }
+    refreshDialogOpen = true;
+  }
+
+  function closeLibraryRefreshDialog() {
+    if (manualRefreshInFlight || store.libraryUpdateInFlight || refreshDialogBusy) return;
+    refreshDialogOpen = false;
+  }
+
+  async function refreshComicsLibrary() {
+    const beforeUpdate = [...store.libraryMangaSnapshot];
+    const updateRun = await runSharedLibraryUpdate({
+      reason: "manual-library-update",
+      categories: manualUpdateCategoryIds(),
+      onLiveRefresh: refreshLibrarySnapshotLive,
+    });
+    const updatedAt = updateRun.updatedAt;
+    updateSettings({ lastLibraryUpdateAt: updatedAt });
+    showSharedLibraryUpdateProgress("Refreshing local Comics data.");
+    cache.clearGroup(CACHE_GROUPS.LIBRARY);
+    await waitForLibraryLoadIdle();
+    await loadData();
+    bumpLibraryCoverCacheGeneration();
+    if (updateRun.changedMangaIds.length > 0) {
+      showSharedLibraryUpdateProgress("Reconciling changed titles.");
+      await reconcileCurrentLibraryCountsFromChapters(updateRun.changedMangaIds);
+    }
+    const entries = recordLibraryUpdateNotifications(beforeUpdate, store.libraryMangaSnapshot, updatedAt);
+    showSharedLibraryUpdateProgress("Comics library update finished.", 1800);
+    addSystemNotification({
+      kind: "success",
+      title: entries.length > 0 ? "New chapters found" : "Comics library sync completed",
+      body: entries.length > 0
+        ? `${entries.reduce((sum, entry) => sum + entry.chapterDelta, 0)} new chapters added across ${entries.length} titles.`
+        : "Aethon refreshed your comics library.",
+      createdAt: updatedAt,
+    });
+    addToast({
+      kind: "success",
+      title: entries.length > 0 ? "New chapters found" : "Comics library updated",
+      body: entries.length > 0
+        ? `${entries.reduce((sum, entry) => sum + entry.chapterDelta, 0)} new chapters added across ${entries.length} titles.`
+        : "Aethon refreshed your comics library.",
+    });
+  }
+
+  function manualUpdateNovelIds() {
+    if (!bookActiveCategoryId) return null;
+    return novelsLibraryState.entries
+      .filter((entry) => (store.settings.booksCategoryAssignments[entry.id] ?? []).includes(bookActiveCategoryId))
+      .map((entry) => entry.id);
+  }
+
+  async function refreshBooksLibrary(options: { categoryNovelIds?: readonly string[] | null } = {}) {
+    showSharedLibraryUpdateProgress("Refreshing Books and source novels.");
+    const updatedAt = Date.now();
+    const result = await refreshNovelLibraryFromSources({
+      profileId: store.runtimeResolvedLocalProfileId,
+      serverUrl: store.runtimeServerUrl,
+    }, {
+      categoryNovelIds: options.categoryNovelIds ?? null,
+      concurrency: 1,
+      downloadNewChapters: store.settings.downloadNewNovelChapters,
+      onlyOngoing: store.settings.onlyUpdateOngoingNovels,
+      pauseMs: 800,
+      onProgress: ({ checked, total, currentTitle, newChapters, failed }) => {
+        if (total <= 0) return;
+        const titlePart = currentTitle ? ` - ${currentTitle}` : "";
+        const newPart = newChapters > 0 ? `, ${newChapters} new` : "";
+        const failedPart = failed > 0 ? `, ${failed} failed` : "";
+        showSharedLibraryUpdateProgress(`Checking source novels ${checked}/${total}${newPart}${failedPart}${titlePart}.`);
+      },
+    });
+    novelsLibraryState = result.state;
+    const novelNotifications = recordNovelUpdateNotifications(groupRefreshedNovelChaptersForNotifications(result.newChapterEntries), updatedAt);
+    const title = result.failed > 0 ? "Books library refreshed with warnings" : "Books library updated";
+    const body = result.checked > 0
+      ? `${result.updated}/${result.checked} source novels refreshed${result.newChapters > 0 ? `, ${result.newChapters} new chapters found` : ""}${result.failed > 0 ? `, ${result.failed} failed` : ""}.`
+      : "No source novels were available to refresh.";
+    showSharedLibraryUpdateProgress("Books library update finished.", 1800);
+    addSystemNotification({
+      kind: result.failed > 0 ? "info" : "success",
+      title: novelNotifications.length > 0 ? "New novel chapters found" : title,
+      body,
+    });
+    addToast({
+      kind: result.failed > 0 ? "info" : "success",
+      title,
+      body,
+    });
+  }
+
+  async function runLibraryRefresh(target: "active" | "all") {
     if (manualRefreshInFlight || store.libraryUpdateInFlight) {
       showSharedLibraryUpdateProgress("Library update already running.");
       addToast({
@@ -1219,49 +1346,17 @@
       return;
     }
     manualRefreshInFlight = true;
+    refreshDialogBusy = target;
     setLibraryUpdateInFlight(true);
     try {
-      if (store.librarySection === "comics") {
-        const beforeUpdate = [...store.libraryMangaSnapshot];
-        const updateRun = await runSharedLibraryUpdate({
-          reason: "manual-library-update",
-          categories: manualUpdateCategoryIds(),
-          onLiveRefresh: refreshLibrarySnapshotLive,
-        });
-        const updatedAt = updateRun.updatedAt;
-        updateSettings({ lastLibraryUpdateAt: updatedAt });
-        showSharedLibraryUpdateProgress("Refreshing local Library data.");
-        cache.clearGroup(CACHE_GROUPS.LIBRARY);
-        await waitForLibraryLoadIdle();
-        await loadData();
-        bumpLibraryCoverCacheGeneration();
-        if (updateRun.changedMangaIds.length > 0) {
-          showSharedLibraryUpdateProgress("Reconciling changed titles.");
-          await reconcileCurrentLibraryCountsFromChapters(updateRun.changedMangaIds);
-        }
-        const entries = recordLibraryUpdateNotifications(beforeUpdate, store.libraryMangaSnapshot, updatedAt);
-        showSharedLibraryUpdateProgress("Library update finished.", 1800);
-        addSystemNotification({
-          kind: "success",
-          title: entries.length > 0 ? "New chapters found" : "Library sync completed",
-          body: entries.length > 0
-            ? `${entries.reduce((sum, entry) => sum + entry.chapterDelta, 0)} new chapters added across ${entries.length} titles.`
-            : "Aethon refreshed your comics library.",
-          createdAt: updatedAt,
-        });
-        addToast({
-          kind: "success",
-          title: entries.length > 0 ? "New chapters found" : "Library updated",
-          body: entries.length > 0
-            ? `${entries.reduce((sum, entry) => sum + entry.chapterDelta, 0)} new chapters added across ${entries.length} titles.`
-            : "Aethon refreshed your comics library.",
-        });
+      refreshDialogOpen = false;
+      if (target === "all") {
+        await refreshComicsLibrary();
+        await refreshBooksLibrary();
+      } else if (store.librarySection === "comics") {
+        await refreshComicsLibrary();
       } else {
-        novelsLibraryState = await loadNovelLibraryState({
-          profileId: store.runtimeResolvedLocalProfileId,
-          serverUrl: store.runtimeServerUrl,
-        });
-        addToast({ kind: "success", title: "Library refreshed", body: "Aethon refreshed local books and novels." });
+        await refreshBooksLibrary({ categoryNovelIds: manualUpdateNovelIds() });
       }
     } catch (refreshError) {
       console.error(refreshError);
@@ -1278,6 +1373,7 @@
       });
     } finally {
       manualRefreshInFlight = false;
+      refreshDialogBusy = null;
       setLibraryUpdateInFlight(false);
     }
   }
@@ -1523,7 +1619,7 @@
     onPreferredColumnsChange={handlePreferredColumnsChange}
     onShowProgressChange={handleShowProgressChange}
     onShowOutlineChange={handleShowOutlineChange}
-    onRefresh={refreshLibraryManually}
+    onRefresh={openLibraryRefreshDialog}
     refreshPending={manualRefreshInFlight || store.libraryUpdateInFlight}
   >
     {#snippet hero()}
@@ -1627,7 +1723,7 @@
                 onPreferredColumnsChange={handlePreferredColumnsChange}
                 onShowProgressChange={handleShowProgressChange}
                 onShowOutlineChange={handleShowOutlineChange}
-                onRefresh={refreshLibraryManually}
+                onRefresh={openLibraryRefreshDialog}
                 refreshPending={manualRefreshInFlight || store.libraryUpdateInFlight}
                 showSearch={false}
               />
@@ -1678,9 +1774,161 @@
       />
     {/if}
   </LibraryShell>
+  {#if refreshDialogOpen}
+    <div class="library-refresh-backdrop" role="presentation" onclick={closeLibraryRefreshDialog}>
+      <div
+        class="library-refresh-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="library-refresh-title"
+        tabindex="-1"
+        onclick={(event) => event.stopPropagation()}
+        onkeydown={(event) => event.stopPropagation()}
+      >
+        <div class="library-refresh-modal__head">
+          <div>
+            <p class="n-eyebrow">Library refresh</p>
+            <h2 id="library-refresh-title">{store.librarySection === "comics" ? "Update Comics library" : "Update Books library"}</h2>
+          </div>
+          <button class="n-icon-btn library-refresh-modal__close" type="button" aria-label="Close refresh dialog" onclick={closeLibraryRefreshDialog} disabled={manualRefreshInFlight || store.libraryUpdateInFlight}>
+            <span aria-hidden="true">×</span>
+          </button>
+        </div>
+        <div class="library-refresh-options">
+          <button
+            type="button"
+            class="library-refresh-option"
+            disabled={manualRefreshInFlight || store.libraryUpdateInFlight}
+            onclick={() => runLibraryRefresh("active")}
+          >
+            <span>{store.librarySection === "comics" ? "Update Comics library" : "Update Books library"}</span>
+            <small>{store.librarySection === "comics" ? "Checks Suwayomi manga titles and refreshes local cards." : "Refreshes local books and source novels from installed novel sources."}</small>
+          </button>
+          <button
+            type="button"
+            class="library-refresh-option library-refresh-option--primary"
+            disabled={manualRefreshInFlight || store.libraryUpdateInFlight}
+            onclick={() => runLibraryRefresh("all")}
+          >
+            <span>Update All Libraries</span>
+            <small>Runs Comics first, then refreshes Books and source novels.</small>
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
 {/if}
 
 <style>
+  .library-refresh-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: rgba(8, 7, 11, 0.48);
+    backdrop-filter: blur(8px);
+  }
+
+  .library-refresh-modal {
+    width: min(440px, calc(100vw - 42px));
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding: 20px;
+    border: 1px solid var(--border-base);
+    border-radius: var(--radius-xl);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 92%, var(--accent-muted)), var(--bg-surface));
+    box-shadow: 0 26px 70px rgba(0, 0, 0, 0.58), 0 0 0 1px rgba(201, 181, 255, 0.04);
+    animation: refreshModalIn 0.14s ease both;
+  }
+
+  .library-refresh-modal__head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .library-refresh-modal__head h2 {
+    margin: 4px 0 0;
+    color: var(--text-primary);
+    font-family: var(--font-display);
+    font-size: 1.12rem;
+    letter-spacing: 0;
+  }
+
+  .library-refresh-modal__close {
+    width: 34px;
+    height: 34px;
+    flex: 0 0 auto;
+  }
+
+  .library-refresh-modal__close span {
+    color: var(--text-muted);
+    font-size: 20px;
+    line-height: 1;
+  }
+
+  .library-refresh-options {
+    display: grid;
+    gap: 10px;
+  }
+
+  .library-refresh-option {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
+    width: 100%;
+    padding: 14px 15px;
+    border: 1px solid var(--border-dim);
+    border-radius: var(--radius-lg);
+    background: color-mix(in srgb, var(--bg-overlay) 72%, transparent);
+    color: var(--text-primary);
+    text-align: left;
+    cursor: pointer;
+    transition: border-color var(--t-base), background var(--t-base), transform var(--t-fast);
+  }
+
+  .library-refresh-option:hover:not(:disabled) {
+    border-color: rgba(201, 181, 255, 0.24);
+    background: color-mix(in srgb, var(--bg-overlay) 78%, var(--accent-muted));
+    transform: translateY(-1px);
+  }
+
+  .library-refresh-option:disabled {
+    opacity: 0.58;
+    cursor: default;
+  }
+
+  .library-refresh-option span {
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    font-weight: 800;
+    letter-spacing: 0;
+  }
+
+  .library-refresh-option small {
+    max-width: 34rem;
+    color: var(--text-muted);
+    font-family: var(--font-ui);
+    font-size: var(--text-xs);
+    line-height: 1.45;
+    letter-spacing: 0;
+  }
+
+  .library-refresh-option--primary {
+    border-color: rgba(201, 181, 255, 0.2);
+    background: color-mix(in srgb, var(--accent-muted) 32%, var(--bg-overlay));
+  }
+
+  @keyframes refreshModalIn {
+    from { opacity: 0; transform: translateY(8px) scale(0.985); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
   .library-hero {
     position: relative;
     z-index: 6;

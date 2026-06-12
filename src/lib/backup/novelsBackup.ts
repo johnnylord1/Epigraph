@@ -92,6 +92,7 @@ export interface AethonNovelChapterEntry {
   order: number;
   releaseTime: number | null;
   unread: boolean;
+  updatedAt?: number | null;
 }
 
 export interface AethonNovelsSnapshot {
@@ -308,6 +309,7 @@ function normalizeChapterEntry(entry: AethonNovelChapterEntry): AethonNovelChapt
     order: typeof entry?.order === "number" ? entry.order : 0,
     releaseTime: typeof entry?.releaseTime === "number" ? entry.releaseTime : null,
     unread: entry?.unread !== false,
+    updatedAt: typeof entry?.updatedAt === "number" ? entry.updatedAt : null,
   };
 }
 

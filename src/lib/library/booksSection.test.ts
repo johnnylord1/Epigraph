@@ -61,6 +61,7 @@ describe("buildBooksSectionState", () => {
       sectionCount: 0,
       tocCount: 0,
       spineCount: 0,
+      pageCount: 87,
       sectionsSummary: [],
     });
 
@@ -90,6 +91,7 @@ describe("buildBooksSectionState", () => {
     expect(state.typeCounts).toEqual({ all: 2, epub: 1, pdf: 1, sources: 0 });
     expect(state.filteredBooks.map((entry) => entry.id)).toEqual(["pdf-beta", "epub-alpha"]);
     expect(state.vm.cards.map((card) => card.id)).toEqual(["book:pdf-beta", "book:epub-alpha"]);
+    expect(state.vm.cards[0].metaChips).toEqual(["Finished"]);
     expect(state.vm.cards[1].coverSrc).toBe("book://alpha");
     expect(state.vm.cards[1].subtitle).toBe("EPUB");
     expect(state.vm.cards[1].metaChips).toEqual(["Completed"]);

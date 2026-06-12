@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   hardcoverRecordToRecommendationCandidate,
   matchHardcoverBook,
+  mergeHardcoverTrackRecords,
   normalizeHardcoverBook,
 } from "./hardcover";
 import {
@@ -35,7 +36,7 @@ describe("Hardcover novel tracking helpers", () => {
       description: "Victorian mystery fantasy.",
       releaseYear: 2018,
       url: "https://hardcover.app/books/lord-of-the-mysteries",
-      workStatus: "Finished",
+      workStatus: "Completed",
     });
   });
 
@@ -227,5 +228,54 @@ describe("Hardcover novel tracking helpers", () => {
     });
     const includedTitles = included.sections.flatMap((section) => section.items.map((item) => item.candidate.title));
     expect(includedTitles).toContain("The Wandering Inn");
+  });
+
+  it("preserves explicit source novel links when refreshing Hardcover records", () => {
+    const merged = mergeHardcoverTrackRecords([
+      {
+        bookId: 1435,
+        title: "Lord of the Mysteries",
+        authors: ["Cuttlefish"],
+        genres: ["Fantasy"],
+        tags: ["Mystery"],
+        moods: [],
+        coverUrl: "old://cover",
+        status: "Want to Read",
+        workStatus: null,
+        rating: null,
+        progress: null,
+        remoteUrl: "https://hardcover.app/books/lord-of-the-mysteries",
+        updatedAt: 1,
+        sourceNovelId: "novel:illusia:lotm",
+        sourceTitleKey: recommendationTitleKey("Lord of the Mysteries", "novel"),
+      },
+    ], [
+      {
+        bookId: 1435,
+        title: "Lord of the Mysteries",
+        authors: ["Cuttlefish"],
+        genres: [],
+        tags: [],
+        moods: [],
+        coverUrl: null,
+        status: "Currently Reading",
+        workStatus: "Ongoing",
+        rating: 4.7,
+        progress: null,
+        remoteUrl: "https://hardcover.app/books/lord-of-the-mysteries",
+        updatedAt: 2,
+        sourceNovelId: null,
+        sourceTitleKey: recommendationTitleKey("Lord of the Mysteries", "novel"),
+      },
+    ]);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({
+      sourceNovelId: "novel:illusia:lotm",
+      status: "Currently Reading",
+      workStatus: "Ongoing",
+      genres: ["Fantasy"],
+      tags: ["Mystery"],
+    });
   });
 });

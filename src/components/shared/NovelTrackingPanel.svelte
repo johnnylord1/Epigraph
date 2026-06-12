@@ -169,6 +169,9 @@
       id: record.bookId,
       title: record.title,
       authors: record.authors,
+      genres: record.genres,
+      tags: record.tags,
+      moods: record.moods,
       coverUrl: record.coverUrl,
       description: null,
       releaseYear: null,
@@ -176,6 +179,7 @@
       ratingsCount: null,
       slug: null,
       url: record.remoteUrl,
+      workStatus: record.workStatus,
     };
   }
 

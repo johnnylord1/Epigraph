@@ -89,6 +89,11 @@
     return book.subtype.toUpperCase();
   }
 
+  function buildBookWorkStatus(hasLocalAsset: boolean, isReadFinished: boolean): string {
+    if (!hasLocalAsset) return "Missing file";
+    return isReadFinished ? "Finished" : "Completed";
+  }
+
   const visibleBooks = $derived(books.slice(0, renderVisible));
   const visibleBookCards = $derived(
     visibleBooks.map((book) => {
@@ -104,7 +109,7 @@
       const badges = !hasLocalAsset
         ? [{ kind: "status" as const, label: "Missing file" }]
         : [];
-      const metaChips = [hasLocalAsset ? "Completed" : "Missing file"];
+      const metaChips = [buildBookWorkStatus(hasLocalAsset, readCount >= chapterCount && chapterCount > 0)];
       if (!hasLocalAsset) metaChips.push("Metadata only");
 
       return {

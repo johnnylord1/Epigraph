@@ -2,11 +2,17 @@
   import { ClockCounterClockwise, Trash, Play } from "phosphor-svelte";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import {
+    buildNovelDetailRecordFromLibrary,
+    getNovelLibraryChapters,
+    peekNovelLibraryState,
+  } from "../../lib/novels/libraryState";
+  import {
     store,
     clearHistory,
     clearLibraryUpdateNotifications,
     clearSystemNotifications,
     openMangaDetail,
+    setActiveNovelDetail,
   } from "../../store/state.svelte";
   import type { Manga } from "../../lib/types";
   import type { HistoryEntry, LibraryUpdateNotification, SystemNotification } from "../../store/state.svelte";
@@ -57,6 +63,7 @@
     id: string;
     notification: LibraryUpdateNotification;
     manga: Manga | null;
+    isNovel: boolean;
     title: string;
     subtitle: string;
     count: number;
@@ -103,14 +110,18 @@
     const mangaById = new Map(store.libraryMangaSnapshot.map((manga) => [manga.id, manga]));
     return store.libraryUpdateNotifications
       .map((notification): UpdateEntry => {
-        const manga = mangaById.get(notification.mangaId) ?? null;
+        const manga = typeof notification.mangaId === "number" ? mangaById.get(notification.mangaId) ?? null : null;
         const count = Math.max(1, Number(notification.chapterDelta ?? 1));
+        const chapterText = notification.chapterTitles?.[0]
+          ? `${notification.chapterTitles[0]}${count > 1 ? ` + ${count - 1} more` : ""}`
+          : plural(count, "chapter");
         return {
           id: notification.id,
           notification,
           manga,
+          isNovel: notification.kind === "novels",
           title: notification.mangaTitle || manga?.title || "Unknown title",
-          subtitle: `${plural(count, "chapter")} added in the latest refresh`,
+          subtitle: `${chapterText} added in the latest refresh`,
           count,
           source: notification.sourceName || manga?.source?.displayName || manga?.source?.name || "Library",
           readAt: notification.createdAt,
@@ -147,8 +158,22 @@
   }
 
   function openUpdate(entry: UpdateEntry) {
+    if (entry.isNovel && entry.notification.novelId) {
+      const state = peekNovelLibraryState({
+        profileId: store.runtimeResolvedLocalProfileId,
+        serverUrl: store.runtimeServerUrl,
+      });
+      const novel = state.entries.find((candidate) => candidate.id === entry.notification.novelId);
+      if (novel) {
+        setActiveNovelDetail({
+          novel: buildNovelDetailRecordFromLibrary(novel, getNovelLibraryChapters(state, novel.id)),
+          inLibrary: true,
+        });
+      }
+      return;
+    }
     const manga = entry.manga ?? {
-      id: entry.notification.mangaId,
+      id: entry.notification.mangaId ?? 0,
       title: entry.title,
       thumbnailUrl: entry.notification.thumbnailUrl,
       inLibrary: true,

@@ -67,6 +67,7 @@ function normalizeChapterEntry(value: unknown): PersistedNovelChapterEntry | nul
     order: typeof record.order === "number" ? record.order : 0,
     releaseTime: typeof record.releaseTime === "number" ? record.releaseTime : null,
     unread: record.unread !== false,
+    updatedAt: typeof record.updatedAt === "number" ? record.updatedAt : null,
   };
 }
 
@@ -375,6 +376,7 @@ export function upsertNovelInLibrary(
       order: chapter.order,
       releaseTime: chapter.releaseTime,
       unread: existingChapter?.unread ?? chapter.unread,
+      updatedAt: existingChapter?.updatedAt ?? null,
     } satisfies PersistedNovelChapterEntry;
   });
 
@@ -683,6 +685,7 @@ export function snapshotNovelLibraryStateSlice(
     order: chapter.order,
     releaseTime: chapter.releaseTime,
     unread: chapter.unread,
+    updatedAt: chapter.updatedAt ?? null,
   }));
 
   return {

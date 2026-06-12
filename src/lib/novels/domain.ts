@@ -79,6 +79,7 @@ export interface PersistedNovelChapterEntry {
   order: number;
   releaseTime: number | null;
   unread: boolean;
+  updatedAt?: number | null;
 }
 
 export interface PersistedNovelLibraryState {

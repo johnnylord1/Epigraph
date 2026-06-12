@@ -437,7 +437,8 @@ export async function getHardcoverUserBooks(
   const records = (data.user_books ?? [])
     .map(normalizeHardcoverUserBook)
     .filter((record): record is HardcoverNovelTrackRecord => Boolean(record));
-  const enrichedRecords = await enrichHardcoverTrackRecords(normalizedToken, records);
+  const mergedRecords = mergeHardcoverTrackRecords(state.records, records);
+  const enrichedRecords = await enrichHardcoverTrackRecords(normalizedToken, mergedRecords);
   return saveHardcoverState({ ...state, records: enrichedRecords }, scopeInput).records;
 }
 
@@ -511,6 +512,32 @@ export function findHardcoverRecordForNovel(
   const titleKey = input.title ? recommendationTitleKey(input.title, "novel") : null;
   if (!titleKey) return null;
   return records.find((record) => record.sourceTitleKey === titleKey || recommendationTitleKey(record.title, "novel") === titleKey) ?? null;
+}
+
+export function mergeHardcoverTrackRecords(
+  existingRecords: readonly HardcoverNovelTrackRecord[],
+  remoteRecords: readonly HardcoverNovelTrackRecord[],
+): HardcoverNovelTrackRecord[] {
+  const existingByBookId = new Map(existingRecords.map((record) => [record.bookId, record]));
+  const remoteBookIds = new Set<number>();
+  const merged = remoteRecords.map((remote) => {
+    remoteBookIds.add(remote.bookId);
+    const existing = existingByBookId.get(remote.bookId);
+    if (!existing) return remote;
+    return {
+      ...remote,
+      genres: remote.genres.length ? remote.genres : existing.genres,
+      tags: remote.tags.length ? remote.tags : existing.tags,
+      moods: remote.moods.length ? remote.moods : existing.moods,
+      coverUrl: remote.coverUrl ?? existing.coverUrl,
+      workStatus: remote.workStatus ?? existing.workStatus,
+      sourceNovelId: existing.sourceNovelId ?? remote.sourceNovelId ?? null,
+      sourceTitleKey: existing.sourceTitleKey ?? remote.sourceTitleKey ?? recommendationTitleKey(remote.title, "novel"),
+    };
+  });
+
+  const linkedLocalOnly = existingRecords.filter((record) => record.sourceNovelId && !remoteBookIds.has(record.bookId));
+  return [...merged, ...linkedLocalOnly];
 }
 
 export function matchHardcoverBook(
@@ -1308,8 +1335,7 @@ function normalizeHardcoverWorkStatus(status: string | null | undefined): string
   const normalized = status?.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
   if (!normalized || normalized.toLowerCase() === "unknown") return null;
   const token = normalized.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-  if (token === "FINISHED") return "Finished";
-  if (token === "COMPLETED" || token === "COMPLETE") return "Completed";
+  if (token === "FINISHED" || token === "COMPLETED" || token === "COMPLETE") return "Completed";
   if (token === "CANCELLED" || token === "CANCELED") return "Cancelled";
   if (token === "HIATUS") return "Hiatus";
   if (token === "ONGOING") return "Ongoing";

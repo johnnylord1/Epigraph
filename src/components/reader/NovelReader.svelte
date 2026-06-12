@@ -14,6 +14,10 @@
     saveNovelLibraryState,
     toggleNovelChapterBookmark,
   } from "../../lib/novels/libraryState";
+  import {
+    loadCachedNovelChapter,
+    saveCachedNovelChapter,
+  } from "../../lib/novels/offlineChapters";
   import { readInstalledNovelChapter } from "../../lib/novels/sources";
   import NocturneState from "../shared/NocturneState.svelte";
   import ReaderHud from "./ReaderHud.svelte";
@@ -150,8 +154,21 @@
     error = null;
     try {
       libraryState = await loadNovelLibraryState(scopeInput);
-      const result = await readInstalledNovelChapter(scopeInput, activeReader.sourceId, activeReader.chapterPath);
-      chapterHtml = sanitizeChapterHtml(result.content);
+      const cached = await loadCachedNovelChapter(scopeInput, activeReader.sourceId, activeReader.chapterPath);
+      if (cached) {
+        chapterHtml = sanitizeChapterHtml(cached.content);
+      } else {
+        const result = await readInstalledNovelChapter(scopeInput, activeReader.sourceId, activeReader.chapterPath);
+        chapterHtml = sanitizeChapterHtml(result.content);
+        await saveCachedNovelChapter(scopeInput, {
+          sourceId: activeReader.sourceId,
+          novelId: activeReader.novelId,
+          chapterId: activeReader.chapterId,
+          chapterPath: activeReader.chapterPath,
+          chapterTitle: activeReader.chapterTitle,
+          content: result.content,
+        }).catch(() => null);
+      }
 
       if (getNovelLibraryEntry(libraryState, activeReader.novelId)) {
         libraryState = await saveNovelLibraryState(markNovelChapterRead(libraryState, {
