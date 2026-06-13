@@ -2,6 +2,7 @@
   import { onDestroy } from "svelte";
   import { store, dismissToast, setLibraryUpdateProgress } from "../../store/state.svelte";
   import type { LibraryUpdateProgress, Toast } from "../../store/state.svelte";
+  import { stopSharedLibraryUpdate } from "../../lib/library/updateRuntime";
 
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const timerVersions = new Map<string, number>();
@@ -95,6 +96,18 @@
             </div>
           {/if}
         </div>
+        {#if p.active && store.libraryUpdateInFlight}
+          <button
+            class="toast-action"
+            type="button"
+            onclick={(event) => {
+              event.stopPropagation();
+              void stopSharedLibraryUpdate();
+            }}
+          >
+            Stop
+          </button>
+        {/if}
         <button class="toast-close" aria-label="Dismiss library update progress" onclick={() => setLibraryUpdateProgress(null)}>
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
             <path d="M18 6 6 18M6 6l12 12" />

@@ -41,6 +41,8 @@ export interface NovelRefreshNotificationGroup {
 export interface RefreshNovelLibraryFailure {
   novelId: string;
   title: string;
+  sourceId: string;
+  sourceName: string;
   error: string;
 }
 
@@ -67,6 +69,7 @@ export interface RefreshNovelLibraryOptions {
   categoryNovelIds?: readonly string[] | null;
   concurrency?: number;
   downloadNewChapters?: boolean;
+  excludedNovelIds?: readonly string[] | null;
   onlyOngoing?: boolean;
   pauseMs?: number;
   onProgress?: (progress: RefreshNovelLibraryProgress) => void;
@@ -89,8 +92,12 @@ export function isNovelUpdateOngoingStatus(status: string | null | undefined): b
 
 export function shouldRefreshNovelEntry(
   entry: PersistedNovelLibraryEntry,
-  options: Pick<RefreshNovelLibraryOptions, "categoryNovelIds" | "onlyOngoing"> = {},
+  options: Pick<RefreshNovelLibraryOptions, "categoryNovelIds" | "excludedNovelIds" | "onlyOngoing"> = {},
 ): boolean {
+  if (options.excludedNovelIds && options.excludedNovelIds.length > 0) {
+    const excluded = new Set(options.excludedNovelIds);
+    if (excluded.has(entry.id)) return false;
+  }
   if (options.categoryNovelIds && options.categoryNovelIds.length > 0) {
     const allowed = new Set(options.categoryNovelIds);
     if (!allowed.has(entry.id)) return false;
@@ -225,7 +232,7 @@ async function runNovelUpdate(
     if (!sourceId) {
       failed += 1;
       checked += 1;
-      failures.push({ novelId: entry.id, title: entry.title, error: "Missing source id" });
+      failures.push({ novelId: entry.id, title: entry.title, sourceId: "unknown", sourceName: "Unknown source", error: "Missing source id" });
       options.onProgress?.({ checked, total, currentTitle: entry.title, newChapters: newChapterEntries.length, failed });
       continue;
     }
@@ -258,7 +265,13 @@ async function runNovelUpdate(
       updated += 1;
     } catch (error) {
       failed += 1;
-      failures.push({ novelId: entry.id, title: entry.title, error: errorMessage(error) });
+      failures.push({
+        novelId: entry.id,
+        title: entry.title,
+        sourceId,
+        sourceName: entry.source?.sourceName ?? entry.source?.pluginName ?? sourceId,
+        error: errorMessage(error),
+      });
       console.warn("Could not refresh source novel:", entry.title, error);
     } finally {
       checked += 1;

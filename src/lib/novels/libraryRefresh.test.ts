@@ -149,4 +149,17 @@ describe("novel library refresh", () => {
     expect(shouldRefreshNovelEntry(entry("Unknown"), { onlyOngoing: true })).toBe(false);
     expect(shouldRefreshNovelEntry(entry("Unknown"), { onlyOngoing: false })).toBe(true);
   });
+
+  it("skips novels blocked by folder update rules before category filters", () => {
+    expect(shouldRefreshNovelEntry(entry("Ongoing"), {
+      categoryNovelIds: [novelId],
+      excludedNovelIds: [novelId],
+      onlyOngoing: false,
+    })).toBe(false);
+    expect(shouldRefreshNovelEntry(entry("Ongoing"), {
+      categoryNovelIds: [novelId],
+      excludedNovelIds: [],
+      onlyOngoing: false,
+    })).toBe(true);
+  });
 });

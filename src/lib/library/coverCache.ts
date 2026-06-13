@@ -20,9 +20,8 @@ function scopeServerUrl(scope: CoverCacheScope) {
 }
 
 function cacheThumbnailUrl(scope: CoverCacheScope, manga: Manga) {
-  const generation = `${scope.coverCacheGeneration ?? ""}`.trim();
-  if (!generation) return manga.thumbnailUrl ?? "";
-  return `${manga.thumbnailUrl ?? ""}::aethon-cover-generation:${generation}`;
+  void scope;
+  return manga.thumbnailUrl ?? "";
 }
 
 function cacheLookupKey(scope: CoverCacheScope, manga: Manga) {

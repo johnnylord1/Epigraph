@@ -178,6 +178,8 @@ const READER_WEBVIEW_INIT_SCRIPT: &str = r#"
 const LIBRARY_COVER_CACHE_MAX_BYTES: u64 = 256 * 1024 * 1024;
 const LIBRARY_COVER_MAX_DOWNLOAD_BYTES: u64 = 5 * 1024 * 1024;
 const NOVEL_RUNTIME_HOST_LABEL: &str = "novel-runtime-host";
+const AETHON_GITHUB_REPO: Option<&str> = option_env!("AETHON_GITHUB_REPO");
+const VITE_AETHON_GITHUB_REPO: Option<&str> = option_env!("VITE_AETHON_GITHUB_REPO");
 
 struct RunningServer {
     child: CommandChild,
@@ -4391,13 +4393,22 @@ fn kill_server(server_url: Option<String>, app: tauri::AppHandle) -> Result<(), 
 async fn list_releases() -> Result<Vec<ReleaseInfo>, String> {
     use tauri_plugin_http::reqwest;
 
+    let repo = AETHON_GITHUB_REPO
+        .or(VITE_AETHON_GITHUB_REPO)
+        .map(str::trim)
+        .filter(|repo| !repo.is_empty())
+        .ok_or_else(|| {
+            "GitHub repository is not configured yet. Set AETHON_GITHUB_REPO when publishing your fork.".to_string()
+        })?;
+
     let client = reqwest::Client::builder()
-        .user_agent("Moku")
+        .user_agent("Aethon")
         .build()
         .map_err(|e| e.to_string())?;
 
+    let releases_url = format!("https://api.github.com/repos/{repo}/releases?per_page=100");
     let resp = client
-        .get("https://api.github.com/repos/Youwes09/Moku/releases?per_page=30")
+        .get(releases_url)
         .send()
         .await
         .map_err(|e| e.to_string())?;

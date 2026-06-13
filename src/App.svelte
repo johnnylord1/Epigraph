@@ -48,8 +48,9 @@
     setLibraryUpdateInFlight,
     setLibraryUpdateProgress,
     bumpLibraryCoverCacheGeneration,
-    recordLibraryUpdateNotifications,
+    recordComicsUpdateNotifications,
     recordNovelUpdateNotifications,
+    recordLibraryUpdateIssues,
     addSystemNotification,
     refreshAppReadingStateFromPersistence,
     setRuntimeSettingsTab,
@@ -66,9 +67,10 @@
   import { initRpc, setIdle, clearReading, destroyRpc } from "./lib/discord";
   import { cache, CACHE_GROUPS, CACHE_KEYS, DEFAULT_TTL_MS } from "./lib/cache";
   import { normalizeCategories } from "./lib/library/categories";
-  import { reconcileMangaCountsFromChapters } from "./lib/library/chapterCounts";
+  import { reconcileComicsChapterSnapshot } from "./lib/library/comicsChapterSnapshot";
   import { loadLibrarySnapshot, saveLibrarySnapshot } from "./lib/library/snapshot";
   import {
+    clearStaleLibraryUpdateInFlight,
     runSharedLibraryUpdate,
     showLibraryUpdateProgress as showSharedLibraryUpdateProgress,
   } from "./lib/library/updateRuntime";
@@ -86,7 +88,7 @@
     type TrackerCompletionTracker,
     type SyncdReplicationSnapshot,
   } from "./lib/syncdDesktop";
-  import { createBooksCategory, sortBooksCategories } from "./lib/library/domainCategories";
+  import { createBooksCategory, getBooksUpdateExcludedBookIds, sortBooksCategories } from "./lib/library/domainCategories";
   import type { Category, Chapter, DownloadStatus, DownloadQueueItem, Manga, Tracker } from "./lib/types";
   import type { ActiveDownload } from "./store/state.svelte";
   import { traceMediaAudit } from "./lib/mediaAudit";
@@ -348,6 +350,7 @@
   let libraryBootstrapInFlight: Promise<void> | null = null;
   let automaticLibraryUpdateInFlight: Promise<void> | null = null;
   let standbyInFlight = false;
+  let staleLibraryUpdateCheckTimer: ReturnType<typeof setTimeout> | null = null;
 
   const AUTOMATIC_LIBRARY_UPDATE_SETTLE_MS = 3 * 60 * 1000;
 
@@ -542,7 +545,7 @@
   }
 
   function canRunAutomaticLibraryUpdateNow(reason: "startup" | "focus" | "interval") {
-    if (reason === "startup" && Date.now() - bootStartedAt < AUTOMATIC_LIBRARY_UPDATE_SETTLE_MS) {
+    if (Date.now() - bootStartedAt < AUTOMATIC_LIBRARY_UPDATE_SETTLE_MS) {
       return false;
     }
     if (!pageHidden && !idle && Date.now() - lastInteractionAt < AUTOMATIC_LIBRARY_UPDATE_SETTLE_MS) {
@@ -553,6 +556,9 @@
 
   async function runAutomaticLibraryUpdate(reason: "startup" | "focus" | "interval") {
     if (automaticLibraryUpdateInFlight) return automaticLibraryUpdateInFlight;
+    if (store.libraryUpdateInFlight) {
+      await clearStaleLibraryUpdateInFlight();
+    }
     if (store.libraryUpdateInFlight) return null;
     if (!store.runtimeResolvedLocalProfileId || !store.runtimeServerUrl) return null;
     if (!nextLibraryUpdateDue()) return null;
@@ -568,8 +574,17 @@
       cache.clearGroup(CACHE_GROUPS.LIBRARY);
       await preloadLibrarySnapshot(true);
       bumpLibraryCoverCacheGeneration();
-      await reconcileLibrarySnapshotCountsFromChapters();
-      const entries = recordLibraryUpdateNotifications(beforeUpdate, store.libraryMangaSnapshot, updatedAt);
+      if (updateRun.cancelled) {
+        showSharedLibraryUpdateProgress("Library update stopped.", 1800);
+        return;
+      }
+      const comicsReconcile = await reconcileLibrarySnapshotChaptersAfterUpdate(
+        beforeUpdate,
+        updateRun.changedMangaIds,
+        updatedAt,
+        updateRun.preloadedChapters,
+      );
+      const entries = recordComicsUpdateNotifications(comicsReconcile.notifications, updatedAt);
       const {
         groupRefreshedNovelChaptersForNotifications,
         refreshNovelLibraryFromSources,
@@ -580,6 +595,10 @@
       }, {
         concurrency: 1,
         downloadNewChapters: store.settings.downloadNewNovelChapters,
+        excludedNovelIds: Array.from(getBooksUpdateExcludedBookIds(
+          store.settings.booksCategories,
+          store.settings.booksCategoryAssignments,
+        )),
         onlyOngoing: store.settings.onlyUpdateOngoingNovels,
         pauseMs: 800,
       });
@@ -587,15 +606,51 @@
         groupRefreshedNovelChaptersForNotifications(novelsResult.newChapterEntries),
         updatedAt,
       );
+      const comicsReconcileIssues = comicsReconcile.failedIds.map((mangaId) => {
+        const manga = store.libraryMangaSnapshot.find((entry) => entry.id === mangaId) ?? beforeUpdate.find((entry) => entry.id === mangaId);
+        const sourceName = manga?.source?.displayName || manga?.source?.name || manga?.sourceId || "Unknown source";
+        return {
+          runId: `comics-reconcile:${updatedAt}`,
+          contentKind: "manga" as const,
+          title: manga?.title ?? `Manga ${mangaId}`,
+          itemId: String(mangaId),
+          sourceId: String(manga?.source?.id ?? manga?.sourceId ?? "unknown"),
+          sourceName,
+          extensionName: sourceName,
+          message: "Aethon could not verify this title's chapter list after the update.",
+          errorType: "unknown" as const,
+        };
+      });
+      const novelIssues = novelsResult.failures.map((failure) => ({
+        runId: `books-update:${updatedAt}`,
+        contentKind: "novel" as const,
+        title: failure.title,
+        itemId: failure.novelId,
+        sourceId: failure.sourceId,
+        sourceName: failure.sourceName,
+        extensionName: failure.sourceName,
+        message: failure.error,
+        errorType: failure.error.match(/timeout|timed out|abort/i) ? "timeout" as const
+          : failure.error.match(/429|rate.?limit/i) ? "rate-limit" as const
+            : failure.error.match(/missing source|source id/i) ? "missing-source" as const
+              : "source-error" as const,
+      }));
+      const updateIssues = recordLibraryUpdateIssues([
+        ...updateRun.issues,
+        ...comicsReconcileIssues,
+        ...novelIssues,
+      ], updatedAt);
       const totalNewChapters = entries.reduce((sum, entry) => sum + entry.chapterDelta, 0)
         + novelNotifications.reduce((sum, entry) => sum + entry.chapterDelta, 0);
       const totalUpdatedTitles = entries.length + novelNotifications.length;
       addSystemNotification({
-        kind: "success",
-        title: totalUpdatedTitles > 0 ? "New chapters found" : "Library sync completed",
-        body: totalUpdatedTitles > 0
-          ? `${totalNewChapters} new chapters added across ${totalUpdatedTitles} titles.`
-          : `Automatic updates every ${store.settings.libraryUpdateIntervalHours ?? 12}h.`,
+        kind: updateIssues.length > 0 ? "info" : "success",
+        title: updateIssues.length > 0 ? "Library sync completed with issues" : totalUpdatedTitles > 0 ? "New chapters found" : "Library sync completed",
+        body: updateIssues.length > 0
+          ? `${updateIssues.length} title${updateIssues.length === 1 ? "" : "s"} could not update across ${new Set(updateIssues.map((issue) => issue.sourceId)).size} source${new Set(updateIssues.map((issue) => issue.sourceId)).size === 1 ? "" : "s"}.`
+          : totalUpdatedTitles > 0
+            ? `${totalNewChapters} new chapters added across ${totalUpdatedTitles} titles.`
+            : `Automatic updates every ${store.settings.libraryUpdateIntervalHours ?? 12}h.`,
         createdAt: updatedAt,
       });
       if (totalUpdatedTitles > 0) {
@@ -603,6 +658,12 @@
           kind: "success",
           title: "New chapters found",
           body: `${totalNewChapters} new chapters added across ${totalUpdatedTitles} titles.`,
+        });
+      } else if (updateIssues.length > 0) {
+        addToast({
+          kind: "info",
+          title: "Library updated with issues",
+          body: `${updateIssues.length} title${updateIssues.length === 1 ? "" : "s"} could not update. See Recent Activity.`,
         });
       }
       showSharedLibraryUpdateProgress("Library update finished.", 1800);
@@ -625,6 +686,23 @@
     return automaticLibraryUpdateInFlight;
   }
 
+  $effect(() => {
+    const hasVisibleLibraryUpdateProgress = store.libraryUpdateInFlight || store.libraryUpdateProgress?.active;
+    if (!hasVisibleLibraryUpdateProgress) {
+      if (staleLibraryUpdateCheckTimer) {
+        clearTimeout(staleLibraryUpdateCheckTimer);
+        staleLibraryUpdateCheckTimer = null;
+      }
+      return;
+    }
+
+    if (staleLibraryUpdateCheckTimer) clearTimeout(staleLibraryUpdateCheckTimer);
+    staleLibraryUpdateCheckTimer = setTimeout(() => {
+      staleLibraryUpdateCheckTimer = null;
+      void clearStaleLibraryUpdateInFlight();
+    }, 5_000);
+  });
+
   function formatAutomaticLibraryUpdateProgress(jobsInfo: any) {
     const finished = Number(jobsInfo?.finishedJobs ?? 0);
     const total = Number(jobsInfo?.totalJobs ?? 0);
@@ -640,13 +718,27 @@
     return jobsInfo?.isRunning ? "Suwayomi is checking your library." : "Preparing library update.";
   }
 
-  async function reconcileLibrarySnapshotCountsFromChapters() {
+  async function reconcileLibrarySnapshotChaptersAfterUpdate(
+    beforeUpdate: Manga[],
+    candidateMangaIds: Iterable<number>,
+    updatedAt: number,
+    preloadedChapters?: Map<number, Chapter[]>,
+  ) {
     const current = store.libraryMangaSnapshot;
-    if (!current.length) return { changedIds: [] as number[], failedIds: [] as number[] };
+    if (!current.length) return { changedIds: [] as number[], failedIds: [] as number[], notifications: [] };
 
-    const result = await reconcileMangaCountsFromChapters(
-      current,
-      async (mangaId) => {
+    const result = await reconcileComicsChapterSnapshot({
+      scope: {
+        profileId: store.runtimeResolvedLocalProfileId,
+        serverUrl: store.runtimeServerUrl,
+      },
+      beforeMangas: beforeUpdate,
+      afterMangas: current,
+      candidateMangaIds,
+      createdAt: updatedAt,
+      concurrency: 3,
+      preloadedChapters,
+      fetchChapters: async (mangaId) => {
         const data = await gql<{ chapters: { nodes: Chapter[] } }>(
           GET_CHAPTERS,
           { mangaId },
@@ -655,8 +747,7 @@
         );
         return data.chapters.nodes;
       },
-      { concurrency: 4 },
-    );
+    });
 
     if (result.changedIds.length > 0) {
       setLibraryMangaSnapshot(result.mangas);
@@ -678,7 +769,7 @@
       console.warn(`Could not reconcile chapter counts for ${result.failedIds.length} library titles.`);
     }
 
-    return { changedIds: result.changedIds, failedIds: result.failedIds };
+    return result;
   }
 
   function updateRuntimeDiagnosticsBridge() {

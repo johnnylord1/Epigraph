@@ -146,6 +146,14 @@ export const GET_LIBRARY_UPDATE_STATUS = `
   }
 `;
 
+export const UPDATE_STOP = `
+  mutation UpdateStop {
+    updateStop(input: {}) {
+      clientMutationId
+    }
+  }
+`;
+
 export const UPDATE_MANGA = `
   mutation UpdateManga($id: Int!, $inLibrary: Boolean) {
     updateManga(input: { id: $id, patch: { inLibrary: $inLibrary } }) {

@@ -1,11 +1,22 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  applyLibraryUpdateMangaPatches,
+  clearStaleLibraryUpdateInFlight,
   formatLibraryUpdateProgress,
+  formatLibraryUpdateStalled,
   formatLibraryUpdateWaiting,
   libraryUpdateProgressNumbers,
+  showLibraryUpdateProgress,
 } from "./updateRuntime";
+import { store } from "../../store/state.svelte";
 
 describe("library update runtime helpers", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    store.libraryUpdateInFlight = false;
+    store.libraryUpdateProgress = null;
+  });
+
   it("formats running progress with bounded numbers", () => {
     const jobsInfo = {
       isRunning: true,
@@ -55,6 +66,12 @@ describe("library update runtime helpers", () => {
       finishedJobs: 633,
       totalJobs: 633,
     })).toBe("Checked 633/633 titles - complete.");
+
+    expect(formatLibraryUpdateProgress({
+      isRunning: false,
+      finishedJobs: 128,
+      totalJobs: 633,
+    })).toBe("Stopped after 128/633 titles.");
   });
 
   it("keeps waiting and preparation text stable", () => {
@@ -64,5 +81,83 @@ describe("library update runtime helpers", () => {
       .toBe("Preparing library update.");
     expect(formatLibraryUpdateWaiting()).toBe("Waiting for Suwayomi progress.");
     expect(libraryUpdateProgressNumbers({ totalJobs: 0, finishedJobs: 0 })).toBeUndefined();
+  });
+
+  it("explains stalled progress without pretending the update finished", () => {
+    expect(formatLibraryUpdateStalled({
+      isRunning: true,
+      finishedJobs: 576,
+      totalJobs: 633,
+    }, 22_400)).toBe("Checking titles 576/633 - waiting on a slow source (22s).");
+
+    showLibraryUpdateProgress("Library update already running.", 1800, {
+      current: 576,
+      total: 633,
+      percent: 90,
+    });
+
+    expect(store.libraryUpdateProgress?.active).toBe(false);
+    expect(store.libraryUpdateProgress?.duration).toBe(1800);
+    expect(store.libraryUpdateProgress?.percent).toBe(90);
+  });
+
+  it("does not erase a valid cover when a live update patch has an empty thumbnail", () => {
+    store.libraryMangaSnapshot = [{
+      id: 10,
+      title: "Cover Title",
+      thumbnailUrl: "/api/v1/manga/10/thumbnail",
+      unreadCount: 1,
+      downloadCount: 0,
+      chapterCount: 5,
+    } as never];
+
+    applyLibraryUpdateMangaPatches([{
+      manga: {
+        id: 10,
+        title: "Cover Title",
+        thumbnailUrl: "",
+        unreadCount: 2,
+        downloadCount: 0,
+        chapters: { totalCount: 6 },
+      },
+    } as never]);
+
+    expect(store.libraryMangaSnapshot[0]?.thumbnailUrl).toBe("/api/v1/manga/10/thumbnail");
+    expect(store.libraryMangaSnapshot[0]?.unreadCount).toBe(2);
+    expect(store.libraryMangaSnapshot[0]?.chapterCount).toBe(6);
+  });
+
+  it("clears stale visible progress when the backend update already completed", async () => {
+    store.libraryUpdateInFlight = false;
+    store.libraryUpdateProgress = {
+      kind: "download",
+      title: "Library update",
+      body: "Checking titles 576/633 - 90%.",
+      active: true,
+      updatedAt: Date.now(),
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        data: {
+          libraryUpdateStatus: {
+            jobsInfo: {
+              isRunning: false,
+              finishedJobs: 633,
+              totalJobs: 633,
+              skippedCategoriesCount: 0,
+              skippedMangasCount: 0,
+            },
+          },
+        },
+      }),
+    })));
+
+    await expect(clearStaleLibraryUpdateInFlight()).resolves.toBe(true);
+
+    expect(store.libraryUpdateInFlight).toBe(false);
+    expect(store.libraryUpdateProgress?.active).toBe(false);
+    expect(store.libraryUpdateProgress?.body).toBe("Checked 633/633 titles - complete.");
+    expect(store.libraryUpdateProgress?.percent).toBe(100);
   });
 });

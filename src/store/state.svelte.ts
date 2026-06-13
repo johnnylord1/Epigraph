@@ -27,6 +27,7 @@ import type { TrackerCompletionTracker } from "../lib/library/completion";
 import type { LibraryPreferredGridColumns, LibraryViewMode } from "../lib/libraryDisplay";
 import type { MangaReaderPreference } from "../lib/reader/scanlator";
 import type { ActiveNovelDetailState, ActiveNovelReaderState } from "../lib/novels/domain";
+import type { ComicsUpdateNotificationInput } from "../lib/library/comicsChapterSnapshot";
 
 export type LibraryUpdateIntensity = "eco" | "balanced" | "fast";
 
@@ -95,6 +96,7 @@ export interface BooksCategory {
   id: string;
   name: string;
   order: number;
+  includeInUpdate?: "INCLUDE" | "EXCLUDE" | "UNSET";
 }
 
 export interface BooksLibraryUiState {
@@ -339,6 +341,30 @@ export interface LibraryUpdateNotification {
   nextChapterCount: number;
   createdAt: number;
   chapterTitles?: string[];
+}
+
+export type LibraryUpdateIssueKind = "manga" | "novel";
+export type LibraryUpdateIssueErrorType =
+  | "timeout"
+  | "rate-limit"
+  | "missing-source"
+  | "network"
+  | "source-error"
+  | "deferred"
+  | "unknown";
+
+export interface LibraryUpdateIssue {
+  id: string;
+  runId: string;
+  contentKind: LibraryUpdateIssueKind;
+  title: string;
+  itemId: string;
+  sourceId: string;
+  sourceName: string;
+  extensionName: string;
+  message: string;
+  errorType: LibraryUpdateIssueErrorType;
+  createdAt: number;
 }
 
 export interface SystemNotification {
@@ -596,7 +622,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoStartServer:        true,
   autoLibraryUpdatesEnabled: true,
   libraryUpdateIntervalHours: 12,
-  libraryUpdateIntensity: "balanced",
+  libraryUpdateIntensity: "fast",
   downloadNewNovelChapters: false,
   onlyUpdateOngoingNovels: false,
   localServerStandbyEnabled: true,
@@ -898,6 +924,93 @@ function normalizeLoadedLibraryUpdateNotification(entry: any): LibraryUpdateNoti
   };
 }
 
+function normalizeLibraryUpdateIssueErrorType(value: unknown): LibraryUpdateIssueErrorType {
+  return value === "timeout"
+    || value === "rate-limit"
+    || value === "missing-source"
+    || value === "network"
+    || value === "source-error"
+    || value === "deferred"
+    || value === "unknown"
+    ? value
+    : "unknown";
+}
+
+function normalizeLoadedLibraryUpdateIssue(entry: any): LibraryUpdateIssue | null {
+  if (!entry || typeof entry !== "object") return null;
+  const createdAt = Number(entry.createdAt);
+  const runId = String(entry.runId ?? "").trim();
+  const itemId = String(entry.itemId ?? "").trim();
+  const title = String(entry.title ?? "").trim();
+  const message = String(entry.message ?? "").trim();
+  if (!Number.isFinite(createdAt) || !runId || !itemId || !title || !message) return null;
+  const contentKind: LibraryUpdateIssueKind = entry.contentKind === "novel" ? "novel" : "manga";
+  const sourceId = String(entry.sourceId ?? "unknown").trim() || "unknown";
+  const sourceName = String(entry.sourceName ?? "Unknown source").trim() || "Unknown source";
+  const extensionName = String(entry.extensionName ?? sourceName).trim() || sourceName;
+  const errorType = normalizeLibraryUpdateIssueErrorType(entry.errorType);
+  return {
+    id: typeof entry.id === "string" && entry.id.trim()
+      ? entry.id
+      : `update-issue:${runId}:${contentKind}:${itemId}:${message.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+    runId,
+    contentKind,
+    title,
+    itemId,
+    sourceId,
+    sourceName,
+    extensionName,
+    message,
+    errorType,
+    createdAt,
+  };
+}
+
+function isSourceWidePersistedIssue(issue: LibraryUpdateIssue) {
+  return issue.contentKind === "manga"
+    && /cloudflare bypass currently disabled|source not installed|missing source|not installed/i.test(issue.message);
+}
+
+function compactLoadedLibraryUpdateIssues(issues: LibraryUpdateIssue[]) {
+  const compacted = new Map<string, LibraryUpdateIssue>();
+  const passthrough: LibraryUpdateIssue[] = [];
+
+  for (const issue of issues) {
+    if (!isSourceWidePersistedIssue(issue) || issue.itemId.startsWith("source:")) {
+      passthrough.push(issue);
+      continue;
+    }
+    const key = `${issue.runId}:${issue.contentKind}:${issue.sourceId}:${issue.extensionName}:${issue.message}`;
+    const current = compacted.get(key);
+    if (!current) {
+      compacted.set(key, {
+        ...issue,
+        id: `update-issue:${issue.runId}:${issue.contentKind}:source:${issue.sourceId}:${issue.message.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+        title: issue.sourceName,
+        itemId: `source:${issue.sourceId}`,
+        message: `1 title could not refresh because this source is unavailable: ${issue.message}`,
+      });
+      continue;
+    }
+    const match = current.message.match(/^(\d+) title/);
+    const count = Math.max(1, Number(match?.[1] ?? 1)) + 1;
+    current.createdAt = Math.max(current.createdAt, issue.createdAt);
+    current.message = `${count} titles could not refresh because this source is unavailable: ${issue.message}`;
+  }
+
+  return [...passthrough, ...compacted.values()]
+    .sort((left, right) => right.createdAt - left.createdAt);
+}
+
+function loadPersistedLibraryUpdateIssues(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return compactLoadedLibraryUpdateIssues(
+    value
+      .map(normalizeLoadedLibraryUpdateIssue)
+      .filter((entry: LibraryUpdateIssue | null): entry is LibraryUpdateIssue => Boolean(entry)),
+  );
+}
+
 function normalizeLoadedSystemNotification(entry: any): SystemNotification | null {
   if (!entry || typeof entry !== "object") return null;
   const createdAt = Number(entry.createdAt);
@@ -942,6 +1055,38 @@ function buildLibraryUpdateNotifications(
         previousChapterCount,
         nextChapterCount,
         createdAt,
+      };
+    })
+    .filter((entry): entry is LibraryUpdateNotification => Boolean(entry))
+    .sort((left, right) => right.chapterDelta - left.chapterDelta || left.mangaTitle.localeCompare(right.mangaTitle));
+}
+
+function buildComicsUpdateNotificationEntries(
+  updates: ComicsUpdateNotificationInput[],
+  createdAt = Date.now(),
+): LibraryUpdateNotification[] {
+  return updates
+    .map((update) => {
+      const mangaId = Number(update.mangaId);
+      const chapterTitles = [...new Set(update.chapterTitles.map((title) => String(title ?? "").trim()).filter(Boolean))].slice(0, 5);
+      const previousChapterCount = Math.max(0, Number(update.previousChapterCount ?? 0));
+      const nextChapterCount = Math.max(0, Number(update.nextChapterCount ?? 0));
+      const chapterDelta = chapterTitles.length > 0
+        ? chapterTitles.length
+        : Math.max(0, nextChapterCount - previousChapterCount);
+      if (!Number.isFinite(mangaId) || chapterDelta <= 0) return null;
+      return {
+        id: `library-update:${mangaId}:${createdAt}:${chapterTitles.join("|") || `${previousChapterCount}:${nextChapterCount}`}`,
+        kind: "comics" as const,
+        mangaId,
+        mangaTitle: String(update.mangaTitle ?? "Unknown title"),
+        thumbnailUrl: String(update.thumbnailUrl ?? ""),
+        sourceName: String(update.sourceName ?? "Library"),
+        chapterDelta,
+        previousChapterCount,
+        nextChapterCount,
+        createdAt,
+        chapterTitles: chapterTitles.length > 0 ? chapterTitles : undefined,
       };
     })
     .filter((entry): entry is LibraryUpdateNotification => Boolean(entry))
@@ -1074,6 +1219,11 @@ class Store {
           .filter((entry: LibraryUpdateNotification | null): entry is LibraryUpdateNotification => Boolean(entry))
       : [],
   );
+  libraryUpdateIssues: LibraryUpdateIssue[] = $state(
+    Array.isArray(saved?.libraryUpdateIssues)
+      ? loadPersistedLibraryUpdateIssues(saved.libraryUpdateIssues)
+      : [],
+  );
   systemNotifications: SystemNotification[] = $state(
     Array.isArray(saved?.systemNotifications)
       ? saved.systemNotifications
@@ -1177,6 +1327,7 @@ class Store {
         $effect(() => { persist({ libraryFilter: this.libraryFilter }); });
         $effect(() => { persist({ history:       this.history       }); });
         $effect(() => { persist({ libraryUpdateNotifications: this.libraryUpdateNotifications }); });
+        $effect(() => { persist({ libraryUpdateIssues: this.libraryUpdateIssues }); });
         $effect(() => { persist({ systemNotifications: this.systemNotifications }); });
         $effect(() => { persist({ readLog:       this.readLog       }); });
       $effect(() => { persist({ bookmarks:     this.bookmarks     }); });
@@ -1466,8 +1617,24 @@ class Store {
   }
 
   clearHistory()                        { this.history = []; this.readLog = []; bumpContentSetupVersion(); }
-  clearLibraryUpdateNotifications()     { this.libraryUpdateNotifications = []; }
+  clearLibraryUpdateNotifications()     { this.libraryUpdateNotifications = []; this.libraryUpdateIssues = []; }
   clearSystemNotifications()            { this.systemNotifications = []; }
+  recordLibraryUpdateIssues(issues: Array<Omit<LibraryUpdateIssue, "id" | "createdAt"> & { id?: string; createdAt?: number }>, createdAt = Date.now()) {
+    const normalized = issues
+      .map((issue) => normalizeLoadedLibraryUpdateIssue({
+        ...issue,
+        createdAt: issue.createdAt ?? createdAt,
+        id: issue.id ?? `update-issue:${issue.runId}:${issue.contentKind}:${issue.itemId}:${issue.message.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+      }))
+      .filter((issue): issue is LibraryUpdateIssue => Boolean(issue));
+    if (!normalized.length) return [];
+    const existingKeys = new Set(this.libraryUpdateIssues.map((issue) => issue.id));
+    const nextIssues = normalized.filter((issue) => !existingKeys.has(issue.id));
+    if (!nextIssues.length) return [];
+    this.libraryUpdateIssues = [...nextIssues, ...this.libraryUpdateIssues]
+      .sort((left, right) => right.createdAt - left.createdAt);
+    return nextIssues;
+  }
   addSystemNotification(entry: Omit<SystemNotification, "id" | "createdAt"> & { id?: string; createdAt?: number }) {
     const createdAt = Number(entry.createdAt ?? Date.now());
     const stableId = entry.id
@@ -1489,6 +1656,15 @@ class Store {
   }
   recordLibraryUpdateNotifications(before: Manga[], after: Manga[], createdAt = Date.now()) {
     const entries = buildLibraryUpdateNotifications(before, after, createdAt);
+    if (!entries.length) return [];
+    const existingKeys = new Set(this.libraryUpdateNotifications.map((entry) => entry.id));
+    const nextEntries = entries.filter((entry) => !existingKeys.has(entry.id));
+    if (!nextEntries.length) return [];
+    this.libraryUpdateNotifications = [...nextEntries, ...this.libraryUpdateNotifications].slice(0, 200);
+    return nextEntries;
+  }
+  recordComicsUpdateNotifications(updates: ComicsUpdateNotificationInput[], createdAt = Date.now()) {
+    const entries = buildComicsUpdateNotificationEntries(updates, createdAt);
     if (!entries.length) return [];
     const existingKeys = new Set(this.libraryUpdateNotifications.map((entry) => entry.id));
     const nextEntries = entries.filter((entry) => !existingKeys.has(entry.id));
@@ -1586,6 +1762,11 @@ class Store {
             id: String(category?.id ?? ""),
             name: String(category?.name ?? ""),
             order: typeof category?.order === "number" ? category.order : 0,
+            includeInUpdate: category?.includeInUpdate === "EXCLUDE"
+              ? "EXCLUDE"
+              : category?.includeInUpdate === "INCLUDE"
+                ? "INCLUDE"
+                : "UNSET",
           }))
         : [],
       booksCategoryAssignments: snapshot.booksCategoryAssignments && typeof snapshot.booksCategoryAssignments === "object"
@@ -2093,8 +2274,10 @@ export function openReader(chapter: Chapter, chapterList: Chapter[], manga?: Man
 export function closeReader()                                            { store.closeReader(); }
 export function addHistory(entry: HistoryEntry, completed?: boolean, minutes?: number) { store.addHistory(entry, completed, minutes); }
 export function recordLibraryUpdateNotifications(before: Manga[], after: Manga[], createdAt?: number) { return store.recordLibraryUpdateNotifications(before, after, createdAt); }
+export function recordComicsUpdateNotifications(updates: ComicsUpdateNotificationInput[], createdAt?: number) { return store.recordComicsUpdateNotifications(updates, createdAt); }
 export function recordNovelUpdateNotifications(updates: NovelUpdateNotificationInput[], createdAt?: number) { return store.recordNovelUpdateNotifications(updates, createdAt); }
 export function clearLibraryUpdateNotifications()                         { store.clearLibraryUpdateNotifications(); }
+export function recordLibraryUpdateIssues(issues: Array<Omit<LibraryUpdateIssue, "id" | "createdAt"> & { id?: string; createdAt?: number }>, createdAt?: number) { return store.recordLibraryUpdateIssues(issues, createdAt); }
 export function addSystemNotification(entry: Omit<SystemNotification, "id" | "createdAt"> & { id?: string; createdAt?: number }) {
   return store.addSystemNotification(entry);
 }

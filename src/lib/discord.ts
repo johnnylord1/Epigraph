@@ -4,6 +4,8 @@ import type { Manga, Chapter }                       from "./types";
 
 const APP_ID         = "1487894643613106298";
 const FALLBACK_IMAGE = "moku_logo";
+const AETHON_GITHUB_REPO = (import.meta.env.VITE_AETHON_GITHUB_REPO ?? "").trim();
+const AETHON_GITHUB_URL = AETHON_GITHUB_REPO ? `https://github.com/${AETHON_GITHUB_REPO}` : null;
 
 let sessionStart: number | null = null;
 
@@ -29,7 +31,7 @@ function getTimestamps(): Timestamps {
 }
 
 const BUTTONS = [
-  new Button("GitHub", "https://github.com/Youwes09/Moku"),
+  ...(AETHON_GITHUB_URL ? [new Button("GitHub", AETHON_GITHUB_URL)] : []),
   new Button("Discord", "https://discord.gg/Jq3pwuNqPp"),
 ];
 

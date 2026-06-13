@@ -302,12 +302,7 @@
   }
 
   function hasUsableCover(manga: Manga): boolean {
-    const coverKey = getCoverStateKey(manga);
-    return (
-      !!manga.thumbnailUrl &&
-      !isCoverFailed(manga) &&
-      (cachedCoverUrls.has(coverKey) || coverCacheCheckedKeys.has(coverKey))
-    );
+    return !!manga.thumbnailUrl && !isCoverFailed(manga);
   }
 
   function getCoverStateKey(manga: Manga): string {
@@ -353,7 +348,7 @@
   }
 
   function coverScopeKey() {
-    return `${store.runtimeResolvedLocalProfileId ?? ""}::${store.runtimeServerUrl ?? ""}::${coverCacheGeneration}`;
+    return `${store.runtimeResolvedLocalProfileId ?? ""}::${store.runtimeServerUrl ?? ""}`;
   }
 
   async function loadCachedCoverForManga(manga: Manga) {

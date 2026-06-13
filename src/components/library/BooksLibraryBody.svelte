@@ -1,3 +1,7 @@
+<script lang="ts" module>
+  const sessionStableNovelCoverSrc = new Map<string, string>();
+</script>
+
 <script lang="ts">
   import { onMount } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -56,6 +60,7 @@
   let dropActive = $state(false);
   let importingDrop = $state(false);
   let brokenCoverKeys = $state(new Set<string>());
+  let stableNovelCoverSrc = $state(new Map<string, string>(sessionStableNovelCoverSrc));
   let contentWidth = $state(0);
   let ctx: { x: number; y: number; book: BookEntry } | null = $state(null);
   let renderVisible = $state(0);
@@ -139,7 +144,14 @@
       };
     }),
   );
-  const visibleCards = $derived([...visibleBookCards, ...novelCards]);
+  const visibleNovelCards = $derived(
+    novelCards.map((card) => {
+      const cachedCoverSrc = stableNovelCoverSrc.get(card.id);
+      const coverSrc = cachedCoverSrc === card.coverSrc ? cachedCoverSrc : card.coverSrc;
+      return coverSrc === card.coverSrc ? card : { ...card, coverSrc };
+    }),
+  );
+  const visibleCards = $derived([...visibleBookCards, ...visibleNovelCards]);
   const hasMore = $derived(books.length > renderVisible);
   const remainingCount = $derived(Math.max(0, books.length - renderVisible));
   const layout = $derived(
@@ -152,6 +164,10 @@
 
   function bookCoverKey(book: Pick<BookEntry, "id" | "coverPath" | "updatedAt">): string {
     return `${book.id}:${book.coverPath ?? "none"}:${book.updatedAt}`;
+  }
+
+  function novelCoverKey(card: Pick<NovelShelfCard, "id" | "coverSrc">): string {
+    return `${card.id}:${card.coverSrc ?? "none"}`;
   }
 
   function fileBasename(path: string): string {
@@ -183,7 +199,10 @@
   }
 
   $effect(() => {
-    const liveKeys = new Set(books.map(bookCoverKey));
+    const liveKeys = new Set([
+      ...books.map(bookCoverKey),
+      ...novelCards.map(novelCoverKey),
+    ]);
     const next = new Set([...brokenCoverKeys].filter((key) => liveKeys.has(key)));
     if (!setsEqual(brokenCoverKeys, next)) {
       brokenCoverKeys = next;
@@ -353,11 +372,33 @@
   }
 
   function handleCoverError(cardId: string) {
+    const novel = novelCards.find((card) => card.id === cardId);
+    if (novel) {
+      return;
+    }
+
     const book = bookByCardId.get(cardId);
     if (!book) return;
 
     BookAssetResolver.dropCoverSrc(book.coverPath);
     brokenCoverKeys = new Set([...brokenCoverKeys, bookCoverKey(book)]);
+  }
+
+  function handleCoverLoad(cardId: string) {
+    const novel = novelCards.find((card) => card.id === cardId);
+    if (!novel?.coverSrc) return;
+
+    const nextCovers = new Map(stableNovelCoverSrc);
+    nextCovers.set(cardId, novel.coverSrc);
+    stableNovelCoverSrc = nextCovers;
+    sessionStableNovelCoverSrc.set(cardId, novel.coverSrc);
+
+    const key = novelCoverKey(novel);
+    if (brokenCoverKeys.has(key)) {
+      const nextBroken = new Set(brokenCoverKeys);
+      nextBroken.delete(key);
+      brokenCoverKeys = nextBroken;
+    }
   }
 
   function handleContentScroll() {
@@ -438,6 +479,7 @@
       {showOutline}
       onOpen={(cardId) => openBook(cardId)}
       onContextMenu={openBookContext}
+      onCoverLoad={handleCoverLoad}
       onCoverError={handleCoverError}
     />
     {#if hasMore}

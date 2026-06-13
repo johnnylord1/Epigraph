@@ -107,11 +107,21 @@
   const latestActivityAt = $derived(Math.max(
     store.history.reduce((latest, entry) => Math.max(latest, Number(entry.readAt) || 0), 0),
     store.libraryUpdateNotifications.reduce((latest, entry) => Math.max(latest, Number(entry.createdAt) || 0), 0),
+    store.libraryUpdateIssues.reduce((latest, entry) => Math.max(latest, Number(entry.createdAt) || 0), 0),
     store.systemNotifications.reduce((latest, entry) => Math.max(latest, Number(entry.createdAt) || 0), 0),
   ));
+  const newLibraryUpdateIssueGroupCount = $derived.by(() => {
+    const groups = new Set<string>();
+    for (const issue of store.libraryUpdateIssues) {
+      if ((Number(issue.createdAt) || 0) <= lastActivitySeenAt) continue;
+      groups.add(`${issue.runId}:${issue.contentKind}:${issue.sourceId}:${issue.extensionName}`);
+    }
+    return groups.size;
+  });
   const newActivityCount = $derived(
     store.history.filter((entry) => (Number(entry.readAt) || 0) > lastActivitySeenAt).length
     + store.libraryUpdateNotifications.filter((entry) => (Number(entry.createdAt) || 0) > lastActivitySeenAt).length
+    + newLibraryUpdateIssueGroupCount
     + store.systemNotifications.filter((entry) => (Number(entry.createdAt) || 0) > lastActivitySeenAt).length
   );
   const newActivityBadge = $derived(newActivityCount > 99 ? "99+" : String(newActivityCount));

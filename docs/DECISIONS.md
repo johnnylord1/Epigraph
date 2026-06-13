@@ -291,4 +291,14 @@
 - Imported the missing `TasteInsightsModal` inside `BrowseV3.svelte`, resolving the broken view full insights overlay button.
 - Updated all card lists inside `BrowseV3.svelte` to match the redesigned `.source-metric-banner` badge layout wrapped in `.card-cover-container`, aligning all search and catalog grids with the library styling.
 
-
+## 2026-06-12 - Settings Brand Card Redesign
+- Redesigned the sidebar rail brand card container (`.settings-brand-card`) inside `Settings.svelte` using CSS styling matching standard Nocturne premium aesthetics.
+- Replaced the simple flat border/background with a high-fidelity glassmorphic layout: `backdrop-filter: blur(16px)`, a dark graphite/slate linear gradient background (`rgba(20, 20, 25, 0.72)` to `rgba(28, 27, 27, 0.65)`), a thin translucent border (`rgba(255, 255, 255, 0.05)`), an inset border glow highlight (`rgba(255, 255, 255, 0.03)`), and a top highlight edge.
+- Added visual interaction feedback: hovering over the brand card triggers a soft border color glow transition (`rgba(184, 167, 234, 0.22)`) and micro-rotates/scales the Svelte logo badge (`transform: scale(1.05) rotate(-3deg)`).
+- Upgraded the logo badge from a simple background gradient to a 3D-like container with drop shadows and an inset border highlight.
+- Formatted title and version details to use Outfit/Manrope fonts, clean scaling, and desaturated, high-readability texts.
+- Converted action buttons (`.settings-rail-action`) into pill-shaped elements with thin outlines (`rgba(255, 255, 255, 0.05)`), subtle desaturated transparent backgrounds (`rgba(255, 255, 255, 0.03)`), desaturated text labels, hover shadow/glow, and press feedback (`transform: scale(0.96)`).
+- Resolved horizontal centering displacement inside the sidebar navigation rail (`#settingsGroupRail.sidebar`) by setting `scrollbar-width: none` and hiding webkit-scrollbars. This removes the hidden scrollbar track gutter reservation that pushed layout elements off-center to the left on Windows.
+- Swapped the generic Svelte logo water droplet in the brand card badge with the official desktop application logo (`src-tauri/icons/icon.png`) imported reactively.
+- Enlarged the app logo symbol size from `20px` to `24px` inside the `32px` badge container to improve visibility and proportions.
+- Implemented an animated subtle pulsing purple border glow using a keyframe animation (`aethon-purple-glow-pulse`) that transitions border colors and shadows gently over a 4s loop. Hovering over the card pauses this loop and expands into a focused static glow.

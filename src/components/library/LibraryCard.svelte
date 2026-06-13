@@ -1,6 +1,6 @@
 <script lang="ts">
   import { BookOpen, Books, CheckSquare, Stack } from "phosphor-svelte";
-  import { resolvedImage } from "../../lib/imageCache";
+  import { requiresAuthenticatedMediaFetch, resolvedImage } from "../../lib/imageCache";
   import type { LibraryCardVM } from "../../lib/library/contracts";
 
   type Props = {
@@ -34,6 +34,7 @@
   }: Props = $props();
   let suppressNextClick = false;
   let flagImageFailed = $state(false);
+  const coverNeedsResolvedImage = $derived(requiresAuthenticatedMediaFetch(vm.coverSrc));
 
   $effect(() => {
     if (vm.sourceMetricBanner) {
@@ -222,17 +223,31 @@
   <div class="card-cover-container">
     <div class="cover-wrap" class:n-library-card__cover={viewMode !== "list"}>
       {#if vm.coverSrc}
-        <img
-          class="cover"
-          use:resolvedImage={vm.coverSrc}
-          alt={vm.title}
-          style={`object-fit:${vm.coverFit};`}
-          loading="lazy"
-          decoding="async"
-          draggable="false"
-          onload={onCoverLoad ? (() => onCoverLoad(vm.id)) : undefined}
-          onerror={onCoverError ? (() => onCoverError(vm.id)) : undefined}
-        />
+        {#if coverNeedsResolvedImage}
+          <img
+            class="cover"
+            use:resolvedImage={vm.coverSrc}
+            alt={vm.title}
+            style={`object-fit:${vm.coverFit};`}
+            loading="lazy"
+            decoding="async"
+            draggable="false"
+            onload={onCoverLoad ? (() => onCoverLoad(vm.id)) : undefined}
+            onerror={onCoverError ? (() => onCoverError(vm.id)) : undefined}
+          />
+        {:else}
+          <img
+            class="cover"
+            src={vm.coverSrc}
+            alt={vm.title}
+            style={`object-fit:${vm.coverFit};`}
+            loading="lazy"
+            decoding="async"
+            draggable="false"
+            onload={onCoverLoad ? (() => onCoverLoad(vm.id)) : undefined}
+            onerror={onCoverError ? (() => onCoverError(vm.id)) : undefined}
+          />
+        {/if}
       {:else}
         <div class="cover-fallback" aria-hidden="true">
           {#if vm.selectable}

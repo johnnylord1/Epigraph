@@ -83,7 +83,14 @@ export function createBooksCategory(
     id: `books-category:${crypto.randomUUID()}`,
     name: trimmed,
     order,
+    includeInUpdate: "UNSET",
   };
+}
+
+export function normalizeBooksCategoryUpdateRule(
+  value: unknown,
+): NonNullable<BooksCategory["includeInUpdate"]> {
+  return value === "EXCLUDE" || value === "INCLUDE" ? value : "UNSET";
 }
 
 export function renameBooksCategory(
@@ -96,6 +103,44 @@ export function renameBooksCategory(
       category.id === categoryId ? { ...category, name: name.trim() } : category,
     ),
   );
+}
+
+export function toggleBooksCategoryUpdateRule(
+  categories: BooksCategory[],
+  categoryId: string,
+): BooksCategory[] {
+  return sortBooksCategories(
+    categories.map((category) =>
+      category.id === categoryId
+        ? {
+            ...category,
+            includeInUpdate: normalizeBooksCategoryUpdateRule(category.includeInUpdate) === "EXCLUDE"
+              ? "UNSET"
+              : "EXCLUDE",
+          }
+        : category,
+    ),
+  );
+}
+
+export function getBooksUpdateExcludedBookIds(
+  categories: readonly BooksCategory[],
+  assignments: Record<string, string[]>,
+): Set<string> {
+  const excludedCategoryIds = new Set(
+    categories
+      .filter((category) => normalizeBooksCategoryUpdateRule(category.includeInUpdate) === "EXCLUDE")
+      .map((category) => category.id),
+  );
+  if (!excludedCategoryIds.size) return new Set();
+
+  const excludedBookIds = new Set<string>();
+  for (const [bookId, categoryIds] of Object.entries(assignments)) {
+    if ((categoryIds ?? []).some((categoryId) => excludedCategoryIds.has(categoryId))) {
+      excludedBookIds.add(bookId);
+    }
+  }
+  return excludedBookIds;
 }
 
 export function deleteBooksCategory(

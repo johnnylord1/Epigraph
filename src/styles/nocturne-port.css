@@ -1804,6 +1804,12 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   background: rgba(28, 27, 27, 0.3);
   border-right: 1px solid rgba(72, 69, 79, 0.05);
   overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.aethon-port--settings #settingsGroupRail.sidebar::-webkit-scrollbar,
+.aethon-port--settings .settings-group-rail::-webkit-scrollbar {
+  display: none;
 }
 
 .aethon-port--settings .nav.settings-group-nav,
@@ -1889,6 +1895,11 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 .aethon-port--settings .settings-group-rail__footer {
   margin-top: auto;
   padding-top: var(--settings-shell-gap);
+  width: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  box-sizing: border-box;
 }
 
 .aethon-port--settings .settings-rail-card {
@@ -1938,18 +1949,29 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 .aethon-port--settings .n-btn.n-btn-ghost.settings-rail-action {
   flex: 1;
   min-height: 0;
-  height: 24px;
-  padding: 0 6px;
-  border-radius: 8px;
-  font-size: 9px;
-  letter-spacing: 0.05em;
-  color: rgba(202, 196, 208, 0.72);
-  border: 1px solid rgba(72, 69, 79, 0.16);
+  height: calc(28px * var(--n-hud-scale));
+  padding: 0 calc(10px * var(--n-hud-scale));
+  border-radius: calc(8px * var(--n-hud-scale));
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-secondary, rgba(202, 196, 208, 0.72));
+  font-family: "Manrope", var(--font-sans);
+  font-size: calc(10px * var(--n-hud-scale));
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  transition:
+    border-color var(--n-duration-fast) ease,
+    background var(--n-duration-fast) ease,
+    color var(--n-duration-fast) ease,
+    transform var(--n-duration-fast) ease;
 }
 
 .aethon-port--settings .n-btn.n-btn-ghost.settings-rail-action:hover {
-  color: var(--n-on-surface);
-  border-color: rgba(184, 167, 234, 0.18);
+  color: #ffffff;
+  border-color: rgba(184, 167, 234, 0.25);
+  background: rgba(184, 167, 234, 0.08);
+  box-shadow: 0 0 calc(12px * var(--n-hud-scale)) rgba(184, 167, 234, 0.04);
 }
 
 .aethon-port--settings .settings-panel-root {
@@ -2276,24 +2298,30 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 
 .aethon-port--settings .settings-rail-action {
   flex: 1;
-  min-height: calc(30px * var(--n-hud-scale));
+  min-height: calc(28px * var(--n-hud-scale));
   padding: 0 calc(10px * var(--n-hud-scale));
-  border-radius: calc(14px * var(--n-hud-scale));
-  border: 1px solid rgba(72, 69, 79, 0.16);
-  background: rgba(21, 21, 25, 0.72);
-  color: rgba(202, 196, 208, 0.72);
+  border-radius: calc(8px * var(--n-hud-scale));
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-secondary, rgba(202, 196, 208, 0.72));
   font-family: "Manrope", var(--font-sans);
   font-size: calc(10px * var(--n-hud-scale));
-  font-weight: 700;
-  letter-spacing: 0.05em;
+  font-weight: 600;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  transition: border-color var(--n-duration-fast) ease, background var(--n-duration-fast) ease, color var(--n-duration-fast) ease;
+  cursor: pointer;
+  transition:
+    border-color var(--n-duration-fast) ease,
+    background var(--n-duration-fast) ease,
+    color var(--n-duration-fast) ease,
+    transform var(--n-duration-fast) ease;
 }
 
 .aethon-port--settings .settings-rail-action:hover {
-  color: var(--n-on-surface);
-  border-color: rgba(184, 167, 234, 0.18);
-  background: rgba(28, 27, 27, 0.82);
+  color: #ffffff;
+  border-color: rgba(184, 167, 234, 0.25);
+  background: rgba(184, 167, 234, 0.08);
+  box-shadow: 0 0 calc(12px * var(--n-hud-scale)) rgba(184, 167, 234, 0.04);
 }
 
 .aethon-port--settings .settings-pane-body.content-body {
@@ -2446,7 +2474,8 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   justify-content: space-between;
   gap: calc(16px * var(--n-hud-scale));
   min-height: calc(56px * var(--n-hud-scale));
-  padding: calc(12px * var(--n-hud-scale)) 0;
+  padding: calc(10px * var(--n-hud-scale)) calc(12px * var(--n-hud-scale));
+  margin: 0 calc(-12px * var(--n-hud-scale));
   border-top: 1px solid rgba(255, 255, 255, 0.04);
   border-radius: calc(14px * var(--n-hud-scale));
   transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
@@ -2455,11 +2484,15 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 .aethon-port--settings .settings-row:hover,
 .aethon-port--settings .settings-mini-row:hover {
   background: rgba(184, 167, 234, 0.035);
-  border-color: rgba(184, 167, 234, 0.12);
+  border-top-color: transparent;
+}
+
+.aethon-port--settings .settings-row:hover + .settings-row,
+.aethon-port--settings .settings-mini-row:hover + .settings-mini-row {
+  border-top-color: transparent;
 }
 
 .aethon-port--settings .settings-mini-row:first-child {
-  padding-top: 0;
   border-top: none;
 }
 
@@ -3121,65 +3154,152 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   animation: aethon-settings-pane-in 280ms cubic-bezier(0.18, 0.92, 0.2, 1) both;
 }
 
+@keyframes aethon-glow-rotate {
+  0% {
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+  100% {
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+
+@keyframes aethon-border-pulse {
+  0% {
+    opacity: 0.55;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
 .aethon-port--settings .settings-brand-card {
-  padding: 12px;
-  border-radius: 18px;
-  border: 1px solid rgba(72, 69, 79, 0.14);
-  background: rgba(28, 27, 27, 0.46);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+  width: auto;
+  box-sizing: border-box;
+  margin: 0;
+  padding: calc(12px * var(--n-hud-scale));
+  border-radius: calc(14px * var(--n-hud-scale));
+  border: 1px solid transparent;
+  background: transparent;
+  position: relative;
+  overflow: hidden;
+  transition: border-color var(--n-duration-normal) ease, box-shadow var(--n-duration-normal) ease;
+}
+
+/* Conic gradient rotating outer glow */
+.aethon-port--settings .settings-brand-card::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 250%;
+  height: 250%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0%,
+    transparent 40%,
+    rgba(184, 167, 234, 0.75) 48%,
+    rgba(211, 196, 255, 0.95) 50%,
+    rgba(184, 167, 234, 0.75) 52%,
+    transparent 60%,
+    transparent 100%
+  );
+  transform: translate(-50%, -50%) rotate(0deg);
+  transform-origin: center center;
+  z-index: 0;
+  pointer-events: none;
+  animation: aethon-glow-rotate 6s linear infinite, aethon-border-pulse 4s ease-in-out infinite alternate;
+}
+
+/* Inner card background mask to shield content and define 1px border gap */
+.aethon-port--settings .settings-brand-card::after {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  background: linear-gradient(135deg, #131316 0%, #1a1a1e 100%);
+  border-radius: calc(13px * var(--n-hud-scale));
+  z-index: 1;
+  pointer-events: none;
+  transition: background var(--n-duration-normal) ease;
+}
+
+.aethon-port--settings .settings-brand-card:hover::after {
+  background: linear-gradient(135deg, #18181c 0%, #1f1f24 100%);
+}
+
+.aethon-port--settings .settings-brand-card:hover {
+  box-shadow:
+    0 calc(12px * var(--n-hud-scale)) calc(32px * var(--n-hud-scale)) rgba(0, 0, 0, 0.5),
+    0 0 calc(20px * var(--n-hud-scale)) rgba(184, 167, 234, 0.08);
 }
 
 .aethon-port--settings .settings-brand-card__header {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 12px;
+  gap: calc(10px * var(--n-hud-scale));
+  margin-bottom: calc(10px * var(--n-hud-scale));
+  position: relative;
+  z-index: 2;
 }
 
 .aethon-port--settings .settings-brand-card__badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 10px;
-  background: linear-gradient(180deg, rgba(184, 167, 234, 0.9), rgba(124, 95, 210, 0.82));
-  color: #111015;
-  box-shadow: 0 10px 20px rgba(91, 62, 168, 0.28);
+  width: calc(40px * var(--n-hud-scale));
+  height: calc(40px * var(--n-hud-scale));
+  border-radius: calc(10px * var(--n-hud-scale));
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow:
+    0 calc(2px * var(--n-hud-scale)) calc(8px * var(--n-hud-scale)) rgba(0, 0, 0, 0.2);
+  transition: transform var(--n-duration-fast) var(--n-ease-spring);
+  position: relative;
+  z-index: 2;
+}
+
+.aethon-port--settings .settings-brand-card:hover .settings-brand-card__badge {
+  transform: scale(1.05) rotate(-3deg);
 }
 
 .aethon-port--settings .settings-brand-card__badge img {
-  width: 18px;
-  height: 18px;
+  width: calc(34px * var(--n-hud-scale));
+  height: calc(34px * var(--n-hud-scale));
   object-fit: contain;
   display: block;
-  filter: drop-shadow(0 2px 6px rgba(44, 20, 99, 0.18));
 }
 
 .aethon-port--settings .settings-brand-card__copy {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(1px * var(--n-hud-scale));
 }
 
 .aethon-port--settings .settings-brand-card__title {
   margin: 0;
-  font-family: "Manrope", var(--font-sans);
-  font-size: 11px;
+  font-family: "Outfit", "Manrope", var(--font-sans);
+  font-size: calc(12px * var(--n-hud-scale));
   font-weight: 700;
-  line-height: 1.2;
-  color: rgba(229, 226, 225, 0.92);
+  line-height: 1.25;
+  color: var(--text-primary, #e5e2e1);
+  letter-spacing: -0.01em;
 }
 
 .aethon-port--settings .settings-brand-card__meta {
-  margin: 2px 0 0;
+  margin: 0;
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: calc(9.5px * var(--n-hud-scale));
   line-height: 1.2;
-  color: rgba(202, 196, 208, 0.34);
+  color: var(--text-muted, rgba(202, 196, 208, 0.62));
+  opacity: 0.8;
+  letter-spacing: 0.02em;
 }
 
 .aethon-port--settings .settings-brand-card__actions {
   display: flex;
-  gap: 8px;
+  gap: calc(8px * var(--n-hud-scale));
+  position: relative;
+  z-index: 2;
 }
 
 .aethon-port--settings .n-btn-danger {
@@ -3567,4 +3687,44 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 [data-theme="light"] .searchRecommendationCard .source-metric-downloaded,
 [data-theme="light-contrast"] .searchRecommendationCard .source-metric-downloaded {
   color: #ffffff;
+}
+
+/* Nocturne success state theme override for Settings */
+.aethon-port--settings .n-state--success {
+  --state-accent: var(--accent-bright, #b8a7ea);
+}
+
+/* Premium Text Inputs for Nocturne Settings */
+.aethon-port--settings .settings-text-input {
+  width: 200px;
+  min-height: calc(34px * var(--n-hud-scale));
+  padding: 0 calc(12px * var(--n-hud-scale));
+  border-radius: calc(10px * var(--n-hud-scale));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(20, 19, 24, 0.72);
+  color: var(--n-on-surface, rgba(229, 226, 225, 0.92));
+  font-family: var(--font-ui);
+  font-size: calc(12px * var(--n-hud-scale));
+  box-sizing: border-box;
+  transition: border-color var(--n-duration-fast) ease, background var(--n-duration-fast) ease, box-shadow var(--n-duration-fast) ease;
+}
+
+.aethon-port--settings .settings-text-input--short {
+  width: 112px;
+}
+
+.aethon-port--settings .settings-text-input:hover {
+  border-color: rgba(184, 167, 234, 0.25);
+  background: rgba(28, 27, 27, 0.82);
+}
+
+.aethon-port--settings .settings-text-input:focus {
+  outline: none;
+  border-color: var(--accent-bright, #b8a7ea);
+  background: rgba(16, 15, 19, 0.9);
+  box-shadow: 0 0 calc(8px * var(--n-hud-scale)) rgba(184, 167, 234, 0.12);
+}
+
+.aethon-port--settings .settings-text-input::placeholder {
+  color: rgba(202, 196, 208, 0.28);
 }

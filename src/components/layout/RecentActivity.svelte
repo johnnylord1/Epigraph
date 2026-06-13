@@ -15,7 +15,7 @@
     setActiveNovelDetail,
   } from "../../store/state.svelte";
   import type { Manga } from "../../lib/types";
-  import type { HistoryEntry, LibraryUpdateNotification, SystemNotification } from "../../store/state.svelte";
+  import type { HistoryEntry, LibraryUpdateIssue, LibraryUpdateNotification, SystemNotification } from "../../store/state.svelte";
 
   type ActivityTab = "all" | "updates" | "history" | "system";
 
@@ -69,6 +69,15 @@
     count: number;
     source: string;
     readAt: number;
+  }
+
+  interface IssueGroup {
+    id: string;
+    sourceName: string;
+    extensionName: string;
+    count: number;
+    latestAt: number;
+    items: LibraryUpdateIssue[];
   }
 
   type SystemEntry = SystemNotification;
@@ -131,13 +140,41 @@
       .slice(0, 80);
   });
 
+  const issueGroups = $derived.by(() => {
+    const groups = new Map<string, IssueGroup>();
+    for (const issue of store.libraryUpdateIssues) {
+      const key = `${issue.runId}:${issue.contentKind}:${issue.sourceId}:${issue.extensionName}`;
+      const current = groups.get(key) ?? {
+        id: key,
+        sourceName: issue.sourceName || "Unknown source",
+        extensionName: issue.extensionName || issue.sourceName || "Unknown extension",
+        count: 0,
+        latestAt: 0,
+        items: [] as LibraryUpdateIssue[],
+      };
+      current.count += 1;
+      current.latestAt = Math.max(current.latestAt, issue.createdAt);
+      current.items.push(issue);
+      groups.set(key, current);
+    }
+    return [...groups.values()]
+      .map((group) => ({
+        ...group,
+        items: group.items
+          .sort((left, right) => right.createdAt - left.createdAt || left.title.localeCompare(right.title))
+          .slice(0, 5),
+      }))
+      .sort((left, right) => right.latestAt - left.latestAt || right.count - left.count)
+      .slice(0, 40);
+  });
+
   const systemEntries = $derived.by(() => {
     return [...store.systemNotifications]
       .sort((left, right) => right.createdAt - left.createdAt)
       .slice(0, 80);
   });
 
-  const totalVisibleCount = $derived(updateEntries.length + sessions.length + systemEntries.length);
+  const totalVisibleCount = $derived(updateEntries.length + issueGroups.length + sessions.length + systemEntries.length);
   const groups = $derived.by(() => {
     const map = new Map<string, Session[]>();
     for (const s of sessions) {
@@ -211,7 +248,7 @@
           All <span class="filter-count">{totalVisibleCount}</span>
         </button>
         <button class="filter" class:active={activeTab === "updates"} type="button" role="tab" aria-selected={activeTab === "updates"} onclick={() => activeTab = "updates"}>
-          Updates <span class="filter-count">{updateEntries.length}</span>
+          Updates <span class="filter-count">{updateEntries.length + issueGroups.length}</span>
         </button>
         <button class="filter" class:active={activeTab === "history"} type="button" role="tab" aria-selected={activeTab === "history"} onclick={() => activeTab = "history"}>
           History <span class="filter-count">{sessions.length}</span>
@@ -221,7 +258,7 @@
         </button>
       </div>
 
-      {#if (activeTab === "updates" && updateEntries.length > 0) || (activeTab === "history" && store.history.length > 0) || (activeTab === "system" && systemEntries.length > 0)}
+      {#if (activeTab === "updates" && (updateEntries.length > 0 || issueGroups.length > 0)) || (activeTab === "history" && store.history.length > 0) || (activeTab === "system" && systemEntries.length > 0)}
         <button class="clear-btn" class:confirm={confirmClear} onclick={handleClear}
           title={confirmClear ? "Click again to confirm" : activeTab === "updates" ? "Clear update notifications" : activeTab === "system" ? "Clear system notifications" : "Clear history"}>
           <Trash size={14} weight="light" />
@@ -236,12 +273,31 @@
       <section class="activity-section">
         <div class="section-title">
           <span>Updates</span>
-          <small>{updateEntries.length}</small>
+          <small>{updateEntries.length + issueGroups.length}</small>
         </div>
 
-        {#if updateEntries.length === 0}
+        {#if updateEntries.length === 0 && issueGroups.length === 0}
           <p class="compact-empty">No new chapter updates.</p>
         {:else}
+          {#if issueGroups.length > 0}
+            <div class="issue-list">
+              {#each issueGroups as group (group.id)}
+                <article class="issue-group event">
+                  <div class="issue-marker"></div>
+                  <div class="item-copy">
+                    <span class="item-title">{group.extensionName}</span>
+                    <span class="item-subtitle">
+                      {group.count} title{group.count === 1 ? "" : "s"} could not update from {group.sourceName}.
+                    </span>
+                    <span class="issue-titles">
+                      {group.items.map((issue) => `${issue.title}: ${issue.message}`).join(" | ")}
+                    </span>
+                  </div>
+                  <span class="item-time">{timeAgo(group.latestAt)}</span>
+                </article>
+              {/each}
+            </div>
+          {/if}
           <div class="event-list">
             {#each updateEntries as entry (entry.id)}
               <button class="activity-item with-thumb event" onclick={() => openUpdate(entry)}>
@@ -608,8 +664,16 @@
     gap: 0;
   }
 
+  .issue-list {
+    display: flex;
+    flex-direction: column;
+    gap: calc(8px * var(--n-hud-scale));
+    margin-bottom: calc(10px * var(--n-hud-scale));
+  }
+
   .activity-item,
-  .system-item {
+  .system-item,
+  .issue-group {
     width: 100%;
     display: grid;
     align-items: center;
@@ -643,8 +707,25 @@
     padding: calc(12px * var(--n-hud-scale)) 0;
   }
 
+  .issue-group {
+    grid-template-columns: calc(18px * var(--n-hud-scale)) minmax(0, 1fr) auto;
+    min-height: 0;
+    padding: calc(12px * var(--n-hud-scale));
+    border: 1px solid rgba(207, 138, 160, 0.14);
+    background: rgba(207, 138, 160, 0.045);
+  }
+
   .system-item + .system-item {
     border-top: 0;
+  }
+
+  .issue-marker {
+    width: calc(8px * var(--n-hud-scale));
+    height: calc(8px * var(--n-hud-scale));
+    margin: calc(6px * var(--n-hud-scale)) auto 0;
+    border-radius: 999px;
+    background: var(--activity-danger);
+    box-shadow: 0 0 12px rgba(207, 138, 160, 0.24);
   }
 
   .thumb-wrap {
@@ -704,6 +785,16 @@
     color: var(--activity-subtle);
     overflow: hidden;
     font-size: calc(13px * var(--n-hud-scale));
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .issue-titles {
+    display: block;
+    color: var(--activity-faint);
+    overflow: hidden;
+    font-size: calc(12px * var(--n-hud-scale));
+    line-height: 1.45;
     text-overflow: ellipsis;
     white-space: nowrap;
   }

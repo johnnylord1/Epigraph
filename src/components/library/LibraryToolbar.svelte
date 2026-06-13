@@ -142,7 +142,7 @@
           class="n-icon-btn library-toolbar-btn"
           title={refreshLabel}
           aria-label={refreshLabel}
-          disabled={refreshPending}
+          aria-busy={refreshPending}
           onclick={onRefresh}
         >
           <ArrowsClockwise size={15} weight="bold" class={refreshPending ? "anim-spin" : ""} />

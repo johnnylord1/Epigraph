@@ -13,6 +13,7 @@ export interface PersistedBooksCategory {
   id: string;
   name: string;
   order: number;
+  includeInUpdate?: "INCLUDE" | "EXCLUDE" | "UNSET";
 }
 
 export interface PersistedBooksLibraryUiState {
@@ -141,6 +142,11 @@ function normalizeBooksCategories(value: unknown): PersistedBooksCategory[] {
       order: typeof (entry as PersistedBooksCategory | null | undefined)?.order === "number"
         ? (entry as PersistedBooksCategory).order
         : index + 1,
+      includeInUpdate: (entry as PersistedBooksCategory | null | undefined)?.includeInUpdate === "EXCLUDE"
+        ? "EXCLUDE"
+        : (entry as PersistedBooksCategory | null | undefined)?.includeInUpdate === "INCLUDE"
+          ? "INCLUDE"
+          : "UNSET",
     }))
     .sort((left, right) => left.order - right.order);
 }

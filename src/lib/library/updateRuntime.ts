@@ -1,13 +1,11 @@
 import { getServerAuthHeader, getServerUrl, gql } from "../client";
 import { cache, CACHE_GROUPS, CACHE_KEYS } from "../cache";
-import { GET_LIBRARY_UPDATE_STATUS, SET_LIBRARY_UPDATE_RULES, UPDATE_LIBRARY } from "../queries";
-import {
-  subscribeLibraryUpdateStatus,
-  type LibraryUpdateMangaPatch,
-  type LibraryUpdateSubscription,
-} from "../suwayomiUpdaterSubscription";
+import { FETCH_CHAPTERS, GET_CATEGORIES_WITH_MANGA_IDS, GET_LIBRARY_UPDATE_STATUS, SET_LIBRARY_UPDATE_RULES, UPDATE_STOP } from "../queries";
+import type { LibraryUpdateMangaPatch } from "../suwayomiUpdaterSubscription";
 import { ensureServerAwakeFor, type ServerWakeReason } from "../serverLifecycle";
 import { setLibraryMangaSnapshot, setLibraryUpdateProgress, store } from "../../store/state.svelte";
+import type { Category, Chapter, Manga } from "../types";
+import type { LibraryUpdateIssueErrorType, LibraryUpdateIssueKind } from "../../store/state.svelte";
 
 export interface LibraryUpdateProgressNumbers {
   current: number;
@@ -27,9 +25,30 @@ export interface SharedLibraryUpdateRunResult {
   updatedAt: number;
   changedMangaIds: number[];
   jobsInfo: any | null;
+  cancelled: boolean;
+  issues: LibraryUpdateIssueInput[];
+  preloadedChapters: Map<number, Chapter[]>;
+}
+
+export interface LibraryUpdateIssueInput {
+  runId: string;
+  contentKind: LibraryUpdateIssueKind;
+  title: string;
+  itemId: string;
+  sourceId: string;
+  sourceName: string;
+  extensionName: string;
+  message: string;
+  errorType: LibraryUpdateIssueErrorType;
 }
 
 let activeLibraryUpdateRun: Promise<SharedLibraryUpdateRunResult> | null = null;
+let stopLibraryUpdateRun: Promise<boolean> | null = null;
+let libraryUpdateStopRequested = false;
+
+function updateRunId() {
+  return `library-update:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
+}
 
 export function libraryUpdatePercent(current: number, total: number) {
   if (!Number.isFinite(total) || total <= 0) return 0;
@@ -55,6 +74,12 @@ function isLibraryUpdateComplete(jobsInfo: any): boolean {
   return !jobsInfo?.isRunning && total > 0 && finished >= total;
 }
 
+function isLibraryUpdateCancelled(jobsInfo: any): boolean {
+  const total = Number(jobsInfo?.totalJobs ?? 0);
+  const finished = Number(jobsInfo?.finishedJobs ?? 0);
+  return !jobsInfo?.isRunning && total > 0 && finished > 0 && finished < total;
+}
+
 export function formatLibraryUpdateProgress(jobsInfo: any) {
   const finished = Number(jobsInfo?.finishedJobs ?? 0);
   const total = Number(jobsInfo?.totalJobs ?? 0);
@@ -72,6 +97,9 @@ export function formatLibraryUpdateProgress(jobsInfo: any) {
     if (!jobsInfo?.isRunning && current >= total) {
       return `Checked ${total}/${total} titles - complete${skipped}.`;
     }
+    if (!jobsInfo?.isRunning && current < total) {
+      return `Stopped after ${current}/${total} titles${skipped}.`;
+    }
     return `Checking titles ${current}/${total} - ${percent}%${skipped}.`;
   }
   if (jobsInfo?.isRunning) return "Suwayomi is checking your library.";
@@ -80,6 +108,294 @@ export function formatLibraryUpdateProgress(jobsInfo: any) {
 
 export function formatLibraryUpdateWaiting() {
   return "Waiting for Suwayomi progress.";
+}
+
+function sourceParallelism() {
+  const intensity = store.settings.libraryUpdateIntensity ?? "fast";
+  if (intensity === "eco") return 1;
+  if (intensity === "balanced") return 2;
+  return 4;
+}
+
+function perTitleTimeoutMs() {
+  const intensity = store.settings.libraryUpdateIntensity ?? "fast";
+  if (intensity === "eco") return 75_000;
+  if (intensity === "balanced") return 60_000;
+  return 45_000;
+}
+
+function sourceCircuitBreakerLimit(reason: SharedLibraryUpdateRunOptions["reason"]) {
+  return reason === "auto-library-update" ? 3 : 5;
+}
+
+function classifyUpdateError(error: unknown): LibraryUpdateIssueErrorType {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  if (/timeout|timed out|abort/i.test(message)) return "timeout";
+  if (/429|rate.?limit|too many requests/i.test(message)) return "rate-limit";
+  if (/source.*not.*install|missing source|not installed|loader/i.test(message)) return "missing-source";
+  if (/network|fetch|econn|dns|connection|socket|http 5|http 0/i.test(message)) return "network";
+  if (/source|extension|parse|cloudflare|captcha|forbidden|http 4/i.test(message)) return "source-error";
+  return "unknown";
+}
+
+function errorMessage(error: unknown) {
+  if (error instanceof Error && error.message.trim()) return error.message.trim();
+  const serialized = String(error ?? "").trim();
+  return serialized || "Unknown update error.";
+}
+
+function isSourceWideUpdateError(error: unknown) {
+  const message = errorMessage(error);
+  return /cloudflare bypass currently disabled|source not installed|missing source|not installed/i.test(message);
+}
+
+function sourceKeyForManga(manga: Manga) {
+  return String(manga.source?.id ?? manga.sourceId ?? "unknown");
+}
+
+function sourceNameForManga(manga: Manga) {
+  return manga.source?.displayName || manga.source?.name || sourceKeyForManga(manga);
+}
+
+function excludedMangaIdsFromCategories(categories = store.categories) {
+  const excluded = new Set<number>();
+  for (const category of categories) {
+    if (String(category.includeInUpdate).toUpperCase() !== "EXCLUDE") continue;
+    for (const manga of category.mangas?.nodes ?? []) {
+      if (Number.isFinite(manga.id)) excluded.add(manga.id);
+    }
+  }
+  return excluded;
+}
+
+function categoryFilterMangaIds(categoryIds?: number[], categories = store.categories) {
+  if (!categoryIds?.length) return null;
+  const allowed = new Set<number>();
+  const categoryIdSet = new Set(categoryIds.map(Number).filter(Number.isFinite));
+  for (const category of categories) {
+    if (!categoryIdSet.has(category.id)) continue;
+    for (const manga of category.mangas?.nodes ?? []) {
+      if (Number.isFinite(manga.id)) allowed.add(manga.id);
+    }
+  }
+  return allowed.size > 0 ? allowed : null;
+}
+
+async function loadUpdateCategoriesForRules(): Promise<Category[]> {
+  try {
+    const data = await gql<{ categories: { nodes: Category[] } }>(
+      GET_CATEGORIES_WITH_MANGA_IDS,
+      undefined,
+      undefined,
+      12_000,
+    );
+    return data.categories.nodes;
+  } catch (error) {
+    console.warn("Could not load category update rules with members; falling back to local category snapshot.", error);
+    return store.categories;
+  }
+}
+
+function eligibleLibraryManga(categoryIds: number[] | undefined, categories: Category[]) {
+  const excluded = excludedMangaIdsFromCategories(categories);
+  const allowed = categoryFilterMangaIds(categoryIds, categories);
+  return store.libraryMangaSnapshot.filter((manga) => {
+    if (!manga.inLibrary) return false;
+    if (excluded.has(manga.id)) return false;
+    if (allowed && !allowed.has(manga.id)) return false;
+    return true;
+  });
+}
+
+function updateCountsFromChapters(manga: Manga, chapters: Chapter[]): Manga {
+  return {
+    ...manga,
+    chapterCount: chapters.length,
+    unreadCount: chapters.filter((chapter) => !chapter.isRead).length,
+    downloadCount: chapters.filter((chapter) => chapter.isDownloaded).length,
+  };
+}
+
+async function fetchChaptersForUpdate(mangaId: number, timeoutMs: number) {
+  const data = await gql<{ fetchChapters: { chapters: Chapter[] } }>(
+    FETCH_CHAPTERS,
+    { mangaId },
+    undefined,
+    timeoutMs,
+  );
+  return data.fetchChapters.chapters ?? [];
+}
+
+async function runComicsSourceQueueUpdate(
+  options: SharedLibraryUpdateRunOptions,
+  runId: string,
+): Promise<{
+  changedMangaIds: number[];
+  issues: LibraryUpdateIssueInput[];
+  preloadedChapters: Map<number, Chapter[]>;
+  jobsInfo: any;
+}> {
+  const updateCategories = await loadUpdateCategoriesForRules();
+  const queue = eligibleLibraryManga(options.categories, updateCategories);
+  const total = queue.length;
+  const preloadedChapters = new Map<number, Chapter[]>();
+  const issues: LibraryUpdateIssueInput[] = [];
+  const changedMangaIds = new Set<number>();
+  const groups = new Map<string, Manga[]>();
+  let finishedJobs = 0;
+
+  for (const manga of queue.sort((left, right) => sourceNameForManga(left).localeCompare(sourceNameForManga(right)) || left.title.localeCompare(right.title))) {
+    const key = sourceKeyForManga(manga);
+    const current = groups.get(key) ?? [];
+    current.push(manga);
+    groups.set(key, current);
+  }
+
+  const sourceEntries = [...groups.entries()].map(([sourceId, mangas]) => ({
+    sourceId,
+    sourceName: sourceNameForManga(mangas[0]),
+    mangas,
+  }));
+
+  const publishProgress = (currentTitle?: string, sourceName?: string) => {
+    const jobsInfo = {
+      isRunning: true,
+      finishedJobs,
+      totalJobs: total,
+      skippedCategoriesCount: 0,
+      skippedMangasCount: 0,
+    };
+    const percent = libraryUpdatePercent(finishedJobs, total);
+    const detail = currentTitle && sourceName ? ` - ${sourceName}: ${currentTitle}` : "";
+    showLibraryUpdateProgress(
+      total > 0
+        ? `Checking titles ${Math.min(finishedJobs, total)}/${total} - ${percent}%${detail}.`
+        : "No eligible comics titles to update.",
+      0,
+      total > 0 ? { current: Math.min(finishedJobs, total), total, percent } : undefined,
+    );
+    return jobsInfo;
+  };
+
+  publishProgress();
+
+  let cursor = 0;
+  const workerCount = Math.max(1, Math.min(sourceParallelism(), sourceEntries.length || 1));
+  const timeoutMs = perTitleTimeoutMs();
+  const breakerLimit = sourceCircuitBreakerLimit(options.reason);
+
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (cursor < sourceEntries.length && !libraryUpdateStopRequested) {
+      const group = sourceEntries[cursor++];
+      let consecutiveFailures = 0;
+      for (let index = 0; index < group.mangas.length; index += 1) {
+        const manga = group.mangas[index];
+        if (libraryUpdateStopRequested) break;
+        publishProgress(manga.title, group.sourceName);
+        try {
+          const chapters = await fetchChaptersForUpdate(manga.id, timeoutMs);
+          preloadedChapters.set(manga.id, chapters);
+          changedMangaIds.add(manga.id);
+          consecutiveFailures = 0;
+          const nextSnapshot = store.libraryMangaSnapshot.map((entry) =>
+            entry.id === manga.id ? updateCountsFromChapters(entry, chapters) : entry,
+          );
+          setLibraryMangaSnapshot(nextSnapshot);
+          cache.set(CACHE_KEYS.LIBRARY, nextSnapshot, CACHE_GROUPS.LIBRARY);
+        } catch (error) {
+          consecutiveFailures += 1;
+          const message = errorMessage(error);
+          const sourceWideError = isSourceWideUpdateError(error);
+          if (sourceWideError) {
+            const affectedTitles = group.mangas.length - index;
+            issues.push({
+              runId,
+              contentKind: "manga",
+              title: group.sourceName,
+              itemId: `source:${group.sourceId}`,
+              sourceId: group.sourceId,
+              sourceName: group.sourceName,
+              extensionName: group.sourceName,
+              message: `${affectedTitles} title${affectedTitles === 1 ? "" : "s"} could not refresh because this source is unavailable: ${message}`,
+              errorType: classifyUpdateError(error),
+            });
+            consecutiveFailures = breakerLimit;
+            finishedJobs += affectedTitles;
+            publishProgress();
+            break;
+          }
+          issues.push({
+            runId,
+            contentKind: "manga",
+            title: manga.title,
+            itemId: String(manga.id),
+            sourceId: group.sourceId,
+            sourceName: group.sourceName,
+            extensionName: group.sourceName,
+            message,
+            errorType: classifyUpdateError(error),
+          });
+          if (consecutiveFailures >= breakerLimit) {
+            const deferredCount = group.mangas.length - index - 1;
+            if (deferredCount > 0) {
+              issues.push({
+                runId,
+                contentKind: "manga",
+                title: group.sourceName,
+                itemId: `source:${group.sourceId}:deferred`,
+                sourceId: group.sourceId,
+                sourceName: group.sourceName,
+                extensionName: group.sourceName,
+                message: `${deferredCount} title${deferredCount === 1 ? "" : "s"} deferred after ${consecutiveFailures} consecutive failures.`,
+                errorType: "deferred",
+              });
+            }
+            finishedJobs += group.mangas.length - index;
+            publishProgress();
+            break;
+          }
+        } finally {
+          if (consecutiveFailures < breakerLimit) finishedJobs += 1;
+          if (options.onLiveRefresh && finishedJobs % 16 === 0) {
+            void Promise.resolve(options.onLiveRefresh()).catch((liveRefreshError) => {
+              console.warn("Could not refresh Library during source queue update:", liveRefreshError);
+            });
+          }
+          publishProgress();
+        }
+      }
+    }
+  }));
+
+  const finalJobsInfo = {
+    isRunning: false,
+    finishedJobs: Math.min(finishedJobs, total),
+    totalJobs: total,
+    skippedCategoriesCount: 0,
+    skippedMangasCount: 0,
+  };
+  showLibraryUpdateProgress(
+    formatLibraryUpdateProgress(finalJobsInfo),
+    1800,
+    total > 0 ? { current: finalJobsInfo.finishedJobs, total, percent: 100 } : undefined,
+  );
+
+  return {
+    changedMangaIds: [...changedMangaIds],
+    issues,
+    preloadedChapters,
+    jobsInfo: finalJobsInfo,
+  };
+}
+
+export function formatLibraryUpdateStalled(jobsInfo: any, stalledMs: number) {
+  const total = Number(jobsInfo?.totalJobs ?? 0);
+  const finished = Math.max(0, Math.min(total, Number(jobsInfo?.finishedJobs ?? 0)));
+  const seconds = Math.max(10, Math.floor(stalledMs / 1000));
+  if (total > 0) {
+    return `Checking titles ${finished}/${total} - waiting on a slow source (${seconds}s).`;
+  }
+  return `Waiting on a slow source (${seconds}s).`;
 }
 
 export function showLibraryUpdateProgress(
@@ -113,10 +429,13 @@ export function applyLibraryUpdateMangaPatches(patches: LibraryUpdateMangaPatch[
     const patch = patchById.get(manga.id);
     if (!patch) return manga;
     changedIds.push(manga.id);
+    const patchThumbnail = typeof patch.thumbnailUrl === "string" && patch.thumbnailUrl.trim()
+      ? patch.thumbnailUrl
+      : manga.thumbnailUrl;
     return {
       ...manga,
       title: patch.title ?? manga.title,
-      thumbnailUrl: patch.thumbnailUrl ?? manga.thumbnailUrl,
+      thumbnailUrl: patchThumbnail,
       unreadCount: patch.unreadCount ?? manga.unreadCount,
       downloadCount: patch.downloadCount ?? manga.downloadCount,
       chapterCount: patch.chapters?.totalCount ?? manga.chapterCount,
@@ -233,13 +552,77 @@ export function isSharedLibraryUpdateRunning() {
   return Boolean(activeLibraryUpdateRun);
 }
 
+export async function clearStaleLibraryUpdateInFlight() {
+  if (!store.libraryUpdateInFlight && !store.libraryUpdateProgress?.active) return false;
+
+  const jobsInfo = await readLibraryUpdateStatusLive();
+  if (!jobsInfo || jobsInfo.isRunning) return false;
+
+  const total = Number(jobsInfo.totalJobs ?? 0);
+  const finished = Number(jobsInfo.finishedJobs ?? 0);
+  if (total > 0 && finished < total) return false;
+
+  store.setLibraryUpdateInFlight(false);
+  showLibraryUpdateProgress(
+    total > 0 ? formatLibraryUpdateProgress(jobsInfo) : "Library update complete.",
+    1800,
+    libraryUpdateProgressNumbers(jobsInfo),
+  );
+  return true;
+}
+
+export function stopSharedLibraryUpdate() {
+  if (stopLibraryUpdateRun) return stopLibraryUpdateRun;
+
+  stopLibraryUpdateRun = (async () => {
+    libraryUpdateStopRequested = true;
+    showLibraryUpdateProgress("Stopping library update.");
+    await gql(UPDATE_STOP).catch((error) => {
+      console.warn("Could not send Suwayomi batch stop request; local source queue stop was still requested.", error);
+    });
+    if (activeLibraryUpdateRun) {
+      showLibraryUpdateProgress("Stop requested. Finishing the current title before stopping.");
+      return true;
+    }
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const jobsInfo = await readLibraryUpdateStatusLive();
+      if (jobsInfo && !jobsInfo.isRunning) {
+        showLibraryUpdateProgress(
+          Number(jobsInfo.totalJobs ?? 0) > 0 ? formatLibraryUpdateProgress(jobsInfo) : "Library update stopped.",
+          1800,
+          libraryUpdateProgressNumbers(jobsInfo),
+        );
+        return true;
+      }
+      if (jobsInfo) {
+        showLibraryUpdateProgress(
+          `Stopping library update - checked ${Number(jobsInfo.finishedJobs ?? 0)}/${Number(jobsInfo.totalJobs ?? 0)} titles.`,
+          0,
+          libraryUpdateProgressNumbers(jobsInfo),
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+    showLibraryUpdateProgress("Stop requested. Waiting for Suwayomi to settle.");
+    return false;
+  })()
+    .catch((error) => {
+      console.warn("Could not stop Library update:", error);
+      showLibraryUpdateProgress("Could not stop library update.", 2200);
+      return false;
+    })
+    .finally(() => {
+      stopLibraryUpdateRun = null;
+    });
+
+  return stopLibraryUpdateRun;
+}
+
 export function runSharedLibraryUpdate(options: SharedLibraryUpdateRunOptions) {
   if (activeLibraryUpdateRun) return activeLibraryUpdateRun;
 
   activeLibraryUpdateRun = (async () => {
-    let progressSubscription: LibraryUpdateSubscription | null = null;
-    const changedMangaIds = new Set<number>();
-    let lastLiveRefreshAt = 0;
+    const runId = updateRunId();
 
     try {
       showLibraryUpdateProgress(
@@ -258,57 +641,17 @@ export function runSharedLibraryUpdate(options: SharedLibraryUpdateRunOptions) {
       await ensureAethonLibraryUpdateRules();
       showLibraryUpdateProgress("Suwayomi is checking your library.");
 
-      progressSubscription = subscribeLibraryUpdateStatus(
-        (event) => {
-          const complete = isLibraryUpdateComplete(event.jobsInfo);
-          showLibraryUpdateProgress(
-            formatLibraryUpdateProgress(event.jobsInfo),
-            complete ? 1800 : 0,
-            libraryUpdateProgressNumbers(event.jobsInfo),
-          );
-          for (const mangaId of applyLibraryUpdateMangaPatches(event.mangaUpdates)) {
-            changedMangaIds.add(mangaId);
-          }
-        },
-        (subscriptionError) => {
-          console.warn("Could not receive live Library update progress:", subscriptionError);
-        },
-      );
-
-      const updateResult = await gql<any>(UPDATE_LIBRARY, { categories: options.categories });
-      const initialJobsInfo = updateResult?.updateLibrary?.updateStatus?.jobsInfo;
-      const jobsInfo = await waitForLibraryUpdateToSettle(
-        initialJobsInfo,
-        options.timeoutMs ?? 8 * 60 * 1000,
-        (progressJobsInfo) => {
-          const complete = isLibraryUpdateComplete(progressJobsInfo);
-          showLibraryUpdateProgress(
-            formatLibraryUpdateProgress(progressJobsInfo),
-            complete ? 1800 : 0,
-            libraryUpdateProgressNumbers(progressJobsInfo),
-          );
-          if (!progressJobsInfo?.isRunning || !options.onLiveRefresh) return;
-          const now = Date.now();
-          const refreshInterval = Math.max(1000, options.liveRefreshIntervalMs ?? 5000);
-          if (now - lastLiveRefreshAt < refreshInterval) return;
-          lastLiveRefreshAt = now;
-          void Promise.resolve(options.onLiveRefresh()).catch((liveRefreshError) => {
-            console.warn("Could not refresh Library during update:", liveRefreshError);
-          });
-        },
-        () => {
-          showLibraryUpdateProgress(formatLibraryUpdateWaiting());
-        },
-      );
-
-      const updatedAt = Date.now();
+      const sourceQueueResult = await runComicsSourceQueueUpdate(options, runId);
       return {
-        updatedAt,
-        changedMangaIds: Array.from(changedMangaIds),
-        jobsInfo,
+        updatedAt: Date.now(),
+        changedMangaIds: sourceQueueResult.changedMangaIds,
+        jobsInfo: sourceQueueResult.jobsInfo,
+        cancelled: libraryUpdateStopRequested,
+        issues: sourceQueueResult.issues,
+        preloadedChapters: sourceQueueResult.preloadedChapters,
       };
     } finally {
-      progressSubscription?.close();
+      libraryUpdateStopRequested = false;
       activeLibraryUpdateRun = null;
     }
   })();

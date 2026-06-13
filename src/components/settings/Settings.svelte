@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from "svelte";
+  import { onMount, tick } from "svelte";
   import { slide } from "svelte/transition";
   import { Book, Image, Sliders, Info, Keyboard, Gear, HardDrives, FolderSimple, Plus, Pencil, Trash, Wrench, PaintBrush, ListChecks, Lock, Eye, EyeSlash, Star, ShieldCheck, Tag, CaretDown } from "phosphor-svelte";
   import { invoke } from "@tauri-apps/api/core";
@@ -61,12 +61,16 @@
     countBooksForCategory,
     createBooksCategory,
     deleteBooksCategory,
+    getBooksUpdateExcludedBookIds,
     moveBooksCategory,
+    normalizeBooksCategoryUpdateRule,
     normalizeBooksCategoryAssignments,
     renameBooksCategory,
     sortBooksCategories,
+    toggleBooksCategoryUpdateRule,
   } from "../../lib/library/domainCategories";
   import splashMark from "../../assets/aethon-splash-mark.png";
+  import desktopIcon from "../../assets/aethon-desktop-icon.png";
   import AppTopbar from "../layout/AppTopbar.svelte";
   import WindowControlsInline from "../layout/WindowControlsInline.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
@@ -85,6 +89,8 @@
     backupRestoreLaunchIntent?: BackupLaunchIntent | null;
   }
   let { onOpenThemeEditor, backupAuditPlan = null, backupRestoreLaunchIntent = null }: Props = $props();
+  const AETHON_GITHUB_REPO = (import.meta.env.VITE_AETHON_GITHUB_REPO ?? "").trim();
+  const AETHON_GITHUB_URL = AETHON_GITHUB_REPO ? `https://github.com/${AETHON_GITHUB_REPO}` : "";
   type Tab = "general" | "appearance" | "reader" | "library" | "performance" | "keybinds" | "storage" | "categories" | "tracking" | "security" | "content" | "about" | "devtools";
   type SettingsGroupId = "app" | "reader-library" | "content" | "system" | "advanced";
   type SettingsNavItem = { id: Tab; label: string; desc: string; icon: any };
@@ -2338,6 +2344,12 @@
       ]),
     ),
   );
+  const booksUpdateExcludedCount = $derived(
+    getBooksUpdateExcludedBookIds(
+      store.settings.booksCategories,
+      store.settings.booksCategoryAssignments,
+    ).size,
+  );
   async function loadCategories() {
     catsLoading = true; catsError = null;
     try {
@@ -2419,6 +2431,19 @@
       catsError = e?.message ?? "Failed to update folder rule";
       await loadCategories();
     }
+  }
+  function toggleBooksFolderUpdates(category: BooksCategory) {
+    const nextCategories = toggleBooksCategoryUpdateRule(store.settings.booksCategories, category.id);
+    const nextCategory = nextCategories.find((entry) => entry.id === category.id);
+    const excluded = normalizeBooksCategoryUpdateRule(nextCategory?.includeInUpdate) === "EXCLUDE";
+    updateSettings({ booksCategories: nextCategories });
+    addToast({
+      kind: "success",
+      title: excluded ? "Books folder excluded from updates" : "Books folder included in updates",
+      body: excluded
+        ? `${category.name} will be skipped during Books updates.`
+        : `${category.name} will be checked during Books updates.`,
+    });
   }
   async function deleteFolder(id: string | number) {
     if (categoryDomain === "books") {
@@ -3046,14 +3071,37 @@
   let dlTotal         = $state<number | null>(null);
   let targetTag       = $state<string | null>(null); // tag being installed
   let releasesLoaded = false; // plain var, not $state, so effect does not re-run on change
+  onMount(() => {
+    getVersion().then(v => appVersion = v).catch(() => appVersion = "unknown");
+  });
   $effect(() => {
     if (tab !== "about") return;
     getVersion().then(v => appVersion = v).catch(() => appVersion = "unknown");
     if (!releasesLoaded) { releasesLoaded = true; loadReleases(); }
   });
+  function openUpdatesPanel() {
+    openTab("about");
+    aboutReleasesOpen = true;
+    releasesError = null;
+    void loadReleases();
+  }
+  async function openProjectGithub() {
+    if (!AETHON_GITHUB_URL) {
+      addToast({
+        kind: "info",
+        title: "GitHub repo not configured",
+        body: "Set VITE_AETHON_GITHUB_REPO after publishing your repository.",
+      });
+      return;
+    }
+    await openUrl(AETHON_GITHUB_URL);
+  }
   async function loadReleases() {
     releasesLoading = true; releasesError = null;
     try {
+      if (!AETHON_GITHUB_REPO) {
+        throw new Error("GitHub repository is not configured yet. Set VITE_AETHON_GITHUB_REPO after publishing your fork.");
+      }
       const timeout = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error("Request timed out after 10s")), 10_000)
       );
@@ -3271,7 +3319,7 @@
       <div class="settings-brand-card">
         <div class="settings-brand-card__header">
           <div class="settings-brand-card__badge">
-            <img src={splashMark} alt="" />
+            <img src={desktopIcon} alt="" />
           </div>
           <div class="settings-brand-card__copy">
             <p class="settings-brand-card__title">Aethon Nocturne</p>
@@ -3279,8 +3327,8 @@
           </div>
         </div>
         <div class="settings-brand-card__actions">
-          <button class="settings-rail-action" type="button" onclick={() => openTab("about")}>Updates</button>
-          <button class="settings-rail-action" type="button" onclick={() => openUrl("https://github.com/Youwes09/Moku")}>GitHub</button>
+          <button class="settings-rail-action" type="button" onclick={openUpdatesPanel}>Updates</button>
+          <button class="settings-rail-action" type="button" onclick={openProjectGithub}>GitHub</button>
         </div>
       </div>
     </div>
@@ -3354,109 +3402,6 @@
                     aria-checked={store.settings.autoStartServer}
                     aria-label="Auto-start local server"
                     onclick={() => updateSettings({ autoStartServer: !store.settings.autoStartServer })}
-                  ></button>
-                </div>
-                <div class="settings-row settings-mini-row">
-                  <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Automatic library updates</p>
-                    <p class="settings-mini-row__hint">Wake the local server on schedule, sync new chapters, then return to standby when safe.</p>
-                  </div>
-                  <button
-                    class="settings-toggle"
-                    class:is-on={store.settings.autoLibraryUpdatesEnabled}
-                    type="button"
-                    role="switch"
-                    aria-checked={store.settings.autoLibraryUpdatesEnabled}
-                    aria-label="Automatic library updates"
-                    onclick={() => updateSettings({ autoLibraryUpdatesEnabled: !store.settings.autoLibraryUpdatesEnabled })}
-                  ></button>
-                </div>
-                <div class="settings-row settings-mini-row">
-                  <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Library update interval</p>
-                    <p class="settings-mini-row__hint">How often Aethon checks your comics library for new chapters.</p>
-                  </div>
-                  <div class="select-wrap" id="general-library-update-interval">
-                    <button class="select-btn" type="button" onclick={() => toggleSelect("general-library-update-interval")}>
-                      <span>{libraryUpdateIntervalLabel(store.settings.libraryUpdateIntervalHours)}</span>
-                      <svg class="select-caret" class:open={selectOpen === "general-library-update-interval"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
-                    </button>
-                    {#if selectOpen === "general-library-update-interval"}
-                      <div class="select-menu">
-                        {#each [6, 12, 24, 48] as hours}
-                          <button
-                            class="select-option"
-                            class:active={(store.settings.libraryUpdateIntervalHours ?? 12) === hours}
-                            type="button"
-                            onclick={() => {
-                              updateSettings({ libraryUpdateIntervalHours: hours });
-                              selectOpen = null;
-                            }}
-                          >
-                            {libraryUpdateIntervalLabel(hours)}
-                          </button>
-                        {/each}
-                      </div>
-                    {/if}
-                  </div>
-                </div>
-                <div class="settings-row settings-mini-row">
-                  <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Update intensity</p>
-                    <p class="settings-mini-row__hint">{libraryUpdateIntensityHint(store.settings.libraryUpdateIntensity)}</p>
-                  </div>
-                  <div class="select-wrap" id="general-library-update-intensity">
-                    <button class="select-btn" type="button" onclick={() => toggleSelect("general-library-update-intensity")}>
-                      <span>{libraryUpdateIntensityLabel(store.settings.libraryUpdateIntensity)}</span>
-                      <svg class="select-caret" class:open={selectOpen === "general-library-update-intensity"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
-                    </button>
-                    {#if selectOpen === "general-library-update-intensity"}
-                      <div class="select-menu">
-                        {#each ["eco", "balanced", "fast"] as intensity}
-                          <button
-                            class="select-option"
-                            class:active={(store.settings.libraryUpdateIntensity ?? "balanced") === intensity}
-                            type="button"
-                            onclick={() => {
-                              updateSettings({ libraryUpdateIntensity: intensity as Settings["libraryUpdateIntensity"] });
-                              selectOpen = null;
-                            }}
-                          >
-                            {libraryUpdateIntensityLabel(intensity as Settings["libraryUpdateIntensity"])}
-                          </button>
-                        {/each}
-                      </div>
-                    {/if}
-                  </div>
-                </div>
-                <div class="settings-row settings-mini-row">
-                  <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Only update ongoing novels</p>
-                    <p class="settings-mini-row__hint">Skip completed, cancelled, hiatus, and unknown novel statuses during Books refresh.</p>
-                  </div>
-                  <button
-                    class="settings-toggle"
-                    class:is-on={store.settings.onlyUpdateOngoingNovels}
-                    type="button"
-                    role="switch"
-                    aria-checked={store.settings.onlyUpdateOngoingNovels}
-                    aria-label="Only update ongoing novels"
-                    onclick={() => updateSettings({ onlyUpdateOngoingNovels: !store.settings.onlyUpdateOngoingNovels })}
-                  ></button>
-                </div>
-                <div class="settings-row settings-mini-row">
-                  <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Download new novel chapters</p>
-                    <p class="settings-mini-row__hint">Save newly discovered source chapters for offline reading; keep off to avoid unexpected storage use.</p>
-                  </div>
-                  <button
-                    class="settings-toggle"
-                    class:is-on={store.settings.downloadNewNovelChapters}
-                    type="button"
-                    role="switch"
-                    aria-checked={store.settings.downloadNewNovelChapters}
-                    aria-label="Download new novel chapters"
-                    onclick={() => updateSettings({ downloadNewNovelChapters: !store.settings.downloadNewNovelChapters })}
                   ></button>
                 </div>
                 <div class="settings-row settings-mini-row">
@@ -4168,6 +4113,115 @@
                       <button class="n-inline-segment" class:is-selected={store.settings.defaultLibrarySection === option.id} type="button" onclick={() => updateSettings({ defaultLibrarySection: option.id })}>{option.label}</button>
                     {/each}
                   </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-card">
+              <p class="settings-card__title">Library updates</p>
+              <div class="settings-card__stack">
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Automatic updates</p>
+                    <p class="settings-mini-row__hint">Check Comics and source Novels on schedule, then write Recent Activity events.</p>
+                  </div>
+                  <button
+                    class="settings-toggle"
+                    class:is-on={store.settings.autoLibraryUpdatesEnabled}
+                    type="button"
+                    role="switch"
+                    aria-checked={store.settings.autoLibraryUpdatesEnabled}
+                    aria-label="Automatic library updates"
+                    onclick={() => updateSettings({ autoLibraryUpdatesEnabled: !store.settings.autoLibraryUpdatesEnabled })}
+                  ></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Update interval</p>
+                    <p class="settings-mini-row__hint">How often Aethon checks libraries when automatic updates are enabled.</p>
+                  </div>
+                  <div class="select-wrap" id="library-update-interval">
+                    <button class="select-btn" type="button" onclick={() => toggleSelect("library-update-interval")}>
+                      <span>{libraryUpdateIntervalLabel(store.settings.libraryUpdateIntervalHours)}</span>
+                      <svg class="select-caret" class:open={selectOpen === "library-update-interval"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
+                    </button>
+                    {#if selectOpen === "library-update-interval"}
+                      <div class="select-menu">
+                        {#each [6, 12, 24, 48] as hours}
+                          <button
+                            class="select-option"
+                            class:active={(store.settings.libraryUpdateIntervalHours ?? 12) === hours}
+                            type="button"
+                            onclick={() => {
+                              updateSettings({ libraryUpdateIntervalHours: hours });
+                              selectOpen = null;
+                            }}
+                          >
+                            {libraryUpdateIntervalLabel(hours)}
+                          </button>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Comics intensity</p>
+                    <p class="settings-mini-row__hint">{libraryUpdateIntensityHint(store.settings.libraryUpdateIntensity)}</p>
+                  </div>
+                  <div class="select-wrap" id="library-update-intensity">
+                    <button class="select-btn" type="button" onclick={() => toggleSelect("library-update-intensity")}>
+                      <span>{libraryUpdateIntensityLabel(store.settings.libraryUpdateIntensity)}</span>
+                      <svg class="select-caret" class:open={selectOpen === "library-update-intensity"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
+                    </button>
+                    {#if selectOpen === "library-update-intensity"}
+                      <div class="select-menu">
+                        {#each ["eco", "balanced", "fast"] as intensity}
+                          <button
+                            class="select-option"
+                            class:active={(store.settings.libraryUpdateIntensity ?? "balanced") === intensity}
+                            type="button"
+                            onclick={() => {
+                              updateSettings({ libraryUpdateIntensity: intensity as Settings["libraryUpdateIntensity"] });
+                              selectOpen = null;
+                            }}
+                          >
+                            {libraryUpdateIntensityLabel(intensity as Settings["libraryUpdateIntensity"])}
+                          </button>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Only update ongoing novels</p>
+                    <p class="settings-mini-row__hint">Skip completed, cancelled, hiatus, and unknown novel statuses during Books refresh.</p>
+                  </div>
+                  <button
+                    class="settings-toggle"
+                    class:is-on={store.settings.onlyUpdateOngoingNovels}
+                    type="button"
+                    role="switch"
+                    aria-checked={store.settings.onlyUpdateOngoingNovels}
+                    aria-label="Only update ongoing novels"
+                    onclick={() => updateSettings({ onlyUpdateOngoingNovels: !store.settings.onlyUpdateOngoingNovels })}
+                  ></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Download new novel chapters</p>
+                    <p class="settings-mini-row__hint">Save newly discovered source chapters for offline reading; keep off to avoid unexpected storage use.</p>
+                  </div>
+                  <button
+                    class="settings-toggle"
+                    class:is-on={store.settings.downloadNewNovelChapters}
+                    type="button"
+                    role="switch"
+                    aria-checked={store.settings.downloadNewNovelChapters}
+                    aria-label="Download new novel chapters"
+                    onclick={() => updateSettings({ downloadNewNovelChapters: !store.settings.downloadNewNovelChapters })}
+                  ></button>
                 </div>
               </div>
             </div>
@@ -5296,7 +5350,7 @@
                 <p class="settings-card__intro">
                   {categoryDomain === "comics"
                     ? "Comics categories stay synced with Suwayomi. Library updates check every title except folders marked as excluded."
-                    : "Books categories are local to Aethon and stay separate from Comics."}
+                    : `Books categories are local to Aethon. Books updates skip every source novel assigned to folders marked as excluded${booksUpdateExcludedCount > 0 ? ` (${booksUpdateExcludedCount} currently skipped)` : ""}.`}
                 </p>
                 {#if categoryDomain === "comics" && catsError}
                   <div class="settings-state">
@@ -5372,9 +5426,18 @@
                         {:else}
                           <div class="settings-mini-row__body">
                             <p class="settings-mini-row__label">{cat.name}</p>
-                            <p class="settings-mini-row__hint">{booksCategoryCounts[cat.id] ?? 0} book</p>
+                            <p class="settings-mini-row__hint">{booksCategoryCounts[cat.id] ?? 0} book{(booksCategoryCounts[cat.id] ?? 0) === 1 ? "" : "s"}{normalizeBooksCategoryUpdateRule(cat.includeInUpdate) === "EXCLUDE" ? " / skipped by updates" : ""}</p>
                           </div>
                           <div class="settings-section-actions settings-inline-actions settings-inline-actions--dense">
+                            <button
+                              class="n-btn n-btn--sm n-btn-ghost settings-folder-action"
+                              class:folder-update-excluded={normalizeBooksCategoryUpdateRule(cat.includeInUpdate) === "EXCLUDE"}
+                              type="button"
+                              onclick={() => toggleBooksFolderUpdates(cat)}
+                              title={normalizeBooksCategoryUpdateRule(cat.includeInUpdate) === "EXCLUDE" ? "Include this folder in Books updates" : "Exclude this folder from Books updates"}
+                            >
+                              {normalizeBooksCategoryUpdateRule(cat.includeInUpdate) === "EXCLUDE" ? "Skip updates" : "Update"}
+                            </button>
                             <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" type="button" onclick={() => moveCategory(cat.id, -1)} disabled={i === 0} title="Move up">Up</button>
                             <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" type="button" onclick={() => moveCategory(cat.id, 1)} disabled={i === sortedBooksCategories.length - 1} title="Move down">Down</button>
                             <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" type="button" onclick={() => startEdit(cat.id, cat.name)} title="Rename"><Pencil size={12} weight="light" /></button>
@@ -6315,16 +6378,16 @@
                     <p class="settings-mini-row__label">Release history</p>
                     <p class="settings-mini-row__hint">Browse recent builds and changelogs without leaving the page shell.</p>
                   </div>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (aboutReleasesOpen = !aboutReleasesOpen)}>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => { aboutReleasesOpen = !aboutReleasesOpen; if (aboutReleasesOpen) loadReleases(); }}>
                     {aboutReleasesOpen ? "Hide" : "Browse"}
                   </button>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
                     <p class="settings-mini-row__label">GitHub</p>
-                    <p class="settings-mini-row__hint">Project home and release notes.</p>
+                    <p class="settings-mini-row__hint">{AETHON_GITHUB_REPO ? AETHON_GITHUB_REPO : "Repository not configured yet."}</p>
                   </div>
-                  <a href="https://github.com/Youwes09/Moku" target="_blank" class="n-btn n-btn--sm n-btn-ghost">Open</a>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={openProjectGithub}>Open</button>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
