@@ -23,6 +23,7 @@
     recordLibraryUpdateIssues,
     recordNovelUpdateNotifications,
     setActiveNovelDetail,
+    setLibraryUpdateInFlight,
     setSettingsOpen,
   } from "../../store/state.svelte";
   import type { Manga } from "../../lib/types";
@@ -295,6 +296,16 @@
     const issue = primaryIssue(group);
     const sourceId = issue?.retrySourceId || issue?.sourceId;
     if (!issue || !sourceId) return;
+    if (store.libraryUpdateInFlight) {
+      addToast({
+        kind: "info",
+        title: "Library update already running",
+        body: "Wait for the active update before retrying this source.",
+        duration: 2400,
+      });
+      return;
+    }
+    setLibraryUpdateInFlight(true);
     try {
       if (issue.retryKind === "novels-source" || issue.contentKind === "novel") {
         const updatedAt = Date.now();
@@ -345,6 +356,8 @@
         title: "Could not retry source",
         body: error instanceof Error ? error.message : "Aethon could not retry this source.",
       });
+    } finally {
+      setLibraryUpdateInFlight(false);
     }
   }
 
