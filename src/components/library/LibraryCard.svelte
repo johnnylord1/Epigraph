@@ -16,6 +16,7 @@
     onPointerLeave?: (id: string, event: PointerEvent) => void;
     onCoverLoad?: (id: string) => void;
     onCoverError?: (id: string) => void;
+    coverLoading?: "lazy" | "eager";
   };
 
   let {
@@ -31,6 +32,7 @@
     onPointerLeave,
     onCoverLoad,
     onCoverError,
+    coverLoading = "lazy",
   }: Props = $props();
   let suppressNextClick = false;
   let flagImageFailed = $state(false);
@@ -47,12 +49,14 @@
   const showOverlayBadges = $derived(viewMode !== "list");
   const primaryGridBadge = $derived(
     viewMode !== "list"
-      ? (vm.sourceMetricBanner
-        ? null
-        : (vm.badges.find((badge) => badge.kind === "unread")
-          ?? vm.badges.find((badge) => badge.kind === "status")
-          ?? vm.badges.find((badge) => badge.kind === "download")
-          ?? null))
+      ? (vm.primaryGridBadge !== undefined
+        ? vm.primaryGridBadge
+        : (vm.sourceMetricBanner
+          ? null
+          : (vm.badges.find((badge) => badge.kind === "unread")
+            ?? vm.badges.find((badge) => badge.kind === "status")
+            ?? vm.badges.find((badge) => badge.kind === "download")
+            ?? null)))
       : null,
   );
   const hasFlag = $derived(
@@ -63,18 +67,18 @@
   );
   const topLeftBadges = $derived(
     showOverlayBadges && viewMode === "list"
-      ? vm.badges
+      ? (vm.listTopLeftBadges ?? vm.badges
           .filter((badge) => badge.kind === "unread" || badge.kind === "download")
-          .sort((left) => (left.kind === "unread" ? -1 : 1))
+          .sort((left) => (left.kind === "unread" ? -1 : 1)))
       : [],
   );
   const topRightBadges = $derived(
     showOverlayBadges && viewMode === "list"
-      ? vm.badges.filter((badge) => badge.kind === "status")
+      ? (vm.listTopRightBadges ?? vm.badges.filter((badge) => badge.kind === "status"))
       : [],
   );
   const bottomLeftBadges = $derived(
-    showOverlayBadges && viewMode === "list" ? vm.badges.filter((badge) => badge.kind === "subtype") : [],
+    showOverlayBadges && viewMode === "list" ? (vm.listBottomLeftBadges ?? vm.badges.filter((badge) => badge.kind === "subtype")) : [],
   );
 
   function formatGridStateLabel(label: string, _kind: string): string {
@@ -228,8 +232,10 @@
             class="cover"
             use:resolvedImage={vm.coverSrc}
             alt={vm.title}
+            width="420"
+            height="630"
             style={`object-fit:${vm.coverFit};`}
-            loading="lazy"
+            loading={coverLoading}
             decoding="async"
             draggable="false"
             onload={onCoverLoad ? (() => onCoverLoad(vm.id)) : undefined}
@@ -240,8 +246,10 @@
             class="cover"
             src={vm.coverSrc}
             alt={vm.title}
+            width="420"
+            height="630"
             style={`object-fit:${vm.coverFit};`}
-            loading="lazy"
+            loading={coverLoading}
             decoding="async"
             draggable="false"
             onload={onCoverLoad ? (() => onCoverLoad(vm.id)) : undefined}
@@ -412,6 +420,7 @@
     gap: var(--library-card-info-gap, calc(7px * var(--n-hud-scale, 1)));
     border-radius: 0;
     transition: transform 160ms ease, filter 160ms ease;
+    contain: layout style;
   }
 
   .card.n-library-card:hover {
@@ -438,6 +447,20 @@
 
   .card.n-library-card:hover .cover {
     filter: brightness(1.06) saturate(1.04);
+  }
+
+  :global(.library-scroll-active) .card.n-library-card,
+  :global(.library-scroll-active) .cover {
+    transition: none;
+  }
+
+  :global(.library-scroll-active) .card.n-library-card:hover {
+    transform: none;
+  }
+
+  :global(.library-scroll-active) .card:hover .cover,
+  :global(.library-scroll-active) .card.n-library-card:hover .cover {
+    filter: none;
   }
 
   .card-list:hover {

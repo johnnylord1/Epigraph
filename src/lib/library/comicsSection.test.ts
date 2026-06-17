@@ -4,6 +4,7 @@ import {
   buildComicsLibraryCardVm,
   buildComicsReadingStateLabel,
   buildComicsSectionState,
+  createComicsLibraryCardVmCache,
 } from "./comicsSection";
 
 function manga(overrides: Partial<Manga> = {}): Manga {
@@ -188,5 +189,31 @@ describe("buildComicsSectionState", () => {
     expect(buildComicsReadingStateLabel(unknownRead)).toBe("Unknown");
     expect(buildComicsReadingStateLabel(finished)).toBe("Completed");
     expect(buildComicsReadingStateLabel(finished, new Set([3]), new Map([[3, 20]]))).toBe("Finished");
+  });
+
+  it("memoizes comic card VMs by visual signature", () => {
+    const cache = createComicsLibraryCardVmCache();
+    const alpha = manga({
+      id: 7,
+      title: "Stable Alpha",
+      unreadCount: 1,
+      chapterCount: 10,
+      downloadCount: 2,
+    });
+    const options = {
+      cropCovers: true,
+      selectedIds: new Set<number>(),
+      trackedCompletedIds: new Set<number>(),
+      trackedChapterTotalsByMangaId: new Map<number, number>(),
+      coverSrcOverride: "thumb://cached-alpha",
+    };
+
+    const first = cache.get(alpha, options);
+    const second = cache.get({ ...alpha }, options);
+    const changed = cache.get({ ...alpha, unreadCount: 2 }, options);
+
+    expect(second).toBe(first);
+    expect(changed).not.toBe(first);
+    expect(changed.sourceMetricBanner?.newCount).toBe(2);
   });
 });

@@ -1,4 +1,5 @@
 <script lang="ts" module>
+  const sessionStableBookCoverSrc = new Map<string, string>();
   const sessionStableNovelCoverSrc = new Map<string, string>();
 </script>
 
@@ -21,14 +22,20 @@
     toggleBookCategoryAssignment,
   } from "../../lib/library/domainCategories";
   import { computeLibraryLayout, type LibraryPreferredGridColumns, type LibraryViewMode } from "../../lib/libraryDisplay";
-  import type { BooksSectionVM } from "../../lib/library/contracts";
-  import type { NovelShelfCard } from "../../lib/novels/libraryShelf";
+  import type { BooksSectionVM, LibraryCardVM } from "../../lib/library/contracts";
+  import {
+    buildNovelShelfCard,
+    type NovelShelfCard,
+    type NovelShelfCardContext,
+  } from "../../lib/novels/libraryShelf";
+  import type { PersistedNovelLibraryEntry } from "../../lib/novels/domain";
   import ContextMenu, { type MenuEntry } from "../shared/ContextMenu.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
-  import LibraryCardGrid from "./LibraryCardGrid.svelte";
+  import VirtualLibraryCardGrid from "./VirtualLibraryCardGrid.svelte";
 
   type Props = {
     vm: BooksSectionVM;
+    active?: boolean;
     books: BookEntry[];
     totalBooks: number;
     renderLimit?: number;
@@ -37,12 +44,14 @@
     preferredColumns: LibraryPreferredGridColumns;
     showProgress: boolean;
     showOutline: boolean;
-    novelCards?: NovelShelfCard[];
+    novelEntries?: PersistedNovelLibraryEntry[];
+    novelCardContext?: NovelShelfCardContext;
     onOpenNovel?: (novelId: string) => void;
   };
 
   let {
     vm,
+    active = true,
     books,
     totalBooks,
     renderLimit = 48,
@@ -51,7 +60,12 @@
     preferredColumns = "auto",
     showProgress = true,
     showOutline = true,
-    novelCards = [],
+    novelEntries = [],
+    novelCardContext = {
+      readCounts: new Map(),
+      progressByNovelId: new Map(),
+      hardcoverRecordByNovelId: new Map(),
+    },
     onOpenNovel = () => {},
   }: Props = $props();
 
@@ -60,17 +74,33 @@
   let dropActive = $state(false);
   let importingDrop = $state(false);
   let brokenCoverKeys = $state(new Set<string>());
+  let stableBookCoverSrc = $state(new Map<string, string>(sessionStableBookCoverSrc));
   let stableNovelCoverSrc = $state(new Map<string, string>(sessionStableNovelCoverSrc));
+  let prewarmStartIndex = $state(0);
+  let prewarmEndIndex = $state(0);
   let contentWidth = $state(0);
   let ctx: { x: number; y: number; book: BookEntry } | null = $state(null);
-  let renderVisible = $state(0);
   let scrollReady = false;
   let viewStateReady = false;
-  let scrollPersistFrame: number | null = null;
+  let previousViewKey: string | null = null;
+  let scrollPersistTimer: ReturnType<typeof setTimeout> | null = null;
+  let scrollIdleTimer: ReturnType<typeof setTimeout> | null = null;
   let pendingScrollTop = 0;
+  let isScrolling = $state(false);
+  const pendingStableBookCoverSrc = new Map<string, string>();
+  const pendingStableNovelCoverSrc = new Map<string, string>();
+  const coverPrewarmInflight = new Set<string>();
+  let coverPrewarmQueue: Array<{ id: string; src: string; kind: "book" | "novel" }> = [];
+  let coverPrewarmHandle: ReturnType<typeof setTimeout> | number | null = null;
+  let coverPrewarmUsesIdleCallback = false;
+  let coverFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  const lazyVirtualizeAfter = 180;
 
   const bookByCardId = $derived(
     new Map(books.map((book) => [createBookLibraryCardId(book.id), book])),
+  );
+  const novelByCardId = $derived(
+    new Map(novelEntries.map((entry) => [`novel-card:${entry.id}`, entry])),
   );
 
   const bookProgressById = $derived(
@@ -99,61 +129,7 @@
     return isReadFinished ? "Finished" : "Completed";
   }
 
-  const visibleBooks = $derived(books.slice(0, renderVisible));
-  const visibleBookCards = $derived(
-    visibleBooks.map((book) => {
-      const progress = bookProgressById.get(book.id);
-      const coverSrc = brokenCoverKeys.has(bookCoverKey(book))
-        ? null
-        : BookAssetResolver.resolveCoverSrc(book);
-      const presented = presentBookWithCoverSrc(book, progress, coverSrc);
-      const hasLocalAsset = hasBookLocalAsset(book);
-      const chapterCount = getBookChapterCount(book);
-      const readCount = getBookReadChapterCount(book, progress);
-      const unreadCount = Math.max(0, chapterCount - readCount);
-      const badges = !hasLocalAsset
-        ? [{ kind: "status" as const, label: "Missing file" }]
-        : [];
-      const metaChips = [buildBookWorkStatus(hasLocalAsset, readCount >= chapterCount && chapterCount > 0)];
-      if (!hasLocalAsset) metaChips.push("Metadata only");
-
-      return {
-        id: createBookLibraryCardId(book.id),
-        title: presented.title,
-        subtitle: formatBookFileSource(book),
-        coverSrc: presented.coverSrc,
-        coverFit: "cover" as const,
-        badges,
-        metaChips,
-        progress: presented.showProgress
-          ? {
-              primaryLabel: String(readCount),
-              secondaryLabel: chapterCount > 0 ? `/ ${chapterCount} chapters` : undefined,
-              percent: chapterCount > 0 ? Math.max(0, Math.min(1, readCount / chapterCount)) : presented.readPercent,
-            }
-          : null,
-        selectable: false,
-        selected: false,
-        disabled: !hasLocalAsset,
-        sourceMetricBanner: {
-          flagLabel: "",
-          downloadedCount: 0,
-          newCount: unreadCount,
-          sourceName: null,
-        },
-      };
-    }),
-  );
-  const visibleNovelCards = $derived(
-    novelCards.map((card) => {
-      const cachedCoverSrc = stableNovelCoverSrc.get(card.id);
-      const coverSrc = cachedCoverSrc === card.coverSrc ? cachedCoverSrc : card.coverSrc;
-      return coverSrc === card.coverSrc ? card : { ...card, coverSrc };
-    }),
-  );
-  const visibleCards = $derived([...visibleBookCards, ...visibleNovelCards]);
-  const hasMore = $derived(books.length > renderVisible);
-  const remainingCount = $derived(Math.max(0, books.length - renderVisible));
+  const totalCardCount = $derived(books.length + novelEntries.length);
   const layout = $derived(
     computeLibraryLayout({
       availableWidth: contentWidth,
@@ -166,8 +142,80 @@
     return `${book.id}:${book.coverPath ?? "none"}:${book.updatedAt}`;
   }
 
-  function novelCoverKey(card: Pick<NovelShelfCard, "id" | "coverSrc">): string {
-    return `${card.id}:${card.coverSrc ?? "none"}`;
+  function novelCoverKey(entry: Pick<PersistedNovelLibraryEntry, "id" | "coverUrl">): string {
+    return `novel-card:${entry.id}:${entry.coverUrl ?? "none"}`;
+  }
+
+  function buildRawBookCard(book: BookEntry): LibraryCardVM {
+    const progress = bookProgressById.get(book.id);
+    const coverSrc = brokenCoverKeys.has(bookCoverKey(book))
+      ? null
+      : BookAssetResolver.resolveCoverSrc(book);
+    const presented = presentBookWithCoverSrc(book, progress, coverSrc);
+    const hasLocalAsset = hasBookLocalAsset(book);
+    const chapterCount = getBookChapterCount(book);
+    const readCount = getBookReadChapterCount(book, progress);
+    const unreadCount = Math.max(0, chapterCount - readCount);
+    const badges = !hasLocalAsset
+      ? [{ kind: "status" as const, label: "Missing file" }]
+      : [];
+    const metaChips = [buildBookWorkStatus(hasLocalAsset, readCount >= chapterCount && chapterCount > 0)];
+    if (!hasLocalAsset) metaChips.push("Metadata only");
+
+    return {
+      id: createBookLibraryCardId(book.id),
+      title: presented.title,
+      subtitle: formatBookFileSource(book),
+      coverSrc: presented.coverSrc,
+      coverFit: "cover",
+      badges,
+      metaChips,
+      progress: presented.showProgress
+        ? {
+            primaryLabel: String(readCount),
+            secondaryLabel: chapterCount > 0 ? `/ ${chapterCount} chapters` : undefined,
+            percent: chapterCount > 0 ? Math.max(0, Math.min(1, readCount / chapterCount)) : presented.readPercent,
+          }
+        : null,
+      selectable: false,
+      selected: false,
+      disabled: !hasLocalAsset,
+      sourceMetricBanner: {
+        flagLabel: "",
+        downloadedCount: 0,
+        newCount: unreadCount,
+        sourceName: null,
+      },
+    };
+  }
+
+  function buildRawNovelCard(entry: PersistedNovelLibraryEntry): NovelShelfCard {
+    return buildNovelShelfCard(entry, novelCardContext);
+  }
+
+  function getRawCardAt(index: number): LibraryCardVM | null {
+    const book = books[index];
+    if (book) return buildRawBookCard(book);
+    const novel = novelEntries[index - books.length];
+    return novel ? buildRawNovelCard(novel) : null;
+  }
+
+  function getVisibleCardAt(index: number): LibraryCardVM | null {
+    const card = getRawCardAt(index);
+    if (!card) return null;
+    if (card.id.startsWith("novel-card:")) {
+      const cachedCoverSrc = stableNovelCoverSrc.get(card.id);
+      return cachedCoverSrc && cachedCoverSrc === card.coverSrc ? card : { ...card, coverSrc: null };
+    }
+    const stable = stableBookCoverSrc.get(card.id);
+    return stable && stable === card.coverSrc ? card : { ...card, coverSrc: null };
+  }
+
+  function getCardIdAt(index: number): string {
+    const book = books[index];
+    if (book) return createBookLibraryCardId(book.id);
+    const novel = novelEntries[index - books.length];
+    return novel ? `novel-card:${novel.id}` : String(index);
   }
 
   function fileBasename(path: string): string {
@@ -186,22 +234,10 @@
     return true;
   }
 
-  function loadMore() {
-    renderVisible = Math.min(books.length, renderVisible + renderLimit);
-  }
-
-  function maybeLoadMore() {
-    if (!contentEl || !hasMore) return;
-    const nearBottom = contentEl.scrollTop + contentEl.clientHeight >= contentEl.scrollHeight - 800;
-    if (nearBottom) {
-      loadMore();
-    }
-  }
-
   $effect(() => {
     const liveKeys = new Set([
       ...books.map(bookCoverKey),
-      ...novelCards.map(novelCoverKey),
+      ...novelEntries.map(novelCoverKey),
     ]);
     const next = new Set([...brokenCoverKeys].filter((key) => liveKeys.has(key)));
     if (!setsEqual(brokenCoverKeys, next)) {
@@ -210,31 +246,28 @@
   });
 
   $effect(() => {
-    viewKey;
+    const nextViewKey = viewKey;
     if (!viewStateReady) {
       viewStateReady = true;
+      previousViewKey = nextViewKey;
       scrollReady = true;
-      renderVisible = Math.min(renderLimit, books.length);
-      setLibraryScrollTop(0);
+      if (active) setLibraryScrollTop(0);
       return;
     }
+    if (nextViewKey === previousViewKey) return;
+    previousViewKey = nextViewKey;
+    prewarmStartIndex = 0;
+    prewarmEndIndex = Math.min(totalCardCount, Math.max(1, renderLimit || 48));
 
-    renderVisible = Math.min(renderLimit, books.length);
-    setLibraryScrollTop(0);
-    if (contentEl) contentEl.scrollTo({ top: 0 });
+    if (active) {
+      setLibraryScrollTop(0);
+      if (contentEl) contentEl.scrollTo({ top: 0 });
+    }
   });
 
   $effect(() => {
     books.length;
-    if (renderVisible === 0 && books.length > 0) {
-      renderVisible = Math.min(renderLimit, books.length);
-    }
-    if (renderVisible > books.length) {
-      renderVisible = books.length;
-    }
-    if (scrollReady && contentEl) {
-      maybeLoadMore();
-    }
+    scrollReady;
   });
 
   async function importBookFile(sourcePath: string): Promise<BookEntry> {
@@ -294,9 +327,9 @@
   }
 
   function openBook(cardId: string) {
-    const novel = novelCards.find((card) => card.id === cardId);
+    const novel = novelByCardId.get(cardId);
     if (novel) {
-      onOpenNovel(novel.novelId);
+      onOpenNovel(novel.id);
       return;
     }
 
@@ -372,7 +405,7 @@
   }
 
   function handleCoverError(cardId: string) {
-    const novel = novelCards.find((card) => card.id === cardId);
+    const novel = novelByCardId.get(cardId);
     if (novel) {
       return;
     }
@@ -381,17 +414,30 @@
     if (!book) return;
 
     BookAssetResolver.dropCoverSrc(book.coverPath);
+    const nextStable = new Map(stableBookCoverSrc);
+    nextStable.delete(cardId);
+    stableBookCoverSrc = nextStable;
+    sessionStableBookCoverSrc.delete(cardId);
     brokenCoverKeys = new Set([...brokenCoverKeys, bookCoverKey(book)]);
   }
 
   function handleCoverLoad(cardId: string) {
-    const novel = novelCards.find((card) => card.id === cardId);
-    if (!novel?.coverSrc) return;
+    const novel = novelByCardId.get(cardId);
+    if (!novel?.coverUrl) {
+      const book = bookByCardId.get(cardId);
+      const coverSrc = book ? BookAssetResolver.resolveCoverSrc(book) : null;
+      if (!coverSrc) return;
+      const nextBooks = new Map(stableBookCoverSrc);
+      nextBooks.set(cardId, coverSrc);
+      stableBookCoverSrc = nextBooks;
+      sessionStableBookCoverSrc.set(cardId, coverSrc);
+      return;
+    }
 
     const nextCovers = new Map(stableNovelCoverSrc);
-    nextCovers.set(cardId, novel.coverSrc);
+    nextCovers.set(cardId, novel.coverUrl);
     stableNovelCoverSrc = nextCovers;
-    sessionStableNovelCoverSrc.set(cardId, novel.coverSrc);
+    sessionStableNovelCoverSrc.set(cardId, novel.coverUrl);
 
     const key = novelCoverKey(novel);
     if (brokenCoverKeys.has(key)) {
@@ -401,16 +447,171 @@
     }
   }
 
-  function handleContentScroll() {
-    if (!contentEl) return;
-    pendingScrollTop = contentEl.scrollTop;
-    if (scrollPersistFrame !== null) return;
-    scrollPersistFrame = requestAnimationFrame(() => {
-      scrollPersistFrame = null;
-      setLibraryScrollTop(pendingScrollTop);
-      maybeLoadMore();
-    });
+  async function decodeCoverUrl(url: string) {
+    if (typeof Image === "undefined") return;
+    const image = new Image();
+    image.decoding = "async";
+    image.src = url;
+    if (typeof image.decode !== "function") return;
+    try {
+      await image.decode();
+    } catch {
+      await new Promise<void>((resolve) => {
+        image.onload = () => resolve();
+        image.onerror = () => resolve();
+        setTimeout(resolve, 1200);
+      });
+    }
   }
+
+  function clearCoverPrewarmSchedule() {
+    if (coverPrewarmHandle === null) return;
+    if (
+      coverPrewarmUsesIdleCallback
+      && typeof window !== "undefined"
+      && typeof window.cancelIdleCallback === "function"
+    ) {
+      window.cancelIdleCallback(coverPrewarmHandle as number);
+    } else {
+      clearTimeout(coverPrewarmHandle as ReturnType<typeof setTimeout>);
+    }
+    coverPrewarmHandle = null;
+    coverPrewarmUsesIdleCallback = false;
+  }
+
+  function scheduleCoverFlush() {
+    if (coverFlushTimer !== null) return;
+    coverFlushTimer = setTimeout(flushCoverUpdates, isScrolling ? 220 : 80);
+  }
+
+  function flushCoverUpdates() {
+    coverFlushTimer = null;
+    if (isScrolling) {
+      scheduleCoverFlush();
+      return;
+    }
+
+    if (pendingStableBookCoverSrc.size) {
+      const nextBooks = new Map(stableBookCoverSrc);
+      for (const [cardId, src] of pendingStableBookCoverSrc) nextBooks.set(cardId, src);
+      pendingStableBookCoverSrc.clear();
+      stableBookCoverSrc = nextBooks;
+    }
+
+    if (pendingStableNovelCoverSrc.size) {
+      const nextNovels = new Map(stableNovelCoverSrc);
+      for (const [cardId, src] of pendingStableNovelCoverSrc) nextNovels.set(cardId, src);
+      pendingStableNovelCoverSrc.clear();
+      stableNovelCoverSrc = nextNovels;
+    }
+  }
+
+  async function prewarmCover(entry: { id: string; src: string; kind: "book" | "novel" }) {
+    const key = `${entry.kind}:${entry.id}:${entry.src}`;
+    if (coverPrewarmInflight.has(key)) return;
+    coverPrewarmInflight.add(key);
+    try {
+      await decodeCoverUrl(entry.src);
+      if (entry.kind === "book") {
+        pendingStableBookCoverSrc.set(entry.id, entry.src);
+        sessionStableBookCoverSrc.set(entry.id, entry.src);
+      } else {
+        pendingStableNovelCoverSrc.set(entry.id, entry.src);
+        sessionStableNovelCoverSrc.set(entry.id, entry.src);
+      }
+      scheduleCoverFlush();
+    } finally {
+      coverPrewarmInflight.delete(key);
+    }
+  }
+
+  function scheduleNextCoverPrewarmBatch() {
+    if (coverPrewarmHandle !== null || coverPrewarmQueue.length === 0) return;
+
+    const run = () => {
+      coverPrewarmHandle = null;
+      coverPrewarmUsesIdleCallback = false;
+      if (isScrolling) {
+        scheduleNextCoverPrewarmBatch();
+        return;
+      }
+      const batch = coverPrewarmQueue.splice(0, 4);
+      for (const entry of batch) void prewarmCover(entry);
+      scheduleNextCoverPrewarmBatch();
+    };
+
+    if (
+      typeof window !== "undefined"
+      && typeof window.requestIdleCallback === "function"
+    ) {
+      coverPrewarmUsesIdleCallback = true;
+      coverPrewarmHandle = window.requestIdleCallback(run, { timeout: 300 });
+      return;
+    }
+
+    coverPrewarmUsesIdleCallback = false;
+    coverPrewarmHandle = setTimeout(run, 32);
+  }
+
+  function scheduleCoverPrewarm(entries: Array<{ id: string; src: string; kind: "book" | "novel" }>) {
+    coverPrewarmQueue = entries;
+    clearCoverPrewarmSchedule();
+    scheduleNextCoverPrewarmBatch();
+  }
+
+  function handleVisibleRangeChange(startIndex: number, endIndex: number) {
+    if (prewarmStartIndex === startIndex && prewarmEndIndex === endIndex) return;
+    prewarmStartIndex = startIndex;
+    prewarmEndIndex = endIndex;
+  }
+
+  function handleContentScroll() {
+    if (!active || !contentEl) return;
+    isScrolling = true;
+    pendingScrollTop = contentEl.scrollTop;
+
+    if (scrollIdleTimer !== null) clearTimeout(scrollIdleTimer);
+    scrollIdleTimer = setTimeout(() => {
+      scrollIdleTimer = null;
+      isScrolling = false;
+    }, 160);
+
+    if (Math.abs(pendingScrollTop - store.libraryScrollTop) < 24) return;
+    if (scrollPersistTimer !== null) clearTimeout(scrollPersistTimer);
+    scrollPersistTimer = setTimeout(() => {
+      scrollPersistTimer = null;
+      setLibraryScrollTop(pendingScrollTop);
+    }, 180);
+  }
+
+  $effect(() => {
+    if (!active || !contentEl) return;
+    contentWidth = contentEl.clientWidth;
+  });
+
+  $effect(() => {
+    if (!active) {
+      coverPrewarmQueue = [];
+      clearCoverPrewarmSchedule();
+      return;
+    }
+
+    const prewarmLimit = Math.max(1, renderLimit || 48);
+    const visibleEnd = Math.max(prewarmEndIndex, Math.min(totalCardCount, prewarmLimit));
+    const entries: Array<{ id: string; src: string; kind: "book" | "novel" }> = [];
+    for (let index = prewarmStartIndex; index < visibleEnd; index += 1) {
+      const card = getRawCardAt(index);
+      if (!card.coverSrc) continue;
+      if (card.id.startsWith("novel-card:")) {
+        if (stableNovelCoverSrc.get(card.id) === card.coverSrc) continue;
+        entries.push({ id: card.id, src: card.coverSrc, kind: "novel" });
+      } else {
+        if (stableBookCoverSrc.get(card.id) === card.coverSrc) continue;
+        entries.push({ id: card.id, src: card.coverSrc, kind: "book" });
+      }
+    }
+    scheduleCoverPrewarm(entries);
+  });
 
   onMount(() => {
     let unlisten: (() => void) | undefined;
@@ -448,18 +649,32 @@
 
     return () => {
       dropActive = false;
-      if (scrollPersistFrame !== null) {
-        cancelAnimationFrame(scrollPersistFrame);
-        scrollPersistFrame = null;
+      if (scrollPersistTimer !== null) {
+        clearTimeout(scrollPersistTimer);
+        scrollPersistTimer = null;
+        setLibraryScrollTop(pendingScrollTop);
       }
+      if (scrollIdleTimer !== null) {
+        clearTimeout(scrollIdleTimer);
+        scrollIdleTimer = null;
+      }
+      coverPrewarmQueue = [];
+      pendingStableBookCoverSrc.clear();
+      pendingStableNovelCoverSrc.clear();
+      coverPrewarmInflight.clear();
+      if (coverFlushTimer !== null) {
+        clearTimeout(coverFlushTimer);
+        coverFlushTimer = null;
+      }
+      clearCoverPrewarmSchedule();
       resizeObserver?.disconnect();
       unlisten?.();
     };
   });
 </script>
 
-<div class="content" bind:this={contentEl} onscroll={handleContentScroll}>
-  {#if totalBooks === 0 || visibleCards.length === 0}
+<div class="content" class:library-scroll-active={isScrolling} bind:this={contentEl} onscroll={handleContentScroll}>
+  {#if totalBooks === 0 || totalCardCount === 0}
     <div class="center books-empty">
       <NocturneState
         layout="center"
@@ -471,25 +686,22 @@
       />
     </div>
   {:else}
-    <LibraryCardGrid
-      items={visibleCards}
+    <VirtualLibraryCardGrid
+      itemCount={totalCardCount}
+      getItem={getVisibleCardAt}
+      getItemId={getCardIdAt}
       {viewMode}
       effectiveColumns={layout.effectiveColumns}
+      scrollElement={contentEl}
       {showProgress}
       {showOutline}
       onOpen={(cardId) => openBook(cardId)}
       onContextMenu={openBookContext}
       onCoverLoad={handleCoverLoad}
       onCoverError={handleCoverError}
+      onVisibleRangeChange={handleVisibleRangeChange}
+      virtualizeAfter={lazyVirtualizeAfter}
     />
-    {#if hasMore}
-      <div class="load-more-row">
-        <button type="button" class="load-more-btn" onclick={loadMore}>
-          Show {Math.min(remainingCount, renderLimit)} more
-          <span class="load-more-count">({remainingCount} remaining)</span>
-        </button>
-      </div>
-    {/if}
   {/if}
 
   {#if vm.dragDropEnabled && (dropActive || importingDrop)}
@@ -539,41 +751,6 @@
   .books-empty {
     font-size: var(--text-sm);
     line-height: var(--leading-base);
-  }
-
-  .load-more-row {
-    display: flex;
-    justify-content: center;
-    padding: var(--sp-5) 0 var(--sp-2);
-    position: relative;
-    z-index: 1;
-  }
-
-  .load-more-btn {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-2);
-    font-family: var(--font-ui);
-    font-size: var(--text-xs);
-    letter-spacing: var(--tracking-wide);
-    padding: 8px 20px;
-    border-radius: var(--radius-full);
-    border: 1px solid var(--border-dim);
-    background: var(--bg-raised);
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: color var(--t-base), border-color var(--t-base), background var(--t-base);
-  }
-
-  .load-more-btn:hover {
-    color: var(--accent-fg);
-    border-color: var(--accent-dim);
-    background: var(--accent-muted);
-  }
-
-  .load-more-count {
-    color: var(--text-faint);
-    font-size: var(--text-2xs);
   }
 
   .book-drop-overlay {

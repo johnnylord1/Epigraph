@@ -345,6 +345,7 @@ export interface LibraryUpdateNotification {
 
 export type LibraryUpdateIssueKind = "manga" | "novel";
 export type LibraryUpdateIssueErrorType =
+  | "source-challenge"
   | "timeout"
   | "rate-limit"
   | "missing-source"
@@ -364,6 +365,11 @@ export interface LibraryUpdateIssue {
   extensionName: string;
   message: string;
   errorType: LibraryUpdateIssueErrorType;
+  actionUrl?: string;
+  retrySourceId?: string;
+  retryKind?: "comics-source" | "novels-source";
+  recoveryHint?: "flaresolverr" | "webview" | "external-browser";
+  affectedCount?: number;
   createdAt: number;
 }
 
@@ -925,7 +931,8 @@ function normalizeLoadedLibraryUpdateNotification(entry: any): LibraryUpdateNoti
 }
 
 function normalizeLibraryUpdateIssueErrorType(value: unknown): LibraryUpdateIssueErrorType {
-  return value === "timeout"
+  return value === "source-challenge"
+    || value === "timeout"
     || value === "rate-limit"
     || value === "missing-source"
     || value === "network"
@@ -949,6 +956,16 @@ function normalizeLoadedLibraryUpdateIssue(entry: any): LibraryUpdateIssue | nul
   const sourceName = String(entry.sourceName ?? "Unknown source").trim() || "Unknown source";
   const extensionName = String(entry.extensionName ?? sourceName).trim() || sourceName;
   const errorType = normalizeLibraryUpdateIssueErrorType(entry.errorType);
+  const actionUrl = typeof entry.actionUrl === "string" && entry.actionUrl.trim() ? entry.actionUrl.trim() : undefined;
+  const retrySourceId = typeof entry.retrySourceId === "string" && entry.retrySourceId.trim() ? entry.retrySourceId.trim() : undefined;
+  const retryKind = entry.retryKind === "comics-source" || entry.retryKind === "novels-source" ? entry.retryKind : undefined;
+  const affectedCount = Number(entry.affectedCount);
+  const recoveryHint =
+    entry.recoveryHint === "flaresolverr"
+    || entry.recoveryHint === "webview"
+    || entry.recoveryHint === "external-browser"
+      ? entry.recoveryHint
+      : undefined;
   return {
     id: typeof entry.id === "string" && entry.id.trim()
       ? entry.id
@@ -962,13 +979,19 @@ function normalizeLoadedLibraryUpdateIssue(entry: any): LibraryUpdateIssue | nul
     extensionName,
     message,
     errorType,
+    actionUrl,
+    retrySourceId,
+    retryKind,
+    recoveryHint,
+    affectedCount: Number.isFinite(affectedCount) ? Math.max(1, Math.floor(affectedCount)) : undefined,
     createdAt,
   };
 }
 
 function isSourceWidePersistedIssue(issue: LibraryUpdateIssue) {
   return issue.contentKind === "manga"
-    && /cloudflare bypass currently disabled|source not installed|missing source|not installed/i.test(issue.message);
+    && (issue.errorType === "source-challenge"
+      || /cloudflare bypass currently disabled|source not installed|missing source|not installed/i.test(issue.message));
 }
 
 function compactLoadedLibraryUpdateIssues(issues: LibraryUpdateIssue[]) {
@@ -988,6 +1011,8 @@ function compactLoadedLibraryUpdateIssues(issues: LibraryUpdateIssue[]) {
         id: `update-issue:${issue.runId}:${issue.contentKind}:source:${issue.sourceId}:${issue.message.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
         title: issue.sourceName,
         itemId: `source:${issue.sourceId}`,
+        retrySourceId: issue.retrySourceId ?? issue.sourceId,
+        retryKind: issue.retryKind ?? "comics-source",
         message: `1 title could not refresh because this source is unavailable: ${issue.message}`,
       });
       continue;
@@ -1269,6 +1294,9 @@ class Store {
   settingsOpen:      boolean          = $state(normalizeNavPage(saved?.navPage) === "settings");
   runtimeSettingsTab: RuntimeSettingsTab | null = $state(null);
   homePanelHint:     "history" | null = $state(null);
+  homePanelReturnPage: NavPage | null = $state(null);
+  activityPanelOpen: boolean = $state(false);
+  activityPanelReturnPage: NavPage | null = $state(null);
   searchTabHint:     SearchHubTab | null = $state(null);
   searchBrowseHint:  SearchBrowseTab | null = $state(null);
   searchSourcesPaneHint: SearchSourcesPane | null = $state(null);
@@ -1900,6 +1928,39 @@ class Store {
     cache.set(CACHE_KEYS.CATEGORIES, cats, CACHE_GROUPS.LIBRARY);
   }
   setLibraryMangaSnapshot(next: Manga[])       { this.libraryMangaSnapshot = next; }
+  syncLibraryMangaFromDetail(manga: Manga, chaps?: Chapter[]) {
+    const existing =
+      this.libraryMangaSnapshot.find((entry) => entry.id === manga.id)
+      ?? (this.activeManga?.id === manga.id ? this.activeManga : null);
+    const nextCounts = chaps
+      ? {
+          chapterCount: chaps.length,
+          unreadCount: chaps.reduce((count, chapter) => count + (chapter.isRead ? 0 : 1), 0),
+          downloadCount: chaps.reduce((count, chapter) => count + (chapter.isDownloaded ? 1 : 0), 0),
+        }
+      : {};
+    const nextManga: Manga = {
+      ...(existing ?? {}),
+      ...manga,
+      inLibrary: manga.inLibrary ?? existing?.inLibrary ?? true,
+      thumbnailUrl: manga.thumbnailUrl || existing?.thumbnailUrl || "",
+      downloadCount: manga.downloadCount ?? existing?.downloadCount,
+      unreadCount: manga.unreadCount ?? existing?.unreadCount,
+      chapterCount: manga.chapterCount ?? existing?.chapterCount,
+      ...nextCounts,
+    };
+
+    let found = false;
+    const nextSnapshot = this.libraryMangaSnapshot.map((entry) => {
+      if (entry.id !== manga.id) return entry;
+      found = true;
+      return nextManga;
+    });
+    if (!found && nextManga.inLibrary) nextSnapshot.push(nextManga);
+    this.libraryMangaSnapshot = nextSnapshot;
+    if (this.activeManga?.id === manga.id) this.activeManga = nextManga;
+    cache.set(CACHE_KEYS.LIBRARY, nextSnapshot, CACHE_GROUPS.LIBRARY);
+  }
   setLibraryBootstrap(status: LibraryBootstrapStatus, scopeKey: string | null, trackingSummary: TrackerCompletionTracker[] | null = null) {
     this.libraryBootstrapStatus = status;
     this.libraryBootstrapScopeKey = scopeKey;
@@ -1928,7 +1989,10 @@ class Store {
     if (next !== "settings") this.lastPrimaryNavPage = next;
     clearSearchEngagedBodyClasses();
     this.clearActiveDetailState();
+    this.activityPanelOpen = false;
+    this.activityPanelReturnPage = null;
     this.homePanelHint = null;
+    this.homePanelReturnPage = null;
   }
   setNavPage(next: NavPage) {
     this.preparePrimaryNavigation(next);
@@ -1949,7 +2013,18 @@ class Store {
   closeNovelReader() {
     this.activeNovelReader = null;
   }
-  setHomePanelHint(next: "history" | null)      { this.homePanelHint    = next; }
+  setHomePanelHint(next: "history" | null)      {
+    this.homePanelHint = next;
+    if (!next) this.homePanelReturnPage = null;
+  }
+  openActivityPanel(returnPage: NavPage | null = this.navPage) {
+    this.activityPanelReturnPage = returnPage;
+    this.activityPanelOpen = true;
+  }
+  closeActivityPanel() {
+    this.activityPanelOpen = false;
+    this.activityPanelReturnPage = null;
+  }
   setSearchTabHint(next: SearchHubTab | null)   { this.searchTabHint    = next; }
   setSearchBrowseHint(next: SearchBrowseTab | null) { this.searchBrowseHint = next; }
   setSearchSourcesPaneHint(next: SearchSourcesPane | null) { this.searchSourcesPaneHint = next; }
@@ -2027,6 +2102,8 @@ class Store {
       if (this.navPage !== "settings") this.lastPrimaryNavPage = this.navPage;
       clearSearchEngagedBodyClasses();
       this.clearActiveDetailState();
+      this.activityPanelOpen = false;
+      this.activityPanelReturnPage = null;
       this.homePanelHint = null;
       this.navPage = "settings";
       this.settingsOpen = true;
@@ -2252,17 +2329,37 @@ class Store {
     this.navPage = "home";
     this.settingsOpen = false;
     this.homePanelHint = null;
+    this.homePanelReturnPage = null;
     this.genreFilter = "";
     this.libraryFilter = "library";
     this.emitNavigationChange();
   }
 
-  openHomeHistory() {
+  openHomeHistory(returnPage: NavPage | null = this.navPage) {
+    const origin = returnPage && returnPage !== "home" ? returnPage : null;
     this.preparePrimaryNavigation("home");
     this.navPage = "home";
     this.settingsOpen = false;
     this.homePanelHint = "history";
+    this.homePanelReturnPage = origin;
     this.emitNavigationChange();
+  }
+
+  closeHomeHistory() {
+    const returnPage = this.homePanelReturnPage;
+    if (returnPage && returnPage !== "home") {
+      clearSearchEngagedBodyClasses();
+      this.clearActiveDetailState();
+      this.homePanelHint = null;
+      this.homePanelReturnPage = null;
+      this.navPage = returnPage;
+      this.settingsOpen = returnPage === "settings";
+      if (returnPage !== "settings") this.lastPrimaryNavPage = returnPage;
+      this.emitNavigationChange();
+      return;
+    }
+
+    this.openHomeDashboard();
   }
 }
 
@@ -2313,6 +2410,7 @@ export function setLibraryUpdateInFlight(next: boolean) { store.setLibraryUpdate
 export function bumpLibraryCoverCacheGeneration() { store.bumpLibraryCoverCacheGeneration(); }
 export function setCategories(cats: Category[])                           { store.setCategories(cats); }
 export function setLibraryMangaSnapshot(next: Manga[])                    { store.setLibraryMangaSnapshot(next); }
+export function syncLibraryMangaFromDetail(manga: Manga, chapters?: Chapter[]) { store.syncLibraryMangaFromDetail(manga, chapters); }
 export function setLibraryBootstrap(status: LibraryBootstrapStatus, scopeKey: string | null, trackingSummary: TrackerCompletionTracker[] | null = null) {
   store.setLibraryBootstrap(status, scopeKey, trackingSummary);
 }
@@ -2342,6 +2440,8 @@ export function setLibraryTagFilter(next: string[])                      { store
 export function setSettingsOpen(next: boolean)                           { store.setSettingsOpen(next); }
 export function setRuntimeSettingsTab(next: RuntimeSettingsTab | null)   { store.setRuntimeSettingsTab(next); }
 export function setHomePanelHint(next: "history" | null)                 { store.setHomePanelHint(next); }
+export function openActivityPanel(returnPage?: NavPage | null)           { store.openActivityPanel(returnPage); }
+export function closeActivityPanel()                                     { store.closeActivityPanel(); }
 export function setSearchTabHint(next: SearchHubTab | null)              { store.setSearchTabHint(next); }
 export function setSearchBrowseHint(next: SearchBrowseTab | null)        { store.setSearchBrowseHint(next); }
 export function setSearchSourcesPaneHint(next: SearchSourcesPane | null) { store.setSearchSourcesPaneHint(next); }
@@ -2367,7 +2467,8 @@ export function openSearchBrowseFeatured(genre?: string | null)          { store
 export function openSearchBrowseTags()                                   { store.openSearchBrowseTags(); }
 export function openSearchSources(panel?: SearchSourcesPane, repoPanel?: "repos" | null) { store.openSearchSources(panel, repoPanel); }
 export function openHomeDashboard()                                      { store.openHomeDashboard(); }
-export function openHomeHistory()                                        { store.openHomeHistory(); }
+export function openHomeHistory(returnPage?: NavPage | null)             { store.openHomeHistory(returnPage); }
+export function closeHomeHistory()                                      { store.closeHomeHistory(); }
 export async function checkAndMarkCompleted(
   mangaId:    number,
   chaps:      Chapter[],

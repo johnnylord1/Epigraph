@@ -1,18 +1,29 @@
 <script lang="ts">
+  import { invoke } from "@tauri-apps/api/core";
+  import { open } from "@tauri-apps/plugin-shell";
   import { ClockCounterClockwise, Trash, Play } from "phosphor-svelte";
+  import { getServerUrl } from "../../lib/client";
+  import { startLocalFlareSolverrAndEnable } from "../../lib/flaresolverr";
+  import { retryComicsLibrarySourceUpdate } from "../../lib/library/updateRuntime";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
+  import { groupRefreshedNovelChaptersForNotifications, refreshNovelLibraryFromSources } from "../../lib/novels/libraryRefresh";
   import {
     buildNovelDetailRecordFromLibrary,
     getNovelLibraryChapters,
     peekNovelLibraryState,
   } from "../../lib/novels/libraryState";
+  import { toSuwayomiWebViewUrl } from "../../lib/suwayomiWebView";
   import {
     store,
+    addToast,
     clearHistory,
     clearLibraryUpdateNotifications,
     clearSystemNotifications,
     openMangaDetail,
+    recordLibraryUpdateIssues,
+    recordNovelUpdateNotifications,
     setActiveNovelDetail,
+    setSettingsOpen,
   } from "../../store/state.svelte";
   import type { Manga } from "../../lib/types";
   import type { HistoryEntry, LibraryUpdateIssue, LibraryUpdateNotification, SystemNotification } from "../../store/state.svelte";
@@ -43,6 +54,15 @@
 
   function plural(count: number, singular: string, pluralLabel = `${singular}s`): string {
     return `${count} ${count === 1 ? singular : pluralLabel}`;
+  }
+
+  function issueAffectedCount(issue: LibraryUpdateIssue) {
+    if (Number.isFinite(Number(issue.affectedCount))) {
+      return Math.max(1, Math.floor(Number(issue.affectedCount)));
+    }
+    const match = issue.message.match(/\b(\d+)\s+titles?\b/i);
+    if (match) return Math.max(1, Number(match[1]));
+    return 1;
   }
 
   const SESSION_GAP_MS = 30 * 60 * 1000;
@@ -152,7 +172,7 @@
         latestAt: 0,
         items: [] as LibraryUpdateIssue[],
       };
-      current.count += 1;
+      current.count += issueAffectedCount(issue);
       current.latestAt = Math.max(current.latestAt, issue.createdAt);
       current.items.push(issue);
       groups.set(key, current);
@@ -221,9 +241,120 @@
     } as Manga);
   }
 
+  function primaryIssue(group: IssueGroup): LibraryUpdateIssue | null {
+    return group.items.find((issue) => issue.errorType === "source-challenge") ?? group.items[0] ?? null;
+  }
+
+  function isSourceChallengeGroup(group: IssueGroup): boolean {
+    return group.items.some((issue) => issue.errorType === "source-challenge");
+  }
+
+  async function startFlareSolverr(event: MouseEvent) {
+    event.stopPropagation();
+    try {
+      await startLocalFlareSolverrAndEnable();
+      addToast({
+        kind: "success",
+        title: "FlareSolverr enabled",
+        body: "Retry the affected source when you are ready.",
+      });
+    } catch (error) {
+      addToast({
+        kind: "error",
+        title: "FlareSolverr unavailable",
+        body: error instanceof Error ? error.message : "Open Settings to configure a local, Docker, or custom instance.",
+        action: { label: "Open Settings", run: () => setSettingsOpen(true) },
+      });
+    }
+  }
+
+  async function openIssueWebView(group: IssueGroup, event: MouseEvent) {
+    event.stopPropagation();
+    const issue = primaryIssue(group);
+    if (!issue?.actionUrl) return;
+    try {
+      if (issue.contentKind === "manga") {
+        await invoke("open_reader_webview", {
+          url: toSuwayomiWebViewUrl(getServerUrl(), issue.actionUrl),
+          title: `Source challenge - ${issue.sourceName}`,
+        });
+        return;
+      }
+      await open(issue.actionUrl);
+    } catch (error) {
+      addToast({
+        kind: "error",
+        title: "Could not open challenge",
+        body: error instanceof Error ? error.message : "Aethon could not open the source challenge page.",
+      });
+    }
+  }
+
+  async function retryIssueSource(group: IssueGroup, event: MouseEvent) {
+    event.stopPropagation();
+    const issue = primaryIssue(group);
+    const sourceId = issue?.retrySourceId || issue?.sourceId;
+    if (!issue || !sourceId) return;
+    try {
+      if (issue.retryKind === "novels-source" || issue.contentKind === "novel") {
+        const updatedAt = Date.now();
+        const result = await refreshNovelLibraryFromSources({
+          profileId: store.runtimeResolvedLocalProfileId,
+          serverUrl: store.runtimeServerUrl,
+        }, {
+          sourceIds: [sourceId],
+          concurrency: 1,
+          downloadNewChapters: store.settings.downloadNewNovelChapters,
+          onlyOngoing: store.settings.onlyUpdateOngoingNovels,
+          pauseMs: 800,
+        });
+        recordNovelUpdateNotifications(groupRefreshedNovelChaptersForNotifications(result.newChapterEntries), updatedAt);
+        recordLibraryUpdateIssues(result.failures.map((failure) => ({
+          runId: `books-source-retry:${updatedAt}:${sourceId}`,
+          contentKind: "novel" as const,
+          title: failure.title,
+          itemId: failure.novelId,
+          sourceId: failure.sourceId,
+          sourceName: failure.sourceName,
+          extensionName: failure.sourceName,
+          message: failure.error,
+          errorType: failure.errorType ?? "source-error" as const,
+          actionUrl: failure.actionUrl,
+          retrySourceId: failure.retrySourceId,
+          retryKind: failure.retryKind,
+          recoveryHint: failure.recoveryHint,
+        })), updatedAt);
+        addToast({
+          kind: result.failed > 0 ? "info" : "success",
+          title: result.failed > 0 ? "Source retry finished with issues" : "Source retry finished",
+          body: `${result.updated}/${result.checked} novels refreshed${result.newChapters > 0 ? `, ${result.newChapters} new chapters` : ""}.`,
+        });
+        return;
+      }
+
+      const result = await retryComicsLibrarySourceUpdate(sourceId);
+      recordLibraryUpdateIssues(result.issues, result.updatedAt);
+      addToast({
+        kind: result.issues.length > 0 ? "info" : "success",
+        title: result.issues.length > 0 ? "Source retry finished with issues" : "Source retry finished",
+        body: `${result.changedMangaIds.length} comics checked for ${issue.sourceName}.`,
+      });
+    } catch (error) {
+      addToast({
+        kind: "error",
+        title: "Could not retry source",
+        body: error instanceof Error ? error.message : "Aethon could not retry this source.",
+      });
+    }
+  }
+
   function handleClear() {
     if (!confirmClear) { confirmClear = true; setTimeout(() => confirmClear = false, 3000); return; }
-    if (activeTab === "updates") {
+    if (activeTab === "all") {
+      clearLibraryUpdateNotifications();
+      clearHistory();
+      clearSystemNotifications();
+    } else if (activeTab === "updates") {
       clearLibraryUpdateNotifications();
     } else if (activeTab === "system") {
       clearSystemNotifications();
@@ -258,9 +389,9 @@
         </button>
       </div>
 
-      {#if (activeTab === "updates" && (updateEntries.length > 0 || issueGroups.length > 0)) || (activeTab === "history" && store.history.length > 0) || (activeTab === "system" && systemEntries.length > 0)}
+      {#if (activeTab === "all" && totalVisibleCount > 0) || (activeTab === "updates" && (updateEntries.length > 0 || issueGroups.length > 0)) || (activeTab === "history" && store.history.length > 0) || (activeTab === "system" && systemEntries.length > 0)}
         <button class="clear-btn" class:confirm={confirmClear} onclick={handleClear}
-          title={confirmClear ? "Click again to confirm" : activeTab === "updates" ? "Clear update notifications" : activeTab === "system" ? "Clear system notifications" : "Clear history"}>
+          title={confirmClear ? "Click again to confirm" : activeTab === "all" ? "Clear all notifications and history" : activeTab === "updates" ? "Clear update notifications" : activeTab === "system" ? "Clear system notifications" : "Clear history"}>
           <Trash size={14} weight="light" />
           <span>{confirmClear ? "Confirm" : "Clear"}</span>
         </button>
@@ -292,6 +423,17 @@
                     <span class="issue-titles">
                       {group.items.map((issue) => `${issue.title}: ${issue.message}`).join(" | ")}
                     </span>
+                    {#if isSourceChallengeGroup(group)}
+                      <div class="issue-actions">
+                        <button class="issue-action" type="button" onclick={startFlareSolverr}>Start FlareSolverr</button>
+                        {#if primaryIssue(group)?.actionUrl}
+                          <button class="issue-action" type="button" onclick={(event) => openIssueWebView(group, event)}>
+                            {primaryIssue(group)?.contentKind === "manga" ? "Open WebView" : "Open source"}
+                          </button>
+                        {/if}
+                        <button class="issue-action" type="button" onclick={(event) => retryIssueSource(group, event)}>Retry source</button>
+                      </div>
+                    {/if}
                   </div>
                   <span class="item-time">{timeAgo(group.latestAt)}</span>
                 </article>
@@ -797,6 +939,30 @@
     line-height: 1.45;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .issue-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: calc(6px * var(--n-hud-scale));
+    margin-top: calc(8px * var(--n-hud-scale));
+  }
+
+  .issue-action {
+    border: 1px solid rgba(191, 170, 248, 0.14);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.035);
+    color: var(--activity-title);
+    cursor: pointer;
+    font-size: calc(11px * var(--n-hud-scale));
+    font-weight: 760;
+    letter-spacing: 0;
+    padding: calc(5px * var(--n-hud-scale)) calc(9px * var(--n-hud-scale));
+  }
+
+  .issue-action:hover {
+    border-color: rgba(191, 170, 248, 0.3);
+    color: var(--activity-accent);
   }
 
   .chapter-arrow,

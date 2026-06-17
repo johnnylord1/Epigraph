@@ -56,7 +56,9 @@
       case "blocked-by-site":
         return {
           title: "Source blocked",
-          body: "This site is rejecting automated requests right now.",
+          body: store.settings.flareSolverrEnabled
+            ? "This site is rejecting automated requests. Check FlareSolverr and retry the source."
+            : "This source needs FlareSolverr for Cloudflare or anti-bot protection.",
           primaryAction: null as "browse" | "retry-search" | null,
           secondaryAction: null as "browse" | "retry-search" | null,
         };
@@ -107,12 +109,16 @@
 
     if (
       lower.includes("cloudflare")
+      || lower.includes("flaresolverr")
+      || lower.includes("captcha")
       || lower.includes("anti-bot")
       || lower.includes("redirect")
       || lower.includes("challenge")
       || classification?.status === "blocked-by-site"
     ) {
-      return summary ?? "This source is currently blocked by its own site behavior, such as redirect or anti-bot protection.";
+      return summary ?? (store.settings.flareSolverrEnabled
+        ? "This source is currently blocked by site protection. Check FlareSolverr and retry."
+        : "This source needs FlareSolverr for Cloudflare or anti-bot protection.");
     }
 
     if (classification?.status === "runtime-gap") {

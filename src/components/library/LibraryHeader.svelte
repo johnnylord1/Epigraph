@@ -2,6 +2,7 @@
   import type { Snippet } from "svelte";
   import type { LibrarySectionKind, LibrarySectionTabVM } from "../../lib/library/contracts";
   import AppTopbar from "../layout/AppTopbar.svelte";
+  import ActivityButton from "../layout/ActivityButton.svelte";
   import WindowControlsInline from "../layout/WindowControlsInline.svelte";
 
   type Props = {
@@ -53,6 +54,7 @@
     {/snippet}
     {#snippet right()}
       <div class="header-right">
+      <ActivityButton />
       <WindowControlsInline />
       </div>
     {/snippet}

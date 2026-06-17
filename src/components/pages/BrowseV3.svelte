@@ -17,11 +17,13 @@
   import { SERVER_READY_EVENT } from "../../lib/serverLifecycle";
   import { ensureExtensionRepo, RECOMMENDED_EXTENSION_REPO } from "../../lib/defaultRepos";
   import AppTopbar from "../layout/AppTopbar.svelte";
+  import ActivityButton from "../layout/ActivityButton.svelte";
   import WindowControlsInline from "../layout/WindowControlsInline.svelte";
   import { browseInstalledNovelSource, loadTrustedInstalledNovelSources, readInstalledNovelDetails, searchInstalledNovelSource, shutdownInstalledNovelSourcesRuntime } from "../../lib/novels/sources";
   import { createNovelLibraryId, type InstalledNovelSourceDescriptor, type NovelDetailRecord, type NovelSourceSearchResult } from "../../lib/novels/domain";
   import { isNovelInLibrary, loadNovelLibraryState, peekNovelLibraryState } from "../../lib/novels/libraryState";
   import { NOVEL_TITLE_ALIAS_VERSION, canonicalNovelTitleCandidates } from "../../lib/novels/titleAliases";
+  import { isSourceChallengeMessage, sourceAccessErrorMessage } from "../../lib/sourceAccess";
   import {
     getHardcoverUserBooks,
     getHardcoverRateLimitRemainingMs,
@@ -984,9 +986,10 @@
 
     try {
       const data = await gql<{ mangas?: { nodes?: Manga[] } }>(GET_LIBRARY);
+      const previousChapterCountById = new Map(snapshot.map((manga) => [manga.id, manga.chapterCount]));
       searchLibraryManga = (data.mangas?.nodes ?? []).map((manga: any) => ({
         ...manga,
-        chapterCount: manga.chapters?.totalCount ?? manga.chapterCount ?? 0,
+        chapterCount: manga.chapters?.totalCount ?? manga.chapterCount ?? previousChapterCountById.get(manga.id) ?? 0,
       }));
       store.setLibraryMangaSnapshot(searchLibraryManga);
     } catch (error) {
@@ -1227,7 +1230,7 @@
       } catch (error: any) {
         if (ctrl.signal.aborted || error?.name === "AbortError") return;
         kw_novelResults = kw_novelResults.map((result) =>
-          result.source.pluginId === source.pluginId ? { ...result, loading: false, error: error.message ?? "Error" } : result,
+          result.source.pluginId === source.pluginId ? { ...result, loading: false, error: sourceBrowseErrorBody(error) } : result,
         );
       }
     }, ctrl.signal);
@@ -2913,6 +2916,7 @@
   let src_browseResults: Manga[]       = $state([]);
   let src_novelBrowseResults: NovelSourceSearchResult[] = $state([]);
   let src_loadingBrowse                = $state(false);
+  let src_browseError: string | null   = $state(null);
   let src_browseQuery                  = $state("");
   let src_submitted                    = $state("");
   let src_hasNextPage                  = $state(false);
@@ -2932,6 +2936,14 @@
       mangaSource: source,
     })),
   );
+
+  function sourceBrowseErrorBody(error: unknown) {
+    const message = sourceAccessErrorMessage(error);
+    if (!isSourceChallengeMessage(message)) return message;
+    return store.settings.flareSolverrEnabled
+      ? "This source is still blocked by site protection. Check FlareSolverr and retry."
+      : "This source needs FlareSolverr for Cloudflare or anti-bot protection.";
+  }
 
   const src_novelSources = $derived.by(() =>
     [
@@ -4711,6 +4723,7 @@
     const ctrl = new AbortController();
     src_abortCtrl = ctrl;
     src_loadingBrowse = true;
+    src_browseError = null;
     if (page === 1) { src_browseResults = []; }
     try {
       const d = await gql<{ fetchSourceManga: { mangas: Manga[]; hasNextPage: boolean } }>(
@@ -4725,7 +4738,10 @@
       src_hasNextPage = d.fetchSourceManga.hasNextPage;
       src_currentPage = page;
     } catch (e: any) {
-      if (e?.name !== "AbortError") console.error(e);
+      if (e?.name !== "AbortError") {
+        console.error(e);
+        src_browseError = sourceBrowseErrorBody(e);
+      }
     } finally {
       if (!ctrl.signal.aborted) src_loadingBrowse = false;
     }
@@ -4748,6 +4764,7 @@
     const ctrl = new AbortController();
     src_abortCtrl = ctrl;
     src_loadingBrowse = true;
+    src_browseError = null;
     if (page === 1) {
       src_novelBrowseResults = [];
     }
@@ -4766,7 +4783,10 @@
       src_hasNextPage = incoming.length > 0;
       src_currentPage = page;
     } catch (e: unknown) {
-      if ((e as { name?: string })?.name !== "AbortError") console.error(e);
+      if ((e as { name?: string })?.name !== "AbortError") {
+        console.error(e);
+        src_browseError = sourceBrowseErrorBody(e);
+      }
     } finally {
       await shutdownInstalledNovelSourcesRuntime().catch(() => {});
       if (!ctrl.signal.aborted) src_loadingBrowse = false;
@@ -4827,10 +4847,11 @@
         inLibrary: novelLibraryState ? isNovelInLibrary(novelLibraryState, createNovelLibraryId(result.sourceId, result.path)) : false,
       });
     } catch (error) {
+      const message = sourceBrowseErrorBody(error);
       addToast({
         kind: "error",
         title: "Could not open novel details",
-        body: error instanceof Error ? error.message : "Aethon couldn't open this novel.",
+        body: message || "Aethon couldn't open this novel.",
       });
     } finally {
       src_openingNovelPath = null;
@@ -4900,6 +4921,7 @@
 
     {#snippet right()}
       <div class="browse-topbar__right">
+        <ActivityButton />
         <WindowControlsInline />
       </div>
     {/snippet}
@@ -5658,6 +5680,15 @@
                 </button>
               </div>
             {/if}
+          {:else if src_browseError}
+            <NocturneState
+              layout="center"
+              tone="warning"
+              icon="warning"
+              eyebrow="Source"
+              title="Could not load this source"
+              body={src_browseError}
+            />
           {:else if !src_loadingBrowse}
             <NocturneState
               layout="center"

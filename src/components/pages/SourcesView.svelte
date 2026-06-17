@@ -848,6 +848,9 @@
         }
         await saveNovelState(nextState);
       } else {
+        if (!(await ensureMangaServerAwake())) {
+          throw new Error("Suwayomi is not available right now.");
+        }
         for (const extension of candidates) {
           try {
             await gql(UPDATE_EXTENSION, { id: extension.pkgName, update: true });
@@ -857,6 +860,7 @@
             });
           } catch (error) {
             console.error(error);
+            setExtensionOperationError(extension.pkgName, extensionErrorMessage(error));
           }
         }
         bumpContentSetupVersion();

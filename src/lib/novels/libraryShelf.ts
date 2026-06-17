@@ -12,6 +12,29 @@ export interface NovelShelfCard extends LibraryCardVM {
   novelId: string;
 }
 
+export interface NovelShelfCardContext {
+  readCounts: ReadonlyMap<string, { total: number; read: number }>;
+  progressByNovelId: ReadonlyMap<string, AethonNovelProgressEntry | undefined>;
+  hardcoverRecordByNovelId: ReadonlyMap<string, HardcoverNovelTrackRecord>;
+}
+
+export interface BuildNovelShelfInput {
+  entries: PersistedNovelLibraryEntry[];
+  chapters: PersistedNovelChapterEntry[];
+  progress: AethonNovelProgressEntry[];
+  search: string;
+  sortMode: BooksLibrarySortMode;
+  sortDir: LibrarySortDir;
+  statusFilter: BooksLibraryStatusFilter;
+  hardcoverRecords?: readonly HardcoverNovelTrackRecord[];
+}
+
+export interface NovelShelf {
+  entries: PersistedNovelLibraryEntry[];
+  cardContext: NovelShelfCardContext;
+  emptyMessage: string;
+}
+
 function formatNovelSourceStatus(status: string | null | undefined): string | null {
   const normalized = status?.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
   if (!normalized || normalized.toLowerCase() === "unknown") return null;
@@ -144,6 +167,16 @@ export function buildNovelLibraryCards(input: {
   cards: NovelShelfCard[];
   emptyMessage: string;
 } {
+  const shelf = buildNovelShelf(input);
+
+  return {
+    entries: shelf.entries,
+    cards: shelf.entries.map((entry) => buildNovelShelfCard(entry, shelf.cardContext)),
+    emptyMessage: shelf.emptyMessage,
+  };
+}
+
+export function buildNovelShelf(input: BuildNovelShelfInput): NovelShelf {
   const progressByNovelId = getProgressByNovelId(input.progress);
   const readCounts = getReadCountsByNovelId(input.chapters);
   const hardcoverRecordByNovelId = getHardcoverRecordByNovelId(input.hardcoverRecords);
@@ -153,43 +186,52 @@ export function buildNovelLibraryCards(input: {
 
   return {
     entries: sorted,
-    cards: sorted.map((entry) => {
-      const counts = readCounts.get(entry.id) ?? { total: entry.chapterCount, read: 0 };
-      const progressPercent = progressByNovelId.get(entry.id)?.progressPercent ?? (
-        counts.total > 0 ? counts.read / counts.total : 0
-      );
-      const chapterCount = Math.max(0, counts.total || entry.chapterCount);
-      const readCount = Math.max(0, Math.min(chapterCount, counts.read));
-      const unreadCount = Math.max(0, chapterCount - readCount);
-
-      return {
-        id: `novel-card:${entry.id}`,
-        novelId: entry.id,
-        title: entry.title,
-        subtitle: buildNovelSourceLabel(entry),
-        coverSrc: entry.coverUrl,
-        coverFit: "cover",
-        badges: [],
-        metaChips: [
-          buildNovelWorkStatusLabel(entry, hardcoverRecordByNovelId.get(entry.id), progressPercent >= 0.98),
-        ],
-        progress: chapterCount > 0 ? {
-          primaryLabel: String(readCount),
-          secondaryLabel: `/ ${chapterCount} chapters`,
-          percent: progressPercent,
-        } : null,
-        selectable: false,
-        selected: false,
-        sourceMetricBanner: {
-          flagLabel: entry.source?.lang ?? "",
-          downloadedCount: 0,
-          newCount: unreadCount,
-          sourceName: entry.source?.sourceName ?? entry.source?.pluginName ?? null,
-        },
-      };
-    }),
+    cardContext: {
+      readCounts,
+      progressByNovelId,
+      hardcoverRecordByNovelId,
+    },
     emptyMessage: input.entries.length === 0
       ? "No source novels in this profile library yet."
       : "No source novels match the current search or filters.",
+  };
+}
+
+export function buildNovelShelfCard(
+  entry: PersistedNovelLibraryEntry,
+  context: NovelShelfCardContext,
+): NovelShelfCard {
+  const counts = context.readCounts.get(entry.id) ?? { total: entry.chapterCount, read: 0 };
+  const progressPercent = context.progressByNovelId.get(entry.id)?.progressPercent ?? (
+    counts.total > 0 ? counts.read / counts.total : 0
+  );
+  const chapterCount = Math.max(0, counts.total || entry.chapterCount);
+  const readCount = Math.max(0, Math.min(chapterCount, counts.read));
+  const unreadCount = Math.max(0, chapterCount - readCount);
+
+  return {
+    id: `novel-card:${entry.id}`,
+    novelId: entry.id,
+    title: entry.title,
+    subtitle: buildNovelSourceLabel(entry),
+    coverSrc: entry.coverUrl,
+    coverFit: "cover",
+    badges: [],
+    metaChips: [
+      buildNovelWorkStatusLabel(entry, context.hardcoverRecordByNovelId.get(entry.id), progressPercent >= 0.98),
+    ],
+    progress: chapterCount > 0 ? {
+      primaryLabel: String(readCount),
+      secondaryLabel: `/ ${chapterCount} chapters`,
+      percent: progressPercent,
+    } : null,
+    selectable: false,
+    selected: false,
+    sourceMetricBanner: {
+      flagLabel: entry.source?.lang ?? "",
+      downloadedCount: 0,
+      newCount: unreadCount,
+      sourceName: entry.source?.sourceName ?? entry.source?.pluginName ?? null,
+    },
   };
 }

@@ -4,6 +4,7 @@ import { Parser } from "htmlparser2";
 import { gcm } from "@noble/ciphers/aes.js";
 import { bytesToUtf8, utf8ToBytes } from "@noble/ciphers/utils.js";
 import { parse as parseProto } from "protobufjs";
+import { isSourceChallengeMessage } from "../sourceAccess";
 
 export interface NovelPluginSmokeInput {
   pluginId: string;
@@ -293,6 +294,126 @@ function getDefaultUserAgent(): string {
   return browserAgent ?? "Aethon Novel Runtime";
 }
 
+interface RuntimeFlareSolverrSettings {
+  enabled: boolean;
+  url: string;
+  timeoutSeconds: number;
+  sessionName: string;
+  sessionTtlMinutes: number;
+  responseFallback: boolean;
+}
+
+function readRuntimeFlareSolverrSettings(): RuntimeFlareSolverrSettings {
+  const defaults: RuntimeFlareSolverrSettings = {
+    enabled: false,
+    url: "http://localhost:8191",
+    timeoutSeconds: 60,
+    sessionName: "moku",
+    sessionTtlMinutes: 15,
+    responseFallback: false,
+  };
+
+  try {
+    const raw = globalThis.localStorage?.getItem("moku-store");
+    const parsed = raw ? JSON.parse(raw) : null;
+    const settings = parsed?.settings ?? {};
+    return {
+      enabled: settings.flareSolverrEnabled === true,
+      url: typeof settings.flareSolverrUrl === "string" && settings.flareSolverrUrl.trim()
+        ? settings.flareSolverrUrl.trim()
+        : defaults.url,
+      timeoutSeconds: typeof settings.flareSolverrTimeout === "number" ? settings.flareSolverrTimeout : defaults.timeoutSeconds,
+      sessionName: typeof settings.flareSolverrSessionName === "string" && settings.flareSolverrSessionName.trim()
+        ? settings.flareSolverrSessionName.trim()
+        : defaults.sessionName,
+      sessionTtlMinutes: typeof settings.flareSolverrSessionTtl === "number" ? settings.flareSolverrSessionTtl : defaults.sessionTtlMinutes,
+      responseFallback: settings.flareSolverrFallback === true || settings.flareSolverrAsResponseFallback === true,
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+function flareSolverrEndpoint(rawUrl: string): string {
+  const parsed = new URL(rawUrl || "http://localhost:8191");
+  return `${parsed.origin}/v1`;
+}
+
+function responseHeadersContainChallenge(headers: Headers | undefined): boolean {
+  if (!headers || typeof headers.entries !== "function") return false;
+  for (const [key, value] of headers.entries()) {
+    if (/^cf-|server|set-cookie/i.test(key) && /cloudflare|cf-|__cf|challenge/i.test(value)) return true;
+  }
+  return false;
+}
+
+function responseStatusMayBeChallenge(status: number): boolean {
+  return status === 403
+    || status === 429
+    || status === 503
+    || status === 520
+    || status === 521
+    || status === 522
+    || status === 523
+    || status === 524;
+}
+
+function responseTextLooksLikeChallenge(text: string): boolean {
+  return isSourceChallengeMessage(text)
+    || /checking your browser|just a moment|cf-browser-verification|cf-chl|turnstile/i.test(text);
+}
+
+function normalizeFlareSolverrHeaders(headers: unknown): Headers {
+  const normalized = new Headers();
+  if (!headers || typeof headers !== "object") return normalized;
+  for (const [key, value] of Object.entries(headers as Record<string, unknown>)) {
+    if (typeof value === "string") normalized.set(key, value);
+  }
+  return normalized;
+}
+
+async function requestViaFlareSolverr(
+  url: string,
+  init: NovelRuntimeFetchInit | undefined,
+  settings: RuntimeFlareSolverrSettings,
+): Promise<Response> {
+  const response = await tauriFetch(flareSolverrEndpoint(settings.url), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      cmd: "request.get",
+      url,
+      maxTimeout: Math.max(10_000, Math.floor(settings.timeoutSeconds * 1000)),
+      session: settings.sessionName,
+      session_ttl_minutes: settings.sessionTtlMinutes,
+      headers: normalizeFetchHeaders(init?.headers),
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`FlareSolverr request failed with HTTP ${response.status}.`);
+  }
+
+  const payload = await response.json().catch(() => null) as {
+    status?: string;
+    message?: string;
+    solution?: {
+      response?: string;
+      status?: number;
+      url?: string;
+      headers?: Record<string, string>;
+    };
+  } | null;
+  if (payload?.status !== "ok" || !payload.solution?.response) {
+    throw new Error(payload?.message || "FlareSolverr did not return a usable response.");
+  }
+
+  return new Response(payload.solution.response, {
+    status: payload.solution.status ?? 200,
+    headers: normalizeFlareSolverrHeaders(payload.solution.headers),
+  });
+}
+
 function normalizeFetchHeaders(headers?: Headers | Record<string, string>): Record<string, string> {
   const normalized: Record<string, string> = {
     Connection: "keep-alive",
@@ -567,11 +688,32 @@ function encodeGrpcEnvelope(payload: Uint8Array): Uint8Array {
 
 function createFetchShim() {
   const fetchApi = async (url: string, init?: NovelRuntimeFetchInit) => {
+    const settings = readRuntimeFlareSolverrSettings();
     const response = await tauriFetch(url, {
       method: init?.method ?? "GET",
       headers: normalizeFetchHeaders(init?.headers),
       body: init?.body ?? undefined,
     });
+
+    if (
+      responseStatusMayBeChallenge(response.status)
+      || responseHeadersContainChallenge(response.headers)
+    ) {
+      const text = await readResponseText(response);
+      if (responseTextLooksLikeChallenge(text)) {
+        if (!settings.enabled) {
+          throw new Error("Source challenge requires FlareSolverr recovery for this LNReader source.");
+        }
+        return wrapRuntimeResponse(await requestViaFlareSolverr(url, init, settings));
+      }
+
+      return wrapRuntimeResponse(new Response(text, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      }));
+    }
+
     return wrapRuntimeResponse(response);
   };
 

@@ -4,8 +4,9 @@ import { traceMediaAudit } from "./mediaAudit";
 
 type HttpModule = typeof import("@tauri-apps/plugin-http");
 
-const MAX_CACHE_ENTRIES = 48;
-const MAX_CACHE_BYTES = 96 * 1024 * 1024;
+const MAX_CACHE_ENTRIES = 240;
+const MAX_CACHE_BYTES = 192 * 1024 * 1024;
+const MAX_CONCURRENT_FETCHES = 6;
 
 type MediaAuditEvent = {
   event: string;
@@ -47,10 +48,12 @@ export type ImageCacheStats = {
 
 const blobCache = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<CacheEntry>>();
+const fetchQueue: Array<() => void> = [];
 
 let httpModulePromise: Promise<HttpModule> | null = null;
 let accessClock = 0;
 let totalCachedBytes = 0;
+let activeFetches = 0;
 
 function describeUrl(url: string): Pick<MediaAuditEvent, "url" | "origin" | "urlContainsCredentials"> {
   try {
@@ -111,6 +114,26 @@ function evictInactiveEntries(forceAll = false): void {
     if (!liveEntry || liveEntry.refCount !== 0) continue;
     revokeEntry(liveEntry);
   }
+}
+
+function scheduleFetch<T>(task: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const run = () => {
+      activeFetches += 1;
+      task()
+        .then(resolve, reject)
+        .finally(() => {
+          activeFetches = Math.max(0, activeFetches - 1);
+          fetchQueue.shift()?.();
+        });
+    };
+
+    if (activeFetches < MAX_CONCURRENT_FETCHES) {
+      run();
+    } else {
+      fetchQueue.push(run);
+    }
+  });
 }
 
 async function getHttpModule(): Promise<HttpModule> {
@@ -175,13 +198,13 @@ async function ensureResolvedBlobEntry(url: string): Promise<CacheEntry> {
     authHeaderAttached: true,
   });
 
-  const request = getHttpModule()
+  const request = scheduleFetch(() => getHttpModule()
     .then(({ fetch }) =>
       fetchWithTimeout(fetch, url, {
         headers: {
           Authorization: authHeader,
         },
-      }))
+      })))
     .then(async (response) => {
       if (!response.ok) {
         traceMediaAudit({
@@ -259,6 +282,40 @@ export async function acquireResolvedMediaUrl(url: string): Promise<ResolvedMedi
   const entry = await ensureResolvedBlobEntry(url);
   entry.refCount += 1;
   touchEntry(entry);
+
+  let released = false;
+  return {
+    resolvedUrl: entry.blobUrl,
+    release: () => {
+      if (released) return;
+      released = true;
+      releaseResolvedMediaUrl(url);
+    },
+  };
+}
+
+export function acquireCachedResolvedMediaUrl(url: string): ResolvedMediaLease | null {
+  if (!requiresAuthenticatedMediaFetch(url)) {
+    return {
+      resolvedUrl: url,
+      release: () => {},
+    };
+  }
+
+  const authHeader = getServerAuthHeader();
+  if (!authHeader) return null;
+
+  const entry = blobCache.get(buildCacheKey(url, authHeader));
+  if (!entry) return null;
+
+  entry.refCount += 1;
+  touchEntry(entry);
+  traceMediaAudit({
+    event: "auth.cache.sync.hit",
+    ...describeUrl(url),
+    resultProtocol: protocolOf(entry.blobUrl),
+    cacheHit: true,
+  });
 
   let released = false;
   return {
@@ -385,6 +442,16 @@ export const resolvedImage: Action<HTMLImageElement, string | null | undefined> 
     if (!candidate) {
       currentResolvedUrl = "";
       node.removeAttribute("src");
+      return;
+    }
+
+    const cachedLease = acquireCachedResolvedMediaUrl(candidate);
+    if (cachedLease) {
+      currentRelease = cachedLease.release;
+      currentResolvedUrl = cachedLease.resolvedUrl;
+      if (node.src !== cachedLease.resolvedUrl) {
+        node.src = cachedLease.resolvedUrl;
+      }
       return;
     }
 

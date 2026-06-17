@@ -2,6 +2,8 @@ import { createComicLibraryCardId } from "./cardIdentity";
 import type {
   ComicsLibraryActions,
   ComicsSectionVM,
+  LibraryCardBadgeVM,
+  LibraryCardVM,
   LibraryCollectionVM,
   LibraryFilterOptionVM,
   LibrarySectionKind,
@@ -297,6 +299,110 @@ export function buildComicsWorkStatusLabel(
 
 export const buildComicsReadingStateLabel = buildComicsWorkStatusLabel;
 
+function normalizeSourceLanguage(lang: string | null | undefined, sourceName?: string | null): string {
+  let normalized = (lang ?? "").trim().toLowerCase();
+  if (!normalized && sourceName) {
+    const nameLower = sourceName.toLowerCase();
+    if (nameLower.includes("(en)") || nameLower.includes("english")) normalized = "en";
+    else if (nameLower.includes("(pt") || nameLower.includes("portugue") || nameLower.includes("union") || nameLower.includes("mangaschan")) normalized = "pt";
+    else if (nameLower.includes("(ja)") || nameLower.includes("japanese")) normalized = "ja";
+    else if (nameLower.includes("(ko)") || nameLower.includes("korean")) normalized = "ko";
+    else if (nameLower.includes("(es)") || nameLower.includes("spanish")) normalized = "es";
+    else if (nameLower.includes("(zh)") || nameLower.includes("chinese")) normalized = "zh";
+  }
+  return normalized;
+}
+
+export function getLibrarySourceFlagText(lang: string | null | undefined, sourceName?: string | null): string {
+  const normalized = normalizeSourceLanguage(lang, sourceName);
+  if (!normalized) return "🌐";
+  if (normalized.startsWith("pt") || normalized.includes("portug") || normalized === "po" || normalized === "por") return "🇧🇷";
+  if (normalized.startsWith("en") || normalized.includes("english") || normalized === "gb") return "🇬🇧";
+  if (normalized.startsWith("ja") || normalized.includes("japan") || normalized.includes("日本語")) return "🇯🇵";
+  if (normalized.startsWith("ko") || normalized.includes("korean") || normalized.includes("한국어")) return "🇰🇷";
+  if (normalized.startsWith("es") || normalized.includes("spani") || normalized.includes("españ") || normalized.includes("espan")) return "🇪🇸";
+  if (normalized.startsWith("zh") || normalized.includes("chin") || normalized.includes("中文")) return "🇨🇳";
+  if (normalized.startsWith("fr") || normalized.includes("frenc") || normalized.includes("franç") || normalized.includes("franc")) return "🇫🇷";
+  const baseLang = normalized.split(/[-_]/)[0];
+  return baseLang ? baseLang.substring(0, 2).toUpperCase() : "🌐";
+}
+
+export function getLibrarySourceCountryCode(lang: string | null | undefined, sourceName?: string | null): string | null {
+  const normalized = normalizeSourceLanguage(lang, sourceName);
+  if (!normalized) return null;
+  if (normalized.startsWith("pt") || normalized.includes("portug") || normalized === "po" || normalized === "por") return "br";
+  if (normalized.startsWith("en") || normalized.includes("english") || normalized === "gb") return "gb";
+  if (normalized.startsWith("ja") || normalized.includes("japan") || normalized.includes("日本語")) return "jp";
+  if (normalized.startsWith("ko") || normalized.includes("korean") || normalized.includes("한국어")) return "kr";
+  if (normalized.startsWith("es") || normalized.includes("spani") || normalized.includes("españ") || normalized.includes("espan")) return "es";
+  if (normalized.startsWith("zh") || normalized.includes("chin") || normalized.includes("中文")) return "cn";
+  if (normalized.startsWith("fr") || normalized.includes("frenc") || normalized.includes("franç") || normalized.includes("franc")) return "fr";
+  const baseLang = normalized.split(/[-_]/)[0];
+  return baseLang.length === 2 ? baseLang : null;
+}
+
+function buildPrimaryGridBadge(badges: readonly LibraryCardBadgeVM[], hasSourceMetricBanner: boolean): LibraryCardBadgeVM | null {
+  if (hasSourceMetricBanner) return null;
+  return badges.find((badge) => badge.kind === "unread")
+    ?? badges.find((badge) => badge.kind === "status")
+    ?? badges.find((badge) => badge.kind === "download")
+    ?? null;
+}
+
+function buildComicsLibraryCardSignature(
+  manga: Manga,
+  options: {
+    cropCovers: boolean;
+    selectedIds?: ReadonlySet<number>;
+    trackedCompletedIds?: ReadonlySet<number>;
+    trackedChapterTotalsByMangaId?: ReadonlyMap<number, number>;
+    coverSrcOverride?: string | null;
+    sourcesById?: ReadonlyMap<string, Source>;
+  },
+): string {
+  const source = resolveComicsSource(manga, options.sourcesById);
+  const hasCoverOverride = Object.prototype.hasOwnProperty.call(options, "coverSrcOverride");
+  const coverSrc = hasCoverOverride ? options.coverSrcOverride : manga.thumbnailUrl ?? null;
+  const chapterCount = Math.max(0, manga.chapterCount ?? 0);
+  const unreadCount = Math.max(0, manga.unreadCount ?? 0);
+  const downloadCount = Math.max(0, manga.downloadCount ?? 0);
+  const trackedTotal = options.trackedChapterTotalsByMangaId?.get(manga.id) ?? "";
+  return [
+    manga.id,
+    manga.title,
+    manga.author ?? "",
+    coverSrc ?? "",
+    options.cropCovers ? "cover" : "contain",
+    unreadCount,
+    downloadCount,
+    chapterCount,
+    manga.status ?? "",
+    source?.id ?? "",
+    source?.displayName ?? "",
+    source?.name ?? "",
+    source?.lang ?? "",
+    options.trackedCompletedIds?.has(manga.id) ? "finished" : "",
+    trackedTotal,
+    options.selectedIds?.has(manga.id) ? "selected" : "",
+  ].join("\u001f");
+}
+
+function resolveComicsSource(
+  manga: Manga,
+  sourcesById?: ReadonlyMap<string, Source>,
+): Pick<Source, "id" | "name" | "lang" | "displayName"> | undefined {
+  if (manga.source) return manga.source;
+  if (!manga.sourceId || !sourcesById) return undefined;
+  const found = sourcesById.get(String(manga.sourceId));
+  if (!found) return undefined;
+  return {
+    id: found.id,
+    name: found.name,
+    lang: found.lang,
+    displayName: found.displayName,
+  };
+}
+
 export function buildComicsLibraryCardVm(
   manga: Manga,
   options: {
@@ -305,41 +411,41 @@ export function buildComicsLibraryCardVm(
     trackedCompletedIds?: ReadonlySet<number>;
     trackedChapterTotalsByMangaId?: ReadonlyMap<number, number>;
     sources?: Source[];
+    sourcesById?: ReadonlyMap<string, Source>;
+    coverSrcOverride?: string | null;
   },
-) {
+): LibraryCardVM {
   const unreadCount = Math.max(0, manga.unreadCount ?? 0);
   const chapterCount = Math.max(0, manga.chapterCount ?? 0);
   const readCount = chapterCount > 0 ? Math.max(0, chapterCount - unreadCount) : 0;
+  const hasCoverOverride = Object.prototype.hasOwnProperty.call(options, "coverSrcOverride");
 
-  let resolvedSource = manga.source;
-  if (!resolvedSource && manga.sourceId && options.sources) {
-    const found = options.sources.find((s) => String(s.id) === String(manga.sourceId));
-    if (found) {
-      resolvedSource = {
-        id: found.id,
-        name: found.name,
-        lang: found.lang,
-        displayName: found.displayName,
-      };
-    }
-  }
+  const sourcesById = options.sourcesById
+    ?? (options.sources ? new Map(options.sources.map((source) => [String(source.id), source])) : undefined);
+  const resolvedSource = resolveComicsSource(manga, sourcesById);
+  const badges: LibraryCardBadgeVM[] = [
+    ...(unreadCount > 0 ? [{
+      kind: "unread" as const,
+      label: `CH ${unreadCount}`,
+    }] : []),
+    ...((manga.downloadCount ?? 0) > 0 && unreadCount === 0 ? [{
+      kind: "download" as const,
+      label: "Local",
+    }] : []),
+  ];
+  const sourceName = resolvedSource?.displayName ?? resolvedSource?.name ?? null;
+  const countryCode = getLibrarySourceCountryCode(resolvedSource?.lang, sourceName);
+  const flagText = getLibrarySourceFlagText(resolvedSource?.lang, sourceName);
+  const hasFlag = Boolean(countryCode) || flagText !== "🌐";
+  const hasSourceMetricBanner = true;
 
   return {
     id: createComicLibraryCardId(manga.id),
     title: manga.title,
     subtitle: manga.author ?? resolvedSource?.displayName ?? resolvedSource?.name ?? "",
-    coverSrc: manga.thumbnailUrl ?? null,
+    coverSrc: hasCoverOverride ? options.coverSrcOverride ?? null : manga.thumbnailUrl ?? null,
     coverFit: options.cropCovers ? "cover" as const : "contain" as const,
-    badges: [
-      ...(unreadCount > 0 ? [{
-        kind: "unread" as const,
-        label: `CH ${unreadCount}`,
-      }] : []),
-      ...((manga.downloadCount ?? 0) > 0 && unreadCount === 0 ? [{
-        kind: "download" as const,
-        label: "Local",
-      }] : []),
-    ],
+    badges,
     metaChips: [
       buildComicsWorkStatusLabel(
         manga,
@@ -359,7 +465,57 @@ export function buildComicsLibraryCardVm(
       flagLabel: resolvedSource?.lang ?? "",
       downloadedCount: Math.max(0, manga.downloadCount ?? 0),
       newCount: unreadCount,
-      sourceName: resolvedSource?.displayName ?? resolvedSource?.name ?? null,
+      sourceName,
+      countryCode,
+      flagText,
+      hasFlag,
+    },
+    primaryGridBadge: buildPrimaryGridBadge(badges, hasSourceMetricBanner),
+    listTopLeftBadges: badges
+      .filter((badge) => badge.kind === "unread" || badge.kind === "download")
+      .sort((left) => (left.kind === "unread" ? -1 : 1)),
+    listTopRightBadges: badges.filter((badge) => badge.kind === "status"),
+    listBottomLeftBadges: badges.filter((badge) => badge.kind === "subtype"),
+  };
+}
+
+export interface ComicsLibraryCardVmCache {
+  get: (
+    manga: Manga,
+    options: {
+      cropCovers: boolean;
+      selectedIds?: ReadonlySet<number>;
+      trackedCompletedIds?: ReadonlySet<number>;
+      trackedChapterTotalsByMangaId?: ReadonlyMap<number, number>;
+      sourcesById?: ReadonlyMap<string, Source>;
+      coverSrcOverride?: string | null;
+    },
+  ) => LibraryCardVM;
+  prune: (liveMangaIds: readonly number[]) => void;
+  clear: () => void;
+}
+
+export function createComicsLibraryCardVmCache(): ComicsLibraryCardVmCache {
+  const cache = new Map<number, { signature: string; vm: LibraryCardVM }>();
+
+  return {
+    get(manga, options) {
+      const signature = buildComicsLibraryCardSignature(manga, options);
+      const cached = cache.get(manga.id);
+      if (cached?.signature === signature) return cached.vm;
+
+      const vm = buildComicsLibraryCardVm(manga, options);
+      cache.set(manga.id, { signature, vm });
+      return vm;
+    },
+    prune(liveMangaIds) {
+      const live = new Set(liveMangaIds);
+      for (const id of cache.keys()) {
+        if (!live.has(id)) cache.delete(id);
+      }
+    },
+    clear() {
+      cache.clear();
     },
   };
 }

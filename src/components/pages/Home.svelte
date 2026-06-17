@@ -1,5 +1,5 @@
 ﻿<script lang="ts">
-  import { onMount } from "svelte";
+  import { flushSync, onMount } from "svelte";
   import { gql } from "../../lib/client";
   import { GET_LIBRARY, GET_CATEGORIES_SUMMARY, GET_LIBRARY_TRACKING_SUMMARY, GET_SOURCES, GET_TRACKERS, GET_EXTENSIONS } from "../../lib/queries";
   import { cache, CACHE_GROUPS, CACHE_KEYS, DEFAULT_TTL_MS } from "../../lib/cache";
@@ -20,7 +20,6 @@
     addToast,
     openSearchSources,
     openHomeDashboard,
-    openHomeHistory,
     setCategories,
     setLibraryMangaSnapshot,
     setSearchPrefill,
@@ -31,6 +30,7 @@
   import type { Manga, Category, Source, Tracker, Extension } from "../../lib/types";
   import RecentActivity from "../layout/RecentActivity.svelte";
   import AppTopbar from "../layout/AppTopbar.svelte";
+  import ActivityButton from "../layout/ActivityButton.svelte";
   import WindowControlsInline from "../layout/WindowControlsInline.svelte";
   import { detectSetupState, type SetupState } from "../../lib/setupState";
   import { SERVER_READY_EVENT } from "../../lib/serverLifecycle";
@@ -89,7 +89,6 @@
 
   let homeSearch = $state("");
   let homeSearchFocused = $state(false);
-  let lastActivitySeenAt = $state(0);
   let trackedCompletedIds: Set<number> = $state(new Set());
   let trackedChapterTotalsByMangaId: Map<number, number> = $state(new Map());
   let loadingLibrary = $state(true);
@@ -103,28 +102,6 @@
   const libraryManga = $derived(store.libraryMangaSnapshot);
   const libraryBooks = $derived(store.books);
   const bookProgressById = $derived(new Map(store.bookProgress.map((progress) => [progress.bookId, progress] as const)));
-  const ACTIVITY_SEEN_STORAGE_KEY = "aethon.home.activity.lastSeenReadAt";
-  const latestActivityAt = $derived(Math.max(
-    store.history.reduce((latest, entry) => Math.max(latest, Number(entry.readAt) || 0), 0),
-    store.libraryUpdateNotifications.reduce((latest, entry) => Math.max(latest, Number(entry.createdAt) || 0), 0),
-    store.libraryUpdateIssues.reduce((latest, entry) => Math.max(latest, Number(entry.createdAt) || 0), 0),
-    store.systemNotifications.reduce((latest, entry) => Math.max(latest, Number(entry.createdAt) || 0), 0),
-  ));
-  const newLibraryUpdateIssueGroupCount = $derived.by(() => {
-    const groups = new Set<string>();
-    for (const issue of store.libraryUpdateIssues) {
-      if ((Number(issue.createdAt) || 0) <= lastActivitySeenAt) continue;
-      groups.add(`${issue.runId}:${issue.contentKind}:${issue.sourceId}:${issue.extensionName}`);
-    }
-    return groups.size;
-  });
-  const newActivityCount = $derived(
-    store.history.filter((entry) => (Number(entry.readAt) || 0) > lastActivitySeenAt).length
-    + store.libraryUpdateNotifications.filter((entry) => (Number(entry.createdAt) || 0) > lastActivitySeenAt).length
-    + newLibraryUpdateIssueGroupCount
-    + store.systemNotifications.filter((entry) => (Number(entry.createdAt) || 0) > lastActivitySeenAt).length
-  );
-  const newActivityBadge = $derived(newActivityCount > 99 ? "99+" : String(newActivityCount));
 
   function submitHomeSearch() {
     const query = homeSearch.trim();
@@ -202,20 +179,38 @@
     document.body.classList.remove("aethon-home-search-engaged");
   }
 
-  function markActivitySeen() {
-    if (latestActivityAt <= 0) return;
-    lastActivitySeenAt = latestActivityAt;
-    localStorage.setItem(ACTIVITY_SEEN_STORAGE_KEY, String(latestActivityAt));
+  function activityReturnLabel() {
+    if (store.homePanelReturnPage === "library") return "Back to Library";
+    if (store.homePanelReturnPage === "search") return "Back to Browse";
+    if (store.homePanelReturnPage === "downloads") return "Back to Downloads";
+    if (store.homePanelReturnPage === "settings") return "Back to Settings";
+    return "Back to Home";
   }
 
-  function handleOpenHomeHistory() {
-    openHomeHistory();
-    markActivitySeen();
+  function closeActivityPanel() {
+    const returnPage = store.homePanelReturnPage;
+    if (returnPage && returnPage !== "home") {
+      openHomeDashboard();
+      window.setTimeout(() => setNavPage(returnPage), 0);
+      return;
+    }
+    openHomeDashboard();
+  }
+
+  function activityBackAction(node: HTMLButtonElement) {
+    const handleClick = (event: MouseEvent) => {
+      event.preventDefault();
+      flushSync(closeActivityPanel);
+    };
+    node.addEventListener("click", handleClick);
+    return {
+      destroy() {
+        node.removeEventListener("click", handleClick);
+      },
+    };
   }
 
   onMount(() => {
-    const storedLastSeen = Number(localStorage.getItem(ACTIVITY_SEEN_STORAGE_KEY) ?? 0);
-    lastActivitySeenAt = Number.isFinite(storedLastSeen) ? storedLastSeen : 0;
     void loadLibrary();
     scheduleHomeMetaLoad();
     void refreshSetupState();
@@ -382,9 +377,10 @@
       }),
     ])
       .then(([mangas, categories, trackingSummary]) => {
+        const previousChapterCountById = new Map(store.libraryMangaSnapshot.map((manga) => [manga.id, manga.chapterCount]));
         setLibraryMangaSnapshot(mangas.map((manga: any) => ({
           ...manga,
-          chapterCount: manga.chapters?.totalCount ?? manga.chapterCount ?? 0,
+          chapterCount: manga.chapters?.totalCount ?? manga.chapterCount ?? previousChapterCountById.get(manga.id) ?? 0,
         })));
         setCategories(normalizeCategories(categories));
         trackedCompletedIds = collectTrackedCompletedMangaIds(trackingSummary);
@@ -915,19 +911,7 @@
       </div>
     {/snippet}
     {#snippet right()}
-      <button
-        class="n-icon-btn home-notification-btn"
-        class:has-new-activity={newActivityCount > 0}
-        type="button"
-        title="Recent activity"
-        aria-label={newActivityCount > 0 ? `Recent activity, ${newActivityCount} new` : "Recent activity"}
-        onclick={handleOpenHomeHistory}
-      >
-        <span class="material-symbols-outlined" aria-hidden="true">notifications</span>
-        {#if newActivityCount > 0}
-          <span class="home-notification-badge" aria-hidden="true">{newActivityBadge}</span>
-        {/if}
-      </button>
+      <ActivityButton />
       <button class="n-icon-btn" type="button" title="Downloads" aria-label="Downloads" onclick={() => setNavPage("downloads")}>
         <span class="material-symbols-outlined" aria-hidden="true">download</span>
       </button>
@@ -939,9 +923,9 @@
     {#if store.homePanelHint === "history"}
       <div class="home-history-view">
         <div class="home-history-view__header">
-          <button class="home-history-back" onclick={openHomeDashboard}>
+          <button class="home-history-back" type="button" use:activityBackAction>
             <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
-            Back to Home
+            {activityReturnLabel()}
           </button>
         </div>
         <div class="home-history-view__content">
@@ -1874,42 +1858,6 @@
     font-size: calc(15px * var(--n-hud-scale));
     font-variation-settings: "FILL" 1, "wght" 500, "GRAD" 0, "opsz" 20;
     line-height: 1;
-  }
-
-  :global(.home-topbar) .home-notification-btn {
-    position: relative;
-    width: calc(38px * var(--n-hud-scale));
-    min-width: calc(38px * var(--n-hud-scale));
-    padding-inline: 0;
-  }
-
-  .home-notification-badge {
-    position: absolute;
-    top: calc(6px * var(--n-hud-scale));
-    right: calc(7px * var(--n-hud-scale));
-    display: block;
-    min-width: 0;
-    padding: 0;
-    border: 0;
-    background: transparent;
-    color: #c9adff;
-    text-shadow:
-      0 0 calc(7px * var(--n-hud-scale)) rgba(190, 164, 255, 0.95),
-      0 0 calc(14px * var(--n-hud-scale)) rgba(155, 117, 255, 0.58);
-    font-family: var(--font-sans);
-    font-size: calc(13px * var(--n-hud-scale));
-    font-weight: 900;
-    letter-spacing: 0;
-    line-height: 1;
-    pointer-events: none;
-  }
-
-  :global(.home-topbar) .home-notification-btn.has-new-activity .material-symbols-outlined {
-    color: #c9adff;
-    text-shadow:
-      0 0 calc(8px * var(--n-hud-scale)) rgba(190, 164, 255, 0.95),
-      0 0 calc(18px * var(--n-hud-scale)) rgba(155, 117, 255, 0.64);
-    font-variation-settings: "FILL" 0, "wght" 500, "GRAD" 0, "opsz" 20;
   }
 
   .home-history-view {

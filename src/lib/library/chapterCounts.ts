@@ -15,7 +15,13 @@ function toFiniteCount(value: unknown) {
   return Number.isFinite(count) ? count : 0;
 }
 
-function deriveCounts(chapters: Chapter[]) {
+export interface MangaChapterCounts {
+  chapterCount: number;
+  unreadCount: number;
+  downloadCount: number;
+}
+
+export function deriveMangaCountsFromChapters(chapters: Chapter[]): MangaChapterCounts {
   return {
     chapterCount: chapters.length,
     unreadCount: chapters.filter((chapter) => !chapter.isRead).length,
@@ -23,7 +29,21 @@ function deriveCounts(chapters: Chapter[]) {
   };
 }
 
-function countsChanged(manga: Manga, counts: ReturnType<typeof deriveCounts>) {
+export function isMangaChapterCountRegression(manga: Manga, counts: MangaChapterCounts) {
+  return counts.chapterCount < toFiniteCount(manga.chapterCount);
+}
+
+export function mergeMangaCountsFromChapters(manga: Manga, chapters: Chapter[]): Manga {
+  const counts = deriveMangaCountsFromChapters(chapters);
+  if (isMangaChapterCountRegression(manga, counts)) return manga;
+  return {
+    ...manga,
+    ...counts,
+  };
+}
+
+function countsChanged(manga: Manga, counts: MangaChapterCounts) {
+  if (isMangaChapterCountRegression(manga, counts)) return false;
   return (
     toFiniteCount(manga.chapterCount) !== counts.chapterCount
     || toFiniteCount(manga.unreadCount) !== counts.unreadCount
@@ -54,7 +74,7 @@ export async function reconcileMangaCountsFromChapters(
   options: ReconcileMangaCountsOptions = {},
 ): Promise<ReconciledMangaCounts> {
   const uniqueMangas = [...new Map(mangas.map((manga) => [manga.id, manga])).values()];
-  const patches = new Map<number, ReturnType<typeof deriveCounts>>();
+  const patches = new Map<number, MangaChapterCounts>();
   const failedIds: number[] = [];
 
   await runWithConcurrency(
@@ -62,7 +82,7 @@ export async function reconcileMangaCountsFromChapters(
     options.concurrency ?? 6,
     async (manga) => {
       try {
-        const counts = deriveCounts(await fetchChapters(manga.id));
+        const counts = deriveMangaCountsFromChapters(await fetchChapters(manga.id));
         if (countsChanged(manga, counts)) patches.set(manga.id, counts);
       } catch {
         failedIds.push(manga.id);

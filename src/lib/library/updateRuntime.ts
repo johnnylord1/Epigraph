@@ -6,6 +6,8 @@ import { ensureServerAwakeFor, type ServerWakeReason } from "../serverLifecycle"
 import { setLibraryMangaSnapshot, setLibraryUpdateProgress, store } from "../../store/state.svelte";
 import type { Category, Chapter, Manga } from "../types";
 import type { LibraryUpdateIssueErrorType, LibraryUpdateIssueKind } from "../../store/state.svelte";
+import { classifySourceAccessError, sourceAccessErrorMessage } from "../sourceAccess";
+import { mergeMangaCountsFromChapters } from "./chapterCounts";
 
 export interface LibraryUpdateProgressNumbers {
   current: number;
@@ -16,6 +18,7 @@ export interface LibraryUpdateProgressNumbers {
 export interface SharedLibraryUpdateRunOptions {
   reason: Extract<ServerWakeReason, "manual-library-update" | "auto-library-update">;
   categories?: number[];
+  sourceIds?: string[];
   timeoutMs?: number;
   liveRefreshIntervalMs?: number;
   onLiveRefresh?: () => Promise<void> | void;
@@ -40,6 +43,11 @@ export interface LibraryUpdateIssueInput {
   extensionName: string;
   message: string;
   errorType: LibraryUpdateIssueErrorType;
+  actionUrl?: string;
+  retrySourceId?: string;
+  retryKind?: "comics-source" | "novels-source";
+  recoveryHint?: "flaresolverr" | "webview" | "external-browser";
+  affectedCount?: number;
 }
 
 let activeLibraryUpdateRun: Promise<SharedLibraryUpdateRunResult> | null = null;
@@ -129,24 +137,15 @@ function sourceCircuitBreakerLimit(reason: SharedLibraryUpdateRunOptions["reason
 }
 
 function classifyUpdateError(error: unknown): LibraryUpdateIssueErrorType {
-  const message = error instanceof Error ? error.message : String(error ?? "");
-  if (/timeout|timed out|abort/i.test(message)) return "timeout";
-  if (/429|rate.?limit|too many requests/i.test(message)) return "rate-limit";
-  if (/source.*not.*install|missing source|not installed|loader/i.test(message)) return "missing-source";
-  if (/network|fetch|econn|dns|connection|socket|http 5|http 0/i.test(message)) return "network";
-  if (/source|extension|parse|cloudflare|captcha|forbidden|http 4/i.test(message)) return "source-error";
-  return "unknown";
+  return classifySourceAccessError(error).errorType;
 }
 
 function errorMessage(error: unknown) {
-  if (error instanceof Error && error.message.trim()) return error.message.trim();
-  const serialized = String(error ?? "").trim();
-  return serialized || "Unknown update error.";
+  return sourceAccessErrorMessage(error);
 }
 
 function isSourceWideUpdateError(error: unknown) {
-  const message = errorMessage(error);
-  return /cloudflare bypass currently disabled|source not installed|missing source|not installed/i.test(message);
+  return classifySourceAccessError(error).sourceWide;
 }
 
 function sourceKeyForManga(manga: Manga) {
@@ -155,6 +154,10 @@ function sourceKeyForManga(manga: Manga) {
 
 function sourceNameForManga(manga: Manga) {
   return manga.source?.displayName || manga.source?.name || sourceKeyForManga(manga);
+}
+
+function actionUrlForMangas(mangas: Manga[]) {
+  return mangas.find((manga) => typeof manga.realUrl === "string" && manga.realUrl.trim())?.realUrl?.trim();
 }
 
 function excludedMangaIdsFromCategories(categories = store.categories) {
@@ -207,13 +210,10 @@ function eligibleLibraryManga(categoryIds: number[] | undefined, categories: Cat
   });
 }
 
-function updateCountsFromChapters(manga: Manga, chapters: Chapter[]): Manga {
-  return {
-    ...manga,
-    chapterCount: chapters.length,
-    unreadCount: chapters.filter((chapter) => !chapter.isRead).length,
-    downloadCount: chapters.filter((chapter) => chapter.isDownloaded).length,
-  };
+function sourceScopedManga(mangas: Manga[], sourceIds?: string[]) {
+  if (!sourceIds?.length) return mangas;
+  const allowed = new Set(sourceIds.map(String));
+  return mangas.filter((manga) => allowed.has(sourceKeyForManga(manga)));
 }
 
 async function fetchChaptersForUpdate(mangaId: number, timeoutMs: number) {
@@ -236,13 +236,19 @@ async function runComicsSourceQueueUpdate(
   jobsInfo: any;
 }> {
   const updateCategories = await loadUpdateCategoriesForRules();
-  const queue = eligibleLibraryManga(options.categories, updateCategories);
+  const queue = sourceScopedManga(eligibleLibraryManga(options.categories, updateCategories), options.sourceIds);
   const total = queue.length;
   const preloadedChapters = new Map<number, Chapter[]>();
   const issues: LibraryUpdateIssueInput[] = [];
   const changedMangaIds = new Set<number>();
   const groups = new Map<string, Manga[]>();
   let finishedJobs = 0;
+  let workingSnapshot = store.libraryMangaSnapshot;
+  let pendingSnapshotCommit: Manga[] | null = null;
+  let snapshotCommitTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastSnapshotCommitAt = 0;
+  let lastProgressPublishAt = 0;
+  let lastProgressPercent = -1;
 
   for (const manga of queue.sort((left, right) => sourceNameForManga(left).localeCompare(sourceNameForManga(right)) || left.title.localeCompare(right.title))) {
     const key = sourceKeyForManga(manga);
@@ -257,7 +263,30 @@ async function runComicsSourceQueueUpdate(
     mangas,
   }));
 
-  const publishProgress = (currentTitle?: string, sourceName?: string) => {
+  const commitSnapshotNow = () => {
+    if (snapshotCommitTimer) {
+      clearTimeout(snapshotCommitTimer);
+      snapshotCommitTimer = null;
+    }
+    if (!pendingSnapshotCommit) return;
+    setLibraryMangaSnapshot(pendingSnapshotCommit);
+    cache.set(CACHE_KEYS.LIBRARY, pendingSnapshotCommit, CACHE_GROUPS.LIBRARY);
+    pendingSnapshotCommit = null;
+    lastSnapshotCommitAt = Date.now();
+  };
+
+  const scheduleSnapshotCommit = (nextSnapshot: Manga[]) => {
+    pendingSnapshotCommit = nextSnapshot;
+    const elapsed = Date.now() - lastSnapshotCommitAt;
+    if (elapsed >= 900) {
+      commitSnapshotNow();
+      return;
+    }
+    if (snapshotCommitTimer) return;
+    snapshotCommitTimer = setTimeout(commitSnapshotNow, Math.max(120, 900 - elapsed));
+  };
+
+  const publishProgress = (currentTitle?: string, sourceName?: string, force = false) => {
     const jobsInfo = {
       isRunning: true,
       finishedJobs,
@@ -266,6 +295,15 @@ async function runComicsSourceQueueUpdate(
       skippedMangasCount: 0,
     };
     const percent = libraryUpdatePercent(finishedJobs, total);
+    const now = Date.now();
+    const shouldPublish = force
+      || percent !== lastProgressPercent
+      || now - lastProgressPublishAt >= 900
+      || finishedJobs >= total;
+    if (!shouldPublish) return jobsInfo;
+
+    lastProgressPublishAt = now;
+    lastProgressPercent = percent;
     const detail = currentTitle && sourceName ? ` - ${sourceName}: ${currentTitle}` : "";
     showLibraryUpdateProgress(
       total > 0
@@ -277,7 +315,7 @@ async function runComicsSourceQueueUpdate(
     return jobsInfo;
   };
 
-  publishProgress();
+  publishProgress(undefined, undefined, true);
 
   let cursor = 0;
   const workerCount = Math.max(1, Math.min(sourceParallelism(), sourceEntries.length || 1));
@@ -295,19 +333,27 @@ async function runComicsSourceQueueUpdate(
         try {
           const chapters = await fetchChaptersForUpdate(manga.id, timeoutMs);
           preloadedChapters.set(manga.id, chapters);
-          changedMangaIds.add(manga.id);
           consecutiveFailures = 0;
-          const nextSnapshot = store.libraryMangaSnapshot.map((entry) =>
-            entry.id === manga.id ? updateCountsFromChapters(entry, chapters) : entry,
-          );
-          setLibraryMangaSnapshot(nextSnapshot);
-          cache.set(CACHE_KEYS.LIBRARY, nextSnapshot, CACHE_GROUPS.LIBRARY);
+          let changed = false;
+          const nextSnapshot = workingSnapshot.map((entry) => {
+            if (entry.id !== manga.id) return entry;
+            const next = mergeMangaCountsFromChapters(entry, chapters);
+            changed = next !== entry;
+            return next;
+          });
+          if (changed) {
+            changedMangaIds.add(manga.id);
+            workingSnapshot = nextSnapshot;
+            scheduleSnapshotCommit(nextSnapshot);
+          }
         } catch (error) {
           consecutiveFailures += 1;
           const message = errorMessage(error);
+          const classification = classifySourceAccessError(error);
           const sourceWideError = isSourceWideUpdateError(error);
           if (sourceWideError) {
             const affectedTitles = group.mangas.length - index;
+            const isChallenge = classification.errorType === "source-challenge";
             issues.push({
               runId,
               contentKind: "manga",
@@ -316,12 +362,19 @@ async function runComicsSourceQueueUpdate(
               sourceId: group.sourceId,
               sourceName: group.sourceName,
               extensionName: group.sourceName,
-              message: `${affectedTitles} title${affectedTitles === 1 ? "" : "s"} could not refresh because this source is unavailable: ${message}`,
-              errorType: classifyUpdateError(error),
+              message: isChallenge
+                ? `${affectedTitles} title${affectedTitles === 1 ? "" : "s"} need source challenge recovery: ${message}`
+                : `${affectedTitles} title${affectedTitles === 1 ? "" : "s"} could not refresh because this source is unavailable: ${message}`,
+              errorType: classification.errorType,
+              actionUrl: actionUrlForMangas(group.mangas.slice(index)),
+              retrySourceId: group.sourceId,
+              retryKind: "comics-source",
+              recoveryHint: isChallenge ? "flaresolverr" : undefined,
+              affectedCount: affectedTitles,
             });
             consecutiveFailures = breakerLimit;
             finishedJobs += affectedTitles;
-            publishProgress();
+            publishProgress(undefined, undefined, true);
             break;
           }
           issues.push({
@@ -334,6 +387,8 @@ async function runComicsSourceQueueUpdate(
             extensionName: group.sourceName,
             message,
             errorType: classifyUpdateError(error),
+            retrySourceId: group.sourceId,
+            retryKind: "comics-source",
           });
           if (consecutiveFailures >= breakerLimit) {
             const deferredCount = group.mangas.length - index - 1;
@@ -348,10 +403,13 @@ async function runComicsSourceQueueUpdate(
                 extensionName: group.sourceName,
                 message: `${deferredCount} title${deferredCount === 1 ? "" : "s"} deferred after ${consecutiveFailures} consecutive failures.`,
                 errorType: "deferred",
+                retrySourceId: group.sourceId,
+                retryKind: "comics-source",
+                affectedCount: deferredCount,
               });
             }
             finishedJobs += group.mangas.length - index;
-            publishProgress();
+            publishProgress(undefined, undefined, true);
             break;
           }
         } finally {
@@ -366,6 +424,7 @@ async function runComicsSourceQueueUpdate(
       }
     }
   }));
+  commitSnapshotNow();
 
   const finalJobsInfo = {
     isRunning: false,
@@ -657,4 +716,17 @@ export function runSharedLibraryUpdate(options: SharedLibraryUpdateRunOptions) {
   })();
 
   return activeLibraryUpdateRun;
+}
+
+export function retryComicsLibrarySourceUpdate(
+  sourceId: string,
+  options: Omit<SharedLibraryUpdateRunOptions, "reason" | "sourceIds"> & {
+    reason?: SharedLibraryUpdateRunOptions["reason"];
+  } = {},
+) {
+  return runSharedLibraryUpdate({
+    ...options,
+    reason: options.reason ?? "manual-library-update",
+    sourceIds: [sourceId],
+  });
 }

@@ -1,0 +1,460 @@
+{
+  "screenshots": [
+    "C:\\Users\\jhow-\\Documents\\Projetos\\ForkMoku\\Aethon\\.codex-smoke\\01-home.png",
+    "C:\\Users\\jhow-\\Documents\\Projetos\\ForkMoku\\Aethon\\.codex-smoke\\02-activity-overlay.png",
+    "C:\\Users\\jhow-\\Documents\\Projetos\\ForkMoku\\Aethon\\.codex-smoke\\03-library-top.png",
+    "C:\\Users\\jhow-\\Documents\\Projetos\\ForkMoku\\Aethon\\.codex-smoke\\04-library-comics-scroll.png",
+    "C:\\Users\\jhow-\\Documents\\Projetos\\ForkMoku\\Aethon\\.codex-smoke\\05-library-books.png",
+    "C:\\Users\\jhow-\\Documents\\Projetos\\ForkMoku\\Aethon\\.codex-smoke\\06-library-comics-after-tab-return.png",
+    "C:\\Users\\jhow-\\Documents\\Projetos\\ForkMoku\\Aethon\\.codex-smoke\\07-series-detail.png",
+    "C:\\Users\\jhow-\\Documents\\Projetos\\ForkMoku\\Aethon\\.codex-smoke\\08-browse-search.png",
+    "C:\\Users\\jhow-\\Documents\\Projetos\\ForkMoku\\Aethon\\.codex-smoke\\09-browse-sources.png",
+    "C:\\Users\\jhow-\\Documents\\Projetos\\ForkMoku\\Aethon\\.codex-smoke\\10-downloads.png",
+    "C:\\Users\\jhow-\\Documents\\Projetos\\ForkMoku\\Aethon\\.codex-smoke\\11-settings.png",
+    "C:\\Users\\jhow-\\Documents\\Projetos\\ForkMoku\\Aethon\\.codex-smoke\\12-library-final-return.png"
+  ],
+  "states": [
+    {
+      "label": "home",
+      "title": "Comics",
+      "bodyText": "68 Level 1 Player SONG CHI-HYEON ONGOING 68 Martial God Regressed to Level 2 ASURA SCANS (EN) ONGOING 68 Solo Resurrection MANGAKAKALOT (EN) COMPLETED 68 The Kingdoms Of Ruin MANGA",
+      "activePanelClass": "library-section-panel s-WGgDa_7gapji is-active",
+      "scrollTop": 9000,
+      "scrollHeight": 17432,
+      "clientHeight": 775,
+      "totalCards": 113,
+      "activeCards": 110,
+      "totalImgs": 230,
+      "activeCoverImgs": 107,
+      "fallbacks": 3,
+      "badges": 0,
+      "overlays": [],
+      "badRects": [],
+      "visibleBlankish": false
+    },
+    {
+      "label": "activity-open-at-home",
+      "overlayOpened": true,
+      "title": "Comics",
+      "bodyText": "68 Level 1 Player SONG CHI-HYEON ONGOING 68 Martial God Regressed to Level 2 ASURA SCANS (EN) ONGOING 68 Solo Resurrection MANGAKAKALOT (EN) COMPLETED 68 The Kingdoms Of Ruin MANGA",
+      "activePanelClass": "library-section-panel s-WGgDa_7gapji is-active",
+      "scrollTop": 9000,
+      "scrollHeight": 17432,
+      "clientHeight": 775,
+      "totalCards": 113,
+      "activeCards": 110,
+      "totalImgs": 290,
+      "activeCoverImgs": 107,
+      "fallbacks": 3,
+      "badges": 0,
+      "overlays": [
+        {
+          "cls": "activity-overlay s-YKmkSalZSfqC",
+          "text": "arrow_back Back to Home Notifications Recent activity Your latest reading, updat"
+        }
+      ],
+      "badRects": [],
+      "visibleBlankish": false
+    },
+    {
+      "label": "library-after-overlay-nav",
+      "title": "Comics",
+      "bodyText": "COMICS BOOKS notifications remove crop_square close LIBRARY Comics shelves 633 TITLES LENDO DAHORA DROPADO ACTION FANTASY ADVENTURE COMEDY SHOUNEN DRAMA ROMANCE MANHWA SUPERNATURAL",
+      "activePanelClass": "library-section-panel s-WGgDa_7gapji is-active",
+      "scrollTop": 9000,
+      "scrollHeight": 17432,
+      "clientHeight": 775,
+      "totalCards": 113,
+      "activeCards": 110,
+      "totalImgs": 221,
+      "activeCoverImgs": 107,
+      "fallbacks": 3,
+      "badges": 0,
+      "overlays": [],
+      "badRects": [],
+      "visibleBlankish": false
+    },
+    {
+      "label": "library-comics-top",
+      "title": "Comics",
+      "bodyText": "COMICS BOOKS notifications remove crop_square close LIBRARY Comics shelves 633 TITLES LENDO DAHORA DROPADO ACTION FANTASY ADVENTURE COMEDY SHOUNEN DRAMA ROMANCE MANHWA SUPERNATURAL",
+      "activePanelClass": "library-section-panel s-WGgDa_7gapji is-active",
+      "scrollTop": 9000,
+      "scrollHeight": 17432,
+      "clientHeight": 775,
+      "totalCards": 113,
+      "activeCards": 110,
+      "totalImgs": 221,
+      "activeCoverImgs": 107,
+      "fallbacks": 3,
+      "badges": 0,
+      "overlays": [],
+      "badRects": [],
+      "visibleBlankish": false
+    },
+    {
+      "label": "library-comics-scroll-9000",
+      "libraryScroll": {
+        "scrollTop": 9000,
+        "cardCount": 110,
+        "imgCount": 107,
+        "fallbackCount": 3,
+        "badgeCount": 0,
+        "firstTitles": [
+          "Level 1 Player",
+          "Martial God Regressed to Level 2",
+          "Solo Resurrection",
+          "The Kingdoms Of Ruin",
+          "Knockin' On The Dungeon Door",
+          "Sayounara Ryuusei, Konnichiwa Jinsei",
+          "Apocalypse Cockroach Give me Buff",
+          "I Became The Mad Emperor"
+        ],
+        "firstImgs": [
+          "http://cover.localhost/C%3A%5CUsers%5Cjhow-%5CAppData%5CRoaming%5Caethon%5Clibrary-cover-cache%5Cf1a9603b910df7e9bcc588b46b8263c3dc9fc583a528f55859a5730ea7aceb4d.jpg",
+          "http://cover.localhost/C%3A%5CUsers%5Cjhow-%5CAppData%5CRoaming%5Caethon%5Clibrary-cover-cache%5Cf2aafd3376a1f715ea62ef1016f4ebed768912489ec78afe0df43ff6350db00d.jpg",
+          "http://cover.localhost/C%3A%5CUsers%5Cjhow-%5CAppData%5CRoaming%5Caethon%5Clibrary-cover-cache%5C400426aa33a19131c17c671cbd2dc616ca3649434152b88a63594639f3ac6f1d.jpg",
+          "http://cover.localhost/C%3A%5CUsers%5Cjhow-%5CAppData%5CRoaming%5Caethon%5Clibrary-cover-cache%5Cb1b60f629b0b09d554d8f878a8da955a2d0a8d1afb0fd09e29b6a51200bf25f0.jpg",
+          "http://cover.localhost/C%3A%5CUsers%5Cjhow-%5CAppData%5CRoaming%5Caethon%5Clibrary-cover-cache%5Cc66f72522fffc970b36171491e43b8c99a3a88d62e19deafe11c9523e5bcdd7a.jpg"
+        ]
+      },
+      "title": "Comics",
+      "bodyText": "COMICS BOOKS notifications remove crop_square close LIBRARY Comics shelves 633 TITLES LENDO DAHORA DROPADO ACTION FANTASY ADVENTURE COMEDY SHOUNEN DRAMA ROMANCE MANHWA SUPERNATURAL",
+      "activePanelClass": "library-section-panel s-WGgDa_7gapji is-active",
+      "scrollTop": 9000,
+      "scrollHeight": 17432,
+      "clientHeight": 775,
+      "totalCards": 113,
+      "activeCards": 110,
+      "totalImgs": 221,
+      "activeCoverImgs": 107,
+      "fallbacks": 3,
+      "badges": 0,
+      "overlays": [],
+      "badRects": [],
+      "visibleBlankish": false
+    },
+    {
+      "label": "library-books",
+      "title": "Books",
+      "bodyText": "COMICS BOOKS notifications remove crop_square close LIBRARY Books shelves 3 BOOKS SAVED LENDO DROPADO SAVED DOWNLOADED FINISHED 346 Book of The Dead EPUB COMPLETED 87 Toaru Majutsu",
+      "activePanelClass": "library-section-panel s-WGgDa_7gapji is-active",
+      "scrollTop": 0,
+      "scrollHeight": 775,
+      "clientHeight": 775,
+      "totalCards": 113,
+      "activeCards": 3,
+      "totalImgs": 221,
+      "activeCoverImgs": 3,
+      "fallbacks": 3,
+      "badges": 0,
+      "overlays": [],
+      "badRects": [],
+      "visibleBlankish": false
+    },
+    {
+      "label": "library-comics-after-tab-return",
+      "tabReturn": {
+        "scrollTop": 9000,
+        "cardCount": 110,
+        "imgCount": 107,
+        "firstImgs": [
+          "http://cover.localhost/C%3A%5CUsers%5Cjhow-%5CAppData%5CRoaming%5Caethon%5Clibrary-cover-cache%5Cf1a9603b910df7e9bcc588b46b8263c3dc9fc583a528f55859a5730ea7aceb4d.jpg",
+          "http://cover.localhost/C%3A%5CUsers%5Cjhow-%5CAppData%5CRoaming%5Caethon%5Clibrary-cover-cache%5Cf2aafd3376a1f715ea62ef1016f4ebed768912489ec78afe0df43ff6350db00d.jpg",
+          "http://cover.localhost/C%3A%5CUsers%5Cjhow-%5CAppData%5CRoaming%5Caethon%5Clibrary-cover-cache%5C400426aa33a19131c17c671cbd2dc616ca3649434152b88a63594639f3ac6f1d.jpg",
+          "http://cover.localhost/C%3A%5CUsers%5Cjhow-%5CAppData%5CRoaming%5Caethon%5Clibrary-cover-cache%5Cb1b60f629b0b09d554d8f878a8da955a2d0a8d1afb0fd09e29b6a51200bf25f0.jpg",
+          "http://cover.localhost/C%3A%5CUsers%5Cjhow-%5CAppData%5CRoaming%5Caethon%5Clibrary-cover-cache%5Cc66f72522fffc970b36171491e43b8c99a3a88d62e19deafe11c9523e5bcdd7a.jpg"
+        ]
+      },
+      "title": "Comics",
+      "bodyText": "COMICS BOOKS notifications remove crop_square close LIBRARY Comics shelves 633 TITLES LENDO DAHORA DROPADO ACTION FANTASY ADVENTURE COMEDY SHOUNEN DRAMA ROMANCE MANHWA SUPERNATURAL",
+      "activePanelClass": "library-section-panel s-WGgDa_7gapji is-active",
+      "scrollTop": 9000,
+      "scrollHeight": 17432,
+      "clientHeight": 775,
+      "totalCards": 113,
+      "activeCards": 110,
+      "totalImgs": 221,
+      "activeCoverImgs": 107,
+      "fallbacks": 3,
+      "badges": 0,
+      "overlays": [],
+      "badRects": [],
+      "visibleBlankish": false
+    },
+    {
+      "label": "series-detail-from-library",
+      "detailOpen": {
+        "clickedTitle": "Level 1 Player",
+        "h1": "Comics",
+        "detailVisible": true,
+        "text": "COMICS BOOKS notifications remove crop_square close LIBRARY Comics shelves 633 TITLES LENDO DAHORA DROPADO ACTION FANTASY ADVENTURE COMEDY SHOUNEN DRAMA ROMANCE MANHWA SUPERNATURAL SEINEN SCHOOL LIFE MARTIAL ARTS HAREM R"
+      },
+      "title": "Comics",
+      "bodyText": "COMICS BOOKS notifications remove crop_square close LIBRARY Comics shelves 633 TITLES LENDO DAHORA DROPADO ACTION FANTASY ADVENTURE COMEDY SHOUNEN DRAMA ROMANCE MANHWA SUPERNATURAL",
+      "activePanelClass": "library-section-panel s-WGgDa_7gapji is-active",
+      "scrollTop": 9000,
+      "scrollHeight": 17432,
+      "clientHeight": 775,
+      "totalCards": 113,
+      "activeCards": 110,
+      "totalImgs": 225,
+      "activeCoverImgs": 110,
+      "fallbacks": 0,
+      "badges": 0,
+      "overlays": [],
+      "badRects": [
+        {
+          "text": "",
+          "w": 0,
+          "h": 0,
+          "x": 0,
+          "y": 0
+        },
+        {
+          "text": "",
+          "w": 0,
+          "h": 0,
+          "x": 0,
+          "y": 0
+        },
+        {
+          "text": "",
+          "w": 0,
+          "h": 0,
+          "x": 0,
+          "y": 0
+        },
+        {
+          "text": "",
+          "w": 0,
+          "h": 0,
+          "x": 0,
+          "y": 0
+        },
+        {
+          "text": "",
+          "w": 0,
+          "h": 0,
+          "x": 0,
+          "y": 0
+        },
+        {
+          "text": "",
+          "w": 0,
+          "h": 0,
+          "x": 0,
+          "y": 0
+        },
+        {
+          "text": "",
+          "w": 0,
+          "h": 0,
+          "x": 0,
+          "y": 0
+        },
+        {
+          "text": "",
+          "w": 0,
+          "h": 0,
+          "x": 0,
+          "y": 0
+        },
+        {
+          "text": "",
+          "w": 0,
+          "h": 0,
+          "x": 0,
+          "y": 0
+        },
+        {
+          "text": "",
+          "w": 0,
+          "h": 0,
+          "x": 0,
+          "y": 0
+        }
+      ],
+      "visibleBlankish": false
+    },
+    {
+      "label": "browse-search",
+      "title": "Comics",
+      "bodyText": "68 Level 1 Player SONG CHI-HYEON ONGOING 68 Martial God Regressed to Level 2 ASURA SCANS (EN) ONGOING 68 Solo Resurrection MANGAKAKALOT (EN) COMPLETED 68 The Kingdoms Of Ruin MANGA",
+      "activePanelClass": "library-section-panel s-WGgDa_7gapji is-active",
+      "scrollTop": 9000,
+      "scrollHeight": 17432,
+      "clientHeight": 775,
+      "totalCards": 113,
+      "activeCards": 110,
+      "totalImgs": 222,
+      "activeCoverImgs": 108,
+      "fallbacks": 2,
+      "badges": 0,
+      "overlays": [],
+      "badRects": [],
+      "visibleBlankish": false
+    },
+    {
+      "label": "browse-sources",
+      "title": "Comics",
+      "bodyText": "68 Level 1 Player SONG CHI-HYEON ONGOING 68 Martial God Regressed to Level 2 ASURA SCANS (EN) ONGOING 68 Solo Resurrection MANGAKAKALOT (EN) COMPLETED 68 The Kingdoms Of Ruin MANGA",
+      "activePanelClass": "library-section-panel s-WGgDa_7gapji is-active",
+      "scrollTop": 9000,
+      "scrollHeight": 17432,
+      "clientHeight": 775,
+      "totalCards": 113,
+      "activeCards": 110,
+      "totalImgs": 221,
+      "activeCoverImgs": 107,
+      "fallbacks": 3,
+      "badges": 0,
+      "overlays": [],
+      "badRects": [],
+      "visibleBlankish": false
+    },
+    {
+      "label": "downloads",
+      "title": "Comics",
+      "bodyText": "68 Level 1 Player SONG CHI-HYEON ONGOING 68 Martial God Regressed to Level 2 ASURA SCANS (EN) ONGOING 68 Solo Resurrection MANGAKAKALOT (EN) COMPLETED 68 The Kingdoms Of Ruin MANGA",
+      "activePanelClass": "library-section-panel s-WGgDa_7gapji is-active",
+      "scrollTop": 9000,
+      "scrollHeight": 17432,
+      "clientHeight": 775,
+      "totalCards": 113,
+      "activeCards": 110,
+      "totalImgs": 221,
+      "activeCoverImgs": 107,
+      "fallbacks": 3,
+      "badges": 0,
+      "overlays": [],
+      "badRects": [],
+      "visibleBlankish": false
+    },
+    {
+      "label": "settings",
+      "title": "Comics",
+      "bodyText": "68 Level 1 Player SONG CHI-HYEON ONGOING 68 Martial God Regressed to Level 2 ASURA SCANS (EN) ONGOING 68 Solo Resurrection MANGAKAKALOT (EN) COMPLETED 68 The Kingdoms Of Ruin MANGA",
+      "activePanelClass": "library-section-panel s-WGgDa_7gapji is-active",
+      "scrollTop": 9000,
+      "scrollHeight": 17432,
+      "clientHeight": 775,
+      "totalCards": 113,
+      "activeCards": 110,
+      "totalImgs": 222,
+      "activeCoverImgs": 107,
+      "fallbacks": 3,
+      "badges": 0,
+      "overlays": [],
+      "badRects": [
+        {
+          "text": "Nocturne",
+          "w": 0,
+          "h": 0,
+          "x": 0,
+          "y": 0
+        },
+        {
+          "text": "New theme",
+          "w": 0,
+          "h": 0,
+          "x": 0,
+          "y": 0
+        },
+        {
+          "text": "OLED dark mode",
+          "w": 0,
+          "h": 0,
+          "x": 0,
+          "y": 0
+        },
+        {
+          "text": "",
+          "w": 0,
+          "h": 0,
+          "x": 0,
+          "y": 0
+        },
+        {
+          "text": "Compact topbar",
+          "w": 0,
+          "h": 0,
+          "x": 0,
+          "y": 0
+        },
+        {
+          "text": "Sidebar glow",
+          "w": 0,
+          "h": 0,
+          "x": 0,
+          "y": 0
+        },
+        {
+          "text": "Compact",
+          "w": 0,
+          "h": 0,
+          "x": 0,
+          "y": 0
+        },
+        {
+          "text": "Default",
+          "w": 0,
+          "h": 0,
+          "x": 0,
+          "y": 0
+        },
+        {
+          "text": "Comfort",
+          "w": 0,
+          "h": 0,
+          "x": 0,
+          "y": 0
+        },
+        {
+          "text": "Balanced",
+          "w": 0,
+          "h": 0,
+          "x": 0,
+          "y": 0
+        }
+      ],
+      "visibleBlankish": false
+    },
+    {
+      "label": "library-final-return",
+      "title": "Comics",
+      "bodyText": "COMICS BOOKS notifications remove crop_square close LIBRARY Comics shelves 633 TITLES LENDO DAHORA DROPADO ACTION FANTASY ADVENTURE COMEDY SHOUNEN DRAMA ROMANCE MANHWA SUPERNATURAL",
+      "activePanelClass": "library-section-panel s-WGgDa_7gapji is-active",
+      "scrollTop": 9000,
+      "scrollHeight": 17432,
+      "clientHeight": 775,
+      "totalCards": 113,
+      "activeCards": 110,
+      "totalImgs": 221,
+      "activeCoverImgs": 107,
+      "fallbacks": 3,
+      "badges": 0,
+      "overlays": [],
+      "badRects": [],
+      "visibleBlankish": false
+    }
+  ],
+  "console": [
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 400 (Bad Request)"
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 400 (Bad Request)"
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 500 (Server Error)"
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 500 (Server Error)"
+    }
+  ]
+}

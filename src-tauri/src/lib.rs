@@ -5,6 +5,8 @@ mod syncd_replication;
 mod syncd_sidecar;
 
 use base64::Engine;
+use image::codecs::jpeg::JpegEncoder;
+use image::imageops::FilterType;
 use percent_encoding::percent_decode;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -177,6 +179,8 @@ const READER_WEBVIEW_INIT_SCRIPT: &str = r#"
 
 const LIBRARY_COVER_CACHE_MAX_BYTES: u64 = 256 * 1024 * 1024;
 const LIBRARY_COVER_MAX_DOWNLOAD_BYTES: u64 = 5 * 1024 * 1024;
+const LIBRARY_COVER_THUMB_MAX_EDGE: u32 = 420;
+const LIBRARY_COVER_THUMB_JPEG_QUALITY: u8 = 82;
 const NOVEL_RUNTIME_HOST_LABEL: &str = "novel-runtime-host";
 const AETHON_GITHUB_REPO: Option<&str> = option_env!("AETHON_GITHUB_REPO");
 const VITE_AETHON_GITHUB_REPO: Option<&str> = option_env!("VITE_AETHON_GITHUB_REPO");
@@ -949,6 +953,39 @@ fn find_cached_library_cover_path(key: &str) -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
+fn downscale_library_cover_bytes(bytes: &[u8]) -> Option<Vec<u8>> {
+    let image = image::load_from_memory(bytes).ok()?;
+    let width = image.width();
+    let height = image.height();
+    if width == 0 || height == 0 {
+        return None;
+    }
+
+    let max_edge = width.max(height);
+    let resized = if max_edge > LIBRARY_COVER_THUMB_MAX_EDGE {
+        image.resize(
+            LIBRARY_COVER_THUMB_MAX_EDGE,
+            LIBRARY_COVER_THUMB_MAX_EDGE,
+            FilterType::Lanczos3,
+        )
+    } else {
+        image
+    };
+
+    let rgb = resized.to_rgb8();
+    let mut output = Vec::new();
+    let mut encoder = JpegEncoder::new_with_quality(&mut output, LIBRARY_COVER_THUMB_JPEG_QUALITY);
+    encoder
+        .encode(
+            &rgb,
+            rgb.width(),
+            rgb.height(),
+            image::ExtendedColorType::Rgb8,
+        )
+        .ok()?;
+    Some(output)
+}
+
 fn resolve_library_cover_asset_path(
     request: &Request<Vec<u8>>,
 ) -> Result<PathBuf, Response<Cow<'static, [u8]>>> {
@@ -1085,13 +1122,20 @@ async fn cache_library_cover(
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .map(|value| value.to_string());
-    let ext = library_cover_extension_from_content_type(content_type.as_deref())
-        .or_else(|| library_cover_extension_from_url(&cover_url))
-        .unwrap_or("jpg");
     let bytes = response.bytes().await.map_err(|err| err.to_string())?;
     if bytes.is_empty() || bytes.len() as u64 > LIBRARY_COVER_MAX_DOWNLOAD_BYTES {
         return Ok(None);
     }
+
+    let (cache_bytes, ext): (Vec<u8>, &'static str) =
+        if let Some(thumbnail_bytes) = downscale_library_cover_bytes(&bytes) {
+            (thumbnail_bytes, "jpg")
+        } else {
+            let ext = library_cover_extension_from_content_type(content_type.as_deref())
+                .or_else(|| library_cover_extension_from_url(&cover_url))
+                .unwrap_or("jpg");
+            (bytes.to_vec(), ext)
+        };
 
     for candidate in library_cover_cache_candidates(&key) {
         let _ = fs::remove_file(candidate);
@@ -1099,7 +1143,7 @@ async fn cache_library_cover(
 
     let target = root.join(format!("{key}.{ext}"));
     let tmp = root.join(format!("{key}.{ext}.tmp"));
-    fs::write(&tmp, &bytes).map_err(|err| err.to_string())?;
+    fs::write(&tmp, &cache_bytes).map_err(|err| err.to_string())?;
     fs::rename(&tmp, &target).map_err(|err| err.to_string())?;
     let _ = trim_library_cover_cache_to_limit(LIBRARY_COVER_CACHE_MAX_BYTES);
 

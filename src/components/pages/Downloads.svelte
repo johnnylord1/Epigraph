@@ -6,6 +6,7 @@
   import { gql } from "../../lib/client";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import AppTopbar from "../layout/AppTopbar.svelte";
+  import ActivityButton from "../layout/ActivityButton.svelte";
   import WindowControlsInline from "../layout/WindowControlsInline.svelte";
   import {
     GET_DOWNLOAD_STATUS,
@@ -743,6 +744,7 @@
             </div>
           {/if}
         </div>
+        <ActivityButton />
         <WindowControlsInline />
       {/snippet}
     </AppTopbar>

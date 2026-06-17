@@ -452,9 +452,10 @@
         ),
       ]);
 
+      const previousChapterCountById = new Map(store.libraryMangaSnapshot.map((manga) => [manga.id, manga.chapterCount]));
       const normalizedMangas = mangas.map((manga: any) => ({
         ...manga,
-        chapterCount: manga.chapters?.totalCount ?? manga.chapterCount ?? 0,
+        chapterCount: manga.chapters?.totalCount ?? manga.chapterCount ?? previousChapterCountById.get(manga.id) ?? 0,
       }));
       const normalizedCategories = normalizeCategories(categories);
       setLibraryMangaSnapshot(normalizedMangas);

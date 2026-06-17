@@ -5,6 +5,7 @@ import {
 } from "./libraryState";
 import { saveCachedNovelChapter } from "./offlineChapters";
 import { readInstalledNovelChapter, readInstalledNovelDetails } from "./sources";
+import { classifySourceAccessError, sourceAccessErrorMessage } from "../sourceAccess";
 import {
   createNovelChapterId,
   type NovelDetailRecord,
@@ -44,6 +45,11 @@ export interface RefreshNovelLibraryFailure {
   sourceId: string;
   sourceName: string;
   error: string;
+  errorType?: ReturnType<typeof classifySourceAccessError>["errorType"];
+  actionUrl?: string;
+  retrySourceId?: string;
+  retryKind?: "novels-source";
+  recoveryHint?: "flaresolverr" | "webview" | "external-browser";
 }
 
 export interface RefreshNovelLibraryProgress {
@@ -72,6 +78,7 @@ export interface RefreshNovelLibraryOptions {
   excludedNovelIds?: readonly string[] | null;
   onlyOngoing?: boolean;
   pauseMs?: number;
+  sourceIds?: readonly string[] | null;
   onProgress?: (progress: RefreshNovelLibraryProgress) => void;
 }
 
@@ -82,7 +89,24 @@ function sleep(ms: number): Promise<void> {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return sourceAccessErrorMessage(error);
+}
+
+function sourceIdForNovelEntry(entry: PersistedNovelLibraryEntry): string | null {
+  return entry.source?.pluginId ?? entry.source?.sourceId ?? null;
+}
+
+function sourceNameForNovelEntry(entry: PersistedNovelLibraryEntry): string {
+  return entry.source?.sourceName ?? entry.source?.pluginName ?? sourceIdForNovelEntry(entry) ?? "Unknown source";
+}
+
+function sourceScopedNovelEntries(entries: PersistedNovelLibraryEntry[], sourceIds?: readonly string[] | null) {
+  if (!sourceIds?.length) return entries;
+  const allowed = new Set(sourceIds.map(String));
+  return entries.filter((entry) => {
+    const sourceId = sourceIdForNovelEntry(entry);
+    return sourceId ? allowed.has(sourceId) : false;
+  });
 }
 
 export function isNovelUpdateOngoingStatus(status: string | null | undefined): boolean {
@@ -215,7 +239,10 @@ async function runNovelUpdate(
   options: RefreshNovelLibraryOptions,
 ): Promise<RefreshNovelLibraryResult> {
   let state = await loadNovelLibraryState(scopeInput);
-  const entries = state.entries.filter((entry) => shouldRefreshNovelEntry(entry, options));
+  const entries = sourceScopedNovelEntries(
+    state.entries.filter((entry) => shouldRefreshNovelEntry(entry, options)),
+    options.sourceIds,
+  );
   const total = entries.length;
   const pauseMs = options.pauseMs ?? 800;
   const newChapterEntries: RefreshedNovelChapter[] = [];
@@ -226,57 +253,104 @@ async function runNovelUpdate(
 
   options.onProgress?.({ checked, total, currentTitle: null, newChapters: 0, failed: 0 });
 
+  const groupedEntries = new Map<string, PersistedNovelLibraryEntry[]>();
   for (const entry of entries) {
-    const sourceId = entry.source?.pluginId ?? entry.source?.sourceId;
-    options.onProgress?.({ checked, total, currentTitle: entry.title, newChapters: newChapterEntries.length, failed });
-    if (!sourceId) {
-      failed += 1;
-      checked += 1;
-      failures.push({ novelId: entry.id, title: entry.title, sourceId: "unknown", sourceName: "Unknown source", error: "Missing source id" });
-      options.onProgress?.({ checked, total, currentTitle: entry.title, newChapters: newChapterEntries.length, failed });
-      continue;
-    }
+    const sourceId = sourceIdForNovelEntry(entry) ?? "unknown";
+    const current = groupedEntries.get(sourceId) ?? [];
+    current.push(entry);
+    groupedEntries.set(sourceId, current);
+  }
 
-    try {
-      const detail = await readInstalledNovelDetails(scopeInput, sourceId, entry.path, {
-        title: entry.title,
-        coverUrl: entry.coverUrl,
-      });
-      const merged = mergeNovelDetailIntoLibraryState(state, entry, detail, Date.now());
-      state = merged.state;
-      newChapterEntries.push(...merged.newChapters);
-      if (options.downloadNewChapters && merged.newChapters.length > 0) {
-        for (const chapter of merged.newChapters) {
-          try {
-            const loaded = await readInstalledNovelChapter(scopeInput, chapter.sourceId, chapter.chapterPath);
-            await saveCachedNovelChapter(scopeInput, {
-              sourceId: chapter.sourceId,
-              novelId: chapter.novelId,
-              chapterId: chapter.chapterId,
-              chapterPath: chapter.chapterPath,
-              chapterTitle: chapter.chapterTitle,
-              content: loaded.content,
-            });
-          } catch (downloadError) {
-            console.warn("Could not cache new novel chapter for offline reading:", chapter.novelTitle, chapter.chapterTitle, downloadError);
+  for (const [sourceId, group] of groupedEntries) {
+    for (let index = 0; index < group.length; index += 1) {
+      const entry = group[index];
+      const entrySourceId = sourceIdForNovelEntry(entry);
+      const sourceName = sourceNameForNovelEntry(entry);
+      options.onProgress?.({ checked, total, currentTitle: entry.title, newChapters: newChapterEntries.length, failed });
+      if (!entrySourceId) {
+        failed += 1;
+        checked += 1;
+        failures.push({
+          novelId: entry.id,
+          title: entry.title,
+          sourceId: "unknown",
+          sourceName: "Unknown source",
+          error: "Missing source id",
+          errorType: "missing-source",
+        });
+        options.onProgress?.({ checked, total, currentTitle: entry.title, newChapters: newChapterEntries.length, failed });
+        continue;
+      }
+
+      try {
+        const detail = await readInstalledNovelDetails(scopeInput, entrySourceId, entry.path, {
+          title: entry.title,
+          coverUrl: entry.coverUrl,
+        });
+        const merged = mergeNovelDetailIntoLibraryState(state, entry, detail, Date.now());
+        state = merged.state;
+        newChapterEntries.push(...merged.newChapters);
+        if (options.downloadNewChapters && merged.newChapters.length > 0) {
+          for (const chapter of merged.newChapters) {
+            try {
+              const loaded = await readInstalledNovelChapter(scopeInput, chapter.sourceId, chapter.chapterPath);
+              await saveCachedNovelChapter(scopeInput, {
+                sourceId: chapter.sourceId,
+                novelId: chapter.novelId,
+                chapterId: chapter.chapterId,
+                chapterPath: chapter.chapterPath,
+                chapterTitle: chapter.chapterTitle,
+                content: loaded.content,
+              });
+            } catch (downloadError) {
+              console.warn("Could not cache new novel chapter for offline reading:", chapter.novelTitle, chapter.chapterTitle, downloadError);
+            }
           }
         }
+        updated += 1;
+        checked += 1;
+      } catch (error) {
+        const message = errorMessage(error);
+        const classification = classifySourceAccessError(error);
+        if (classification.sourceWide) {
+          const affected = group.length - index;
+          failed += affected;
+          checked += affected;
+          failures.push({
+            novelId: `source:${sourceId}`,
+            title: sourceName,
+            sourceId,
+            sourceName,
+            error: classification.errorType === "source-challenge"
+              ? `${affected} novel${affected === 1 ? "" : "s"} need source challenge recovery: ${message}`
+              : `${affected} novel${affected === 1 ? "" : "s"} could not refresh because this source is unavailable: ${message}`,
+            errorType: classification.errorType,
+            retrySourceId: sourceId,
+            retryKind: "novels-source",
+            recoveryHint: classification.errorType === "source-challenge" ? "flaresolverr" : undefined,
+          });
+          console.warn("Could not refresh source novels:", sourceName, error);
+          options.onProgress?.({ checked, total, currentTitle: entry.title, newChapters: newChapterEntries.length, failed });
+          break;
+        }
+
+        failed += 1;
+        checked += 1;
+        failures.push({
+          novelId: entry.id,
+          title: entry.title,
+          sourceId: entrySourceId,
+          sourceName,
+          error: message,
+          errorType: classification.errorType,
+          retrySourceId: entrySourceId,
+          retryKind: "novels-source",
+        });
+        console.warn("Could not refresh source novel:", entry.title, error);
+      } finally {
+        options.onProgress?.({ checked, total, currentTitle: entry.title, newChapters: newChapterEntries.length, failed });
+        if (checked < total) await sleep(pauseMs);
       }
-      updated += 1;
-    } catch (error) {
-      failed += 1;
-      failures.push({
-        novelId: entry.id,
-        title: entry.title,
-        sourceId,
-        sourceName: entry.source?.sourceName ?? entry.source?.pluginName ?? sourceId,
-        error: errorMessage(error),
-      });
-      console.warn("Could not refresh source novel:", entry.title, error);
-    } finally {
-      checked += 1;
-      options.onProgress?.({ checked, total, currentTitle: entry.title, newChapters: newChapterEntries.length, failed });
-      if (checked < total) await sleep(pauseMs);
     }
   }
 

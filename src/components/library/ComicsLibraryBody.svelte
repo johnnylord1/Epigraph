@@ -1,11 +1,22 @@
+<script module lang="ts">
+  import { createComicsLibraryCardVmCache } from "../../lib/library/comicsSection";
+
+  let sessionComicsScrollTop = 0;
+  const comicsCardVmCache = createComicsLibraryCardVmCache();
+  const ENABLE_LIBRARY_PERF_LOGS = false;
+</script>
+
 <script lang="ts">
   import { onMount } from "svelte";
   import { Books, CheckSquare, Folder, FolderSimplePlus, Trash, X } from "phosphor-svelte";
   import { createComicLibraryCardId } from "../../lib/library/cardIdentity";
   import {
     cacheLibraryCoverFromServer,
+    clearSessionLibraryCoverUrl,
     getCachedLibraryCoverUrl,
+    getSessionLibraryCoverUrl,
     libraryCoverCacheKey,
+    setSessionLibraryCoverUrl,
   } from "../../lib/library/coverCache";
   import {
     clearLibraryCoverFailed,
@@ -13,23 +24,24 @@
     hasLibraryCoverFailed,
     markLibraryCoverFailed,
   } from "../../lib/library/coverFailure";
-  import { buildComicsLibraryCardVm } from "../../lib/library/comicsSection";
-  import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import { computeLibraryLayout, type LibraryPreferredGridColumns, type LibraryViewMode } from "../../lib/libraryDisplay";
   import type { ComicsSectionVM } from "../../lib/library/contracts";
   import { getCategoryDisplayName } from "../../lib/library/categories";
+  import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import type { Category, Manga, Source } from "../../lib/types";
   import {
+    openMangaDetail,
     setLibraryReturnToMangaId,
     setLibraryScrollTop,
-    setActiveManga,
     store,
   } from "../../store/state.svelte";
   import ContextMenu, { type MenuEntry } from "../shared/ContextMenu.svelte";
-  import LibraryCardGrid from "./LibraryCardGrid.svelte";
+  import VirtualLibraryCardGrid from "./VirtualLibraryCardGrid.svelte";
+  import { estimateLibraryVirtualRowSize } from "../../lib/library/virtualGrid";
 
   type Props = {
     vm: ComicsSectionVM;
+    active?: boolean;
     mangas: Manga[];
     categories: Category[];
     categoryMangaMap: Map<number, Manga[]>;
@@ -57,6 +69,7 @@
 
   let {
     vm,
+    active = true,
     mangas,
     categories,
     categoryMangaMap,
@@ -95,10 +108,11 @@
   let coverWakeAttemptedKeys = $state(new Set<string>());
   let cachedCoverUrls = $state(new Map<string, string>());
   let coverCacheCheckedKeys = $state(new Set<string>());
-  let renderVisible = $state(0);
-  let loadMoreSentinel: HTMLDivElement | null = $state(null);
-  let loadMoreObserver: IntersectionObserver | null = $state(null);
+  let prewarmStartIndex = $state(0);
+  let prewarmEndIndex = $state(0);
   let viewStateReady = false;
+  let previousViewKey: string | null = null;
+  let previousActive = false;
   let pendingScrollRestore = false;
   let pendingCardRestore = false;
   let prevActiveMangaId: number | null = null;
@@ -106,36 +120,29 @@
   const coverRetryTimers = new Map<number, ReturnType<typeof setTimeout>>();
   const coverRecoveryTimers = new Map<number, ReturnType<typeof setTimeout>>();
   const coverCacheInflight = new Set<string>();
-  const coverCacheWritesInflight = new Set<string>();
+  const pendingCachedCoverUrls = new Map<string, string>();
+  const pendingCheckedCoverKeys = new Set<string>();
+  let coverCacheFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  let coverPrewarmQueue: Manga[] = [];
+  let coverPrewarmHandle: ReturnType<typeof setTimeout> | number | null = null;
+  let coverPrewarmUsesIdleCallback = false;
   let lastCoverRecoveryVersions = new Map<number, number>();
   let lastCoverCacheScopeKey = "";
-  let scrollPersistFrame: number | null = null;
+  let scrollPersistTimer: ReturnType<typeof setTimeout> | null = null;
+  let scrollIdleTimer: ReturnType<typeof setTimeout> | null = null;
   let pendingScrollTop = 0;
+  let isScrolling = $state(false);
+  let lastVisibleCardsBuildMs = 0;
+  let lastVisibleCardsCount = 0;
+  const mountStartedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+  const lazyVirtualizeAfter = 180;
 
   const mangaByCardId = $derived(
     new Map(mangas.map((manga) => [createComicLibraryCardId(manga.id), manga])),
   );
+  const sourcesById = $derived(new Map(sources.map((source) => [String(source.id), source])));
 
-  const safeRenderLimit = $derived(Math.max(1, renderLimit || 48));
-  const renderedMangas = $derived(mangas.slice(0, renderVisible));
-  const visibleCards = $derived(
-    renderedMangas.map((manga) => {
-      const card = buildComicsLibraryCardVm(manga, {
-        cropCovers: store.settings.libraryCropCovers,
-        selectedIds,
-        trackedCompletedIds,
-        trackedChapterTotalsByMangaId,
-        sources,
-      });
-
-      return {
-        ...card,
-        coverSrc: hasUsableCover(manga) ? getCoverSrc(manga) : null,
-      };
-    }),
-  );
-  const hasMoreCards = $derived(renderVisible < mangas.length);
-  const remainingCards = $derived(Math.max(0, mangas.length - renderVisible));
+  const prewarmLimit = $derived(Math.max(1, renderLimit || 48));
   const layout = $derived(
     computeLibraryLayout({
       availableWidth: contentWidth,
@@ -143,6 +150,65 @@
       mode: viewMode,
     }),
   );
+  const visibleCards = $derived.by(() => {
+    const start = typeof performance !== "undefined" ? performance.now() : Date.now();
+    const cards = mangas.length > lazyVirtualizeAfter
+      ? []
+      : mangas.map((manga) => getComicsCardVm(manga));
+    comicsCardVmCache.prune(mangas.map((manga) => manga.id));
+    lastVisibleCardsBuildMs = (typeof performance !== "undefined" ? performance.now() : Date.now()) - start;
+    lastVisibleCardsCount = cards.length;
+    if (ENABLE_LIBRARY_PERF_LOGS) {
+      console.info("[LibraryPerf] Comics VM build", {
+        cards: cards.length,
+        ms: Number(lastVisibleCardsBuildMs.toFixed(2)),
+      });
+    }
+    return cards;
+  });
+
+  function getComicsCardVm(manga: Manga) {
+    const coverSrc = hasUsableCover(manga) ? getCoverSrc(manga) : null;
+    return comicsCardVmCache.get(manga, {
+      cropCovers: store.settings.libraryCropCovers,
+      selectedIds,
+      trackedCompletedIds,
+      trackedChapterTotalsByMangaId,
+      sourcesById,
+      coverSrcOverride: coverSrc,
+    });
+  }
+
+  function getComicsCardAt(index: number) {
+    const manga = mangas[index];
+    return manga ? getComicsCardVm(manga) : null;
+  }
+
+  function getComicsCardIdAt(index: number) {
+    const manga = mangas[index];
+    return manga ? createComicLibraryCardId(manga.id) : String(index);
+  }
+
+  function logLibraryPerf(label: string, data: Record<string, unknown> = {}) {
+    if (!ENABLE_LIBRARY_PERF_LOGS) return;
+    console.info(`[LibraryPerf] ${label}`, data);
+  }
+
+  function scheduleGridVisiblePerfLog(reason: string) {
+    if (!ENABLE_LIBRARY_PERF_LOGS) return;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+        logLibraryPerf(`Comics ${reason}`, {
+          cards: lastVisibleCardsCount,
+          vmBuildMs: Number(lastVisibleCardsBuildMs.toFixed(2)),
+          mountToGridMs: Number((now - mountStartedAt).toFixed(2)),
+          domNodes: contentEl?.querySelectorAll("*").length ?? 0,
+          scrollTop: contentEl?.scrollTop ?? 0,
+        });
+      });
+    });
+  }
 
   function enterSelectMode(id?: number) {
     selectMode = true;
@@ -199,7 +265,7 @@
       return;
     }
 
-    setActiveManga(manga);
+    openMangaDetail(manga);
   }
 
   async function bulkMoveToCategory(category: Category) {
@@ -247,6 +313,7 @@
       const nextCached = new Map(cachedCoverUrls);
       nextCached.delete(coverKey);
       cachedCoverUrls = nextCached;
+      clearSessionLibraryCoverUrl(coverCacheScope(), manga);
     }
 
     if (!coverWakeAttemptedKeys.has(coverKey)) {
@@ -296,9 +363,6 @@
       coverWakeAttemptedKeys = nextWakeAttempted;
     }
 
-    if (!cachedCoverUrls.has(coverKey)) {
-      void cacheCoverAfterServerLoad(manga);
-    }
   }
 
   function hasUsableCover(manga: Manga): boolean {
@@ -314,29 +378,26 @@
     return failedCoverKeys.has(coverKey) || hasLibraryCoverFailed(coverKey);
   }
 
-  function getCoverSignature(manga: Manga): string {
-    const sourceId = typeof manga.source?.id === "string" ? manga.source.id : "";
-    const title = typeof manga.title === "string" ? manga.title.trim().toLowerCase() : "";
-    return encodeURIComponent(`${manga.id}:${sourceId}:${title}`);
-  }
-
   function getCoverSrc(manga: Manga): string {
     if (!manga.thumbnailUrl) return "";
-    const cached = cachedCoverUrls.get(getCoverStateKey(manga));
-    if (cached) return cached;
-    const base = resolveMangaCoverUrl(manga, {
+    const coverKey = getCoverStateKey(manga);
+    const retry = coverRetryCounts.get(coverKey) ?? 0;
+    if (retry === 0) {
+      const cached = cachedCoverUrls.get(coverKey);
+      if (cached) return cached;
+      const sessionCached = getSessionLibraryCoverUrl(coverCacheScope(), manga);
+      if (sessionCached) return sessionCached;
+    }
+    const direct = resolveMangaCoverUrl(manga, {
       context: "library",
       persistence: "persistent",
       cacheGeneration: coverCacheGeneration,
     });
-    const sig = getCoverSignature(manga);
-    const retry = coverRetryCounts.get(getCoverStateKey(manga)) ?? 0;
     const params = [
-      `aethon_cover_sig=${sig}`,
       `aethon_cover_recovery=${coverRecoveryVersions.get(manga.id) ?? 0}`,
     ];
     if (retry > 0) params.push(`aethon_cover_retry=${retry}`);
-    return `${base}${base.includes("?") ? "&" : "?"}${params.join("&")}`;
+    return direct ? `${direct}${direct.includes("?") ? "&" : "?"}${params.join("&")}` : "";
   }
 
   function coverCacheScope() {
@@ -348,75 +409,212 @@
   }
 
   function coverScopeKey() {
-    return `${store.runtimeResolvedLocalProfileId ?? ""}::${store.runtimeServerUrl ?? ""}`;
+    return `${store.runtimeResolvedLocalProfileId ?? ""}::${store.runtimeServerUrl ?? ""}::${coverCacheGeneration}`;
   }
 
   async function loadCachedCoverForManga(manga: Manga) {
     const scope = coverCacheScope();
     const key = libraryCoverCacheKey(scope, manga);
+    const coverKey = getCoverStateKey(manga);
     if (coverCacheInflight.has(key)) return;
     coverCacheInflight.add(key);
     try {
-      const cached = await getCachedLibraryCoverUrl(scope, manga);
+      const cached = await getCachedLibraryCoverUrl(scope, manga)
+        ?? await cacheLibraryCoverFromServer(scope, manga);
+      if (coverKey !== getCoverStateKey(manga)) return;
       if (cached) {
-        const coverKey = getCoverStateKey(manga);
-        const next = new Map(cachedCoverUrls);
-        next.set(coverKey, cached);
-        cachedCoverUrls = next;
+        const decoded = await decodeCoverUrl(cached);
+        if (coverKey !== getCoverStateKey(manga)) return;
+        if (!decoded) return;
+        pendingCachedCoverUrls.set(coverKey, cached);
+        setSessionLibraryCoverUrl(scope, manga, cached);
+        pendingCheckedCoverKeys.add(coverKey);
+        scheduleCoverCacheFlush();
       }
-      const nextChecked = new Set(coverCacheCheckedKeys);
-      nextChecked.add(getCoverStateKey(manga));
-      coverCacheCheckedKeys = nextChecked;
     } finally {
       coverCacheInflight.delete(key);
     }
   }
 
-  async function cacheCoverAfterServerLoad(manga: Manga) {
-    const coverKey = getCoverStateKey(manga);
-    if (coverCacheWritesInflight.has(coverKey)) return;
-    coverCacheWritesInflight.add(coverKey);
+  async function decodeCoverUrl(url: string): Promise<boolean> {
+    if (typeof Image === "undefined") return true;
+    const image = new Image();
+    image.decoding = "async";
+    image.src = url;
+    if (typeof image.decode !== "function") return true;
     try {
-      const cached = await cacheLibraryCoverFromServer(coverCacheScope(), manga);
-      if (!cached) return;
-      const next = new Map(cachedCoverUrls);
-      next.set(coverKey, cached);
-      cachedCoverUrls = next;
-      const nextChecked = new Set(coverCacheCheckedKeys);
-      nextChecked.add(coverKey);
-      coverCacheCheckedKeys = nextChecked;
-    } finally {
-      coverCacheWritesInflight.delete(coverKey);
+      await image.decode();
+      return true;
+    } catch {
+      return await new Promise<boolean>((resolve) => {
+        image.onload = () => resolve(true);
+        image.onerror = () => resolve(false);
+        setTimeout(() => resolve(false), 1200);
+      });
     }
   }
 
+  function scheduleCoverCacheFlush() {
+    if (coverCacheFlushTimer !== null) return;
+    coverCacheFlushTimer = setTimeout(flushCoverCacheUpdates, isScrolling ? 220 : 80);
+  }
+
+  function flushCoverCacheUpdates() {
+    coverCacheFlushTimer = null;
+    if (isScrolling) {
+      scheduleCoverCacheFlush();
+      return;
+    }
+    if (!pendingCachedCoverUrls.size && !pendingCheckedCoverKeys.size) return;
+
+    if (pendingCachedCoverUrls.size) {
+      const nextCached = new Map(cachedCoverUrls);
+      for (const [coverKey, url] of pendingCachedCoverUrls) nextCached.set(coverKey, url);
+      pendingCachedCoverUrls.clear();
+      cachedCoverUrls = nextCached;
+    }
+
+    if (pendingCheckedCoverKeys.size) {
+      const nextChecked = new Set(coverCacheCheckedKeys);
+      for (const coverKey of pendingCheckedCoverKeys) nextChecked.add(coverKey);
+      pendingCheckedCoverKeys.clear();
+      coverCacheCheckedKeys = nextChecked;
+    }
+  }
+
+  function clearCoverPrewarmSchedule() {
+    if (coverPrewarmHandle === null) return;
+    if (
+      coverPrewarmUsesIdleCallback
+      && typeof window !== "undefined"
+      && typeof window.cancelIdleCallback === "function"
+    ) {
+      window.cancelIdleCallback(coverPrewarmHandle as number);
+    } else {
+      clearTimeout(coverPrewarmHandle as ReturnType<typeof setTimeout>);
+    }
+    coverPrewarmHandle = null;
+    coverPrewarmUsesIdleCallback = false;
+  }
+
+  function scheduleNextCoverPrewarmBatch() {
+    if (coverPrewarmHandle !== null || coverPrewarmQueue.length === 0) return;
+
+    const run = () => {
+      coverPrewarmHandle = null;
+      coverPrewarmUsesIdleCallback = false;
+      if (isScrolling) {
+        scheduleNextCoverPrewarmBatch();
+        return;
+      }
+      const batch = coverPrewarmQueue.splice(0, 4);
+      for (const manga of batch) {
+        void loadCachedCoverForManga(manga);
+      }
+      scheduleNextCoverPrewarmBatch();
+    };
+
+    if (
+      typeof window !== "undefined"
+      && typeof window.requestIdleCallback === "function"
+    ) {
+      coverPrewarmUsesIdleCallback = true;
+      coverPrewarmHandle = window.requestIdleCallback(run, { timeout: 300 });
+      return;
+    }
+
+    coverPrewarmUsesIdleCallback = false;
+    coverPrewarmHandle = setTimeout(run, 32);
+  }
+
+  function scheduleCoverPrewarm(mangasToPrewarm: Manga[]) {
+    coverPrewarmQueue = mangasToPrewarm;
+    clearCoverPrewarmSchedule();
+    scheduleNextCoverPrewarmBatch();
+  }
+
   function handleContentScroll() {
-    if (!contentEl) return;
+    if (!active || !contentEl) return;
     scheduleScrollTopPersistence(contentEl.scrollTop);
   }
 
   function scheduleScrollTopPersistence(scrollTop: number) {
+    sessionComicsScrollTop = scrollTop;
+    isScrolling = true;
     pendingScrollTop = scrollTop;
-    if (scrollPersistFrame !== null) return;
-    scrollPersistFrame = requestAnimationFrame(() => {
-      scrollPersistFrame = null;
+
+    if (scrollIdleTimer !== null) clearTimeout(scrollIdleTimer);
+    scrollIdleTimer = setTimeout(() => {
+      scrollIdleTimer = null;
+      isScrolling = false;
+    }, 160);
+
+    if (Math.abs(scrollTop - store.libraryScrollTop) < 24) return;
+    if (scrollPersistTimer !== null) clearTimeout(scrollPersistTimer);
+    scrollPersistTimer = setTimeout(() => {
+      scrollPersistTimer = null;
       setLibraryScrollTop(pendingScrollTop);
+    }, 180);
+  }
+
+  function restoreContentScrollTop(targetTop: number) {
+    if (targetTop <= 0) return;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (!active || !contentEl) return;
+        if (Math.abs(contentEl.scrollTop - targetTop) < 2) return;
+        if (typeof contentEl.scrollTo === "function") {
+          contentEl.scrollTo({ top: targetTop });
+        } else {
+          contentEl.scrollTop = targetTop;
+        }
+      });
     });
   }
 
-  function resetRenderedPage() {
-    renderVisible = mangas.length > 0 ? Math.min(safeRenderLimit, mangas.length) : 0;
+  function scrollToMangaIndex(mangaIndex: number) {
+    if (!contentEl || mangaIndex < 0) return;
+    const rowIndex = Math.floor(mangaIndex / Math.max(1, layout.effectiveColumns));
+    const targetTop = rowIndex * estimateLibraryVirtualRowSize(viewMode);
+    if (typeof contentEl.scrollTo === "function") {
+      contentEl.scrollTo({ top: targetTop });
+    } else {
+      contentEl.scrollTop = targetTop;
+    }
   }
 
-  function loadNextPage() {
-    if (!hasMoreCards) return;
-    renderVisible = Math.min(mangas.length, Math.max(renderVisible, safeRenderLimit) + safeRenderLimit);
+  function restoreCardIntoView(targetId: number, attempts = 0) {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (!active || !contentEl) return;
+        const card = contentEl.querySelector<HTMLElement>(`[data-card-id="${createComicLibraryCardId(targetId)}"]`);
+        if (card) {
+          card.scrollIntoView({ block: "center", inline: "nearest" });
+          pendingCardRestore = false;
+          return;
+        }
+
+        const mangaIndex = mangas.findIndex((entry) => entry.id === targetId);
+        if (mangaIndex >= 0 && attempts === 0) {
+          scrollToMangaIndex(mangaIndex);
+          restoreCardIntoView(targetId, attempts + 1);
+          return;
+        }
+
+        if (attempts < 6) {
+          restoreCardIntoView(targetId, attempts + 1);
+          return;
+        }
+
+        pendingCardRestore = false;
+      });
+    });
   }
 
-  function maybeLoadNextPage() {
-    if (!contentEl || !hasMoreCards) return;
-    const remainingScroll = contentEl.scrollHeight - contentEl.scrollTop - contentEl.clientHeight;
-    if (remainingScroll <= 900) loadNextPage();
+  function handleVisibleRangeChange(startIndex: number, endIndex: number) {
+    if (prewarmStartIndex === startIndex && prewarmEndIndex === endIndex) return;
+    prewarmStartIndex = startIndex;
+    prewarmEndIndex = endIndex;
   }
 
   function openCtx(cardId: string, event: MouseEvent) {
@@ -472,43 +670,47 @@
   }
 
   $effect(() => {
-    const total = mangas.length;
-    const pageSize = safeRenderLimit;
-
-    if (total === 0) {
-      if (renderVisible !== 0) renderVisible = 0;
+    if (!active) {
+      coverPrewarmQueue = [];
+      clearCoverPrewarmSchedule();
       return;
     }
 
-    if (renderVisible === 0) {
-      renderVisible = Math.min(pageSize, total);
-      return;
-    }
-
-    if (renderVisible > total) {
-      renderVisible = total;
-    }
-  });
-
-  $effect(() => {
     const profileId = store.runtimeResolvedLocalProfileId;
     const serverUrl = store.runtimeServerUrl;
     const scopeKey = `${profileId ?? ""}::${serverUrl ?? ""}::${coverCacheGeneration}`;
     if (lastCoverCacheScopeKey && lastCoverCacheScopeKey !== scopeKey) {
+      comicsCardVmCache.clear();
       cachedCoverUrls = new Map();
       coverCacheCheckedKeys = new Set();
       failedCoverKeys = new Set();
       coverRetryCounts = new Map();
       coverWakeAttemptedKeys = new Set();
       coverCacheInflight.clear();
-      coverCacheWritesInflight.clear();
+      pendingCachedCoverUrls.clear();
+      pendingCheckedCoverKeys.clear();
+      if (coverCacheFlushTimer !== null) {
+        clearTimeout(coverCacheFlushTimer);
+        coverCacheFlushTimer = null;
+      }
+      coverPrewarmQueue = [];
+      clearCoverPrewarmSchedule();
     }
     lastCoverCacheScopeKey = scopeKey;
-    for (const manga of renderedMangas) {
+    const visibleEnd = Math.max(prewarmEndIndex, Math.min(mangas.length, prewarmLimit));
+    const visiblePrewarmMangas = mangas.slice(prewarmStartIndex, visibleEnd);
+    const queuedForCache: Manga[] = [];
+    for (const manga of visiblePrewarmMangas) {
       const coverKey = getCoverStateKey(manga);
-      if (!manga.thumbnailUrl || cachedCoverUrls.has(coverKey) || coverCacheCheckedKeys.has(coverKey)) continue;
-      void loadCachedCoverForManga(manga);
+      if (
+        !manga.thumbnailUrl
+        || cachedCoverUrls.has(coverKey)
+        || coverCacheCheckedKeys.has(coverKey)
+        || (coverRetryCounts.get(coverKey) ?? 0) > 0
+      ) continue;
+      queuedForCache.push(manga);
     }
+    scheduleCoverPrewarm(queuedForCache);
   });
 
   $effect(() => {
@@ -549,23 +751,29 @@
   });
 
   $effect(() => {
-    viewKey;
+    const nextViewKey = viewKey;
     if (!viewStateReady) {
       viewStateReady = true;
-      resetRenderedPage();
+      previousViewKey = nextViewKey;
       return;
     }
+    if (nextViewKey === previousViewKey) return;
+    previousViewKey = nextViewKey;
 
     exitSelectMode();
-    resetRenderedPage();
-    setLibraryScrollTop(0);
-    if (typeof contentEl?.scrollTo === "function") contentEl.scrollTo({ top: 0 });
+    prewarmStartIndex = 0;
+    prewarmEndIndex = Math.min(mangas.length, prewarmLimit);
+    sessionComicsScrollTop = 0;
+    if (active) {
+      setLibraryScrollTop(0);
+      if (typeof contentEl?.scrollTo === "function") contentEl.scrollTo({ top: 0 });
+    }
   });
 
   $effect(() => {
     const activeMangaId = store.activeManga?.id ?? null;
 
-    if (activeMangaId !== null && contentEl) {
+    if (active && activeMangaId !== null && contentEl) {
       clearLongPress();
       setLibraryScrollTop(contentEl.scrollTop);
       setLibraryReturnToMangaId(activeMangaId);
@@ -580,30 +788,21 @@
   });
 
   $effect(() => {
-    if (!pendingScrollRestore || vm.loading || !contentEl || store.activeManga) return;
+    if (!active || !pendingScrollRestore || vm.loading || !contentEl || store.activeManga) return;
 
-    const targetTop = store.libraryScrollTop;
+    const targetTop = store.libraryScrollTop > 0 ? store.libraryScrollTop : sessionComicsScrollTop;
     if (targetTop <= 0) {
       pendingScrollRestore = false;
       return;
     }
 
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        if (!contentEl) return;
-        if (typeof contentEl.scrollTo === "function") {
-          contentEl.scrollTo({ top: targetTop });
-        } else {
-          contentEl.scrollTop = targetTop;
-        }
-        pendingScrollRestore = false;
-        pendingCardRestore = false;
-      });
-    });
+    restoreContentScrollTop(targetTop);
+    pendingScrollRestore = false;
+    pendingCardRestore = false;
   });
 
   $effect(() => {
-    if (!pendingCardRestore || vm.loading || !contentEl || store.activeManga) return;
+    if (!active || !pendingCardRestore || vm.loading || !contentEl || store.activeManga) return;
 
     const targetId = store.libraryReturnToMangaId;
     if (targetId === null) {
@@ -613,30 +812,38 @@
 
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        if (!contentEl) return;
-        const card = contentEl.querySelector<HTMLElement>(`[data-card-id="${createComicLibraryCardId(targetId)}"]`);
-        if (card) {
-          card.scrollIntoView({ block: "center", inline: "nearest" });
-          pendingCardRestore = false;
-        } else if (hasMoreCards) {
-          loadNextPage();
-        } else {
-          pendingCardRestore = false;
-        }
+        restoreCardIntoView(targetId);
       });
     });
   });
 
   $effect(() => {
-    const observer = loadMoreObserver;
-    const sentinel = loadMoreSentinel;
-    if (!observer) return;
-    observer.disconnect();
-    if (sentinel) observer.observe(sentinel);
+    if (!active || !contentEl) {
+      previousActive = false;
+      return;
+    }
+    contentWidth = contentEl.clientWidth;
+    if (previousActive) return;
+    previousActive = true;
+
+    const targetTop = sessionComicsScrollTop > 0 ? sessionComicsScrollTop : store.libraryScrollTop;
+    if (targetTop > 0) {
+      restoreContentScrollTop(targetTop);
+    } else if (store.libraryReturnToMangaId !== null) {
+      pendingCardRestore = true;
+    }
+  });
+
+  $effect(() => {
+    if (!active || vm.loading || !contentEl) return;
+    mangas.length;
+    scheduleGridVisiblePerfLog("grid visible");
   });
 
   onMount(() => {
     let resizeObserver: ResizeObserver | null = null;
+    let longTaskObserver: PerformanceObserver | null = null;
+    let longTaskCount = 0;
 
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape" && selectMode) exitSelectMode();
@@ -662,19 +869,35 @@
       }
       if (store.libraryScrollTop > 0) {
         pendingScrollRestore = true;
+      } else if (sessionComicsScrollTop > 0) {
+        pendingScrollRestore = true;
       }
       if (store.libraryScrollTop <= 0 && store.libraryReturnToMangaId !== null) {
         pendingCardRestore = true;
       }
 
-      if (typeof IntersectionObserver !== "undefined") {
-        loadMoreObserver = new IntersectionObserver((entries) => {
-          if (entries.some((entry) => entry.isIntersecting)) {
-            loadNextPage();
-          }
-        }, { root: contentEl, rootMargin: "900px 0px" });
-        if (loadMoreSentinel) loadMoreObserver.observe(loadMoreSentinel);
+      scheduleGridVisiblePerfLog("mount");
+    });
+
+    if (
+      ENABLE_LIBRARY_PERF_LOGS
+      && typeof PerformanceObserver !== "undefined"
+    ) {
+      try {
+        longTaskObserver = new PerformanceObserver((list) => {
+          longTaskCount += list.getEntries().length;
+          logLibraryPerf("Comics long tasks", { count: longTaskCount });
+        });
+        longTaskObserver.observe({ entryTypes: ["longtask"] });
+      } catch {
+        longTaskObserver = null;
       }
+    }
+
+    logLibraryPerf("Comics mounted", {
+      cards: mangas.length,
+      active,
+      cacheGeneration: coverCacheGeneration,
     });
 
     window.addEventListener("keydown", onKeyDown);
@@ -686,11 +909,30 @@
       for (const timer of coverRecoveryTimers.values()) clearTimeout(timer);
       coverRecoveryTimers.clear();
       resizeObserver?.disconnect();
-      loadMoreObserver?.disconnect();
-      if (scrollPersistFrame !== null) {
-        cancelAnimationFrame(scrollPersistFrame);
-        scrollPersistFrame = null;
+      if (contentEl) sessionComicsScrollTop = contentEl.scrollTop;
+      coverPrewarmQueue = [];
+      pendingCachedCoverUrls.clear();
+      pendingCheckedCoverKeys.clear();
+      if (coverCacheFlushTimer !== null) {
+        clearTimeout(coverCacheFlushTimer);
+        coverCacheFlushTimer = null;
       }
+      clearCoverPrewarmSchedule();
+      if (scrollPersistTimer !== null) {
+        clearTimeout(scrollPersistTimer);
+        scrollPersistTimer = null;
+        setLibraryScrollTop(pendingScrollTop);
+      }
+      if (scrollIdleTimer !== null) {
+        clearTimeout(scrollIdleTimer);
+        scrollIdleTimer = null;
+      }
+      longTaskObserver?.disconnect();
+      logLibraryPerf("Comics unmounted", {
+        cards: mangas.length,
+        longTasks: longTaskCount,
+        lifetimeMs: Number(((typeof performance !== "undefined" ? performance.now() : Date.now()) - mountStartedAt).toFixed(2)),
+      });
       window.removeEventListener("keydown", onKeyDown);
     };
   });
@@ -746,6 +988,7 @@
 
 <div
   class="content"
+  class:library-scroll-active={isScrolling}
   role="presentation"
   bind:this={contentEl}
   onscroll={handleContentScroll}
@@ -767,28 +1010,46 @@
   {:else if mangas.length === 0}
     <div class="center">{vm.emptyMessage}</div>
   {:else}
-    <LibraryCardGrid
-      items={visibleCards}
-      {viewMode}
-      effectiveColumns={layout.effectiveColumns}
-      {showProgress}
-      {showOutline}
-      showSelectableState={selectMode}
-      onOpen={onOpenCard}
-      onContextMenu={openCtx}
-      onPointerDown={onCardPointerDown}
-      onPointerUp={() => clearLongPress()}
-      onPointerLeave={() => clearLongPress()}
-      onCoverLoad={handleCoverLoad}
-      onCoverError={handleCoverError}
-    />
-    {#if hasMoreCards}
-      <div class="load-more-row" bind:this={loadMoreSentinel}>
-        <button type="button" class="load-more-btn" onclick={loadNextPage}>
-          Load {Math.min(remainingCards, safeRenderLimit)} more
-          <span>{remainingCards} remaining</span>
-        </button>
-      </div>
+    {#if mangas.length > lazyVirtualizeAfter}
+      <VirtualLibraryCardGrid
+        itemCount={mangas.length}
+        getItem={getComicsCardAt}
+        getItemId={getComicsCardIdAt}
+        {viewMode}
+        effectiveColumns={layout.effectiveColumns}
+        scrollElement={contentEl}
+        {showProgress}
+        {showOutline}
+        showSelectableState={selectMode}
+        onOpen={onOpenCard}
+        onContextMenu={openCtx}
+        onPointerDown={onCardPointerDown}
+        onPointerUp={() => clearLongPress()}
+        onPointerLeave={() => clearLongPress()}
+        onCoverLoad={handleCoverLoad}
+        onCoverError={handleCoverError}
+        onVisibleRangeChange={handleVisibleRangeChange}
+        virtualizeAfter={lazyVirtualizeAfter}
+      />
+    {:else}
+      <VirtualLibraryCardGrid
+        items={visibleCards}
+        {viewMode}
+        effectiveColumns={layout.effectiveColumns}
+        scrollElement={contentEl}
+        {showProgress}
+        {showOutline}
+        showSelectableState={selectMode}
+        onOpen={onOpenCard}
+        onContextMenu={openCtx}
+        onPointerDown={onCardPointerDown}
+        onPointerUp={() => clearLongPress()}
+        onPointerLeave={() => clearLongPress()}
+        onCoverLoad={handleCoverLoad}
+        onCoverError={handleCoverError}
+        onVisibleRangeChange={handleVisibleRangeChange}
+        virtualizeAfter={lazyVirtualizeAfter}
+      />
     {/if}
   {/if}
 </div>
@@ -816,41 +1077,6 @@
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
     gap: var(--library-grid-column-gap, var(--sp-4));
-  }
-
-  .load-more-row {
-    display: flex;
-    justify-content: center;
-    padding: var(--sp-6) 0 var(--sp-2);
-  }
-
-  .load-more-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--sp-2);
-    min-height: 38px;
-    padding: 0 var(--sp-4);
-    border-radius: 999px;
-    border: 1px solid var(--border-strong);
-    background: color-mix(in srgb, var(--bg-raised) 80%, transparent);
-    color: var(--text-secondary);
-    font-family: var(--font-ui);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-semibold);
-    letter-spacing: var(--tracking-wide);
-    cursor: pointer;
-    transition: transform var(--t-base), border-color var(--t-base), color var(--t-base), background var(--t-base);
-  }
-
-  .load-more-btn:hover {
-    transform: translateY(-1px);
-    border-color: var(--accent-dim);
-    background: color-mix(in srgb, var(--accent-muted) 42%, var(--bg-raised));
-    color: var(--text-primary);
-  }
-
-  .load-more-btn span {
-    color: var(--text-faint);
   }
 
   .card-skeleton {

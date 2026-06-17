@@ -85,4 +85,42 @@ describe("reconcileMangaCountsFromChapters", () => {
     expect(result.mangas[0].chapterCount).toBe(1);
     expect(result.mangas[1].chapterCount).toBe(0);
   });
+
+  it("does not downgrade counts when a source returns a partial chapter list", async () => {
+    const result = await reconcileMangaCountsFromChapters(
+      [
+        manga({ id: 1, chapterCount: 5, unreadCount: 3, downloadCount: 1 }),
+      ],
+      async () => [
+        chapter({ id: 1, mangaId: 1, isRead: false }),
+        chapter({ id: 2, mangaId: 1, isRead: true }),
+      ],
+    );
+
+    expect(result.changedIds).toEqual([]);
+    expect(result.mangas[0]).toMatchObject({
+      chapterCount: 5,
+      unreadCount: 3,
+      downloadCount: 1,
+    });
+  });
+
+  it("updates unread counts when the chapter total is stable", async () => {
+    const result = await reconcileMangaCountsFromChapters(
+      [
+        manga({ id: 1, chapterCount: 2, unreadCount: 2, downloadCount: 0 }),
+      ],
+      async () => [
+        chapter({ id: 1, mangaId: 1, isRead: true, isDownloaded: true }),
+        chapter({ id: 2, mangaId: 1, isRead: false }),
+      ],
+    );
+
+    expect(result.changedIds).toEqual([1]);
+    expect(result.mangas[0]).toMatchObject({
+      chapterCount: 2,
+      unreadCount: 1,
+      downloadCount: 1,
+    });
+  });
 });

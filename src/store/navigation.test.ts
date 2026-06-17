@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { openBookReader, openHomeDashboard, openHomeHistory, openMangaDetail, openReader, openSearchSources, setNavPage, setSettingsOpen, store } from "./state.svelte";
+import { closeActivityPanel, openActivityPanel, openBookReader, openHomeDashboard, openHomeHistory, openMangaDetail, openReader, openSearchSources, setNavPage, setSettingsOpen, store } from "./state.svelte";
 
 describe("navigation subscriptions", () => {
   afterEach(() => {
@@ -14,6 +14,7 @@ describe("navigation subscriptions", () => {
     store.previewManga = null;
     store.pageUrls = [];
     store.pageNumber = 1;
+    closeActivityPanel();
   });
 
   test("emits when navPage changes", () => {
@@ -166,10 +167,54 @@ describe("navigation subscriptions", () => {
     expect(store.activeManga).toBeNull();
   });
 
+  test("openHomeHistory remembers the page that opened activity", () => {
+    setNavPage("library");
+
+    openHomeHistory(store.navPage);
+
+    expect(store.navPage).toBe("home");
+    expect(store.homePanelHint).toBe("history");
+    expect(store.homePanelReturnPage).toBe("library");
+
+    setNavPage(store.homePanelReturnPage!);
+
+    expect(store.navPage).toBe("library");
+    expect(store.homePanelHint).toBeNull();
+    expect(store.homePanelReturnPage).toBeNull();
+  });
+
+  test("activity panel opens over the current tab and closes without navigation", () => {
+    setNavPage("downloads");
+
+    openActivityPanel(store.navPage);
+
+    expect(store.navPage).toBe("downloads");
+    expect(store.activityPanelOpen).toBe(true);
+    expect(store.activityPanelReturnPage).toBe("downloads");
+
+    closeActivityPanel();
+
+    expect(store.navPage).toBe("downloads");
+    expect(store.activityPanelOpen).toBe(false);
+    expect(store.activityPanelReturnPage).toBeNull();
+  });
+
+  test("primary navigation closes the activity panel", () => {
+    setNavPage("library");
+    openActivityPanel(store.navPage);
+
+    setNavPage("search");
+
+    expect(store.navPage).toBe("search");
+    expect(store.activityPanelOpen).toBe(false);
+    expect(store.activityPanelReturnPage).toBeNull();
+  });
+
   test("opening settings clears transient detail state and returns to the last page", () => {
     setNavPage("library");
     store.activeManga = { id: 42, title: "Test", thumbnailUrl: "" } as never;
     store.activeSource = { id: "source-1" } as never;
+    openActivityPanel(store.navPage);
 
     setSettingsOpen(true);
 
@@ -177,6 +222,8 @@ describe("navigation subscriptions", () => {
     expect(store.settingsOpen).toBe(true);
     expect(store.activeManga).toBeNull();
     expect(store.activeSource).toBeNull();
+    expect(store.activityPanelOpen).toBe(false);
+    expect(store.activityPanelReturnPage).toBeNull();
 
     setSettingsOpen(false);
 

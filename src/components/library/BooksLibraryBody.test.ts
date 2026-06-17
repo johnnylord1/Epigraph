@@ -96,4 +96,65 @@ describe("BooksLibraryBody", () => {
     await fireEvent.click(screen.getByRole("button", { name: /Chrysalis/i }));
     expect(store.activeBookId).toBe("book-1");
   });
+
+  test("renders large book shelves through the virtual grid lazy resolver", async () => {
+    const { default: BooksLibraryBody } = await import("./BooksLibraryBody.svelte");
+
+    const books = Array.from({ length: 240 }, (_, index) => ({
+      id: `book-${index}`,
+      title: `Book ${index}`,
+      author: null,
+      description: null,
+      coverPath: null,
+      subtype: "epub",
+      createdAt: index,
+      updatedAt: index,
+      importPath: `C:/books/book-${index}.epub`,
+      assetPath: `C:/books/library/book-${index}.epub`,
+      sectionsSummary: [],
+      sectionCount: 1,
+      tocCount: 1,
+      spineCount: 1,
+    })) as BookEntry[];
+
+    const vm: BooksSectionVM = {
+      kind: "books",
+      sectionTabs: [],
+      collections: [],
+      toolbar: {
+        searchValue: "",
+        searchPlaceholder: "Search books",
+        sortMode: "recentlyAdded",
+        sortDir: "desc",
+        sortOptions: [],
+        filterValue: "ALL",
+        filterOptions: [],
+      },
+      loading: false,
+      error: null,
+      emptyMessage: "Empty",
+      cards: [],
+      dragDropEnabled: false,
+      importing: false,
+      dropActive: false,
+    };
+
+    const { container } = render(BooksLibraryBody, {
+      props: {
+        vm,
+        books,
+        totalBooks: books.length,
+        viewKey: "large",
+        viewMode: "grid",
+        preferredColumns: "auto",
+        showProgress: true,
+        showOutline: true,
+      },
+    });
+
+    expect(container.querySelector(".virtual-grid")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Book 0" })).toBeTruthy();
+    await fireEvent.click(screen.getByRole("button", { name: "Book 0" }));
+    expect(store.activeBookId).toBe("book-0");
+  });
 });

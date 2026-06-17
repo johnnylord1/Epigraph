@@ -81,6 +81,9 @@ export interface LibrarySourceMetricBannerVM {
   downloadedCount: number;
   newCount: number;
   sourceName?: string | null;
+  countryCode?: string | null;
+  flagText?: string;
+  hasFlag?: boolean;
 }
 
 export interface LibraryCardVM {
@@ -96,6 +99,10 @@ export interface LibraryCardVM {
   selectable: boolean;
   selected: boolean;
   disabled?: boolean;
+  primaryGridBadge?: LibraryCardBadgeVM | null;
+  listTopLeftBadges?: LibraryCardBadgeVM[];
+  listTopRightBadges?: LibraryCardBadgeVM[];
+  listBottomLeftBadges?: LibraryCardBadgeVM[];
 }
 
 export interface LibrarySectionVM {

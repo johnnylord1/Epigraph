@@ -5,6 +5,7 @@
   import type { BackupLaunchIntent } from "../../lib/backup/backupRollout";
   import Sidebar from "./Sidebar.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
+  import ActivityOverlay from "./ActivityOverlay.svelte";
   import { peekPersistedBookEntry } from "../../lib/books/libraryState";
   import type { NavPage } from "../../store/state.svelte";
 
@@ -51,6 +52,7 @@
   const detailComponentPromises = new Map<DetailKey, Promise<any>>();
   const pageComponentCache = new Map<PageKey, any>();
   const detailComponentCache = new Map<DetailKey, any>();
+  let libraryComponent = $state<any>(null);
   let pageComponent = $state<any>(null);
   let pageKey = $state<PageKey | null>(null);
   let pageLoadedKey = $state<PageKey | null>(null);
@@ -82,6 +84,7 @@
 
     const cachedComponent = pageComponentCache.get(nextKey);
     if (cachedComponent) {
+      if (nextKey === "library") libraryComponent = cachedComponent;
       pageComponent = cachedComponent;
       pageLoadedKey = nextKey;
       return;
@@ -94,6 +97,7 @@
       const component = await getCachedComponent(pageComponentPromises, nextKey, pageLoaders[nextKey]);
       if (requestId !== pageLoadRequestId) return;
       pageComponentCache.set(nextKey, component);
+      if (nextKey === "library") libraryComponent = component;
       pageComponent = component;
       pageLoadedKey = nextKey;
     } catch (error) {
@@ -166,7 +170,11 @@
 
   onMount(() => {
     queueMicrotask(() => {
-      void getCachedComponent(pageComponentPromises, "library", pageLoaders.library);
+      void getCachedComponent(pageComponentPromises, "library", pageLoaders.library)
+        .then((component) => {
+          pageComponentCache.set("library", component);
+          libraryComponent = component;
+        });
       void getCachedComponent(pageComponentPromises, "home", pageLoaders.home);
     });
   });
@@ -175,7 +183,23 @@
 <div class="root aethon-app-shell">
   <Sidebar />
   <div class="main" class:main--settings={navPage === "settings"}>
-    {#key navPage}
+    {#if libraryComponent}
+      {@const LibraryPage = libraryComponent}
+      <div
+        class="page-keepalive"
+        class:is-active={navPage === "library"}
+        aria-hidden={navPage !== "library"}
+        inert={navPage !== "library"}
+      >
+        <LibraryPage
+          {onOpenThemeEditor}
+          {backupAuditPlan}
+          {backupRestoreLaunchIntent}
+        />
+      </div>
+    {/if}
+
+    {#if navPage === "library" && !libraryComponent}
       {#if pageError}
         <div class="page-state">
           <NocturneState
@@ -213,7 +237,47 @@
           />
         </div>
       {/if}
-    {/key}
+    {:else if navPage !== "library"}
+      {#key navPage}
+        {#if pageError}
+          <div class="page-state">
+            <NocturneState
+              layout="center"
+              tone="danger"
+              icon="warning"
+              eyebrow="Page status"
+              title="Page failed to load"
+              body="Aethon couldn't open this page."
+              detail={pageError}
+              actions={[{
+                label: "Retry page",
+                kind: "primary",
+                icon: "retry",
+                onClick: () => void loadPage(navPage),
+              }]}
+            />
+          </div>
+        {:else if pageComponent && pageLoadedKey === navPage}
+          {@const Page = pageComponent}
+          <Page
+            {onOpenThemeEditor}
+            {backupAuditPlan}
+            {backupRestoreLaunchIntent}
+          />
+        {:else}
+          <div class="page-state">
+            <NocturneState
+              layout="center"
+              tone="info"
+              icon="info"
+              eyebrow="Loading"
+              title="Opening page"
+              body="Aethon is loading this surface."
+            />
+          </div>
+        {/if}
+      {/key}
+    {/if}
 
     {#if navPage !== "settings" && navPage !== "downloads" && !readerActive}
       {#if detailComponent && ((detailLoadedKey === "series" && store.activeManga) || (detailLoadedKey === "book" && hasActiveBook))}
@@ -252,6 +316,10 @@
         </div>
       {/if}
     {/if}
+
+    {#if store.activityPanelOpen && !readerActive}
+      <ActivityOverlay />
+    {/if}
   </div>
 </div>
 
@@ -280,6 +348,25 @@
   .main--settings {
     background: var(--n-gradient-bg), #131313;
     isolation: isolate;
+  }
+
+  .page-keepalive {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    position: relative;
+    z-index: 0;
+  }
+
+  .page-keepalive:not(.is-active) {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+    overflow: hidden;
+    contain: layout paint style;
   }
 
   .detail-layer {

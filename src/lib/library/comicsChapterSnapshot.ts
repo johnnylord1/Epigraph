@@ -1,4 +1,9 @@
 import { librarySnapshotScopeKey, type LibrarySnapshotScope } from "./snapshot";
+import {
+  deriveMangaCountsFromChapters,
+  isMangaChapterCountRegression,
+  type MangaChapterCounts,
+} from "./chapterCounts";
 import type { Chapter, Manga } from "../types";
 
 const COMICS_CHAPTER_SNAPSHOT_KEY = "aethon-comics-chapter-snapshots";
@@ -12,10 +17,10 @@ interface StorageLike {
 
 export interface PersistedComicsChapterEntry {
   id: number;
-  name: string;
-  sourceOrder: number | null;
-  uploadDate: string | null;
-  seenAt: number;
+  name?: string;
+  sourceOrder?: number | null;
+  uploadDate?: string | null;
+  seenAt?: number;
 }
 
 export interface PersistedComicsMangaChapterSnapshot {
@@ -83,13 +88,15 @@ function normalizeChapterEntry(value: unknown): PersistedComicsChapterEntry | nu
   const id = normalizeNumber(record.id);
   const seenAt = normalizeNumber(record.seenAt);
   if (id === null) return null;
-  return {
-    id,
-    name: normalizeString(record.name) ?? "",
-    sourceOrder: normalizeNumber(record.sourceOrder),
-    uploadDate: normalizeString(record.uploadDate),
-    seenAt: seenAt ?? Date.now(),
-  };
+  const entry: PersistedComicsChapterEntry = { id };
+  const name = normalizeString(record.name);
+  const sourceOrder = normalizeNumber(record.sourceOrder);
+  const uploadDate = normalizeString(record.uploadDate);
+  if (name) entry.name = name;
+  if (sourceOrder !== null) entry.sourceOrder = sourceOrder;
+  if (uploadDate) entry.uploadDate = uploadDate;
+  if (seenAt !== null) entry.seenAt = seenAt;
+  return entry;
 }
 
 function normalizeMangaSnapshot(value: unknown): PersistedComicsMangaChapterSnapshot | null {
@@ -147,9 +154,43 @@ function readSnapshotMap(storage = storageOrNull()): Record<string, PersistedCom
   }
 }
 
+function compactChapterEntryForStorage(entry: PersistedComicsChapterEntry): PersistedComicsChapterEntry {
+  if (Number.isFinite(entry.id)) return { id: entry.id };
+  const compacted: PersistedComicsChapterEntry = { id: entry.id };
+  if (entry.name) compacted.name = entry.name;
+  if (entry.sourceOrder !== undefined) compacted.sourceOrder = entry.sourceOrder;
+  if (entry.uploadDate) compacted.uploadDate = entry.uploadDate;
+  return compacted;
+}
+
+function compactSnapshotForStorage(snapshot: PersistedComicsChapterSnapshot): PersistedComicsChapterSnapshot {
+  return {
+    ...snapshot,
+    mangas: Object.fromEntries(
+      Object.entries(snapshot.mangas).map(([mangaId, mangaSnapshot]) => [
+        mangaId,
+        {
+          ...mangaSnapshot,
+          chapters: mangaSnapshot.chapters.map(compactChapterEntryForStorage),
+        },
+      ]),
+    ),
+  };
+}
+
+function compactSnapshotMapForStorage(next: Record<string, PersistedComicsChapterSnapshot>) {
+  return Object.fromEntries(
+    Object.entries(next).map(([scopeKey, snapshot]) => [scopeKey, compactSnapshotForStorage(snapshot)]),
+  );
+}
+
 function writeSnapshotMap(next: Record<string, PersistedComicsChapterSnapshot>, storage = storageOrNull()) {
   if (!storage) return;
-  storage.setItem(COMICS_CHAPTER_SNAPSHOT_KEY, JSON.stringify(next));
+  try {
+    storage.setItem(COMICS_CHAPTER_SNAPSHOT_KEY, JSON.stringify(compactSnapshotMapForStorage(next)));
+  } catch (error) {
+    console.warn("Could not persist Comics chapter snapshots; continuing without updating the local snapshot cache.", error);
+  }
 }
 
 export function loadComicsChapterSnapshot(scope: LibrarySnapshotScope = {}): PersistedComicsChapterSnapshot | null {
@@ -178,7 +219,7 @@ export function saveComicsChapterSnapshot(
 function chapterKey(entry: PersistedComicsChapterEntry) {
   if (Number.isFinite(entry.id)) return `id:${entry.id}`;
   const order = entry.sourceOrder ?? "";
-  const name = entry.name.trim().toLowerCase().replace(/\s+/g, " ");
+  const name = (entry.name ?? "").trim().toLowerCase().replace(/\s+/g, " ");
   const uploadDate = entry.uploadDate ?? "";
   return `fallback:${order}:${name}:${uploadDate}`;
 }
@@ -204,15 +245,8 @@ function toChapterEntry(chapter: Chapter, seenAt: number): PersistedComicsChapte
   };
 }
 
-function deriveCounts(chapters: Chapter[]) {
-  return {
-    chapterCount: chapters.length,
-    unreadCount: chapters.filter((chapter) => !chapter.isRead).length,
-    downloadCount: chapters.filter((chapter) => chapter.isDownloaded).length,
-  };
-}
-
-function countsChanged(manga: Manga, counts: ReturnType<typeof deriveCounts>) {
+function countsChanged(manga: Manga, counts: MangaChapterCounts) {
+  if (isMangaChapterCountRegression(manga, counts)) return false;
   const chapterCount = Number(manga.chapterCount ?? 0);
   const unreadCount = Number(manga.unreadCount ?? 0);
   const downloadCount = Number(manga.downloadCount ?? 0);
@@ -274,7 +308,7 @@ export async function reconcileComicsChapterSnapshot(
     options.afterMangas,
     options.candidateMangaIds,
   ).filter((mangaId) => afterById.has(mangaId));
-  const patches = new Map<number, ReturnType<typeof deriveCounts>>();
+  const patches = new Map<number, MangaChapterCounts>();
   const notifications: ComicsUpdateNotificationInput[] = [];
   const failedIds: number[] = [];
   const touchedIds = new Set<number>();
@@ -305,7 +339,8 @@ export async function reconcileComicsChapterSnapshot(
         .filter((entry): entry is PersistedComicsChapterEntry => Boolean(entry));
       const previous = nextSnapshotMap[String(mangaId)] ?? null;
       const newChapters = diffComicsChapterEntries(previous?.chapters, entries);
-      const counts = deriveCounts(chapters);
+      const counts = deriveMangaCountsFromChapters(chapters);
+      if (isMangaChapterCountRegression(manga, counts)) return;
       if (countsChanged(manga, counts)) patches.set(mangaId, counts);
       nextSnapshotMap[String(mangaId)] = {
         mangaId,

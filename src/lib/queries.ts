@@ -7,6 +7,7 @@ export const GET_LIBRARY = `
         id
         title
         thumbnailUrl
+        realUrl
         inLibrary
         downloadCount
         unreadCount
@@ -19,6 +20,16 @@ export const GET_LIBRARY = `
           lang
           displayName
         }
+      }
+    }
+  }
+`;
+
+export const GET_LIBRARY_CHAPTER_COUNTS = `
+  query GetLibraryChapterCounts {
+    mangas(condition: { inLibrary: true }) {
+      nodes {
+        id
         chapters {
           totalCount
         }

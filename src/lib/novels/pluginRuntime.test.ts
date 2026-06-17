@@ -533,4 +533,88 @@ exports.default = new IllusiaLikePlugin();
     expect(details.name).toBe("\u00caxodo");
     expect(details.chapters[0]?.title).toBe("O homem mais confi\u00e1vel da Lua");
   });
+
+  it("uses FlareSolverr for LNReader source challenge responses when enabled", async () => {
+    tauriFetchMock.mockReset();
+    vi.stubGlobal("localStorage", {
+      getItem: vi.fn(() => JSON.stringify({
+        settings: {
+          flareSolverrEnabled: true,
+          flareSolverrUrl: "http://localhost:8191",
+          flareSolverrTimeout: 60,
+          flareSolverrSessionName: "moku",
+          flareSolverrSessionTtl: 15,
+        },
+      })),
+    });
+
+    tauriFetchMock
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        statusText: "Forbidden",
+        headers: new Headers({ server: "cloudflare", "content-type": "text/html; charset=utf-8" }),
+        text: async () => "<html><title>Just a moment...</title><body>Cloudflare challenge</body></html>",
+        arrayBuffer: async () => new TextEncoder().encode("<html>Cloudflare challenge</html>").buffer,
+        json: async () => ({}),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => ({
+          status: "ok",
+          solution: {
+            status: 200,
+            response: JSON.stringify({
+              data: {
+                book: {
+                  name: "Recovered Novel",
+                  image: "/covers/recovered.webp",
+                  authorize: { description: "Recovered.", name: "Author" },
+                  status: "updating",
+                },
+                tags: { tags_name: [] },
+                chapters: [{ title: "Chapter 1", index: 1, slug: "chapter-1" }],
+              },
+            }),
+            headers: { "content-type": "application/json" },
+          },
+        }),
+        text: async () => "",
+      });
+
+    const details = await readNovelPluginDetails({
+      pluginId: "hotnovelpub",
+      artifactUrl: "https://example.com/hotnovelpub.js",
+      pluginSource: `
+Object.defineProperty(exports, "__esModule", { value: true });
+const { fetchApi } = require("@libs/fetch");
+class HotNovelPubLikePlugin {
+  constructor() {
+    this.id = "hotnovelpub";
+    this.name = "HotNovelPub";
+    this.apiSite = "https://api.hotnovelpub.com";
+  }
+  async parseNovel(path) {
+    const response = await fetchApi(this.apiSite + "/book/" + path).then((result) => result.json());
+    return {
+      path,
+      name: response.data.book.name,
+      author: response.data.book.authorize.name,
+      summary: response.data.book.authorize.description,
+      chapters: response.data.chapters.map((chapter) => ({ name: chapter.title, path: chapter.slug })),
+    };
+  }
+}
+exports.default = new HotNovelPubLikePlugin();
+`,
+      novelPath: "shadow-slave",
+    });
+
+    expect(details.name).toBe("Recovered Novel");
+    expect(tauriFetchMock).toHaveBeenCalledWith("http://localhost:8191/v1", expect.objectContaining({
+      method: "POST",
+    }));
+  });
 });

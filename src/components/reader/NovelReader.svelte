@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, tick, untrack } from "svelte";
   import { ArrowLeft, ArrowRight, BookmarkSimple, BookOpen, CaretLeft, CaretRight, CircleNotch, SlidersHorizontal, X } from "phosphor-svelte";
-  import { addToast, bumpContentSetupVersion, closeNovelReader, setActiveNovelDetail, store, updateSettings } from "../../store/state.svelte";
+  import { addToast, bumpContentSetupVersion, closeNovelReader, setActiveNovelDetail, setSettingsOpen, store, updateSettings } from "../../store/state.svelte";
   import {
     buildNovelDetailRecordFromLibrary,
     getNovelBookmarkEntries,
@@ -23,6 +23,8 @@
   import ReaderHud from "./ReaderHud.svelte";
   import TtsControls from "./TtsControls.svelte";
   import { createDomTtsTextProvider, createTtsController } from "../../lib/reader/tts";
+  import { startLocalFlareSolverrAndEnable } from "../../lib/flaresolverr";
+  import { isSourceChallengeMessage } from "../../lib/sourceAccess";
 
   let loading = $state(false);
   let error = $state<string | null>(null);
@@ -100,6 +102,33 @@
       surface: store.settings.proseReaderBackgroundColor ?? "#131316",
     };
   });
+  const readerErrorIsSourceChallenge = $derived(error ? isSourceChallengeMessage(error) : false);
+  const readerErrorBody = $derived.by(() => {
+    if (!error) return "";
+    if (!readerErrorIsSourceChallenge) return error;
+    return store.settings.flareSolverrEnabled
+      ? "This LNReader source is still blocked by site protection. Check FlareSolverr and retry the chapter."
+      : "This LNReader source needs FlareSolverr for Cloudflare or anti-bot protection.";
+  });
+
+  async function startFlareSolverrForChapter() {
+    try {
+      await startLocalFlareSolverrAndEnable();
+      addToast({
+        kind: "success",
+        title: "FlareSolverr enabled",
+        body: "Retry the chapter after the local service is ready.",
+      });
+    } catch (startError) {
+      addToast({
+        kind: "error",
+        title: "FlareSolverr unavailable",
+        body: startError instanceof Error ? startError.message : "Open Settings to configure FlareSolverr.",
+        duration: 7000,
+        action: { label: "Open settings", run: () => setSettingsOpen(true) },
+      });
+    }
+  }
 
   function cycleProseTheme() {
     const themes = ["nocturne", "dark", "sepia", "light", "oled", "slate", "forest", "nord", "warm"] as const;
@@ -551,8 +580,22 @@
             icon="warning"
             eyebrow="Reader"
             title="Could not load this chapter"
-            body={error}
-            actions={[{
+            body={readerErrorBody}
+            detail={readerErrorIsSourceChallenge ? error : ""}
+            actions={readerErrorIsSourceChallenge ? [
+              {
+                label: store.settings.flareSolverrEnabled ? "Open settings" : "Start FlareSolverr",
+                kind: "primary",
+                icon: "plug",
+                onClick: store.settings.flareSolverrEnabled ? () => setSettingsOpen(true) : startFlareSolverrForChapter,
+              },
+              {
+                label: "Retry chapter",
+                kind: "secondary",
+                icon: "retry",
+                onClick: loadChapter,
+              },
+            ] : [{
               label: "Retry chapter",
               kind: "primary",
               icon: "retry",

@@ -72,6 +72,7 @@
   import splashMark from "../../assets/aethon-splash-mark.png";
   import desktopIcon from "../../assets/aethon-desktop-icon.png";
   import AppTopbar from "../layout/AppTopbar.svelte";
+  import ActivityButton from "../layout/ActivityButton.svelte";
   import WindowControlsInline from "../layout/WindowControlsInline.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
   import SyncdConnectionPanel from "./SyncdConnectionPanel.svelte";
@@ -3292,6 +3293,7 @@
       <span class="settings-search-live" aria-live="polite">{settingsSearchAnnouncement}</span>
     {/snippet}
     {#snippet right()}
+      <ActivityButton />
       <button class="n-icon-btn" aria-label="Open about settings" type="button" onclick={() => openTab("about")}>
         <Info size={16} weight="light" />
       </button>

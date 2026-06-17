@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { LibraryCardVM } from "../../lib/library/contracts";
 import LibraryCardGrid from "./LibraryCardGrid.svelte";
+import VirtualLibraryCardGrid from "./VirtualLibraryCardGrid.svelte";
 
 describe("LibraryCardGrid", () => {
   afterEach(() => cleanup());
@@ -88,5 +89,58 @@ describe("LibraryCardGrid", () => {
     const grid = container.querySelector(".grid");
     expect(grid?.getAttribute("style")).toContain("--library-columns: 4");
     expect(grid?.getAttribute("style")).not.toContain("--library-card-max");
+  });
+
+  test("updates the virtual window from the external scroll container after remount-like scroll changes", async () => {
+    const scroller = document.createElement("div");
+    let scrollTop = 0;
+    Object.defineProperty(scroller, "clientHeight", { value: 600, configurable: true });
+    Object.defineProperty(scroller, "scrollTop", {
+      get: () => scrollTop,
+      set: (value) => {
+        scrollTop = Number(value);
+      },
+      configurable: true,
+    });
+    document.body.appendChild(scroller);
+
+    const items: LibraryCardVM[] = Array.from({ length: 240 }, (_, index) => ({
+      id: `book:${index}`,
+      title: `Book ${index}`,
+      subtitle: undefined,
+      coverSrc: null,
+      coverFit: "cover",
+      badges: [],
+      metaChips: [],
+      progress: null,
+      selectable: false,
+      selected: false,
+      disabled: false,
+    }));
+
+    try {
+      render(VirtualLibraryCardGrid, {
+        props: {
+          items,
+          scrollElement: scroller,
+          viewMode: "grid",
+          effectiveColumns: 4,
+          virtualizeAfter: 20,
+        },
+      });
+
+      expect(await screen.findByRole("button", { name: "Book 0" })).toBeTruthy();
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+      scroller.scrollTop = 5_520;
+      await fireEvent.scroll(scroller);
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+      expect(await screen.findByRole("button", { name: "Book 80" })).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Book 0" })).toBeNull();
+    } finally {
+      scroller.remove();
+    }
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildNovelLibraryCards } from "./libraryShelf";
+import { buildNovelLibraryCards, buildNovelShelf, buildNovelShelfCard } from "./libraryShelf";
 import type { PersistedNovelLibraryEntry } from "./domain";
 import type { HardcoverNovelTrackRecord } from "./hardcover";
 
@@ -112,5 +112,39 @@ describe("buildNovelLibraryCards", () => {
 
     expect(completedCard?.metaChips).toEqual(["Completed"]);
     expect(finishedCard?.metaChips).toEqual(["Finished"]);
+  });
+
+  it("builds the same card through the lazy shelf helper", () => {
+    const entry = novel();
+    const eager = buildNovelLibraryCards({
+      entries: [entry],
+      chapters: [],
+      progress: [{
+        novelId: entry.id,
+        progressPercent: 1,
+        updatedAt: 1,
+      }],
+      search: "",
+      sortMode: "az",
+      sortDir: "asc",
+      statusFilter: "all",
+      hardcoverRecords: [hardcover({ sourceNovelId: entry.id, workStatus: "Completed" })],
+    });
+    const lazy = buildNovelShelf({
+      entries: [entry],
+      chapters: [],
+      progress: [{
+        novelId: entry.id,
+        progressPercent: 1,
+        updatedAt: 1,
+      }],
+      search: "",
+      sortMode: "az",
+      sortDir: "asc",
+      statusFilter: "all",
+      hardcoverRecords: [hardcover({ sourceNovelId: entry.id, workStatus: "Completed" })],
+    });
+
+    expect(buildNovelShelfCard(lazy.entries[0]!, lazy.cardContext)).toEqual(eager.cards[0]);
   });
 });

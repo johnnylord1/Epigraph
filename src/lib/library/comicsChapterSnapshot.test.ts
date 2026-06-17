@@ -72,6 +72,7 @@ describe("comics chapter snapshot", () => {
 
     expect(loadComicsChapterSnapshot({ profileId: "main", serverUrl: "http://127.0.0.1:4567" })?.mangas["7"]?.chapters).toHaveLength(1);
     expect(loadComicsChapterSnapshot({ profileId: "test", serverUrl: "http://127.0.0.1:4667" })).toBeNull();
+    expect(storage.get("aethon-comics-chapter-snapshots")).not.toContain("Chapter 1");
   });
 
   it("diffs new chapters by stable chapter id", () => {
@@ -193,5 +194,73 @@ describe("comics chapter snapshot", () => {
         nextChapterCount: 2,
       },
     ]);
+  });
+
+  it("keeps the previous card and chapter snapshot when fetched chapters regress", async () => {
+    saveComicsChapterSnapshot(
+      { profileId: "main", serverUrl: "http://127.0.0.1:4567" },
+      {
+        mangas: {
+          "7": {
+            mangaId: 7,
+            chapters: [chapter(1, "Chapter 1"), chapter(2, "Chapter 2"), chapter(3, "Chapter 3")]
+              .map((entry) => ({
+                id: entry.id,
+                name: entry.name,
+                sourceOrder: entry.sourceOrder,
+                uploadDate: entry.uploadDate ?? null,
+                seenAt: 42,
+              })),
+            updatedAt: 42,
+          },
+        },
+      },
+    );
+
+    const result = await reconcileComicsChapterSnapshot({
+      scope: { profileId: "main", serverUrl: "http://127.0.0.1:4567" },
+      beforeMangas: [{ ...manga, chapterCount: 3, unreadCount: 3 }],
+      afterMangas: [{ ...manga, chapterCount: 3, unreadCount: 3 }],
+      candidateMangaIds: [7],
+      fetchChapters: vi.fn(async () => [chapter(1, "Chapter 1")]),
+      createdAt: 100,
+    });
+
+    expect(result.changedIds).toEqual([]);
+    expect(result.notifications).toEqual([]);
+    expect(result.mangas[0]).toMatchObject({ chapterCount: 3, unreadCount: 3 });
+    expect(loadComicsChapterSnapshot({ profileId: "main", serverUrl: "http://127.0.0.1:4567" })?.mangas["7"]?.chapters).toHaveLength(3);
+  });
+
+  it("does not fail reconciliation when persisted chapter snapshots exceed storage quota", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      value: {
+        getItem: (key: string) => storage.get(key) ?? null,
+        setItem: () => {
+          throw new DOMException("Quota exceeded", "QuotaExceededError");
+        },
+        removeItem: (key: string) => storage.delete(key),
+        clear: () => storage.clear(),
+      },
+    });
+
+    const result = await reconcileComicsChapterSnapshot({
+      scope: { profileId: "main", serverUrl: "http://127.0.0.1:4567" },
+      beforeMangas: [manga],
+      afterMangas: [{ ...manga, chapterCount: 2 }],
+      candidateMangaIds: [7],
+      fetchChapters: vi.fn(async () => [chapter(1, "Chapter 1"), chapter(2, "Chapter 2")]),
+      createdAt: 100,
+    });
+
+    expect(result.failedIds).toEqual([]);
+    expect(result.mangas[0]).toMatchObject({ chapterCount: 2, unreadCount: 2 });
+    expect(warn).toHaveBeenCalledWith(
+      "Could not persist Comics chapter snapshots; continuing without updating the local snapshot cache.",
+      expect.any(DOMException),
+    );
+    warn.mockRestore();
   });
 });

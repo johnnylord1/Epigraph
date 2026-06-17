@@ -8,13 +8,14 @@
   import { dedupeMangaById, dedupeMangaByTitle } from "../../lib/util";
   import { buildReaderChapterList, effectiveScanlator, listScanlators, normalizeMangaReaderPreference, resolveReaderChapterTarget } from "../../lib/reader/scanlator";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
-  import { store, addToast, updateSettings, openReader, setActiveManga, setSettingsOpen, openSearchBrowseFeatured, linkManga, unlinkManga, checkAndMarkCompleted as storeCheckAndMarkCompleted } from "../../store/state.svelte";
+  import { store, addToast, updateSettings, openReader, setActiveManga, setSettingsOpen, openSearchBrowseFeatured, linkManga, unlinkManga, checkAndMarkCompleted as storeCheckAndMarkCompleted, syncLibraryMangaFromDetail } from "../../store/state.svelte";
   import type { Manga, Chapter, Category, DownloadStatus } from "../../lib/types";
   import ContextMenu from "../shared/ContextMenu.svelte";
   import MigrateModal from "./MigrateModal.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
   import TrackingPanel from "../shared/TrackingPanel.svelte";
   import SeriesDetailV3Shell from "../shared/SeriesDetailV3Shell.svelte";
+  import { isSourceChallengeMessage, sourceAccessErrorMessage } from "../../lib/sourceAccess";
 
   type MenuEntry = any;
 
@@ -180,6 +181,8 @@
 
   function applyChapters(nodes: Chapter[]) {
     chapters = nodes;
+    const currentManga = manga ?? store.activeManga;
+    if (currentManga && nodes.length > 0) syncLibraryMangaFromDetail(currentManga, nodes);
     if (store.activeManga && nodes.length > 0) checkAndMarkCompleted(store.activeManga.id, nodes);
   }
 
@@ -437,11 +440,15 @@
     const cached = mangaStore.get(id);
     if (cached) {
       manga = cached.data; loadingManga = false;
+      if (cached.data.thumbnailUrl) store.bumpLibraryCoverCacheGeneration();
+      syncLibraryMangaFromDetail(cached.data, chapters.length > 0 ? chapters : undefined);
       if (Date.now() - cached.fetchedAt < MANGA_TTL_MS) return;
       gql<{ manga: Manga }>(GET_MANGA, { id }, ctrl.signal).then(d => {
         if (ctrl.signal.aborted || loadingFor !== id) return;
         mangaStore.set(id, { data: d.manga, fetchedAt: Date.now() });
         manga = d.manga;
+        if (d.manga.thumbnailUrl) store.bumpLibraryCoverCacheGeneration();
+        syncLibraryMangaFromDetail(d.manga, chapters.length > 0 ? chapters : undefined);
         if (d.manga.source?.id) recordSourceAccess(d.manga.source.id);
       }).catch(() => {});
       return;
@@ -451,6 +458,8 @@
       if (ctrl.signal.aborted || loadingFor !== id) return;
       mangaStore.set(id, { data: d.manga, fetchedAt: Date.now() });
       manga = d.manga;
+      if (d.manga.thumbnailUrl) store.bumpLibraryCoverCacheGeneration();
+      syncLibraryMangaFromDetail(d.manga, chapters.length > 0 ? chapters : undefined);
       if (d.manga.source?.id) recordSourceAccess(d.manga.source.id);
     }).catch(() => {}).finally(() => { if (!ctrl.signal.aborted && loadingFor === id) loadingManga = false; });
   }
@@ -586,7 +595,21 @@
     gql(FETCH_CHAPTERS, { mangaId: store.activeManga.id })
       .then(() => reloadChapters(store.activeManga!.id))
       .then(() => addToast({ kind: "success", title: "Chapters refreshed" }))
-      .catch(e => addToast({ kind: "error", title: "Refresh failed", body: e?.message }))
+      .catch((error) => {
+        const message = sourceAccessErrorMessage(error);
+        const challenge = isSourceChallengeMessage(message);
+        addToast({
+          kind: "error",
+          title: "Refresh failed",
+          body: challenge
+            ? store.settings.flareSolverrEnabled
+              ? "Check FlareSolverr and retry this source."
+              : "This source needs FlareSolverr for Cloudflare or anti-bot protection."
+            : message,
+          duration: challenge ? 7000 : undefined,
+          action: challenge ? { label: "Open settings", run: () => setSettingsOpen(true) } : undefined,
+        });
+      })
       .finally(() => refreshing = false);
   }
 
