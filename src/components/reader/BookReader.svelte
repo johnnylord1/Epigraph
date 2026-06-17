@@ -19,6 +19,7 @@
   import {
     extractReflowedPage,
     getReflowElementKey,
+    pruneReflowedPages,
     type ReflowedPage,
   } from "../../lib/books/pdfReflow";
   import {
@@ -105,7 +106,7 @@
   const proseTextAlign = $derived(store.settings.proseReaderTextAlign ?? "left");
   const pdfFitMode = $derived(store.settings.pdfFitMode ?? "width");
   const pdfDarkMode = $derived(store.settings.pdfDarkMode ?? false);
-  const pdfReflowMode = $derived(store.settings.pdfReflowMode ?? true);
+  const pdfReflowMode = $derived(store.settings.pdfReflowMode ?? false);
   const pdfReflowCleanBackgrounds = $derived(store.settings.pdfReflowCleanBackgrounds ?? true);
   const pdfReflowIllustrationScale = $derived(store.settings.pdfReflowIllustrationScale ?? 1);
   const reflowPageNumbers = $derived.by(() => {
@@ -145,6 +146,7 @@
   let activeSubPanel = $state<"main" | "pdf" | "appearance" | "typography" | "layout" | "display" | "images" | "tts">("main");
   const tts = createTtsController();
   let pageNumber = $state(1);
+  const REFLOWED_PAGE_RETAIN_RADIUS = 8;
 
   $effect(() => {
     if (!toolsOpen) {
@@ -519,7 +521,11 @@
         removeDecorativeBackgrounds: pdfReflowCleanBackgrounds,
       });
       if (!getReflowPage(pageNum)) {
-        reflowedPages = [...reflowedPages, reflowed].sort((left, right) => left.pageNumber - right.pageNumber);
+        reflowedPages = pruneReflowedPages(
+          [...reflowedPages, reflowed],
+          pageNumber,
+          REFLOWED_PAGE_RETAIN_RADIUS,
+        );
       }
     } catch (err) {
       console.error("Failed to reflow PDF page", pageNum, err);

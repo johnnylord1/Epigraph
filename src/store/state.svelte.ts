@@ -601,7 +601,7 @@ export const DEFAULT_SETTINGS: Settings = {
   proseReaderFullWidth:   false,
   pdfFitMode:             "width",
   pdfDarkMode:            false,
-  pdfReflowMode:          true,
+  pdfReflowMode:          false,
   pdfReflowCleanBackgrounds: true,
   pdfReflowIllustrationScale: 1,
   pageGap:                true,
