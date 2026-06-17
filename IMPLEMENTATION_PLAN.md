@@ -5,7 +5,7 @@ Treat the current working tree as the source of truth. Several features were imp
 
 ---
 
-## Current Status -- 2026-06-16
+## Current Status -- 2026-06-17
 
 ### Validation Snapshot
 
@@ -68,6 +68,23 @@ Treat the current working tree as the source of truth. Several features were imp
     - `npm run build` passed after the Library tab-preservation change.
 - `npm run build` passed recently.
 - Settings browser screenshot drift was reviewed during the deep visual smoke, fixed as expected primary-page isolation, and the updated Settings browser snapshots now pass.
+- Latest safe phased stabilization pass after checkpoint `fe04871`:
+  - `npm run test:unit -- src/lib/library/updateRuntime.test.ts src/lib/library/comicsChapterSnapshot.test.ts src/lib/novels/libraryRefresh.test.ts` passed with 18 tests.
+  - `npm run test:unit -- src/lib/sourceAccess.test.ts src/lib/novels/pluginRuntime.test.ts src/lib/novels/libraryRefresh.test.ts src/lib/library/updateRuntime.test.ts src/store/navigation.test.ts` passed with 34 tests.
+  - `npm run test:unit -- src/lib/library/coverCache.test.ts src/lib/library/chapterCounts.test.ts src/lib/manga/coverResolver.test.ts src/lib/imageCache.test.ts` passed with 17 tests.
+  - `npm run test:browser -- src/components/library/ComicsLibraryBody.test.ts src/components/library/LibraryCardGrid.test.ts src/components/library/BooksLibraryBody.test.ts` passed with 13 tests.
+  - `npm run test:unit -- src/components/pages/BrowseV3.test.ts src/components/pages/NovelSources.test.ts src/store/navigation.test.ts src/lib/novels/packages.test.ts src/lib/novels/repositories.test.ts` passed with 31 tests.
+  - `npm run test -- --project shell-jsdom src/components/reader/TtsControls.test.ts src/lib/reader/tts.test.ts` passed with 8 tests.
+  - `npx vitest run --project unit src/lib/books/pdfReflow.test.ts src/lib/reader/contracts.test.ts` passed with 12 tests.
+  - `npm run test:unit -- src/components/pages/Downloads.test.ts src/lib/cache.test.ts src/lib/localProfiles.test.ts src/lib/backup/appBackup.test.ts src/lib/backup/aethonBackup.test.ts src/lib/backup/aethonRestorePlanner.test.ts` passed with 36 tests.
+  - `npm run build` passed after the source retry guard and PDF Reflow opt-in fixes.
+  - Final `npm run test:unit` passed with 83 files and 416 tests.
+  - Final `npm run build` passed.
+  - Full `npm run test:browser` had one Settings screenshot timeout on the first run; isolated rerun `npm run test:browser -- src/components/settings/Settings.browser.test.ts` passed with 5 tests, so the failure is tracked as a browser screenshot timing flake rather than an accepted visual drift.
+  - `cargo test local_server_java_args_enable_extension_bytecode_compatibility` passed with the dev app/JRE lock clear.
+  - Recent Activity source retries now respect the global Library update in-flight lock instead of starting an invisible retry while another update is active.
+  - PDF Reflow is opt-in by default again and retained extracted reflow pages are pruned with the existing `pruneReflowedPages` helper.
+  - Downloads/data, bulk Library actions, and fullscreen were code-audited: bulk mutations use `Promise.allSettled` plus consolidated client updates, fullscreen Escape is global, and fullscreen keybinds ignore editable targets.
 - Desktop dev/release auditing is still required after each remaining milestone before continuing to the next one.
 
 ### Already Implemented In The Working Tree
@@ -123,6 +140,7 @@ Treat the current working tree as the source of truth. Several features were imp
 - Primary navigation now closes the global Recent Activity overlay, so the notification page does not remain in front after switching sidebar pages.
 - The Recent Activity `All` tab has a clear action that clears update notifications/issues, history entries, and system notifications.
 - Recent Activity issue groups now use compacted affected-title counts when the update runtime reports source-wide blockers.
+- Recent Activity source retry actions now set and clear `libraryUpdateInFlight`, and report `Library update already running` instead of launching a retry while another update is active.
 - Library page keep-alive is implemented in `Layout.svelte`; the Library component remains mounted when navigating away to other primary pages.
 - `VirtualLibraryCardGrid.svelte` supports lazy `itemCount`/`getItem`/`getItemId` rendering and bounded virtual rows for both Comics and Books.
 - Comics Library card opening uses `openMangaDetail`, so SeriesDetail routing receives full manga detail state from Library cards.
@@ -130,11 +148,13 @@ Treat the current working tree as the source of truth. Several features were imp
 - `Library.svelte` no longer subscribes to the same `CACHE_KEYS.LIBRARY` key that `loadData()` writes, avoiding the previous self-triggered cache reload loop.
 - Library snapshot commits during Comics update are throttled/batched in `updateRuntime.ts`, reducing cache-write churn while updates are running.
 - Nocturne theme tokens and UI surface styling were partially centralized and applied to popovers/panels.
-- PDF Reflow Mode is partially implemented in `BookReader.svelte`:
+- PDF Reflow Mode is partially implemented and guarded in `BookReader.svelte`:
   - persisted `pdfReflowMode` setting;
+  - `pdfReflowMode = false` by default, so PDF Reflow is opt-in;
   - `pdf.reflow.ready` runtime stage;
   - page-level PDF.js text extraction;
   - reflow DOM rendering;
+  - bounded retained reflow pages through `pruneReflowedPages`;
   - `src/lib/books/pdfReflow.test.ts`.
 - TTS is partially implemented:
   - `src/lib/reader/tts.ts`;
@@ -194,7 +214,7 @@ Treat the current working tree as the source of truth. Several features were imp
   - cancel/close modal behavior;
   - navigation during update.
 - Library/Home/Browse/Sources must be checked after update to verify they all reflect updated data.
-- Cloudflare challenge handling needs broader real-source validation:
+- Cloudflare challenge handling has classifier/retry plumbing and guarded Recent Activity retry actions, but still needs broader real-source validation:
   - verify source challenge detection for multiple Comics and Books sources;
   - verify source-level actions are useful;
   - verify Suwayomi WebView fallback still writes usable Comics cookies;
@@ -207,10 +227,10 @@ Treat the current working tree as the source of truth. Several features were imp
   - confirm retained decoded cover memory stays acceptable after visiting all major pages.
 - Books/Comics tab switching is fixed for the current real dev data and now keeps both tab bodies mounted. It still needs a larger Books/Novel shelf smoke later because current real Books data is too small to prove large-shelf behavior.
 - The Activity/notification overlay close-on-navigation is implemented, unit-tested, and checked in the real dev WebView after reload.
-- Browse > Sources extension install/search/update/remove still needs a final desktop audit against a live Suwayomi instance; code audit confirmed manga and novel flows remain separate, and `Update all` now wakes the manga server before batch updates.
-- PDF Reflow needs release QA, memory trimming for retained reflow pages, and a clear policy for PDF TTS.
+- Browse > Sources extension install/search/update/remove passes the current component/unit coverage; it still needs a final desktop audit against a live Suwayomi instance.
+- PDF Reflow is now opt-in and trims retained reflow pages; it still needs release QA and a final PDF TTS policy check on real PDFs.
 - TTS still needs real release audio QA, stable voice/rate persistence, and native OS voice discovery only if WebView voices remain insufficient.
-- Downloads/data paths, release-data isolation, bulk actions, and fullscreen escape still need final hardening.
+- Downloads/data paths, release-data isolation, bulk actions, and fullscreen escape pass current code/test audit; remaining work is real download/offline/cache-cleanup smoke in desktop release data.
 - Settings browser screenshot drift was fixed and updated snapshots pass; continue to treat future screenshot drift as a review gate.
 
 ---
