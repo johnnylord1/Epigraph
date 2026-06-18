@@ -36,6 +36,8 @@
   import { reconcileComicsChapterSnapshot } from "../../lib/library/comicsChapterSnapshot";
   import {
     clearStaleLibraryUpdateInFlight,
+    formatLibraryUpdateFinalSummary,
+    libraryUpdateProgressNumbers,
     runSharedLibraryUpdate,
     showLibraryUpdateProgress as showSharedLibraryUpdateProgress,
   } from "../../lib/library/updateRuntime";
@@ -1406,7 +1408,11 @@
       };
     });
     const issues = recordLibraryUpdateIssues([...updateRun.issues, ...reconcileIssues], updatedAt);
-    showSharedLibraryUpdateProgress("Comics library update finished.", 1800);
+    showSharedLibraryUpdateProgress(
+      formatLibraryUpdateFinalSummary("Comics library", updateRun.jobsInfo, issues.length),
+      1800,
+      libraryUpdateProgressNumbers(updateRun.jobsInfo),
+    );
     addSystemNotification({
       kind: issues.length > 0 ? "info" : "success",
       title: issues.length > 0 ? "Comics library refreshed with issues" : entries.length > 0 ? "New chapters found" : "Comics library sync completed",

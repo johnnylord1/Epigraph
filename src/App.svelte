@@ -71,6 +71,8 @@
   import { loadLibrarySnapshot, saveLibrarySnapshot } from "./lib/library/snapshot";
   import {
     clearStaleLibraryUpdateInFlight,
+    formatLibraryUpdateFinalSummary,
+    libraryUpdateProgressNumbers,
     runSharedLibraryUpdate,
     showLibraryUpdateProgress as showSharedLibraryUpdateProgress,
   } from "./lib/library/updateRuntime";
@@ -641,6 +643,7 @@
         ...comicsReconcileIssues,
         ...novelIssues,
       ], updatedAt);
+      const comicsIssueCount = updateRun.issues.length + comicsReconcileIssues.length;
       const totalNewChapters = entries.reduce((sum, entry) => sum + entry.chapterDelta, 0)
         + novelNotifications.reduce((sum, entry) => sum + entry.chapterDelta, 0);
       const totalUpdatedTitles = entries.length + novelNotifications.length;
@@ -667,7 +670,11 @@
           body: `${updateIssues.length} title${updateIssues.length === 1 ? "" : "s"} could not update. See Recent Activity.`,
         });
       }
-      showSharedLibraryUpdateProgress("Library update finished.", 1800);
+      showSharedLibraryUpdateProgress(
+        formatLibraryUpdateFinalSummary("Comics library", updateRun.jobsInfo, comicsIssueCount),
+        1800,
+        libraryUpdateProgressNumbers(updateRun.jobsInfo),
+      );
       await maybeStandbyAfterIdle("auto-library-update");
     })()
       .catch((error) => {

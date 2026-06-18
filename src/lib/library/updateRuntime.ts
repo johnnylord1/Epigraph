@@ -114,6 +114,25 @@ export function formatLibraryUpdateProgress(jobsInfo: any) {
   return "Preparing library update.";
 }
 
+export function formatLibraryUpdateFinalSummary(
+  label: string,
+  jobsInfo: any,
+  issueCount = 0,
+) {
+  const total = Number(jobsInfo?.totalJobs ?? 0);
+  const finished = Math.max(0, Math.min(total, Number(jobsInfo?.finishedJobs ?? 0)));
+  const suffix = issueCount > 0
+    ? ` with ${issueCount} issue${issueCount === 1 ? "" : "s"}`
+    : "";
+
+  if (total > 0) {
+    if (finished >= total) return `${label} checked ${total}/${total} titles${suffix}.`;
+    return `${label} stopped after ${finished}/${total} titles${suffix}.`;
+  }
+
+  return `${label} update finished${suffix}.`;
+}
+
 export function formatLibraryUpdateWaiting() {
   return "Waiting for Suwayomi progress.";
 }

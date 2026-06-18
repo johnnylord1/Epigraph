@@ -85,6 +85,12 @@ Treat the current working tree as the source of truth. Several features were imp
   - Recent Activity source retries now respect the global Library update in-flight lock instead of starting an invisible retry while another update is active.
   - PDF Reflow is opt-in by default again and retained extracted reflow pages are pruned with the existing `pruneReflowedPages` helper.
   - Downloads/data, bulk Library actions, and fullscreen were code-audited: bulk mutations use `Promise.allSettled` plus consolidated client updates, fullscreen Escape is global, and fullscreen keybinds ignore editable targets.
+- Latest Phase 1 update-runtime hardening:
+  - Final Comics update progress now uses `formatLibraryUpdateFinalSummary`, preserving checked/total counts and issue counts after UI reconciliation instead of replacing the detailed runtime result with a generic finished message.
+  - Automatic update final progress now reports the Comics portion explicitly while the system notification remains the overall Comics+Books summary.
+  - `npm run test:unit -- src/lib/library/updateRuntime.test.ts src/lib/library/comicsChapterSnapshot.test.ts src/lib/novels/libraryRefresh.test.ts` passed with 19 tests.
+  - `npm run build` passed after the final-summary change.
+  - A real Tauri dev-app smoke opened `Aethon [MAIN :4567]`, navigated to Library, rendered Comics cards, and captured no WebView console/page errors.
 - Latest desktop dev WebView smoke after the safe phased commits:
   - `npm run tauri:dev:gate` opened the real Tauri dev app against `http://127.0.0.1:1420` and MAIN Suwayomi on `:4567`.
   - WebView2 CDP inspection confirmed the real app page title was `Aethon [MAIN :4567]` with no captured console/page errors during smoke.
