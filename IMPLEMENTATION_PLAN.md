@@ -91,6 +91,11 @@ Treat the current working tree as the source of truth. Several features were imp
   - `npm run test:unit -- src/lib/library/updateRuntime.test.ts src/lib/library/comicsChapterSnapshot.test.ts src/lib/novels/libraryRefresh.test.ts` passed with 19 tests.
   - `npm run build` passed after the final-summary change.
   - A real Tauri dev-app smoke opened `Aethon [MAIN :4567]`, navigated to Library, rendered Comics cards, and captured no WebView console/page errors.
+- Latest Phase 2 source-challenge classifier hardening:
+  - `sourceAccess` now classifies common anti-bot page text such as `Just a moment`, `checking your browser`, `attention required`, `access denied`, and `DDoS-Guard` as source-wide `source-challenge` issues with FlareSolverr recovery.
+  - Plain `HTTP 403 Forbidden` remains a non-source-wide `source-error`, avoiding an overly broad Cloudflare assumption.
+  - `npm run test:unit -- src/lib/sourceAccess.test.ts src/lib/library/updateRuntime.test.ts src/lib/novels/libraryRefresh.test.ts src/lib/novels/pluginRuntime.test.ts` passed with 24 tests.
+  - `npm run build` passed after the classifier change.
 - Latest desktop dev WebView smoke after the safe phased commits:
   - `npm run tauri:dev:gate` opened the real Tauri dev app against `http://127.0.0.1:1420` and MAIN Suwayomi on `:4567`.
   - WebView2 CDP inspection confirmed the real app page title was `Aethon [MAIN :4567]` with no captured console/page errors during smoke.

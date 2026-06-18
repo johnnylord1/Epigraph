@@ -13,6 +13,16 @@ describe("source access classification", () => {
       errorType: "source-challenge",
       sourceWide: true,
     });
+    expect(classifySourceAccessError("Just a moment... Checking your browser before accessing the source")).toMatchObject({
+      errorType: "source-challenge",
+      sourceWide: true,
+      recoveryHint: "flaresolverr",
+    });
+    expect(classifySourceAccessError("DDoS-Guard: attention required, access denied")).toMatchObject({
+      errorType: "source-challenge",
+      sourceWide: true,
+      recoveryHint: "flaresolverr",
+    });
   });
 
   it("keeps missing source and timeout distinct", () => {
@@ -22,6 +32,10 @@ describe("source access classification", () => {
     });
     expect(classifySourceAccessError("Request timed out")).toMatchObject({
       errorType: "timeout",
+      sourceWide: false,
+    });
+    expect(classifySourceAccessError("HTTP 403 Forbidden")).toMatchObject({
+      errorType: "source-error",
       sourceWide: false,
     });
   });

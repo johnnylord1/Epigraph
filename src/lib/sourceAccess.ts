@@ -21,7 +21,7 @@ export function sourceAccessErrorMessage(error: unknown): string {
 }
 
 export function isSourceChallengeMessage(message: string): boolean {
-  return /cloudflare|captcha|challenge|anti.?bot|flaresolverr|bypass/i.test(message);
+  return /cloudflare|captcha|challenge|anti.?bot|flaresolverr|bypass|checking your browser|just a moment|attention required|access denied|ddos.?guard/i.test(message);
 }
 
 export function classifySourceAccessError(error: unknown): SourceAccessClassification {
