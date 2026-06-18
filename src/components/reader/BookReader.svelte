@@ -162,7 +162,7 @@
       untrack(() => {
         void refreshPdfReflowTtsProvider();
       });
-    } else if (bookType === "pdf" && !reflow) {
+    } else if (bookType === "pdf") {
       untrack(() => tts.setProvider(null));
     }
   });
@@ -426,6 +426,7 @@
 
   function disposeReader() {
     tts.stop();
+    tts.setProvider(null);
     try {
       pdfRenderTask?.cancel?.();
     } catch {}
@@ -1480,7 +1481,7 @@
   onbookmark={toggleBookmark}
 >
   {#snippet settingsPopover()}
-    {#if activeSubPanel === "tts" && (activeBook?.subtype === "epub" || (activeBook?.subtype === "pdf" && pdfReflowMode))}
+    {#if activeSubPanel === "tts" && (activeBook?.subtype === "epub" || (activeBook?.subtype === "pdf" && pdfReflowMode && reflowedPages.length > 0))}
       <TtsControls controller={tts} onback={() => activeSubPanel = "main"} />
     {:else}
       <dl>
@@ -1507,9 +1508,9 @@
                 <dt>Images</dt>
                 <dd>{Math.round(pdfReflowIllustrationScale * 100)}% <span class="popover-chevron">&gt;</span></dd>
               </div>
-              <div class="popover-tts-row" onclick={() => activeSubPanel = "tts"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "tts"; }}>
+              <div class="popover-tts-row" onclick={() => { if (reflowedPages.length > 0) activeSubPanel = "tts"; }} role="button" tabindex="0" aria-disabled={reflowedPages.length === 0} onkeydown={(e) => { if ((e.key === "Enter" || e.key === " ") && reflowedPages.length > 0) activeSubPanel = "tts"; }}>
                 <dt>Text to Speech</dt>
-                <dd>Configure <span class="popover-chevron">&gt;</span></dd>
+                <dd>{reflowedPages.length > 0 ? "Configure" : "Waiting for reflow"} <span class="popover-chevron">&gt;</span></dd>
               </div>
             {:else}
               <div class="popover-tts-row" onclick={() => activeSubPanel = "display"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "display"; }}>
@@ -2008,10 +2009,10 @@
               </div>
             </dd>
           </div>
-          <div class="popover-tts-row" onclick={() => activeSubPanel = "tts"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') activeSubPanel = "tts"; }}>
+          <div class="popover-tts-row" onclick={() => { if (reflowedPages.length > 0) activeSubPanel = "tts"; }} role="button" tabindex="0" aria-disabled={reflowedPages.length === 0} onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && reflowedPages.length > 0) activeSubPanel = "tts"; }}>
             <dt style="color: var(--reader-text);">Text to Speech</dt>
             <dd style="color: var(--reader-accent-bright); font-weight: 600; display: flex; align-items: center; gap: 4px;">
-              <span>Configure</span>
+              <span>{reflowedPages.length > 0 ? "Configure" : "Waiting for reflow"}</span>
               <span class="popover-chevron">&gt;</span>
             </dd>
           </div>

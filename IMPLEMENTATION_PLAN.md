@@ -105,6 +105,11 @@ Treat the current working tree as the source of truth. Several features were imp
   - Sources `Update all` now filters candidates by the active mode (`manga` vs `novels`) and reports partial per-extension failures as an error toast instead of a generic success.
   - Novel source bulk updates now continue past a failed plugin update and keep the failed source highlighted with its operation error.
   - `npm run test:unit -- src/components/pages/BrowseV3.test.ts src/components/pages/NovelSources.test.ts src/lib/novels/packages.test.ts src/lib/novels/repositories.test.ts` passed with 21 tests.
+- Latest Phase 5 Reader/PDF/TTS hardening:
+  - BookReader now clears the TTS provider during reader disposal and while a PDF is in canvas mode or reflow mode before any reflowed text exists, preventing stale EPUB/reflow providers from leaking into the next document.
+  - PDF reflow TTS controls remain gated until at least one reflowed page is loaded; before that, the settings row reports that it is waiting for reflow instead of opening active controls with no readable text.
+  - `npm run test -- --project shell-jsdom src/components/reader/TtsControls.test.ts src/lib/reader/tts.test.ts` passed with 8 tests.
+  - `npx vitest run --project unit src/lib/books/pdfReflow.test.ts src/lib/reader/contracts.test.ts` passed with 12 tests.
 - Latest desktop dev WebView smoke after the safe phased commits:
   - `npm run tauri:dev:gate` opened the real Tauri dev app against `http://127.0.0.1:1420` and MAIN Suwayomi on `:4567`.
   - WebView2 CDP inspection confirmed the real app page title was `Aethon [MAIN :4567]` with no captured console/page errors during smoke.
