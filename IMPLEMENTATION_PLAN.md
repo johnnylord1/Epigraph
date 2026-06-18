@@ -120,7 +120,8 @@ Treat the current working tree as the source of truth. Several features were imp
   - `npm run test:browser` passed with 5 files and 21 browser-component tests.
   - `npm run build` passed after the phased fixes.
   - `cargo test local_server_java_args_enable_extension_bytecode_compatibility` passed with no dev app/JRE lock active.
-  - Real Tauri dev-app smoke via `npm run tauri:dev:gate` and WebView2 CDP confirmed `Aethon [MAIN :4567]`, no captured console/page errors, primary sidebar navigation active-state changes for Home/Library/Browse/Downloads/Settings, bounded Library virtual card counts during deep scroll, loaded images still present after scroll, and Comics/Books/Comics tab switching completed without a visible app freeze.
+  - Real Tauri dev-app smoke via `npm run tauri:dev:gate` and WebView2 CDP confirmed `Aethon [MAIN :4567]`, primary sidebar navigation active-state changes for Home/Library/Browse/Downloads/Settings, bounded Library virtual card counts during deep scroll, loaded images still present after scroll, and Comics/Books/Comics tab switching completed without a visible app freeze.
+  - A follow-up no-watch memory smoke kept the Library virtual window stable at 46 mounted cards across top/deep/back scroll samples. Process working set moved from about `aethon.exe 47.9 MB / Java 417.8 MB` to `aethon.exe 56.8 MB / Java 483.9 MB` after navigation and long Library scroll; the WebView renderer did not grow into multi-GB memory. One console 500 resource load was observed during this second smoke, but no JS `pageerror` or app freeze was captured.
 - Latest desktop dev WebView smoke after the safe phased commits:
   - `npm run tauri:dev:gate` opened the real Tauri dev app against `http://127.0.0.1:1420` and MAIN Suwayomi on `:4567`.
   - WebView2 CDP inspection confirmed the real app page title was `Aethon [MAIN :4567]` with no captured console/page errors during smoke.
