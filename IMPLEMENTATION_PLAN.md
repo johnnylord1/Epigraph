@@ -85,7 +85,15 @@ Treat the current working tree as the source of truth. Several features were imp
   - Recent Activity source retries now respect the global Library update in-flight lock instead of starting an invisible retry while another update is active.
   - PDF Reflow is opt-in by default again and retained extracted reflow pages are pruned with the existing `pruneReflowedPages` helper.
   - Downloads/data, bulk Library actions, and fullscreen were code-audited: bulk mutations use `Promise.allSettled` plus consolidated client updates, fullscreen Escape is global, and fullscreen keybinds ignore editable targets.
-- Desktop dev/release auditing is still required after each remaining milestone before continuing to the next one.
+- Latest desktop dev WebView smoke after the safe phased commits:
+  - `npm run tauri:dev:gate` opened the real Tauri dev app against `http://127.0.0.1:1420` and MAIN Suwayomi on `:4567`.
+  - WebView2 CDP inspection confirmed the real app page title was `Aethon [MAIN :4567]` with no captured console/page errors during smoke.
+  - Primary navigation was validated in the dev app for Home, Library, Browse, Downloads, and Settings; the active sidebar state changed correctly and each page rendered visible page-specific controls.
+  - Recent Activity overlay was reopened during smoke and verified to close when switching primary sidebar pages.
+  - Library Comics/Books tab switching in the dev app measured about 150-170 ms in the audited run, even while a real Library update was active.
+  - Library virtual scroll was validated against the real scroll container at top, middle, deep, near-bottom, and back-middle positions; visible card counts remained stable, DOM card count stayed bounded, and visible card images were loaded.
+  - During this smoke, the Library update toast progressed from early items to `349/633 - 55%`, confirming it was live progress rather than a stuck toast at that point.
+- Desktop release/no-watch auditing is still required after remaining runtime milestones, especially update completion/final-state and memory/CPU measurements.
 
 ### Already Implemented In The Working Tree
 
@@ -202,12 +210,14 @@ Treat the current working tree as the source of truth. Several features were imp
 
 ### Still Pending / Known Risk
 
-- The Fast Comics update path must be audited against the real desktop dev app:
+- The Fast Comics update path has partial real desktop dev-app coverage:
   - titles updated in the latest smoke and produced real chapter notifications;
   - failures classified correctly for the observed missing-source, source-challenge, timeout, and generic source errors;
   - Recent Activity issue groups were actionable for the observed Comix source challenge;
+  - the latest dev smoke confirmed active progress at `349/633 - 55%`;
+  - update completion/final-state still needs to be observed after a full live run;
   - CPU/Java load still needs a release/no-watch measurement.
-- Update toast can still show confusing states near completion or while waiting on slow sources; it needs real-run validation.
+- Update toast can still show confusing states near completion or while waiting on slow sources; live mid-run progress was verified, but final settle/close still needs real-run validation.
 - Manual, automatic, and "Update All Libraries" need stress testing:
   - repeated clicks;
   - mixed Comics/Books update clicks;
@@ -221,11 +231,12 @@ Treat the current working tree as the source of truth. Several features were imp
   - verify retry only affects the blocked source/titles.
 - Comics cover fallback is unit/browser tested for one controlled retry and then a stable placeholder until URL/manual recovery changes.
 - Books/Novels source covers still need the same stress audit as Comics where applicable, without duplicating Suwayomi-specific cache assumptions.
-- Library keep-alive/virtualization needs a release/no-watch smoke:
-  - confirm `Library -> Home/Browse/Downloads/Settings -> Library` preserves scroll and mounted covers;
-  - confirm long scroll does not accumulate unbounded DOM nodes;
+- Library keep-alive/virtualization has real dev-app smoke coverage and still needs release/no-watch measurement:
+  - confirmed primary navigation across Home, Library, Browse, Downloads, and Settings in the real dev WebView;
+  - confirmed Library long-scroll positions load visible cards at top/middle/deep/near-bottom without an empty grid;
+  - confirmed long scroll keeps DOM cards bounded in the audited real dev run;
   - confirm retained decoded cover memory stays acceptable after visiting all major pages.
-- Books/Comics tab switching is fixed for the current real dev data and now keeps both tab bodies mounted. It still needs a larger Books/Novel shelf smoke later because current real Books data is too small to prove large-shelf behavior.
+- Books/Comics tab switching is fixed for the current real dev data and now keeps both tab bodies mounted. Latest dev-app smoke measured about 150-170 ms for tab changes while an update was active. It still needs a larger Books/Novel shelf smoke later because current real Books data is too small to prove large-shelf behavior.
 - The Activity/notification overlay close-on-navigation is implemented, unit-tested, and checked in the real dev WebView after reload.
 - Browse > Sources extension install/search/update/remove passes the current component/unit coverage; it still needs a final desktop audit against a live Suwayomi instance.
 - PDF Reflow is now opt-in and trims retained reflow pages; it still needs release QA and a final PDF TTS policy check on real PDFs.
