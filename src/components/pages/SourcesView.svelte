@@ -528,7 +528,12 @@
     void saveRepos(repos.filter((repo) => repo !== url));
   }
 
-  async function mutate(fn: () => Promise<unknown>, pkgName: string, operation: ExtensionOperation) {
+  async function mutate(
+    fn: () => Promise<unknown>,
+    pkgName: string,
+    operation: ExtensionOperation,
+    reloadAfter = true,
+  ) {
     startExtensionOperation(pkgName, operation);
     if (!(await ensureMangaServerAwake())) {
       const message = "Suwayomi is not available right now.";
@@ -547,7 +552,7 @@
     try {
       await fn();
       bumpContentSetupVersion();
-      await loadExtensions();
+      if (reloadAfter) await loadExtensions();
     } catch (error) {
       ok = false;
       console.error(error);
@@ -780,15 +785,21 @@
       () => gql(UPDATE_EXTENSION, { id: extension.pkgName, uninstall: true }),
       extension.pkgName,
       "remove",
+      false,
     );
     if (didRemove && selectedPkgName === extension.pkgName) {
       selectedPkgName = null;
     }
     if (didRemove) {
+      extensions = extensions.map((item) => (
+        item.pkgName === extension.pkgName
+          ? { ...item, isInstalled: false, hasUpdate: false }
+          : item
+      ));
       addToast({
         kind: "success",
         title: "Extension removed",
-        body: `${extension.name} was removed.`,
+        body: `${extension.name} was removed. Suwayomi will unload the running source after its next restart.`,
       });
     }
   }
@@ -803,18 +814,22 @@
       () => gql(UPDATE_EXTENSION, { id: extension.pkgName, update: true }),
       extension.pkgName,
       "update",
+      false,
     );
     if (!didUpdate) return;
 
-    const refreshed = extensions.find((item) => item.pkgName === extension.pkgName) ?? {
-      ...extension,
+    const refreshed = {
+      ...(extensions.find((item) => item.pkgName === extension.pkgName) ?? extension),
       hasUpdate: false,
     };
+    extensions = extensions.map((item) => (
+      item.pkgName === extension.pkgName ? refreshed : item
+    ));
     mockSettingsStore.refreshConfig(extension.pkgName, refreshed);
     addToast({
       kind: "success",
       title: "Extension updated",
-      body: `${extension.name} is up to date.`,
+      body: `${extension.name} is installed. Suwayomi will load the new version after its next restart.`,
     });
   }
 
@@ -868,9 +883,11 @@
         if (!(await ensureMangaServerAwake())) {
           throw new Error("Suwayomi is not available right now.");
         }
+        const updatedPkgNames = new Set<string>();
         for (const extension of candidates) {
           try {
             await gql(UPDATE_EXTENSION, { id: extension.pkgName, update: true });
+            updatedPkgNames.add(extension.pkgName);
             mockSettingsStore.refreshConfig(extension.pkgName, {
               ...extension,
               hasUpdate: false,
@@ -881,8 +898,12 @@
             setExtensionOperationError(extension.pkgName, extensionErrorMessage(error));
           }
         }
+        extensions = extensions.map((extension) => (
+          updatedPkgNames.has(extension.pkgName)
+            ? { ...extension, hasUpdate: false }
+            : extension
+        ));
         bumpContentSetupVersion();
-        await loadExtensions();
       }
       const succeededCount = candidates.length - failedUpdateCount;
       addToast({
@@ -891,7 +912,7 @@
         body:
           failedUpdateCount > 0
             ? `${succeededCount}/${candidates.length} extension${candidates.length === 1 ? "" : "s"} updated. Check the highlighted source errors.`
-            : `${candidates.length} extension${candidates.length === 1 ? "" : "s"} checked.`,
+            : `${candidates.length} extension${candidates.length === 1 ? "" : "s"} installed. Suwayomi will load the new version after its next restart.`,
       });
     } catch (error) {
       console.error(error);
