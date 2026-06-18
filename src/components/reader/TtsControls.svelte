@@ -11,12 +11,56 @@
 
   let { controller, onback }: Props = $props();
   let stateVersion = $state(0);
+  const TTS_PREFERENCES_KEY = "aethon-tts-preferences-v1";
+
+  function readPreferences() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(TTS_PREFERENCES_KEY) ?? "{}");
+      return {
+        rate: typeof parsed.rate === "number" ? parsed.rate : null,
+        voice: typeof parsed.voice === "string" ? parsed.voice : null,
+      };
+    } catch {
+      return { rate: null, voice: null };
+    }
+  }
+
+  function savePreferences(patch: { rate?: number; voice?: string }) {
+    const current = readPreferences();
+    try {
+      localStorage.setItem(TTS_PREFERENCES_KEY, JSON.stringify({
+        rate: patch.rate ?? current.rate ?? 1,
+        voice: patch.voice ?? current.voice ?? "",
+      }));
+    } catch {
+      // TTS remains usable when storage is unavailable.
+    }
+  }
+
+  function setPlaybackRate(rate: number) {
+    controller.setRate(rate);
+    savePreferences({ rate });
+  }
+
+  function setSelectedVoice(voice: string) {
+    controller.setVoice(voice);
+    savePreferences({ voice });
+  }
 
   $effect(() => {
     const unsubscribe = controller.subscribe(() => {
       stateVersion += 1;
     });
     return unsubscribe;
+  });
+
+  let preferencesRestored = false;
+  $effect(() => {
+    if (preferencesRestored) return;
+    preferencesRestored = true;
+    const preferences = readPreferences();
+    if (preferences.rate !== null) controller.setRate(preferences.rate);
+    if (preferences.voice !== null) controller.setVoice(preferences.voice);
   });
 
   const state = $derived.by(() => {
@@ -111,7 +155,7 @@
           max={2.5}
           step={0.1}
           value={playbackRate}
-          oninput={(event) => controller.setRate(Number(event.currentTarget.value))}
+          oninput={(event) => setPlaybackRate(Number(event.currentTarget.value))}
           disabled={!supported}
           aria-label="Playback speed"
         />
@@ -125,7 +169,7 @@
         <select
           class="tts-select"
           value={selectedVoice}
-          onchange={(event) => controller.setVoice(event.currentTarget.value)}
+          onchange={(event) => setSelectedVoice(event.currentTarget.value)}
           disabled={!supported || voices.length === 0}
           aria-label="Speech voice"
         >
