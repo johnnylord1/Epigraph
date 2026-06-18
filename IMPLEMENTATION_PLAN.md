@@ -115,6 +115,12 @@ Treat the current working tree as the source of truth. Several features were imp
   - Downloads/data and backup/cache safety were revalidated; cache cleanup remains in-memory/session scoped and does not delete downloads, imports, history, library, or progress.
   - `npm run test:unit -- src/components/pages/Downloads.test.ts src/lib/cache.test.ts src/lib/localProfiles.test.ts src/lib/backup/appBackup.test.ts src/lib/backup/aethonBackup.test.ts src/lib/backup/aethonRestorePlanner.test.ts` passed with 36 tests.
   - `npm run test -- --project shell-jsdom src/components/reader/TtsControls.test.ts src/lib/reader/tts.test.ts src/components/reader/ReaderHud.test.ts` passed with 14 tests.
+- Latest Phase 7 final validation:
+  - `npm run test:unit` passed with 83 files and 418 tests.
+  - `npm run test:browser` passed with 5 files and 21 browser-component tests.
+  - `npm run build` passed after the phased fixes.
+  - `cargo test local_server_java_args_enable_extension_bytecode_compatibility` passed with no dev app/JRE lock active.
+  - Real Tauri dev-app smoke via `npm run tauri:dev:gate` and WebView2 CDP confirmed `Aethon [MAIN :4567]`, no captured console/page errors, primary sidebar navigation active-state changes for Home/Library/Browse/Downloads/Settings, bounded Library virtual card counts during deep scroll, loaded images still present after scroll, and Comics/Books/Comics tab switching completed without a visible app freeze.
 - Latest desktop dev WebView smoke after the safe phased commits:
   - `npm run tauri:dev:gate` opened the real Tauri dev app against `http://127.0.0.1:1420` and MAIN Suwayomi on `:4567`.
   - WebView2 CDP inspection confirmed the real app page title was `Aethon [MAIN :4567]` with no captured console/page errors during smoke.
