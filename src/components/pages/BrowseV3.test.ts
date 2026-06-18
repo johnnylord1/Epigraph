@@ -10,6 +10,7 @@ const {
   ensureServerAwakeForMock,
   loadTrustedInstalledNovelSourcesMock,
   resetMangaExtensionsMock,
+  failMangaUpdateIdsMock,
 } = vi.hoisted(() => {
   const mangaExtensionsMock: Array<{
     apkName: string;
@@ -22,7 +23,9 @@ const {
     hasUpdate: boolean;
     iconUrl: string | null;
   }> = [];
+  const failMangaUpdateIdsMock = new Set<string>();
   const resetMangaExtensionsMock = vi.fn(() => {
+    failMangaUpdateIdsMock.clear();
     mangaExtensionsMock.splice(
       0,
       mangaExtensionsMock.length,
@@ -54,6 +57,7 @@ const {
   return {
     addToastMock: vi.fn(),
     resetMangaExtensionsMock,
+    failMangaUpdateIdsMock,
     gqlMock: vi.fn(async (query: string, variables?: Record<string, unknown>) => {
     if (query === "GET_SOURCES") return {
       sources: {
@@ -128,6 +132,9 @@ const {
         extension.hasUpdate = false;
       }
       if (variables?.update) {
+        if (failMangaUpdateIdsMock.has(extension.pkgName)) {
+          throw new Error("Repository timeout");
+        }
         extension.hasUpdate = false;
         extension.versionName = "1.1";
       }
@@ -437,6 +444,29 @@ describe("BrowseV3", () => {
     });
     await waitFor(() => {
       expect(addToastMock).toHaveBeenCalledWith(expect.objectContaining({ title: "Extension removed" }));
+    });
+  });
+
+  test("reports partial failures when updating all manga extensions", async () => {
+    failMangaUpdateIdsMock.add("ext.mangadex");
+    render(BrowseV3);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Sources" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Update all (1)" })).toBeTruthy();
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Update all (1)" }));
+
+    await waitFor(() => {
+      expect(addToastMock).toHaveBeenCalledWith(expect.objectContaining({
+        kind: "error",
+        title: "Some extensions could not update",
+      }));
+    });
+    await waitFor(() => {
+      expect(screen.getByText("Repository timeout")).toBeTruthy();
     });
   });
 

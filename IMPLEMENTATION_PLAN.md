@@ -101,6 +101,10 @@ Treat the current working tree as the source of truth. Several features were imp
   - Books Library empty-state rendering now uses the actual lazy grid card count, allowing a novels-only Books view to render instead of showing the empty shelf state.
   - `npm run test:unit -- src/lib/library/coverCache.test.ts src/lib/manga/coverResolver.test.ts src/lib/imageCache.test.ts` passed with 13 tests.
   - `npm run test:browser -- src/components/library/BooksLibraryBody.test.ts src/components/library/ComicsLibraryBody.test.ts src/components/library/LibraryCardGrid.test.ts` passed with 14 tests.
+- Latest Phase 4 Browse/Sources hardening:
+  - Sources `Update all` now filters candidates by the active mode (`manga` vs `novels`) and reports partial per-extension failures as an error toast instead of a generic success.
+  - Novel source bulk updates now continue past a failed plugin update and keep the failed source highlighted with its operation error.
+  - `npm run test:unit -- src/components/pages/BrowseV3.test.ts src/components/pages/NovelSources.test.ts src/lib/novels/packages.test.ts src/lib/novels/repositories.test.ts` passed with 21 tests.
 - Latest desktop dev WebView smoke after the safe phased commits:
   - `npm run tauri:dev:gate` opened the real Tauri dev app against `http://127.0.0.1:1420` and MAIN Suwayomi on `:4567`.
   - WebView2 CDP inspection confirmed the real app page title was `Aethon [MAIN :4567]` with no captured console/page errors during smoke.

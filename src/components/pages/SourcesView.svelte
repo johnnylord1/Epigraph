@@ -819,10 +819,12 @@
   }
 
   async function updateAllExtensions() {
-    const candidates = extensions.filter((extension) => extension.hasUpdate);
+    const expectedKind = isNovelMode ? "novels" : "manga";
+    const candidates = extensions.filter((extension) => extension.hasUpdate && extension.kind === expectedKind);
     if (candidates.length === 0 || updatingAll) return;
 
     updatingAll = true;
+    let failedUpdateCount = 0;
     for (const extension of candidates) {
       startExtensionOperation(extension.pkgName, "update");
     }
@@ -830,23 +832,38 @@
       if (isNovelMode) {
         if (!novelRepositoryState) return;
         let nextState = novelRepositoryState;
+        let hasNovelChanges = false;
         for (const extension of candidates) {
-          if (!extension.novelPluginId || !extension.novelRepositoryId) continue;
-          const entry = nextState.catalogEntries.find((item) => (
-            item.pluginId === extension.novelPluginId
-            && item.repositoryId === extension.novelRepositoryId
-          ));
-          if (!entry) continue;
-          nextState = await installNovelCatalogPlugin({
-            state: nextState,
-            entry,
-            scopeInput: {
-              profileId: store.runtimeResolvedLocalProfileId,
-              serverUrl: store.runtimeServerUrl,
-            },
-          });
+          try {
+            if (!extension.novelPluginId || !extension.novelRepositoryId) {
+              throw new Error("Novel source metadata is incomplete.");
+            }
+            const entry = nextState.catalogEntries.find((item) => (
+              item.pluginId === extension.novelPluginId
+              && item.repositoryId === extension.novelRepositoryId
+            ));
+            if (!entry) {
+              throw new Error("Novel source is no longer present in the cached repository catalog.");
+            }
+            nextState = await installNovelCatalogPlugin({
+              state: nextState,
+              entry,
+              scopeInput: {
+                profileId: store.runtimeResolvedLocalProfileId,
+                serverUrl: store.runtimeServerUrl,
+              },
+            });
+            hasNovelChanges = true;
+          } catch (error) {
+            failedUpdateCount += 1;
+            console.error(error);
+            setExtensionOperationError(
+              extension.pkgName,
+              error instanceof Error ? error.message : "Aethon could not update this novel plugin.",
+            );
+          }
         }
-        await saveNovelState(nextState);
+        if (hasNovelChanges) await saveNovelState(nextState);
       } else {
         if (!(await ensureMangaServerAwake())) {
           throw new Error("Suwayomi is not available right now.");
@@ -859,6 +876,7 @@
               hasUpdate: false,
             });
           } catch (error) {
+            failedUpdateCount += 1;
             console.error(error);
             setExtensionOperationError(extension.pkgName, extensionErrorMessage(error));
           }
@@ -866,10 +884,14 @@
         bumpContentSetupVersion();
         await loadExtensions();
       }
+      const succeededCount = candidates.length - failedUpdateCount;
       addToast({
-        kind: "success",
-        title: "Extensions updated",
-        body: `${candidates.length} extension${candidates.length === 1 ? "" : "s"} checked.`,
+        kind: failedUpdateCount > 0 ? "error" : "success",
+        title: failedUpdateCount > 0 ? "Some extensions could not update" : "Extensions updated",
+        body:
+          failedUpdateCount > 0
+            ? `${succeededCount}/${candidates.length} extension${candidates.length === 1 ? "" : "s"} updated. Check the highlighted source errors.`
+            : `${candidates.length} extension${candidates.length === 1 ? "" : "s"} checked.`,
       });
     } catch (error) {
       console.error(error);
