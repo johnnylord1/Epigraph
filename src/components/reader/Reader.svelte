@@ -16,6 +16,7 @@
   import { toSuwayomiWebViewUrl } from "../../lib/suwayomiWebView";
   import { store, closeReader, openReader, addHistory, updateSettings, checkAndMarkCompleted, setSettingsOpen, addBookmark, removeBookmark } from "../../store/state.svelte";
   import { isEditableKeyboardTarget, matchesKeybind, toggleFullscreen, DEFAULT_KEYBINDS } from "../../lib/keybinds";
+  import { loadOfflineMangaChapter, revokeOfflineMangaPages } from "../../lib/reader/offlineManga";
   import { setReading } from "../../lib/discord";
   import type { FitMode } from "../../store/state.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
@@ -37,6 +38,12 @@
 
   const pageCache = new Map<number, string[]>();
   const inflight  = new Map<number, Promise<string[]>>();
+  let offlinePageUrls: string[] = [];
+
+  function clearOfflinePages() {
+    revokeOfflineMangaPages(offlinePageUrls);
+    offlinePageUrls = [];
+  }
 
   function isCloudflareLikeError(message: string | null): boolean {
     if (!message) return false;
@@ -371,6 +378,7 @@
     pageGroups       = [];
     pageReady        = false;
     resetReaderSessionCaches();
+    clearOfflinePages();
     store.pageUrls   = [];
     fadingOut        = false;
     closeReaderWebView().catch(() => {});
@@ -385,7 +393,23 @@
 
     store.pageNumber = 1;
     try {
-      const urls = await fetchPagesWithEmptyRetry(id, ctrl.signal);
+      let urls: string[];
+      try {
+        urls = await fetchPagesWithEmptyRetry(id, ctrl.signal);
+      } catch (networkError) {
+        const chapter = store.activeChapter;
+        const manga = store.activeManga;
+        if (!chapter?.isDownloaded || chapter.id !== id || !manga?.source?.displayName) throw networkError;
+        urls = await loadOfflineMangaChapter({
+          downloadsPath: store.settings.serverDownloadsPath ?? "",
+          sourceName: manga.source.displayName,
+          mangaTitle: manga.title,
+          chapterName: chapter.name,
+          scanlator: chapter.scanlator,
+        });
+        if (urls.length === 0) throw networkError;
+        offlinePageUrls = urls;
+      }
       if (ctrl.signal.aborted) return;
       store.pageUrls = urls;
       if (resumeTo > 1) store.pageNumber = Math.min(resumeTo, urls.length || resumeTo);
@@ -959,6 +983,7 @@
 
   onDestroy(() => {
     closeReaderWebView().catch(() => {});
+    clearOfflinePages();
     resetReaderSessionCaches();
   });
 </script>

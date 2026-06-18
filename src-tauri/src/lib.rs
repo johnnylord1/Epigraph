@@ -2128,14 +2128,8 @@ fn resolve_downloads_path(downloads_path: &str) -> PathBuf {
     if !downloads_path.trim().is_empty() {
         return PathBuf::from(downloads_path);
     }
-    // Mirror Suwayomi-Server's own default: <data_dir>/Tachidesk/downloads
-    // Windows: %LOCALAPPDATA%\Tachidesk\downloads
-    // macOS:   ~/Library/Application Support/Tachidesk/downloads
-    // Linux:   $XDG_DATA_HOME/Tachidesk/downloads  (~/.local/share/Tachidesk/downloads)
-    let base = std::env::var("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| dirs::data_dir().unwrap_or_else(|| PathBuf::from("/")));
-    base.join("Tachidesk").join("downloads")
+    // The embedded MAIN server stores downloads below its configured rootDir.
+    local_server_profile_root(LocalServerProfile::Main).join("downloads")
 }
 
 #[tauri::command]
@@ -2180,6 +2174,70 @@ fn get_storage_info(downloads_path: String) -> Result<StorageInfo, String> {
 #[tauri::command]
 fn get_default_downloads_path() -> String {
     resolve_downloads_path("").to_string_lossy().into_owned()
+}
+
+fn download_name_key(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+#[tauri::command]
+fn read_downloaded_chapter_archive(
+    downloads_path: String,
+    source_name: String,
+    manga_title: String,
+    chapter_name: String,
+    scanlator: Option<String>,
+) -> Result<Option<String>, String> {
+    let root = resolve_downloads_path(&downloads_path);
+    let manga_dir = root.join("mangas").join(&source_name).join(&manga_title);
+    if !manga_dir.is_dir() {
+        return Ok(None);
+    }
+
+    let root = root.canonicalize().map_err(|error| error.to_string())?;
+    let manga_dir = manga_dir.canonicalize().map_err(|error| error.to_string())?;
+    if !manga_dir.starts_with(&root) {
+        return Err("Downloaded chapter path escaped the downloads directory.".to_string());
+    }
+
+    let chapter_key = download_name_key(&chapter_name);
+    let scanlator_key = scanlator
+        .as_deref()
+        .map(download_name_key)
+        .filter(|value| !value.is_empty());
+    let mut best_match: Option<(u8, PathBuf)> = None;
+
+    for entry in std::fs::read_dir(&manga_dir).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path();
+        if !path.is_file() || path.extension().and_then(|value| value.to_str()).map(|value| !value.eq_ignore_ascii_case("cbz")).unwrap_or(true) {
+            continue;
+        }
+        let stem = path.file_stem().and_then(|value| value.to_str()).unwrap_or_default();
+        let stem_key = download_name_key(stem);
+        let score = if stem_key == chapter_key {
+            2
+        } else if stem_key.ends_with(&chapter_key)
+            && scanlator_key.as_ref().map(|value| stem_key.starts_with(value)).unwrap_or(true)
+        {
+            3
+        } else {
+            0
+        };
+        if score > best_match.as_ref().map(|(best, _)| *best).unwrap_or(0) {
+            best_match = Some((score, path));
+        }
+    }
+
+    let Some((_, path)) = best_match else {
+        return Ok(None);
+    };
+    let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+    Ok(Some(base64::engine::general_purpose::STANDARD.encode(bytes)))
 }
 
 /// Returns true if the given path exists and is a directory.
@@ -4916,6 +4974,7 @@ pub fn run() {
             syncd_replication::syncd_forget_persisted_session,
             get_storage_info,
             get_default_downloads_path,
+            read_downloaded_chapter_archive,
             check_path_exists,
             create_directory,
             download_server_file_to_downloads,
