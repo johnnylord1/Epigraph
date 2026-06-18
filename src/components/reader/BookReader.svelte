@@ -55,6 +55,7 @@
   import NocturneState from "../shared/NocturneState.svelte";
   import ReaderHud from "./ReaderHud.svelte";
   import { createDomTtsTextProvider, createTtsController } from "../../lib/reader/tts";
+  import { isEditableKeyboardTarget } from "../../lib/keybinds";
   import TtsControls from "./TtsControls.svelte";
 
   const ZOOM_STEP = 0.1;
@@ -1083,7 +1084,7 @@
   }
 
   function onKey(event: KeyboardEvent) {
-    if ((event.target as HTMLElement)?.tagName === "INPUT") return;
+    if (isEditableKeyboardTarget(event.target)) return;
     showUi();
     if (event.key === "Escape" || event.key === "Backspace") {
       event.preventDefault();

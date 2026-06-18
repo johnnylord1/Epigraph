@@ -76,6 +76,7 @@
     runSharedLibraryUpdate,
     showLibraryUpdateProgress as showSharedLibraryUpdateProgress,
   } from "./lib/library/updateRuntime";
+  import { isEditableKeyboardTarget } from "./lib/keybinds";
   import {
     configureLocalServerRuntime,
     ensureServerAwakeFor,
@@ -2849,12 +2850,6 @@
     }
   }
 
-  function isKeyboardEditableTarget(target: EventTarget | null) {
-    if (!(target instanceof HTMLElement)) return false;
-    const tag = target.tagName.toLowerCase();
-    return tag === "input" || tag === "textarea" || tag === "select" || target.isContentEditable;
-  }
-
   async function exitFullscreen() {
     if (!win) return;
     await win.setFullscreen(false).catch((error) => {
@@ -2873,7 +2868,7 @@
   }
 
   function handleGlobalFullscreenKey(e: KeyboardEvent) {
-    if (isKeyboardEditableTarget(e.target)) return;
+    if (isEditableKeyboardTarget(e.target)) return;
     if (e.key === "Escape" && store.isFullscreen) {
       e.preventDefault();
       e.stopPropagation();

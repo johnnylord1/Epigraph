@@ -60,6 +60,13 @@ export function matchesKeybind(e: KeyboardEvent, bind: string): boolean {
   return eventToKeybind(e) === bind;
 }
 
+export function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+  if (typeof HTMLElement === "undefined") return false;
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName.toLowerCase();
+  return tag === "input" || tag === "textarea" || tag === "select" || target.isContentEditable;
+}
+
 export async function toggleFullscreen(): Promise<void> {
   try {
     const win = getCurrentWindow();

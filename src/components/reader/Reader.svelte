@@ -15,7 +15,7 @@
   import { FETCH_CHAPTER_PAGES, MARK_CHAPTER_READ, ENQUEUE_DOWNLOAD, ENQUEUE_CHAPTERS_DOWNLOAD } from "../../lib/queries";
   import { toSuwayomiWebViewUrl } from "../../lib/suwayomiWebView";
   import { store, closeReader, openReader, addHistory, updateSettings, checkAndMarkCompleted, setSettingsOpen, addBookmark, removeBookmark } from "../../store/state.svelte";
-  import { matchesKeybind, toggleFullscreen, DEFAULT_KEYBINDS } from "../../lib/keybinds";
+  import { isEditableKeyboardTarget, matchesKeybind, toggleFullscreen, DEFAULT_KEYBINDS } from "../../lib/keybinds";
   import { setReading } from "../../lib/discord";
   import type { FitMode } from "../../store/state.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
@@ -857,7 +857,7 @@
   }
 
   function onKey(e: KeyboardEvent) {
-    if ((e.target as HTMLElement).tagName === "INPUT") return;
+    if (isEditableKeyboardTarget(e.target)) return;
     const kb = store.settings.keybinds ?? DEFAULT_KEYBINDS;
     const r  = store.settings.readingDirection === "rtl";
     if (e.key === "Escape") {

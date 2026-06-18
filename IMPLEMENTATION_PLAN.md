@@ -110,6 +110,11 @@ Treat the current working tree as the source of truth. Several features were imp
   - PDF reflow TTS controls remain gated until at least one reflowed page is loaded; before that, the settings row reports that it is waiting for reflow instead of opening active controls with no readable text.
   - `npm run test -- --project shell-jsdom src/components/reader/TtsControls.test.ts src/lib/reader/tts.test.ts` passed with 8 tests.
   - `npx vitest run --project unit src/lib/books/pdfReflow.test.ts src/lib/reader/contracts.test.ts` passed with 12 tests.
+- Latest Phase 6 downloads/data/bulk/fullscreen hardening:
+  - Editable keyboard-target detection is now shared through `src/lib/keybinds.ts` and used by the app fullscreen handler, Manga Reader, and BookReader, so textareas, selects, and contenteditable surfaces do not trigger reader/fullscreen shortcuts.
+  - Downloads/data and backup/cache safety were revalidated; cache cleanup remains in-memory/session scoped and does not delete downloads, imports, history, library, or progress.
+  - `npm run test:unit -- src/components/pages/Downloads.test.ts src/lib/cache.test.ts src/lib/localProfiles.test.ts src/lib/backup/appBackup.test.ts src/lib/backup/aethonBackup.test.ts src/lib/backup/aethonRestorePlanner.test.ts` passed with 36 tests.
+  - `npm run test -- --project shell-jsdom src/components/reader/TtsControls.test.ts src/lib/reader/tts.test.ts src/components/reader/ReaderHud.test.ts` passed with 14 tests.
 - Latest desktop dev WebView smoke after the safe phased commits:
   - `npm run tauri:dev:gate` opened the real Tauri dev app against `http://127.0.0.1:1420` and MAIN Suwayomi on `:4567`.
   - WebView2 CDP inspection confirmed the real app page title was `Aethon [MAIN :4567]` with no captured console/page errors during smoke.
