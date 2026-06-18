@@ -407,6 +407,12 @@
   function handleCoverError(cardId: string) {
     const novel = novelByCardId.get(cardId);
     if (novel) {
+      const key = novelCoverKey(novel);
+      const nextStable = new Map(stableNovelCoverSrc);
+      nextStable.delete(cardId);
+      stableNovelCoverSrc = nextStable;
+      sessionStableNovelCoverSrc.delete(cardId);
+      brokenCoverKeys = new Set([...brokenCoverKeys, key]);
       return;
     }
 
@@ -674,7 +680,7 @@
 </script>
 
 <div class="content" class:library-scroll-active={isScrolling} bind:this={contentEl} onscroll={handleContentScroll}>
-  {#if totalBooks === 0 || totalCardCount === 0}
+  {#if totalCardCount === 0}
     <div class="center books-empty">
       <NocturneState
         layout="center"

@@ -96,6 +96,11 @@ Treat the current working tree as the source of truth. Several features were imp
   - Plain `HTTP 403 Forbidden` remains a non-source-wide `source-error`, avoiding an overly broad Cloudflare assumption.
   - `npm run test:unit -- src/lib/sourceAccess.test.ts src/lib/library/updateRuntime.test.ts src/lib/novels/libraryRefresh.test.ts src/lib/novels/pluginRuntime.test.ts` passed with 24 tests.
   - `npm run build` passed after the classifier change.
+- Latest Phase 3 cover/placeholder hardening:
+  - Books/Novels source cover errors now clear the stable source-cover entry and mark that novel cover identity as broken, so a failing source novel cover stays on the placeholder instead of retrying/reappearing after tab churn.
+  - Books Library empty-state rendering now uses the actual lazy grid card count, allowing a novels-only Books view to render instead of showing the empty shelf state.
+  - `npm run test:unit -- src/lib/library/coverCache.test.ts src/lib/manga/coverResolver.test.ts src/lib/imageCache.test.ts` passed with 13 tests.
+  - `npm run test:browser -- src/components/library/BooksLibraryBody.test.ts src/components/library/ComicsLibraryBody.test.ts src/components/library/LibraryCardGrid.test.ts` passed with 14 tests.
 - Latest desktop dev WebView smoke after the safe phased commits:
   - `npm run tauri:dev:gate` opened the real Tauri dev app against `http://127.0.0.1:1420` and MAIN Suwayomi on `:4567`.
   - WebView2 CDP inspection confirmed the real app page title was `Aethon [MAIN :4567]` with no captured console/page errors during smoke.

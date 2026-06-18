@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { BooksSectionVM } from "../../lib/library/contracts";
 import type { BookEntry } from "../../lib/books/types";
+import type { PersistedNovelLibraryEntry } from "../../lib/novels/domain";
 import { store } from "../../store/state.svelte";
 
 let dragHandler: ((event: { payload: { type: string; paths: string[] } }) => void) | undefined;
@@ -156,5 +157,77 @@ describe("BooksLibraryBody", () => {
     expect(await screen.findByRole("button", { name: "Book 0" })).toBeTruthy();
     await fireEvent.click(screen.getByRole("button", { name: "Book 0" }));
     expect(store.activeBookId).toBe("book-0");
+  });
+
+  test("keeps a broken source novel cover on the placeholder", async () => {
+    const { default: BooksLibraryBody } = await import("./BooksLibraryBody.svelte");
+
+    const novel = {
+      id: "novel-1",
+      title: "Source Novel",
+      author: "Author",
+      description: null,
+      coverUrl: "https://example.test/cover.jpg",
+      path: "/novel/1",
+      status: "Ongoing",
+      tags: [],
+      chapterCount: 4,
+      addedAt: 1,
+      updatedAt: 2,
+      source: {
+        repositoryUrl: "https://example.test/plugins.json",
+        repositoryName: "Test",
+        pluginId: "plugin-1",
+        pluginName: "Plugin One",
+        pluginVersion: "1.0.0",
+        sourceId: "source-1",
+        sourceName: "Source One",
+        lang: "en",
+      },
+    } as PersistedNovelLibraryEntry;
+
+    const vm: BooksSectionVM = {
+      kind: "books",
+      sectionTabs: [],
+      collections: [],
+      toolbar: {
+        searchValue: "",
+        searchPlaceholder: "Search books",
+        sortMode: "recentlyAdded",
+        sortDir: "desc",
+        sortOptions: [],
+        filterValue: "ALL",
+        filterOptions: [],
+      },
+      loading: false,
+      error: null,
+      emptyMessage: "Empty",
+      cards: [],
+      dragDropEnabled: false,
+      importing: false,
+      dropActive: false,
+    };
+
+    const { container } = render(BooksLibraryBody, {
+      props: {
+        vm,
+        books: [],
+        totalBooks: 0,
+        novelEntries: [novel],
+        viewKey: "novels",
+        viewMode: "grid",
+        preferredColumns: "auto",
+        showProgress: true,
+        showOutline: true,
+      },
+    });
+
+    const img = await screen.findByAltText("Source Novel");
+    expect(img).toHaveAttribute("src", "https://example.test/cover.jpg");
+
+    await fireEvent.error(img);
+
+    expect(container.querySelector("img.cover")).toBeNull();
+    expect(container.querySelector(".cover-fallback")).toBeTruthy();
   });
 });
