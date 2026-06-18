@@ -40,6 +40,14 @@ Treat the current working tree as the source of truth. Several features were imp
   - Library release scroll reached `scrollTop=9000` with bounded visible cards and loaded images still present; Comics/Books/Comics tab switching did not produce a page error.
   - Release smoke captured source/backend resource errors for some external requests (`400`, `500`, `504`) and Cloudflare recommendation warnings, but no JavaScript `pageerror` or app freeze.
   - After release navigation/Library smoke, process working sets were about `aethon.exe 38.7 MB` and `java.exe 526.0 MB`.
+- Latest NSIS installer and release soak validation:
+  - `npm run tauri -- build --config src-tauri/tauri.conf.json` generated `src-tauri/target/release/bundle/nsis/Aethon_0.6.7_x64-setup.exe`.
+  - Installer artifact size was `191,234,755` bytes with SHA-256 `122FE1406D1FE79AFC9575C8284C54E8EE6EA45D3F03A8CD2FBAB34AB9BA42F0`.
+  - The Tauri build command returned non-zero after generating the NSIS installer because the updater public key is configured but `TAURI_SIGNING_PRIVATE_KEY` is not present. Distribution signing remains the only blocker for a fully green installer build.
+  - Release bundle contents were validated without installing into Windows: `aethon.exe`, `aethon-syncd.exe`, packaged `java.exe`, and `Suwayomi-Server.jar` were present under `src-tauri/target/release`.
+  - A release soak via CDP ran 4 navigation cycles across Library, Home, Browse, Downloads, and Settings, alternating Comics/Books and scrolling Library to deep positions.
+  - Soak samples showed `aethon.exe` staying around `37.8-38.9 MB`; `java.exe` ranged around `603.7-673.1 MB` during source/page activity.
+  - The soak recorded `0` JavaScript `pageerror` entries. Console noise was limited to external/source resource warnings/errors already observed during release smoke.
 - `npm run test:unit` passed recently with the expanded stabilization suite.
 - Targeted library/novel tests passed recently:
   - `src/lib/library/updateRuntime.test.ts`
