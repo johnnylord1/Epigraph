@@ -30,6 +30,16 @@ Treat the current working tree as the source of truth. Several features were imp
   - TTS controls persist playback rate and selected Web Speech voice in localStorage and restore them after reader remount without blocking use when storage is unavailable.
   - The manga Reader can fall back to local downloaded `.cbz` archives when a downloaded chapter cannot fetch pages from Suwayomi, and revokes generated blob URLs on chapter changes/destroy.
   - The default downloads path now points at the embedded MAIN server profile (`aethon-main/downloads`) instead of the generic Tachidesk default, matching the real files written by the app.
+- Latest release/no-bundle smoke:
+  - `npm run tauri -- build --no-bundle --config src-tauri/tauri.automation.conf.json` produced `src-tauri/target/release/aethon.exe`.
+  - The release executable launched with the packaged Suwayomi JRE from `src-tauri/target/release/binaries/suwayomi-bundle/jre/bin/java.exe` and MAIN root `C:\Users\jhow-\AppData\Roaming\aethon-main`.
+  - WebDriver automation could not be used because the installed `msedgedriver.exe` supports Edge 146 while the local WebView/Edge runtime is 149.0.4022.69. No system driver was changed.
+  - Release smoke was completed through WebView2 CDP by launching with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9223`.
+  - Release app title was `Aethon [MAIN :4567]`, and MAIN Suwayomi listened on `127.0.0.1:4567`.
+  - Visual screenshots confirmed Library, Browse, Downloads, and Settings render as separate primary pages; Settings and Browse do not show Library keep-alive residue.
+  - Library release scroll reached `scrollTop=9000` with bounded visible cards and loaded images still present; Comics/Books/Comics tab switching did not produce a page error.
+  - Release smoke captured source/backend resource errors for some external requests (`400`, `500`, `504`) and Cloudflare recommendation warnings, but no JavaScript `pageerror` or app freeze.
+  - After release navigation/Library smoke, process working sets were about `aethon.exe 38.7 MB` and `java.exe 526.0 MB`.
 - `npm run test:unit` passed recently with the expanded stabilization suite.
 - Targeted library/novel tests passed recently:
   - `src/lib/library/updateRuntime.test.ts`
