@@ -5,10 +5,31 @@ Treat the current working tree as the source of truth. Several features were imp
 
 ---
 
-## Current Status -- 2026-06-17
+## Current Status -- 2026-06-18
 
 ### Validation Snapshot
 
+- Latest continuation after the phased stabilization commits:
+  - `npm run test:unit` passed with 83 files and 419 tests.
+  - `npm run test:browser` passed with 5 files and 21 browser-component tests.
+  - `npm run build` passed after the Sources, TTS, and downloaded-manga offline-reader fixes.
+  - `cargo test local_server_java_args_enable_extension_bytecode_compatibility --lib` passed from `src-tauri`.
+  - Real Tauri dev-app smoke via `npm run tauri:dev:gate` was performed during this pass, not only browser tests:
+    - manual Comics update completed against 633 titles with source-grouped failures in Recent Activity;
+    - manual Books update completed with `1/1 source novels refreshed`;
+    - Update All ran Comics then Books, and repeated clicks respected the in-flight update lock;
+    - FlareSolverr recovery started the local service on `:8191`;
+    - a source retry for Comix retried only the 38 affected titles;
+    - Suwayomi WebView recovery opened the expected source challenge URL instead of changing the main app route;
+    - Browse > Sources install/remove/update behavior was validated with a disposable Comic Fury install/remove and existing updateable manga extensions;
+    - PDF Reflow and TTS were validated with a real imported PDF, including Web Speech playback state and persisted voice/rate preferences after reader remount;
+    - a downloaded MangaDex chapter opened offline from its local `.cbz` after Java/Suwayomi was stopped;
+    - Settings cache cleanup did not change the downloads folder count, total bytes, or SHA-256 for the downloaded chapter archive.
+- Latest fixes from this continuation:
+  - Browse > Sources no longer reloads stale Suwayomi extension state immediately after update/remove operations that only fully unload on server restart; it updates local UI state and explains the restart behavior in the toast.
+  - TTS controls persist playback rate and selected Web Speech voice in localStorage and restore them after reader remount without blocking use when storage is unavailable.
+  - The manga Reader can fall back to local downloaded `.cbz` archives when a downloaded chapter cannot fetch pages from Suwayomi, and revokes generated blob URLs on chapter changes/destroy.
+  - The default downloads path now points at the embedded MAIN server profile (`aethon-main/downloads`) instead of the generic Tachidesk default, matching the real files written by the app.
 - `npm run test:unit` passed recently with the expanded stabilization suite.
 - Targeted library/novel tests passed recently:
   - `src/lib/library/updateRuntime.test.ts`
@@ -130,7 +151,7 @@ Treat the current working tree as the source of truth. Several features were imp
   - Library Comics/Books tab switching in the dev app measured about 150-170 ms in the audited run, even while a real Library update was active.
   - Library virtual scroll was validated against the real scroll container at top, middle, deep, near-bottom, and back-middle positions; visible card counts remained stable, DOM card count stayed bounded, and visible card images were loaded.
   - During this smoke, the Library update toast progressed from early items to `349/633 - 55%`, confirming it was live progress rather than a stuck toast at that point.
-- Desktop release/no-watch auditing is still required after remaining runtime milestones, especially update completion/final-state and memory/CPU measurements.
+- Desktop dev/no-watch auditing has now covered update completion/final-state, source recovery actions, navigation, Library scroll/tab switching, reader/TTS behavior, and downloaded offline reading. A packaged release smoke remains useful before distribution, but it is no longer blocking the current stabilization phase.
 
 ### Already Implemented In The Working Tree
 
