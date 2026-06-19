@@ -230,4 +230,83 @@ describe("BooksLibraryBody", () => {
     expect(container.querySelector("img.cover")).toBeNull();
     expect(container.querySelector(".cover-fallback")).toBeTruthy();
   });
+
+  test("renders large source novel shelves through the virtual grid lazy resolver", async () => {
+    const { default: BooksLibraryBody } = await import("./BooksLibraryBody.svelte");
+
+    const novels = Array.from({ length: 320 }, (_, index) => ({
+      id: `novel-${index}`,
+      title: `Novel ${index}`,
+      author: index % 2 === 0 ? "Author" : null,
+      description: null,
+      coverUrl: null,
+      path: `/novel/${index}`,
+      status: index % 3 === 0 ? "Ongoing" : "Completed",
+      tags: ["Fantasy"],
+      chapterCount: 12,
+      addedAt: index,
+      updatedAt: index,
+      source: {
+        repositoryUrl: "https://example.test/plugins.json",
+        repositoryName: "Test",
+        pluginId: "plugin-1",
+        pluginName: "Plugin One",
+        pluginVersion: "1.0.0",
+        sourceId: "source-1",
+        sourceName: "Source One",
+        lang: "en",
+      },
+    })) as PersistedNovelLibraryEntry[];
+
+    const vm: BooksSectionVM = {
+      kind: "books",
+      sectionTabs: [],
+      collections: [],
+      toolbar: {
+        searchValue: "",
+        searchPlaceholder: "Search books",
+        sortMode: "recentlyAdded",
+        sortDir: "desc",
+        sortOptions: [],
+        filterValue: "ALL",
+        filterOptions: [],
+      },
+      loading: false,
+      error: null,
+      emptyMessage: "Empty",
+      cards: [],
+      dragDropEnabled: false,
+      importing: false,
+      dropActive: false,
+    };
+    const onOpenNovel = vi.fn();
+    const target = document.createElement("div");
+    target.style.cssText = "display:flex;width:1280px;height:720px;min-height:0;";
+    document.body.appendChild(target);
+
+    const { container } = render(BooksLibraryBody, {
+      target,
+      props: {
+        vm,
+        books: [],
+        totalBooks: 0,
+        novelEntries: novels,
+        onOpenNovel,
+        viewKey: "large-novels",
+        viewMode: "grid",
+        preferredColumns: "auto",
+        showProgress: true,
+        showOutline: true,
+      },
+    });
+
+    expect(container.querySelector(".virtual-grid")).toBeTruthy();
+    expect(container.querySelectorAll("[data-card-id]").length).toBeLessThan(80);
+    expect(await screen.findByRole("button", { name: /Novel 0/i })).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole("button", { name: /Novel 0/i }));
+
+    expect(onOpenNovel).toHaveBeenCalledWith("novel-0");
+    expect(store.activeBookId).toBeNull();
+  });
 });

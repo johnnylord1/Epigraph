@@ -292,7 +292,8 @@ Treat the current working tree as the source of truth. Several features were imp
   - The first aggressive virtual window prevented the freeze but made covers enter too late during scroll.
   - The current tuned window mounts about 110 Comics cards / 11 rows in the audited desktop WebView, preserving scroll/page return state without remounting covers.
   - Tradeoff: keeping Library alive intentionally retains decoded cover memory while the user visits Home/Browse/Downloads/Settings.
-  - Remaining risk is tuning under larger real libraries and slower disks/network caches, especially Books/Novel source covers.
+  - Books/Novels source scale now has synthetic browser coverage with 320 source novels in a bounded app-like viewport, confirming the virtual grid path keeps mounted cards bounded and opens the correct novel through the lazy resolver.
+  - Remaining risk is only real-data tuning under a larger live Books/Novel shelf and slower disks/network caches.
 - Comics and Books update flows are now more similar at the orchestration level, but they use different canonical backends:
   - Comics: Suwayomi and `fetchChapters`.
   - Books/Novels: LNReader-style local runtime/source plugins.
@@ -320,13 +321,13 @@ Treat the current working tree as the source of truth. Several features were imp
   - verify Suwayomi WebView fallback still writes usable Comics cookies;
   - verify retry only affects the blocked source/titles.
 - Comics cover fallback is unit/browser tested for one controlled retry and then a stable placeholder until URL/manual recovery changes.
-- Books/Novels source covers still need the same stress audit as Comics where applicable, without duplicating Suwayomi-specific cache assumptions.
+- Books/Novels source covers have synthetic large-shelf browser coverage for the lazy virtualized path; they still need real-data cover stress validation when a sufficiently large live Books/Novel shelf is available.
 - Library keep-alive/virtualization has real dev-app smoke coverage and still needs release/no-watch measurement:
   - confirmed primary navigation across Home, Library, Browse, Downloads, and Settings in the real dev WebView;
   - confirmed Library long-scroll positions load visible cards at top/middle/deep/near-bottom without an empty grid;
   - confirmed long scroll keeps DOM cards bounded in the audited real dev run;
   - confirm retained decoded cover memory stays acceptable after visiting all major pages.
-- Books/Comics tab switching is fixed for the current real dev data and now keeps both tab bodies mounted. Latest dev-app smoke measured about 150-170 ms for tab changes while an update was active. It still needs a larger Books/Novel shelf smoke later because current real Books data is too small to prove large-shelf behavior.
+- Books/Comics tab switching is fixed for the current real dev data and now keeps both tab bodies mounted. Latest dev-app smoke measured about 150-170 ms for tab changes while an update was active. Synthetic browser coverage now exercises a 320-entry source novel shelf; only a larger live Books/Novel shelf smoke remains when real data is available.
 - The Activity/notification overlay close-on-navigation is implemented, unit-tested, and checked in the real dev WebView after reload.
 - Browse > Sources extension install/search/update/remove passes the current component/unit coverage; it still needs a final desktop audit against a live Suwayomi instance.
 - PDF Reflow is now opt-in and trims retained reflow pages; it still needs release QA and a final PDF TTS policy check on real PDFs.
