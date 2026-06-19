@@ -5,7 +5,30 @@ Treat the current working tree as the source of truth. Several features were imp
 
 ---
 
-## Current Status -- 2026-06-18
+## Current Status -- 2026-06-19
+
+### Final Continuation Snapshot
+
+- Worktree is clean after `cad418c test: cover large source novel library virtualization`.
+- Latest focused Books/Novels scale audit:
+  - `npm run test:browser -- src/components/library/BooksLibraryBody.test.ts` passed with the new 320 source-novel virtual-grid coverage.
+  - `npm run test:unit -- src/lib/novels/libraryShelf.test.ts` passed.
+  - `npm run build` passed.
+- Latest real dev-app visual smoke via `npm run tauri:dev:gate` and WebView2 CDP covered:
+  - Home;
+  - Library Comics top/scroll;
+  - Comics -> Books -> Comics;
+  - Browse;
+  - Downloads;
+  - Settings;
+  - Recent Activity opening from Library;
+  - Recent Activity closing when navigating to Browse from the sidebar.
+- Final blockers / decisions:
+  - `TAURI_SIGNING_PRIVATE_KEY` is still absent from the environment, so signed updater/distribution output remains blocked externally.
+  - The installed app remains present at `C:\Users\jhow-\AppData\Local\Aethon\Aethon.exe` with `uninstall.exe`; do not remove it unless explicitly requested.
+  - A larger live Books/Novels shelf smoke remains data-dependent. Synthetic 320-novel browser coverage is in place, but the current real profile only has a small Books/Novels shelf.
+
+## Historical Status -- 2026-06-18
 
 ### Validation Snapshot
 
