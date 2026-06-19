@@ -56,6 +56,12 @@ Treat the current working tree as the source of truth. Several features were imp
   - The installed app launched with `--main`, title `Aethon [MAIN :4567]`, and Suwayomi using the installed JRE while keeping MAIN data rooted at `C:\Users\jhow-\AppData\Roaming\aethon-main`.
   - Installed-app smoke covered Home, Library, Browse, Downloads, Settings, Books Library, and explicit Comics Library. The explicit Comics Library pass rendered `77` visible cards and `96` loaded images.
   - Installed-app smoke recorded `0` console errors and `0` JavaScript `pageerror` entries. After the smoke, process working sets were about `aethon.exe 46.4 MB` and `java.exe 585.8 MB`.
+- Latest external-source hardening:
+  - Browse Search recommendations now classify source failures through `sourceAccess` before logging them.
+  - Expected source-side failures such as Cloudflare/source-challenge, timeout, rate-limit, network, missing source, and source-error are logged once per source/context as `console.info` instead of repeated `console.warn` spam.
+  - Unknown recommendation failures still use `console.warn` with the original error object.
+  - `npm run test:unit -- src/components/pages/BrowseV3.test.ts src/lib/sourceAccess.test.ts` passed with 11 tests.
+  - `npm run build` passed after the recommendation logging change.
 - `npm run test:unit` passed recently with the expanded stabilization suite.
 - Targeted library/novel tests passed recently:
   - `src/lib/library/updateRuntime.test.ts`

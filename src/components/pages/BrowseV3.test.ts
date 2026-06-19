@@ -11,6 +11,7 @@ const {
   loadTrustedInstalledNovelSourcesMock,
   resetMangaExtensionsMock,
   failMangaUpdateIdsMock,
+  sourceMangaFailureMock,
 } = vi.hoisted(() => {
   const mangaExtensionsMock: Array<{
     apkName: string;
@@ -24,6 +25,9 @@ const {
     iconUrl: string | null;
   }> = [];
   const failMangaUpdateIdsMock = new Set<string>();
+  const sourceMangaFailureMock = {
+    value: null as Error | null,
+  };
   const resetMangaExtensionsMock = vi.fn(() => {
     failMangaUpdateIdsMock.clear();
     mangaExtensionsMock.splice(
@@ -58,6 +62,7 @@ const {
     addToastMock: vi.fn(),
     resetMangaExtensionsMock,
     failMangaUpdateIdsMock,
+    sourceMangaFailureMock,
     gqlMock: vi.fn(async (query: string, variables?: Record<string, unknown>) => {
     if (query === "GET_SOURCES") return {
       sources: {
@@ -172,23 +177,26 @@ const {
         ],
       },
     };
-    if (query === "FETCH_SOURCE_MANGA") return {
-      fetchSourceManga: {
-        mangas: [
-          {
-            id: variables?.type === "LATEST" ? 2 : 1,
-            title: variables?.type === "LATEST" ? "Latest Mock Manga" : "Popular Mock Manga",
-            thumbnailUrl: "/mock-cover.png",
-            inLibrary: false,
-            chapterCount: 12,
-            unreadCount: 0,
-            status: "ONGOING",
-            source: { id: "manga-src", displayName: "Manga Source" },
-          },
-        ],
-        hasNextPage: false,
-      },
-    };
+    if (query === "FETCH_SOURCE_MANGA") {
+      if (sourceMangaFailureMock.value) throw sourceMangaFailureMock.value;
+      return {
+        fetchSourceManga: {
+          mangas: [
+            {
+              id: variables?.type === "LATEST" ? 2 : 1,
+              title: variables?.type === "LATEST" ? "Latest Mock Manga" : "Popular Mock Manga",
+              thumbnailUrl: "/mock-cover.png",
+              inLibrary: false,
+              chapterCount: 12,
+              unreadCount: 0,
+              status: "ONGOING",
+              source: { id: "manga-src", displayName: "Manga Source" },
+            },
+          ],
+          hasNextPage: false,
+        },
+      };
+    }
       return {};
     }),
     browseInstalledNovelSourceMock: vi.fn(async () => [
@@ -346,6 +354,7 @@ describe("BrowseV3", () => {
     gqlMock.mockClear();
     addToastMock.mockClear();
     resetMangaExtensionsMock();
+    sourceMangaFailureMock.value = null;
     browseInstalledNovelSourceMock.mockClear();
     detectSetupStateMock.mockClear();
     ensureServerAwakeForMock.mockReset();
@@ -583,5 +592,34 @@ describe("BrowseV3", () => {
       expect.objectContaining({ type: "LATEST" }),
       expect.any(AbortSignal),
     );
+  });
+
+  test("logs expected source recommendation failures as deduped info instead of warnings", async () => {
+    vi.useFakeTimers();
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    sourceMangaFailureMock.value = new Error("Cloudflare bypass currently disabled");
+
+    try {
+      render(BrowseV3);
+      await vi.advanceTimersByTimeAsync(1_900);
+      await tick();
+      await vi.advanceTimersByTimeAsync(120);
+
+      await waitFor(() => {
+        expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining("source-challenge"));
+      });
+      expect(warnSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining("Search recommendations source issue"),
+        expect.anything(),
+      );
+
+      await vi.advanceTimersByTimeAsync(120);
+      expect(infoSpy.mock.calls.filter(([message]) => String(message).includes("source-challenge")).length).toBe(1);
+    } finally {
+      infoSpy.mockRestore();
+      warnSpy.mockRestore();
+      vi.useRealTimers();
+    }
   });
 });

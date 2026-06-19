@@ -23,7 +23,7 @@
   import { createNovelLibraryId, type InstalledNovelSourceDescriptor, type NovelDetailRecord, type NovelSourceSearchResult } from "../../lib/novels/domain";
   import { isNovelInLibrary, loadNovelLibraryState, peekNovelLibraryState } from "../../lib/novels/libraryState";
   import { NOVEL_TITLE_ALIAS_VERSION, canonicalNovelTitleCandidates } from "../../lib/novels/titleAliases";
-  import { isSourceChallengeMessage, sourceAccessErrorMessage } from "../../lib/sourceAccess";
+  import { classifySourceAccessError, isSourceChallengeMessage, sourceAccessErrorMessage } from "../../lib/sourceAccess";
   import {
     getHardcoverUserBooks,
     getHardcoverRateLimitRemainingMs,
@@ -85,6 +85,23 @@
   }
 
   type BrowseTrackerEntry = Tracker;
+
+  const loggedSearchRecommendationSourceIssues = new Set<string>();
+
+  function logSearchRecommendationSourceIssue(context: string, sourceName: string, error: unknown) {
+    const classification = classifySourceAccessError(error);
+    const message = sourceAccessErrorMessage(error);
+    const key = `${context}:${sourceName}:${classification.errorType}:${message}`;
+    if (loggedSearchRecommendationSourceIssues.has(key)) return;
+    loggedSearchRecommendationSourceIssues.add(key);
+
+    const detail = `${context} for ${sourceName}: ${classification.errorType} - ${message}`;
+    if (classification.errorType === "unknown") {
+      console.warn(`Search recommendations source issue: ${detail}`, error);
+      return;
+    }
+    console.info(`Search recommendations skipped source: ${detail}`);
+  }
 
   function safePeekNovelLibraryState() {
     try {
@@ -3110,7 +3127,7 @@
           }
         } catch (error) {
           if (ctrl.signal.aborted) return [] as Manga[];
-          console.warn(`Search recommendations could not load popular titles for ${entry.displayName}; trying keyword fallback.`, error);
+          logSearchRecommendationSourceIssue("popular recommendations", entry.displayName, error);
         }
 
         for (const term of fallbackTerms) {
@@ -3228,7 +3245,7 @@
         );
         if (visible.length > 0 || type === "LATEST") return visible;
       } catch (error) {
-        console.warn(`Search recommendations could not load ${type.toLowerCase()} page ${request.sourcePage} for ${entry.displayName}.`, error);
+        logSearchRecommendationSourceIssue(`${type.toLowerCase()} recommendations page ${request.sourcePage}`, entry.displayName, error);
       }
 
       return [] as Manga[];
