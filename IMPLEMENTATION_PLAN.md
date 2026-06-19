@@ -48,6 +48,14 @@ Treat the current working tree as the source of truth. Several features were imp
   - A release soak via CDP ran 4 navigation cycles across Library, Home, Browse, Downloads, and Settings, alternating Comics/Books and scrolling Library to deep positions.
   - Soak samples showed `aethon.exe` staying around `37.8-38.9 MB`; `java.exe` ranged around `603.7-673.1 MB` during source/page activity.
   - The soak recorded `0` JavaScript `pageerror` entries. Console noise was limited to external/source resource warnings/errors already observed during release smoke.
+- Latest installed-app validation:
+  - Signing audit found no `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, `TAURI_PRIVATE_KEY`, or `MINISIGN_PRIVATE_KEY` in the environment. No private signing key is present in the repo.
+  - The generated NSIS installer was run with `/S` and exited `0`.
+  - The installed app was found at `C:\Users\jhow-\AppData\Local\Aethon\Aethon.exe`; uninstall metadata exists under HKCU with DisplayName `Aethon`, DisplayVersion `0.6.7`, and InstallLocation `C:\Users\jhow-\AppData\Local\Aethon`.
+  - Installed files include `aethon.exe`, `aethon-syncd.exe`, `uninstall.exe`, packaged `binaries/suwayomi-bundle/jre/bin/java.exe`, and packaged `binaries/suwayomi-bundle/bin/Suwayomi-Server.jar`.
+  - The installed app launched with `--main`, title `Aethon [MAIN :4567]`, and Suwayomi using the installed JRE while keeping MAIN data rooted at `C:\Users\jhow-\AppData\Roaming\aethon-main`.
+  - Installed-app smoke covered Home, Library, Browse, Downloads, Settings, Books Library, and explicit Comics Library. The explicit Comics Library pass rendered `77` visible cards and `96` loaded images.
+  - Installed-app smoke recorded `0` console errors and `0` JavaScript `pageerror` entries. After the smoke, process working sets were about `aethon.exe 46.4 MB` and `java.exe 585.8 MB`.
 - `npm run test:unit` passed recently with the expanded stabilization suite.
 - Targeted library/novel tests passed recently:
   - `src/lib/library/updateRuntime.test.ts`
