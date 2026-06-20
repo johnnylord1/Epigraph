@@ -26,6 +26,7 @@
     store,
     updateSettings,
   } from "../../store/state.svelte";
+  import { _, translate as t } from "../../lib/i18n/runtime";
   import type { BooksCategory } from "../../store/state.svelte";
   import {
     getBookSectionCount,
@@ -120,7 +121,7 @@
       const pageNumber = index + 1;
       return {
         id: `pdf-page:${pageNumber}`,
-        label: `Page ${pageNumber}`,
+        label: t("detail.pageNumber", { value: pageNumber }),
         href: createPdfPageHref(pageNumber),
         depth: 0,
       } satisfies BookSectionSummaryItem;
@@ -134,7 +135,7 @@
   ));
   const showProgress = $derived(activePresentation?.showProgress ?? (displaySectionCount > 0 || !!activeProgress));
   const usesPagesLabel = $derived(activeBook?.subtype === "pdf" && detailSections.length === 0);
-  const previewHeading = $derived(previewing ? "Preview" : (usesPagesLabel ? "Pages" : "Chapters"));
+  const previewHeading = $derived(previewing ? t("bookDetail.preview") : (usesPagesLabel ? t("bookDetail.pages") : t("detail.stats.chapters")));
   const coverSrc = $derived(activePresentation?.coverSrc ?? (activeBook ? BookAssetResolver.resolveCoverSrc(activeBook) : null));
   const bookFileAvailable = $derived(activeBook ? hasBookLocalAsset(activeBook) : false);
   const currentBookmark = $derived(activeBook ? store.bookBookmarks.find((bookmark) => bookmark.bookId === activeBook.id) ?? null : null);
@@ -212,15 +213,15 @@
   const assignedBookCategories = $derived(allBookCategories.filter((category) => assignedBookCategoryIds.includes(category.id)));
   const hasFolders = $derived(assignedBookCategories.length > 0);
   const primaryActionLabel = $derived.by(() => {
-    if (previewLoading) return "Opening...";
-    if (!activeProgress) return "Start reading";
+    if (previewLoading) return t("novelSources.loading.opening");
+    if (!activeProgress) return t("detail.actions.startReading");
     if (currentSectionView) {
-      if (usesPagesLabel) return `Continue p.${currentSectionView.pageNumber ?? currentSectionView.sectionNumber}`;
+      if (usesPagesLabel) return t("bookDetail.continuePage", { page: currentSectionView.pageNumber ?? currentSectionView.sectionNumber });
       const title = sectionTitle(currentSectionView);
       const chapterMatch = title.match(/^chapter\s+(\d+(?:\.\d+)?)/i);
-      return chapterMatch ? `Continue Ch.${chapterMatch[1]}` : `Continue ${title}`;
+      return chapterMatch ? t("detail.actions.continueChapter", { chapter: chapterMatch[1], page: "" }) : t("bookDetail.continueSection", { section: title });
     }
-    return "Continue reading";
+    return t("bookDetail.continueReading");
   });
 
   function revokeObjectUrl(url: string | null | undefined) {
@@ -324,11 +325,11 @@
   }
 
   function filterLabel(filter: SectionFilter) {
-    if (filter === "read") return "Read";
-    if (filter === "unread") return "Unread";
-    if (filter === "bookmarked") return "Bookmarked";
-    if (filter === "current") return "Current";
-    return "All";
+    if (filter === "read") return t("bookDetail.filter.read");
+    if (filter === "unread") return t("detail.stats.unread");
+    if (filter === "bookmarked") return t("bookDetail.filter.bookmarked");
+    if (filter === "current") return t("bookDetail.filter.current");
+    return t("bookDetail.filter.all");
   }
 
   function handleFolderOutside(event: MouseEvent) {
@@ -559,7 +560,7 @@
       });
     } catch (error) {
       disposePreview();
-      previewError = error instanceof Error ? error.message : "Could not open this book.";
+      previewError = error instanceof Error ? error.message : t("bookDetail.errors.couldNotOpen");
       tracePreview("books.preview.error", {
         message: previewError,
         classification: classifyBookRuntimeFailure(currentPreviewProbe, currentPreviewStage, error),
@@ -671,21 +672,21 @@
   <SeriesDetailV3Shell
     mediaKind="novel"
     title={activePresentation?.title ?? activeBook.title}
-    subtitle={activePresentation?.authorLabel ?? activeBook.author ?? "Unknown author"}
+    subtitle={activePresentation?.authorLabel ?? activeBook.author ?? $_("bookDetail.unknownAuthor")}
     coverUrl={coverSrc && !coverBroken ? coverSrc : null}
     fallbackLabel={activePresentation?.subtypeLabel ?? activeBook.subtype.toUpperCase()}
     statusLabel={activePresentation?.subtypeLabel ?? activeBook.subtype.toUpperCase()}
-    sourceLabel="Book"
-    sourceLine={`Book - ${activePresentation?.subtypeLabel ?? activeBook.subtype.toUpperCase()}`}
+    sourceLabel={$_("common.books")}
+    sourceLine={`${$_("common.books")} - ${activePresentation?.subtypeLabel ?? activeBook.subtype.toUpperCase()}`}
     description={activePresentation?.description ?? activeBook.description}
     tags={[activeBook.subtype === "pdf" ? "PDF" : "EPUB"]}
     detailsOpen={detailsOpen}
-    progressLabel={showProgress ? (activePresentation?.progressSummary ?? `${readSectionCount} / ${displaySectionCount} read`) : null}
+    progressLabel={showProgress ? (activePresentation?.progressSummary ?? $_("bookDetail.progressRead", { read: readSectionCount, total: displaySectionCount })) : null}
     progressPercent={readPercent * 100}
     metrics={[
-      { label: usesPagesLabel ? "Pages" : "Chapters", value: String(displaySectionCount) },
-      { label: "Read", value: String(readSectionCount) },
-      { label: "Bookmarks", value: String(currentBookmark ? 1 : 0) },
+      { label: usesPagesLabel ? $_("bookDetail.pages") : $_("detail.stats.chapters"), value: String(displaySectionCount) },
+      { label: $_("bookDetail.filter.read"), value: String(readSectionCount) },
+      { label: $_("bookDetail.filter.bookmarks"), value: String(currentBookmark ? 1 : 0) },
     ]}
     onBack={closeDetail}
     onDetailsToggle={() => detailsOpen = !detailsOpen}
@@ -694,7 +695,7 @@
       <button class="series-primary" onclick={openFullscreenReader} disabled={previewLoading || !bookFileAvailable}>
         <Play size={13} weight="fill" />
         {#if !bookFileAvailable}
-          File missing
+          {$_("bookDetail.fileMissing")}
         {:else}
           {primaryActionLabel}
         {/if}
@@ -702,24 +703,24 @@
     {/snippet}
 
     {#snippet secondaryActions()}
-      <button class="series-action series-icon-action active" type="button" onclick={handleRemove} title="Remove from Library" aria-label="Remove from Library">
+      <button class="series-action series-icon-action active" type="button" onclick={handleRemove} title={$_("bookDetail.removeFromLibrary")} aria-label={$_("bookDetail.removeFromLibrary")}>
         <BookmarkSimple size={13} weight="fill" />
       </button>
-      <button class="series-action series-icon-action" type="button" onclick={() => trackingOpen = true} title="Tracking" aria-label="Tracking">
+      <button class="series-action series-icon-action" type="button" onclick={() => trackingOpen = true} title={$_("detail.actions.tracking")} aria-label={$_("detail.actions.tracking")}>
         <ChartLineUp size={13} weight="light" />
       </button>
     {/snippet}
 
     {#snippet utilityActions()}
       <div class="fp-wrap" bind:this={folderPickerRef}>
-        <button class="series-utility" class:active={hasFolders} type="button" onclick={() => folderPickerOpen = !folderPickerOpen} title="Folders">
+        <button class="series-utility" class:active={hasFolders} type="button" onclick={() => folderPickerOpen = !folderPickerOpen} title={$_("detail.actions.folders")}>
           <FolderSimplePlus size={14} weight={hasFolders ? "fill" : "light"} />
-          Folder
+          {$_("detail.actions.folder")}
         </button>
         {#if folderPickerOpen}
           <div class="fp-menu">
             {#if allBookCategories.length === 0 && !folderCreating}
-              <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Folders" title="No folders yet" body="Create a folder in Settings to organize this book." />
+              <NocturneState layout="compact" tone="info" icon="folder" eyebrow={$_("detail.actions.folders")} title={$_("detail.folders.emptyTitle")} body={$_("bookDetail.folders.emptyBody")} />
             {/if}
             {#each allBookCategories as category (category.id)}
               {@const isIn = assignedBookCategoryIds.includes(category.id)}
@@ -733,7 +734,7 @@
               <div class="fp-create">
                 <input
                   class="fp-input"
-                  placeholder="Folder name..."
+                  placeholder={$_("detail.folders.namePlaceholder")}
                   bind:value={folderNewName}
                   onkeydown={(event) => {
                     if (event.key === "Enter") createFolder();
@@ -743,13 +744,13 @@
                     }
                   }}
                 />
-                <button class="fp-confirm" type="button" onclick={createFolder} disabled={!folderNewName.trim()}>Add</button>
-                <button class="fp-cancel" type="button" onclick={() => { folderCreating = false; folderNewName = ""; }} aria-label="Cancel folder creation">
+                <button class="fp-confirm" type="button" onclick={createFolder} disabled={!folderNewName.trim()}>{$_("detail.folders.add")}</button>
+                <button class="fp-cancel" type="button" onclick={() => { folderCreating = false; folderNewName = ""; }} aria-label={$_("detail.folders.cancelCreation")}>
                   <X size={12} weight="light" />
                 </button>
               </div>
             {:else}
-              <button class="fp-new" type="button" onclick={() => folderCreating = true}>+ New folder</button>
+              <button class="fp-new" type="button" onclick={() => folderCreating = true}>{$_("detail.folders.new")}</button>
             {/if}
           </div>
         {/if}
@@ -758,15 +759,15 @@
 
     {#snippet detailsExtra()}
       <div class="v3-details-stack">
-        <div class="detail-row"><span class="detail-key">Type</span><span class="detail-val">{activePresentation?.subtypeLabel ?? activeBook.subtype.toUpperCase()}</span></div>
-        <div class="detail-row"><span class="detail-key">{usesPagesLabel ? "Pages" : "Chapters"}</span><span class="detail-val">{displaySectionCount}</span></div>
-        {#if hasFolders}<div class="detail-row"><span class="detail-key">Folders</span><span class="detail-val">{assignedBookCategories.map((category) => category.name).join(", ")}</span></div>{/if}
-        {#if activeBook.subtype === "pdf"}<div class="detail-row"><span class="detail-key">Pages</span><span class="detail-val">{activePresentation?.pageCountLabel ?? `${activeBook.pageCount ?? 0} pages`}</span></div>{/if}
-        {#if activeBook.subtype === "epub"}<div class="detail-row"><span class="detail-key">Spine items</span><span class="detail-val">{activeBook.spineCount ?? activeBook.spine?.length ?? 0}</span></div>{/if}
-        {#if activeProgress}<div class="detail-row"><span class="detail-key">Last progress</span><span class="detail-val">{activePresentation?.readPercentLabel ?? `${Math.round(readPercent * 100)}%`}</span></div>{/if}
+        <div class="detail-row"><span class="detail-key">{$_("bookDetail.type")}</span><span class="detail-val">{activePresentation?.subtypeLabel ?? activeBook.subtype.toUpperCase()}</span></div>
+        <div class="detail-row"><span class="detail-key">{usesPagesLabel ? $_("bookDetail.pages") : $_("detail.stats.chapters")}</span><span class="detail-val">{displaySectionCount}</span></div>
+        {#if hasFolders}<div class="detail-row"><span class="detail-key">{$_("detail.actions.folders")}</span><span class="detail-val">{assignedBookCategories.map((category) => category.name).join(", ")}</span></div>{/if}
+        {#if activeBook.subtype === "pdf"}<div class="detail-row"><span class="detail-key">{$_("bookDetail.pages")}</span><span class="detail-val">{activePresentation?.pageCountLabel ?? $_("bookDetail.pageCount", { count: activeBook.pageCount ?? 0 })}</span></div>{/if}
+        {#if activeBook.subtype === "epub"}<div class="detail-row"><span class="detail-key">{$_("bookDetail.spineItems")}</span><span class="detail-val">{activeBook.spineCount ?? activeBook.spine?.length ?? 0}</span></div>{/if}
+        {#if activeProgress}<div class="detail-row"><span class="detail-key">{$_("bookDetail.lastProgress")}</span><span class="detail-val">{activePresentation?.readPercentLabel ?? `${Math.round(readPercent * 100)}%`}</span></div>{/if}
         <div class="detail-file">
-          <span class="detail-key">Source file</span>
-          <p class="detail-path">{activeBook.importPath || "Metadata-only restore (original file unavailable)"}</p>
+          <span class="detail-key">{$_("bookDetail.sourceFile")}</span>
+          <p class="detail-path">{activeBook.importPath || $_("bookDetail.metadataOnlyRestore")}</p>
         </div>
       </div>
     {/snippet}
@@ -778,14 +779,14 @@
           <div class="sort-wrap">
             <button class="series-toolbar-btn" type="button" onclick={() => { sortMenuOpen = !sortMenuOpen; filterMenuOpen = false; }}>
               {#if sectionSortDir === "desc"}<SortDescending size={14} weight="light" />{:else}<SortAscending size={14} weight="light" />{/if}
-              Sort
+              {$_("library.sort")}
               <CaretDown size={10} weight="light" />
             </button>
             {#if sortMenuOpen}
               <div class="sort-menu" role="presentation" onmouseleave={() => sortMenuOpen = false}>
-                <p class="sort-section-label">{usesPagesLabel ? "Page order" : "Chapter order"}</p>
-                <button class="sort-option" class:active={sectionSortDir === "asc"} onclick={() => setSortDir("asc")}>Ascending</button>
-                <button class="sort-option" class:active={sectionSortDir === "desc"} onclick={() => setSortDir("desc")}>Descending</button>
+                <p class="sort-section-label">{usesPagesLabel ? $_("bookDetail.pageOrder") : $_("bookDetail.chapterOrder")}</p>
+                <button class="sort-option" class:active={sectionSortDir === "asc"} onclick={() => setSortDir("asc")}>{$_("library.sort.ascending")}</button>
+                <button class="sort-option" class:active={sectionSortDir === "desc"} onclick={() => setSortDir("desc")}>{$_("library.sort.descending")}</button>
               </div>
             {/if}
           </div>
@@ -797,12 +798,12 @@
             </button>
             {#if filterMenuOpen}
               <div class="sort-menu" role="presentation" onmouseleave={() => filterMenuOpen = false}>
-                <p class="sort-section-label">Filter</p>
-                <button class="sort-option" class:active={sectionFilter === "all"} onclick={() => setFilter("all")}>{usesPagesLabel ? "All pages" : "All chapters"}</button>
-                <button class="sort-option" class:active={sectionFilter === "unread"} onclick={() => setFilter("unread")}>Unread</button>
-                <button class="sort-option" class:active={sectionFilter === "read"} onclick={() => setFilter("read")}>Read</button>
-                <button class="sort-option" class:active={sectionFilter === "bookmarked"} onclick={() => setFilter("bookmarked")}>Bookmarked</button>
-                <button class="sort-option" class:active={sectionFilter === "current"} onclick={() => setFilter("current")}>Current</button>
+                <p class="sort-section-label">{$_("library.filter")}</p>
+                <button class="sort-option" class:active={sectionFilter === "all"} onclick={() => setFilter("all")}>{usesPagesLabel ? $_("bookDetail.allPages") : $_("bookDetail.allChapters")}</button>
+                <button class="sort-option" class:active={sectionFilter === "unread"} onclick={() => setFilter("unread")}>{$_("detail.stats.unread")}</button>
+                <button class="sort-option" class:active={sectionFilter === "read"} onclick={() => setFilter("read")}>{$_("bookDetail.filter.read")}</button>
+                <button class="sort-option" class:active={sectionFilter === "bookmarked"} onclick={() => setFilter("bookmarked")}>{$_("bookDetail.filter.bookmarked")}</button>
+                <button class="sort-option" class:active={sectionFilter === "current"} onclick={() => setFilter("current")}>{$_("bookDetail.filter.current")}</button>
               </div>
             {/if}
           </div>
@@ -810,9 +811,9 @@
       </div>
       <div class="list-header-right">
         {#if !previewing && sectionViews.length > 0}
-          <div class="view-segmented" aria-label={`${previewHeading} view`}>
-            <button class="series-icon" class:active={viewMode === "list"} onclick={() => viewMode = "list"} title="List view"><List size={14} weight="light" /></button>
-            <button class="series-icon" class:active={viewMode === "grid"} onclick={() => viewMode = "grid"} title="Grid view"><SquaresFour size={14} weight="light" /></button>
+          <div class="view-segmented" aria-label={$_("bookDetail.sectionView", { section: previewHeading })}>
+            <button class="series-icon" class:active={viewMode === "list"} onclick={() => viewMode = "list"} title={$_("detail.view.list")}><List size={14} weight="light" /></button>
+            <button class="series-icon" class:active={viewMode === "grid"} onclick={() => viewMode = "grid"} title={$_("detail.view.grid")}><SquaresFour size={14} weight="light" /></button>
           </div>
         {/if}
       </div>
@@ -825,20 +826,20 @@
             layout="compact"
             tone="danger"
             icon="info"
-            eyebrow="Reader preview"
-            title="Could not open this book"
+            eyebrow={$_("bookDetail.readerPreview")}
+            title={$_("bookDetail.errors.couldNotOpen")}
             body={previewError}
           />
         {:else}
           <div class="preview-frame" class:is-loading={previewLoading}>
             <div class="preview-host" bind:this={previewHost}></div>
             {#if previewLoading}
-              <div class="preview-loading">Opening {activePresentation?.subtypeLabel ?? activeBook.subtype.toUpperCase()}...</div>
+              <div class="preview-loading">{$_("bookDetail.openingType", { type: activePresentation?.subtypeLabel ?? activeBook.subtype.toUpperCase() })}</div>
             {/if}
           </div>
         {/if}
       {:else if sectionViews.length > 0 && filteredSections.length === 0}
-        <NocturneState layout="compact" tone="info" icon="search" eyebrow={usesPagesLabel ? "Pages" : "Chapters"} title={`No ${usesPagesLabel ? "pages" : "chapters"} match this filter`} body="Try another status filter or clear the current view filter." />
+        <NocturneState layout="compact" tone="info" icon="search" eyebrow={usesPagesLabel ? $_("bookDetail.pages") : $_("detail.stats.chapters")} title={usesPagesLabel ? $_("bookDetail.empty.noPagesMatch") : $_("bookDetail.empty.noChaptersMatch")} body={$_("bookDetail.empty.tryAnotherStatusFilter")} />
       {:else if filteredSections.length > 0}
         <div class={viewMode === "grid" ? "ch-grid v3-ch-grid" : "ch-list v3-ch-list"}>
           {#if viewMode === "grid"}
@@ -847,16 +848,16 @@
                 <span class="grid-cell-title">{sectionTitle(item)}</span>
                 {#if sectionSubtitle(item)}<span class="grid-cell-sub">{sectionSubtitle(item)}</span>{/if}
                 <span class="chapter-progress"><span class="chapter-progress__fill" style={`width: ${item.isRead ? 100 : 0}%`}></span></span>
-                {#if item.isCurrent}<span class="grid-cell-dl book-current-dot" title="Current"></span>{/if}
-                {#if item.isBookmarked}<span class="grid-cell-dot" title="Bookmarked"></span>{/if}
+                {#if item.isCurrent}<span class="grid-cell-dl book-current-dot" title={$_("bookDetail.filter.current")}></span>{/if}
+                {#if item.isBookmarked}<span class="grid-cell-dot" title={$_("bookDetail.filter.bookmarked")}></span>{/if}
               </button>
             {/each}
           {:else}
             <div class="chapter-table-header">
-              <span>{usesPagesLabel ? "Page" : "Chapter"}</span>
-              <span>Type</span>
-              <span>{activeBook.subtype === "pdf" ? "Position" : "Depth"}</span>
-              <span>Status</span>
+              <span>{usesPagesLabel ? $_("bookDetail.page") : $_("detail.table.chapter")}</span>
+              <span>{$_("bookDetail.type")}</span>
+              <span>{activeBook.subtype === "pdf" ? $_("bookDetail.position") : $_("bookDetail.depth")}</span>
+              <span>{$_("detail.table.status")}</span>
             </div>
             {#each visibleSections as item (item.id)}
               <button class="ch-row v3-ch-row" class:read={item.isRead} class:ch-selected={item.isCurrent} style={`--toc-depth:${item.depth};`} onclick={() => openBookSection(item)}>
@@ -864,26 +865,26 @@
                   <span class="ch-name">{sectionTitle(item)}</span>
                   <div class="ch-meta">
                     {#if sectionSubtitle(item)}<span class="ch-meta-item">{sectionSubtitle(item)}</span>{/if}
-                    {#if item.isCurrent}<span class="ch-meta-item current">Current</span>{/if}
-                    {#if item.isBookmarked}<span class="ch-meta-item bookmarked">Bookmarked</span>{/if}
-                    {#if !item.isRead && !item.isCurrent}<span class="ch-meta-item unread">Unread</span>{/if}
-                    {#if item.depth > 0}<span class="ch-meta-item">Depth {item.depth}</span>{/if}
+                    {#if item.isCurrent}<span class="ch-meta-item current">{$_("bookDetail.filter.current")}</span>{/if}
+                    {#if item.isBookmarked}<span class="ch-meta-item bookmarked">{$_("bookDetail.filter.bookmarked")}</span>{/if}
+                    {#if !item.isRead && !item.isCurrent}<span class="ch-meta-item unread">{$_("detail.stats.unread")}</span>{/if}
+                    {#if item.depth > 0}<span class="ch-meta-item">{$_("bookDetail.depthValue", { depth: item.depth })}</span>{/if}
                   </div>
                   <div class="chapter-progress"><div class="chapter-progress__fill" style={`width: ${item.isRead ? 100 : 0}%`}></div></div>
                 </div>
                 <span class="ch-provider">{activePresentation?.subtypeLabel ?? activeBook.subtype.toUpperCase()}</span>
-                <span class="ch-date">{activeBook.subtype === "pdf" && item.pageNumber ? `${Math.round(item.progressPercent * 100)}%` : (item.depth > 0 ? `Depth ${item.depth}` : "")}</span>
+                <span class="ch-date">{activeBook.subtype === "pdf" && item.pageNumber ? `${Math.round(item.progressPercent * 100)}%` : (item.depth > 0 ? $_("bookDetail.depthValue", { depth: item.depth }) : "")}</span>
                 <div class="ch-status">
                   <span class="ch-status-read"></span>
                   <span class="ch-status-main">
                     {#if item.isCurrent}
-                      <BookOpen size={14} weight="fill" class="read-icon" title="Current" />
+                      <BookOpen size={14} weight="fill" class="read-icon" title={$_("bookDetail.filter.current")} />
                     {:else if item.isBookmarked}
-                      <BookmarkSimple size={14} weight="fill" class="read-icon" title="Bookmarked" />
+                      <BookmarkSimple size={14} weight="fill" class="read-icon" title={$_("bookDetail.filter.bookmarked")} />
                     {:else if item.isRead}
-                      <CheckCircle size={14} weight="fill" class="read-icon" title="Read" />
+                      <CheckCircle size={14} weight="fill" class="read-icon" title={$_("bookDetail.filter.read")} />
                     {:else if !item.isRead}
-                      <Circle size={14} weight="regular" class="unread-icon" title="Unread" />
+                      <Circle size={14} weight="regular" class="unread-icon" title={$_("detail.stats.unread")} />
                     {/if}
                   </span>
                   <span class="ch-status-action"></span>
@@ -897,9 +898,9 @@
           layout="compact"
           tone="info"
           icon="books"
-          eyebrow="Book contents"
-          title="No readable sections"
-          body={activeBook.subtype === "pdf" ? "This PDF has no readable pages." : "No readable spine or TOC metadata was found in this EPUB."}
+          eyebrow={$_("bookDetail.contents")}
+          title={$_("bookDetail.empty.noReadableSections")}
+          body={activeBook.subtype === "pdf" ? $_("bookDetail.empty.pdfNoReadablePages") : $_("bookDetail.empty.epubNoReadableMetadata")}
         />
       {/if}
     {/snippet}
@@ -907,9 +908,9 @@
     {#snippet chapterFooter()}
       {#if !previewing && viewMode === "list" && filteredSections.length > 0 && totalSectionPages > 1}
         <div class="pagination-bottom v3-pagination">
-          <button class="series-page-btn" onclick={() => goToSectionPage(sectionPage - 1)} disabled={sectionPage === 1}>Prev</button>
+          <button class="series-page-btn" onclick={() => goToSectionPage(sectionPage - 1)} disabled={sectionPage === 1}>{$_("library.pagination.prev")}</button>
           <span class="page-num">{sectionPage} / {totalSectionPages}</span>
-          <button class="series-page-btn" onclick={() => goToSectionPage(sectionPage + 1)} disabled={sectionPage === totalSectionPages}>Next</button>
+          <button class="series-page-btn" onclick={() => goToSectionPage(sectionPage + 1)} disabled={sectionPage === totalSectionPages}>{$_("library.pagination.next")}</button>
         </div>
       {/if}
     {/snippet}
