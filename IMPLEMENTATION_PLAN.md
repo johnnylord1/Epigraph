@@ -56,10 +56,10 @@ Treat the current working tree as the source of truth. Several features were imp
   - Local signing key files exist at `C:\Users\jhow-\.tauri\aethon.key` and `C:\Users\jhow-\.tauri\aethon.key.pub`.
   - Signing environment variables were not globally present, which is correct for keeping the private key out of the repo/environment.
   - `npm run tauri -- build --config src-tauri/tauri.conf.json` with `TAURI_SIGNING_PRIVATE_KEY` supplied only for that process generated `src-tauri/target/release/bundle/nsis/Aethon_0.0.1_x64-setup.exe`.
-  - Installer SHA-256: `15D24D91691EAB26EBE0F82260AADB41A13FDA8015A420A3FFC90B5529507AB1`.
+  - Final installer SHA-256 after commit `d82c8c5`: `CB25F62953E3857D86D6CBF8C898412A03C4DB3E03DDC41F55DD9ACCCA278CDB`.
   - Signing was unblocked by passing the encrypted key's empty password as the preserved single argument `--password=` directly to the Tauri CLI shim. The previous npm invocation silently dropped the empty password and waited on an invisible prompt.
   - `src-tauri/target/release/bundle/nsis/Aethon_0.0.1_x64-setup.exe.sig` was generated successfully by Tauri CLI 2.10.1.
-  - Signature SHA-256: `52822D8F98879C93EF5E43B128C6F802BC8A42F22A3996796E5E45557BBC8C76`.
+  - Final signature SHA-256: `4CBE871C68BCB8A8612F786ECA9885B0886F457AF240C3B6BF21DC1204A1AE33`.
   - Tauri CLI 2.10.1 has no `signer verify` subcommand; successful key decryption/signing and the generated updater signature are the available local CLI validation.
   - The signing key remained outside the repository and was supplied only to the signing process.
 - Latest i18n and dev-app smoke:
@@ -71,6 +71,9 @@ Treat the current working tree as the source of truth. Several features were imp
   - Visual smoke found and fixed the missing `settings-row--stacked` CSS contract that compressed the Create profile label into a one-character column in narrow windows.
   - `npm run test:browser -- src/components/settings/Settings.browser.test.ts -t "keeps the profile creation row readable"`, `npm test -- src/lib/i18n/runtime.test.ts`, and `npm run build` passed.
   - With the dev app closed, `cargo test local_server_java_args_enable_extension_bytecode_compatibility` passed.
+  - The final signed NSIS installer completed a silent install with exit code `0` at `C:\Users\jhow-\AppData\Local\Aethon\aethon.exe`.
+  - Installed-release smoke opened `http://tauri.localhost/` with title `Aethon [MAIN :4567]`, rendered the real 633-title Library and Settings/Profiles, and recorded no JavaScript or console errors.
+  - The temporary localization smoke state was restored to English before leaving the installed app open.
 
 
 ### Remaining Work
@@ -82,7 +85,6 @@ Treat the current working tree as the source of truth. Several features were imp
   - Expand locale-specific visual coverage beyond the completed Hebrew RTL smoke.
 - Release/signing:
   - Publish updater metadata using the generated installer URL and signature value.
-  - Run installed-app smoke after signing.
 - Known non-blocking build warnings to clean later:
   - unused CSS selectors in `NovelDetail.svelte` and `SeriesDetail.svelte`;
   - protobuf `eval` warning from dependency code;
