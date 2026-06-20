@@ -24,7 +24,9 @@ Treat the current working tree as the source of truth. Several features were imp
   - Recent Activity opening from Library;
   - Recent Activity closing when navigating to Browse from the sidebar.
 - Final blockers / decisions:
-  - `TAURI_SIGNING_PRIVATE_KEY` is still absent from the environment, so signed updater/distribution output remains blocked externally.
+  - Updater signing keypair was generated locally at `C:\Users\jhow-\.tauri\aethon.key` and `C:\Users\jhow-\.tauri\aethon.key.pub`; the private key was generated without a password and must not be committed.
+  - `src-tauri/tauri.conf.json` and `src-tauri/tauri.windows.conf.json` now use the generated public updater key.
+  - Signed NSIS artifacts were generated under `src-tauri/target/release/bundle/nsis/`, including `Aethon_0.6.7_x64-setup.exe.sig`.
   - The installed app remains present at `C:\Users\jhow-\AppData\Local\Aethon\Aethon.exe` with `uninstall.exe`; do not remove it unless explicitly requested.
   - A larger live Books/Novels shelf smoke remains data-dependent. Synthetic 320-novel browser coverage is in place, but the current real profile only has a small Books/Novels shelf.
 
