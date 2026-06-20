@@ -74,6 +74,15 @@ Treat the current working tree as the source of truth. Several features were imp
   - The final signed NSIS installer completed a silent install with exit code `0` at `C:\Users\jhow-\AppData\Local\Aethon\aethon.exe`.
   - Installed-release smoke opened `http://tauri.localhost/` with title `Aethon [MAIN :4567]`, rendered the real 633-title Library and Settings/Profiles, and recorded no JavaScript or console errors.
   - The temporary localization smoke state was restored to English before leaving the installed app open.
+- Latest release-readiness cleanup:
+  - Commit `2f26fcf` fixed the Library folder snapshot regression: transient category refresh failures no longer overwrite persisted folders with an empty category list, and Library category fetch now wakes the local server before querying.
+  - Settings General was reorganized into separate `Startup`, `Profiles`, and `Desktop defaults` cards, with updated browser snapshots.
+  - Settings General and related shared labels received the next i18n message-key slice while keeping app language separate from `Preferred source language`.
+  - The GitHub CLI was installed locally and authenticated as `johnnylord1`; repository/release publishing is intentionally postponed until local release readiness is complete.
+  - Local release cleanup removed Aethon-owned unused CSS build warnings in `NovelDetail.svelte` and `SeriesDetail.svelte`.
+  - Backup test fixtures were aligned to release version `0.0.1`.
+  - `npm test -- src/lib/backup/aethonBackup.test.ts src/lib/backup/booksBackup.test.ts` passed with 9 tests.
+  - `npm run build` passed after the release cleanup; the previous Aethon-owned Svelte unused-selector warnings are gone.
 
 
 ### Remaining Work
@@ -83,10 +92,15 @@ Treat the current working tree as the source of truth. Several features were imp
   - Extract hardcoded user-facing strings from primary pages first: Home, Library, Browse/Sources, Downloads, Settings, SeriesDetail, BookDetail, NovelDetail, readers, dialogs/toasts.
   - Expand message-key coverage tests beyond the locale resolver so new native strings do not bypass the i18n layer.
   - Expand locale-specific visual coverage beyond the completed Hebrew RTL smoke.
-- Release/signing:
-  - Publish updater metadata using the generated installer URL and signature value.
+- Local release readiness before GitHub publishing:
+  - Optional final installed-app smoke after the next signed installer is generated, if release artifacts are rebuilt again before publishing.
+- Final GitHub publishing step:
+  - Create or select the GitHub repository after local readiness is complete.
+  - Create the `v0.0.1` GitHub Release.
+  - Upload the signed NSIS installer and generated `.sig`.
+  - Publish updater metadata using the GitHub Release installer URL and signature value.
+  - Add the production updater endpoint once the metadata URL is stable.
 - Known non-blocking build warnings to clean later:
-  - unused CSS selectors in `NovelDetail.svelte` and `SeriesDetail.svelte`;
   - protobuf `eval` warning from dependency code;
   - Vite dynamic/static import chunking warnings.
 

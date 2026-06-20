@@ -706,16 +706,11 @@
 {/if}
 
 <style>
-  .novel-current-dot,
-  .novel-unread-dot {
+  .novel-current-dot {
     width: 5px;
     height: 5px;
     border-radius: 999px;
     background: #d3c4ff;
-  }
-
-  .novel-unread-dot {
-    opacity: 0.56;
   }
 
   .dl-wrap {

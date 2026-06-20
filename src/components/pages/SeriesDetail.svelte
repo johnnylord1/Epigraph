@@ -1283,7 +1283,7 @@
   }
   .grid-cell, .grid-cell-skeleton { cursor: pointer; }
   .grid-cell-skeleton { min-height: 74px; border: 1px solid rgba(202, 196, 208, 0.06); border-radius: 12px; background: rgba(28, 27, 27, 0.34); }
-  .grid-cell-dl, .grid-cell-dot, .ch-dl-dot { width: 5px; height: 5px; border-radius: 999px; background: #d3c4ff; }
+  .grid-cell-dl, .grid-cell-dot { width: 5px; height: 5px; border-radius: 999px; background: #d3c4ff; }
   .grid-cell-dl, .grid-cell-dot, .grid-cell-spinner { position: absolute; top: 8px; right: 8px; }
   .grid-cell-dot { right: 18px; opacity: 0.65; }
   .grid-cell-spinner { color: #d3c4ff; }

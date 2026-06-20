@@ -292,7 +292,7 @@ describe("books backup payload", () => {
 
     const built = await buildAethonBooksBackupContainer(
       sampleSnapshot,
-      { exportMode: "full", appVersion: "0.6.7", platform: "windows", sourceProfileId: "main" },
+      { exportMode: "full", appVersion: "0.0.1", platform: "windows", sourceProfileId: "main" },
       {
         readBinaryFile,
         writeManagedBookAsset: vi.fn(),

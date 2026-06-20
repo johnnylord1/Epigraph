@@ -15,7 +15,7 @@ import {
 describe("aethon unified backup container", () => {
   it("builds a canonical .aethonbk container with manifest, payload registry, and checksums", async () => {
     const built = await buildAethonBackupContainer({
-      appVersion: "0.6.7",
+      appVersion: "0.0.1",
       platform: "windows",
       sourceSurface: "desktop",
       sourceProfileId: "test",
