@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, tick, untrack } from "svelte";
   import { gql } from "../../lib/client";
+  import { _ } from "../../lib/i18n/runtime";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import { GET_SOURCES, FETCH_SOURCE_MANGA, GET_TRACKERS, SEARCH_TRACKER, GET_LIBRARY, GET_ALL_TRACKER_RECORDS } from "../../lib/queries";
@@ -87,6 +88,20 @@
   type BrowseTrackerEntry = Tracker;
 
   const loggedSearchRecommendationSourceIssues = new Set<string>();
+
+  function browseTabLabel(tab: SearchTab) {
+    if (tab === "keyword") return $_("browse.tabs.search");
+    if (tab === "browse") return $_("browse.tabs.discover");
+    return $_("browse.tabs.sources");
+  }
+
+  function browseSearchPlaceholder() {
+    if (activeBrowseTab === "keyword") return $_("browse.search.placeholderKeyword");
+    if (activeBrowseTab === "browse") return $_("browse.search.placeholderDiscover");
+    return activeContentType === "novels"
+      ? $_("browse.search.placeholderNovelSources")
+      : $_("browse.search.placeholderExtensions");
+  }
 
   function logSearchRecommendationSourceIssue(context: string, sourceName: string, error: unknown) {
     const classification = classifySourceAccessError(error);
@@ -4892,7 +4907,7 @@
 <div class="root" class:is-search-engaged={browseSearchFocused}>
   <AppTopbar className="browse-topbar">
     {#snippet left()}
-      <nav class="n-segmented" data-active={activeContentType === "novels" ? "novels" : "manga"} aria-label="Content type">
+      <nav class="n-segmented" data-active={activeContentType === "novels" ? "novels" : "manga"} aria-label={$_("browse.contentType")}>
         <span class="n-segmented__thumb" aria-hidden="true"></span>
         <button
           type="button"
@@ -4900,7 +4915,7 @@
           class:is-active={activeContentType === "manga"}
           onclick={() => selectContentType("manga")}
         >
-          Comics
+          {$_("common.comics")}
         </button>
         <button
           type="button"
@@ -4908,7 +4923,7 @@
           class:is-active={activeContentType === "novels"}
           onclick={() => selectContentType("novels")}
         >
-          Books
+          {$_("common.books")}
         </button>
       </nav>
     {/snippet}
@@ -4920,13 +4935,7 @@
           <input
             bind:value={searchQuery}
             class="n-search__input"
-            placeholder={activeBrowseTab === "keyword"
-              ? "Search manga, novels, authors..."
-              : activeBrowseTab === "browse"
-                ? "Filter Discover..."
-                : activeContentType === "novels"
-                  ? "Search novel sources..."
-                  : "Search extensions..."}
+            placeholder={browseSearchPlaceholder()}
             oninput={(event) => handleTopbarSearchInput((event.currentTarget as HTMLInputElement).value)}
             onfocus={handleBrowseSearchFocus}
             onblur={handleBrowseSearchBlur}
@@ -4946,13 +4955,13 @@
 
   <div class="browseSubtabs">
     <button class="browseSubtab" class:browseSubtabActive={activeBrowseTab === "keyword"} onclick={() => selectBrowseTab("keyword")}>
-      Search
+      {browseTabLabel("keyword")}
     </button>
     <button class="browseSubtab" class:browseSubtabActive={activeBrowseTab === "browse"} onclick={() => selectBrowseTab("browse")}>
-      Discover
+      {browseTabLabel("browse")}
     </button>
     <button class="browseSubtab" class:browseSubtabActive={activeBrowseTab === "source"} onclick={() => selectBrowseTab("source")}>
-      Sources
+      {browseTabLabel("source")}
     </button>
   </div>
 
@@ -4976,8 +4985,8 @@
         <div class="searchCanvas">
           <main class="searchMainColumn">
           <div class="searchHeroCopy">
-            <span class="n-eyebrow">Search</span>
-            <h2>Find something to read</h2>
+            <span class="n-eyebrow">{$_("browse.search.eyebrow")}</span>
+            <h2>{$_("browse.search.title")}</h2>
             <p>{searchHeroStatusText}</p>
           </div>
 
@@ -4986,8 +4995,8 @@
               layout="compact"
               tone="info"
               icon="retry"
-              eyebrow="Search status"
-              title="Preparing recommendations"
+              eyebrow={$_("browse.search.statusEyebrow")}
+              title={$_("browse.search.preparingRecommendations")}
               body={searchHeroStatusText}
             />
           {:else if searchEmptyStateMessage}
@@ -4995,8 +5004,8 @@
               layout="compact"
               tone={setupState?.kind === "server_offline" ? "danger" : "info"}
               icon={setupState?.kind === "server_offline" ? "plug" : "info"}
-              eyebrow="Search status"
-              title="Recommendations unavailable"
+              eyebrow={$_("browse.search.statusEyebrow")}
+              title={$_("browse.search.recommendationsUnavailable")}
               body={searchEmptyStateMessage}
             />
           {:else}
