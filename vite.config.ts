@@ -1,9 +1,38 @@
 import { defineConfig } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
+import { paraglideVitePlugin } from "@inlang/paraglide-js";
 import path from "path";
 
+function isKnownReleaseWarning(warning: { code?: string; id?: string; message?: string }) {
+  const id = warning.id ?? "";
+  const message = warning.message ?? "";
+  if (warning.code === "EVAL" && id.includes("@protobufjs") && id.includes("inquire")) return true;
+  if (
+    message.includes("is dynamically imported by") &&
+    message.includes("but also statically imported by") &&
+    (
+      message.includes("src/lib/books/libraryState.ts") ||
+      message.includes("src/lib/client.ts") ||
+      message.includes("src/lib/queries.ts") ||
+      message.includes("src/lib/backup/novelsBackup.ts") ||
+      message.includes("src/lib/novels/domain.ts") ||
+      message.includes("src/lib/novels/libraryState.ts") ||
+      message.includes("src/lib/novels/libraryRefresh.ts")
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export default defineConfig({
-  plugins: [svelte()],
+  plugins: [
+    svelte(),
+    paraglideVitePlugin({
+      project: "./project.inlang",
+      outdir: "./src/paraglide",
+    }),
+  ],
   clearScreen: false,
   resolve: {
     alias: {
@@ -27,6 +56,10 @@ export default defineConfig({
     minify: !process.env.TAURI_DEBUG ? "esbuild" : false,
     sourcemap: !!process.env.TAURI_DEBUG,
     rollupOptions: {
+      onwarn(warning, defaultHandler) {
+        if (isKnownReleaseWarning(warning)) return;
+        defaultHandler(warning);
+      },
       output: {
         manualChunks(id) {
           if (!id.includes("node_modules")) return undefined;

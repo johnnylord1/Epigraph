@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { _ } from "svelte-i18n";
+  import { _ } from "../../lib/i18n/runtime";
   import { store } from "../../store/state.svelte";
   import type { AethonRestorePlan } from "../../lib/backup/aethonRestorePlanner";
   import type { BackupLaunchIntent } from "../../lib/backup/backupRollout";

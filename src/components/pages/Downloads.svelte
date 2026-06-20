@@ -1,8 +1,9 @@
-﻿<script lang="ts">
+<script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { open as openPath } from "@tauri-apps/plugin-shell";
   import { CircleNotch } from "phosphor-svelte";
+  import { _ } from "../../lib/i18n/runtime";
   import { gql } from "../../lib/client";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import AppTopbar from "../layout/AppTopbar.svelte";
@@ -78,7 +79,7 @@
       progress: item.progress,
       chapterName: item.chapter.name,
       pageCount: item.chapter.pageCount,
-      mangaTitle: item.chapter.manga?.title ?? "Unknown title",
+      mangaTitle: item.chapter.manga?.title ?? $_("downloads.unknownTitle"),
       thumbnailUrl: item.chapter.manga?.thumbnailUrl ?? "",
       order: item.localOrder ?? itemOrder.get(item.chapter.id) ?? 0,
     };
@@ -551,10 +552,10 @@
     const visualState = getVisualState(item);
     const percent = Math.round(item.progress * 100);
 
-    if (visualState === "error") return "Network Error";
-    if (visualState === "finished") return "Finished";
-    if (visualState === "queued") return "Queued";
-    if (visualState === "paused") return `Paused · ${percent}%`;
+    if (visualState === "error") return $_("downloads.status.networkError");
+    if (visualState === "finished") return $_("downloads.status.finished");
+    if (visualState === "queued") return $_("downloads.status.queued");
+    if (visualState === "paused") return $_("downloads.status.pausedPercent", { values: { percent } });
     return `${percent}%`;
   }
 
@@ -569,11 +570,11 @@
 
   function getActionLabel(item: DisplayDownloadItem) {
     const visualState = getVisualState(item);
-    if (visualState === "downloading" || visualState === "queued") return "Pause";
-    if (visualState === "paused") return "Resume";
-    if (visualState === "error") return "Retry";
-    if (visualState === "finished") return "Completed";
-    return "Pause";
+    if (visualState === "downloading" || visualState === "queued") return $_("downloads.actions.pause");
+    if (visualState === "paused") return $_("downloads.actions.resume");
+    if (visualState === "error") return $_("downloads.actions.retry");
+    if (visualState === "finished") return $_("downloads.actions.completed");
+    return $_("downloads.actions.pause");
   }
 
   function isActionBusy(item: DisplayDownloadItem) {
@@ -607,13 +608,15 @@
   let storageSummary: string = $derived.by(() =>
     storageInfo
       ? `${fmtBytes(storageInfo.manga_bytes)} / ${fmtBytes(storageInfo.free_bytes)} free`
-      : "—",
+      : "�",
   );
   let speedSummary: string = $derived(
-    activeCount === 0 ? "Idle" : observedSpeedPerSecond === null ? "Measuring..." : `${formatObservedSpeed(observedSpeedPerSecond)}/s`,
+    activeCount === 0 ? $_("downloads.summary.idle") : observedSpeedPerSecond === null ? $_("downloads.summary.measuring") : `${formatObservedSpeed(observedSpeedPerSecond)}/s`,
   );
   let summaryStatus: string = $derived(
-    queueSize === 0 ? "No downloads queued" : `${activeCount} Running · ${pausedCount} Paused`,
+    queueSize === 0
+      ? $_("downloads.summary.noneQueued")
+      : $_("downloads.summary.counts", { values: { active: activeCount, paused: pausedCount } }),
   );
 
   function fmtBytes(bytes: number): string {
@@ -650,7 +653,7 @@
           <input
             class="n-search__input"
             type="text"
-            placeholder="Search downloads..."
+            placeholder={$_("downloads.searchPlaceholder")}
             bind:value={searchQuery}
             onfocus={() => syncDownloadsSearchDim(true)}
             onblur={() => syncDownloadsSearchDim(false)}
@@ -663,8 +666,8 @@
             class="n-icon-btn"
             class:is-active={filterPanelOpen || downloadFilter !== "all"}
             type="button"
-            title="Filter downloads"
-            aria-label="Filter downloads"
+            title={$_("downloads.filter.title")}
+            aria-label={$_("downloads.filter.title")}
             aria-expanded={filterPanelOpen}
             onclick={toggleFilterPanel}
           >
@@ -672,14 +675,14 @@
           </button>
           {#if filterPanelOpen}
             <div class="downloads-menu-panel downloads-filter-panel n-popover-surface n-popover-menu" role="menu">
-              <p class="n-popover-label">Show</p>
+              <p class="n-popover-label">{$_("downloads.filter.show")}</p>
               {#each [
-                { id: "all", label: "All", count: queueSize },
-                { id: "downloading", label: "Active", count: activeCount },
-                { id: "queued", label: "Queued", count: queuedCount },
-                { id: "paused", label: "Paused", count: pausedCount },
-                { id: "error", label: "Failed", count: failedCount },
-                { id: "finished", label: "Finished", count: finishedCount },
+                { id: "all", label: $_("downloads.filter.all"), count: queueSize },
+                { id: "downloading", label: $_("downloads.filter.active"), count: activeCount },
+                { id: "queued", label: $_("downloads.filter.queued"), count: queuedCount },
+                { id: "paused", label: $_("downloads.filter.paused"), count: pausedCount },
+                { id: "error", label: $_("downloads.filter.failed"), count: failedCount },
+                { id: "finished", label: $_("downloads.filter.finished"), count: finishedCount },
               ] as option}
                 <button
                   type="button"
@@ -701,8 +704,8 @@
             class="n-icon-btn"
             class:is-active={morePanelOpen}
             type="button"
-            title="More download options"
-            aria-label="More download options"
+            title={$_("downloads.more.title")}
+            aria-label={$_("downloads.more.title")}
             aria-expanded={morePanelOpen}
             onclick={toggleMorePanel}
           >
@@ -710,7 +713,7 @@
           </button>
           {#if morePanelOpen}
             <div class="downloads-menu-panel downloads-more-panel n-popover-surface n-popover-menu" role="menu">
-              <p class="n-popover-label">Queue actions</p>
+              <p class="n-popover-label">{$_("downloads.more.queueActions")}</p>
               <button
                 type="button"
                 class="n-popover-item"
@@ -718,7 +721,7 @@
                 disabled={finishedCount === 0 || clearingFinished}
                 onclick={clearFinished}
               >
-                <span>{clearingFinished ? "Clearing..." : "Clear finished"}</span>
+                <span>{clearingFinished ? $_("downloads.actions.clearing") : $_("downloads.actions.clearFinished")}</span>
                 <small>{finishedCount}</small>
               </button>
               <button
@@ -728,7 +731,7 @@
                 disabled={failedCount === 0 || retryingFailed}
                 onclick={retryFailed}
               >
-                <span>{retryingFailed ? "Retrying..." : "Retry failed"}</span>
+                <span>{retryingFailed ? $_("downloads.actions.retrying") : $_("downloads.actions.retryFailed")}</span>
                 <small>{failedCount}</small>
               </button>
               <button
@@ -738,7 +741,7 @@
                 disabled={openingFolder}
                 onclick={openDownloadsFolder}
               >
-                <span>{openingFolder ? "Opening..." : "Open downloads folder"}</span>
+                <span>{openingFolder ? $_("downloads.actions.opening") : $_("downloads.actions.openFolder")}</span>
                 <small class="material-symbols-outlined" aria-hidden="true">folder_open</small>
               </button>
             </div>
@@ -754,13 +757,13 @@
     <div class="downloads-page">
       <div class="downloads-page__header">
         <div>
-          <p class="n-eyebrow downloads-page__eyebrow">Downloads</p>
-          <h1 class="n-title-xl">Download Queue</h1>
+          <p class="n-eyebrow downloads-page__eyebrow">{$_("downloads.eyebrow")}</p>
+          <h1 class="n-title-xl">{$_("downloads.title")}</h1>
         </div>
         <div class="downloads-page__header-actions">
           <div class="n-soft-pill downloads-pill">
             <span class="material-symbols-outlined" aria-hidden="true">download</span>
-            <span>{queueSize} {queueSize === 1 ? "Item" : "Items"}</span>
+            <span>{$_(queueSize === 1 ? "downloads.itemCount" : "downloads.itemCountPlural", { values: { count: queueSize } })}</span>
           </div>
           <button
             class="n-btn n-btn--md n-btn-ghost downloads-page__exit"
@@ -768,7 +771,7 @@
             onclick={leaveDownloads}
           >
             <span class="material-symbols-outlined" aria-hidden="true">home</span>
-            <span>Home</span>
+            <span>{$_("shell.navigation.home")}</span>
           </button>
         </div>
       </div>
@@ -776,17 +779,17 @@
       <section class="downloads-summary">
         <div class="downloads-summary__cluster">
           <div class="downloads-summary__metric">
-            <span>Status</span>
+            <span>{$_("downloads.summary.status")}</span>
             <strong>{summaryStatus}</strong>
           </div>
           <div class="downloads-summary__divider"></div>
           <div class="downloads-summary__metric">
-            <span>Storage</span>
+            <span>{$_("downloads.summary.storage")}</span>
             <strong>{storageSummary}</strong>
           </div>
           <div class="downloads-summary__divider"></div>
           <div class="downloads-summary__metric">
-            <span>Speed</span>
+            <span>{$_("downloads.summary.speed")}</span>
             <strong class="downloads-summary__accent">{speedSummary}</strong>
           </div>
         </div>
@@ -803,7 +806,7 @@
             {:else}
               <span class="material-symbols-outlined" aria-hidden="true">pause_circle</span>
             {/if}
-            <span>Pause All</span>
+            <span>{$_("downloads.actions.pauseAll")}</span>
           </button>
           <button
             class="n-btn n-btn--md n-btn-primary downloads-summary__button downloads-resume-all-btn"
@@ -816,27 +819,27 @@
             {:else}
               <span class="material-symbols-outlined" aria-hidden="true">play_arrow</span>
             {/if}
-            <span>Resume All</span>
+            <span>{$_("downloads.actions.resumeAll")}</span>
           </button>
         </div>
       </section>
 
       {#if initialLoadTimedOut && status === null}
         <div class="downloads-load-note" role="status">
-          <span>Download status is taking longer than usual. The page is still usable.</span>
+          <span>{$_("downloads.load.slow")}</span>
         </div>
       {/if}
 
       {#if !statusHydrated && status === null}
         <div class="downloads-load-note downloads-load-note--inline" role="status">
-          <span>Loading download queue...</span>
+          <span>{$_("downloads.load.loading")}</span>
         </div>
       {/if}
 
       <div class="downloads-list">
         {#if filteredQueue.length === 0}
           <div class="downloads-empty">
-            <span>{queueSize === 0 ? "No downloads queued." : "No downloads match this search."}</span>
+            <span>{queueSize === 0 ? $_("downloads.empty.none") : $_("downloads.empty.noSearchMatch")}</span>
           </div>
         {:else}
           {#each filteredQueue as item (item.chapter.id)}
@@ -861,7 +864,7 @@
               <div class="dl-row__body">
                 <div class="dl-row__header">
                   <div>
-                    <h3 class="dl-row__title">{manga?.title ?? "Unknown title"}</h3>
+                    <h3 class="dl-row__title">{manga?.title ?? $_("downloads.unknownTitle")}</h3>
                     <span class="dl-row__subtitle">{item.chapter.name}</span>
                   </div>
                   <span
@@ -908,8 +911,8 @@
                 <button
                   class="n-icon-btn dl-row__icon-btn dl-row__icon-btn--danger"
                   type="button"
-                  aria-label="Remove download"
-                  title="Remove download"
+                  aria-label={$_("downloads.actions.remove")}
+                  title={$_("downloads.actions.remove")}
                   onclick={() => dequeue(item.chapter.id)}
                   disabled={isRemoving}
                 >
@@ -922,8 +925,8 @@
                 <button
                   class="n-icon-btn dl-row__icon-btn"
                   type="button"
-                  aria-label="Move to top"
-                  title="Move to top"
+                  aria-label={$_("downloads.actions.moveTop")}
+                  title={$_("downloads.actions.moveTop")}
                   onclick={() => moveToTop(item.chapter.id)}
                   disabled={visualState === "finished" || isActionPending || queueSize <= 1}
                 >

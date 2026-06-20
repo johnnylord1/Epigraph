@@ -19,10 +19,11 @@ Treat the current working tree as the source of truth. Several features were imp
   - Resetting the active profile stops its local server first; the user should restart Aethon afterward so the active profile is recreated cleanly from disk.
 - The legacy `TEST` profile remains reserved for launch/restore compatibility, but it is not exposed as a normal Settings profile choice.
 - Settings now contains the first app-language package wiring:
-  - `svelte-i18n` is installed and initialized.
+  - Paraglide/Inlang is installed and compiled through Vite.
+  - `project.inlang/settings.json` and `messages/{locale}.json` are the source translation catalogs.
   - Settings exposes an `App language` selector independent from `Preferred source language`.
   - The language selector supports a broad locale list through `Intl.DisplayNames`.
-  - Settings language controls plus the shared sidebar and page/detail loading states now use message keys; full-app localization still requires extracting domain-specific strings from the major pages and readers.
+  - Settings language controls plus the shared sidebar, Home, Downloads, and page/detail loading states now use message keys; full-app localization still requires extracting domain-specific strings from the remaining major pages and readers.
 - Settings storage/expansion controls were hardened:
   - dropdown menus use opaque Nocturne surfaces instead of transparent backgrounds;
   - Storage action rows are aligned;
@@ -83,13 +84,16 @@ Treat the current working tree as the source of truth. Several features were imp
   - Backup test fixtures were aligned to release version `0.0.1`.
   - `npm test -- src/lib/backup/aethonBackup.test.ts src/lib/backup/booksBackup.test.ts` passed with 9 tests.
   - `npm run build` passed after the release cleanup; the previous Aethon-owned Svelte unused-selector warnings are gone.
+  - The i18n runtime was migrated from `svelte-i18n` to Paraglide with a compatibility wrapper for existing `$_("section.key")` call sites.
+  - Home and Downloads received the next message-key slice in Paraglide catalogs.
+  - `npm test -- src/lib/i18n/runtime.test.ts src/components/pages/Downloads.test.ts`, `npm test -- --project shell-jsdom src/components/settings/Settings.test.ts src/components/pages/Downloads.test.ts src/lib/i18n/runtime.test.ts`, and `npm run build` passed after the Paraglide migration.
 
 
 ### Remaining Work
 
 - Full app localization:
   - Continue the hybrid production strategy: curated shared/core messages first, then machine-assisted domain catalogs with human review.
-  - Extract hardcoded user-facing strings from primary pages first: Home, Library, Browse/Sources, Downloads, Settings, SeriesDetail, BookDetail, NovelDetail, readers, dialogs/toasts.
+  - Extract hardcoded user-facing strings from the remaining primary/detail surfaces: Library, Browse/Sources, SeriesDetail, BookDetail, NovelDetail, readers, dialogs/toasts, and the rest of Settings beyond General.
   - Expand message-key coverage tests beyond the locale resolver so new native strings do not bypass the i18n layer.
   - Expand locale-specific visual coverage beyond the completed Hebrew RTL smoke.
 - Local release readiness before GitHub publishing:

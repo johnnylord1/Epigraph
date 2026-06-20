@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { DownloadStatus } from "../../lib/types";
+import "../../lib/i18n/runtime";
 
 const { gqlMock, openPathMock, resetFixture } = vi.hoisted(() => {
   const createFixture = (): DownloadStatus => ({

@@ -38,11 +38,13 @@
     "phosphor-svelte": "^3.1.0",
     "protobufjs": "^8.0.1",
     "qrcode": "^1.5.4",
-    "svelte-i18n": "4.0.1",
     "svelte-spa-router": "^4.0.1",
     "tauri-plugin-drpc": "^1.0.3"
   },
   "devDependencies": {
+    "@inlang/paraglide-js": "2.20.0",
+    "@inlang/plugin-m-function-matcher": "2.1.0",
+    "@inlang/plugin-message-format": "4.0.0",
     "@sveltejs/vite-plugin-svelte": "^4.0.4",
     "@tauri-apps/cli": "^2.0.0",
     "@testing-library/svelte": "^5.3.1",

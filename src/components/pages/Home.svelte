@@ -1,5 +1,6 @@
-ï»¿<script lang="ts">
+<script lang="ts">
   import { flushSync, onMount } from "svelte";
+  import { _ } from "../../lib/i18n/runtime";
   import { gql } from "../../lib/client";
   import { GET_LIBRARY, GET_CATEGORIES_SUMMARY, GET_LIBRARY_TRACKING_SUMMARY, GET_SOURCES, GET_TRACKERS, GET_EXTENSIONS } from "../../lib/queries";
   import { cache, CACHE_GROUPS, CACHE_KEYS, DEFAULT_TTL_MS } from "../../lib/cache";
@@ -76,7 +77,7 @@
     if (source.isNsfw) {
       parts.push("NSFW");
     }
-    return parts.join(" Â· ");
+    return parts.join(" · ");
   }
 
   function normalizeExtensionSourceKey(name: string): string {
@@ -180,11 +181,11 @@
   }
 
   function activityReturnLabel() {
-    if (store.homePanelReturnPage === "library") return "Back to Library";
-    if (store.homePanelReturnPage === "search") return "Back to Browse";
-    if (store.homePanelReturnPage === "downloads") return "Back to Downloads";
-    if (store.homePanelReturnPage === "settings") return "Back to Settings";
-    return "Back to Home";
+    if (store.homePanelReturnPage === "library") return $_("home.activity.backToLibrary");
+    if (store.homePanelReturnPage === "search") return $_("home.activity.backToBrowse");
+    if (store.homePanelReturnPage === "downloads") return $_("home.activity.backToDownloads");
+    if (store.homePanelReturnPage === "settings") return $_("home.activity.backToSettings");
+    return $_("home.activity.backToHome");
   }
 
   function closeActivityPanel() {
@@ -788,8 +789,8 @@
   });
   const browseSourcesSummary = $derived(
     sourceReadyCount > 0
-      ? `${sourceReadyCount} sources ready`
-      : "No sources ready",
+      ? $_("home.quick.sourcesReady", { values: { count: sourceReadyCount } })
+      : $_("home.quick.noSourcesReady"),
   );
   const titlesWithUnreadCount = $derived(
     libraryManga.filter((manga) => (manga.unreadCount ?? 0) > 0).length,
@@ -808,8 +809,8 @@
   );
   const checkUpdatesSummary = $derived(
     titlesWithUnreadCount + booksInProgressCount > 0
-      ? `${titlesWithUnreadCount + booksInProgressCount} titles with unread chapters/pages`
-      : "Library is up to date",
+      ? $_("home.quick.unreadTitles", { values: { count: titlesWithUnreadCount + booksInProgressCount } })
+      : $_("home.quick.libraryUpToDate"),
   );
   const startedMangaIds = $derived(new Set(store.history.map((entry) => entry.mangaId)));
   const mangaToReadCount = $derived(
@@ -819,15 +820,17 @@
     mangaToReadCount + booksToReadCount,
   );
   const planToReadSummary = $derived(
-    planToReadCount > 0 ? `${planToReadCount} titles waiting` : "Nothing queued to start",
+    planToReadCount > 0
+      ? $_("home.quick.titlesWaiting", { values: { count: planToReadCount } })
+      : $_("home.quick.nothingQueued"),
   );
   const downloadSummary = $derived(
     activeDownloadCount || queuedDownloadCount || pausedDownloadCount
       ? [
-          activeDownloadCount ? `${activeDownloadCount} active` : "",
-          queuedDownloadCount ? `${queuedDownloadCount} queued` : "",
-          pausedDownloadCount ? `${pausedDownloadCount} paused` : "",
-        ].filter(Boolean).join(" Â· ")
+          activeDownloadCount ? $_("home.quick.downloadActive", { values: { count: activeDownloadCount } }) : "",
+          queuedDownloadCount ? $_("home.quick.downloadQueued", { values: { count: queuedDownloadCount } }) : "",
+          pausedDownloadCount ? $_("home.quick.downloadPaused", { values: { count: pausedDownloadCount } }) : "",
+        ].filter(Boolean).join(" · ")
       : "",
   );
 
@@ -902,7 +905,7 @@
         <input
           class="n-search__input"
           type="text"
-          placeholder="Search archive..."
+          placeholder={$_("home.searchPlaceholder")}
           bind:value={homeSearch}
           onfocus={handleHomeSearchFocus}
           onblur={handleHomeSearchBlur}
@@ -912,7 +915,7 @@
     {/snippet}
     {#snippet right()}
       <ActivityButton />
-      <button class="n-icon-btn" type="button" title="Downloads" aria-label="Downloads" onclick={() => setNavPage("downloads")}>
+      <button class="n-icon-btn" type="button" title={$_("shell.navigation.downloads")} aria-label={$_("shell.navigation.downloads")} onclick={() => setNavPage("downloads")}>
         <span class="material-symbols-outlined" aria-hidden="true">download</span>
       </button>
       <WindowControlsInline />
@@ -936,9 +939,9 @@
       <div class="home-dashboard">
         <section class="home-section">
           <div class="home-section__header">
-            <h2 class="home-section__title">Continue Reading</h2>
+            <h2 class="home-section__title">{$_("home.continue.title")}</h2>
             <button class="home-link-btn" type="button" onclick={() => setNavPage("library")}>
-              View Library
+              {$_("home.continue.viewLibrary")}
             </button>
           </div>
           <div class="home-continue-grid">
@@ -990,7 +993,7 @@
                       data-inert-control={item.kind === "placeholder" ? "home-continue-placeholder" : undefined}
                     >
                       <span class="material-symbols-outlined" aria-hidden="true">play_arrow</span>
-                      <span>Resume</span>
+                      <span>{$_("home.continue.resume")}</span>
                     </button>
                   </div>
                 </div>
@@ -1003,28 +1006,28 @@
           <button class="home-quick-action" type="button" onclick={() => openSearchSources("browse")}>
             <span class="material-symbols-outlined" aria-hidden="true">explore</span>
             <div>
-              <strong>Browse Sources</strong>
+              <strong>{$_("home.quick.browseSources")}</strong>
               <small>{browseSourcesSummary}</small>
             </div>
           </button>
           <button class="home-quick-action" type="button" onclick={() => setNavPage("downloads")}>
             <span class="material-symbols-outlined" aria-hidden="true">download</span>
             <div>
-              <strong>Downloads</strong>
+              <strong>{$_("shell.navigation.downloads")}</strong>
               <small>{downloadSummary}</small>
             </div>
           </button>
           <button class="home-quick-action" type="button" onclick={openCheckUpdates}>
             <span class="material-symbols-outlined" aria-hidden="true">sync</span>
             <div>
-              <strong>Check Updates</strong>
+              <strong>{$_("home.quick.checkUpdates")}</strong>
               <small>{checkUpdatesSummary}</small>
             </div>
           </button>
           <button class="home-quick-action" type="button" onclick={openPlanToRead}>
             <span class="material-symbols-outlined" aria-hidden="true">bookmark_border</span>
             <div>
-              <strong>Plan to Read</strong>
+              <strong>{$_("home.quick.planToRead")}</strong>
               <small>{planToReadSummary}</small>
             </div>
           </button>
@@ -1035,7 +1038,7 @@
             <div class="home-column__header">
               <h2 class="home-column__title">
                 <span class="material-symbols-outlined" aria-hidden="true">notifications_active</span>
-                Recent Updates
+                {$_("home.sections.recentUpdates")}
               </h2>
             </div>
             <div class="home-updates-list">
@@ -1067,22 +1070,22 @@
               <div class="home-column__header">
                 <h2 class="home-column__title">
                   <span class="material-symbols-outlined" aria-hidden="true">bar_chart</span>
-                  This Week
+                  {$_("home.sections.thisWeek")}
                 </h2>
               </div>
               <div class="home-card home-week-card">
                 <div class="home-week-card__stats">
                   <div>
                     <strong>{stats.totalChaptersRead}</strong>
-                    <small>Chapters</small>
+                    <small>{$_("home.metrics.chapters")}</small>
                   </div>
                   <div>
                     <strong>{formatReadTime(stats.totalMinutesRead)}</strong>
-                    <small>Read time</small>
+                    <small>{$_("home.metrics.readTime")}</small>
                   </div>
                 <div>
                     <strong>{Math.max(thisWeekSeriesCount, 1)}</strong>
-                    <small>Series</small>
+                    <small>{$_("home.metrics.series")}</small>
                   </div>
                 </div>
                 <div class="home-week-card__bars">
@@ -1100,7 +1103,7 @@
               <div class="home-column__header">
                 <h2 class="home-column__title">
                   <span class="material-symbols-outlined" aria-hidden="true">check_circle</span>
-                  Recently Finished
+                  {$_("home.sections.recentlyFinished")}
                 </h2>
               </div>
               <div class="home-finished-list">
@@ -1129,18 +1132,18 @@
 
           <aside class="home-column home-side-stack">
             <section class="home-card home-side-card">
-              <h3 class="home-side-card__title">Archive</h3>
+              <h3 class="home-side-card__title">{$_("home.sections.archive")}</h3>
               <div class="home-side-card__metric">
                 <strong>{stats.totalChaptersRead}</strong>
-                <small>Chapters read</small>
+                <small>{$_("home.metrics.chaptersRead")}</small>
               </div>
               <div class="home-side-card__separator"></div>
               <div class="home-side-card__progress">
                 <div class="home-side-card__progress-head">
-                  <span>{archiveFinishedCount} complete</span>
+                  <span>{$_("home.metrics.completeCount", { values: { count: archiveFinishedCount } })}</span>
                   <small>{archiveCompletionRatio}%</small>
                 </div>
-                <span class="home-side-card__storage-label">Storage</span>
+                <span class="home-side-card__storage-label">{$_("downloads.summary.storage")}</span>
                 <div class="home-side-card__progress-track">
                   <div class="home-side-card__progress-fill" style={`width:${archiveCompletionRatio}%;`}></div>
                 </div>
@@ -1148,17 +1151,17 @@
               <div class="home-side-card__split">
                 <div>
                   <strong>{archiveTotalCount}</strong>
-                  <small>Titles</small>
+                  <small>{$_("home.metrics.titles")}</small>
                 </div>
                 <div>
                   <strong>{setupState?.usableSourceCount ?? 0}</strong>
-                  <small>Sources</small>
+                  <small>{$_("home.metrics.sources")}</small>
                 </div>
               </div>
             </section>
 
             <section class="home-card home-side-card">
-              <h3 class="home-side-card__title">Sources</h3>
+              <h3 class="home-side-card__title">{$_("home.sections.sources")}</h3>
               {#if visibleHomeSources.length > 0}
                 <ul class="home-source-list">
                   {#each visibleHomeSources as item (item.source.id)}
@@ -1175,21 +1178,21 @@
             </section>
 
             <section class="home-card home-side-card">
-              <h3 class="home-side-card__title">Tracking</h3>
+              <h3 class="home-side-card__title">{$_("home.sections.tracking")}</h3>
               {#if displayTrackers.length > 0}
                 <ul class="home-tracking-list">
                   {#each displayTrackers as tracker (tracker.id)}
                     <li>
                       <span>{tracker.name}</span>
                       <small class:is-synced={tracker.isLoggedIn} class:is-muted={!tracker.isLoggedIn}>
-                        {tracker.isLoggedIn ? "Connected" : "Not connected"}
+                        {tracker.isLoggedIn ? $_("home.tracking.connected") : $_("home.tracking.notConnected")}
                       </small>
                     </li>
                   {/each}
                   {#if trackedTitleCount > 0}
                     <li>
-                      <span>Tracked titles</span>
-                      <small class="is-synced">{trackedTitleCount} synced</small>
+                      <span>{$_("home.tracking.trackedTitles")}</span>
+                      <small class="is-synced">{$_("home.tracking.syncedCount", { values: { count: trackedTitleCount } })}</small>
                     </li>
                   {/if}
                 </ul>
