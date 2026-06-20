@@ -3,7 +3,7 @@ import { Activity, Assets, Button, Timestamps }     from "tauri-plugin-drpc/acti
 import type { Manga, Chapter }                       from "./types";
 
 const APP_ID         = "1487894643613106298";
-const FALLBACK_IMAGE = "moku_logo";
+const FALLBACK_IMAGE = "aethon_logo";
 const AETHON_GITHUB_REPO = (import.meta.env.VITE_AETHON_GITHUB_REPO ?? "").trim();
 const AETHON_GITHUB_URL = AETHON_GITHUB_REPO ? `https://github.com/${AETHON_GITHUB_REPO}` : null;
 

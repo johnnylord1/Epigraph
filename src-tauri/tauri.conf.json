@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Aethon",
   "version": "0.0.1",
-  "identifier": "dev.moku.app",
+  "identifier": "dev.aethon.app",
   "build": {
     "frontendDist": "../dist",
     "beforeBuildCommand": "npm run build"

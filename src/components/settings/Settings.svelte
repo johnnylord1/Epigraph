@@ -2555,7 +2555,7 @@
   let flareEnabled     = $state(store.settings.flareSolverrEnabled ?? false);
   let flareUrl         = $state(store.settings.flareSolverrUrl ?? "http://localhost:8191");
   let flareTimeout     = $state(store.settings.flareSolverrTimeout ?? 60);
-  let flareSession     = $state(store.settings.flareSolverrSessionName ?? "moku");
+  let flareSession     = $state(store.settings.flareSolverrSessionName ?? "aethon");
   let flareTtl         = $state(store.settings.flareSolverrSessionTtl ?? 15);
   let flareFallback    = $state(store.settings.flareSolverrFallback ?? false);
   let flareLocalAutoStart = $state(store.settings.flareSolverrLocalAutoStart ?? false);
@@ -3188,7 +3188,7 @@
   function triggerSplash() {
     splashTriggered = true;
     setTimeout(() => splashTriggered = false, 200);
-    (window as any).__mokuShowSplash?.();
+    (window as any).__aethonShowSplash?.();
   }
   let contentSources:        Source[] = $state([]);
   let contentSourcesLoading: boolean  = $state(false);

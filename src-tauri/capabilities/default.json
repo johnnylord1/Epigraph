@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default permissions for Moku",
+  "description": "Default permissions for Aethon",
   "windows": ["main"],
   "permissions": [
     "core:default",

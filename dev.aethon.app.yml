@@ -1,10 +1,10 @@
-app-id: dev.moku.app
+app-id: dev.aethon.app
 runtime: org.gnome.Platform
 runtime-version: '48'
 sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
-command: moku
+command: aethon
 separate-locales: false
 
 finish-args:
@@ -17,13 +17,13 @@ finish-args:
   - --socket=session-bus
   - --socket=system-bus
   - --filesystem=home
-  - --filesystem=xdg-data/moku:create
+  - --filesystem=xdg-data/aethon:create
   - --talk-name=org.freedesktop.Flatpak
 
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
   env:
-    CARGO_HOME: /run/build/moku/cargo
+    CARGO_HOME: /run/build/aethon/cargo
 
 modules:
   - name: openjdk
@@ -111,7 +111,7 @@ modules:
         cat > /app/bin/tachidesk-server << 'EOF'
         #!/bin/sh
 
-        DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/moku/tachidesk"
+        DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/aethon/tachidesk"
         mkdir -p "$DATA_DIR"
 
         # Seed conf on first run
@@ -159,23 +159,23 @@ modules:
         sha256: 51e307c2581e4e1a002991ab3e3a77503c8b074c42695987a984a7382d0ac5af
         dest-filename: Suwayomi-Server.jar
 
-  - name: moku
+  - name: aethon
     buildsystem: simple
     build-options:
       env:
-        CARGO_HOME: /run/build/moku/cargo
-        XDG_DATA_HOME: /run/build/moku/xdg-data
+        CARGO_HOME: /run/build/aethon/cargo
+        XDG_DATA_HOME: /run/build/aethon/xdg-data
         TAURI_SKIP_DEVSERVER_CHECK: 'true'
         PKG_CONFIG_PATH: /usr/lib/pkgconfig:/usr/share/pkgconfig
     build-commands:
       - tar -xzf frontend-dist.tar.gz
       - . /usr/lib/sdk/rust-stable/enable.sh && PKG_CONFIG_PATH=/usr/lib/pkgconfig:/usr/share/pkgconfig cargo build --release --manifest-path src-tauri/Cargo.toml
-      - install -Dm755 src-tauri/target/release/moku /app/bin/moku
-      - install -Dm644 packaging/dev.moku.app.desktop /app/share/applications/dev.moku.app.desktop
-      - install -Dm644 src-tauri/icons/32x32.png /app/share/icons/hicolor/32x32/apps/dev.moku.app.png
-      - install -Dm644 src-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/dev.moku.app.png
-      - install -Dm644 src-tauri/icons/128x128@2x.png /app/share/icons/hicolor/256x256/apps/dev.moku.app.png
-      - install -Dm644 packaging/dev.moku.app.metainfo.xml /app/share/metainfo/dev.moku.app.metainfo.xml
+      - install -Dm755 src-tauri/target/release/aethon /app/bin/aethon
+      - install -Dm644 packaging/dev.aethon.app.desktop /app/share/applications/dev.aethon.app.desktop
+      - install -Dm644 src-tauri/icons/32x32.png /app/share/icons/hicolor/32x32/apps/dev.aethon.app.png
+      - install -Dm644 src-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/dev.aethon.app.png
+      - install -Dm644 src-tauri/icons/128x128@2x.png /app/share/icons/hicolor/256x256/apps/dev.aethon.app.png
+      - install -Dm644 packaging/dev.aethon.app.metainfo.xml /app/share/metainfo/dev.aethon.app.metainfo.xml
     sources:
       - type: dir
         path: .
@@ -190,4 +190,4 @@ modules:
           [source.crates-io]
           replace-with = "vendored-sources"
           [source.vendored-sources]
-          directory = "/run/build/moku/cargo/vendor"
+          directory = "/run/build/aethon/cargo/vendor"

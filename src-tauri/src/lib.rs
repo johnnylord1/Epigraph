@@ -5047,7 +5047,7 @@ pub fn run() {
         })
         .on_window_event(|_window, _event| {})
         .build(tauri::generate_context!())
-        .expect("error while building moku");
+        .expect("error while building aethon");
 
     app.run(|app_handle, event| {
         syncd_sidecar::handle_run_event(app_handle, &event);

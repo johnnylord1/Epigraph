@@ -1,5 +1,5 @@
 {
-  description = "Moku — manga reader frontend for Suwayomi";
+  description = "aethon — manga reader frontend for Suwayomi";
 
   inputs = {
     nixpkgs.url     = "github:NixOS/nixpkgs/nixos-unstable";
@@ -18,7 +18,7 @@
 
       perSystem = { system, lib, ... }:
         let
-          version = "0.6.7";
+          version = "0.0.1";
 
           pkgs = import inputs.nixpkgs {
             inherit system;
@@ -60,14 +60,14 @@
           };
 
           frontend = pkgs.stdenv.mkDerivation {
-            pname   = "moku-frontend";
+            pname   = "aethon-frontend";
             inherit version;
             src     = frontendSrc;
 
             nativeBuildInputs = with pkgs; [ nodejs_22 pnpm pnpmConfigHook ];
 
             pnpmDeps = pkgs.fetchPnpmDeps {
-              pname          = "moku-frontend";
+              pname          = "aethon-frontend";
               inherit version;
               src            = frontendSrc;
               fetcherVersion = 1;
@@ -101,41 +101,41 @@
 
           cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 
-          moku = craneLib.buildPackage (commonArgs // {
+          aethon = craneLib.buildPackage (commonArgs // {
             inherit cargoArtifacts;
-            meta.mainProgram = "moku";
+            meta.mainProgram = "aethon";
             postInstall = ''
               mkdir -p "$out/share/applications"
-              cat > "$out/share/applications/moku.desktop" << EOF
+              cat > "$out/share/applications/aethon.desktop" << EOF
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=Moku
+Name=Aethon
 Comment=Manga reader frontend for Suwayomi
-Exec=$out/bin/moku
-Icon=moku
+Exec=$out/bin/aethon
+Icon=aethon
 Terminal=false
 Categories=Graphics;Viewer;
 Keywords=manga;comic;reader;suwayomi;
-StartupWMClass=moku
+StartupWMClass=aethon
 EOF
 
               for size in 32x32 128x128 256x256 512x512; do
                 src="icons/$size.png"
                 [ -f "$src" ] && install -Dm644 "$src" \
-                  "$out/share/icons/hicolor/$size/apps/moku.png"
+                  "$out/share/icons/hicolor/$size/apps/aethon.png"
               done
 
               for size in 128x128 256x256; do
                 src="icons/''${size}@2x.png"
                 [ -f "$src" ] && install -Dm644 "$src" \
-                  "$out/share/icons/hicolor/''${size}@2/apps/moku.png"
+                  "$out/share/icons/hicolor/''${size}@2/apps/aethon.png"
               done
 
-              install -Dm644 "${./src/assets/moku-icon.svg}" \
-                "$out/share/icons/hicolor/scalable/apps/moku.svg"
+              install -Dm644 "${./src/assets/aethon-icon.svg}" \
+                "$out/share/icons/hicolor/scalable/apps/aethon.svg"
 
-              wrapProgram $out/bin/moku \
+              wrapProgram $out/bin/aethon \
                 --prefix XDG_DATA_DIRS : "${lib.makeSearchPath "share/gsettings-schemas" [
                   pkgs.gsettings-desktop-schemas
                   pkgs.gtk3
@@ -148,7 +148,7 @@ EOF
           });
 
           bumpScript = pkgs.writeShellApplication {
-            name = "moku-bump";
+            name = "aethon-bump";
             runtimeInputs = with pkgs; [ gnused coreutils git rustToolchain ];
             text = ''
               [[ $# -lt 1 ]] && { echo "Usage: nix run .#bump -- <version>"; exit 1; }
@@ -166,7 +166,7 @@ EOF
           };
 
           flatpakScript = pkgs.writeShellApplication {
-            name = "moku-flatpak";
+            name = "aethon-flatpak";
             runtimeInputs = with pkgs; [
               gnused coreutils git
               nodejs_22 pnpm
@@ -177,7 +177,7 @@ EOF
               [[ $# -lt 1 ]] && { echo "Usage: nix run .#flatpak -- <version>"; exit 1; }
               VERSION="$1"
               REPO="$(git rev-parse --show-toplevel)"
-              MANIFEST="$REPO/dev.moku.app.yml"
+              MANIFEST="$REPO/dev.aethon.app.yml"
 
               echo "── Bumping versions ──"
               sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" \
@@ -226,13 +226,13 @@ EOF
                 --force-clean \
                 "$REPO/build-dir" \
                 "$MANIFEST"
-              flatpak build-bundle "$REPO/repo" "$REPO/moku.flatpak" dev.moku.app
+              flatpak build-bundle "$REPO/repo" "$REPO/aethon.flatpak" dev.aethon.app
               rm -rf "$REPO/build-dir" "$REPO/repo"
-              echo "moku.flatpak created"
+              echo "aethon.flatpak created"
 
               echo ""
               echo "Done — v$VERSION"
-              echo "  -> $REPO/moku.flatpak"
+              echo "  -> $REPO/aethon.flatpak"
               echo ""
               echo "After pushing the tag, run:"
               echo "  nix run .#pkgbuild-bump -- $VERSION"
@@ -240,7 +240,7 @@ EOF
           };
 
           pkgbuildBumpScript = pkgs.writeShellApplication {
-            name = "moku-pkgbuild-bump";
+            name = "aethon-pkgbuild-bump";
             runtimeInputs = with pkgs; [ gnused curl coreutils git ];
             text = ''
               [[ $# -lt 1 ]] && { echo "Usage: nix run .#pkgbuild-bump -- <version>"; exit 1; }
@@ -249,7 +249,7 @@ EOF
               PKGBUILD="$REPO/PKGBUILD"
               [[ -f "$PKGBUILD" ]] || { echo "PKGBUILD not found"; exit 1; }
 
-              TARBALL_URL="https://github.com/Youwes09/Moku/archive/refs/tags/v$VERSION.tar.gz"
+              TARBALL_URL="https://github.com/Aethon-Project/Aethon/archive/refs/tags/v$VERSION.tar.gz"
               echo "Fetching tarball sha256..."
               TARBALL_SHA=$(curl -fsSL "$TARBALL_URL" | sha256sum | awk '{print $1}')
 
@@ -267,16 +267,16 @@ EOF
         in
         {
           apps = {
-            default       = { type = "app"; program = "${moku}/bin/moku"; };
-            moku          = { type = "app"; program = "${moku}/bin/moku"; };
-            bump          = { type = "app"; program = "${bumpScript}/bin/moku-bump"; };
-            flatpak       = { type = "app"; program = "${flatpakScript}/bin/moku-flatpak"; };
-            pkgbuild-bump = { type = "app"; program = "${pkgbuildBumpScript}/bin/moku-pkgbuild-bump"; };
+            default       = { type = "app"; program = "${aethon}/bin/aethon"; };
+            aethon          = { type = "app"; program = "${aethon}/bin/aethon"; };
+            bump          = { type = "app"; program = "${bumpScript}/bin/aethon-bump"; };
+            flatpak       = { type = "app"; program = "${flatpakScript}/bin/aethon-flatpak"; };
+            pkgbuild-bump = { type = "app"; program = "${pkgbuildBumpScript}/bin/aethon-pkgbuild-bump"; };
           };
 
           packages = {
-            inherit moku frontend;
-            default = moku;
+            inherit aethon frontend;
+            default = aethon;
           };
 
           devShells.default = pkgs.mkShell {
@@ -295,7 +295,7 @@ EOF
               export PKG_CONFIG_PATH="${pkgs.openssl.dev}/lib/pkgconfig''${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
               export XDG_DATA_DIRS="${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
 
-              echo "Moku dev shell — pnpm install && pnpm tauri:dev"
+              echo "aethon dev shell — pnpm install && pnpm tauri:dev"
               echo ""
               echo "Release:"
               echo "  nix run .#bump          -- <ver>   bump versions only"

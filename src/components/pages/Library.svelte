@@ -106,7 +106,7 @@
   import LibraryShell from "../library/LibraryShell.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
 
-  const DT_TAB = "application/x-moku-tab";
+  const DT_TAB = "application/x-aethon-tab";
   const CATEGORY_MEMBERS_CACHE_KEY = `${CACHE_KEYS.CATEGORIES}:members`;
   const LEGACY_CATEGORIES_WITH_MANGA_CACHE_KEY = `${CACHE_KEYS.CATEGORIES}:with-manga`;
   const LIBRARY_CHAPTER_COUNTS_CACHE_KEY = `${CACHE_KEYS.LIBRARY}:chapter-counts`;

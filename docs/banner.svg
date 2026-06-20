@@ -16,7 +16,7 @@
 
     <rect width="1280" height="320" fill="#070e09"/>
 
-    <!-- Icon — rotate(7) from moku-icon-splash.svg -->
+    <!-- Icon — rotate(7) from aethon-icon-splash.svg -->
     <g transform="translate(640, 148) rotate(7) scale(0.065,-0.065) translate(-5000,-4800)"
        fill="url(#leafHero)" opacity="0.97">
       <path d="M4908 6615 c-597 -629 -935 -1264 -934 -1755 0 -508 195 -778 790

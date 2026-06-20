@@ -1,5 +1,5 @@
 Major Revisions:
- - Moku-Share to Easily Migrate/Share Manga (Investigate Usecase/Feasibility)
+ - Aethon-Share to Easily Migrate/Share Manga (Investigate Usecase/Feasibility)
 
 Minor Revisions:
  - Improve Deduplication Algorithm with Advanced Option Settings (Implement Chapter & Author-based Comparisons, Resource Intensive)
@@ -10,7 +10,7 @@ Minor Revisions:
  - Look at how Manga are Organized in WebUI and Implement into Series-Detail (Chapter Display is Off)
  - Adjustment in Settings for Theme Editor:
     - Patch Color-Picker to Work Properly
- - Moku Discord RPC 
+ - Aethon Discord RPC
   - Write a better library for Discord RPC & Tauri
   - Integrate Download Directory Changes (Settings)
 

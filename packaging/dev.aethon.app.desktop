@@ -1,10 +1,10 @@
 [Desktop Entry]
 Name=Aethon
 Comment=Aethon manga reader powered by Suwayomi
-Exec=moku
-Icon=dev.moku.app
+Exec=aethon
+Icon=dev.aethon.app
 Terminal=false
 Type=Application
 Categories=Graphics;Viewer;
 Keywords=manga;comics;reader;
-StartupWMClass=moku
+StartupWMClass=aethon

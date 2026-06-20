@@ -4,28 +4,28 @@
 
 <div align="center">
 
-[![release](https://img.shields.io/github/v/release/Youwes09/Moku?style=flat&color=a8c4a8&labelColor=151515)](https://github.com/Youwes09/Moku/releases/latest)
-[![downloads](https://img.shields.io/github/downloads/Youwes09/Moku/total?style=flat&color=a8c4a8&labelColor=151515)](https://github.com/Youwes09/Moku/releases/latest)
-[![license](https://img.shields.io/github/license/Youwes09/Moku?style=flat&color=a8c4a8&labelColor=151515)](./LICENSE)
+[![release](https://img.shields.io/github/v/release/Aethon-Project/Aethon?style=flat&color=a8c4a8&labelColor=151515)](https://github.com/Aethon-Project/Aethon/releases/latest)
+[![downloads](https://img.shields.io/github/downloads/Aethon-Project/Aethon/total?style=flat&color=a8c4a8&labelColor=151515)](https://github.com/Aethon-Project/Aethon/releases/latest)
+[![license](https://img.shields.io/github/license/Aethon-Project/Aethon?style=flat&color=a8c4a8&labelColor=151515)](./LICENSE)
 [![discord](https://img.shields.io/discord/1485151759511978077?style=flat&color=a8c4a8&labelColor=151515&label=discord)](https://discord.gg/cfncTbJ2)
 
 </div>
 
 <br/>
 
-Aethon is a fast, minimal manga reader frontend built from the upstream [Moku](https://github.com/Youwes09/Moku) codebase for [Suwayomi-Server](https://github.com/Suwayomi/Suwayomi-Server). It keeps the same lightweight Tauri approach with no Electron overhead.
+Aethon is a fast, minimal manga reader frontend built from the Aethon codebase for [Suwayomi-Server](https://github.com/Suwayomi/Suwayomi-Server). It keeps the same lightweight Tauri approach with no Electron overhead.
 
 ---
 
 ## Screenshots
 
 <div align="center">
-  <img src="docs/screenshots/Moku-Home.png" width="49%" alt="Home" />
-  <img src="docs/screenshots/Moku-Discover.png" width="49%" alt="Discover" />
-  <img src="docs/screenshots/Moku-Reader.png" width="49%" alt="Reader" />
-  <img src="docs/screenshots/Moku-Preview.png" width="49%" alt="Preview" />
-  <img src="docs/screenshots/Moku-Tracker.png" width="49%" alt="Tracker" />
-  <img src="docs/screenshots/Moku-Settings.png" width="49%" alt="Settings" />
+  <img src="docs/screenshots/aethon-Home.png" width="49%" alt="Home" />
+  <img src="docs/screenshots/aethon-Discover.png" width="49%" alt="Discover" />
+  <img src="docs/screenshots/aethon-Reader.png" width="49%" alt="Reader" />
+  <img src="docs/screenshots/aethon-Preview.png" width="49%" alt="Preview" />
+  <img src="docs/screenshots/aethon-Tracker.png" width="49%" alt="Tracker" />
+  <img src="docs/screenshots/aethon-Settings.png" width="49%" alt="Settings" />
 </div>
 
 <div align="center">
@@ -54,31 +54,31 @@ Aethon is a fast, minimal manga reader frontend built from the upstream [Moku](h
 Suwayomi-Server and a bundled JRE are included — no separate install needed.
 
 ```bash
-flatpak install moku.flatpak
-flatpak run dev.moku.app
+flatpak install aethon.flatpak
+flatpak run dev.aethon.app
 ```
 
-Download the latest `moku.flatpak` from the [releases page](https://github.com/Youwes09/Moku/releases/latest).
+Download the latest `aethon.flatpak` from the [releases page](https://github.com/Aethon-Project/Aethon/releases/latest).
 
 ### Nix
 
 ```bash
-nix run github:Youwes09/Moku
+nix run github:Aethon-Project/Aethon
 ```
 
 Add to your flake:
 
 ```nix
-inputs.moku.url = "github:Youwes09/Moku";
+inputs.aethon.url = "github:Aethon-Project/Aethon";
 ```
 
 ### Windows
 
-Download the `.exe` installer from the [releases page](https://github.com/Youwes09/Moku/releases/latest). Suwayomi-Server and a JRE are bundled.
+Download the `.exe` installer from the [releases page](https://github.com/Aethon-Project/Aethon/releases/latest). Suwayomi-Server and a JRE are bundled.
 
 ### macOS
 
-Download the `.dmg` from the [releases page](https://github.com/Youwes09/Moku/releases/latest).
+Download the `.dmg` from the [releases page](https://github.com/Aethon-Project/Aethon/releases/latest).
 
 > **Note:** Builds are ad-hoc signed. On first launch you may need to run:
 > ```bash
@@ -104,7 +104,7 @@ You can point Aethon at any Suwayomi instance — local or remote — via **Sett
 If `pnpm` is already installed:
 
 ```bash
-git clone https://github.com/Youwes09/Moku Aethon
+git clone https://github.com/Aethon-Project/Aethon Aethon
 cd Aethon
 pnpm install
 pnpm tauri:dev
@@ -115,7 +115,7 @@ pnpm tauri:dev
 If `pnpm` is not installed globally but `npm` is available, use:
 
 ```bash
-git clone https://github.com/Youwes09/Moku Aethon
+git clone https://github.com/Aethon-Project/Aethon Aethon
 cd Aethon
 npm exec pnpm install --frozen-lockfile
 npm exec pnpm exec vite build

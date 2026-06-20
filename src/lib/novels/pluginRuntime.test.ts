@@ -542,7 +542,7 @@ exports.default = new IllusiaLikePlugin();
           flareSolverrEnabled: true,
           flareSolverrUrl: "http://localhost:8191",
           flareSolverrTimeout: 60,
-          flareSolverrSessionName: "moku",
+          flareSolverrSessionName: "aethon",
           flareSolverrSessionTtl: 15,
         },
       })),

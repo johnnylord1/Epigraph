@@ -41,7 +41,7 @@ foreach ($p in $procs) {
   $gp = Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue
   if (-not $gp) { continue }
   $cmd = [string]$p.CommandLine
-  $isAethonWebView = $cmd -match 'dev\\.moku\\.app|webview-exe-name=aethon\\.exe'
+  $isAethonWebView = $cmd -match 'dev\\.aethon\\.app|webview-exe-name=aethon\\.exe'
   $isSuwayomi = $cmd -match 'aethon-main|suwayomi'
   $isSuwayomiChild = $p.Name -eq 'jcef_helper.exe' -and $aethonSuwayomiPids.ContainsKey([int]$p.ParentProcessId)
   if ($p.Name -eq 'aethon.exe' -or $isAethonWebView -or $isSuwayomi -or $isSuwayomiChild) {

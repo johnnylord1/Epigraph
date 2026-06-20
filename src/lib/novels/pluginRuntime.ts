@@ -308,13 +308,15 @@ function readRuntimeFlareSolverrSettings(): RuntimeFlareSolverrSettings {
     enabled: false,
     url: "http://localhost:8191",
     timeoutSeconds: 60,
-    sessionName: "moku",
+    sessionName: "aethon",
     sessionTtlMinutes: 15,
     responseFallback: false,
   };
 
   try {
-    const raw = globalThis.localStorage?.getItem("moku-store");
+    const raw =
+      globalThis.localStorage?.getItem("aethon-store")
+        ?? globalThis.localStorage?.getItem("moku-store");
     const parsed = raw ? JSON.parse(raw) : null;
     const settings = parsed?.settings ?? {};
     return {

@@ -661,7 +661,7 @@ export const DEFAULT_SETTINGS: Settings = {
   flareSolverrEnabled:    false,
   flareSolverrUrl:        "http://localhost:8191",
   flareSolverrTimeout:    60,
-  flareSolverrSessionName: "moku",
+  flareSolverrSessionName: "aethon",
   flareSolverrSessionTtl: 15,
   flareSolverrFallback:   false,
   flareSolverrLocalAutoStart: false,
@@ -729,6 +729,8 @@ function cloneDefaultSettings(): Settings {
 // ── Persistence ───────────────────────────────────────────────────────────────
 
 const STORE_VERSION = 7;
+const STORE_KEY = "aethon-store";
+const LEGACY_STORE_KEY = "moku-store";
 
 // Fields reset to their DEFAULT_SETTINGS value on each version bump.
 // Add a key here whenever its default changes meaning between releases.
@@ -741,7 +743,7 @@ const RESET_ON_UPGRADE: (keyof Settings)[] = [
 
 function loadPersisted(): any {
   try {
-    const raw = localStorage.getItem("moku-store");
+    const raw = localStorage.getItem(STORE_KEY) ?? localStorage.getItem(LEGACY_STORE_KEY);
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
@@ -768,7 +770,7 @@ function readPersistedAppReadingSnapshot(): {
 function persist(patch: Record<string, unknown>) {
   try {
     const current = loadPersisted() ?? {};
-    localStorage.setItem("moku-store", JSON.stringify({ ...current, ...patch }));
+    localStorage.setItem(STORE_KEY, JSON.stringify({ ...current, ...patch }));
   } catch {}
 }
 
@@ -786,7 +788,7 @@ const saved = (() => {
       settings: { ...data.settings, ...resetPatch },
     };
     try {
-      localStorage.setItem("moku-store", JSON.stringify(migrated));
+      localStorage.setItem(STORE_KEY, JSON.stringify(migrated));
     } catch {}
     return migrated;
   }
@@ -802,6 +804,11 @@ function mergeSettings(saved: any): Settings {
   const coercedServerUrl = savedServerUrl === "http://127.0.0.1:4667" ? "http://127.0.0.1:4567" : savedServerUrl ?? DEFAULT_SETTINGS.serverUrl;
   const savedTheme = saved?.settings?.theme;
   const coercedTheme = savedTheme === undefined || savedTheme === "dark" ? DEFAULT_SETTINGS.theme : savedTheme;
+  const savedFlareSolverrSessionName = saved?.settings?.flareSolverrSessionName;
+  const coercedFlareSolverrSessionName =
+    savedFlareSolverrSessionName === undefined || savedFlareSolverrSessionName === "moku"
+      ? DEFAULT_SETTINGS.flareSolverrSessionName
+      : savedFlareSolverrSessionName;
 
   return {
     ...DEFAULT_SETTINGS,
@@ -836,6 +843,7 @@ function mergeSettings(saved: any): Settings {
     defaultLocalProfileId: coercedDefaultProfileId,
     serverUrl:             coercedServerUrl,
     theme:                 coercedTheme,
+    flareSolverrSessionName: coercedFlareSolverrSessionName,
     launchIntoLibrary:    saved?.settings?.launchIntoLibrary ?? DEFAULT_SETTINGS.launchIntoLibrary,
     libraryUpdateIntensity: normalizeLibraryUpdateIntensity(saved?.settings?.libraryUpdateIntensity),
     downloadNewNovelChapters: saved?.settings?.downloadNewNovelChapters === true,

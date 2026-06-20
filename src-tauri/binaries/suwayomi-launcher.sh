@@ -1,5 +1,5 @@
 #!/bin/sh
-# Moku — Suwayomi launcher sidecar for macOS.
+# Aethon — Suwayomi launcher sidecar for macOS.
 # Tauri calls this script directly as a sidecar (Contents/MacOS/suwayomi-server-{arch}).
 # The Suwayomi bundle is placed by Tauri into Contents/Resources/suwayomi-bundle/.
 set -e

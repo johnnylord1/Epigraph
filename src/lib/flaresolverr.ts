@@ -40,7 +40,7 @@ export async function saveFlareSolverrConfig(patch: Partial<{
     enabled: patch.enabled ?? store.settings.flareSolverrEnabled,
     url: patch.url ?? store.settings.flareSolverrUrl ?? "http://localhost:8191",
     timeout: patch.timeout ?? store.settings.flareSolverrTimeout ?? 60,
-    sessionName: patch.sessionName ?? store.settings.flareSolverrSessionName ?? "moku",
+    sessionName: patch.sessionName ?? store.settings.flareSolverrSessionName ?? "aethon",
     sessionTtl: patch.sessionTtl ?? store.settings.flareSolverrSessionTtl ?? 15,
     fallback: patch.fallback ?? store.settings.flareSolverrFallback ?? false,
   };

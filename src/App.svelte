@@ -135,7 +135,7 @@
 
     if (!themeStyleEl) {
       themeStyleEl = document.createElement("style");
-      themeStyleEl.id = "moku-custom-theme";
+      themeStyleEl.id = "aethon-custom-theme";
       document.head.appendChild(themeStyleEl);
     }
     themeStyleEl.textContent = css;
@@ -869,7 +869,7 @@
   };
 
   type AethonAuditWindow = Window & {
-    __mokuShowSplash?: () => void;
+    __aethonShowSplash?: () => void;
     __aethonAudit?: AethonAuditBridge;
     __aethonMediaAudit?: boolean;
   };
@@ -1355,7 +1355,7 @@
 
   function installAuditBridge() {
     const auditWindow = window as AethonAuditWindow;
-    auditWindow.__mokuShowSplash = showAuditSplash;
+    auditWindow.__aethonShowSplash = showAuditSplash;
     auditWindow.__aethonAudit = {
       showSplash: showAuditSplash,
       hideSplash: hideAuditSplash,
@@ -1385,7 +1385,7 @@
 
   function uninstallAuditBridge() {
     const auditWindow = window as AethonAuditWindow;
-    delete auditWindow.__mokuShowSplash;
+    delete auditWindow.__aethonShowSplash;
     delete auditWindow.__aethonAudit;
   }
 
