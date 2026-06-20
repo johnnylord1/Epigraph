@@ -96,6 +96,7 @@
   import {
     buildCategoryMembers,
     loadLibrarySnapshot,
+    resolveLibrarySnapshotCategoryState,
     saveLibrarySnapshot,
     type PersistedLibrarySnapshot,
   } from "../../lib/library/snapshot";
@@ -334,7 +335,18 @@
   function loadCategoriesSnapshot() {
     return cache.get(
       CACHE_KEYS.CATEGORIES,
-      async () => ensureCompletedCategory((await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES_SUMMARY)).categories.nodes),
+      async () => {
+        await ensureServerAwakeFor("library-categories", {
+          serverUrl: store.runtimeServerUrl,
+          binary: store.settings.serverBinary,
+          updateIntensity: store.settings.libraryUpdateIntensity,
+          profileId: store.runtimeResolvedLocalProfileId,
+          profileLabel: store.runtimeResolvedLocalProfileMeta?.label ?? store.runtimeServerLabel,
+        });
+        return ensureCompletedCategory(
+          (await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES_SUMMARY)).categories.nodes,
+        );
+      },
       DEFAULT_TTL_MS,
       CACHE_GROUPS.LIBRARY,
     );
@@ -391,15 +403,27 @@
     return true;
   }
 
-  function persistCurrentLibrarySnapshot(categories = store.categories) {
+  function persistCurrentLibrarySnapshot(
+    categories = store.categories,
+    options: { allowEmptyCategories?: boolean } = {},
+  ) {
     if (!store.runtimeResolvedLocalProfileId || !store.runtimeServerUrl) return;
-    saveLibrarySnapshot(currentSnapshotScope(), {
-      mangas: store.libraryMangaSnapshot,
-      categories: normalizeCategories(categories.map((category) => {
+    const previous = loadLibrarySnapshot(currentSnapshotScope());
+    const normalizedCategories = normalizeCategories(categories);
+    const nextCategoryState = resolveLibrarySnapshotCategoryState(
+      previous,
+      normalizeCategories(normalizedCategories.map((category) => {
         const { mangas: _mangas, ...summary } = category;
         return summary;
       })),
-      categoryMembers: buildCategoryMembers(categories),
+      buildCategoryMembers(normalizedCategories),
+      options.allowEmptyCategories,
+    );
+
+    saveLibrarySnapshot(currentSnapshotScope(), {
+      mangas: store.libraryMangaSnapshot,
+      categories: nextCategoryState.categories,
+      categoryMembers: nextCategoryState.categoryMembers,
       trackingSummary: store.libraryTrackingSummarySnapshot,
     });
   }
@@ -439,7 +463,7 @@
         cache.clear(LEGACY_CATEGORIES_WITH_MANGA_CACHE_KEY);
         const categories = normalizeCategories(await loadCategoryMembersSnapshot());
         setCategories(categories);
-        persistCurrentLibrarySnapshot(categories);
+        persistCurrentLibrarySnapshot(categories, { allowEmptyCategories: true });
         return categories;
       } finally {
         hydrateCategoriesInFlight = null;
@@ -611,7 +635,9 @@
         clearCategoryLoadRetry();
       }
       store.setLibraryTrackingSummarySnapshot(trackingSummary);
-      persistCurrentLibrarySnapshot(normalizeCategories(categories));
+      persistCurrentLibrarySnapshot(normalizeCategories(categories), {
+        allowEmptyCategories: !categoriesLoadFailed,
+      });
       void refreshLibraryChapterCounts();
       void hydrateCategoryMembers(false).catch(console.error);
       error = null;

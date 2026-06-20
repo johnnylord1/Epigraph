@@ -19,6 +19,21 @@ export interface PersistedLibrarySnapshot {
   updatedAt: number;
 }
 
+export function resolveLibrarySnapshotCategoryState(
+  previous: PersistedLibrarySnapshot | null,
+  categories: Category[],
+  categoryMembers: Record<string, number[]>,
+  allowEmptyCategories = false,
+) {
+  if (!allowEmptyCategories && categories.length === 0 && (previous?.categories.length ?? 0) > 0) {
+    return {
+      categories: previous!.categories,
+      categoryMembers: previous!.categoryMembers,
+    };
+  }
+  return { categories, categoryMembers };
+}
+
 interface StorageLike {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;

@@ -288,15 +288,6 @@
     about: true,
     devtools: true,
   };
-  const IDLE_TIMEOUT_LABELS: Record<string, string> = {
-    "0": "Never",
-    "1": "1 minute",
-    "2": "2 minutes",
-    "5": "5 minutes",
-    "10": "10 minutes",
-    "15": "15 minutes",
-    "30": "30 minutes",
-  };
   const PAGE_STYLE_LABELS: Record<string, string> = {
     single: "Single page",
     longstrip: "Long strip",
@@ -314,8 +305,11 @@
   };
 
   function idleTimeoutLabel(value: number | null | undefined): string {
-    const key = String(value ?? 5);
-    return IDLE_TIMEOUT_LABELS[key] ?? `${value ?? 5} min`;
+    const minutes = Number(value ?? 5);
+    if (minutes <= 0) return $_("common.never");
+    return $_(minutes === 1 ? "common.minute" : "common.minutes", {
+      values: { count: minutes },
+    });
   }
 
   function libraryUpdateIntervalLabel(value: number | null | undefined): string {
@@ -3426,7 +3420,7 @@
           onclick={() => openGroup(group.id)}
         >
           <span class="cat-btn__icon"><group.icon size={16} weight="light" /></span>
-          <span class="cat-btn__label">{group.label}</span>
+          <span class="cat-btn__label">{group.id === "app" ? $_("settings.general.group") : group.label}</span>
         </button>
       {/each}
     </nav>
@@ -3462,7 +3456,7 @@
             onclick={() => openTab(t.id)}
           >
             <span class="settings-subnav-btn__icon"><t.icon size={16} weight="light" /></span>
-            <span class="settings-subnav-btn__label">{t.label}</span>
+            <span class="settings-subnav-btn__label">{t.id === "general" ? $_("settings.general.title") : t.label}</span>
           </button>
         {/each}
       </div>
@@ -3471,9 +3465,9 @@
     <section class="settings-pane-shell">
       <header class="settings-pane-header">
         <div>
-          <p class="settings-pane-header__eyebrow" id="settingsPaneGroupLabel">{currentGroup.label}</p>
-          <h2 class="settings-pane-header__title" id="settingsPaneTitle">{currentTabMeta.label}</h2>
-          <p class="settings-pane-header__desc" id="settingsPaneDesc">{currentTabMeta.desc}</p>
+          <p class="settings-pane-header__eyebrow" id="settingsPaneGroupLabel">{tab === "general" ? $_("settings.general.group") : currentGroup.label}</p>
+          <h2 class="settings-pane-header__title" id="settingsPaneTitle">{tab === "general" ? $_("settings.general.title") : currentTabMeta.label}</h2>
+          <p class="settings-pane-header__desc" id="settingsPaneDesc">{tab === "general" ? $_("settings.general.description") : currentTabMeta.desc}</p>
         </div>
       </header>
 
@@ -3487,12 +3481,12 @@
         >
           <div class="settings-grid">
             <div class="settings-card">
-              <p class="settings-card__title">Startup</p>
+              <p class="settings-card__title">{$_("settings.general.startup.title")}</p>
               <div class="settings-card__stack">
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Launch into library</p>
-                    <p class="settings-mini-row__hint">Open the last active library section on startup.</p>
+                    <p class="settings-mini-row__label">{$_("settings.general.startup.launchLibrary")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings.general.startup.launchLibraryHint")}</p>
                   </div>
                   <button
                     class="settings-toggle"
@@ -3500,14 +3494,14 @@
                     type="button"
                     role="switch"
                     aria-checked={store.settings.launchIntoLibrary}
-                    aria-label="Launch into library"
+                    aria-label={$_("settings.general.startup.launchLibrary")}
                     onclick={() => updateSettings({ launchIntoLibrary: !store.settings.launchIntoLibrary })}
                   ></button>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Auto-start local server</p>
-                    <p class="settings-mini-row__hint">Only when using the embedded desktop server.</p>
+                    <p class="settings-mini-row__label">{$_("settings.general.startup.autoStartServer")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings.general.startup.autoStartServerHint")}</p>
                   </div>
                   <button
                     class="settings-toggle"
@@ -3515,14 +3509,14 @@
                     type="button"
                     role="switch"
                     aria-checked={store.settings.autoStartServer}
-                    aria-label="Auto-start local server"
+                    aria-label={$_("settings.general.startup.autoStartServer")}
                     onclick={() => updateSettings({ autoStartServer: !store.settings.autoStartServer })}
                   ></button>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Local server standby</p>
-                    <p class="settings-mini-row__hint">Let Aethon stop Suwayomi after idle while Library can use its local snapshot.</p>
+                    <p class="settings-mini-row__label">{$_("settings.general.startup.serverStandby")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings.general.startup.serverStandbyHint")}</p>
                   </div>
                   <button
                     class="settings-toggle"
@@ -3530,14 +3524,14 @@
                     type="button"
                     role="switch"
                     aria-checked={store.settings.localServerStandbyEnabled}
-                    aria-label="Local server standby"
+                    aria-label={$_("settings.general.startup.serverStandby")}
                     onclick={() => updateSettings({ localServerStandbyEnabled: !store.settings.localServerStandbyEnabled })}
                   ></button>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Standby after idle</p>
-                    <p class="settings-mini-row__hint">Minimum idle time before the embedded server may sleep.</p>
+                    <p class="settings-mini-row__label">{$_("settings.general.startup.standbyAfter")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings.general.startup.standbyAfterHint")}</p>
                   </div>
                   <div class="select-wrap" id="general-server-standby-idle">
                     <button class="select-btn" type="button" onclick={() => toggleSelect("general-server-standby-idle")}>
@@ -3565,8 +3559,37 @@
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Discord Rich Presence</p>
-                    <p class="settings-mini-row__hint">Show reading activity when supported.</p>
+                    <p class="settings-mini-row__label">{$_("settings.general.startup.idleTimeout")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings.general.startup.idleTimeoutHint")}</p>
+                  </div>
+                  <div class="select-wrap" id="general-idle-timeout">
+                    <button class="select-btn" type="button" onclick={() => toggleSelect("general-idle-timeout")}>
+                      <span>{idleTimeoutLabel(store.settings.idleTimeoutMin)}</span>
+                      <svg class="select-caret" class:open={selectOpen === "general-idle-timeout"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
+                    </button>
+                    {#if selectOpen === "general-idle-timeout"}
+                      <div class="select-menu">
+                        {#each [0, 1, 2, 5, 10, 15, 30] as value}
+                          <button
+                            class="select-option"
+                            class:active={Number(store.settings.idleTimeoutMin ?? 5) === value}
+                            type="button"
+                            onclick={() => {
+                              updateSettings({ idleTimeoutMin: value });
+                              selectOpen = null;
+                            }}
+                          >
+                            {idleTimeoutLabel(value)}
+                          </button>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">{$_("settings.general.startup.discord")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings.general.startup.discordHint")}</p>
                   </div>
                   <button
                     class="settings-toggle"
@@ -3574,19 +3597,19 @@
                     type="button"
                     role="switch"
                     aria-checked={store.settings.discordRpc}
-                    aria-label="Discord Rich Presence"
+                    aria-label={$_("settings.general.startup.discord")}
                     onclick={() => updateSettings({ discordRpc: !store.settings.discordRpc })}
                   ></button>
                 </div>
               </div>
             </div>
             <div class="settings-card">
-              <p class="settings-card__title">Profiles</p>
+              <p class="settings-card__title">{$_("settings.general.profiles.title")}</p>
               <div class="settings-card__stack">
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Active profile</p>
-                    <p class="settings-mini-row__hint">Local profile controls workspace, paths and session defaults.</p>
+                    <p class="settings-mini-row__label">{$_("settings.general.profiles.active")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings.general.profiles.activeHint")}</p>
                   </div>
                   <div class="settings-input-line">
                     <div class="select-wrap" id="general-profile">
@@ -3616,14 +3639,14 @@
                       class="n-btn n-btn--sm n-btn-ghost n-btn-danger"
                       type="button"
                       disabled={profileDataDeleteBusy === persistedDefaultProfileId}
-                      title="Reset this profile workspace data"
+                      title={$_("settings.general.profiles.resetTitle")}
                       onclick={() => resetLocalProfileDataFromSettings(persistedDefaultProfileId)}
                     >
                       {profileDataDeleteBusy === persistedDefaultProfileId
-                        ? "Resetting..."
+                        ? $_("common.resetting")
                         : profileDataDeleteConfirmId === persistedDefaultProfileId
-                          ? "Confirm reset"
-                          : "Reset data"}
+                          ? $_("common.confirmReset")
+                          : $_("common.resetData")}
                     </button>
                   </div>
                 </div>
@@ -3671,23 +3694,23 @@
                               class="n-btn n-btn--sm n-btn-ghost"
                               type="button"
                               disabled={currentRuntimeProfileId === meta.id || profileDataDeleteBusy === meta.id}
-                              title={currentRuntimeProfileId === meta.id ? "Close this session before deleting the active profile" : "Remove profile from Settings"}
+                              title={currentRuntimeProfileId === meta.id ? $_("settings.general.profiles.deleteActiveTitle") : $_("settings.general.profiles.deleteTitle")}
                               onclick={() => deleteLocalProfileFromSettings(meta.id)}
                             >
-                              Delete
+                              {$_("common.delete")}
                             </button>
                             <button
                               class="n-btn n-btn--sm n-btn-ghost n-btn-danger"
                               type="button"
                               disabled={profileDataDeleteBusy === meta.id}
-                              title="Reset profile data on disk"
+                              title={$_("settings.general.profiles.resetDiskTitle")}
                               onclick={() => resetLocalProfileDataFromSettings(meta.id)}
                             >
                               {profileDataDeleteBusy === meta.id
-                                ? "Resetting..."
+                                ? $_("common.resetting")
                                 : profileDataDeleteConfirmId === meta.id
-                                  ? "Confirm reset"
-                                  : "Reset data"}
+                                  ? $_("common.confirmReset")
+                                  : $_("common.resetData")}
                             </button>
                           </div>
                         </div>
@@ -3698,14 +3721,14 @@
 
                 <div class="settings-row settings-mini-row settings-row--stacked" data-testid="create-local-profile">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Create profile</p>
-                    <p class="settings-mini-row__hint">Creates a separate local Aethon workspace on its own port.</p>
+                    <p class="settings-mini-row__label">{$_("settings.general.profiles.create")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings.general.profiles.createHint")}</p>
                   </div>
                   <div class="settings-input-line">
                     <input
                       class="settings-text-input settings-input-line__grow"
                       bind:value={profileCreateLabel}
-                      placeholder="Profile name"
+                      placeholder={$_("settings.general.profiles.namePlaceholder")}
                       spellcheck="false"
                       onkeydown={(event) => event.key === "Enter" && createLocalProfileFromSettings()}
                     />
@@ -3718,7 +3741,7 @@
                       onkeydown={(event) => event.key === "Enter" && createLocalProfileFromSettings()}
                     />
                     <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={createLocalProfileFromSettings} disabled={!profileCreatePort.trim()}>
-                      Create
+                      {$_("common.create")}
                     </button>
                   </div>
                   {#if profileCreateError}
@@ -3726,48 +3749,18 @@
                   {/if}
                 </div>
 
-                <div class="settings-row settings-mini-row">
-                  <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Idle timeout</p>
-                    <p class="settings-mini-row__hint">Pause background operations after inactivity.</p>
-                  </div>
-                  <div class="select-wrap" id="general-idle-timeout">
-                    <button class="select-btn" type="button" onclick={() => toggleSelect("general-idle-timeout")}>
-                      <span>{idleTimeoutLabel(store.settings.idleTimeoutMin)}</span>
-                      <svg class="select-caret" class:open={selectOpen === "general-idle-timeout"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
-                    </button>
-                    {#if selectOpen === "general-idle-timeout"}
-                      <div class="select-menu">
-                        {#each [["0","Never"],["1","1 minute"],["2","2 minutes"],["5","5 minutes"],["10","10 minutes"],["15","15 minutes"],["30","30 minutes"]] as [value, label]}
-                          <button
-                            class="select-option"
-                            class:active={String(store.settings.idleTimeoutMin ?? 5) === value}
-                            type="button"
-                            onclick={() => {
-                              updateSettings({ idleTimeoutMin: Number(value) });
-                              selectOpen = null;
-                            }}
-                          >
-                            {label}
-                          </button>
-                        {/each}
-                      </div>
-                    {/if}
-                  </div>
-                </div>
               </div>
-              <div class="settings-card__surface" style="margin-top:16px">
-                <div class="settings-card__head">
-                  <p class="settings-card__title">Desktop defaults</p>
-                </div>
+            </div>
+            <div class="settings-card settings-card--wide settings-desktop-defaults">
+              <p class="settings-card__title">{$_("settings.general.desktop.title")}</p>
                 <div class="settings-card__stack">
                   <div class="settings-row settings-mini-row">
                     <div class="settings-mini-row__body">
-                      <p class="settings-mini-row__label">Server URL</p>
+                      <p class="settings-mini-row__label">{$_("settings.general.desktop.serverUrl")}</p>
                       <p class="settings-mini-row__hint">
                         {serverUrlManagedByProfile
-                          ? "Managed by the active profile for this session."
-                          : "Base URL of your Suwayomi instance."}
+                          ? $_("settings.general.desktop.serverManagedHint")
+                          : $_("settings.general.desktop.serverBaseHint")}
                       </p>
                     </div>
                     <input
@@ -3783,8 +3776,8 @@
                   </div>
                   <div class="settings-row settings-mini-row">
                     <div class="settings-mini-row__body">
-                      <p class="settings-mini-row__label">Preferred source language</p>
-                      <p class="settings-mini-row__hint">Used to preselect languages in Search and deduplicate sources.</p>
+                      <p class="settings-mini-row__label">{$_("settings.general.desktop.sourceLanguage")}</p>
+                      <p class="settings-mini-row__hint">{$_("settings.general.desktop.sourceLanguageHint")}</p>
                     </div>
                     <input
                       class="settings-text-input settings-text-input--short"
@@ -3797,17 +3790,16 @@
                 </div>
                 <div class="settings-card__footer settings-card__footer--split" style="margin-top:16px">
                   <div class="settings-meta-card">
-                    <span class="settings-meta-card__label">Current session</span>
+                    <span class="settings-meta-card__label">{$_("settings.general.desktop.currentSession")}</span>
                     <span class="settings-meta-card__value">{currentSessionProfileSummary}</span>
                     <span class="settings-meta-card__hint">{currentRuntimeServerUrl}</span>
                   </div>
                   <div class="settings-meta-card">
-                    <span class="settings-meta-card__label">Next launch default</span>
+                    <span class="settings-meta-card__label">{$_("settings.general.desktop.nextLaunch")}</span>
                     <span class="settings-meta-card__value">{nextLaunchProfileSummary}</span>
                     <span class="settings-meta-card__hint">{nextLaunchProfileMeta?.serverUrl ?? currentRuntimeServerUrl}</span>
                   </div>
                 </div>
-              </div>
             </div>
           </div>
         </section>

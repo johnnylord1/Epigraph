@@ -5,6 +5,7 @@ import {
   librarySnapshotScopeKey,
   loadLibrarySnapshot,
   normalizeLibrarySnapshot,
+  resolveLibrarySnapshotCategoryState,
   saveLibrarySnapshot,
 } from "./snapshot";
 import type { Category, Manga } from "../types";
@@ -72,5 +73,26 @@ describe("library snapshot", () => {
   it("ignores invalid or empty snapshots", () => {
     expect(normalizeLibrarySnapshot({ version: 1, mangas: [], categories: [] })).toBeNull();
     expect(normalizeLibrarySnapshot({ mangas: [{ id: "nope" }], categories: [{ id: null }] })).toBeNull();
+  });
+
+  it("preserves folders when a transient category refresh returns no data", () => {
+    const previous = saveLibrarySnapshot(
+      { profileId: "main", serverUrl: "http://127.0.0.1:4567" },
+      {
+        mangas: [manga],
+        categories: [category],
+        categoryMembers: { "3": [7] },
+        trackingSummary: [],
+      },
+    );
+
+    expect(resolveLibrarySnapshotCategoryState(previous, [], {}, false)).toEqual({
+      categories: previous.categories,
+      categoryMembers: { "3": [7] },
+    });
+    expect(resolveLibrarySnapshotCategoryState(previous, [], {}, true)).toEqual({
+      categories: [],
+      categoryMembers: {},
+    });
   });
 });
