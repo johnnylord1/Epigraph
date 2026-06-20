@@ -96,6 +96,7 @@
   import type { ActiveDownload } from "./store/state.svelte";
   import { traceMediaAudit } from "./lib/mediaAudit";
   import { getImageCacheStats, trimImageCache } from "./lib/imageCache";
+  import { applyAppLanguage } from "./lib/i18n/runtime";
   import Toaster      from "./components/layout/Toaster.svelte";
   import SplashScreen from "./components/layout/SplashScreen.svelte";
   import Layout from "./components/layout/Layout.svelte";
@@ -275,6 +276,10 @@
     document.documentElement.style.zoom = `${pct}%`;
     scheduleViewportMetrics(uiZoom);
   }
+
+  $effect(() => {
+    applyAppLanguage(store.settings.appLanguage);
+  });
 
   $effect(() => {
     const isReaderSurface = !!store.activeChapter || !!store.activeBookReaderId || !!store.activeNovelReader;
@@ -1740,6 +1745,7 @@
       launchTarget,
       store.settings.defaultLocalProfileId,
       store.settings.serverUrl,
+      store.settings.customLocalProfiles,
     );
 
     store.runtimeResolvedLocalProfileId = resolved.profileId;
@@ -2606,6 +2612,8 @@
         invoke<void>("spawn_server", {
           binary: store.settings.serverBinary,
           serverUrl: effectiveServerUrl,
+          profileId: store.runtimeResolvedLocalProfileId,
+          profileLabel: store.runtimeResolvedLocalProfileMeta?.label ?? store.runtimeServerLabel,
           updateIntensity: store.settings.libraryUpdateIntensity,
         }).catch((err: any) => {
           if (err?.kind === "NotConfigured") {
@@ -2675,6 +2683,8 @@
     void configureLocalServerRuntime({
       serverUrl: store.runtimeServerUrl,
       updateIntensity: store.settings.libraryUpdateIntensity,
+      profileId: store.runtimeResolvedLocalProfileId,
+      profileLabel: store.runtimeResolvedLocalProfileMeta?.label ?? store.runtimeServerLabel,
     }).catch((error) => {
       console.warn("Could not apply local Suwayomi runtime profile:", error);
     });
@@ -2701,6 +2711,8 @@
       serverUrl: store.runtimeServerUrl,
       binary: store.settings.serverBinary,
       updateIntensity: store.settings.libraryUpdateIntensity,
+      profileId: store.runtimeResolvedLocalProfileId,
+      profileLabel: store.runtimeResolvedLocalProfileMeta?.label ?? store.runtimeServerLabel,
     }).catch((error) => {
       console.warn("Could not wake Suwayomi for active surface:", error);
     });

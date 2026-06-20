@@ -3,6 +3,7 @@
   import { openActivityPanel, store } from "../../store/state.svelte";
 
   const ACTIVITY_SEEN_STORAGE_KEY = "aethon.home.activity.lastSeenReadAt";
+  const ACTIVITY_SEEN_EVENT = "aethon:activity-seen";
 
   let lastActivitySeenAt = $state(0);
   const historyEntries = $derived(store.history ?? []);
@@ -40,6 +41,7 @@
     } catch {
       // Some test/private contexts expose localStorage but reject access.
     }
+    window.dispatchEvent(new CustomEvent<number>(ACTIVITY_SEEN_EVENT, { detail: latestActivityAt }));
   }
 
   function openActivity() {
@@ -48,12 +50,33 @@
   }
 
   onMount(() => {
+    function syncActivitySeen(event: Event) {
+      const seenAt = Number((event as CustomEvent<number>).detail);
+      if (!Number.isFinite(seenAt)) return;
+      lastActivitySeenAt = Math.max(lastActivitySeenAt, seenAt);
+    }
+
+    function syncActivitySeenFromStorage(event: StorageEvent) {
+      if (event.key !== ACTIVITY_SEEN_STORAGE_KEY) return;
+      const seenAt = Number(event.newValue ?? 0);
+      if (!Number.isFinite(seenAt)) return;
+      lastActivitySeenAt = Math.max(lastActivitySeenAt, seenAt);
+    }
+
     try {
       const storedLastSeen = Number(localStorage.getItem(ACTIVITY_SEEN_STORAGE_KEY) ?? 0);
       lastActivitySeenAt = Number.isFinite(storedLastSeen) ? storedLastSeen : 0;
     } catch {
       lastActivitySeenAt = 0;
     }
+
+    window.addEventListener(ACTIVITY_SEEN_EVENT, syncActivitySeen);
+    window.addEventListener("storage", syncActivitySeenFromStorage);
+
+    return () => {
+      window.removeEventListener(ACTIVITY_SEEN_EVENT, syncActivitySeen);
+      window.removeEventListener("storage", syncActivitySeenFromStorage);
+    };
   });
 </script>
 
@@ -81,19 +104,23 @@
 
   .activity-badge {
     position: absolute;
-    top: calc(6px * var(--n-hud-scale));
-    right: calc(7px * var(--n-hud-scale));
-    display: block;
-    min-width: 0;
-    padding: 0;
+    top: calc(2px * var(--n-hud-scale));
+    right: calc(2px * var(--n-hud-scale));
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: calc(14px * var(--n-hud-scale));
+    height: calc(14px * var(--n-hud-scale));
+    padding: 0 calc(2px * var(--n-hud-scale));
     border: 0;
-    background: transparent;
-    color: #c9adff;
+    border-radius: 999px;
+    background: rgba(16, 14, 22, 0.88);
+    color: #eadfff;
     text-shadow:
-      0 0 calc(7px * var(--n-hud-scale)) rgba(190, 164, 255, 0.95),
-      0 0 calc(14px * var(--n-hud-scale)) rgba(155, 117, 255, 0.58);
+      0 0 calc(2px * var(--n-hud-scale)) rgba(218, 201, 255, 0.98),
+      0 0 calc(7px * var(--n-hud-scale)) rgba(155, 117, 255, 0.72);
     font-family: var(--font-sans);
-    font-size: calc(13px * var(--n-hud-scale));
+    font-size: calc(11px * var(--n-hud-scale));
     font-weight: 900;
     letter-spacing: 0;
     line-height: 1;
@@ -101,10 +128,8 @@
   }
 
   .activity-btn.has-new-activity .material-symbols-outlined {
-    color: #c9adff;
-    text-shadow:
-      0 0 calc(8px * var(--n-hud-scale)) rgba(190, 164, 255, 0.95),
-      0 0 calc(18px * var(--n-hud-scale)) rgba(155, 117, 255, 0.64);
-    font-variation-settings: "FILL" 0, "wght" 500, "GRAD" 0, "opsz" 20;
+    color: inherit;
+    text-shadow: none;
+    font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 20;
   }
 </style>

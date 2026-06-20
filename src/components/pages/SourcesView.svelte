@@ -192,6 +192,8 @@
       serverUrl: store.runtimeServerUrl ?? store.settings.serverUrl,
       binary: store.settings.serverBinary,
       updateIntensity: store.settings.libraryUpdateIntensity,
+      profileId: store.runtimeResolvedLocalProfileId,
+      profileLabel: store.runtimeResolvedLocalProfileMeta?.label ?? store.runtimeServerLabel,
     });
   }
 

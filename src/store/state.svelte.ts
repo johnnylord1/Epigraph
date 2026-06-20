@@ -2,11 +2,12 @@ import type { Manga, Chapter, Category, Source } from "../lib/types";
 import { cache, CACHE_GROUPS, CACHE_KEYS } from "../lib/cache";
 import { DEFAULT_KEYBINDS, type Keybinds } from "../lib/keybinds";
 import type {
+  CustomLocalProfile,
   LocalProfileId,
   LocalProfileMeta,
   RuntimeProfileResolutionSource,
 } from "../lib/localProfiles";
-import { normalizeLocalProfileId, normalizeServerUrl } from "../lib/localProfiles";
+import { getLocalProfileMeta, normalizeCustomLocalProfiles, normalizeLocalProfileId, normalizeServerUrl } from "../lib/localProfiles";
 import type { BookBookmarkEntry, BookEntry, BookProgress } from "../lib/books/types";
 import { BookAssetResolver } from "../lib/books/assets";
 import { reconcileBookIdentityState } from "../lib/books/identity";
@@ -28,6 +29,7 @@ import type { LibraryPreferredGridColumns, LibraryViewMode } from "../lib/librar
 import type { MangaReaderPreference } from "../lib/reader/scanlator";
 import type { ActiveNovelDetailState, ActiveNovelReaderState } from "../lib/novels/domain";
 import type { ComicsUpdateNotificationInput } from "../lib/library/comicsChapterSnapshot";
+import { normalizeAppLanguage, type AppLanguageCode } from "../lib/i18n/languages";
 
 export type LibraryUpdateIntensity = "eco" | "balanced" | "fast";
 
@@ -494,9 +496,11 @@ export interface Settings {
    * Replaces the old `uiScale` percentage integer.
    */
   uiZoom:                  number;
+  appLanguage:             AppLanguageCode;
   compactSidebar:          boolean;
   gpuAcceleration:         boolean;
   defaultLocalProfileId:   LocalProfileId;
+  customLocalProfiles:     CustomLocalProfile[];
   serverUrl:               string;
   serverBinary:            string;
   autoStartServer:         boolean;
@@ -620,9 +624,11 @@ export const DEFAULT_SETTINGS: Settings = {
   chapterPageSize:        25,
   readerBrightness:       1.0,
   uiZoom:                 1.0,
+  appLanguage:            "system",
   compactSidebar:         false,
   gpuAcceleration:        true,
   defaultLocalProfileId:  "main",
+  customLocalProfiles:    [],
   serverUrl:              "http://127.0.0.1:4567",
   serverBinary:           "",
   autoStartServer:        true,
@@ -797,10 +803,11 @@ const saved = (() => {
 function mergeSettings(saved: any): Settings {
   const savedBooksLibraryState = peekBookLibraryState();
   const savedMangaReaderPrefs = saved?.settings?.mangaReaderPrefs ?? {};
+  const customLocalProfiles = normalizeCustomLocalProfiles(saved?.settings?.customLocalProfiles);
   const savedDefaultProfileId = normalizeLocalProfileId(saved?.settings?.defaultLocalProfileId);
   const savedServerUrl = normalizeServerUrl(saved?.settings?.serverUrl);
-  const coercedDefaultProfileId = savedDefaultProfileId === "test" ? "main" : savedDefaultProfileId ?? DEFAULT_SETTINGS.defaultLocalProfileId;
-  const coercedServerUrl = savedServerUrl === "http://127.0.0.1:4667" ? "http://127.0.0.1:4567" : savedServerUrl ?? DEFAULT_SETTINGS.serverUrl;
+  const coercedDefaultProfileId = getLocalProfileMeta(savedDefaultProfileId, customLocalProfiles)?.id ?? DEFAULT_SETTINGS.defaultLocalProfileId;
+  const coercedServerUrl = savedServerUrl ?? DEFAULT_SETTINGS.serverUrl;
   const savedTheme = saved?.settings?.theme;
   const coercedTheme = savedTheme === undefined || savedTheme === "dark" ? DEFAULT_SETTINGS.theme : savedTheme;
   const savedFlareSolverrSessionName = saved?.settings?.flareSolverrSessionName;
@@ -840,10 +847,12 @@ function mergeSettings(saved: any): Settings {
       ...savedBooksLibraryState.booksLibraryUi,
     },
     defaultLocalProfileId: coercedDefaultProfileId,
+    customLocalProfiles,
     serverUrl:             coercedServerUrl,
     theme:                 coercedTheme,
     flareSolverrSessionName: coercedFlareSolverrSessionName,
     launchIntoLibrary:    saved?.settings?.launchIntoLibrary ?? DEFAULT_SETTINGS.launchIntoLibrary,
+    appLanguage:          normalizeAppLanguage(saved?.settings?.appLanguage),
     libraryUpdateIntensity: normalizeLibraryUpdateIntensity(saved?.settings?.libraryUpdateIntensity),
     downloadNewNovelChapters: saved?.settings?.downloadNewNovelChapters === true,
     onlyUpdateOngoingNovels: saved?.settings?.onlyUpdateOngoingNovels === true,

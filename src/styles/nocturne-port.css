@@ -2432,6 +2432,39 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   gap: calc(10px * var(--n-hud-scale));
 }
 
+.aethon-port--settings .settings-card__footer--actions {
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(14px * var(--n-hud-scale));
+}
+
+.aethon-port--settings .settings-card__footer-status {
+  min-width: 0;
+  flex: 1 1 240px;
+  display: flex;
+  align-items: center;
+  min-height: calc(30px * var(--n-hud-scale));
+}
+
+.aethon-port--settings .settings-storage-action-group,
+.aethon-port--settings .settings-storage-meter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(10px * var(--n-hud-scale));
+  min-width: 0;
+}
+
+.aethon-port--settings .settings-storage-action-group {
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.aethon-port--settings .settings-storage-meter {
+  margin-bottom: calc(12px * var(--n-hud-scale));
+}
+
 .aethon-port--settings .settings-card__footer--split {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2547,6 +2580,8 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   font-weight: 600;
   line-height: 1.45;
   color: rgba(202, 196, 208, 0.42);
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .aethon-port--settings .settings-mini-row__hint--mono {
@@ -3074,7 +3109,8 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   padding: 16px 18px;
   border-radius: 16px;
   border: 1px solid rgba(72, 69, 79, 0.12);
-  background: rgba(17, 16, 21, 0.72);
+  background: rgb(17, 16, 21);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
 }
 
 .aethon-port--settings .settings-card__notice {
@@ -3258,11 +3294,10 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   justify-content: center;
   width: calc(40px * var(--n-hud-scale));
   height: calc(40px * var(--n-hud-scale));
-  border-radius: calc(10px * var(--n-hud-scale));
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  box-shadow:
-    0 calc(2px * var(--n-hud-scale)) calc(8px * var(--n-hud-scale)) rgba(0, 0, 0, 0.2);
+  border-radius: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
   transition: transform var(--n-duration-fast) var(--n-ease-spring);
   position: relative;
   z-index: 2;
@@ -3273,8 +3308,8 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings .settings-brand-card__badge img {
-  width: calc(34px * var(--n-hud-scale));
-  height: calc(34px * var(--n-hud-scale));
+  width: calc(52px * var(--n-hud-scale));
+  height: calc(52px * var(--n-hud-scale));
   object-fit: contain;
   display: block;
 }

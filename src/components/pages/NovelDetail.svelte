@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { ArrowsClockwise, BookmarkSimple, CaretDown, ChartLineUp, Check, CheckCircle, DownloadSimple, FolderSimplePlus, Link, List, Play, SortAscending, SortDescending, SquaresFour, X } from "phosphor-svelte";
+  import { ArrowsClockwise, ArrowsLeftRight, BookOpen, BookmarkSimple, CaretDown, ChartLineUp, Check, CheckCircle, Circle, DownloadSimple, FolderSimplePlus, Link, List, Play, SortAscending, SortDescending, SquaresFour, X } from "phosphor-svelte";
   import {
     addToast,
     bumpContentSetupVersion,
@@ -546,7 +546,7 @@
         {/if}
       </div>
       <button class="series-utility" disabled={!activeDetail.inLibrary || Boolean(migrationBlocker)} title={migrationBlocker ?? "Migrate this novel to another source"} aria-label="Migrate this novel to another source" onclick={() => migrateOpen = true}>
-        <ArrowsClockwise size={13} weight="light" />
+        <ArrowsLeftRight size={15} weight="light" />
         Migrate
       </button>
     {/snippet}
@@ -627,14 +627,16 @@
                 <span class="ch-provider">{sourceName ?? ""}</span>
                 <span class="ch-date">{formatDate(chapter.releaseTime)}</span>
                 <div class="ch-status">
-                  <span class="ch-status-read">{#if !chapter.unread}<CheckCircle size={14} weight="fill" class="read-icon" />{/if}</span>
+                  <span class="ch-status-read"></span>
                   <span class="ch-status-main">
                     {#if isCurrent}
-                      <span class="novel-current-dot" title="Current"></span>
+                      <BookOpen size={14} weight="fill" class="read-icon" title="Current" />
                     {:else if isBookmarked}
-                      <BookmarkSimple size={14} weight="fill" class="read-icon" />
+                      <BookmarkSimple size={14} weight="fill" class="read-icon" title="Bookmarked" />
+                    {:else if !chapter.unread}
+                      <CheckCircle size={14} weight="fill" class="read-icon" title="Read" />
                     {:else if chapter.unread}
-                      <span class="novel-unread-dot" title="Unread"></span>
+                      <Circle size={14} weight="regular" class="unread-icon" title="Unread" />
                     {/if}
                   </span>
                   <span class="ch-status-action"></span>
@@ -971,7 +973,7 @@
   }
 
   .dl-unified-btn {
-    min-width: 118px;
+    min-width: 0;
   }
 
   .dl-unified-count {
@@ -988,7 +990,7 @@
   }
 
   .dl-unified-count-empty {
-    opacity: 0;
+    display: none;
   }
 
   .dl-item-danger {

@@ -318,9 +318,31 @@ fn default_local_server_port(profile: LocalServerProfile) -> u16 {
     }
 }
 
+fn sanitize_custom_profile_key(value: &str) -> Option<String> {
+    let normalized = value.trim().to_ascii_lowercase();
+    if normalized.is_empty() || normalized.len() > 32 {
+        return None;
+    }
+    if !normalized
+        .chars()
+        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
+    {
+        return None;
+    }
+    if normalized.starts_with('-') || normalized.ends_with('-') {
+        return None;
+    }
+    Some(normalized)
+}
+
+fn local_server_profile_key_from_id(value: Option<&str>) -> Option<String> {
+    value.and_then(sanitize_custom_profile_key)
+}
+
 #[derive(Clone, Debug)]
 struct LocalServerTarget {
     profile: LocalServerProfile,
+    profile_key: String,
     root_dir: PathBuf,
     server_url: String,
     port: u16,
@@ -1625,7 +1647,8 @@ server.maxSourcesInParallel = 6
             attach_only_override: None,
         };
         let main =
-            resolve_local_server_target(&main_target, Some("http://127.0.0.1:4567")).unwrap();
+            resolve_local_server_target(&main_target, Some("http://127.0.0.1:4567"), None, None)
+                .unwrap();
         assert_eq!(main.profile.key(), "main");
         assert_eq!(main.port, 4567);
         assert!(!main.attach_only);
@@ -1651,10 +1674,61 @@ server.maxSourcesInParallel = 6
             attach_only_override: Some(true),
         };
         let test =
-            resolve_local_server_target(&test_target, Some("http://127.0.0.1:4667")).unwrap();
+            resolve_local_server_target(&test_target, Some("http://127.0.0.1:4667"), None, None)
+                .unwrap();
         assert_eq!(test.profile.key(), "test");
         assert_eq!(test.port, 4667);
         assert!(test.attach_only);
+    }
+    #[test]
+    fn resolve_local_server_target_uses_custom_profile_root() {
+        let launch_target = LaunchTargetInfo {
+            server_url_override: None,
+            profile_label_override: None,
+            server_auth_enabled_override: None,
+            server_auth_user_override: None,
+            server_auth_pass_override: None,
+            audit_open_override: None,
+            audit_manga_id_override: None,
+            audit_chapter_id_override: None,
+            audit_book_id_override: None,
+            audit_manga_backup_override: None,
+            audit_books_backup_override: None,
+            audit_novels_backup_override: None,
+            audit_aethon_backup_override: None,
+            restore_manga_backup_override: None,
+            restore_aethon_backup_override: None,
+            restore_handoff_override: None,
+            restore_source_profile_override: None,
+            attach_only_override: None,
+        };
+
+        let target = resolve_local_server_target(
+            &launch_target,
+            Some("http://127.0.0.1:4777"),
+            Some("sandbox"),
+            Some("Sandbox"),
+        )
+        .unwrap();
+
+        assert_eq!(target.profile_key, "sandbox");
+        assert_eq!(target.port, 4777);
+        assert_eq!(target.root_dir, local_server_custom_profile_root("sandbox"));
+    }
+
+    #[test]
+    fn reset_local_profile_data_resolves_builtin_profiles() {
+        let main_root = reset_local_profile_root("main").unwrap();
+        let test_root = reset_local_profile_root("test").unwrap();
+
+        assert_eq!(
+            main_root,
+            local_server_profile_root(LocalServerProfile::Main)
+        );
+        assert_eq!(
+            test_root,
+            local_server_profile_root(LocalServerProfile::Test)
+        );
     }
 
     #[test]
@@ -1805,6 +1879,7 @@ server.maxSourcesInParallel = 6
             std::env::temp_dir().join(format!("aethon-owner-validate-{}", std::process::id()));
         let target = LocalServerTarget {
             profile: LocalServerProfile::Test,
+            profile_key: "test".to_string(),
             root_dir: temp.clone(),
             server_url: "http://127.0.0.1:4667".to_string(),
             port: 4667,
@@ -2199,7 +2274,9 @@ fn read_downloaded_chapter_archive(
     }
 
     let root = root.canonicalize().map_err(|error| error.to_string())?;
-    let manga_dir = manga_dir.canonicalize().map_err(|error| error.to_string())?;
+    let manga_dir = manga_dir
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
     if !manga_dir.starts_with(&root) {
         return Err("Downloaded chapter path escaped the downloads directory.".to_string());
     }
@@ -2214,15 +2291,27 @@ fn read_downloaded_chapter_archive(
     for entry in std::fs::read_dir(&manga_dir).map_err(|error| error.to_string())? {
         let entry = entry.map_err(|error| error.to_string())?;
         let path = entry.path();
-        if !path.is_file() || path.extension().and_then(|value| value.to_str()).map(|value| !value.eq_ignore_ascii_case("cbz")).unwrap_or(true) {
+        if !path.is_file()
+            || path
+                .extension()
+                .and_then(|value| value.to_str())
+                .map(|value| !value.eq_ignore_ascii_case("cbz"))
+                .unwrap_or(true)
+        {
             continue;
         }
-        let stem = path.file_stem().and_then(|value| value.to_str()).unwrap_or_default();
+        let stem = path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
         let stem_key = download_name_key(stem);
         let score = if stem_key == chapter_key {
             2
         } else if stem_key.ends_with(&chapter_key)
-            && scanlator_key.as_ref().map(|value| stem_key.starts_with(value)).unwrap_or(true)
+            && scanlator_key
+                .as_ref()
+                .map(|value| stem_key.starts_with(value))
+                .unwrap_or(true)
         {
             3
         } else {
@@ -2237,7 +2326,9 @@ fn read_downloaded_chapter_archive(
         return Ok(None);
     };
     let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
-    Ok(Some(base64::engine::general_purpose::STANDARD.encode(bytes)))
+    Ok(Some(
+        base64::engine::general_purpose::STANDARD.encode(bytes),
+    ))
 }
 
 /// Returns true if the given path exists and is a directory.
@@ -2440,6 +2531,30 @@ fn local_server_profile_root(profile: LocalServerProfile) -> PathBuf {
     }
 }
 
+fn local_server_custom_profile_root(profile_key: &str) -> PathBuf {
+    let base = dirs::data_dir().unwrap_or_else(|| suwayomi_data_dir());
+    base.join(format!("aethon-profile-{profile_key}"))
+}
+
+fn local_server_root_for_profile_key(profile_key: &str) -> PathBuf {
+    match profile_key {
+        "main" => local_server_profile_root(LocalServerProfile::Main),
+        "test" => local_server_profile_root(LocalServerProfile::Test),
+        custom => local_server_custom_profile_root(custom),
+    }
+}
+
+fn local_server_builtin_profile_from_key(profile_key: &str) -> LocalServerProfile {
+    match profile_key {
+        "main" => LocalServerProfile::Main,
+        _ => LocalServerProfile::Test,
+    }
+}
+
+fn is_builtin_local_server_profile_key(profile_key: &str) -> bool {
+    matches!(profile_key, "main" | "test")
+}
+
 fn is_loopback_http_url(raw: &str) -> bool {
     let Ok(url) = Url::parse(raw) else {
         return false;
@@ -2451,6 +2566,8 @@ fn is_loopback_http_url(raw: &str) -> bool {
 fn resolve_local_server_target(
     launch_target: &LaunchTargetInfo,
     requested_url: Option<&str>,
+    requested_profile_id: Option<&str>,
+    requested_profile_label: Option<&str>,
 ) -> Result<LocalServerTarget, SpawnError> {
     let attach_only = launch_target.attach_only_override.unwrap_or(false);
     let normalized_url = requested_url
@@ -2472,16 +2589,29 @@ fn resolve_local_server_target(
         .port_or_known_default()
         .ok_or_else(|| SpawnError::SpawnFailed("Local server URL is missing a port".to_string()))?;
 
-    let profile = if launch_target.profile_label_override.as_deref() == Some("MAIN") || port == 4567
-    {
-        LocalServerProfile::Main
-    } else {
-        LocalServerProfile::Test
-    };
+    let label = requested_profile_label
+        .or(launch_target.profile_label_override.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let profile_key = local_server_profile_key_from_id(requested_profile_id)
+        .or_else(|| label.and_then(sanitize_custom_profile_key))
+        .or_else(|| match launch_target.profile_label_override.as_deref() {
+            Some("MAIN") => Some("main".to_string()),
+            Some("TEST") => Some("test".to_string()),
+            _ => None,
+        })
+        .or_else(|| match port {
+            4567 => Some("main".to_string()),
+            4667 => Some("test".to_string()),
+            _ => Some(format!("profile-{port}")),
+        })
+        .unwrap_or_else(|| "test".to_string());
+    let profile = local_server_builtin_profile_from_key(&profile_key);
 
     Ok(LocalServerTarget {
         profile,
-        root_dir: local_server_profile_root(profile),
+        profile_key: profile_key.clone(),
+        root_dir: local_server_root_for_profile_key(&profile_key),
         server_url: normalized_url,
         port,
         attach_only,
@@ -2686,7 +2816,7 @@ fn remove_server_owner_files(data_dir: &Path) {
 }
 
 fn validate_server_owner(target: &LocalServerTarget, owner: &ServerOwner) -> OwnerReuseDecision {
-    if owner.profile_key != target.profile.key()
+    if owner.profile_key.to_ascii_lowercase() != target.profile_key
         || owner.root_dir != target.root_dir.to_string_lossy()
         || owner.server_url.trim_end_matches('/') != target.server_url
         || owner.port != target.port
@@ -2874,7 +3004,7 @@ fn reconciliation_overlay_root_for_server_url(
     launch_target: &LaunchTargetInfo,
     server_url: Option<&str>,
 ) -> PathBuf {
-    resolve_local_server_target(launch_target, server_url)
+    resolve_local_server_target(launch_target, server_url, None, None)
         .map(|target| target.root_dir)
         .unwrap_or_else(|_| suwayomi_data_dir())
 }
@@ -2892,19 +3022,6 @@ fn reconciliation_overlay_path_for_server_url(
     reconciliation_overlay_path_for_root(&root_dir)
 }
 
-fn local_server_profile_from_id(value: Option<&str>) -> Option<LocalServerProfile> {
-    match value
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.to_ascii_lowercase())
-        .as_deref()
-    {
-        Some("main") => Some(LocalServerProfile::Main),
-        Some("test") => Some(LocalServerProfile::Test),
-        _ => None,
-    }
-}
-
 fn sha256_hex(value: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(value.as_bytes());
@@ -2916,11 +3033,11 @@ fn novels_scope_root_for_target(
     profile_id: Option<&str>,
     server_url: Option<&str>,
 ) -> PathBuf {
-    if let Some(profile) = local_server_profile_from_id(profile_id) {
-        return local_server_profile_root(profile);
+    if let Some(profile_key) = local_server_profile_key_from_id(profile_id) {
+        return local_server_root_for_profile_key(&profile_key);
     }
 
-    if let Ok(target) = resolve_local_server_target(launch_target, server_url) {
+    if let Ok(target) = resolve_local_server_target(launch_target, server_url, None, None) {
         return target.root_dir;
     }
 
@@ -3240,10 +3357,23 @@ fn remove_novel_plugin_installation(
 }
 
 fn kill_tachidesk(app: &tauri::AppHandle, server_url: Option<&str>) {
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    let Ok(target) = resolve_local_server_target(&launch_target, server_url, None, None) else {
+        return;
+    };
+    kill_tachidesk_target(app, &target);
+}
+
+fn kill_tachidesk_target(app: &tauri::AppHandle, target: &LocalServerTarget) {
     let running = {
         let state = app.state::<ServerState>();
         let mut guard = state.0.lock().unwrap();
-        guard.take()
+        match guard.as_ref() {
+            Some(running) if running.owner_path == server_owner_path(&target.root_dir) => {
+                guard.take()
+            }
+            _ => None,
+        }
     };
 
     if let Some(running) = running {
@@ -3256,10 +3386,6 @@ fn kill_tachidesk(app: &tauri::AppHandle, server_url: Option<&str>) {
         return;
     }
 
-    let launch_target = app.state::<LaunchTarget>().0.clone();
-    let Ok(target) = resolve_local_server_target(&launch_target, server_url) else {
-        return;
-    };
     let owner_path = server_owner_path(&target.root_dir);
     let Some(owner) = read_server_owner(&owner_path) else {
         return;
@@ -3312,12 +3438,12 @@ fn local_server_java_args(jar: &Path) -> Vec<String> {
 
 fn seed_server_conf(
     data_dir: &Path,
-    profile: LocalServerProfile,
+    profile_key: &str,
     port: u16,
     update_intensity: LocalServerUpdateIntensity,
 ) {
     let conf_path = data_dir.join("server.conf");
-    let exposure_mode = suwayomi_lan::load_and_sanitize(data_dir, profile.key())
+    let exposure_mode = suwayomi_lan::load_and_sanitize(data_dir, profile_key)
         .unwrap_or(suwayomi_lan::LanExposureMode::LoopbackOnly);
     let server_ip = format!("\"{}\"", suwayomi_lan::bind_host_for_mode(&exposure_mode));
 
@@ -3400,7 +3526,7 @@ fn sanitize_suwayomi_lan_state() {
         }
         seed_server_conf(
             &root,
-            profile,
+            profile.key(),
             default_local_server_port(profile),
             LocalServerUpdateIntensity::Balanced,
         );
@@ -3494,7 +3620,7 @@ fn schedule_suwayomi_lan_session_watchers(app: &tauri::AppHandle) {
             let _ = suwayomi_lan::clear_temporary_session(&root);
             seed_server_conf(
                 &root,
-                profile,
+                profile.key(),
                 default_local_server_port(profile),
                 LocalServerUpdateIntensity::Balanced,
             );
@@ -3510,7 +3636,7 @@ fn clear_suwayomi_lan_state() {
         if root.exists() {
             seed_server_conf(
                 &root,
-                profile,
+                profile.key(),
                 default_local_server_port(profile),
                 LocalServerUpdateIntensity::Balanced,
             );
@@ -3928,6 +4054,8 @@ fn resolve_server_binary(
 fn spawn_server(
     binary: String,
     server_url: String,
+    profile_id: Option<String>,
+    profile_label: Option<String>,
     update_intensity: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<(), SpawnError> {
@@ -3939,21 +4067,31 @@ fn spawn_server(
     }
 
     let launch_target = app.state::<LaunchTarget>().0.clone();
-    let mut target = resolve_local_server_target(&launch_target, Some(server_url.as_str()))?;
+    let mut target = resolve_local_server_target(
+        &launch_target,
+        Some(server_url.as_str()),
+        profile_id.as_deref(),
+        profile_label.as_deref(),
+    )?;
     let update_intensity = LocalServerUpdateIntensity::from_option(update_intensity.as_deref());
     if target.attach_only {
         return Err(SpawnError::AttachOnlyTarget(
             "Audit targets are attach-only and never auto-start a local server.".to_string(),
         ));
     }
-    target.root_dir = ensure_suwayomi_data_dir(target.profile);
+    if is_builtin_local_server_profile_key(&target.profile_key) {
+        target.root_dir = ensure_suwayomi_data_dir(target.profile);
+    } else {
+        std::fs::create_dir_all(&target.root_dir)
+            .map_err(|err| SpawnError::SpawnFailed(err.to_string()))?;
+    }
 
     let data_dir = target.root_dir.clone();
     let owner_path = server_owner_path(&data_dir);
     let owner_tmp_path = server_owner_tmp_path(&data_dir);
     let spawn_lock_path = server_spawn_lock_path(&data_dir);
     let main_startup_diagnostic_path =
-        Some(data_dir.join(format!("{}-app-driven-startup.log", target.profile.key())));
+        Some(data_dir.join(format!("{}-app-driven-startup.log", target.profile_key)));
 
     let log_path = data_dir.join("aethon-spawn.log");
     let _ = std::fs::create_dir_all(&data_dir);
@@ -3988,10 +4126,7 @@ fn spawn_server(
         &mut log,
         &format!(
             "[spawn_server] target profile={} url={} port={} attach_only={}",
-            target.profile.key(),
-            target.server_url,
-            target.port,
-            target.attach_only
+            target.profile_key, target.server_url, target.port, target.attach_only
         ),
     );
     do_log(
@@ -4095,7 +4230,7 @@ fn spawn_server(
     if let Some(java_pid) = find_java_pid_for_rootdir(&data_dir) {
         if probe_local_server(&target.server_url, LOCAL_SERVER_HEALTH_PROBE_TIMEOUT) {
             let owner = ServerOwner {
-                profile_key: target.profile.key().to_string(),
+                profile_key: target.profile_key.clone(),
                 root_dir: data_dir.to_string_lossy().into_owned(),
                 app_pid: std::process::id(),
                 java_pid,
@@ -4149,7 +4284,12 @@ fn spawn_server(
         ),
     }
 
-    seed_server_conf(&data_dir, target.profile, target.port, update_intensity);
+    seed_server_conf(
+        &data_dir,
+        &target.profile_key,
+        target.port,
+        update_intensity,
+    );
     do_log(&mut log, "[spawn_server] server.conf seeded");
 
     let mut invocation = match resolve_server_binary(&binary, &app, &mut log) {
@@ -4376,7 +4516,7 @@ fn spawn_server(
             }
 
             let owner = ServerOwner {
-                profile_key: target.profile.key().to_string(),
+                profile_key: target.profile_key.clone(),
                 root_dir: data_dir.to_string_lossy().into_owned(),
                 app_pid: std::process::id(),
                 java_pid,
@@ -4431,22 +4571,100 @@ fn spawn_server(
 #[tauri::command]
 fn configure_local_server_runtime(
     server_url: String,
+    profile_id: Option<String>,
+    profile_label: Option<String>,
     update_intensity: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<(), SpawnError> {
     let launch_target = app.state::<LaunchTarget>().0.clone();
-    let mut target = resolve_local_server_target(&launch_target, Some(server_url.as_str()))?;
+    let mut target = resolve_local_server_target(
+        &launch_target,
+        Some(server_url.as_str()),
+        profile_id.as_deref(),
+        profile_label.as_deref(),
+    )?;
     if target.attach_only {
         return Ok(());
     }
-    target.root_dir = ensure_suwayomi_data_dir(target.profile);
+    if is_builtin_local_server_profile_key(&target.profile_key) {
+        target.root_dir = ensure_suwayomi_data_dir(target.profile);
+    } else {
+        std::fs::create_dir_all(&target.root_dir)
+            .map_err(|err| SpawnError::SpawnFailed(err.to_string()))?;
+    }
     seed_server_conf(
         &target.root_dir,
-        target.profile,
+        &target.profile_key,
         target.port,
         LocalServerUpdateIntensity::from_option(update_intensity.as_deref()),
     );
     Ok(())
+}
+
+#[cfg(test)]
+fn reset_local_profile_root(profile_id: &str) -> Result<PathBuf, String> {
+    let profile_key = local_server_profile_key_from_id(Some(profile_id))
+        .ok_or_else(|| "Invalid profile id.".to_string())?;
+    Ok(local_server_root_for_profile_key(&profile_key))
+}
+
+#[tauri::command]
+fn reset_local_profile_data(profile_id: String, app: tauri::AppHandle) -> Result<bool, String> {
+    let profile_key = local_server_profile_key_from_id(Some(profile_id.as_str()))
+        .ok_or_else(|| "Invalid profile id.".to_string())?;
+    let server_url = format!(
+        "http://127.0.0.1:{}",
+        match profile_key.as_str() {
+            "main" => default_local_server_port(LocalServerProfile::Main),
+            "test" => default_local_server_port(LocalServerProfile::Test),
+            _ => {
+                return reset_custom_local_profile_data(&profile_key, &app);
+            }
+        }
+    );
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    let target = resolve_local_server_target(
+        &launch_target,
+        Some(server_url.as_str()),
+        Some(profile_key.as_str()),
+        Some(profile_key.as_str()),
+    )
+    .map_err(|err| format!("{err:?}"))?;
+    reset_resolved_local_profile_data(&target, &app)
+}
+
+fn reset_custom_local_profile_data(
+    profile_key: &str,
+    app: &tauri::AppHandle,
+) -> Result<bool, String> {
+    let root_dir = local_server_root_for_profile_key(profile_key);
+    let server_url = format!("http://127.0.0.1:{}", profile_key);
+    let target = LocalServerTarget {
+        profile: LocalServerProfile::Test,
+        profile_key: profile_key.to_string(),
+        root_dir,
+        server_url,
+        port: 0,
+        attach_only: false,
+    };
+    reset_resolved_local_profile_data(&target, app)
+}
+
+fn reset_resolved_local_profile_data(
+    target: &LocalServerTarget,
+    app: &tauri::AppHandle,
+) -> Result<bool, String> {
+    let root_dir = target.root_dir.clone();
+    kill_tachidesk_target(app, target);
+    if !root_dir.exists() {
+        return Ok(false);
+    }
+    if !root_dir.is_dir() {
+        return Err("Profile data path is not a directory.".to_string());
+    }
+
+    std::fs::remove_dir_all(&root_dir).map_err(|err| err.to_string())?;
+    Ok(true)
 }
 
 #[tauri::command]
@@ -4979,6 +5197,7 @@ pub fn run() {
             remove_book_assets,
             spawn_server,
             configure_local_server_runtime,
+            reset_local_profile_data,
             kill_server,
             get_platform_ui_scale,
             get_flaresolverr_local_status,

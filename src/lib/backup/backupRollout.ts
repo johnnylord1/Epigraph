@@ -1,6 +1,7 @@
 import {
   BUILTIN_LOCAL_PROFILES,
   getLocalProfileMeta,
+  isBuiltInLocalProfileId,
   normalizeLocalProfileId,
   normalizeServerUrl,
   type LocalProfileId,
@@ -22,14 +23,14 @@ export interface BackupLaunchIntent {
 export function isBuiltInRestoreExecutionProfile(
   profileId: LocalProfileId | null | undefined,
 ): profileId is LocalProfileId {
-  return normalizeLocalProfileId(profileId) != null;
+  return isBuiltInLocalProfileId(normalizeLocalProfileId(profileId));
 }
 
 export function resolveOtherLocalProfileId(
   profileId: LocalProfileId | null | undefined,
 ): LocalProfileId | null {
   const normalized = normalizeLocalProfileId(profileId);
-  if (!normalized) return null;
+  if (!isBuiltInLocalProfileId(normalized)) return null;
   return normalized === "test" ? "main" : "test";
 }
 

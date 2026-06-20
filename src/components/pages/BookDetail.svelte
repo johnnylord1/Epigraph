@@ -6,6 +6,7 @@
     CaretDown,
     ChartLineUp,
     CheckCircle,
+    Circle,
     FolderSimplePlus,
     FunnelSimple,
     List,
@@ -873,14 +874,16 @@
                 <span class="ch-provider">{activePresentation?.subtypeLabel ?? activeBook.subtype.toUpperCase()}</span>
                 <span class="ch-date">{activeBook.subtype === "pdf" && item.pageNumber ? `${Math.round(item.progressPercent * 100)}%` : (item.depth > 0 ? `Depth ${item.depth}` : "")}</span>
                 <div class="ch-status">
-                  <span class="ch-status-read">{#if item.isRead}<CheckCircle size={14} weight="fill" class="read-icon" />{/if}</span>
+                  <span class="ch-status-read"></span>
                   <span class="ch-status-main">
                     {#if item.isCurrent}
-                      <span class="book-current-dot" title="Current"></span>
+                      <BookOpen size={14} weight="fill" class="read-icon" title="Current" />
                     {:else if item.isBookmarked}
-                      <BookmarkSimple size={14} weight="fill" class="read-icon" />
+                      <BookmarkSimple size={14} weight="fill" class="read-icon" title="Bookmarked" />
+                    {:else if item.isRead}
+                      <CheckCircle size={14} weight="fill" class="read-icon" title="Read" />
                     {:else if !item.isRead}
-                      <span class="book-unread-dot" title="Unread"></span>
+                      <Circle size={14} weight="regular" class="unread-icon" title="Unread" />
                     {/if}
                   </span>
                   <span class="ch-status-action"></span>
@@ -979,18 +982,6 @@
 
   .ch-left {
     padding-left: calc(var(--toc-depth, 0) * 12px);
-  }
-
-  .book-current-dot,
-  .book-unread-dot {
-    width: 5px;
-    height: 5px;
-    border-radius: 999px;
-    background: #d3c4ff;
-  }
-
-  .book-unread-dot {
-    opacity: 0.56;
   }
 
   .preview-loading {

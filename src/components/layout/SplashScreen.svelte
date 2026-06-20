@@ -440,7 +440,7 @@
   });
 
   $effect(() => {
-    if (mode === "idle" || !showCards || !starfieldEl || !orbitBackEl || !orbitFrontEl) {
+    if (!showCards || !starfieldEl || !orbitBackEl || !orbitFrontEl) {
       fpsText = "";
       return;
     }

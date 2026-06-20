@@ -18,6 +18,8 @@ export interface ServerLifecycleInput {
   serverUrl: string | null | undefined;
   binary?: string | null;
   updateIntensity?: LibraryUpdateIntensity | null;
+  profileId?: string | null;
+  profileLabel?: string | null;
 }
 
 export function notifyServerReady(serverUrl: string | null | undefined) {
@@ -65,6 +67,8 @@ export async function ensureServerAwakeFor(
   await invoke<void>("spawn_server", {
     binary: input.binary ?? "",
     serverUrl,
+    profileId: input.profileId ?? null,
+    profileLabel: input.profileLabel ?? null,
     updateIntensity: input.updateIntensity ?? "balanced",
   });
 
@@ -85,6 +89,8 @@ export async function configureLocalServerRuntime(input: ServerLifecycleInput) {
   if (!isLoopbackServerUrl(serverUrl)) return false;
   await invoke<void>("configure_local_server_runtime", {
     serverUrl,
+    profileId: input.profileId ?? null,
+    profileLabel: input.profileLabel ?? null,
     updateIntensity: input.updateIntensity ?? "balanced",
   });
   return true;

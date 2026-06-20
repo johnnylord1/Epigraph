@@ -712,6 +712,8 @@ export function runSharedLibraryUpdate(options: SharedLibraryUpdateRunOptions) {
         serverUrl: store.runtimeServerUrl,
         binary: store.settings.serverBinary,
         updateIntensity: store.settings.libraryUpdateIntensity,
+      profileId: store.runtimeResolvedLocalProfileId,
+      profileLabel: store.runtimeResolvedLocalProfileMeta?.label ?? store.runtimeServerLabel,
       });
       if (!awake) throw new Error("Suwayomi is not reachable.");
 

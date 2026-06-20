@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  createCustomLocalProfile,
   DEFAULT_LOCAL_PROFILE_ID,
+  getAllLocalProfiles,
   getLocalProfileMeta,
   resolveSessionProfile,
 } from "./localProfiles";
@@ -59,5 +61,28 @@ describe("resolveSessionProfile", () => {
     expect(resolved.profileMeta).toBeNull();
     expect(resolved.displayLabel).toContain("CUSTOM");
     expect(resolved.effectiveServerUrl).toBe("http://10.0.0.25:8080");
+  });
+
+  it("exposes only main as the built-in visible profile", () => {
+    expect(getAllLocalProfiles().map((profile) => profile.id)).toEqual(["main"]);
+    expect(getLocalProfileMeta("test")?.label).toBe("TEST");
+  });
+
+  it("creates and resolves custom local profiles", () => {
+    const custom = createCustomLocalProfile({ label: "Sandbox", port: 4777 });
+    const resolved = resolveSessionProfile(null, custom.id, null, [custom]);
+
+    expect(custom).toEqual({ id: "sandbox", label: "Sandbox", port: 4777 });
+    expect(getAllLocalProfiles([custom]).map((profile) => profile.id)).toContain("sandbox");
+    expect(resolved.profileId).toBe("sandbox");
+    expect(resolved.profileMeta?.serverUrl).toBe("http://127.0.0.1:4777");
+    expect(resolved.displayLabel).toBe("Sandbox");
+  });
+
+  it("rejects duplicate custom profile ports", () => {
+    const custom = createCustomLocalProfile({ label: "Sandbox", port: 4777 });
+
+    expect(() => createCustomLocalProfile({ label: "Other", port: 4777 }, [custom])).toThrow("already used");
+    expect(() => createCustomLocalProfile({ label: "Main Copy", port: 4567 }, [custom])).toThrow("already used");
   });
 });

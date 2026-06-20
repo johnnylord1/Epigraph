@@ -5,7 +5,88 @@ Treat the current working tree as the source of truth. Several features were imp
 
 ---
 
-## Current Status -- 2026-06-19
+## Current Status -- 2026-06-20
+
+### Launch Stabilization Snapshot
+
+- App/package version is now `0.0.1` for the upcoming first public release pass.
+- Branding/name work has moved the desktop identity from Moku/Tauri defaults toward Aethon/Aethon Nocturne in the user-facing shell.
+- Local profiles are no longer limited to hardcoded visible built-ins:
+  - `MAIN` remains the required primary profile.
+  - Additional profiles can be created from Settings with their own localhost port and separate local workspace root.
+  - Additional profiles can be removed from Settings when they are not the active session.
+  - Profile workspace data can be reset for `MAIN` and for additional profiles from Settings after a second confirmation click.
+  - Resetting the active profile stops its local server first; the user should restart Aethon afterward so the active profile is recreated cleanly from disk.
+- The legacy `TEST` profile remains reserved for launch/restore compatibility, but it is not exposed as a normal Settings profile choice.
+- Settings now contains the first app-language package wiring:
+  - `svelte-i18n` is installed and initialized.
+  - Settings exposes an `App language` selector independent from `Preferred source language`.
+  - The language selector supports a broad locale list through `Intl.DisplayNames`.
+  - Only a small Settings slice is translated so far. Full-app localization still requires extracting hardcoded strings from all major Svelte pages/components into message keys.
+- Settings storage/expansion controls were hardened:
+  - dropdown menus use opaque Nocturne surfaces instead of transparent backgrounds;
+  - Storage action rows are aligned;
+  - expandable Settings sections can be collapsed by clicking the same action again.
+- Library/Shell/details visual polish from the latest pass is in the working tree:
+  - global window drag was restored through the top chrome;
+  - Downloads/Settings search placement and animation were aligned with other primary pages;
+  - Settings app card positioning and icon presentation were adjusted;
+  - detail-page header action sizing, migrate labeling, status icon columns, and notification badge styling were adjusted across shared detail shell usage.
+- Latest focused validation after the profile reset and Settings hardening:
+  - `npm test -- src/lib/localProfiles.test.ts` passed with 8 tests.
+  - `npm test -- --project shell-jsdom src/components/settings/Settings.test.ts` passed with 8 tests.
+  - `cargo test reset_local_profile_data_resolves_builtin_profiles` passed before the dev app was opened.
+  - `npm run build` passed after the profile reset change.
+  - A fresh real dev app was restarted from `target/debug/aethon.exe` against Vite `127.0.0.1:1420`, MAIN Suwayomi `127.0.0.1:4567`, and WebView2 CDP `127.0.0.1:9223`.
+  - Dev-app CDP smoke confirmed title `Aethon [MAIN :4567]`, Settings rendered visually, Profiles showed `MAIN`, and `Reset data` was visible without testing destructive reset on real user data.
+- Latest small follow-up:
+  - Library preload aborts caused by navigation are now treated as normal cancellation instead of `console.error` noise.
+  - `npm test -- src/lib/localProfiles.test.ts` and `npm test -- --project shell-jsdom src/components/settings/Settings.test.ts` passed after that adjustment.
+  - After closing the dev app, `cargo test reset_local_profile_data_resolves_builtin_profiles` passed.
+  - `npm run build` passed after the Library abort-noise adjustment.
+  - The dev app was restarted again from `target/debug/aethon.exe`; Vite `127.0.0.1:1420`, MAIN Suwayomi `127.0.0.1:4567`, and WebView2 CDP `127.0.0.1:9223` were all live.
+  - Final CDP smoke covered Home, Library, Browse, Downloads, and Settings. It recorded `0` JavaScript `pageerror` entries and `0` `console.error` entries.
+  - Final visual screenshot confirmed Settings render with `Aethon Nocturne v0.0.1`, `MAIN`, and `RESET DATA` visible in Profiles.
+- Latest profile destructive-smoke result:
+  - A temporary profile named `Codex Smoke ...` was created from Settings on a random high localhost port.
+  - Its `Reset data` / `Confirm reset` flow was exercised.
+  - The temporary profile registration was deleted afterward.
+  - The default profile was restored to `MAIN`; final Settings state showed `Active profile ... MAIN Reset data`.
+- Latest release signing audit:
+  - Local signing key files exist at `C:\Users\jhow-\.tauri\aethon.key` and `C:\Users\jhow-\.tauri\aethon.key.pub`.
+  - Signing environment variables were not globally present, which is correct for keeping the private key out of the repo/environment.
+  - `npm run tauri -- build --config src-tauri/tauri.conf.json` with `TAURI_SIGNING_PRIVATE_KEY` supplied only for that process generated `src-tauri/target/release/bundle/nsis/Aethon_0.0.1_x64-setup.exe`.
+  - Installer SHA-256: `15D24D91691EAB26EBE0F82260AADB41A13FDA8015A420A3FFC90B5529507AB1`.
+  - The 0.0.1 updater signature file was not generated. Both the build signing tail and manual `tauri signer sign --private-key-path ...` stayed pending until command timeout, even when an empty stdin line was supplied for a no-password key. This remains the release blocker to resolve before publishing updater metadata.
+
+### Remaining Work
+
+- Full app localization:
+  - Decide the production translation strategy: manual curated messages, machine-assisted initial catalog with review, or hybrid.
+  - Extract hardcoded user-facing strings from primary pages first: Home, Library, Browse/Sources, Downloads, Settings, SeriesDetail, BookDetail, NovelDetail, readers, dialogs/toasts.
+  - Add message-key coverage tests so new strings do not bypass the i18n layer.
+  - Add RTL smoke for Arabic/Hebrew/Farsi/Urdu if those locales remain selectable.
+- Signing:
+  - Resolve the hanging `tauri signer sign` command for `Aethon_0.0.1_x64-setup.exe`.
+  - Generate and verify `Aethon_0.0.1_x64-setup.exe.sig` before publishing updater metadata.
+- Profiles:
+  - Add a non-destructive dev smoke for create/select/delete custom profile registration.
+  - Add a destructive profile reset smoke only on a temporary custom profile, not on real `MAIN` data.
+  - Add backend tests around custom profile reset path once a Tauri command harness is available without requiring the live app.
+- Dev/release smoke:
+  - Restart the dev app after every final patch before visual smoke; do not reuse an older dev build.
+  - Smoke Home, Library, Browse, Downloads, Settings, profile controls, notification overlay, and Library long scroll.
+  - Rerun Rust tests with the dev app closed to avoid JRE file locks.
+- Release/signing:
+  - Confirm `TAURI_SIGNING_PRIVATE_KEY` is provided only through the release environment.
+  - Run final installer build/signing once the private key is available.
+  - Run installed-app smoke after signing.
+- Known non-blocking build warnings to clean later:
+  - unused CSS selectors in `NovelDetail.svelte` and `SeriesDetail.svelte`;
+  - protobuf `eval` warning from dependency code;
+  - Vite dynamic/static import chunking warnings.
+
+## Historical Status -- 2026-06-19
 
 ### Final Continuation Snapshot
 

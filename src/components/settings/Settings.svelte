@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { slide } from "svelte/transition";
+  import { _ } from "svelte-i18n";
+  import "../../lib/i18n/runtime";
   import { Book, Image, Sliders, Info, Keyboard, Gear, HardDrives, FolderSimple, Plus, Pencil, Trash, Wrench, PaintBrush, ListChecks, Lock, Eye, EyeSlash, Star, ShieldCheck, Tag, CaretDown } from "phosphor-svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
@@ -11,9 +13,12 @@
   import { gql, gqlUpload, getServerAuthHeader, serverFileUrl } from "../../lib/client";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import {
-    BUILTIN_LOCAL_PROFILES,
+    createCustomLocalProfile,
     DEFAULT_LOCAL_PROFILE_ID,
+    getAllLocalProfiles,
     getLocalProfileMeta,
+    isBuiltInLocalProfileId,
+    normalizeCustomLocalProfiles,
     normalizeLocalProfileId,
     type LocalProfileId,
   } from "../../lib/localProfiles";
@@ -70,7 +75,6 @@
     toggleBooksCategoryUpdateRule,
   } from "../../lib/library/domainCategories";
   import splashMark from "../../assets/aethon-splash-mark.png";
-  import desktopIcon from "../../assets/aethon-desktop-icon.png";
   import AppTopbar from "../layout/AppTopbar.svelte";
   import ActivityButton from "../layout/ActivityButton.svelte";
   import WindowControlsInline from "../layout/WindowControlsInline.svelte";
@@ -84,6 +88,7 @@
   import type { Tracker } from "../../lib/types";
   import type { AvailableExtensionEntry, OverlayEntry, ParsedBackup, ReconciliationAnalysis, ReconciliationClusterResult, RestoreReadinessSummary, SourceInventoryEntry } from "../../lib/reconciliation/types";
   import { SETTINGS_AETHON_BACKUP_EXTENSION, loadSettingsStorageRuntime } from "./settingsStorageRuntime";
+  import { APP_LANGUAGE_OPTIONS, appLanguageLabel, resolveAppLocale, type AppLanguageCode } from "../../lib/i18n/languages";
   interface Props {
     onOpenThemeEditor?: (id?: string | null) => void;
     backupAuditPlan?: AethonRestorePlan | null;
@@ -551,6 +556,7 @@
     aboutReleasesOpen = false;
     securityDetailPane = null;
     advStorageOpen = false;
+    storageAdvancedSource = null;
     flareAdvancedOpen = false;
     flareLocalOpen = false;
     flareDockerOpen = false;
@@ -619,8 +625,93 @@
   async function getStorageRuntime() {
     return loadSettingsStorageRuntime();
   }
+  let profileCreateLabel = $state("");
+  let profileCreatePort = $state("");
+  let profileCreateError: string | null = $state(null);
+  let profileDataDeleteConfirmId: LocalProfileId | null = $state(null);
+  let profileDataDeleteBusy: LocalProfileId | null = $state(null);
+  const profileOptions = $derived.by(() => getAllLocalProfiles(store.settings.customLocalProfiles));
+
   function setDefaultLocalProfile(profileId: LocalProfileId) {
-    updateSettings({ defaultLocalProfileId: profileId });
+    const profile = getLocalProfileMeta(profileId, store.settings.customLocalProfiles);
+    if (!profile) return;
+    updateSettings({ defaultLocalProfileId: profile.id, serverUrl: profile.serverUrl });
+  }
+
+  function createLocalProfileFromSettings() {
+    profileCreateError = null;
+    try {
+      const profile = createCustomLocalProfile(
+        { label: profileCreateLabel, port: Number(profileCreatePort) },
+        store.settings.customLocalProfiles,
+      );
+      const customLocalProfiles = [
+        ...normalizeCustomLocalProfiles(store.settings.customLocalProfiles),
+        profile,
+      ];
+      const meta = getLocalProfileMeta(profile.id, customLocalProfiles);
+      updateSettings({
+        customLocalProfiles,
+        defaultLocalProfileId: profile.id,
+        serverUrl: meta?.serverUrl ?? `http://127.0.0.1:${profile.port}`,
+      });
+      profileCreateLabel = "";
+      profileCreatePort = "";
+    } catch (error) {
+      profileCreateError = error instanceof Error ? error.message : "Could not create profile.";
+    }
+  }
+
+  function deleteLocalProfileFromSettings(profileId: LocalProfileId) {
+    const normalized = normalizeLocalProfileId(profileId);
+    if (!normalized || isBuiltInLocalProfileId(normalized)) return;
+    if (currentRuntimeProfileId === normalized) {
+      profileCreateError = "Close this session before deleting the active profile.";
+      return;
+    }
+    const customLocalProfiles = normalizeCustomLocalProfiles(store.settings.customLocalProfiles)
+      .filter((profile) => profile.id !== normalized);
+    const deletedDefault = persistedDefaultProfileId === normalized;
+    const fallback = getLocalProfileMeta(DEFAULT_LOCAL_PROFILE_ID, customLocalProfiles);
+    updateSettings({
+      customLocalProfiles,
+      ...(deletedDefault
+        ? {
+            defaultLocalProfileId: DEFAULT_LOCAL_PROFILE_ID,
+            serverUrl: fallback?.serverUrl ?? "http://127.0.0.1:4567",
+          }
+        : {}),
+    });
+    profileCreateError = null;
+    if (profileDataDeleteConfirmId === normalized) profileDataDeleteConfirmId = null;
+  }
+
+  async function resetLocalProfileDataFromSettings(profileId: LocalProfileId) {
+    const normalized = normalizeLocalProfileId(profileId);
+    if (!normalized) return;
+    if (profileDataDeleteConfirmId !== normalized) {
+      profileDataDeleteConfirmId = normalized;
+      profileCreateError = "Click Reset data again to permanently remove this profile workspace data.";
+      return;
+    }
+
+    profileDataDeleteBusy = normalized;
+    profileCreateError = null;
+    try {
+      await invoke<boolean>("reset_local_profile_data", { profileId: normalized });
+      addToast({
+        kind: "success",
+        title: "Profile data reset",
+        body: currentRuntimeProfileId === normalized
+          ? "Restart Aethon to start this profile from a clean workspace."
+          : "The profile workspace will be recreated cleanly next time it starts.",
+      });
+      profileDataDeleteConfirmId = null;
+    } catch (error) {
+      profileCreateError = error instanceof Error ? error.message : "Could not reset profile data.";
+    } finally {
+      profileDataDeleteBusy = null;
+    }
   }
   function close() { setSettingsOpen(false); }
   function onKey(e: KeyboardEvent) { if (e.key === "Escape" && !listeningKey) close(); }
@@ -660,13 +751,13 @@
   // overwrite the server's download directory config without the user explicitly asking.
   const currentRuntimeServerUrl = $derived.by(() => getEffectiveServerUrl());
   const currentRuntimeProfileId = $derived.by(
-    () => normalizeLocalProfileId(store.runtimeResolvedLocalProfileId)
+    () => getLocalProfileMeta(normalizeLocalProfileId(store.runtimeResolvedLocalProfileId), store.settings.customLocalProfiles)?.id ?? null
   );
   const persistedDefaultProfileId = $derived.by(
-    () => normalizeLocalProfileId(store.settings.defaultLocalProfileId) ?? DEFAULT_LOCAL_PROFILE_ID
+    () => getLocalProfileMeta(normalizeLocalProfileId(store.settings.defaultLocalProfileId), store.settings.customLocalProfiles)?.id ?? DEFAULT_LOCAL_PROFILE_ID
   );
   const currentProfileMeta = $derived.by(() => store.runtimeResolvedLocalProfileMeta);
-  const nextLaunchProfileMeta = $derived.by(() => getLocalProfileMeta(persistedDefaultProfileId));
+  const nextLaunchProfileMeta = $derived.by(() => getLocalProfileMeta(persistedDefaultProfileId, store.settings.customLocalProfiles));
   const currentSessionProfileLabel = $derived.by(() => {
     const label = currentProfileMeta?.label ?? store.runtimeServerLabel?.trim().toUpperCase();
     return label && label.length ? label : "CUSTOM";
@@ -733,14 +824,33 @@
   let extraScanDirs: string[]   = $state([...(store.settings.extraScanDirs ?? [])]);
   let newScanDir                = $state("");
   let multiStorageInfos: (StorageInfo & { label: string })[] = $state([]);
+  type StorageAdvancedSource = "limit" | "paths" | "backup" | "advanced";
   let advStorageOpen            = $state(false);
-  function openStorageAdvanced() {
+  let storageAdvancedSource     = $state<StorageAdvancedSource | null>(null);
+  function toggleStorageAdvanced(source: StorageAdvancedSource) {
+    if (advStorageOpen && storageAdvancedSource === source) {
+      advStorageOpen = false;
+      storageAdvancedSource = null;
+      return;
+    }
     advStorageOpen = true;
+    storageAdvancedSource = source;
+  }
+  function openStorageAdvanced() {
+    toggleStorageAdvanced("advanced");
+  }
+  function openStorageLimit() {
+    toggleStorageAdvanced("limit");
+  }
+  function openStoragePaths() {
+    toggleStorageAdvanced("paths");
   }
   function openStorageBackupPanel() {
-    advStorageOpen = true;
+    toggleStorageAdvanced("backup");
     void tick().then(() => {
-      backupSectionEl?.scrollIntoView({ block: "start", behavior: "smooth" });
+      if (storageAdvancedSource === "backup") {
+        backupSectionEl?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+      }
     });
   }
   const storageLimitBytes = $derived.by(() =>
@@ -2529,6 +2639,9 @@
   }
   let selectOpen: string | null = $state(null);
   function toggleSelect(id: string) { selectOpen = selectOpen === id ? null : id; }
+  function appLanguageOptionLabel(code: AppLanguageCode, systemLabel: string) {
+    return appLanguageLabel(code, resolveAppLocale(store.settings.appLanguage), systemLabel);
+  }
   function onSelectOutside(e: MouseEvent) {
     if (selectOpen && !(e.target as HTMLElement).closest(".select-wrap")) selectOpen = null;
   }
@@ -3321,7 +3434,7 @@
       <div class="settings-brand-card">
         <div class="settings-brand-card__header">
           <div class="settings-brand-card__badge">
-            <img src={desktopIcon} alt="" />
+            <img src={splashMark} alt="" />
           </div>
           <div class="settings-brand-card__copy">
             <p class="settings-brand-card__title">Aethon Nocturne</p>
@@ -3475,30 +3588,144 @@
                     <p class="settings-mini-row__label">Active profile</p>
                     <p class="settings-mini-row__hint">Local profile controls workspace, paths and session defaults.</p>
                   </div>
-                  <div class="select-wrap" id="general-profile">
-                    <button class="select-btn" type="button" onclick={() => toggleSelect("general-profile")}>
-                      <span>{nextLaunchProfileSummary}</span>
-                      <svg class="select-caret" class:open={selectOpen === "general-profile"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
+                  <div class="settings-input-line">
+                    <div class="select-wrap" id="general-profile">
+                      <button class="select-btn" type="button" onclick={() => toggleSelect("general-profile")}>
+                        <span>{nextLaunchProfileSummary}</span>
+                        <svg class="select-caret" class:open={selectOpen === "general-profile"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
+                      </button>
+                      {#if selectOpen === "general-profile"}
+                        <div class="select-menu">
+                          {#each profileOptions as profile}
+                            <button
+                              class="select-option"
+                              class:active={persistedDefaultProfileId === profile.id}
+                              type="button"
+                              onclick={() => {
+                                setDefaultLocalProfile(profile.id);
+                                selectOpen = null;
+                              }}
+                            >
+                              {profile.label} :{profile.port}
+                            </button>
+                          {/each}
+                        </div>
+                      {/if}
+                    </div>
+                    <button
+                      class="n-btn n-btn--sm n-btn-ghost n-btn-danger"
+                      type="button"
+                      disabled={profileDataDeleteBusy === persistedDefaultProfileId}
+                      title="Reset this profile workspace data"
+                      onclick={() => resetLocalProfileDataFromSettings(persistedDefaultProfileId)}
+                    >
+                      {profileDataDeleteBusy === persistedDefaultProfileId
+                        ? "Resetting..."
+                        : profileDataDeleteConfirmId === persistedDefaultProfileId
+                          ? "Confirm reset"
+                          : "Reset data"}
                     </button>
-                    {#if selectOpen === "general-profile"}
-                      <div class="select-menu">
-                        {#each BUILTIN_LOCAL_PROFILES as profile}
+                  </div>
+                </div>
+                                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">{$_("settings.general.appLanguage.label")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings.general.appLanguage.hint")}</p>
+                  </div>
+                  <div class="select-wrap" id="general-app-language">
+                    <button class="select-btn select-btn--wide" type="button" onclick={() => toggleSelect("general-app-language")}>
+                      <span>{appLanguageOptionLabel(store.settings.appLanguage, $_("settings.general.appLanguage.system"))}</span>
+                      <svg class="select-caret" class:open={selectOpen === "general-app-language"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
+                    </button>
+                    {#if selectOpen === "general-app-language"}
+                      <div class="select-menu select-menu--scroll">
+                        {#each APP_LANGUAGE_OPTIONS as option}
                           <button
                             class="select-option"
-                            class:active={persistedDefaultProfileId === profile.id}
+                            class:active={(store.settings.appLanguage ?? "system") === option.code}
                             type="button"
                             onclick={() => {
-                              setDefaultLocalProfile(profile.id);
+                              updateSettings({ appLanguage: option.code });
                               selectOpen = null;
                             }}
                           >
-                            {profile.label} :{profile.port}
+                            {appLanguageOptionLabel(option.code, $_("settings.general.appLanguage.system"))}
                           </button>
                         {/each}
                       </div>
                     {/if}
                   </div>
                 </div>
+                {#if normalizeCustomLocalProfiles(store.settings.customLocalProfiles).length > 0}
+                  <div class="settings-card__stack settings-profile-list" data-testid="custom-profile-list">
+                    {#each normalizeCustomLocalProfiles(store.settings.customLocalProfiles) as profile}
+                      {@const meta = getLocalProfileMeta(profile.id, store.settings.customLocalProfiles)}
+                      {#if meta}
+                        <div class="settings-row settings-mini-row">
+                          <div class="settings-mini-row__body">
+                            <p class="settings-mini-row__label">{meta.label}</p>
+                            <p class="settings-mini-row__hint">{meta.serverUrl}</p>
+                          </div>
+                          <div class="settings-input-line">
+                            <button
+                              class="n-btn n-btn--sm n-btn-ghost"
+                              type="button"
+                              disabled={currentRuntimeProfileId === meta.id || profileDataDeleteBusy === meta.id}
+                              title={currentRuntimeProfileId === meta.id ? "Close this session before deleting the active profile" : "Remove profile from Settings"}
+                              onclick={() => deleteLocalProfileFromSettings(meta.id)}
+                            >
+                              Delete
+                            </button>
+                            <button
+                              class="n-btn n-btn--sm n-btn-ghost n-btn-danger"
+                              type="button"
+                              disabled={profileDataDeleteBusy === meta.id}
+                              title="Reset profile data on disk"
+                              onclick={() => resetLocalProfileDataFromSettings(meta.id)}
+                            >
+                              {profileDataDeleteBusy === meta.id
+                                ? "Resetting..."
+                                : profileDataDeleteConfirmId === meta.id
+                                  ? "Confirm reset"
+                                  : "Reset data"}
+                            </button>
+                          </div>
+                        </div>
+                      {/if}
+                    {/each}
+                  </div>
+                {/if}
+
+                <div class="settings-row settings-mini-row settings-row--stacked" data-testid="create-local-profile">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">Create profile</p>
+                    <p class="settings-mini-row__hint">Creates a separate local Aethon workspace on its own port.</p>
+                  </div>
+                  <div class="settings-input-line">
+                    <input
+                      class="settings-text-input settings-input-line__grow"
+                      bind:value={profileCreateLabel}
+                      placeholder="Profile name"
+                      spellcheck="false"
+                      onkeydown={(event) => event.key === "Enter" && createLocalProfileFromSettings()}
+                    />
+                    <input
+                      class="settings-text-input settings-text-input--short"
+                      bind:value={profileCreatePort}
+                      inputmode="numeric"
+                      placeholder="4777"
+                      oninput={(event) => (profileCreatePort = event.currentTarget.value.replace(/\D/g, "").slice(0, 5))}
+                      onkeydown={(event) => event.key === "Enter" && createLocalProfileFromSettings()}
+                    />
+                    <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={createLocalProfileFromSettings} disabled={!profileCreatePort.trim()}>
+                      Create
+                    </button>
+                  </div>
+                  {#if profileCreateError}
+                    <p class="settings-mini-row__hint settings-error-text">{profileCreateError}</p>
+                  {/if}
+                </div>
+
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
                     <p class="settings-mini-row__label">Idle timeout</p>
@@ -4484,7 +4711,7 @@
                   <NocturneState layout="compact" tone="info" icon="info" eyebrow="Storage" title="Disk usage unavailable" body="External servers do not expose local filesystem usage to this desktop runtime." />
                 </div>
               {:else}
-                <div class="mb-3 flex items-baseline justify-between">
+                <div class="settings-storage-meter">
                   <span class="settings-mini-row__label">Storage usage</span>
                   <span class="settings-mini-row__hint" style="font-family:var(--font-mono)">{storageUsageSummary.usageLabel}</span>
                 </div>
@@ -4496,16 +4723,19 @@
                     ? "No limit is set yet. Use Advanced to define a warning threshold and extra scan paths."
                     : `Warn when usage crosses ${store.settings.storageLimitGb} GB.`}
                 </p>
-                <div class="settings-card__footer" style="margin-top:16px">
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={openStorageAdvanced}>
-                    {store.settings.storageLimitGb === null ? "Set limit" : "Edit limit"}
+                <div class="settings-card__footer settings-card__footer--actions" style="margin-top:16px">
+                  <span class="settings-card__footer-status">{storageUsageSummary.freeLabel ?? ""}</span>
+                  <div class="settings-storage-action-group">
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={openStorageLimit}>
+                    {advStorageOpen && storageAdvancedSource === "limit" ? "Close" : store.settings.storageLimitGb === null ? "Set limit" : "Edit limit"}
                   </button>
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={handleClearCache} disabled={clearing}>
                     {cleared ? "Cleared" : clearing ? "Clearing..." : "Clean cache"}
                   </button>
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={openStorageBackupPanel}>
-                    Create backup
+                    {advStorageOpen && storageAdvancedSource === "backup" ? "Hide backup" : "Create backup"}
                   </button>
+                  </div>
                 </div>
               {/if}
             </div>
@@ -4533,7 +4763,8 @@
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => browseSettingsPath("local")} disabled={isExternalServer}>Browse</button>
                 </div>
               </div>
-              <div class="settings-card__footer" style="margin-top:16px">
+              <div class="settings-card__footer settings-card__footer--actions" style="margin-top:16px">
+                <span class="settings-card__footer-status">
                 {#if pathsError}
                   <span class="settings-mini-row__hint" style="color:var(--color-error)">{pathsError}</span>
                 {:else if pathsSaved}
@@ -4541,15 +4772,16 @@
                 {:else}
                   <span class="settings-mini-row__hint">Manual path edits and validation stay in Advanced.</span>
                 {/if}
-                <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={openStorageAdvanced}>
-                  Edit paths
+                </span>
+                <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={openStoragePaths}>
+                  {advStorageOpen && storageAdvancedSource === "paths" ? "Close" : "Edit paths"}
                 </button>
               </div>
             </div>
 
             <!-- Ã¢â€â‚¬Ã¢â€â‚¬ Storage Limit Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ -->
             <!-- Ã¢â€â‚¬Ã¢â€â‚¬ Advanced (collapsible) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ -->
-            {#if advStorageOpen}
+            {#if advStorageOpen && storageAdvancedSource === "backup"}
             <div class="settings-card settings-card--wide" bind:this={backupSectionEl}>
               <p class="settings-card__title">Backup & Restore</p>
               <p class="settings-card__intro">
@@ -5126,12 +5358,12 @@
             <div class="settings-card settings-card--wide">
               <div class="settings-card__head">
                 <p class="settings-card__title">Advanced</p>
-                <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (advStorageOpen = !advStorageOpen)}>
-                  {advStorageOpen ? "Collapse" : "Expand"}
+                <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={openStorageAdvanced}>
+                  {advStorageOpen && storageAdvancedSource === "advanced" ? "Collapse" : "Expand"}
                 </button>
               </div>
               <p class="settings-card__intro">Limits, migration, extra scan directories and backup flows stay tucked here so the main shell keeps the approved composition.</p>
-              {#if advStorageOpen}
+              {#if advStorageOpen && storageAdvancedSource !== "backup"}
                 <div class="settings-card__surface" style="margin-top:16px">
                   <div class="settings-card__head">
                     <p class="settings-card__title">Path editor</p>
@@ -6571,9 +6803,11 @@
   .select-wrap { position: relative; flex-shrink: 0; }
   .select-btn { display: flex; align-items: center; gap: var(--sp-2); min-height: 32px; font-size: 12px; font-weight: 600; color: var(--n-on-surface); background: rgba(21, 21, 25, 0.72); border: 1px solid rgba(72, 69, 79, 0.16); border-radius: 14px; padding: 0 12px; cursor: pointer; min-width: 130px; transition: border-color 140ms ease, background 140ms ease; }
   .select-btn:hover { border-color: rgba(184, 167, 234, 0.18); background: rgba(28, 27, 27, 0.82); }
+  .select-btn--wide { min-width: 190px; }
+  .select-menu--scroll { max-height: min(320px, calc(var(--visual-vh, 100vh) - 160px)); overflow-y: auto; overscroll-behavior: contain; }
   .select-caret { color: var(--text-faint); transition: transform var(--t-base); flex-shrink: 0; margin-left: auto; }
   .select-caret.open { transform: rotate(180deg); }
-  .select-menu { position: absolute; top: calc(100% + 4px); right: 0; min-width: 100%; background: var(--bg-raised); border: 1px solid var(--border-base); border-radius: var(--radius-md); padding: var(--sp-1); z-index: 200; box-shadow: 0 8px 24px rgba(0,0,0,0.4); animation: scaleIn 0.1s ease both; transform-origin: top right; }
+  .select-menu { position: absolute; top: calc(100% + 4px); right: 0; min-width: 100%; background: linear-gradient(180deg, rgb(24, 22, 31), rgb(18, 17, 24)); border: 1px solid rgba(72, 69, 79, 0.72); border-radius: var(--radius-md); padding: var(--sp-1); z-index: 1200; box-shadow: 0 18px 44px rgba(0,0,0,0.64), inset 0 1px 0 rgba(255,255,255,0.035); animation: scaleIn 0.1s ease both; transform-origin: top right; }
   .select-option { display: block; width: 100%; padding: 6px var(--sp-3); border-radius: var(--radius-sm); font-size: var(--text-sm); color: var(--text-secondary); background: none; border: none; cursor: pointer; text-align: left; transition: background var(--t-fast), color var(--t-fast); }
   .select-option:hover { background: var(--bg-overlay); color: var(--text-primary); }
   .select-option.active { color: var(--accent-fg); background: var(--accent-muted); }

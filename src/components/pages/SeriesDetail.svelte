@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
-  import { BookmarkSimple, Download, CheckCircle, Circle, ArrowSquareOut, CircleNotch, Play, SortAscending, SortDescending, CaretDown, ArrowsClockwise, List, SquaresFour, FolderSimplePlus, Trash, DownloadSimple, X, LinkSimpleHorizontalBreak, ChartLineUp } from "phosphor-svelte";
+  import { BookmarkSimple, Download, CheckCircle, Circle, ArrowSquareOut, CircleNotch, Play, SortAscending, SortDescending, CaretDown, ArrowsClockwise, ArrowsLeftRight, List, SquaresFour, FolderSimplePlus, Trash, DownloadSimple, X, LinkSimpleHorizontalBreak, ChartLineUp } from "phosphor-svelte";
   import { gql } from "../../lib/client";
   import { GET_MANGA, GET_CHAPTERS, FETCH_CHAPTERS, ENQUEUE_DOWNLOAD, UPDATE_MANGA, MARK_CHAPTER_READ, MARK_CHAPTERS_READ, DELETE_DOWNLOADED_CHAPTERS, ENQUEUE_CHAPTERS_DOWNLOAD, GET_ALL_MANGA, GET_CATEGORIES, CREATE_CATEGORY, UPDATE_MANGA_CATEGORIES, GET_DOWNLOAD_STATUS, START_DOWNLOADER } from "../../lib/queries";
   import { cache, CACHE_KEYS, recordSourceAccess } from "../../lib/cache";
@@ -892,8 +892,9 @@
           {/if}
         </div>
       {/if}
-      <button class="series-utility series-icon-action" onclick={() => migrateOpen = true} disabled={!manga} title="Switch source" aria-label="Switch source">
-        <ArrowsClockwise size={13} weight="light" />
+      <button class="series-utility" onclick={() => migrateOpen = true} disabled={!manga} title="Switch source" aria-label="Switch source">
+        <ArrowsLeftRight size={15} weight="light" />
+        Migrate
       </button>
     {/snippet}
 
@@ -1020,7 +1021,7 @@
                 <span class="ch-status-read">{#if ch.isRead}<CheckCircle size={14} weight="fill" class="read-icon" />{/if}</span>
                 <span class="ch-status-main">
                   {#if ch.isDownloaded}
-                    <span class="ch-dl-dot" title="Downloaded"></span>
+                    <Download size={13} weight="fill" title="Downloaded" />
                   {:else if enqueueing.has(ch.id)}
                     <CircleNotch size={14} weight="light" class="anim-spin enqueue-icon" />
                   {:else}
@@ -1261,9 +1262,9 @@
   .fp-confirm:hover, .fp-cancel:hover, .dl-range-back:hover, .dl-range-go:hover:not(:disabled) { color: #e8e4eb; background: rgba(201, 181, 255, 0.12); }
   .fp-confirm:active, .fp-cancel:active, .dl-range-back:active, .dl-range-go:active:not(:disabled) { transform: scale(0.97); }
   .dl-range-go:disabled { opacity: 0.4; cursor: default; }
-  .dl-unified-btn { min-width: 118px; }
+  .dl-unified-btn { min-width: 0; }
   .dl-unified-count { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: rgba(0, 0, 0, 0.22); font-size: 9px; font-variant-numeric: tabular-nums; }
-  .dl-unified-count-empty { opacity: 0; }
+  .dl-unified-count-empty { display: none; }
   .dl-unified-alert, .dl-item-danger, .sel-action-danger { color: #ffb3b3; }
   .dl-item-danger {
     border: 1px solid transparent;

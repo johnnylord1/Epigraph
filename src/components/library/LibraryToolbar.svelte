@@ -312,6 +312,11 @@
     flex-shrink: 0;
   }
 
+  .library-toolbar-btn :global(svg) {
+    width: var(--library-toolbar-icon-size, calc(15px * var(--n-hud-scale)));
+    height: var(--library-toolbar-icon-size, calc(15px * var(--n-hud-scale)));
+  }
+
   .dropdown-panel {
     position: absolute;
     top: calc(100% + 6px);

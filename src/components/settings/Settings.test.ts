@@ -283,6 +283,24 @@ describe("Settings", () => {
     expect(screen.getByText("Connected services")).toBeTruthy();
   });
 
+  test("toggles storage expansion panels from their own buttons", async () => {
+    renderSettings();
+
+    await fireEvent.click(screen.getByRole("button", { name: "System" }));
+
+    expect(screen.queryByText("Path editor")).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Edit paths" }));
+    expect(screen.getByText("Path editor")).toBeTruthy();
+    await fireEvent.click(screen.getAllByRole("button", { name: "Close" }).find((button) => button.textContent?.trim() === "Close")!);
+    expect(screen.queryByText("Path editor")).toBeNull();
+
+    expect(screen.queryByText("Backup & Restore")).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Create backup" }));
+    expect(screen.getByText("Backup & Restore")).toBeTruthy();
+    await fireEvent.click(screen.getByRole("button", { name: "Hide backup" }));
+    expect(screen.queryByText("Backup & Restore")).toBeNull();
+  });
+
   test("rebinds the appearance pane theme editor affordances and help action", async () => {
     const { onOpenThemeEditor } = renderSettings();
 
@@ -334,5 +352,19 @@ describe("Settings", () => {
     expect(store.settings.libraryPreferredGridColumns).toBe(8);
 
     expect(screen.getByText("8")).toBeTruthy();
+  });
+
+  test("allows resetting the main profile workspace data", async () => {
+    renderSettings();
+
+    const resetButton = screen.getByRole("button", { name: "Reset data" });
+    await fireEvent.click(resetButton);
+    expect(screen.getByText("Click Reset data again to permanently remove this profile workspace data.")).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Confirm reset" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("reset_local_profile_data", { profileId: "main" });
+    });
   });
 });

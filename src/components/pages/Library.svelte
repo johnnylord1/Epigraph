@@ -111,6 +111,13 @@
   const LEGACY_CATEGORIES_WITH_MANGA_CACHE_KEY = `${CACHE_KEYS.CATEGORIES}:with-manga`;
   const LIBRARY_CHAPTER_COUNTS_CACHE_KEY = `${CACHE_KEYS.LIBRARY}:chapter-counts`;
 
+  function isAbortError(error: unknown): boolean {
+    return (
+      (error instanceof DOMException && error.name === "AbortError") ||
+      (typeof error === "object" && error !== null && (error as { name?: string }).name === "AbortError")
+    );
+  }
+
   let ensureCompletedInFlight: Promise<Category[]> | null = null;
   let hydrateCategoriesInFlight: Promise<Category[]> | null = null;
   let libraryChapterCountsInFlight: Promise<void> | null = null;
@@ -405,6 +412,8 @@
           serverUrl: store.runtimeServerUrl,
           binary: store.settings.serverBinary,
           updateIntensity: store.settings.libraryUpdateIntensity,
+      profileId: store.runtimeResolvedLocalProfileId,
+      profileLabel: store.runtimeResolvedLocalProfileMeta?.label ?? store.runtimeServerLabel,
         });
         return ensureCompletedCategory((await gql<{ categories: { nodes: Category[] } }>(GET_CATEGORIES_WITH_MANGA_IDS)).categories.nodes);
       },
@@ -454,7 +463,7 @@
       categoryLoadRetryCount = 0;
       return categories;
     } catch (reloadError) {
-      console.error(reloadError);
+      if (!isAbortError(reloadError)) console.error(reloadError);
       return store.categories;
     }
   }
@@ -575,20 +584,20 @@
       let categoriesLoadFailed = false;
       const [nodes, categories, trackingSummary, sources] = await Promise.all([
         loadLibrary().catch((libraryError) => {
-          console.error(libraryError);
+          if (!isAbortError(libraryError)) console.error(libraryError);
           return store.libraryMangaSnapshot;
         }),
         loadCategoriesSnapshot().catch((categoryError) => {
-          console.error(categoryError);
+          if (!isAbortError(categoryError)) console.error(categoryError);
           categoriesLoadFailed = true;
           return store.categories;
         }),
         loadLibraryTrackingSummary().catch((trackingError) => {
-          console.error(trackingError);
+          if (!isAbortError(trackingError)) console.error(trackingError);
           return store.libraryTrackingSummarySnapshot;
         }),
         loadSourcesSnapshot().catch((sourcesError) => {
-          console.error(sourcesError);
+          if (!isAbortError(sourcesError)) console.error(sourcesError);
           return [];
         }),
       ]);
@@ -630,7 +639,7 @@
       trackedCompletedIds = new Set();
       trackedChapterTotalsByMangaId = new Map();
       error = null;
-      console.error(loadError);
+      if (!isAbortError(loadError)) console.error(loadError);
       if (
         store.runtimeResolvedLocalProfileId
         && store.runtimeServerUrl
@@ -1628,6 +1637,8 @@
         serverUrl: store.runtimeServerUrl,
         binary: store.settings.serverBinary,
         updateIntensity: store.settings.libraryUpdateIntensity,
+      profileId: store.runtimeResolvedLocalProfileId,
+      profileLabel: store.runtimeResolvedLocalProfileMeta?.label ?? store.runtimeServerLabel,
       });
       if (awake) {
         bumpCoverRecoveryVersions(pendingCoverRecoveryIds);

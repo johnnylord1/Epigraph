@@ -163,10 +163,11 @@
     --library-grid-compact-column-gap: clamp(10px, 1.7vw, 18px);
     --library-content-padding-top: clamp(14px, 2.4vw, 20px);
     --library-content-padding-bottom: clamp(18px, 2.9vw, 24px);
-    --library-toolbar-gap: clamp(8px, 1.4vw, 12px);
-    --library-toolbar-cluster-gap: clamp(6px, 1vw, 8px);
-    --library-toolbar-height: clamp(34px, 4.8vw, 44px);
-    --library-icon-btn-size: clamp(30px, 4.5vw, 36px);
+    --library-toolbar-gap: calc(12px * var(--n-hud-scale));
+    --library-toolbar-cluster-gap: calc(8px * var(--n-hud-scale));
+    --library-toolbar-height: calc(44px * var(--n-hud-scale));
+    --library-icon-btn-size: calc(36px * var(--n-hud-scale));
+    --library-toolbar-icon-size: calc(15px * var(--n-hud-scale));
     --library-card-min-grid: clamp(104px, 18vw, 140px);
     --library-card-max-grid: clamp(126px, 22vw, 180px);
     --library-card-min-compact: clamp(88px, 15vw, 116px);
