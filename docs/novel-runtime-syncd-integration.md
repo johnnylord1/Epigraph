@@ -11,10 +11,10 @@ The existing scope rules remain authoritative:
 ## Primary scope references
 
 Confirmed against:
-- [mutations.rs](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src-tauri\src\syncd\routes\mutations.rs)
-- [middleware.rs](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src-tauri\src\syncd\middleware.rs)
-- [0001_init.sql](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src-tauri\migrations-syncd\0001_init.sql)
-- [syncd-mutations-phase-gate.md](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\docs\syncd-mutations-phase-gate.md)
+- [mutations.rs](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src-tauri\src\syncd\routes\mutations.rs)
+- [middleware.rs](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src-tauri\src\syncd\middleware.rs)
+- [0001_init.sql](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src-tauri\migrations-syncd\0001_init.sql)
+- [syncd-mutations-phase-gate.md](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\docs\syncd-mutations-phase-gate.md)
 
 ## What novels sync in v1
 

@@ -107,15 +107,15 @@ Observed results:
 - `38` syncd tests passed
 - syncd booted over local HTTPS and reached `/healthz`
 - bootstrap payload creation succeeded and wrote:
-  - [bootstrap-created.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-created.json)
+  - [bootstrap-created.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-created.json)
 - bootstrap payload fetch returned the same bootstrap truth in:
-  - [bootstrap-fetched.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-fetched.json)
+  - [bootstrap-fetched.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-fetched.json)
 - bootstrap claim stayed pending before approval in:
-  - [bootstrap-claim-pending.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-claim-pending.json)
+  - [bootstrap-claim-pending.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-claim-pending.json)
 - bootstrap claim returned a final token only after approval in:
-  - [bootstrap-claim-approved.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-claim-approved.json)
+  - [bootstrap-claim-approved.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-claim-approved.json)
 - expired bootstrap payload fetch failed cleanly in:
-  - [bootstrap-expired.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-expired.json)
+  - [bootstrap-expired.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-expired.json)
 
 ## Specific Proof Points
 
@@ -123,8 +123,8 @@ Observed results:
 
 Proven by runtime harness assertions against:
 
-- [bootstrap-created.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-created.json)
-- [bootstrap-fetched.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-fetched.json)
+- [bootstrap-created.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-created.json)
+- [bootstrap-fetched.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-fetched.json)
 
 Neither payload contains `accessToken` or `token`.
 

@@ -55,7 +55,7 @@ This gate covers the currently shipped LNReader desktop slice:
 
 ## Proven in this slice
 
-- exact primary sources for the LNReader contract and Tauri capability model are recorded in [lnreader-compat-plan.md](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\docs\lnreader-compat-plan.md)
+- exact primary sources for the LNReader contract and Tauri capability model are recorded in [lnreader-compat-plan.md](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\docs\lnreader-compat-plan.md)
 - LNReader repositories are persisted profile-scoped and rendered in Settings
 - repository CRUD, refresh metadata, trust state, and cached language filtering are live in the desktop app
 - profile-scoped plugin package storage actions now exist in the Settings novels panel for:
@@ -65,7 +65,7 @@ This gate covers the currently shipped LNReader desktop slice:
   - disable
   - remove
 - installed plugin artifacts are now written under profile-scoped novels storage instead of being only contract-level records
-- the hidden `novel-runtime-host` is a real Tauri runtime surface with a dedicated capability file at [novel-runtime-host.json](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src-tauri\capabilities\novel-runtime-host.json)
+- the hidden `novel-runtime-host` is a real Tauri runtime surface with a dedicated capability file at [novel-runtime-host.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src-tauri\capabilities\novel-runtime-host.json)
 - the hidden host starts during the runtime smoke and is absent afterwards in the real desktop target history
 - the hidden host teardown path is clean enough to prove:
   - frontend stop request
@@ -75,7 +75,7 @@ This gate covers the currently shipped LNReader desktop slice:
   - no orphan hidden host target after smoke
 - installed trusted novel plugins are now surfaced inside the app as usable novel sources under `Browse > Sources > Novel Sources`
 - novels library state is now stored in a real profile-root desktop file instead of profile-scoped `localStorage`
-- local books library state is now stored in a real desktop file instead of mixed `moku-store` / general settings persistence
+- local books library state is now stored in a real desktop file instead of mixed `aethon-store` / general settings persistence
 - the unified backup/export/import pipeline now reads `books` and `novels` from their authoritative desktop state files
 - source migration now has a real authoritative journal path instead of silent destructive replace:
   - desktop-backed `migration-journal-state.json`
@@ -236,71 +236,71 @@ Still open:
 
 Docs:
 
-- [lnreader-compat-plan.md](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\docs\lnreader-compat-plan.md)
-- [reader-ux-contract.md](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\docs\reader-ux-contract.md)
-- [novel-runtime-syncd-integration.md](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\docs\novel-runtime-syncd-integration.md)
-- [lnreader-source-compatibility-matrix.md](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\docs\lnreader-source-compatibility-matrix.md)
+- [lnreader-compat-plan.md](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\docs\lnreader-compat-plan.md)
+- [reader-ux-contract.md](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\docs\reader-ux-contract.md)
+- [novel-runtime-syncd-integration.md](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\docs\novel-runtime-syncd-integration.md)
+- [lnreader-source-compatibility-matrix.md](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\docs\lnreader-source-compatibility-matrix.md)
 
 Repository/runtime implementation:
 
-- [NovelRepositoriesPanel.svelte](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\components\settings\NovelRepositoriesPanel.svelte)
-- [repositoryState.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\novels\repositoryState.ts)
-- [repositories.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\novels\repositories.ts)
-- [runtimeHost.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\novels\runtimeHost.ts)
-- [pluginRuntime.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\novels\pluginRuntime.ts)
-- [packages.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\novels\packages.ts)
-- [sources.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\novels\sources.ts)
-- [migrationSafe.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\novels\migrationSafe.ts)
-- [booksBackup.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\backup\booksBackup.ts)
-- [novelsBackup.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\backup\novelsBackup.ts)
-- [novelsStateBridge.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\backup\novelsStateBridge.ts)
-- [importFile.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\books\importFile.ts)
-- [libraryState.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\books\libraryState.ts)
-- [libraryState.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\novels\libraryState.ts)
-- [libraryShelf.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\novels\libraryShelf.ts)
-- [domain.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\novels\domain.ts)
-- [types.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\migration\types.ts)
-- [journalState.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\migration\journalState.ts)
-- [manga.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\migration\manga.ts)
-- [novels.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\migration\novels.ts)
-- [NovelRuntimeHost.svelte](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\components\novels\NovelRuntimeHost.svelte)
-- [NovelSources.svelte](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\components\pages\NovelSources.svelte)
-- [NovelDetail.svelte](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\components\pages\NovelDetail.svelte)
-- [NovelMigrateModal.svelte](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\components\pages\NovelMigrateModal.svelte)
-- [MigrateModal.svelte](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\components\pages\MigrateModal.svelte)
-- [NovelReader.svelte](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\components\reader\NovelReader.svelte)
-- [NovelsLibraryBody.svelte](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\components\library\NovelsLibraryBody.svelte)
-- [Library.svelte](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\components\pages\Library.svelte)
-- [App.svelte](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\App.svelte)
-- [novel-runtime-host.json](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src-tauri\capabilities\novel-runtime-host.json)
-- [lib.rs](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src-tauri\src\lib.rs)
-- [package.json](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\package.json)
+- [NovelRepositoriesPanel.svelte](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\settings\NovelRepositoriesPanel.svelte)
+- [repositoryState.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\novels\repositoryState.ts)
+- [repositories.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\novels\repositories.ts)
+- [runtimeHost.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\novels\runtimeHost.ts)
+- [pluginRuntime.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\novels\pluginRuntime.ts)
+- [packages.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\novels\packages.ts)
+- [sources.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\novels\sources.ts)
+- [migrationSafe.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\novels\migrationSafe.ts)
+- [booksBackup.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\backup\booksBackup.ts)
+- [novelsBackup.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\backup\novelsBackup.ts)
+- [novelsStateBridge.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\backup\novelsStateBridge.ts)
+- [importFile.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\books\importFile.ts)
+- [libraryState.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\books\libraryState.ts)
+- [libraryState.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\novels\libraryState.ts)
+- [libraryShelf.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\novels\libraryShelf.ts)
+- [domain.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\novels\domain.ts)
+- [types.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\migration\types.ts)
+- [journalState.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\migration\journalState.ts)
+- [manga.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\migration\manga.ts)
+- [novels.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\migration\novels.ts)
+- [NovelRuntimeHost.svelte](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\novels\NovelRuntimeHost.svelte)
+- [NovelSources.svelte](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\pages\NovelSources.svelte)
+- [NovelDetail.svelte](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\pages\NovelDetail.svelte)
+- [NovelMigrateModal.svelte](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\pages\NovelMigrateModal.svelte)
+- [MigrateModal.svelte](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\pages\MigrateModal.svelte)
+- [NovelReader.svelte](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\reader\NovelReader.svelte)
+- [NovelsLibraryBody.svelte](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\library\NovelsLibraryBody.svelte)
+- [Library.svelte](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\pages\Library.svelte)
+- [App.svelte](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\App.svelte)
+- [novel-runtime-host.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src-tauri\capabilities\novel-runtime-host.json)
+- [lib.rs](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src-tauri\src\lib.rs)
+- [package.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\package.json)
 
 Tests:
 
-- [pluginRuntime.test.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\novels\pluginRuntime.test.ts)
-- [runtimeHost.test.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\novels\runtimeHost.test.ts)
-- [repositories.test.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\novels\repositories.test.ts)
-- [packages.test.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\novels\packages.test.ts)
-- [journalState.test.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\migration\journalState.test.ts)
-- [booksBackup.test.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\backup\booksBackup.test.ts)
-- [novelsBackup.test.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\backup\novelsBackup.test.ts)
-- [novelsStateBridge.test.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\backup\novelsStateBridge.test.ts)
-- [libraryState.test.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\books\libraryState.test.ts)
-- [libraryState.test.ts](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\lib\novels\libraryState.test.ts)
+- [pluginRuntime.test.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\novels\pluginRuntime.test.ts)
+- [runtimeHost.test.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\novels\runtimeHost.test.ts)
+- [repositories.test.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\novels\repositories.test.ts)
+- [packages.test.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\novels\packages.test.ts)
+- [journalState.test.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\migration\journalState.test.ts)
+- [booksBackup.test.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\backup\booksBackup.test.ts)
+- [novelsBackup.test.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\backup\novelsBackup.test.ts)
+- [novelsStateBridge.test.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\backup\novelsStateBridge.test.ts)
+- [libraryState.test.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\books\libraryState.test.ts)
+- [libraryState.test.ts](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\lib\novels\libraryState.test.ts)
 
 Runtime evidence:
 
-- [runtime-lifecycle-audit.json](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\tmp\lnreader-runtime-audit-lifecycle\runtime-lifecycle-audit.json)
-- [runtime-lifecycle-audit.png](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\tmp\lnreader-runtime-audit-lifecycle\runtime-lifecycle-audit.png)
-- [live-search-probe.json](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\tmp\lnreader-live-search-probe\live-search-probe.json)
-- [ao3-live-search-probe.json](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\tmp\lnreader-live-search-probe\ao3-live-search-probe.json)
-- [acceptance-flow.json](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\tmp\novels-product-acceptance\acceptance-flow.json)
-- [acceptance-flow.png](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\tmp\novels-product-acceptance\acceptance-flow.png)
-- [persistence-check.json](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\tmp\novels-product-acceptance\persistence-check.json)
-- [persistence-check.png](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\tmp\novels-product-acceptance\persistence-check.png)
-- [books-persistence-check.json](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\tmp\books-storage-audit\books-persistence-check.json)
-- [books-persistence-check.png](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\tmp\books-storage-audit\books-persistence-check.png)
+- [runtime-lifecycle-audit.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\tmp\lnreader-runtime-audit-lifecycle\runtime-lifecycle-audit.json)
+- [runtime-lifecycle-audit.png](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\tmp\lnreader-runtime-audit-lifecycle\runtime-lifecycle-audit.png)
+- [live-search-probe.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\tmp\lnreader-live-search-probe\live-search-probe.json)
+- [ao3-live-search-probe.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\tmp\lnreader-live-search-probe\ao3-live-search-probe.json)
+- [acceptance-flow.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\tmp\novels-product-acceptance\acceptance-flow.json)
+- [acceptance-flow.png](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\tmp\novels-product-acceptance\acceptance-flow.png)
+- [persistence-check.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\tmp\novels-product-acceptance\persistence-check.json)
+- [persistence-check.png](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\tmp\novels-product-acceptance\persistence-check.png)
+- [books-persistence-check.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\tmp\books-storage-audit\books-persistence-check.json)
+- [books-persistence-check.png](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\tmp\books-storage-audit\books-persistence-check.png)
 
 ## Evidence summary
 

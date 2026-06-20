@@ -2,7 +2,7 @@ import path from "node:path";
 import { defineWorkspace } from "vitest/config";
 
 const BROWSER_SCREENSHOT_BASE_DIR = path.resolve(
-  "C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/src/test/browser/__screenshots__/custom"
+  "src/test/browser/__screenshots__/custom"
 );
 
 export default defineWorkspace([

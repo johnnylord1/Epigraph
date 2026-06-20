@@ -103,7 +103,7 @@ function Start-ManagedProcess {
   }
 }
 
-$projectRoot = "C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon"
+$projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $tmpRoot = Join-Path $projectRoot "tmp\syncd-pairing-phase-gate"
 $dataDir = Join-Path $tmpRoot "data"
 $stdoutPath = Join-Path $tmpRoot "syncd.stdout.log"

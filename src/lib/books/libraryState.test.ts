@@ -118,37 +118,15 @@ describe("book library state storage", () => {
     expect(peekBookLibraryState().books[0]?.title).toBe("Reader Contract");
   });
 
-  it("migrates legacy moku-store book state into desktop storage when no file exists yet", async () => {
-    const legacy = createState();
-    localStorage.setItem("moku-store", JSON.stringify({
-      books: legacy.books,
-      bookProgress: legacy.bookProgress,
-      bookBookmarks: legacy.bookBookmarks,
-      settings: {
-        booksCategories: legacy.booksCategories,
-        booksCategoryAssignments: legacy.booksCategoryAssignments,
-        booksLibraryUi: legacy.booksLibraryUi,
-      },
-      navPage: "home",
-    }));
-
-    invokeMock
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce("C:/Users/jhow-/AppData/Roaming/aethon/books/library-state.json");
+  it("starts with empty book state when no desktop state exists", async () => {
+    invokeMock.mockResolvedValueOnce(null);
 
     const state = await loadBookLibraryState();
 
-    expect(state.books[0]?.title).toBe("Reader Contract");
-    expect(invokeMock).toHaveBeenNthCalledWith(1, "read_book_library_state");
-    expect(invokeMock).toHaveBeenNthCalledWith(2, "write_book_library_state", expect.objectContaining({
-      contents: expect.stringContaining("\"title\": \"Reader Contract\""),
-    }));
-    const migratedStore = JSON.parse(localStorage.getItem("moku-store") ?? "{}");
-    expect(migratedStore).not.toHaveProperty("books");
-    expect(migratedStore).toHaveProperty("navPage", "home");
-    expect(migratedStore.settings ?? {}).not.toHaveProperty("booksCategories");
-    expect(migratedStore.settings ?? {}).not.toHaveProperty("booksCategoryAssignments");
-    expect(migratedStore.settings ?? {}).not.toHaveProperty("booksLibraryUi");
+    expect(invokeMock).toHaveBeenCalledWith("read_book_library_state");
+    expect(state.books).toHaveLength(0);
+    expect(state.bookProgress).toHaveLength(0);
+    expect(state.bookBookmarks).toHaveLength(0);
   });
 
   it("persists updated book state to desktop storage", async () => {

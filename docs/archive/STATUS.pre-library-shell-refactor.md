@@ -57,7 +57,7 @@ Implemented the desktop-only Books shelf and local EPUB ingest foundation withou
 - EPUB preview is intentionally minimal and should not be treated as the final book reader.
 
 ## Files/Directories That Must Not Be Touched Next
-- `C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon-android-spike`
+- `C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon-android-spike`
 
 ## Notes For Future Codex Sessions
 - Preserve upstream license obligations and attribution.
@@ -373,8 +373,8 @@ Required scenario coverage:
   - the live UI path was validated up to review/selection without forcing a real restore into the current user library
 
 Screenshots saved from the real Tauri restore flow:
-- `C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/reconciliation-review.png`
-- `C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/reconciliation-review-selections.png`
+- `C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/reconciliation-review.png`
+- `C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/reconciliation-review-selections.png`
 
 Known limits still present in v1:
 - this is not a generic backup editor

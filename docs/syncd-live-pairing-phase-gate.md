@@ -80,8 +80,8 @@ Supported states:
 Commands run:
 
 ```powershell
-cmd /c cargo test --manifest-path C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src-tauri\Cargo.toml --bin aethon-syncd
-powershell -ExecutionPolicy Bypass -File C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\scripts\run-syncd-live-pairing-phase-gate.ps1
+cmd /c cargo test --manifest-path C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src-tauri\Cargo.toml --bin aethon-syncd
+powershell -ExecutionPolicy Bypass -File C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\scripts\run-syncd-live-pairing-phase-gate.ps1
 ```
 
 Observed:
@@ -91,13 +91,13 @@ Observed:
 - bootstrap session creation still worked
 - WebSocket subscription connected successfully using bootstrap session identity and pairing code
 - live event sequence was captured in:
-  - [pairing-live-events.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-live-pairing-phase-gate/pairing-live-events.json)
+  - [pairing-live-events.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-live-pairing-phase-gate/pairing-live-events.json)
 - pending claim still had no token in:
-  - [claim-pending.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-live-pairing-phase-gate/claim-pending.json)
+  - [claim-pending.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-live-pairing-phase-gate/claim-pending.json)
 - final token was still only returned after approval in:
-  - [claim-approved.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-live-pairing-phase-gate/claim-approved.json)
+  - [claim-approved.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-live-pairing-phase-gate/claim-approved.json)
 - bootstrap source payload still stayed bootstrap-only in:
-  - [bootstrap-created.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-live-pairing-phase-gate/bootstrap-created.json)
+  - [bootstrap-created.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-live-pairing-phase-gate/bootstrap-created.json)
 
 Observed event order:
 

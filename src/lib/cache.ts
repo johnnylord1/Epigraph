@@ -289,14 +289,13 @@ export function getPageSet(
 // ── Source frecency helpers ───────────────────────────────────────────────────
 
 const FRECENCY_KEY         = "aethon-source-frecency";
-const LEGACY_FRECENCY_KEY  = "moku-source-frecency";
 const MAX_FRECENCY_SOURCES = 4;
 
 type FrecencyMap = Record<string, number>;
 
 function loadFrecency(): FrecencyMap {
   try {
-    const r = localStorage.getItem(FRECENCY_KEY) ?? localStorage.getItem(LEGACY_FRECENCY_KEY);
+    const r = localStorage.getItem(FRECENCY_KEY);
     return r ? JSON.parse(r) : {};
   }
   catch { return {}; }

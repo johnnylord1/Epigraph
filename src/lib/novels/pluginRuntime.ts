@@ -314,9 +314,7 @@ function readRuntimeFlareSolverrSettings(): RuntimeFlareSolverrSettings {
   };
 
   try {
-    const raw =
-      globalThis.localStorage?.getItem("aethon-store")
-        ?? globalThis.localStorage?.getItem("moku-store");
+    const raw = globalThis.localStorage?.getItem("aethon-store");
     const parsed = raw ? JSON.parse(raw) : null;
     const settings = parsed?.settings ?? {};
     return {

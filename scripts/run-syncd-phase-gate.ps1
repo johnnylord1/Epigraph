@@ -132,7 +132,7 @@ function Stop-AethonPhaseGateApp {
   }
 }
 
-$projectRoot = "C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon"
+$projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $tmpRoot = Join-Path $projectRoot "tmp\syncd-phase-gate"
 $dataDir = Join-Path $tmpRoot "data"
 $statusPath = Join-Path $tmpRoot "status.json"

@@ -1,7 +1,7 @@
 # Splash Gate Restoration Report
 
 Date: 2026-04-08
-Repository: `C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon`
+Repository: `C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon`
 
 ## Objective
 

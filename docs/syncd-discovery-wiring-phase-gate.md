@@ -92,10 +92,10 @@ aligned without changing their external contracts.
 Commands run:
 
 ```powershell
-cargo fmt --manifest-path C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src-tauri\Cargo.toml
-cargo test --manifest-path C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src-tauri\Cargo.toml --bin aethon-syncd
-powershell -ExecutionPolicy Bypass -File C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\scripts\run-syncd-discovery-phase-gate.ps1
-powershell -ExecutionPolicy Bypass -File C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\scripts\run-syncd-live-pairing-phase-gate.ps1
+cargo fmt --manifest-path C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src-tauri\Cargo.toml
+cargo test --manifest-path C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src-tauri\Cargo.toml --bin aethon-syncd
+powershell -ExecutionPolicy Bypass -File C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\scripts\run-syncd-discovery-phase-gate.ps1
+powershell -ExecutionPolicy Bypass -File C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\scripts\run-syncd-live-pairing-phase-gate.ps1
 ```
 
 Observed:
@@ -109,18 +109,18 @@ Observed:
 Artifacts:
 
 - discovery descriptor:
-  - [discovery-descriptor.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-discovery-phase-gate/discovery-descriptor.json)
+  - [discovery-descriptor.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-discovery-phase-gate/discovery-descriptor.json)
 - descriptor response headers:
-  - [discovery-descriptor.headers.txt](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-discovery-phase-gate/discovery-descriptor.headers.txt)
+  - [discovery-descriptor.headers.txt](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-discovery-phase-gate/discovery-descriptor.headers.txt)
 - bootstrap payload created under the same advertised origin:
-  - [bootstrap-created.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-discovery-phase-gate/bootstrap-created.json)
+  - [bootstrap-created.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-discovery-phase-gate/bootstrap-created.json)
 - bootstrap fetch under the same advertised origin:
-  - [bootstrap-fetched.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-discovery-phase-gate/bootstrap-fetched.json)
+  - [bootstrap-fetched.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-discovery-phase-gate/bootstrap-fetched.json)
 - bootstrap anti-cache headers still present:
-  - [bootstrap-created.headers.txt](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-discovery-phase-gate/bootstrap-created.headers.txt)
-  - [bootstrap-fetched.headers.txt](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-discovery-phase-gate/bootstrap-fetched.headers.txt)
+  - [bootstrap-created.headers.txt](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-discovery-phase-gate/bootstrap-created.headers.txt)
+  - [bootstrap-fetched.headers.txt](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-discovery-phase-gate/bootstrap-fetched.headers.txt)
 - unchanged live pairing runtime proof rerun after this slice:
-  - [pairing-live-events.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-live-pairing-phase-gate/pairing-live-events.json)
+  - [pairing-live-events.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-live-pairing-phase-gate/pairing-live-events.json)
 
 ## Why Bind != Discovery Origin
 

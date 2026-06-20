@@ -6,7 +6,6 @@ import { normalizeBookBookmark, normalizeBookProgress } from "./progress";
 import type { BookBookmarkEntry, BookEntry, BookProgress } from "./types";
 
 const BOOK_LIBRARY_STATE_VERSION = 1 as const;
-const LEGACY_STORE_KEY = "moku-store";
 const bookLibraryStateCacheKey = "global";
 
 export interface PersistedBooksCategory {
@@ -36,22 +35,7 @@ export interface PersistedBookLibraryState {
   updatedAtMs: number | null;
 }
 
-interface StorageLike {
-  getItem(key: string): string | null;
-  setItem(key: string, value: string): void;
-  removeItem?(key: string): void;
-}
-
 const bookLibraryStateCache = new Map<string, PersistedBookLibraryState>();
-
-function storageOrNull(): StorageLike | null {
-  try {
-    if (typeof localStorage === "undefined") return null;
-    return localStorage;
-  } catch {
-    return null;
-  }
-}
 
 export function canUseDesktopBookStorage(): boolean {
   if (typeof window === "undefined") return false;
@@ -109,24 +93,6 @@ function normalizeLoadedBookBookmark(bookmark: unknown): BookBookmarkEntry {
 
 function normalizeLoadedBookProgress(progress: unknown): BookProgress {
   return normalizeBookProgress(progress);
-}
-
-function readLegacyStore(storage = storageOrNull()): Record<string, unknown> | null {
-  if (!storage) return null;
-  const raw = storage.getItem(LEGACY_STORE_KEY);
-  if (!raw) return null;
-
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    return parsed && typeof parsed === "object" ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeLegacyStore(next: Record<string, unknown>, storage = storageOrNull()) {
-  if (!storage) return;
-  storage.setItem(LEGACY_STORE_KEY, JSON.stringify(next));
 }
 
 function normalizeBooksCategories(value: unknown): PersistedBooksCategory[] {
@@ -201,75 +167,6 @@ function normalizeBooksLibraryUi(value: unknown): PersistedBooksLibraryUiState {
   };
 }
 
-function deleteLegacyBookLibraryState(storage = storageOrNull()) {
-  const current = readLegacyStore(storage);
-  if (!storage || !current) return;
-
-  const next = { ...current };
-  delete next.books;
-  delete next.bookProgress;
-  delete next.bookBookmarks;
-  if (next.settings && typeof next.settings === "object") {
-    const nextSettings = { ...(next.settings as Record<string, unknown>) };
-    delete nextSettings.booksCategories;
-    delete nextSettings.booksCategoryAssignments;
-    delete nextSettings.booksLibraryUi;
-    next.settings = nextSettings;
-  }
-
-  if (Object.keys(next).length === 0) {
-    storage.removeItem?.(LEGACY_STORE_KEY);
-    return;
-  }
-
-  writeLegacyStore(next, storage);
-}
-
-function readLegacyBookLibraryState(storage = storageOrNull()): PersistedBookLibraryState | null {
-  const current = readLegacyStore(storage);
-  if (!current) return null;
-
-  const hasLegacyBooks =
-    Array.isArray(current.books)
-    || Array.isArray(current.bookProgress)
-    || Array.isArray(current.bookBookmarks)
-    || Array.isArray((current.settings as Record<string, unknown> | undefined)?.booksCategories)
-    || Boolean((current.settings as Record<string, unknown> | undefined)?.booksCategoryAssignments)
-    || Boolean((current.settings as Record<string, unknown> | undefined)?.booksLibraryUi);
-
-  if (!hasLegacyBooks) return null;
-
-  const legacySettings = current.settings && typeof current.settings === "object"
-    ? current.settings as Record<string, unknown>
-    : {};
-
-  return normalizeBookLibraryState({
-    books: current.books,
-    bookProgress: current.bookProgress,
-    bookBookmarks: current.bookBookmarks,
-    booksCategories: legacySettings.booksCategories,
-    booksCategoryAssignments: legacySettings.booksCategoryAssignments,
-    booksLibraryUi: legacySettings.booksLibraryUi,
-  });
-}
-
-function writeLegacyBookLibraryState(state: PersistedBookLibraryState, storage = storageOrNull()) {
-  if (!storage) return;
-  const current = readLegacyStore(storage) ?? {};
-  writeLegacyStore({
-    ...current,
-    books: state.books,
-    bookProgress: state.bookProgress,
-    bookBookmarks: state.bookBookmarks,
-    settings: {
-      ...(current.settings && typeof current.settings === "object" ? current.settings as Record<string, unknown> : {}),
-      booksCategories: state.booksCategories,
-      booksCategoryAssignments: state.booksCategoryAssignments,
-      booksLibraryUi: state.booksLibraryUi,
-    },
-  }, storage);
-}
-
 function persistBookLibraryStateCache(state: PersistedBookLibraryState): PersistedBookLibraryState {
   bookLibraryStateCache.set(bookLibraryStateCacheKey, state);
   return state;
@@ -313,7 +210,6 @@ export function normalizeBookLibraryState(value: unknown): PersistedBookLibraryS
 
 export function peekBookLibraryState(): PersistedBookLibraryState {
   return bookLibraryStateCache.get(bookLibraryStateCacheKey)
-    ?? readLegacyBookLibraryState()
     ?? createEmptyState();
 }
 
@@ -341,7 +237,6 @@ async function persistBookLibraryStateToDesktop(
     contents: JSON.stringify(normalized, null, 2),
   });
 
-  deleteLegacyBookLibraryState();
   return persistBookLibraryStateCache(normalized);
 }
 
@@ -355,22 +250,16 @@ export async function reloadBookLibraryState(): Promise<PersistedBookLibraryStat
   bookLibraryStateCache.delete(bookLibraryStateCacheKey);
 
   if (!canUseDesktopBookStorage()) {
-    return persistBookLibraryStateCache(readLegacyBookLibraryState() ?? createEmptyState());
+    return persistBookLibraryStateCache(createEmptyState());
   }
 
   const raw = await invoke<string | null>("read_book_library_state").catch(() => null);
   if (raw) {
     try {
-      deleteLegacyBookLibraryState();
       return persistBookLibraryStateCache(normalizeBookLibraryState(JSON.parse(raw)));
     } catch {
       return persistBookLibraryStateCache(createEmptyState());
     }
-  }
-
-  const legacy = readLegacyBookLibraryState();
-  if (legacy) {
-    return persistBookLibraryStateToDesktop(legacy);
   }
 
   return persistBookLibraryStateCache(createEmptyState());
@@ -385,7 +274,6 @@ export async function saveBookLibraryState(
   });
 
   if (!canUseDesktopBookStorage()) {
-    writeLegacyBookLibraryState(normalized);
     return persistBookLibraryStateCache(normalized);
   }
 

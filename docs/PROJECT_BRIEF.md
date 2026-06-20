@@ -1,10 +1,10 @@
 # Project Brief
 
 ## What Aethon Is
-Aethon is a new product foundation built from the upstream Moku codebase.
+Aethon is a new product foundation built from the upstream Aethon codebase.
 
 ## Upstream Base
-- Base repository: Moku
+- Base repository: Aethon
 - Purpose in Phase 0: establish a clean fork foundation without changing application behavior
 
 ## Current Mission

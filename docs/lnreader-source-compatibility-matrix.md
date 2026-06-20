@@ -65,12 +65,12 @@ Rules:
 
 ## Evidence Anchors
 
-- [acceptance-flow.json](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\tmp\novels-product-acceptance\acceptance-flow.json)
-- [persistence-check.json](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\tmp\novels-product-acceptance\persistence-check.json)
-- [live-search-probe.json](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\tmp\lnreader-live-search-probe\live-search-probe.json)
-- [ao3-live-search-probe.json](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\tmp\lnreader-live-search-probe\ao3-live-search-probe.json)
-- [runtime-lifecycle-audit.json](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\tmp\lnreader-runtime-audit-lifecycle\runtime-lifecycle-audit.json)
-- [illusia-probe.json](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\tmp\lnreader-source-matrix\illusia-probe.json)
-- [royalroad-probe.json](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\tmp\lnreader-source-matrix\royalroad-probe.json)
-- [lightnovelbrasil-probe.json](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\tmp\lnreader-source-matrix\lightnovelbrasil-probe.json)
-- [centralnovel-probe.json](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\tmp\lnreader-source-matrix\centralnovel-probe.json)
+- [acceptance-flow.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\tmp\novels-product-acceptance\acceptance-flow.json)
+- [persistence-check.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\tmp\novels-product-acceptance\persistence-check.json)
+- [live-search-probe.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\tmp\lnreader-live-search-probe\live-search-probe.json)
+- [ao3-live-search-probe.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\tmp\lnreader-live-search-probe\ao3-live-search-probe.json)
+- [runtime-lifecycle-audit.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\tmp\lnreader-runtime-audit-lifecycle\runtime-lifecycle-audit.json)
+- [illusia-probe.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\tmp\lnreader-source-matrix\illusia-probe.json)
+- [royalroad-probe.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\tmp\lnreader-source-matrix\royalroad-probe.json)
+- [lightnovelbrasil-probe.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\tmp\lnreader-source-matrix\lightnovelbrasil-probe.json)
+- [centralnovel-probe.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\tmp\lnreader-source-matrix\centralnovel-probe.json)

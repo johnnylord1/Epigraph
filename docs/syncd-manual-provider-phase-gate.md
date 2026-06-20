@@ -80,9 +80,9 @@ No trust-bearing token is exposed in:
 ## Commands run
 
 ```powershell
-cargo test --manifest-path C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src-tauri\Cargo.toml --bin aethon-syncd
-powershell -ExecutionPolicy Bypass -File C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\scripts\run-syncd-discovery-phase-gate.ps1
-powershell -ExecutionPolicy Bypass -File C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\scripts\run-syncd-live-pairing-phase-gate.ps1
+cargo test --manifest-path C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src-tauri\Cargo.toml --bin aethon-syncd
+powershell -ExecutionPolicy Bypass -File C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\scripts\run-syncd-discovery-phase-gate.ps1
+powershell -ExecutionPolicy Bypass -File C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\scripts\run-syncd-live-pairing-phase-gate.ps1
 ```
 
 ## Runtime evidence

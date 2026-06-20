@@ -101,7 +101,7 @@ function Read-SessionPath {
   return (Join-Path $Root "suwayomi-lan-session.json")
 }
 
-$projectRoot = "C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon"
+$projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $tmpRoot = Join-Path $projectRoot "tmp\syncd-lan-hardening"
 $mainRoot = Join-Path $tmpRoot "main-root"
 $testRoot = Join-Path $tmpRoot "test-root"

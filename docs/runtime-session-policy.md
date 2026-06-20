@@ -16,7 +16,7 @@ This document defines the approved entry points for opening Aethon during manual
 Use one of these only:
 
 - Desktop shortcut: `C:\Users\jhow-\Desktop\Aethon.lnk`
-- Launcher script: `C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\scripts\launch-latest-aethon.ps1`
+- Launcher script: `C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\scripts\launch-latest-aethon.ps1`
 
 These are the only approved entry points for:
 
@@ -37,7 +37,7 @@ Do not open raw `tauri:dev:gate` for routine manual UI inspection.
 
 Use:
 
-- `C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\scripts\stop-aethon-orphans.ps1`
+- `C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\scripts\stop-aethon-orphans.ps1`
 
 This is the approved cleanup path when:
 

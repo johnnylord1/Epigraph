@@ -85,29 +85,29 @@ Rejected resurrection proved in runtime:
 - wrong-scope `book.bookmark` resurrection attempt returned `INVALID_SCOPE_FOR_ENTITY`
 
 `/v1/changes` proof:
-- [changes-bookmark-book-sequence.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-mutations-phase-gate/changes-bookmark-book-sequence.json)
+- [changes-bookmark-book-sequence.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-mutations-phase-gate/changes-bookmark-book-sequence.json)
   - returns `merge -> delete -> merge`
   - final patch carries `"label":"Restored"` and the precise EPUB locator
-- [changes-bookmark-book-post-delete.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-mutations-phase-gate/changes-bookmark-book-post-delete.json)
+- [changes-bookmark-book-post-delete.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-mutations-phase-gate/changes-bookmark-book-post-delete.json)
   - returns only the resurrection merge when queried after the delete version
-- [changes-bookmark-novel-sequence.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-mutations-phase-gate/changes-bookmark-novel-sequence.json)
+- [changes-bookmark-novel-sequence.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-mutations-phase-gate/changes-bookmark-novel-sequence.json)
   - returns `merge -> delete -> merge`
   - final patch carries `"chapterId":"c11"` and `"label":"Restored"`
-- [changes-bookmark-novel-post-delete.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-mutations-phase-gate/changes-bookmark-novel-post-delete.json)
+- [changes-bookmark-novel-post-delete.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-mutations-phase-gate/changes-bookmark-novel-post-delete.json)
   - returns only the resurrection merge when queried after the delete version
 
 SSE replay proof:
-- [events-replay-bookmark-resurrection-book.log](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-mutations-phase-gate/events-replay-bookmark-resurrection-book.log)
+- [events-replay-bookmark-resurrection-book.log](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-mutations-phase-gate/events-replay-bookmark-resurrection-book.log)
   - replays `merge -> delete -> merge`
   - final truth matches the final `/v1/changes` patch for `bookmark-1`
-- [events-replay-bookmark-resurrection-novel.log](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-mutations-phase-gate/events-replay-bookmark-resurrection-novel.log)
+- [events-replay-bookmark-resurrection-novel.log](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-mutations-phase-gate/events-replay-bookmark-resurrection-novel.log)
   - replays `merge -> delete -> merge`
   - final truth matches the final `/v1/changes` patch for `novel-bookmark-1`
 
 Cross-scope leakage proof:
-- [changes-cross-scope-book-into-novels.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-mutations-phase-gate/changes-cross-scope-book-into-novels.json)
+- [changes-cross-scope-book-into-novels.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-mutations-phase-gate/changes-cross-scope-book-into-novels.json)
   - empty `changes[]`
-- [changes-cross-scope-novel-into-books.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-mutations-phase-gate/changes-cross-scope-novel-into-books.json)
+- [changes-cross-scope-novel-into-books.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-mutations-phase-gate/changes-cross-scope-novel-into-books.json)
   - empty `changes[]`
 
 ## Automated Proof

@@ -81,7 +81,7 @@ function Wait-ForText {
   throw "Timed out waiting for '$Needle' in $Path"
 }
 
-$projectRoot = "C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon"
+$projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $tmpRoot = Join-Path $projectRoot "tmp\syncd-mutations-phase-gate"
 $dataDir = Join-Path $tmpRoot "data"
 $stdoutPath = Join-Path $tmpRoot "syncd.stdout.log"

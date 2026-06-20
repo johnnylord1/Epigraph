@@ -35,7 +35,7 @@
 
 ```powershell
 cmd /c npm run build
-powershell -ExecutionPolicy Bypass -File C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\scripts\run-syncd-native-two-instance-automation.ps1 -SkipBuild
+powershell -ExecutionPolicy Bypass -File C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\scripts\run-syncd-native-two-instance-automation.ps1 -SkipBuild
 ```
 
 ## Runtime evidence

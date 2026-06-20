@@ -87,19 +87,19 @@ Observed runtime results:
 
 - syncd booted over local HTTPS and reached `/healthz`
 - pending claim was recorded in:
-  - [claim-main-pending.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-pairing-phase-gate/claim-main-pending.json)
+  - [claim-main-pending.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-pairing-phase-gate/claim-main-pending.json)
 - approved `main` claim issued a profile-bound QR token in:
-  - [claim-main-approved.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-pairing-phase-gate/claim-main-approved.json)
+  - [claim-main-approved.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-pairing-phase-gate/claim-main-approved.json)
 - rejected claim stayed rejected in:
-  - [claim-rejected.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-pairing-phase-gate/claim-rejected.json)
+  - [claim-rejected.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-pairing-phase-gate/claim-rejected.json)
 - expired session returned structured `410` in:
-  - [claim-expired.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-pairing-phase-gate/claim-expired.json)
+  - [claim-expired.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-pairing-phase-gate/claim-expired.json)
 - second-profile trusted-pool issuance was proven in:
-  - [claim-test-approved.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-pairing-phase-gate/claim-test-approved.json)
+  - [claim-test-approved.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-pairing-phase-gate/claim-test-approved.json)
 - revoked token was denied with `401` in:
-  - [revoked-token-use.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-pairing-phase-gate/revoked-token-use.json)
+  - [revoked-token-use.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-pairing-phase-gate/revoked-token-use.json)
 - inactivity-expired token was denied with `401` in:
-  - [expired-token-use.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-pairing-phase-gate/expired-token-use.json)
+  - [expired-token-use.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-pairing-phase-gate/expired-token-use.json)
 
 Automated test results:
 

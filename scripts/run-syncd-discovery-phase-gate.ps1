@@ -158,7 +158,7 @@ function Stop-ManagedProcess {
   }
 }
 
-$projectRoot = "C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon"
+$projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $tmpRoot = Join-Path $projectRoot "tmp\syncd-discovery-phase-gate"
 $dataDir = Join-Path $tmpRoot "data"
 $invalidDataDir = Join-Path $tmpRoot "invalid-data"

@@ -730,7 +730,6 @@ function cloneDefaultSettings(): Settings {
 
 const STORE_VERSION = 7;
 const STORE_KEY = "aethon-store";
-const LEGACY_STORE_KEY = "moku-store";
 
 // Fields reset to their DEFAULT_SETTINGS value on each version bump.
 // Add a key here whenever its default changes meaning between releases.
@@ -743,7 +742,7 @@ const RESET_ON_UPGRADE: (keyof Settings)[] = [
 
 function loadPersisted(): any {
   try {
-    const raw = localStorage.getItem(STORE_KEY) ?? localStorage.getItem(LEGACY_STORE_KEY);
+    const raw = localStorage.getItem(STORE_KEY);
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
@@ -806,7 +805,7 @@ function mergeSettings(saved: any): Settings {
   const coercedTheme = savedTheme === undefined || savedTheme === "dark" ? DEFAULT_SETTINGS.theme : savedTheme;
   const savedFlareSolverrSessionName = saved?.settings?.flareSolverrSessionName;
   const coercedFlareSolverrSessionName =
-    savedFlareSolverrSessionName === undefined || savedFlareSolverrSessionName === "moku"
+    savedFlareSolverrSessionName === undefined
       ? DEFAULT_SETTINGS.flareSolverrSessionName
       : savedFlareSolverrSessionName;
 

@@ -67,7 +67,7 @@ Audit date: `2026-04-08`
      - per-window and per-webview permission isolation
      - minimal permission strategy for the hidden plugin runtime host
    - Confirmed against Aethon:
-     - current broad capability lives in [default.json](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src-tauri\capabilities\default.json)
+     - current broad capability lives in [default.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src-tauri\capabilities\default.json)
      - the plugin runtime host must not reuse the broad default capability
 
 2. `Runtime Authority`
@@ -93,7 +93,7 @@ Audit date: `2026-04-08`
      - the plugin host bridge must be strictly whitelisted
 
 5. `Current Aethon default capability`
-   - File: [default.json](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src-tauri\capabilities\default.json)
+   - File: [default.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src-tauri\capabilities\default.json)
    - Used for:
      - baseline comparison against the future novels runtime host capability
    - Confirmed against Aethon:
@@ -128,8 +128,8 @@ If the LNReader documentation and a real published plugin disagree:
 ### Reader shell boundary
 
 The shared reader shell grows from:
-- [ReaderHud.svelte](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\components\reader\ReaderHud.svelte)
-- [BookReader.svelte](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\components\reader\BookReader.svelte)
+- [ReaderHud.svelte](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\reader\ReaderHud.svelte)
+- [BookReader.svelte](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\reader\BookReader.svelte)
 
 This shell owns:
 - chrome

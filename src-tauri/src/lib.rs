@@ -3542,39 +3542,7 @@ fn suwayomi_data_dir() -> PathBuf {
 }
 
 fn legacy_suwayomi_data_dirs() -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-
-    #[cfg(target_os = "windows")]
-    {
-        dirs.push(
-            dirs::data_dir()
-                .unwrap_or_else(|| PathBuf::from("C:\\ProgramData"))
-                .join("moku\\tachidesk"),
-        );
-
-        if let Ok(local) = std::env::var("LOCALAPPDATA") {
-            dirs.push(PathBuf::from(local).join("Tachidesk"));
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        dirs.push(
-            dirs::data_dir()
-                .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from("~")))
-                .join("dev.moku.app/tachidesk"),
-        );
-    }
-
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        let base = std::env::var("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| dirs::data_dir().unwrap_or_else(|| PathBuf::from("/tmp")));
-        dirs.push(base.join("moku/tachidesk"));
-    }
-
-    dirs
+    Vec::new()
 }
 
 fn ensure_suwayomi_data_dir(profile: LocalServerProfile) -> PathBuf {

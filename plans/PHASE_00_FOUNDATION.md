@@ -1,7 +1,7 @@
 # Phase 00 Foundation
 
 ## Checklist
-- [x] Clone the upstream Moku repository into the local `Aethon` project directory.
+- [x] Clone the upstream Aethon repository into the local `Aethon` project directory.
 - [x] Inspect the repository tree without editing source files.
 - [x] Create the requested Markdown scaffold.
 - [x] Fill the scaffold with small, useful first-pass content.

@@ -94,17 +94,17 @@ Observed:
 - claim still used the existing approval-gated pairing flow
 - expired bootstrap fetch still returned `410 BOOTSTRAP_SESSION_EXPIRED`
 - bootstrap header captures proved the anti-cache headers on:
-  - [bootstrap-created.headers.txt](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-created.headers.txt)
-  - [bootstrap-fetched.headers.txt](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-fetched.headers.txt)
-  - [bootstrap-expired.headers.txt](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-expired.headers.txt)
+  - [bootstrap-created.headers.txt](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-created.headers.txt)
+  - [bootstrap-fetched.headers.txt](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-fetched.headers.txt)
+  - [bootstrap-expired.headers.txt](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-expired.headers.txt)
 
 Payload/runtime artifacts:
 
-- [bootstrap-created.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-created.json)
-- [bootstrap-fetched.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-fetched.json)
-- [bootstrap-claim-pending.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-claim-pending.json)
-- [bootstrap-claim-approved.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-claim-approved.json)
-- [bootstrap-expired.json](/C:/Users/jhow-/Documents/Projetos/ForkMoku/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-expired.json)
+- [bootstrap-created.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-created.json)
+- [bootstrap-fetched.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-fetched.json)
+- [bootstrap-claim-pending.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-claim-pending.json)
+- [bootstrap-claim-approved.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-claim-approved.json)
+- [bootstrap-expired.json](/C:/Users/jhow-/Documents/Projetos/ForkAethon/Aethon/tmp/syncd-bootstrap-phase-gate/bootstrap-expired.json)
 
 ## What Remains For The Later Discovery Slice
 

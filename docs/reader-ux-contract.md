@@ -15,8 +15,8 @@ This document freezes what "shared reader" means in Aethon and what it does not 
 ## Shared shell
 
 The shared reader shell grows from the existing reader chrome in:
-- [ReaderHud.svelte](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\components\reader\ReaderHud.svelte)
-- [BookReader.svelte](C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\components\reader\BookReader.svelte)
+- [ReaderHud.svelte](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\reader\ReaderHud.svelte)
+- [BookReader.svelte](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\reader\BookReader.svelte)
 
 The shell owns:
 - top bar

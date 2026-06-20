@@ -33,7 +33,7 @@ These are the true mockups to work on:
 
 Folder:
 
-`C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\docs\mockups\stitch-nocturne-isolated\`
+`C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\docs\mockups\stitch-nocturne-isolated\`
 
 Ignore the older non-V2 HTML files unless you need them only for comparison.
 
@@ -81,20 +81,20 @@ The functional truth must come from the real app.
 
 Use these real app files as reference for what controls and options should exist:
 
-- `C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\App.svelte`
-- `C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\components\layout\Sidebar.svelte`
-- `C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\components\pages\Home.svelte`
-- `C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\components\pages\Library.svelte`
-- `C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\components\library\LibraryToolbar.svelte`
-- `C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\components\library\LibraryDisplayPopover.svelte`
-- `C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\components\library\BooksTypeSelector.svelte`
-- `C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\components\pages\Search.svelte`
-- `C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\components\pages\SeriesDetail.svelte`
-- `C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\components\reader\Reader.svelte`
-- `C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\components\pages\BookDetail.svelte`
-- `C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\components\reader\BookReader.svelte`
-- `C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\components\pages\Downloads.svelte`
-- `C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon\src\components\settings\Settings.svelte`
+- `C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\App.svelte`
+- `C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\layout\Sidebar.svelte`
+- `C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\pages\Home.svelte`
+- `C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\pages\Library.svelte`
+- `C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\library\LibraryToolbar.svelte`
+- `C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\library\LibraryDisplayPopover.svelte`
+- `C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\library\BooksTypeSelector.svelte`
+- `C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\pages\Search.svelte`
+- `C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\pages\SeriesDetail.svelte`
+- `C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\reader\Reader.svelte`
+- `C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\pages\BookDetail.svelte`
+- `C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\reader\BookReader.svelte`
+- `C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\pages\Downloads.svelte`
+- `C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\settings\Settings.svelte`
 
 ## Implementation Strategy
 
