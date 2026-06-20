@@ -3,8 +3,6 @@
   import { gql } from "../../lib/client";
   import { cache, CACHE_GROUPS, CACHE_KEYS, DEFAULT_TTL_MS } from "../../lib/cache";
   import {
-    BOOKS_FILTER_OPTIONS,
-    BOOKS_SORT_OPTIONS,
     buildBooksSectionState,
     createBooksLibraryActions,
     type BooksLibrarySortMode,
@@ -43,11 +41,18 @@
   } from "../../lib/library/updateRuntime";
   import {
     buildComicsSectionState,
-    COMICS_SORT_OPTIONS,
-    COMICS_STATUS_OPTIONS,
     createComicsLibraryActions,
   } from "../../lib/library/comicsSection";
-  import type { LibraryCollectionVM, LibraryCollectionsReorderApi, LibrarySectionKind } from "../../lib/library/contracts";
+  import type {
+    BooksTypeOptionVM,
+    LibraryCollectionVM,
+    LibraryCollectionsReorderApi,
+    LibrarySectionKind,
+    LibrarySectionTabVM,
+    LibrarySectionVM,
+    LibraryToolbarVM,
+  } from "../../lib/library/contracts";
+  import { _ } from "../../lib/i18n/runtime";
   import { dedupeMangaById } from "../../lib/util";
   import { createBookLibraryCardId, createComicLibraryCardId } from "../../lib/library/cardIdentity";
   import {
@@ -941,17 +946,116 @@
   const bookProgressByBookId = $derived(new Map(store.bookProgress.map((progress) => [progress.bookId, progress])));
   const novelProgressByNovelId = $derived(new Map(novelsLibraryState.progress.map((progress) => [progress.novelId, progress])));
 
-  const activeSectionVm = $derived(
+  function localizeSectionTabs(tabs: LibrarySectionTabVM[]): LibrarySectionTabVM[] {
+    return tabs.map((tab) => ({
+      ...tab,
+      label: tab.id === "books" ? $_("library.sections.books") : $_("library.sections.comics"),
+    }));
+  }
+
+  function localizeCollection(collection: LibraryCollectionVM): LibraryCollectionVM {
+    const keyById: Record<string, string> = {
+      all: "library.collections.all",
+      library: "library.collections.saved",
+      downloaded: "library.collections.downloaded",
+      "books:saved": "library.collections.saved",
+      "books:downloaded": "library.collections.downloaded",
+      "books:finished": "library.collections.finished",
+    };
+    const key = keyById[collection.id.toLowerCase()];
+    return key ? { ...collection, label: $_(key) } : collection;
+  }
+
+  function localizeSortOptionLabel(id: string, section: LibrarySectionKind): string {
+    const keyById: Record<string, string> = section === "books"
+      ? {
+          az: "library.sort.az",
+          author: "library.sort.author",
+          recentlyAdded: "library.sort.recentlyAdded",
+          recentlyRead: "library.sort.recentlyRead",
+          sectionCount: "library.sort.bookContents",
+        }
+      : {
+          az: "library.sort.az",
+          unreadCount: "library.sort.unreadChapters",
+          totalChapters: "library.sort.totalChapters",
+          recentlyAdded: "library.sort.recentlyAdded",
+          recentlyRead: "library.sort.recentlyRead",
+          latestFetched: "library.sort.latestFetchedChapter",
+          latestUploaded: "library.sort.latestUploadedChapter",
+        };
+    return keyById[id] ? $_(keyById[id]) : id;
+  }
+
+  function localizeFilterOptionLabel(id: string, section: LibrarySectionKind): string {
+    const keyById: Record<string, string> = section === "books"
+      ? {
+          all: "library.filter.allBooks",
+          unopened: "library.filter.unopened",
+          in_progress: "library.filter.inProgress",
+          finished: "library.filter.finished",
+        }
+      : {
+          ALL: "library.status.all",
+          ONGOING: "library.status.ongoing",
+          COMPLETED: "library.status.completed",
+          CANCELLED: "library.status.cancelled",
+          HIATUS: "library.status.hiatus",
+          UNKNOWN: "library.status.unknown",
+        };
+    return keyById[id] ? $_(keyById[id]) : id;
+  }
+
+  function localizeToolbar(toolbar: LibraryToolbarVM, section: LibrarySectionKind): LibraryToolbarVM {
+    return {
+      ...toolbar,
+      searchPlaceholder: section === "books" ? $_("library.search.books") : $_("library.search.comics"),
+      sortOptions: toolbar.sortOptions.map((option) => ({
+        ...option,
+        label: localizeSortOptionLabel(option.id, section),
+      })),
+      filterOptions: toolbar.filterOptions.map((option) => ({
+        ...option,
+        label: localizeFilterOptionLabel(option.id, section),
+      })),
+    };
+  }
+
+  function localizeBookTypeOptions(options: BooksTypeOptionVM[]): BooksTypeOptionVM[] {
+    const keyById: Record<BooksTypeOptionVM["id"], string> = {
+      all: "library.books.types.all",
+      epub: "library.books.types.epub",
+      pdf: "library.books.types.pdf",
+      sources: "library.books.types.sources",
+    };
+    return options.map((option) => ({
+      ...option,
+      label: $_(keyById[option.id]),
+    }));
+  }
+
+  function localizeSectionVm<T extends LibrarySectionVM>(vm: T | undefined): T | undefined {
+    if (!vm) return undefined;
+    return {
+      ...vm,
+      sectionTabs: localizeSectionTabs(vm.sectionTabs),
+      collections: vm.collections.map(localizeCollection),
+      toolbar: localizeToolbar(vm.toolbar, vm.kind),
+    };
+  }
+
+  const localizedBooksSectionVm = $derived(localizeSectionVm(booksSectionState?.vm));
+  const localizedComicsSectionVm = $derived(localizeSectionVm(comicsSectionState?.vm));
+  const displaySectionVm = $derived(
     visualLibrarySection === "books"
-      ? booksSectionState?.vm
-      : comicsSectionState?.vm,
+      ? localizedBooksSectionVm
+      : localizedComicsSectionVm,
   );
-  const displaySectionVm = $derived(activeSectionVm);
   const activeSortDefaultMode = $derived(visualLibrarySection === "books" ? "recentlyAdded" : "az");
   const activeSortDefaultDir = $derived(visualLibrarySection === "books" ? "desc" as const : "asc" as const);
   const activeFilterDefaultValue = $derived(visualLibrarySection === "books" ? "all" : "ALL");
-  const activeSortLabel = $derived(visualLibrarySection === "books" ? "Sort books" : "Sort by");
-  const activeFilterLabel = $derived(visualLibrarySection === "books" ? "Reading status" : "Filter by status");
+  const activeSortLabel = $derived(visualLibrarySection === "books" ? $_("library.sort.books") : $_("library.sort.by"));
+  const activeFilterLabel = $derived(visualLibrarySection === "books" ? $_("library.filter.readingStatus") : $_("library.filter.byStatus"));
   const comicsViewKey = $derived(`${store.libraryFilter}|${comicsSearch}|${tabSortMode}|${tabSortDir}|${tabStatus}|genre:${activeLibraryGenre ?? "all"}`);
   const booksViewKey = $derived(`${bookActiveCategoryId ?? "all"}|${bookTypeFilter}|${booksSearch}|${bookSortMode}|${bookSortDir}|${bookStatusFilter}|genre:${activeLibraryGenre ?? "all"}`);
   const displaySettings = $derived({
@@ -1115,16 +1219,16 @@
     return "";
   }
 
-  const activeHeroTitle = $derived(visualLibrarySection === "books" ? "Books" : "Comics");
+  const activeHeroTitle = $derived(visualLibrarySection === "books" ? $_("library.sections.books") : $_("library.sections.comics"));
   const activeHeroCountLabel = $derived(
     visualLibrarySection === "books"
-      ? `${store.books.length + novelsLibraryState.entries.length} Books Saved`
-      : `${comicsSectionState?.counts.library ?? 0} Titles`,
+      ? $_("library.count.booksSaved", { count: store.books.length + novelsLibraryState.entries.length })
+      : $_("library.count.titles", { count: comicsSectionState?.counts.library ?? 0 }),
   );
   const booksStandardCollections = $derived<LibraryCollectionVM[]>([
     {
       id: "books:saved",
-      label: "Saved",
+      label: $_("library.collections.saved"),
       count: store.books.length + novelsLibraryState.entries.length,
       icon: "books",
       active: activeBooksStandardFilter === "saved",
@@ -1133,7 +1237,7 @@
     },
     {
       id: "books:downloaded",
-      label: "Downloaded",
+      label: $_("library.collections.downloaded"),
       count: store.books.filter(hasBookLocalAsset).length,
       icon: "download",
       active: activeBooksStandardFilter === "downloaded",
@@ -1142,7 +1246,7 @@
     },
     {
       id: "books:finished",
-      label: "Finished",
+      label: $_("library.collections.finished"),
       count: store.books.filter((book) => isFinishedBook(book.id)).length
         + novelsLibraryState.entries.filter((entry) => isFinishedNovel(entry.id)).length,
       icon: "folder",
@@ -1161,6 +1265,9 @@
     visualLibrarySection === "books"
       ? activeHeroCollections.filter((collection) => !isSystemHeroCollection(collection))
       : activeHeroCollections.filter((collection) => !isSystemHeroCollection(collection)),
+  );
+  const activeBookTypeOptions = $derived(
+    visualLibrarySection === "books" ? localizeBookTypeOptions(booksSectionState?.vm?.typeOptions ?? []) : [],
   );
 
   const comicsByCardId = $derived(new Map(allManga.map((manga) => [createComicLibraryCardId(manga.id), manga])));
@@ -1858,10 +1965,10 @@
       layout="center"
       tone="danger"
       icon="plug"
-      eyebrow="Library"
-      title="Could not reach Suwayomi"
-      body="Make sure the server is running, then retry."
-      actions={[{ label: "Retry", kind: "primary", icon: "retry", onClick: () => retryCount++ }]}
+      eyebrow={$_("library.error.eyebrow")}
+      title={$_("library.error.title")}
+      body={$_("library.error.body")}
+      actions={[{ label: $_("library.error.retry"), kind: "primary", icon: "retry", onClick: () => retryCount++ }]}
     />
   </div>
 {:else}
@@ -1876,7 +1983,7 @@
     filterDefaultValue={activeFilterDefaultValue}
     sortLabel={activeSortLabel}
     filterLabel={activeFilterLabel}
-        bookTypeOptions={visualLibrarySection === "books" ? booksSectionState?.vm?.typeOptions ?? [] : []}
+        bookTypeOptions={activeBookTypeOptions}
     collectionsReorderApi={collectionsReorderApi}
     onSectionChange={handleSectionChange}
     onCollectionSelect={handleCollectionSelect}
@@ -1897,7 +2004,7 @@
         <div class="library-hero__stack">
           <div class="library-hero__top">
             <div>
-              <p class="n-eyebrow library-hero__eyebrow">Library</p>
+              <p class="n-eyebrow library-hero__eyebrow">{$_("library.eyebrow")}</p>
               <h1 class="n-title-xl library-hero__title">{activeHeroTitle}</h1>
             </div>
             <div class="n-soft-pill library-count-pill">
@@ -1930,7 +2037,7 @@
                     <div
                       class="library-genre-scroll"
                       role="group"
-                      aria-label="Library genres"
+                      aria-label={$_("library.genres.aria")}
                       bind:this={genreScrollEl}
                       onpointerdown={handleGenrePointerDown}
                       onpointermove={handleGenrePointerMove}
@@ -1981,7 +2088,7 @@
                 sortDefaultMode={activeSortDefaultMode}
                 sortDefaultDir={activeSortDefaultDir}
                 filterDefaultValue={activeFilterDefaultValue}
-                bookTypeOptions={visualLibrarySection === "books" ? booksSectionState?.vm?.typeOptions ?? [] : []}
+                bookTypeOptions={activeBookTypeOptions}
                 sortLabel={activeSortLabel}
                 filterLabel={activeFilterLabel}
                 onSearchChange={handleSearchChange}
@@ -2008,7 +2115,7 @@
       aria-hidden={visualLibrarySection !== "books"}
     >
       <BooksLibraryBody
-        vm={booksSectionState?.vm}
+        vm={localizedBooksSectionVm}
         active={visualLibrarySection === "books"}
         books={genreFilteredBooks}
         totalBooks={genreFilteredBooksTotal}
@@ -2029,7 +2136,7 @@
       aria-hidden={visualLibrarySection !== "comics"}
     >
       <ComicsLibraryBody
-        vm={comicsSectionState?.vm}
+        vm={localizedComicsSectionVm}
         active={visualLibrarySection === "comics"}
         mangas={genreFilteredComicsManga}
         categories={comicsSectionState?.visibleCategories ?? []}
@@ -2070,10 +2177,10 @@
       >
         <div class="library-refresh-modal__head">
           <div>
-            <p class="n-eyebrow">Library refresh</p>
-            <h2 id="library-refresh-title">{store.librarySection === "comics" ? "Update Comics library" : "Update Books library"}</h2>
+            <p class="n-eyebrow">{$_("library.refresh.eyebrow")}</p>
+            <h2 id="library-refresh-title">{store.librarySection === "comics" ? $_("library.refresh.updateComics") : $_("library.refresh.updateBooks")}</h2>
           </div>
-          <button class="n-icon-btn library-refresh-modal__close" type="button" aria-label="Close refresh dialog" onclick={closeLibraryRefreshDialog} disabled={manualRefreshInFlight || store.libraryUpdateInFlight}>
+          <button class="n-icon-btn library-refresh-modal__close" type="button" aria-label={$_("library.refresh.close")} onclick={closeLibraryRefreshDialog} disabled={manualRefreshInFlight || store.libraryUpdateInFlight}>
             <span aria-hidden="true">x</span>
           </button>
         </div>
@@ -2084,8 +2191,8 @@
             disabled={manualRefreshInFlight || store.libraryUpdateInFlight}
             onclick={() => runLibraryRefresh("active")}
           >
-            <span>{store.librarySection === "comics" ? "Update Comics library" : "Update Books library"}</span>
-            <small>{store.librarySection === "comics" ? "Checks Suwayomi manga titles and refreshes local cards." : "Refreshes local books and source novels from installed novel sources."}</small>
+            <span>{store.librarySection === "comics" ? $_("library.refresh.updateComics") : $_("library.refresh.updateBooks")}</span>
+            <small>{store.librarySection === "comics" ? $_("library.refresh.updateComicsHint") : $_("library.refresh.updateBooksHint")}</small>
           </button>
           <button
             type="button"
@@ -2093,8 +2200,8 @@
             disabled={manualRefreshInFlight || store.libraryUpdateInFlight}
             onclick={() => runLibraryRefresh("all")}
           >
-            <span>Update All Libraries</span>
-            <small>Runs Comics first, then refreshes Books and source novels.</small>
+            <span>{$_("library.refresh.updateAll")}</span>
+            <small>{$_("library.refresh.updateAllHint")}</small>
           </button>
         </div>
       </div>

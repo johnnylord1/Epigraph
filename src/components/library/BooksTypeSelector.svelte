@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { BooksTypeOptionVM } from "../../lib/library/contracts";
+  import { _ } from "../../lib/i18n/runtime";
 
   type Props = {
     options: BooksTypeOptionVM[];
@@ -12,7 +13,7 @@
   }: Props = $props();
 </script>
 
-<div class="books-type-selector" aria-label="Books type">
+<div class="books-type-selector" aria-label={$_("library.books.type")}>
   {#each options as option}
     <button
       type="button"

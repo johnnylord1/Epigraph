@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { LibraryDisplaySettings } from "../../lib/library/contracts";
   import type { LibraryPreferredGridColumns, LibraryViewMode } from "../../lib/libraryDisplay";
+  import { _ } from "../../lib/i18n/runtime";
   import LibraryDensityRail from "./LibraryDensityRail.svelte";
 
   type Props = {
@@ -13,9 +14,9 @@
   };
 
   const VIEW_OPTIONS: { id: LibraryViewMode; label: string }[] = [
-    { id: "grid", label: "Grid" },
-    { id: "compact_grid", label: "Compact grid" },
-    { id: "list", label: "List" },
+    { id: "grid", label: "library.display.grid" },
+    { id: "compact_grid", label: "library.display.compactGrid" },
+    { id: "list", label: "library.display.list" },
   ];
 
   let {
@@ -28,17 +29,24 @@
   }: Props = $props();
 
   const densityLabel = $derived(
-    settings.preferredColumns === "auto" ? "Auto" : String(settings.preferredColumns),
+    settings.preferredColumns === "auto" ? $_("library.display.auto") : String(settings.preferredColumns),
+  );
+  const viewModeLabel = $derived(
+    settings.viewMode === "compact_grid"
+      ? $_("library.display.compactGrid")
+      : settings.viewMode === "list"
+        ? $_("library.display.list")
+        : $_("library.display.grid"),
   );
 </script>
 
-  <div class="display-panel" role="menu" aria-label="View settings">
+  <div class="display-panel" role="menu" aria-label={$_("library.display.viewSettings")}>
   {#if panel === "density"}
     <section class="n-popover-panel is-open">
       <div class="n-popover-head">
         <div>
-          <p class="n-popover-title">Items per row</p>
-          <p class="n-popover-note">Compact grid density for the cover wall.</p>
+          <p class="n-popover-title">{$_("library.display.itemsPerRow")}</p>
+          <p class="n-popover-note">{$_("library.display.itemsPerRowHint")}</p>
         </div>
         <span class="n-popover-meta">{densityLabel}</span>
       </div>
@@ -52,39 +60,37 @@
     <section class="n-popover-panel is-open">
       <div class="n-popover-head">
         <div>
-          <p class="n-popover-title">Layout</p>
-          <p class="n-popover-note">Visual mode and metadata overlays.</p>
+          <p class="n-popover-title">{$_("library.display.layout")}</p>
+          <p class="n-popover-note">{$_("library.display.layoutHint")}</p>
         </div>
-        <span class="n-popover-meta">
-          {settings.viewMode === "compact_grid" ? "Compact grid" : settings.viewMode === "list" ? "List" : "Grid"}
-        </span>
+        <span class="n-popover-meta">{viewModeLabel}</span>
       </div>
 
-      <div class="n-mini-switch n-layout-switch" role="group" aria-label="Layout mode">
+      <div class="n-mini-switch n-layout-switch" role="group" aria-label={$_("library.display.layoutMode")}>
         {#each VIEW_OPTIONS as option}
           <button
             type="button"
             class:is-selected={settings.viewMode === option.id}
             onclick={() => onViewModeChange(option.id)}
           >
-            {option.label === "Compact grid" ? "Compact" : option.label}
+            {option.id === "compact_grid" ? $_("library.display.compact") : $_(option.label)}
           </button>
         {/each}
       </div>
 
       <div class="n-toggle-row">
-        <span class="n-toggle-label">Show progress</span>
+        <span class="n-toggle-label">{$_("library.display.showProgress")}</span>
       <div class="n-mini-switch" data-toggle="progress">
-        <button type="button" class:is-selected={settings.showProgress} onclick={() => onShowProgressChange(true)}>On</button>
-        <button type="button" class:is-selected={!settings.showProgress} onclick={() => onShowProgressChange(false)}>Off</button>
+        <button type="button" class:is-selected={settings.showProgress} onclick={() => onShowProgressChange(true)}>{$_("common.on")}</button>
+        <button type="button" class:is-selected={!settings.showProgress} onclick={() => onShowProgressChange(false)}>{$_("common.off")}</button>
       </div>
       </div>
 
       <div class="n-toggle-row">
-        <span class="n-toggle-label">Show outlines</span>
+        <span class="n-toggle-label">{$_("library.display.showOutlines")}</span>
         <div class="n-mini-switch" data-toggle="outline">
-          <button type="button" class:is-selected={settings.showOutline} onclick={() => onShowOutlineChange(true)}>On</button>
-          <button type="button" class:is-selected={!settings.showOutline} onclick={() => onShowOutlineChange(false)}>Off</button>
+          <button type="button" class:is-selected={settings.showOutline} onclick={() => onShowOutlineChange(true)}>{$_("common.on")}</button>
+          <button type="button" class:is-selected={!settings.showOutline} onclick={() => onShowOutlineChange(false)}>{$_("common.off")}</button>
         </div>
       </div>
     </section>
@@ -92,8 +98,8 @@
     <section class="n-popover-panel is-open">
       <div class="n-popover-head">
         <div>
-          <p class="n-popover-title">Items per row</p>
-          <p class="n-popover-note">Compact grid density for the cover wall.</p>
+          <p class="n-popover-title">{$_("library.display.itemsPerRow")}</p>
+          <p class="n-popover-note">{$_("library.display.itemsPerRowHint")}</p>
         </div>
         <span class="n-popover-meta">{densityLabel}</span>
       </div>
@@ -107,39 +113,37 @@
     <section class="n-popover-panel is-open">
       <div class="n-popover-head">
         <div>
-          <p class="n-popover-title">Layout</p>
-          <p class="n-popover-note">Visual mode and metadata overlays.</p>
+          <p class="n-popover-title">{$_("library.display.layout")}</p>
+          <p class="n-popover-note">{$_("library.display.layoutHint")}</p>
         </div>
-        <span class="n-popover-meta">
-          {settings.viewMode === "compact_grid" ? "Compact grid" : settings.viewMode === "list" ? "List" : "Grid"}
-        </span>
+        <span class="n-popover-meta">{viewModeLabel}</span>
       </div>
 
-      <div class="n-mini-switch n-layout-switch" role="group" aria-label="Layout mode">
+      <div class="n-mini-switch n-layout-switch" role="group" aria-label={$_("library.display.layoutMode")}>
         {#each VIEW_OPTIONS as option}
           <button
             type="button"
             class:is-selected={settings.viewMode === option.id}
             onclick={() => onViewModeChange(option.id)}
           >
-            {option.label === "Compact grid" ? "Compact" : option.label}
+            {option.id === "compact_grid" ? $_("library.display.compact") : $_(option.label)}
           </button>
         {/each}
       </div>
 
       <div class="n-toggle-row">
-        <span class="n-toggle-label">Show progress</span>
+        <span class="n-toggle-label">{$_("library.display.showProgress")}</span>
         <div class="n-mini-switch" data-toggle="progress">
-          <button type="button" class:is-selected={settings.showProgress} onclick={() => onShowProgressChange(true)}>On</button>
-          <button type="button" class:is-selected={!settings.showProgress} onclick={() => onShowProgressChange(false)}>Off</button>
+          <button type="button" class:is-selected={settings.showProgress} onclick={() => onShowProgressChange(true)}>{$_("common.on")}</button>
+          <button type="button" class:is-selected={!settings.showProgress} onclick={() => onShowProgressChange(false)}>{$_("common.off")}</button>
         </div>
       </div>
 
       <div class="n-toggle-row">
-        <span class="n-toggle-label">Show outlines</span>
+        <span class="n-toggle-label">{$_("library.display.showOutlines")}</span>
         <div class="n-mini-switch" data-toggle="outline">
-          <button type="button" class:is-selected={settings.showOutline} onclick={() => onShowOutlineChange(true)}>On</button>
-          <button type="button" class:is-selected={!settings.showOutline} onclick={() => onShowOutlineChange(false)}>Off</button>
+          <button type="button" class:is-selected={settings.showOutline} onclick={() => onShowOutlineChange(true)}>{$_("common.on")}</button>
+          <button type="button" class:is-selected={!settings.showOutline} onclick={() => onShowOutlineChange(false)}>{$_("common.off")}</button>
         </div>
       </div>
     </section>

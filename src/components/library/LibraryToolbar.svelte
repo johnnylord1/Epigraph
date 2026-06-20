@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { ArrowsClockwise, CaretDown, CaretUp, Funnel, GridFour, MagnifyingGlass, SortAscending } from "phosphor-svelte";
   import type { BooksTypeOptionVM, LibraryDisplaySettings, LibraryToolbarVM } from "../../lib/library/contracts";
+  import { _ } from "../../lib/i18n/runtime";
   import BooksTypeSelector from "./BooksTypeSelector.svelte";
   import LibraryDisplayPopover from "./LibraryDisplayPopover.svelte";
 
@@ -57,12 +58,13 @@
     onShowOutlineChange = () => {},
     onRefresh,
     refreshPending = false,
-    refreshLabel = "Refresh library",
+    refreshLabel = "",
   }: Props = $props();
 
   let sortPanelOpen = $state(false);
   let filterPanelOpen = $state(false);
   let displayPanelOpen = $state(false);
+  const effectiveRefreshLabel = $derived(refreshLabel || $_("library.toolbar.refresh"));
 
   function openSortPanel() {
     sortPanelOpen = !sortPanelOpen;
@@ -140,8 +142,8 @@
         <button
           type="button"
           class="n-icon-btn library-toolbar-btn"
-          title={refreshLabel}
-          aria-label={refreshLabel}
+          title={effectiveRefreshLabel}
+          aria-label={effectiveRefreshLabel}
           aria-busy={refreshPending}
           onclick={onRefresh}
         >
@@ -154,7 +156,7 @@
           type="button"
           class="n-icon-btn library-toolbar-btn"
           class:is-active={displayPanelOpen}
-          title="Display"
+          title={$_("library.display.title")}
           onclick={openDisplayPanel}
         >
           <GridFour size={15} weight={displayPanelOpen ? "fill" : "bold"} />
@@ -213,7 +215,7 @@
             role="menuitem"
             onclick={onSortDirToggle}
           >
-            {toolbar.sortDir === "asc" ? "Ascending" : "Descending"}
+            {toolbar.sortDir === "asc" ? $_("library.sort.ascending") : $_("library.sort.descending")}
             {#if toolbar.sortDir === "asc"}
               <CaretUp size={11} weight="bold" />
             {:else}
@@ -223,7 +225,7 @@
 
           {#if bookTypeOptions.length}
             <div class="book-type-section">
-              <p class="n-popover-label">Book type</p>
+              <p class="n-popover-label">{$_("library.books.type")}</p>
               <BooksTypeSelector options={bookTypeOptions} onSelect={onBookTypeChange} />
             </div>
           {/if}
