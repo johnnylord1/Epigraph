@@ -2,6 +2,7 @@
   import { onMount, untrack } from "svelte";
   import { BookmarkSimple, Download, CheckCircle, Circle, ArrowSquareOut, CircleNotch, Play, SortAscending, SortDescending, CaretDown, ArrowsClockwise, ArrowsLeftRight, List, SquaresFour, FolderSimplePlus, Trash, DownloadSimple, X, LinkSimpleHorizontalBreak, ChartLineUp } from "phosphor-svelte";
   import { gql } from "../../lib/client";
+  import { _ } from "../../lib/i18n/runtime";
   import { GET_MANGA, GET_CHAPTERS, FETCH_CHAPTERS, ENQUEUE_DOWNLOAD, UPDATE_MANGA, MARK_CHAPTER_READ, MARK_CHAPTERS_READ, DELETE_DOWNLOADED_CHAPTERS, ENQUEUE_CHAPTERS_DOWNLOAD, GET_ALL_MANGA, GET_CATEGORIES, CREATE_CATEGORY, UPDATE_MANGA_CATEGORIES, GET_DOWNLOAD_STATUS, START_DOWNLOADER } from "../../lib/queries";
   import { cache, CACHE_KEYS, recordSourceAccess } from "../../lib/cache";
   import { getCategoryDisplayName, isCompletedCategory, normalizeCategories } from "../../lib/library/categories";
@@ -119,7 +120,7 @@
     const value = Number.isFinite(chapter.chapterNumber) && chapter.chapterNumber > 0
       ? chapter.chapterNumber
       : chapter.sourceOrder;
-    return `Chapter ${value}`;
+    return $_("detail.chapterNumber", { value });
   }
 
   function mangaChapterTitle(chapter: Chapter): string {
@@ -201,11 +202,11 @@
 
   function downloadErrorBody(error?: unknown) {
     const message = error instanceof Error ? error.message : String(error ?? "");
-    if (!message) return store.settings.flareSolverrEnabled ? "Check the source and retry." : "This source may need FlareSolverr.";
+    if (!message) return store.settings.flareSolverrEnabled ? $_("detail.errors.checkSourceRetry") : $_("detail.errors.sourceMayNeedFlareSolverr");
     const cloudflare = /cloudflare|challenge|flaresolverr/i.test(message);
-    if (cloudflare) return store.settings.flareSolverrEnabled ? "Check FlareSolverr and retry." : "This source needs FlareSolverr.";
-    if (/http|network|fetch/i.test(message)) return "Could not reach Suwayomi.";
-    return "Check the source and retry.";
+    if (cloudflare) return store.settings.flareSolverrEnabled ? $_("detail.errors.checkFlareSolverrRetry") : $_("detail.errors.sourceNeedsFlareSolverr");
+    if (/http|network|fetch/i.test(message)) return $_("detail.errors.couldNotReachSuwayomi");
+    return $_("detail.errors.checkSourceRetry");
   }
 
   function showDownloadFailure(error?: unknown) {
@@ -213,16 +214,16 @@
     const needsFlareSolverr = /FlareSolverr/i.test(body);
     addToast({
       kind: "error",
-      title: "Download failed",
+      title: $_("detail.download.failed"),
       body,
       duration: needsFlareSolverr ? 6000 : undefined,
-      action: needsFlareSolverr ? { label: "Open settings", run: () => setSettingsOpen(true) } : undefined,
+      action: needsFlareSolverr ? { label: $_("detail.actions.openSettings"), run: () => setSettingsOpen(true) } : undefined,
     });
   }
 
   function queuedLabel(count: number, fallback?: string) {
-    if (count === 1) return fallback ?? "1 chapter";
-    return `${count} chapters`;
+    if (count === 1) return fallback ?? $_("detail.chapterCount", { count });
+    return $_("detail.chapterCount", { count });
   }
 
   function shouldKeepDownloadQueueWarm() {
@@ -607,7 +608,7 @@
               : "This source needs FlareSolverr for Cloudflare or anti-bot protection."
             : message,
           duration: challenge ? 7000 : undefined,
-          action: challenge ? { label: "Open settings", run: () => setSettingsOpen(true) } : undefined,
+      action: challenge ? { label: $_("detail.actions.openSettings"), run: () => setSettingsOpen(true) } : undefined,
         });
       })
       .finally(() => refreshing = false);
@@ -756,18 +757,18 @@
     onTagClick={(g) => { openSearchBrowseFeatured(g); setActiveManga(null); }}
     onDetailsToggle={() => detailsOpen = !detailsOpen}
     metrics={[
-      { label: "Chapters", value: String(totalCount) },
-      { label: "Unread", value: String(unreadCount) },
-      { label: "Downloaded", value: String(downloadedCount) },
+      { label: $_("detail.stats.chapters"), value: String(totalCount) },
+      { label: $_("detail.stats.unread"), value: String(unreadCount) },
+      { label: $_("detail.stats.downloaded"), value: String(downloadedCount) },
     ]}
   >
     {#snippet topbarActions()}
       {#if manga?.realUrl}
-        <a href={manga.realUrl} target="_blank" rel="noreferrer" class="series-icon" title="Open in browser">
+        <a href={manga.realUrl} target="_blank" rel="noreferrer" class="series-icon" title={$_("detail.actions.openInBrowser")}>
           <ArrowSquareOut size={14} weight="light" />
         </a>
       {/if}
-      <button class="series-icon" type="button" onclick={refreshChapters} disabled={refreshing} title="Refresh chapters">
+      <button class="series-icon" type="button" onclick={refreshChapters} disabled={refreshing} title={$_("detail.actions.refreshChapters")}>
         <ArrowsClockwise size={14} weight="light" class={refreshing ? "anim-spin" : ""} />
       </button>
     {/snippet}
@@ -777,32 +778,32 @@
         <Play size={13} weight="fill" />
         {#if continueChapter}
           {continueChapter.type === "continue"
-            ? `Continue Ch.${continueChapter.chapter.chapterNumber}${(continueChapter.chapter.lastPageRead ?? 0) > 0 ? ` p.${continueChapter.chapter.lastPageRead}` : ""}`
-            : continueChapter.type === "reread" ? "Read again" : "Start reading"}
+            ? $_("detail.actions.continueChapter", { chapter: continueChapter.chapter.chapterNumber, page: (continueChapter.chapter.lastPageRead ?? 0) > 0 ? ` p.${continueChapter.chapter.lastPageRead}` : "" })
+            : continueChapter.type === "reread" ? $_("detail.actions.readAgain") : $_("detail.actions.startReading")}
         {:else}
-          No chapters
+          {$_("detail.empty.noChapters")}
         {/if}
       </button>
     {/snippet}
 
     {#snippet secondaryActions()}
-      <button class="series-action series-icon-action" class:active={manga?.inLibrary} onclick={toggleLibrary} disabled={togglingLibrary || loadingManga} title={manga?.inLibrary ? "In Library" : "Add to Library"} aria-label={manga?.inLibrary ? "In Library" : "Add to Library"}>
+      <button class="series-action series-icon-action" class:active={manga?.inLibrary} onclick={toggleLibrary} disabled={togglingLibrary || loadingManga} title={manga?.inLibrary ? $_("detail.status.inLibrary") : $_("detail.actions.addToLibrary")} aria-label={manga?.inLibrary ? $_("detail.status.inLibrary") : $_("detail.actions.addToLibrary")}>
         <BookmarkSimple size={13} weight={manga?.inLibrary ? "fill" : "light"} />
       </button>
-      <button class="series-action series-icon-action" onclick={() => trackingOpen = true} disabled={!store.activeManga} title="Tracking" aria-label="Tracking">
+      <button class="series-action series-icon-action" onclick={() => trackingOpen = true} disabled={!store.activeManga} title={$_("detail.actions.tracking")} aria-label={$_("detail.actions.tracking")}>
         <ChartLineUp size={13} weight="light" />
       </button>
     {/snippet}
 
     {#snippet utilityActions()}
       <div class="fp-wrap" bind:this={folderPickerRef}>
-        <button class="series-utility" class:active={hasFolders} onclick={() => folderPickerOpen = !folderPickerOpen} title="Folders"><FolderSimplePlus size={14} weight={hasFolders ? "fill" : "light"} /> Folder</button>
+        <button class="series-utility" class:active={hasFolders} onclick={() => folderPickerOpen = !folderPickerOpen} title={$_("detail.actions.folders")}><FolderSimplePlus size={14} weight={hasFolders ? "fill" : "light"} /> {$_("detail.actions.folder")}</button>
         {#if folderPickerOpen}
           <div class="fp-menu">
             {#if catsLoading}
-              <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Folders" title="Loading folders" />
+              <NocturneState layout="compact" tone="info" icon="folder" eyebrow={$_("detail.actions.folders")} title={$_("detail.folders.loading")} />
             {:else if allCategories.length === 0 && !folderCreating}
-              <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Folders" title="No folders yet" body="Create a folder in Settings to organize this series." />
+              <NocturneState layout="compact" tone="info" icon="folder" eyebrow={$_("detail.actions.folders")} title={$_("detail.folders.emptyTitle")} body={$_("detail.folders.emptyBody")} />
             {/if}
             {#each allCategories as cat}
               {@const isIn = mangaCategories.some(c => c.id === cat.id)}
@@ -823,9 +824,9 @@
       </button>
       {#if chapters.length > 0}
         <div class="dl-wrap" bind:this={dlDropRef}>
-          <button class="series-utility dl-unified-btn" class:active={dlOpen} class:dl-has-count={downloadedCount > 0} class:dl-downloading={downloadButtonState === "active"} class:dl-error={downloadButtonState === "error"} onclick={() => dlOpen = !dlOpen} title="Download options">
+          <button class="series-utility dl-unified-btn" class:active={dlOpen} class:dl-has-count={downloadedCount > 0} class:dl-downloading={downloadButtonState === "active"} class:dl-error={downloadButtonState === "error"} onclick={() => dlOpen = !dlOpen} title={$_("detail.download.options")}>
             {#if downloadButtonState === "active"}<CircleNotch size={13} weight="light" class="anim-spin" />{:else}<Download size={13} weight={downloadedCount > 0 ? "fill" : "light"} />{/if}
-            Download
+            {$_("detail.actions.download")}
             <span class="dl-unified-count" class:dl-unified-alert={downloadButtonState === "error"} class:dl-unified-count-empty={downloadButtonState !== "error" && activeSeriesDownloadCount === 0 && downloadedCount === 0}>
               {#if downloadButtonState === "error"}!{:else if activeSeriesDownloadCount > 0}{activeSeriesDownloadCount}{:else if downloadedCount > 0}{downloadedCount}{:else}0{/if}
             </span>
@@ -892,15 +893,15 @@
           {/if}
         </div>
       {/if}
-      <button class="series-utility" onclick={() => migrateOpen = true} disabled={!manga} title="Switch source" aria-label="Switch source">
+      <button class="series-utility" onclick={() => migrateOpen = true} disabled={!manga} title={$_("detail.actions.switchSource")} aria-label={$_("detail.actions.switchSource")}>
         <ArrowsLeftRight size={15} weight="light" />
-        Migrate
+        {$_("detail.actions.migrate")}
       </button>
     {/snippet}
 
     {#snippet detailsExtra()}
       <div class="v3-details-stack">
-        {#if manga?.source}<div class="detail-row"><span class="detail-key">Source</span><span class="detail-val">{manga.source.displayName}</span></div>{/if}
+        {#if manga?.source}<div class="detail-row"><span class="detail-key">{$_("detail.fields.source")}</span><span class="detail-val">{manga.source.displayName}</span></div>{/if}
         {#if manga?.status}<div class="detail-row"><span class="detail-key">Status</span><span class="detail-val">{statusLabel}</span></div>{/if}
         {#if manga?.author}<div class="detail-row"><span class="detail-key">Author</span><span class="detail-val">{manga.author}</span></div>{/if}
         {#if manga?.artist && manga.artist !== manga.author}<div class="detail-row"><span class="detail-key">Artist</span><span class="detail-val">{manga.artist}</span></div>{/if}
@@ -911,12 +912,12 @@
     {#snippet chapterControls()}
       <div class="list-header-left">
         {#if hasSelection}
-          <span class="sel-count">{selectedIds.size} selected</span>
-          <button class="series-select-btn" onclick={downloadSelected} title="Download selected"><Download size={13} weight="light" /></button>
-          <button class="series-select-btn sel-action-danger" onclick={deleteSelected} title="Delete selected downloads"><Trash size={13} weight="light" /></button>
-          <button class="series-select-btn" onclick={() => markSelectedRead(true)} title="Mark selected as read"><CheckCircle size={13} weight="light" /></button>
-          <button class="series-select-btn" onclick={() => markSelectedRead(false)} title="Mark selected as unread"><Circle size={13} weight="light" /></button>
-          <button class="series-select-btn" onclick={clearSelection} title="Clear selection"><X size={13} weight="light" /></button>
+          <span class="sel-count">{$_("detail.selection.selected", { count: selectedIds.size })}</span>
+          <button class="series-select-btn" onclick={downloadSelected} title={$_("detail.selection.downloadSelected")}><Download size={13} weight="light" /></button>
+          <button class="series-select-btn sel-action-danger" onclick={deleteSelected} title={$_("detail.selection.deleteSelectedDownloads")}><Trash size={13} weight="light" /></button>
+          <button class="series-select-btn" onclick={() => markSelectedRead(true)} title={$_("detail.selection.markSelectedRead")}><CheckCircle size={13} weight="light" /></button>
+          <button class="series-select-btn" onclick={() => markSelectedRead(false)} title={$_("detail.selection.markSelectedUnread")}><Circle size={13} weight="light" /></button>
+          <button class="series-select-btn" onclick={clearSelection} title={$_("detail.selection.clear")}><X size={13} weight="light" /></button>
         {:else}
           {#if scanlatorOptions.length > 0}
             <div class="sort-wrap">
@@ -963,9 +964,9 @@
       </div>
       <div class="list-header-right">
         {#if !hasSelection}
-          <div class="view-segmented" aria-label="Chapter view">
-            <button class="series-icon" class:active={viewMode === "list"} onclick={() => viewMode = "list"} title="List view"><List size={14} weight="light" /></button>
-            <button class="series-icon" class:active={viewMode === "grid"} onclick={() => viewMode = "grid"} title="Grid view"><SquaresFour size={14} weight="light" /></button>
+          <div class="view-segmented" aria-label={$_("detail.chapterView")}>
+            <button class="series-icon" class:active={viewMode === "list"} onclick={() => viewMode = "list"} title={$_("detail.view.list")}><List size={14} weight="light" /></button>
+            <button class="series-icon" class:active={viewMode === "grid"} onclick={() => viewMode = "grid"} title={$_("detail.view.grid")}><SquaresFour size={14} weight="light" /></button>
           </div>
         {/if}
       </div>
@@ -976,7 +977,7 @@
         {#if loadingChapters && chapters.length === 0}
           {#if viewMode === "grid"}{#each Array(24) as _}<div class="grid-cell-skeleton skeleton"></div>{/each}{:else}{#each Array(8) as _}<div class="row-skeleton"><div class="skeleton sk-line" style="width:55%;height:12px"></div><div class="skeleton sk-line" style="width:25%;height:11px"></div></div>{/each}{/if}
         {:else if sortedChapters.length === 0}
-          <NocturneState layout="compact" tone="info" icon="search" eyebrow="Chapters" title="No chapters match this filter" body="Try another scanlator or clear the current chapter filters." />
+          <NocturneState layout="compact" tone="info" icon="search" eyebrow={$_("detail.stats.chapters")} title={$_("detail.empty.noChaptersMatch")} body={$_("detail.empty.tryAnotherScanlator")} />
         {:else if viewMode === "grid"}
           {#each sortedChapters as ch, i}
             {@const inProgress = !ch.isRead && (ch.lastPageRead ?? 0) > 0}
@@ -985,23 +986,23 @@
               <span class="grid-cell-title">{mangaChapterPrimaryLabel(ch)}</span>
               {#if mangaChapterSecondaryLabel(ch)}<span class="grid-cell-sub">{mangaChapterSecondaryLabel(ch)}</span>{/if}
               <span class="chapter-progress"><span class="chapter-progress__fill" style={`width: ${gridProgress}%`}></span></span>
-              {#if ch.isDownloaded}<span class="grid-cell-dl" title="Downloaded"></span>{/if}
+              {#if ch.isDownloaded}<span class="grid-cell-dl" title={$_("detail.stats.downloaded")}></span>{/if}
               {#if ch.isRead}<span class="grid-cell-dot"></span>{/if}
               {#if enqueueing.has(ch.id)}<span class="grid-cell-spinner"><CircleNotch size={10} weight="light" class="anim-spin" /></span>{/if}
             </button>
           {/each}
         {:else}
           <div class="chapter-table-header">
-            <span>Chapter</span>
-            <span>Scanlator</span>
-            <span>Date</span>
-            <span>Status</span>
+            <span>{$_("detail.table.chapter")}</span>
+            <span>{$_("detail.table.scanlator")}</span>
+            <span>{$_("detail.table.date")}</span>
+            <span>{$_("detail.table.status")}</span>
           </div>
           {#each pageChapters as ch}
             {@const idxInSorted = sortedChapters.indexOf(ch)}{@const isSelected = selectedIds.has(ch.id)}{@const rowProgress = ch.isRead ? 100 : (ch.pageCount > 0 ? Math.min(100, ((ch.lastPageRead ?? 0) / ch.pageCount) * 100) : 0)}
             <div role="button" tabindex="0" class="ch-row v3-ch-row" class:read={ch.isRead} class:ch-selected={isSelected} onclick={(e) => hasSelection ? toggleSelect(ch.id, e) : openChapterReader(ch)} onkeydown={(e) => e.key === "Enter" && (hasSelection ? toggleSelect(ch.id, e) : openChapterReader(ch))} oncontextmenu={(e) => { e.preventDefault(); ctx = { x: e.clientX, y: e.clientY, chapter: ch, idx: idxInSorted }; }}>
               <div class="ch-left">
-                <button class="ch-check" class:ch-check-visible={hasSelection} onclick={(e) => toggleSelect(ch.id, e)} title="Select">{#if isSelected}<CheckCircle size={15} weight="fill" />{:else}<Circle size={15} weight="light" />{/if}</button>
+                <button class="ch-check" class:ch-check-visible={hasSelection} onclick={(e) => toggleSelect(ch.id, e)} title={$_("detail.selection.select")}>{#if isSelected}<CheckCircle size={15} weight="fill" />{:else}<Circle size={15} weight="light" />{/if}</button>
                 <span class="ch-name">{mangaChapterPrimaryLabel(ch)}</span>
                 {#if mangaChapterSecondaryLabel(ch)}
                   <div class="ch-meta">
@@ -1021,16 +1022,16 @@
                 <span class="ch-status-read">{#if ch.isRead}<CheckCircle size={14} weight="fill" class="read-icon" />{/if}</span>
                 <span class="ch-status-main">
                   {#if ch.isDownloaded}
-                    <Download size={13} weight="fill" title="Downloaded" />
+                    <Download size={13} weight="fill" title={$_("detail.stats.downloaded")} />
                   {:else if enqueueing.has(ch.id)}
                     <CircleNotch size={14} weight="light" class="anim-spin enqueue-icon" />
                   {:else}
-                    <button class="dl-btn" onclick={(e) => { e.stopPropagation(); enqueue(ch, e); }} title="Download"><Download size={13} weight="light" /></button>
+                    <button class="dl-btn" onclick={(e) => { e.stopPropagation(); enqueue(ch, e); }} title={$_("detail.actions.download")}><Download size={13} weight="light" /></button>
                   {/if}
                 </span>
                 <span class="ch-status-action">
                   {#if ch.isDownloaded}
-                    <button class="dl-btn dl-btn-delete" onclick={(e) => { e.stopPropagation(); deleteDownloaded(ch.id); }} title="Delete download"><Trash size={13} weight="light" /></button>
+                    <button class="dl-btn dl-btn-delete" onclick={(e) => { e.stopPropagation(); deleteDownloaded(ch.id); }} title={$_("detail.download.delete")}><Trash size={13} weight="light" /></button>
                   {/if}
                 </span>
               </div>
