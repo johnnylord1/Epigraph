@@ -149,8 +149,11 @@
   const pendingCoverRecoveryIds = new Set<number>();
   let libraryLoadRetryTimer: ReturnType<typeof setTimeout> | null = null;
   let libraryLoadRetryCount = 0;
+  let categoryLoadRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  let categoryLoadRetryCount = 0;
   let lastLoadedScopeKey: string | null = null;
   const libraryLoadRetryLimit = 30;
+  const categoryLoadRetryLimit = 12;
   let novelsLibraryState = $state(peekNovelLibraryState({
     profileId: store.runtimeResolvedLocalProfileId,
     serverUrl: store.runtimeServerUrl,
@@ -444,13 +447,40 @@
       const categories = await loadCategoriesSnapshot();
       setCategories(categories);
       if (!categoriesHaveMangaMembers(categories)) {
-        return await hydrateCategoryMembers(force);
+        const hydrated = await hydrateCategoryMembers(force);
+        categoryLoadRetryCount = 0;
+        return hydrated;
       }
+      categoryLoadRetryCount = 0;
       return categories;
     } catch (reloadError) {
       console.error(reloadError);
       return store.categories;
     }
+  }
+
+  function clearCategoryLoadRetry() {
+    categoryLoadRetryCount = 0;
+    if (categoryLoadRetryTimer) {
+      clearTimeout(categoryLoadRetryTimer);
+      categoryLoadRetryTimer = null;
+    }
+  }
+
+  function scheduleCategoryLoadRetry() {
+    if (categoryLoadRetryTimer || categoryLoadRetryCount >= categoryLoadRetryLimit) return;
+    categoryLoadRetryCount += 1;
+    categoryLoadRetryTimer = setTimeout(() => {
+      categoryLoadRetryTimer = null;
+      if (!store.runtimeResolvedLocalProfileId || !store.runtimeServerUrl) return;
+      void reloadCategories(true).then((categories) => {
+        if (categories.length > 0) {
+          clearCategoryLoadRetry();
+          return;
+        }
+        scheduleCategoryLoadRetry();
+      });
+    }, Math.min(5000, 500 * categoryLoadRetryCount));
   }
 
   function loadLibrary() {
@@ -542,6 +572,7 @@
       && activeLibraryBootstrapStatus !== "ready";
     if (shouldBlockForLoad) loading = true;
     try {
+      let categoriesLoadFailed = false;
       const [nodes, categories, trackingSummary, sources] = await Promise.all([
         loadLibrary().catch((libraryError) => {
           console.error(libraryError);
@@ -549,6 +580,7 @@
         }),
         loadCategoriesSnapshot().catch((categoryError) => {
           console.error(categoryError);
+          categoriesLoadFailed = true;
           return store.categories;
         }),
         loadLibraryTrackingSummary().catch((trackingError) => {
@@ -564,6 +596,11 @@
       allSources = sources;
       setLibraryMangaSnapshot(normalizeLoadedLibrary(nodes));
       setCategories(normalizeCategories(categories));
+      if (categoriesLoadFailed) {
+        scheduleCategoryLoadRetry();
+      } else {
+        clearCategoryLoadRetry();
+      }
       store.setLibraryTrackingSummarySnapshot(trackingSummary);
       persistCurrentLibrarySnapshot(normalizeCategories(categories));
       void refreshLibraryChapterCounts();
@@ -729,11 +766,16 @@
     const warmSnapshot = hasWarmLibrarySnapshot();
     if (!store.runtimeResolvedLocalProfileId || !store.runtimeServerUrl) return;
     if (scopeKey === lastLoadedScopeKey && retryCount <= 0) {
+      if (bootstrapStatus === "ready" && !warmSnapshot && !loadDataInFlight) {
+        untrack(() => loadData());
+        return;
+      }
       if (!loadDataInFlight) loading = !warmSnapshot && bootstrapStatus === "loading";
       return;
     }
     lastLoadedScopeKey = scopeKey;
     libraryLoadRetryCount = 0;
+    clearCategoryLoadRetry();
     if (libraryLoadRetryTimer) {
       clearTimeout(libraryLoadRetryTimer);
       libraryLoadRetryTimer = null;
@@ -1759,6 +1801,10 @@
       if (libraryLoadRetryTimer) {
         clearTimeout(libraryLoadRetryTimer);
         libraryLoadRetryTimer = null;
+      }
+      if (categoryLoadRetryTimer) {
+        clearTimeout(categoryLoadRetryTimer);
+        categoryLoadRetryTimer = null;
       }
     };
   });

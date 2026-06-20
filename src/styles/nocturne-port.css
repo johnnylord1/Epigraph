@@ -916,6 +916,7 @@ html[data-aethon-motion="idle"] .aethon-port--splash .brand-mark {
   border-image: linear-gradient(90deg, transparent 5%, rgba(184, 167, 234, 0.08) 50%, transparent 95%) 1;
   box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.02), 0 2px 12px rgba(0, 0, 0, 0.15);
   z-index: 50;
+  -webkit-app-region: drag;
 }
 
 html[data-aethon-motion="idle"] .n-topbar {
@@ -957,7 +958,7 @@ html[data-aethon-motion="idle"] .n-topbar {
   display: flex;
   align-items: center;
   flex: 1;
-  -webkit-app-region: no-drag;
+  -webkit-app-region: drag;
 }
 
 .n-topbar__left {
@@ -986,6 +987,7 @@ html[data-aethon-motion="idle"] .n-topbar {
     background 350ms ease;
   z-index: 52;
   margin: 0 auto;
+  -webkit-app-region: no-drag;
 }
 
 .n-search:focus-within {
@@ -1046,6 +1048,19 @@ html[data-aethon-motion="idle"] .n-topbar {
     border-color 300ms ease,
     background 300ms ease,
     box-shadow 300ms ease;
+  -webkit-app-region: no-drag;
+}
+
+.n-topbar button,
+.n-topbar a,
+.n-topbar input,
+.n-topbar select,
+.n-topbar textarea,
+.n-topbar [role="button"],
+.n-topbar .n-search,
+.n-topbar .n-icon-btn,
+.n-topbar .n-segmented {
+  -webkit-app-region: no-drag;
 }
 
 .n-search__input::placeholder {
@@ -1727,9 +1742,9 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 .aethon-port--settings .n-search.settings-search,
 .aethon-port--settings .n-search--settings {
   position: relative;
-  width: min(100%, calc(420px * var(--n-hud-scale)));
+  width: var(--n-search-width);
   margin: 0 auto;
-  max-width: 100%;
+  max-width: var(--n-search-width-focus);
 }
 
 .aethon-port--settings .n-topbar--settings {
@@ -1738,6 +1753,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   align-items: center;
   gap: calc(16px * var(--n-hud-scale));
   padding: 0 var(--settings-shell-padding-x);
+  -webkit-app-region: drag;
 }
 
 .aethon-port--settings .n-topbar--settings .n-topbar__left {
@@ -1748,6 +1764,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   display: flex;
   justify-content: center;
   min-width: 0;
+  -webkit-app-region: drag;
 }
 
 .aethon-port--settings .n-topbar--settings .n-topbar__right {
@@ -1895,10 +1912,10 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 .aethon-port--settings .settings-group-rail__footer {
   margin-top: auto;
   padding-top: var(--settings-shell-gap);
-  width: auto;
+  width: 100%;
   display: flex;
   flex-direction: column;
-  align-items: stretch;
+  align-items: center;
   box-sizing: border-box;
 }
 
@@ -2099,22 +2116,15 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings .settings-search-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1;
-  opacity: 0;
-  pointer-events: none;
-  background: transparent;
-  transition: opacity 250ms ease;
+  display: none;
 }
 
 .aethon-port--settings.settings-page.is-search-engaged .settings-search-overlay {
-  opacity: 1;
-  pointer-events: auto;
+  display: none;
 }
 
 .aethon-port--settings.settings-page.is-search-engaged .n-search--settings {
-  width: min(100%, var(--n-search-width-focus));
+  width: var(--n-search-width-focus);
 }
 
 .aethon-port--settings.settings-page.is-search-engaged > .n-topbar--settings {
@@ -3173,9 +3183,10 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings .settings-brand-card {
-  width: auto;
+  width: 100%;
+  max-width: calc(var(--settings-group-rail-width) - (12px * var(--n-hud-scale)));
   box-sizing: border-box;
-  margin: 0;
+  margin: 0 auto 0 calc(-6px * var(--n-hud-scale));
   padding: calc(12px * var(--n-hud-scale));
   border-radius: calc(14px * var(--n-hud-scale));
   border: 1px solid transparent;

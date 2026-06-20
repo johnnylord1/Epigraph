@@ -67,6 +67,7 @@
   let virtualGridEl: HTMLDivElement | null = $state(null);
   let viewportScrollTop = $state(0);
   let viewportClientHeight = $state(0);
+  const measuredVirtualRows = new Map<number, number>();
 
   const visibleStartRow = $derived(
     Math.max(0, Math.floor(viewportScrollTop / Math.max(1, rowSize)) - overscanRows),
@@ -124,12 +125,40 @@
   });
 
   function measureVirtualRow(node: HTMLDivElement) {
+    const rowIndex = Number(node.dataset.index);
+    let observer: ResizeObserver | null = null;
+
+    const updateMeasurement = () => {
+      if (!Number.isFinite(rowIndex)) return;
+      const nextSize = node.getBoundingClientRect().height;
+      if (!(nextSize > 0)) return;
+      measuredVirtualRows.set(rowIndex, nextSize);
+      measuredRowSize = Math.max(...measuredVirtualRows.values());
+    };
+
+    updateMeasurement();
+    if (typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver(updateMeasurement);
+      observer.observe(node);
+    }
+
     return {
       destroy() {
-        void node;
+        observer?.disconnect();
+        if (Number.isFinite(rowIndex)) measuredVirtualRows.delete(rowIndex);
+        measuredRowSize = measuredVirtualRows.size > 0
+          ? Math.max(...measuredVirtualRows.values())
+          : 0;
       },
     };
   }
+
+  $effect(() => {
+    safeColumns;
+    viewMode;
+    measuredVirtualRows.clear();
+    measuredRowSize = 0;
+  });
 
   $effect(() => {
     if (!onVisibleRangeChange) return;

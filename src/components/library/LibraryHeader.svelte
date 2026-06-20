@@ -95,7 +95,7 @@
     width: 100%;
     min-width: 0;
     flex-wrap: nowrap;
-    -webkit-app-region: no-drag;
+    -webkit-app-region: drag;
   }
 
   .header-right {

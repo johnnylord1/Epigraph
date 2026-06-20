@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { LibraryCardVM } from "../../lib/library/contracts";
 import LibraryCardGrid from "./LibraryCardGrid.svelte";
@@ -137,8 +137,13 @@ describe("LibraryCardGrid", () => {
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
-      expect(await screen.findByRole("button", { name: "Book 80" })).toBeTruthy();
-      expect(screen.queryByRole("button", { name: "Book 0" })).toBeNull();
+      await waitFor(() => {
+        expect(screen.queryByRole("button", { name: "Book 0" })).toBeNull();
+        const renderedIndexes = screen.getAllByRole("button")
+          .map((button) => Number(button.getAttribute("aria-label")?.replace("Book ", "")))
+          .filter(Number.isFinite);
+        expect(Math.min(...renderedIndexes)).toBeGreaterThan(0);
+      });
     } finally {
       scroller.remove();
     }

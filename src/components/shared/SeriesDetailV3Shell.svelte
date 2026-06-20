@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import { ArrowLeft, BookOpen, Info } from "phosphor-svelte";
 
   type SeriesDetailMetric = {
@@ -74,6 +75,15 @@
     return !/^(unknown|source|source novel|manga series|untitled)$/i.test(value.trim());
   }
 
+  const interactiveSelector =
+    "button, a, input, select, textarea, label, [role='button'], [role='menuitem'], [role='menuitemradio'], [contenteditable='true'], .n-icon-btn, [data-no-window-drag]";
+
+  function handleTopbarPointerDown(event: PointerEvent) {
+    if (event.button !== 0 || !(event.target instanceof Element)) return;
+    if (event.target.closest(interactiveSelector)) return;
+    getCurrentWindow().startDragging().catch(() => {});
+  }
+
   const clampedProgress = $derived(Math.max(0, Math.min(100, progressPercent)));
   const visibleTags = $derived.by(() => {
     const values = [statusLabel, ...tags].filter((value): value is string => hasRealText(value));
@@ -86,7 +96,8 @@
 </script>
 
 <div class="series-v3-root" data-media-kind={mediaKind}>
-  <header class="n-topbar">
+  <!-- svelte-ignore a11y_no_static_element_interactions: desktop window drag must start from empty detail topbar regions. -->
+  <header class="n-topbar" data-tauri-drag-region onpointerdown={handleTopbarPointerDown}>
     <div class="n-topbar-left">
       <button class="n-icon-btn" type="button" title="Back" onclick={onBack}>
         <ArrowLeft size={17} weight="light" />
@@ -262,6 +273,7 @@
     background: rgba(19, 19, 26, 0.78);
     backdrop-filter: blur(32px) saturate(140%);
     box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.02), 0 2px 12px rgba(0, 0, 0, 0.15);
+    -webkit-app-region: drag;
   }
 
   .n-topbar::before {
@@ -303,6 +315,7 @@
     background: transparent;
     cursor: pointer;
     transition: color 140ms ease, border-color 140ms ease, background 140ms ease, transform 160ms ease, box-shadow 160ms ease;
+    -webkit-app-region: no-drag;
   }
 
   .n-icon-btn:hover {

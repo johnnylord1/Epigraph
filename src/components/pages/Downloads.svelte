@@ -970,6 +970,25 @@
     right: auto;
     left: auto;
     height: var(--n-topbar-height);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: calc(16px * var(--n-hud-scale));
+  }
+
+  .downloads-topbar-shell :global(.n-topbar__left),
+  .downloads-topbar-shell :global(.n-topbar__center),
+  .downloads-topbar-shell :global(.n-topbar__right) {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .downloads-topbar-shell :global(.n-topbar__center) {
+    justify-content: center;
+  }
+
+  .downloads-topbar-shell :global(.n-topbar__right) {
+    justify-content: flex-end;
   }
 
   .downloads-topbar-shell :global(.n-topbar::before) {
