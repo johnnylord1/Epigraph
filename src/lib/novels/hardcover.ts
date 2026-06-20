@@ -991,7 +991,7 @@ async function sendHardcoverGraphql<T>(
     headers: {
       "Content-Type": "application/json",
       Authorization: authorization,
-      "User-Agent": "Aethon/0.5.0 Hardcover Novel Tracking",
+      "User-Agent": "Aethon/0.0.1 Hardcover Novel Tracking",
     },
     body: JSON.stringify({ query, variables }),
   });
