@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveMessageLocale } from "./runtime";
+import { applyAppLanguage, resolveMessageLocale, translate } from "./runtime";
 
 describe("resolveMessageLocale", () => {
   it("uses exact catalogs before language fallbacks", () => {
@@ -10,5 +10,11 @@ describe("resolveMessageLocale", () => {
   it("falls back to a translated base language or English", () => {
     expect(resolveMessageLocale("pt-PT")).toBe("en");
     expect(resolveMessageLocale("ar-SA")).toBe("en");
+  });
+
+  it("supports the app's direct interpolation argument shape", () => {
+    applyAppLanguage("en");
+    expect(translate("sources.count.extension", { count: 1 })).toBe("1 extension");
+    expect(translate("sources.actions.updateAllCount", { count: 3 })).toBe("Update all (3)");
   });
 });

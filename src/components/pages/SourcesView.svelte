@@ -41,6 +41,7 @@
     removeInstalledNovelPlugin,
   } from "../../lib/novels/packages";
   import { addToast, bumpContentSetupVersion, setExtensionsPanelHint, store } from "../../store/state.svelte";
+  import { _ } from "../../lib/i18n/runtime";
   import { ensureExtensionRepo, RECOMMENDED_EXTENSION_REPO } from "../../lib/defaultRepos";
   import { ensureServerAwakeFor, maybeStandbyLocalServer, SERVER_READY_EVENT } from "../../lib/serverLifecycle";
   import { detectSetupState, type SetupState } from "../../lib/setupState";
@@ -61,11 +62,11 @@
     topbarSearch?: string | null;
   } = $props();
 
-  const FILTERS: { id: Filter; label: string }[] = [
-    { id: "installed", label: "Installed" },
-    { id: "available", label: "Available" },
-    { id: "updates", label: "Updates" },
-    { id: "all", label: "All" },
+  const FILTERS: { id: Filter; labelKey: string }[] = [
+    { id: "installed", labelKey: "sources.filters.installed" },
+    { id: "available", labelKey: "sources.filters.available" },
+    { id: "updates", labelKey: "sources.filters.updates" },
+    { id: "all", labelKey: "sources.filters.all" },
   ];
   const LNREADER_AUDITED_OFFICIAL_REPOSITORY_URL =
     "https://raw.githubusercontent.com/LNReader/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json";
@@ -104,12 +105,15 @@
   let extensionLoadRun = 0;
 
   const isNovelMode = $derived(contentType === "novels");
-  const activeFilters = $derived(FILTERS);
-  const searchPlaceholder = $derived(isNovelMode ? "Search novel sources..." : "Search extensions...");
-  const sourceNoun = $derived(isNovelMode ? "sources" : "extensions");
-  const sourceTitle = $derived(isNovelMode ? "Manage novel sources" : "Manage extensions");
+  const activeFilters = $derived(FILTERS.map((item) => ({ ...item, label: $_(item.labelKey) })));
+  const searchPlaceholder = $derived(isNovelMode ? $_("sources.search.novelSources") : $_("sources.search.extensions"));
+  const sourceTitle = $derived(isNovelMode ? $_("sources.title.novelSources") : $_("sources.title.extensions"));
   const novelRepositoryCount = $derived(novelRepositoryState?.repositories.length ?? 0);
   const novelCatalogCount = $derived(novelRepositoryState?.catalogEntries.length ?? 0);
+  const novelRepositorySummary = $derived($_("sources.repositories.novelSummary", {
+    feeds: novelRepositoryCount,
+    plugins: novelCatalogCount,
+  }));
 
   const selectedExtension = $derived(
     selectedPkgName ? extensions.find((extension) => extension.pkgName === selectedPkgName) ?? null : null,
@@ -126,7 +130,9 @@
   });
 
   const updateCount = $derived(extensions.filter((extension) => extension.hasUpdate).length);
-  const updateAllLabel = $derived(updateCount > 0 ? `Update all (${updateCount})` : "Update all");
+  const updateAllLabel = $derived(updateCount > 0
+    ? $_("sources.actions.updateAllCount", { count: updateCount })
+    : $_("sources.actions.updateAll"));
 
   const topbarSearchTerm = $derived((topbarSearch ?? "").trim());
   const localSearchTerm = $derived(search.trim());
@@ -147,11 +153,11 @@
       true;
     return matchesSearch && matchesFilter;
   }));
-  const sourceCountLabel = $derived(`${filtered.length} ${
-    filtered.length === 1
-      ? isNovelMode ? "source" : "extension"
-      : sourceNoun
-  }`);
+  const sourceCountLabel = $derived(
+    isNovelMode
+      ? $_(filtered.length === 1 ? "sources.count.source" : "sources.count.sources", { count: filtered.length })
+      : $_(filtered.length === 1 ? "sources.count.extension" : "sources.count.extensions", { count: filtered.length }),
+  );
 
   const groups = $derived.by(() => {
     const map = new Map<string, ManagedExtension[]>();
@@ -938,12 +944,12 @@
 
   function actionLabelFor(extension: ManagedExtension) {
     const operation = activeOperations.get(extension.pkgName);
-    if (operation === "update") return "Updating...";
-    if (operation === "remove") return "Removing...";
-    if (operation === "install") return "Installing...";
-    if (extension.hasUpdate) return "Update";
-    if (extension.isInstalled) return "Remove";
-    return "Install";
+    if (operation === "update") return $_("sources.actions.updating");
+    if (operation === "remove") return $_("sources.actions.removing");
+    if (operation === "install") return $_("sources.actions.installing");
+    if (extension.hasUpdate) return $_("sources.actions.update");
+    if (extension.isInstalled) return $_("sources.actions.remove");
+    return $_("sources.actions.install");
   }
 
   function runVariantAction(event: MouseEvent, extension: ManagedExtension) {
@@ -1042,7 +1048,7 @@
   <section class="sourcesMain">
     <div class="sourcesHeader">
       <div class="sourcesTitle">
-        <p class="eyebrow">Sources</p>
+        <p class="eyebrow">{$_("sources.eyebrow")}</p>
         <h2>{sourceTitle}</h2>
         <span>{sourceCountLabel}</span>
       </div>
@@ -1051,7 +1057,7 @@
         <div class="tabs">
           {#each activeFilters as item}
             <button class="tab" class:active={filter === item.id} type="button" onclick={() => (filter = item.id)}>
-              {item.id === "updates" && updateCount > 0 ? `Updates (${updateCount})` : item.label}
+              {item.id === "updates" && updateCount > 0 ? $_("sources.filters.updatesCount", { count: updateCount }) : item.label}
             </button>
           {/each}
         </div>
@@ -1065,7 +1071,7 @@
           <button class="toolbarActionBtn" type="button" disabled={updatingAll} onclick={updateAllExtensions}>
             {#if updatingAll}
               <CircleNotch size={13} weight="bold" class="anim-spin" />
-              Updating
+              {$_("sources.actions.updating")}
             {:else}
               {updateAllLabel}
             {/if}
@@ -1073,18 +1079,18 @@
         {/if}
 
         {#if isNovelMode}
-          <button class="iconBtn" class:active={utilityPanel === "novelRepos"} type="button" title="Manage novel repositories" onclick={() => openUtilityPanel("novelRepos")}>
+          <button class="iconBtn" class:active={utilityPanel === "novelRepos"} type="button" title={$_("sources.repositories.manageNovel")} onclick={() => openUtilityPanel("novelRepos")}>
             <GitBranch size={15} weight="bold" />
           </button>
         {:else}
-          <button class="iconBtn" class:active={utilityPanel === "repos"} type="button" title="Manage repos" onclick={() => openUtilityPanel("repos")}>
+          <button class="iconBtn" class:active={utilityPanel === "repos"} type="button" title={$_("sources.repositories.manageManga")} onclick={() => openUtilityPanel("repos")}>
             <GitBranch size={15} weight="bold" />
           </button>
-          <button class="iconBtn" class:active={utilityPanel === "apk"} type="button" title="Install APK URL" onclick={() => openUtilityPanel("apk")}>
+          <button class="iconBtn" class:active={utilityPanel === "apk"} type="button" title={$_("sources.apk.title")} onclick={() => openUtilityPanel("apk")}>
             <Plus size={15} weight="bold" />
           </button>
         {/if}
-        <button class="iconBtn" type="button" title={isNovelMode ? "Refresh novel sources" : "Refresh repositories"} disabled={refreshing} onclick={fetchFromRepo}>
+        <button class="iconBtn" type="button" title={isNovelMode ? $_("sources.actions.refreshNovelSources") : $_("sources.actions.refreshRepositories")} disabled={refreshing} onclick={fetchFromRepo}>
           <ArrowsClockwise size={15} weight="bold" class={refreshing ? "anim-spin" : ""} />
         </button>
       </div>
@@ -1107,12 +1113,12 @@
 
     {#if isNovelMode && utilityPanel === "novelRepos"}
       <div class="repoOverlay" role="presentation">
-        <button class="repoOverlayBackdrop" type="button" aria-label="Close repositories panel" onclick={() => (utilityPanel = null)}></button>
+        <button class="repoOverlayBackdrop" type="button" aria-label={$_("sources.repositories.closePanel")} onclick={() => (utilityPanel = null)}></button>
         <section class="utilityPanel repoWindow novelRepoPanel">
         <div class="utilityHeader">
           <div class="utilityHeaderCopy">
-            <strong>Novel repositories</strong>
-            <span>{novelRepositoryCount} feeds · {novelCatalogCount} cached plugins</span>
+            <strong>{$_("sources.repositories.novelTitle")}</strong>
+            <span>{novelRepositorySummary}</span>
           </div>
           <button class="closeUtility" type="button" onclick={() => (utilityPanel = null)}><X size={14} weight="bold" /></button>
         </div>
@@ -1124,9 +1130,9 @@
                 layout="compact"
                 tone="info"
                 icon="folder"
-                eyebrow="Novel repositories"
-                title="No repositories configured"
-                body="Add the official LNReader feed or paste a trusted plugin index URL."
+                eyebrow={$_("sources.repositories.novelTitle")}
+                title={$_("sources.repositories.emptyTitle")}
+                body={$_("sources.repositories.emptyNovelBody")}
               />
             {:else}
               {#each novelRepositoryState.repositories as repo}
@@ -1134,19 +1140,19 @@
                 {@const repoPluginCount = novelRepositoryState.catalogEntries.filter((entry) => entry.repositoryId === repo.id).length}
                 <div class="repoRow novelRepoRow">
                   <div class="novelRepoCopy">
-                    <strong>{repo.recommendedSeed ? "Official LNReader feed" : repo.normalizedUrl}</strong>
-                    <span>{repoPluginCount} plugins · {repoState}</span>
+                    <strong>{repo.recommendedSeed ? $_("sources.repositories.officialLnreader") : repo.normalizedUrl}</strong>
+                    <span>{$_("sources.repositories.pluginSummary", { count: repoPluginCount, state: repoState })}</span>
                     {#if repo.lastError}<small>{repo.lastError}</small>{/if}
                   </div>
                   <div class="novelRepoActions">
                     <button type="button" disabled={refreshingNovelRepositoryId === repo.id} onclick={() => refreshNovelRepo(repo)}>
-                      {#if refreshingNovelRepositoryId === repo.id}<CircleNotch size={12} weight="bold" class="anim-spin" />{:else}Refresh{/if}
+                      {#if refreshingNovelRepositoryId === repo.id}<CircleNotch size={12} weight="bold" class="anim-spin" />{:else}{$_("sources.actions.refresh")}{/if}
                     </button>
                     <button type="button" disabled={savingRepos} onclick={() => toggleNovelRepo(repo)}>
-                      {repo.enabled ? "Disable" : "Enable"}
+                      {repo.enabled ? $_("sources.actions.disable") : $_("sources.actions.enable")}
                     </button>
                     <button type="button" disabled={savingRepos} onclick={() => removeNovelRepo(repo)}>
-                      Remove
+                      {$_("sources.actions.remove")}
                     </button>
                   </div>
                 </div>
@@ -1164,14 +1170,14 @@
               onkeydown={(event) => event.key === "Enter" && !savingRepos && addNovelRepo(newRepoUrl)}
             />
             <button type="button" disabled={savingRepos || !newRepoUrl.trim()} onclick={() => addNovelRepo(newRepoUrl)}>
-              {#if savingRepos}<CircleNotch size={13} weight="bold" class="anim-spin" />{:else}Add{/if}
+              {#if savingRepos}<CircleNotch size={13} weight="bold" class="anim-spin" />{:else}{$_("sources.actions.add")}{/if}
             </button>
             <button type="button" disabled={savingRepos} onclick={() => addNovelRepo(LNREADER_AUDITED_OFFICIAL_REPOSITORY_URL, true)}>
-              Official
+              {$_("sources.actions.official")}
             </button>
           </div>
           {#if repoError}
-            <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Repository error" title="Could not update repositories" body={repoError} />
+            <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("sources.repositories.errorEyebrow")} title={$_("sources.repositories.errorTitle")} body={repoError} />
           {/if}
         {/if}
         </section>
@@ -1180,17 +1186,17 @@
 
     {#if !isNovelMode && utilityPanel === "apk"}
       <div class="repoOverlay" role="presentation">
-        <button class="repoOverlayBackdrop" type="button" aria-label="Close APK install panel" onclick={() => (utilityPanel = null)}></button>
+        <button class="repoOverlayBackdrop" type="button" aria-label={$_("sources.apk.closePanel")} onclick={() => (utilityPanel = null)}></button>
         <section class="utilityPanel repoWindow repoWindowNarrow">
           <div class="utilityHeader">
             <div class="utilityHeaderCopy">
-              <strong>Install APK URL</strong>
-              <span>Install a trusted extension package manually</span>
+              <strong>{$_("sources.apk.title")}</strong>
+              <span>{$_("sources.apk.subtitle")}</span>
             </div>
             <button class="closeUtility" type="button" onclick={() => (utilityPanel = null)}><X size={14} weight="bold" /></button>
           </div>
           <div class="repoHint">
-            Paste a direct `.apk` URL. Aethon will install it through the same extension manager used by repository installs.
+            {$_("sources.apk.hint")}
           </div>
           <div class="inlineForm">
             <input
@@ -1205,14 +1211,14 @@
               {#if installingExternal}
                 <CircleNotch size={13} weight="bold" class="anim-spin" />
               {:else if installSuccess}
-                <Check size={13} weight="bold" /> Done
+                <Check size={13} weight="bold" /> {$_("sources.actions.done")}
               {:else}
-                Install
+                {$_("sources.actions.install")}
               {/if}
             </button>
           </div>
           {#if installError}
-            <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Install error" title="Could not install this package" body={installError} />
+            <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("sources.apk.errorEyebrow")} title={$_("sources.apk.errorTitle")} body={installError} />
           {/if}
         </section>
       </div>
@@ -1220,12 +1226,12 @@
 
     {#if !isNovelMode && utilityPanel === "repos"}
       <div class="repoOverlay" role="presentation">
-        <button class="repoOverlayBackdrop" type="button" aria-label="Close repositories panel" onclick={() => (utilityPanel = null)}></button>
+        <button class="repoOverlayBackdrop" type="button" aria-label={$_("sources.repositories.closePanel")} onclick={() => (utilityPanel = null)}></button>
         <section class="utilityPanel repoWindow novelRepoPanel">
           <div class="utilityHeader">
             <div class="utilityHeaderCopy">
-              <strong>Manga repositories</strong>
-              <span>{repos.length} feeds configured</span>
+              <strong>{$_("sources.repositories.mangaTitle")}</strong>
+              <span>{$_("sources.repositories.mangaSummary", { count: repos.length })}</span>
             </div>
             <button class="closeUtility" type="button" onclick={() => (utilityPanel = null)}><X size={14} weight="bold" /></button>
           </div>
@@ -1237,9 +1243,9 @@
               layout="compact"
               tone="info"
               icon="folder"
-              eyebrow="Manga repositories"
-              title="No repositories configured"
-              body="Add a Tachiyomi extension index to make sources available."
+              eyebrow={$_("sources.repositories.mangaTitle")}
+              title={$_("sources.repositories.emptyTitle")}
+              body={$_("sources.repositories.emptyMangaBody")}
             />
           {:else}
             <div class="repoList compactRepoList">
@@ -1247,11 +1253,11 @@
                 <div class="repoRow novelRepoRow">
                   <div class="novelRepoCopy">
                     <strong>{repo}</strong>
-                    <span>Extension repository</span>
+                    <span>{$_("sources.repositories.extensionRepository")}</span>
                   </div>
                   <div class="novelRepoActions">
                     <button type="button" disabled={savingRepos} onclick={() => removeRepo(repo)}>
-                      {#if savingRepos}<CircleNotch size={12} weight="bold" class="anim-spin" />{:else}Remove{/if}
+                      {#if savingRepos}<CircleNotch size={12} weight="bold" class="anim-spin" />{:else}{$_("sources.actions.remove")}{/if}
                     </button>
                   </div>
                 </div>
@@ -1268,11 +1274,11 @@
               onkeydown={(event) => event.key === "Enter" && !savingRepos && addRepo()}
             />
             <button type="button" disabled={savingRepos || !newRepoUrl.trim()} onclick={addRepo}>
-              {#if savingRepos}<CircleNotch size={13} weight="bold" class="anim-spin" />{:else}Add{/if}
+              {#if savingRepos}<CircleNotch size={13} weight="bold" class="anim-spin" />{:else}{$_("sources.actions.add")}{/if}
             </button>
           </div>
           {#if repoError}
-            <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Repository error" title="Could not update repositories" body={repoError} />
+            <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("sources.repositories.errorEyebrow")} title={$_("sources.repositories.errorTitle")} body={repoError} />
           {/if}
         {/if}
         </section>
@@ -1289,20 +1295,20 @@
           layout="center"
           tone="info"
           icon="search"
-          eyebrow="Sources"
-          title={`No ${sourceNoun} found`}
-          body={isNovelMode ? "Try refreshing novel sources or check your installed novel plugins." : "Try another filter, search term, or refresh your repositories."}
+          eyebrow={$_("sources.eyebrow")}
+          title={isNovelMode ? $_("sources.empty.noNovelSources") : $_("sources.empty.noExtensions")}
+          body={isNovelMode ? $_("sources.empty.novelBody") : $_("sources.empty.mangaBody")}
         />
       </div>
     {:else}
       <div class="extensionList">
         <div class="extensionTableHead" aria-hidden="true">
-          <span>Source</span>
-          <span>Language</span>
-          <span>Version</span>
-          <span>Status</span>
-          <span>Repository</span>
-          <span>Actions</span>
+          <span>{$_("sources.table.source")}</span>
+          <span>{$_("sources.table.language")}</span>
+          <span>{$_("sources.table.version")}</span>
+          <span>{$_("sources.table.status")}</span>
+          <span>{$_("sources.table.repository")}</span>
+          <span>{$_("sources.table.actions")}</span>
         </div>
         {#each visibleGroups as { base, primary, variants }}
           {@const isExpanded = expanded.has(base)}
@@ -1332,7 +1338,7 @@
 
             <div class="tableCell tableCellLang">
               <span>{primary.lang.toUpperCase()}</span>
-              {#if hasVariants}<small>{variants.length + 1} variants</small>{/if}
+              {#if hasVariants}<small>{$_("sources.card.variants", { count: variants.length + 1 })}</small>{/if}
             </div>
 
             <div class="tableCell">
@@ -1341,33 +1347,33 @@
 
             <div class="tableCell tableCellStatus">
               {#if primary.hasUpdate}
-                <span class="updateBadge">Update</span>
+                <span class="updateBadge">{$_("sources.actions.update")}</span>
               {:else if primary.isInstalled}
-                <span class="installedBadge">Installed</span>
+                <span class="installedBadge">{$_("sources.status.installed")}</span>
               {:else}
-                <span class="availableBadge">Available</span>
+                <span class="availableBadge">{$_("sources.status.available")}</span>
               {/if}
             </div>
 
             <div class="tableCell tableCellRepo">
               <span>{primary.kind === "novels" ? primary.site || "LNReader" : primary.apkName || "Suwayomi"}</span>
-              <small>{primary.kind === "novels" ? primary.repositoryUrl || "Novel repository" : "Extension repository"}</small>
+              <small>{primary.kind === "novels" ? primary.repositoryUrl || $_("sources.repositories.novelRepository") : $_("sources.repositories.extensionRepository")}</small>
             </div>
 
             <div class="cardActions">
               {#if isExtensionWorking(primary.pkgName)}
                 <CircleNotch size={16} weight="bold" class="anim-spin" />
               {:else if primary.hasUpdate}
-                <button class="actionBtn" type="button" onclick={(event) => updateExtension(event, primary)}>Update</button>
-                <button class="ghostBtn" type="button" onclick={(event) => removeExtension(event, primary)}>Remove</button>
+                <button class="actionBtn" type="button" onclick={(event) => updateExtension(event, primary)}>{$_("sources.actions.update")}</button>
+                <button class="ghostBtn" type="button" onclick={(event) => removeExtension(event, primary)}>{$_("sources.actions.remove")}</button>
               {:else if primary.isInstalled}
-                <button class="ghostBtn" type="button" onclick={(event) => removeExtension(event, primary)}>Remove</button>
+                <button class="ghostBtn" type="button" onclick={(event) => removeExtension(event, primary)}>{$_("sources.actions.remove")}</button>
               {:else}
-                <button class="actionBtn" type="button" onclick={(event) => installFromList(event, primary)}>Install</button>
+                <button class="actionBtn" type="button" onclick={(event) => installFromList(event, primary)}>{$_("sources.actions.install")}</button>
               {/if}
 
               {#if hasVariants}
-                <button class="variantBtn" type="button" onclick={(event) => toggleExpand(event, base)} title={`${variants.length + 1} variants`}>
+                <button class="variantBtn" type="button" onclick={(event) => toggleExpand(event, base)} title={$_("sources.card.variants", { count: variants.length + 1 })}>
                   {#if isExpanded}<CaretDown size={13} weight="bold" />{:else}<CaretRight size={13} weight="bold" />{/if}
                 </button>
               {/if}
@@ -1399,7 +1405,7 @@
                     <span>{variant.lang.toUpperCase()}</span>
                     <strong>{variant.name}</strong>
                     <small>v{variant.versionName}</small>
-                    {#if variant.hasUpdate}<em>Update</em>{/if}
+                    {#if variant.hasUpdate}<em>{$_("sources.actions.update")}</em>{/if}
                     <button
                       type="button"
                       class="variantAction"
@@ -1420,7 +1426,7 @@
 
         {#if hasMore}
           <button class="loadMoreBtn" type="button" onclick={loadMore}>
-            Show {Math.min(remainingCount, renderLimit)} more
+            {$_("sources.actions.showMore", { count: Math.min(remainingCount, renderLimit) })}
           </button>
         {/if}
       </div>

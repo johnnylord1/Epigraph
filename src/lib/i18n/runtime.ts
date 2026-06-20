@@ -7,7 +7,7 @@ const MESSAGE_LOCALES = new Set<string>(locales as readonly string[]);
 
 type TranslateValues = Record<string, unknown>;
 type TranslateOptions = { values?: TranslateValues };
-type TranslateFn = (id: string, options?: TranslateOptions) => string;
+type TranslateFn = (id: string, options?: TranslateOptions | TranslateValues) => string;
 type Subscriber = (translate: TranslateFn) => void;
 
 const subscribers = new Set<Subscriber>();
@@ -26,7 +26,8 @@ export const translate: TranslateFn = (id, options = {}) => {
   const key = messageKey(id);
   const fn = (m as Record<string, ((inputs?: TranslateValues) => string) | undefined>)[key];
   if (!fn) return id;
-  return fn(options.values ?? {});
+  const values = "values" in options ? options.values ?? {} : options;
+  return fn(values);
 };
 
 export const _ = {
