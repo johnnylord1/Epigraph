@@ -205,11 +205,11 @@ function resetSettingsStore() {
   store.categories = [];
 }
 
-function renderSettings(initialTab: RuntimeSettingsTab | null = null) {
+function renderSettings(initialTab: RuntimeSettingsTab | null = null, width = 1280) {
   store.runtimeSettingsTab = initialTab;
   const appShell = document.createElement("div");
   appShell.id = "app-shell";
-  appShell.style.width = "1280px";
+  appShell.style.width = width.toString() + "px";
   appShell.style.height = "800px";
   appShell.style.minHeight = "800px";
   appShell.style.background = "#0f0f11";
@@ -255,6 +255,17 @@ describe("Settings (browser)", () => {
   test("matches the imported shell in default App > General state", async () => {
     renderSettings();
     await expectSettingsScreenshot("settings-app-general");
+  });
+
+  test("keeps the profile creation row readable in a narrow app window", () => {
+    renderSettings(null, 800);
+    const row = document.querySelector<HTMLElement>('[data-testid="create-local-profile"]');
+    const body = row?.querySelector<HTMLElement>(".settings-mini-row__body");
+
+    expect(row).toBeTruthy();
+    expect(body).toBeTruthy();
+    expect(getComputedStyle(row!).flexDirection).toBe("column");
+    expect(body!.getBoundingClientRect().width).toBeGreaterThan(200);
   });
 
   test("matches the imported shell in Reader & Library > Reader state", async () => {

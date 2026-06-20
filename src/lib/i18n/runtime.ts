@@ -10,7 +10,7 @@ for (const [messageLocale, messages] of Object.entries(APP_I18N_MESSAGES)) {
   addMessages(messageLocale, messages);
 }
 
-function resolveMessageLocale(appLocale: string): string {
+export function resolveMessageLocale(appLocale: string): string {
   if (MESSAGE_LOCALES.has(appLocale)) return appLocale;
   const baseLocale = appLocale.split("-")[0] ?? "";
   return MESSAGE_LOCALES.has(baseLocale) ? baseLocale : FALLBACK_LOCALE;
@@ -32,6 +32,7 @@ export function applyAppLanguage(language: unknown): string {
 
   if (typeof document !== "undefined") {
     document.documentElement.lang = nextLocale;
+    document.documentElement.dir = /^(ar|fa|he|ur)(-|$)/i.test(nextLocale) ? "rtl" : "ltr";
     document.documentElement.dataset.appLocale = nextLocale;
     document.documentElement.dataset.appMessageLocale = nextMessageLocale;
   }

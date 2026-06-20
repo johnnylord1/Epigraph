@@ -22,7 +22,7 @@ Treat the current working tree as the source of truth. Several features were imp
   - `svelte-i18n` is installed and initialized.
   - Settings exposes an `App language` selector independent from `Preferred source language`.
   - The language selector supports a broad locale list through `Intl.DisplayNames`.
-  - Only a small Settings slice is translated so far. Full-app localization still requires extracting hardcoded strings from all major Svelte pages/components into message keys.
+  - Settings language controls plus the shared sidebar and page/detail loading states now use message keys; full-app localization still requires extracting domain-specific strings from the major pages and readers.
 - Settings storage/expansion controls were hardened:
   - dropdown menus use opaque Nocturne surfaces instead of transparent backgrounds;
   - Storage action rows are aligned;
@@ -57,29 +57,31 @@ Treat the current working tree as the source of truth. Several features were imp
   - Signing environment variables were not globally present, which is correct for keeping the private key out of the repo/environment.
   - `npm run tauri -- build --config src-tauri/tauri.conf.json` with `TAURI_SIGNING_PRIVATE_KEY` supplied only for that process generated `src-tauri/target/release/bundle/nsis/Aethon_0.0.1_x64-setup.exe`.
   - Installer SHA-256: `15D24D91691EAB26EBE0F82260AADB41A13FDA8015A420A3FFC90B5529507AB1`.
-  - The 0.0.1 updater signature file was not generated. Both the build signing tail and manual `tauri signer sign --private-key-path ...` stayed pending until command timeout, even when an empty stdin line was supplied for a no-password key. This remains the release blocker to resolve before publishing updater metadata.
+  - Signing was unblocked by passing the encrypted key's empty password as the preserved single argument `--password=` directly to the Tauri CLI shim. The previous npm invocation silently dropped the empty password and waited on an invisible prompt.
+  - `src-tauri/target/release/bundle/nsis/Aethon_0.0.1_x64-setup.exe.sig` was generated successfully by Tauri CLI 2.10.1.
+  - Signature SHA-256: `52822D8F98879C93EF5E43B128C6F802BC8A42F22A3996796E5E45557BBC8C76`.
+  - Tauri CLI 2.10.1 has no `signer verify` subcommand; successful key decryption/signing and the generated updater signature are the available local CLI validation.
+  - The signing key remained outside the repository and was supplied only to the signing process.
+- Latest i18n and dev-app smoke:
+  - Shared sidebar labels and page/detail loading states now use `svelte-i18n` message keys.
+  - The runtime applies `dir=rtl` for Arabic, Persian, Hebrew, and Urdu locales and restores `dir=ltr` when returning to English or Portuguese.
+  - Real WebView2 smoke switched English -> Hebrew RTL -> Portuguese (Brazil) -> English; document language/direction and sidebar labels updated without JavaScript errors.
+  - Home, Library, Browse, Downloads, and Settings sidebar navigation was exercised in the fresh dev build.
+  - Library Comics rendered loaded covers at scroll offsets 0, 22000, and the end of the 48150px virtual surface; Books/Comics switching and Library keep-alive navigation also passed.
+  - Visual smoke found and fixed the missing `settings-row--stacked` CSS contract that compressed the Create profile label into a one-character column in narrow windows.
+  - `npm run test:browser -- src/components/settings/Settings.browser.test.ts -t "keeps the profile creation row readable"`, `npm test -- src/lib/i18n/runtime.test.ts`, and `npm run build` passed.
+  - With the dev app closed, `cargo test local_server_java_args_enable_extension_bytecode_compatibility` passed.
+
 
 ### Remaining Work
 
 - Full app localization:
-  - Decide the production translation strategy: manual curated messages, machine-assisted initial catalog with review, or hybrid.
+  - Continue the hybrid production strategy: curated shared/core messages first, then machine-assisted domain catalogs with human review.
   - Extract hardcoded user-facing strings from primary pages first: Home, Library, Browse/Sources, Downloads, Settings, SeriesDetail, BookDetail, NovelDetail, readers, dialogs/toasts.
-  - Add message-key coverage tests so new strings do not bypass the i18n layer.
-  - Add RTL smoke for Arabic/Hebrew/Farsi/Urdu if those locales remain selectable.
-- Signing:
-  - Resolve the hanging `tauri signer sign` command for `Aethon_0.0.1_x64-setup.exe`.
-  - Generate and verify `Aethon_0.0.1_x64-setup.exe.sig` before publishing updater metadata.
-- Profiles:
-  - Add a non-destructive dev smoke for create/select/delete custom profile registration.
-  - Add a destructive profile reset smoke only on a temporary custom profile, not on real `MAIN` data.
-  - Add backend tests around custom profile reset path once a Tauri command harness is available without requiring the live app.
-- Dev/release smoke:
-  - Restart the dev app after every final patch before visual smoke; do not reuse an older dev build.
-  - Smoke Home, Library, Browse, Downloads, Settings, profile controls, notification overlay, and Library long scroll.
-  - Rerun Rust tests with the dev app closed to avoid JRE file locks.
+  - Expand message-key coverage tests beyond the locale resolver so new native strings do not bypass the i18n layer.
+  - Expand locale-specific visual coverage beyond the completed Hebrew RTL smoke.
 - Release/signing:
-  - Confirm `TAURI_SIGNING_PRIVATE_KEY` is provided only through the release environment.
-  - Run final installer build/signing once the private key is available.
+  - Publish updater metadata using the generated installer URL and signature value.
   - Run installed-app smoke after signing.
 - Known non-blocking build warnings to clean later:
   - unused CSS selectors in `NovelDetail.svelte` and `SeriesDetail.svelte`;

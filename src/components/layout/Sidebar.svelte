@@ -1,13 +1,14 @@
 <script lang="ts">
+  import { _ } from "svelte-i18n";
   import splashMark from "../../assets/aethon-splash-mark.png";
   import { store, setNavPage, setSettingsOpen, openHomeDashboard } from "../../store/state.svelte";
   import type { NavPage } from "../../store/state.svelte";
 
-  const MAIN_TABS: Array<{ id: Exclude<NavPage, "settings">; label: string }> = [
-    { id: "home", label: "Home" },
-    { id: "library", label: "Library" },
-    { id: "search", label: "Browse" },
-    { id: "downloads", label: "Downloads" },
+  const MAIN_TABS: Array<{ id: Exclude<NavPage, "settings">; labelKey: string }> = [
+    { id: "home", labelKey: "shell.navigation.home" },
+    { id: "library", labelKey: "shell.navigation.library" },
+    { id: "search", labelKey: "shell.navigation.browse" },
+    { id: "downloads", labelKey: "shell.navigation.downloads" },
   ];
 
   const activeDownloadCount = $derived(
@@ -28,28 +29,28 @@
   }
 </script>
 
-<aside class="n-sidebar" aria-label="Primary navigation">
+<aside class="n-sidebar" aria-label={$_("shell.navigation.primary")}>
   <button
     class="n-sidebar__brand"
     type="button"
-    title="Home"
-    aria-label="Go to Home"
+    title={$_("shell.navigation.home")}
+    aria-label={$_("shell.navigation.goHome")}
     onclick={goHome}
   >
-    <img src={splashMark} alt="Aethon Logo" />
+    <img src={splashMark} alt={$_("shell.navigation.logoAlt")} />
   </button>
 
-  <nav class="n-sidebar__nav" aria-label="Primary">
+  <nav class="n-sidebar__nav" aria-label={$_("shell.navigation.primary")}>
     {#each MAIN_TABS as tab}
     <button
       class="n-sidebar-btn"
       class:is-active={store.navPage === tab.id}
       class:download-active={tab.id === "downloads" && hasDownloadActivity}
       class:download-error={tab.id === "downloads" && hasDownloadError}
-      data-tooltip={tab.label}
+      data-tooltip={$_(tab.labelKey)}
       type="button"
-        aria-label={tab.label}
-        title={tab.label}
+        aria-label={$_(tab.labelKey)}
+        title={$_(tab.labelKey)}
         onclick={() => navigate(tab.id)}
       >
         <span class="n-icon" aria-hidden="true"></span>
@@ -66,10 +67,10 @@
     <button
       class="n-sidebar-btn"
       class:is-active={store.navPage === "settings"}
-      data-tooltip="Settings"
+      data-tooltip={$_("shell.navigation.settings")}
       type="button"
-      title="Settings"
-      aria-label="Settings"
+      title={$_("shell.navigation.settings")}
+      aria-label={$_("shell.navigation.settings")}
       onclick={() => setSettingsOpen(true)}
     >
       <span class="n-icon" aria-hidden="true"></span>

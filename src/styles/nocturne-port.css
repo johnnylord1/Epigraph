@@ -2543,6 +2543,17 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   align-items: flex-start;
 }
 
+.aethon-port--settings .settings-row--stacked {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.aethon-port--settings .settings-row--stacked .settings-mini-row__body,
+.aethon-port--settings .settings-row--stacked .settings-input-line {
+  width: 100%;
+  max-width: 100%;
+}
+
 .aethon-port--settings .settings-mini-row--density {
   flex-direction: column;
   align-items: stretch;

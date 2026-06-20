@@ -1,5 +1,34 @@
 export const APP_I18N_MESSAGES = {
   en: {
+    shell: {
+      navigation: {
+        primary: "Primary navigation",
+        home: "Home",
+        library: "Library",
+        browse: "Browse",
+        downloads: "Downloads",
+        settings: "Settings",
+        goHome: "Go to Home",
+        logoAlt: "Aethon logo",
+      },
+      pageState: {
+        status: "Page status",
+        failedTitle: "Page failed to load",
+        failedBody: "Aethon couldn't open this page.",
+        retry: "Retry page",
+        loading: "Loading",
+        openingTitle: "Opening page",
+        openingBody: "Aethon is loading this surface.",
+      },
+      detailState: {
+        status: "Detail status",
+        openingTitle: "Opening details",
+        openingBody: "Aethon is loading this detail page.",
+        failedTitle: "Details failed to load",
+        failedBody: "Aethon couldn't open this detail page.",
+        retry: "Retry details",
+      },
+    },
     settings: {
       general: {
         appLanguage: {
@@ -11,6 +40,35 @@ export const APP_I18N_MESSAGES = {
     },
   },
   "pt-BR": {
+    shell: {
+      navigation: {
+        primary: "Navegacao principal",
+        home: "Inicio",
+        library: "Biblioteca",
+        browse: "Explorar",
+        downloads: "Downloads",
+        settings: "Configuracoes",
+        goHome: "Ir para o inicio",
+        logoAlt: "Logo do Aethon",
+      },
+      pageState: {
+        status: "Status da pagina",
+        failedTitle: "Falha ao carregar a pagina",
+        failedBody: "O Aethon nao conseguiu abrir esta pagina.",
+        retry: "Tentar novamente",
+        loading: "Carregando",
+        openingTitle: "Abrindo pagina",
+        openingBody: "O Aethon esta carregando esta tela.",
+      },
+      detailState: {
+        status: "Status dos detalhes",
+        openingTitle: "Abrindo detalhes",
+        openingBody: "O Aethon esta carregando os detalhes.",
+        failedTitle: "Falha ao carregar os detalhes",
+        failedBody: "O Aethon nao conseguiu abrir os detalhes.",
+        retry: "Tentar novamente",
+      },
+    },
     settings: {
       general: {
         appLanguage: {

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { _ } from "svelte-i18n";
   import { store } from "../../store/state.svelte";
   import type { AethonRestorePlan } from "../../lib/backup/aethonRestorePlanner";
   import type { BackupLaunchIntent } from "../../lib/backup/backupRollout";
@@ -206,12 +207,12 @@
             layout="center"
             tone="danger"
             icon="warning"
-            eyebrow="Page status"
-            title="Page failed to load"
-            body="Aethon couldn't open this page."
+            eyebrow={$_("shell.pageState.status")}
+            title={$_("shell.pageState.failedTitle")}
+            body={$_("shell.pageState.failedBody")}
             detail={pageError}
             actions={[{
-              label: "Retry page",
+              label: $_("shell.pageState.retry"),
               kind: "primary",
               icon: "retry",
               onClick: () => void loadPage(navPage),
@@ -231,9 +232,9 @@
             layout="center"
             tone="info"
             icon="info"
-            eyebrow="Loading"
-            title="Opening page"
-            body="Aethon is loading this surface."
+            eyebrow={$_("shell.pageState.loading")}
+            title={$_("shell.pageState.openingTitle")}
+            body={$_("shell.pageState.openingBody")}
           />
         </div>
       {/if}
@@ -245,12 +246,12 @@
               layout="center"
               tone="danger"
               icon="warning"
-              eyebrow="Page status"
-              title="Page failed to load"
-              body="Aethon couldn't open this page."
+              eyebrow={$_("shell.pageState.status")}
+              title={$_("shell.pageState.failedTitle")}
+              body={$_("shell.pageState.failedBody")}
               detail={pageError}
               actions={[{
-                label: "Retry page",
+                label: $_("shell.pageState.retry"),
                 kind: "primary",
                 icon: "retry",
                 onClick: () => void loadPage(navPage),
@@ -270,9 +271,9 @@
               layout="center"
               tone="info"
               icon="info"
-              eyebrow="Loading"
-              title="Opening page"
-              body="Aethon is loading this surface."
+              eyebrow={$_("shell.pageState.loading")}
+              title={$_("shell.pageState.openingTitle")}
+              body={$_("shell.pageState.openingBody")}
             />
           </div>
         {/if}
@@ -291,9 +292,9 @@
             layout="center"
             tone="info"
             icon="info"
-            eyebrow="Detail status"
-            title="Opening details"
-            body="Aethon is loading this detail page."
+            eyebrow={$_("shell.detailState.status")}
+            title={$_("shell.detailState.openingTitle")}
+            body={$_("shell.detailState.openingBody")}
           />
         </div>
       {:else if detailError}
@@ -302,12 +303,12 @@
             layout="center"
             tone="danger"
             icon="warning"
-            eyebrow="Detail status"
-            title="Details failed to load"
-            body="Aethon couldn't open this detail page."
+            eyebrow={$_("shell.detailState.status")}
+            title={$_("shell.detailState.failedTitle")}
+            body={$_("shell.detailState.failedBody")}
             detail={detailError}
             actions={[{
-              label: "Retry details",
+              label: $_("shell.detailState.retry"),
               kind: "primary",
               icon: "retry",
               onClick: () => detailKey && void loadDetail(detailKey),
