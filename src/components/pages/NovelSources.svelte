@@ -3,6 +3,7 @@
   import { BookOpen } from "phosphor-svelte";
 
   import { addToast, setActiveNovelDetail, store } from "../../store/state.svelte";
+  import { _ } from "../../lib/i18n/runtime";
   import NovelSourceStatusDetails from "../novels/NovelSourceStatusDetails.svelte";
   import { createNovelLibraryId, type InstalledNovelSourceDescriptor, type NovelSourceSearchResult } from "../../lib/novels/domain";
   import { isNovelInLibrary, loadNovelLibraryState, peekNovelLibraryState } from "../../lib/novels/libraryState";
@@ -55,38 +56,38 @@
     switch (activeSourceClassification?.status) {
       case "blocked-by-site":
         return {
-          title: "Source blocked",
+          title: $_("novelSources.errors.blockedTitle"),
           body: store.settings.flareSolverrEnabled
-            ? "This site is rejecting automated requests. Check FlareSolverr and retry the source."
-            : "This source needs FlareSolverr for Cloudflare or anti-bot protection.",
+            ? $_("novelSources.errors.blockedFlareEnabled")
+            : $_("novelSources.errors.blockedFlareDisabled"),
           primaryAction: null as "browse" | "retry-search" | null,
           secondaryAction: null as "browse" | "retry-search" | null,
         };
       case "runtime-gap":
         return {
-          title: "Source not fully supported",
-          body: "This extension needs runtime behavior Aethon does not fully cover yet.",
+          title: $_("novelSources.errors.runtimeGapTitle"),
+          body: $_("novelSources.errors.runtimeGapBody"),
           primaryAction: null as "browse" | "retry-search" | null,
           secondaryAction: submittedQuery ? "retry-search" as const : null,
         };
       case "working-with-known-limitations":
         return {
-          title: "Partial source",
-          body: "Try Browse or a shorter search term.",
+          title: $_("novelSources.errors.partialTitle"),
+          body: $_("novelSources.errors.partialBody"),
           primaryAction: "browse" as const,
           secondaryAction: submittedQuery ? "retry-search" as const : null,
         };
       case "pending":
         return {
-          title: "Source still being checked",
-          body: "The automatic source check has not finished yet.",
+          title: $_("novelSources.errors.pendingTitle"),
+          body: $_("novelSources.errors.pendingBody"),
           primaryAction: null as "browse" | "retry-search" | null,
           secondaryAction: null as "browse" | "retry-search" | null,
         };
       default:
         return {
-          title: "Temporary source failure",
-          body: submittedQuery ? "Try the search again or switch to Browse for this source." : panelError,
+          title: $_("novelSources.errors.temporaryTitle"),
+          body: submittedQuery ? $_("novelSources.errors.temporarySearchBody") : panelError,
           primaryAction: submittedQuery ? "retry-search" as const : "browse" as const,
           secondaryAction: submittedQuery ? "browse" as const : null,
         };
@@ -117,16 +118,16 @@
       || classification?.status === "blocked-by-site"
     ) {
       return summary ?? (store.settings.flareSolverrEnabled
-        ? "This source is currently blocked by site protection. Check FlareSolverr and retry."
-        : "This source needs FlareSolverr for Cloudflare or anti-bot protection.");
+        ? $_("novelSources.errors.blockedCurrentFlareEnabled")
+        : $_("novelSources.errors.blockedFlareDisabled"));
     }
 
     if (classification?.status === "runtime-gap") {
-      return summary ?? "This source still depends on runtime features that Aethon does not fully cover yet.";
+      return summary ?? $_("novelSources.errors.runtimeGapSummary");
     }
 
     if (classification?.status === "working-with-known-limitations") {
-      return summary ?? "This source works with known limitations. Try Browse or a shorter search query.";
+      return summary ?? $_("novelSources.errors.partialSummary");
     }
 
     return message;
@@ -200,7 +201,7 @@
       panelError = message;
       addToast({
         kind: "error",
-        title: "Could not open novel details",
+        title: $_("novelSources.errors.openDetailTitle"),
         body: message,
       });
     } finally {
@@ -232,7 +233,7 @@
   <div class="splitSidebar">
     {#if loadingSources}
       <div class="splitEmpty">
-        <NocturneState layout="compact" tone="info" icon="retry" eyebrow="Novel sources" title="Loading sources" />
+        <NocturneState layout="compact" tone="info" icon="retry" eyebrow={$_("novelSources.eyebrow")} title={$_("novelSources.loading.sources")} />
       </div>
     {:else if sources.length === 0}
       <div class="splitEmpty">
@@ -240,9 +241,9 @@
           layout="compact"
           tone="info"
           icon="plug"
-          eyebrow="Novel sources"
-          title="No trusted sources"
-          body="Install and trust at least one LNReader novel extension in Settings first."
+          eyebrow={$_("novelSources.eyebrow")}
+          title={$_("novelSources.empty.noTrustedTitle")}
+          body={$_("novelSources.empty.noTrustedBody")}
         />
       </div>
     {:else}
@@ -268,7 +269,7 @@
               pluginName={source.name}
               record={sourceClassification}
               badge={sourceBadge}
-              contextLabel="Source status"
+              contextLabel={$_("novelSources.sourceStatus")}
             />
           </div>
         {/each}
@@ -283,9 +284,9 @@
           layout="center"
           tone="info"
           icon="books"
-          eyebrow="Novel sources"
-          title="Browse a source"
-          body="Select a source to see its popular titles, or search within it."
+          eyebrow={$_("novelSources.eyebrow")}
+          title={$_("novelSources.empty.browseSourceTitle")}
+          body={$_("novelSources.empty.browseSourceBody")}
         />
       </div>
     {:else}
@@ -297,11 +298,11 @@
             pluginName={activeSource.name}
             record={activeSourceClassification}
             badge={activeSourceBadge}
-            contextLabel="Source status"
+            contextLabel={$_("novelSources.sourceStatus")}
           />
         </div>
         <button class="mini-btn mini-btnGhost" type="button" onclick={reloadSources} disabled={loadingSources}>
-          Reload
+          {$_("novelSources.actions.reload")}
         </button>
       </div>
 
@@ -311,15 +312,15 @@
           <input
             bind:value={query}
             class="searchInput"
-            placeholder={`Search ${activeSource.name}...`}
+            placeholder={$_("novelSources.search.placeholder", { source: activeSource.name })}
             onkeydown={(event) => event.key === "Enter" && runSearch()}
           />
           {#if query}
             <button class="clearBtn" type="button" onclick={() => { query = ""; submittedQuery = ""; results = []; panelError = null; }}>&times;</button>
           {/if}
         </div>
-        <button class="showMoreBtn" type="button" onclick={runBrowse} disabled={loadingResults}>Browse</button>
-        <button class="searchBtn" type="button" onclick={runSearch} disabled={loadingResults || !query.trim()}>Search</button>
+        <button class="showMoreBtn" type="button" onclick={runBrowse} disabled={loadingResults}>{$_("novelSources.actions.browse")}</button>
+        <button class="searchBtn" type="button" onclick={runSearch} disabled={loadingResults || !query.trim()}>{$_("novelSources.actions.search")}</button>
       </div>
 
       {#if panelError}
@@ -328,32 +329,32 @@
             layout="compact"
             tone="danger"
             icon="warning"
-            eyebrow="Source request"
-            title={sourceFailurePresentation?.title ?? "Source request failed"}
+            eyebrow={$_("novelSources.errors.requestEyebrow")}
+            title={sourceFailurePresentation?.title ?? $_("novelSources.errors.requestFailedTitle")}
             body={sourceFailurePresentation?.body ?? panelError}
             actions={[
-              ...(sourceFailurePresentation?.primaryAction === "browse" ? [{ label: "Browse instead", kind: "primary" as const, icon: "books" as const, disabled: loadingResults, onClick: runBrowse }] : []),
-              ...(sourceFailurePresentation?.primaryAction === "retry-search" ? [{ label: "Retry search", kind: "primary" as const, icon: "retry" as const, disabled: loadingResults || !submittedQuery, onClick: runSearch }] : []),
-              ...(sourceFailurePresentation?.secondaryAction === "browse" ? [{ label: "Browse instead", kind: "secondary" as const, icon: "books" as const, disabled: loadingResults, onClick: runBrowse }] : []),
-              ...(sourceFailurePresentation?.secondaryAction === "retry-search" ? [{ label: "Retry search", kind: "secondary" as const, icon: "retry" as const, disabled: loadingResults || !submittedQuery, onClick: runSearch }] : []),
+              ...(sourceFailurePresentation?.primaryAction === "browse" ? [{ label: $_("novelSources.actions.browseInstead"), kind: "primary" as const, icon: "books" as const, disabled: loadingResults, onClick: runBrowse }] : []),
+              ...(sourceFailurePresentation?.primaryAction === "retry-search" ? [{ label: $_("novelSources.actions.retrySearch"), kind: "primary" as const, icon: "retry" as const, disabled: loadingResults || !submittedQuery, onClick: runSearch }] : []),
+              ...(sourceFailurePresentation?.secondaryAction === "browse" ? [{ label: $_("novelSources.actions.browseInstead"), kind: "secondary" as const, icon: "books" as const, disabled: loadingResults, onClick: runBrowse }] : []),
+              ...(sourceFailurePresentation?.secondaryAction === "retry-search" ? [{ label: $_("novelSources.actions.retrySearch"), kind: "secondary" as const, icon: "retry" as const, disabled: loadingResults || !submittedQuery, onClick: runSearch }] : []),
             ]}
           />
           <NovelSourceStatusDetails
             pluginName={activeSource.name}
             record={activeSourceClassification}
             badge={activeSourceBadge}
-            contextLabel="Source status"
+            contextLabel={$_("novelSources.sourceStatus")}
           />
         </div>
       {:else if openingDetailPath}
         <div class="splitEmpty">
-          <NocturneState layout="compact" tone="info" icon="books" eyebrow="Novel sources" title="Opening novel details" />
+          <NocturneState layout="compact" tone="info" icon="books" eyebrow={$_("novelSources.eyebrow")} title={$_("novelSources.loading.openingDetails")} />
         </div>
       {/if}
 
       {#if loadingResults}
         <div class="splitEmpty">
-          <NocturneState layout="center" tone="info" icon="retry" eyebrow="Novel sources" title="Loading titles" />
+          <NocturneState layout="center" tone="info" icon="retry" eyebrow={$_("novelSources.eyebrow")} title={$_("novelSources.loading.titles")} />
         </div>
       {:else if results.length > 0}
         <div class="tagGrid">
@@ -366,12 +367,12 @@
                   <div class="coverFallback"><BookOpen size={28} weight="duotone" /></div>
                 {/if}
                 {#if isNovelInLibrary(libraryState, createNovelLibraryId(result.sourceId, result.path))}
-                  <span class="inLibBadge">Saved</span>
+                  <span class="inLibBadge">{$_("novelSources.status.saved")}</span>
                 {/if}
               </div>
               <p class="cardTitle">{result.title}</p>
               {#if openingDetailPath === result.path}
-                <span class="sourceLang">Opening...</span>
+                <span class="sourceLang">{$_("novelSources.loading.opening")}</span>
               {/if}
             </button>
           {/each}
@@ -382,11 +383,11 @@
             layout="center"
             tone="info"
             icon="search"
-            eyebrow="Novel sources"
-            title={submittedQuery ? `No results for "${submittedQuery}"` : "Browse or search this source"}
+            eyebrow={$_("novelSources.eyebrow")}
+            title={submittedQuery ? $_("novelSources.empty.noResults", { query: submittedQuery }) : $_("novelSources.empty.browseOrSearchTitle")}
             body={submittedQuery
-              ? "This source may search better with shorter terms, fewer spaces, or no accents. Aethon already retries normalized variations automatically."
-              : "Use Browse for popular titles or Search for a specific novel."}
+              ? $_("novelSources.empty.noResultsBody")
+              : $_("novelSources.empty.browseOrSearchBody")}
           />
         </div>
       {/if}
