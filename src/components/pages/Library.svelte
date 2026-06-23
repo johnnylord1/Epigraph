@@ -134,7 +134,7 @@
   let trackedChapterTotalsByMangaId: Map<number, number> = $state(new Map());
   let allSources: Source[] = $state([]);
   function hasWarmLibrarySnapshot() {
-    return store.libraryMangaSnapshot.length > 0 && store.categories.length > 0;
+    return store.libraryMangaSnapshot.length > 0 || store.categories.length > 0;
   }
 
   let loading = $state(!hasWarmLibrarySnapshot());

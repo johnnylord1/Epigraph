@@ -1789,6 +1789,25 @@ server.maxSourcesInParallel = 6
     }
 
     #[test]
+    fn default_downloads_path_follows_requested_profile() {
+        let main = resolve_downloads_path_for_profile("", Some("main"));
+        let test = resolve_downloads_path_for_profile("", Some("test"));
+        let custom = resolve_downloads_path_for_profile("", Some("sandbox"));
+
+        assert_eq!(
+            main,
+            local_server_profile_root(LocalServerProfile::Main).join("downloads")
+        );
+        assert_eq!(
+            test,
+            local_server_custom_profile_root("test").join("downloads")
+        );
+        assert_eq!(custom, local_server_custom_profile_root("sandbox").join("downloads"));
+        assert_ne!(main, test);
+        assert_ne!(main, custom);
+    }
+
+    #[test]
     fn reconciliation_overlay_root_falls_back_for_non_local_targets() {
         let launch_target = LaunchTargetInfo {
             server_url_override: Some("https://example.com".to_string()),
@@ -2214,11 +2233,21 @@ fn strip_unc(path: PathBuf) -> PathBuf {
 }
 
 fn resolve_downloads_path(downloads_path: &str) -> PathBuf {
+    resolve_downloads_path_for_profile(downloads_path, None)
+}
+
+fn resolve_downloads_path_for_profile(downloads_path: &str, profile_id: Option<&str>) -> PathBuf {
     if !downloads_path.trim().is_empty() {
         return PathBuf::from(downloads_path);
     }
-    // The embedded MAIN server stores downloads below its configured rootDir.
-    local_server_profile_root(LocalServerProfile::Main).join("downloads")
+    let profile_key = local_server_profile_key_from_id(profile_id)
+        .unwrap_or_else(|| "main".to_string());
+    let root = if profile_key == "main" {
+        local_server_profile_root(LocalServerProfile::Main)
+    } else {
+        local_server_custom_profile_root(&profile_key)
+    };
+    root.join("downloads")
 }
 
 #[tauri::command]
@@ -2258,11 +2287,13 @@ fn get_storage_info(downloads_path: String) -> Result<StorageInfo, String> {
     })
 }
 
-/// Returns the resolved default downloads path for the current platform.
-/// This mirrors resolve_downloads_path("") so the frontend can display it.
+/// Returns the resolved default downloads path for the current platform/profile.
+/// This mirrors resolve_downloads_path_for_profile("") so the frontend can display it.
 #[tauri::command]
-fn get_default_downloads_path() -> String {
-    resolve_downloads_path("").to_string_lossy().into_owned()
+fn get_default_downloads_path(profile_id: Option<String>) -> String {
+    resolve_downloads_path_for_profile("", profile_id.as_deref())
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn download_name_key(value: &str) -> String {

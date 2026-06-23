@@ -215,7 +215,23 @@ Treat the current working tree as the source of truth. Several features were imp
     - `npm run test:unit -- src/components/settings/Settings.test.ts src/store/navigation.test.ts src/lib/backup/lnreaderBackup.test.ts` passed with 25 tests.
     - `npm run build` passed with Paraglide compilation.
     - Dev-app screenshots were saved under `.codex-smoke/lnreader-restore-*` and `.codex-smoke/lnreader-backup-panel-*`.
-  - New observed issue: Settings Storage still displays the downloads path as `LocalServerMain\downloads` while a clean `TEST` session is running from `LocalServerTest`. The restore itself uses the correct `profile:test` novels state, but the displayed Storage path/profile label needs a focused follow-up.
+  - Settings Storage now asks Rust for the default downloads path with the active runtime profile id. `MAIN` resolves to the main local-server root and any other profile id, including `TEST`, resolves to its custom profile root for display.
+  - The release/installed Library skeleton blocker was diagnosed and fixed:
+    - root cause: Library treated a warm snapshot as valid only when both manga and categories were present;
+    - release startup could have `633 titles` in the manga snapshot while categories were still hydrating, leaving `loading=true` and keeping the whole Library interaction surface stuck on skeleton cards;
+    - the warm-snapshot gate now accepts either manga or categories, so cards render and the app stays interactive while category membership hydrates in the background.
+  - Validation after the Storage path and Library startup fixes:
+    - `npm test -- --project shell-jsdom src/components/settings/Settings.test.ts` passed with 8 tests.
+    - `cargo test default_downloads_path_follows_requested_profile` passed.
+    - `npm test -- --project shell-jsdom src/components/library/ComicsLibraryBody.test.ts src/components/library/LibraryCardGrid.test.ts` passed with 15 tests.
+    - `npm run build` passed with Paraglide compilation.
+    - Signed release build completed using `C:\Users\jhow-\.tauri\aethon.key`.
+    - Updated installer: `src-tauri/target/release/bundle/nsis/Aethon_0.0.1_x64-setup.exe`.
+    - Updated installer SHA-256: `280156212538FF6F2EAB8185ACDFD62298110819E873FA2028F795FD6C32A325`.
+    - Updated signature SHA-256: `2416B0702A3BE660151AC4324D81E7E4030C3800377ADDF9C602D356D1AD7EBD`.
+    - Real release executable smoke from `src-tauri/target/release/aethon.exe --main` confirmed Library Comics renders real cards, covers, badges, and `633 TITLES` instead of skeleton placeholders.
+    - Silent install of the regenerated NSIS installer succeeded.
+    - Installed-app smoke from `C:\Users\jhow-\AppData\Local\Aethon\aethon.exe --main` confirmed Library Comics also renders real cards, covers, badges, and `633 TITLES` instead of skeleton placeholders.
 
 
 ### Remaining Work
@@ -225,9 +241,7 @@ Treat the current working tree as the source of truth. Several features were imp
   - Add a lightweight CI/catalog guard for new Svelte presentation literals so future native UI strings do not bypass Paraglide.
   - Consider a later focused pass for low-level technical error/log text that is not normally visible in the native UI.
 - Local release readiness before GitHub publishing:
-  - Diagnose and fix the installed/release startup and Library skeleton blocker found during the latest release preflight.
-  - After the fix, rebuild the signed installer and repeat installed-app smoke before publishing.
-  - Re-run one final broad dev-app smoke if additional code changes are made while fixing the release blocker.
+  - Re-run one final broad dev-app smoke if more code changes land before publishing.
 - Books/Novels:
   - Keep EPUB/PDF imports global for release unless the product direction changes to fully isolated multi-workspace profiles.
   - If full profile isolation is desired later, migrate `read_book_library_state` / `write_book_library_state`, imported assets, covers, progress, bookmarks, categories, and UI state to profile-scoped paths with a one-time migration from the current global books state into `MAIN`.
@@ -235,7 +249,6 @@ Treat the current working tree as the source of truth. Several features were imp
 - Backup/restore:
   - Add focused coverage for Tachiyomi/Mihon `.tachibk`, `.proto.gz`, and `.proto` restore/export after the LNReader restore fixes, including progress/bookmarks and source-extension readiness.
   - Add focused coverage for Aethon unified `.aethonbk` export/restore after the per-format flows are green.
-  - Fix the Settings Storage path display mismatch in non-`MAIN` profile sessions.
 - Final GitHub publishing step:
   - Create or select the GitHub repository after local readiness is complete.
   - Create the `v0.0.1` GitHub Release.

@@ -788,7 +788,7 @@
   let defaultDownloadsPath  = $state("");
   $effect(() => {
     if (!isExternalServer) {
-      invoke<string>("get_default_downloads_path").then(p => { defaultDownloadsPath = p; });
+      invoke<string>("get_default_downloads_path", { profileId: currentRuntimeProfileId }).then(p => { defaultDownloadsPath = p; });
     } else {
       defaultDownloadsPath = "";
     }
