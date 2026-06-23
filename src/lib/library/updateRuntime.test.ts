@@ -10,9 +10,11 @@ import {
   showLibraryUpdateProgress,
 } from "./updateRuntime";
 import { store } from "../../store/state.svelte";
+import { applyAppLanguage } from "../i18n/runtime";
 
 describe("library update runtime helpers", () => {
   beforeEach(() => {
+    applyAppLanguage("en");
     vi.restoreAllMocks();
     store.libraryUpdateInFlight = false;
     store.libraryUpdateProgress = null;

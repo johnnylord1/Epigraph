@@ -112,7 +112,7 @@ describe("book library state storage", () => {
 
     const state = await loadBookLibraryState();
 
-    expect(invokeMock).toHaveBeenCalledWith("read_book_library_state");
+    expect(invokeMock).toHaveBeenCalledWith("read_book_library_state", { profileId: "main" });
     expect(state.books[0]?.title).toBe("Reader Contract");
     expect(state.booksCategories[0]?.id).toBe("favorites");
     expect(peekBookLibraryState().books[0]?.title).toBe("Reader Contract");
@@ -123,7 +123,7 @@ describe("book library state storage", () => {
 
     const state = await loadBookLibraryState();
 
-    expect(invokeMock).toHaveBeenCalledWith("read_book_library_state");
+    expect(invokeMock).toHaveBeenCalledWith("read_book_library_state", { profileId: "main" });
     expect(state.books).toHaveLength(0);
     expect(state.bookProgress).toHaveLength(0);
     expect(state.bookBookmarks).toHaveLength(0);
@@ -137,6 +137,7 @@ describe("book library state storage", () => {
     expect(state.books).toHaveLength(1);
     expect(invokeMock).toHaveBeenCalledWith("write_book_library_state", expect.objectContaining({
       contents: expect.stringContaining("\"bookId\": \"epub-demo\""),
+      profileId: "main",
     }));
   });
 
@@ -159,7 +160,29 @@ describe("book library state storage", () => {
     expect(reloaded.books[0]?.title).toBe("Updated Reader Contract");
     expect(reloaded.bookProgress[0]?.progressPercent).toBe(0.8);
     expect(peekBookLibraryState().books[0]?.title).toBe("Updated Reader Contract");
-    expect(invokeMock).toHaveBeenNthCalledWith(1, "read_book_library_state");
-    expect(invokeMock).toHaveBeenNthCalledWith(2, "read_book_library_state");
+    expect(invokeMock).toHaveBeenNthCalledWith(1, "read_book_library_state", { profileId: "main" });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "read_book_library_state", { profileId: "main" });
+  });
+
+  it("keeps desktop book state caches isolated per profile", async () => {
+    const main = createState();
+    const test = {
+      ...createState(),
+      books: createState().books.map((book) => ({ ...book, id: "test-book", title: "Test Profile Book" })),
+      bookProgress: [],
+      updatedAtMs: 30,
+    };
+
+    invokeMock
+      .mockResolvedValueOnce(JSON.stringify(main))
+      .mockResolvedValueOnce(JSON.stringify(test));
+
+    const mainState = await loadBookLibraryState({ profileId: "main" });
+    const testState = await loadBookLibraryState({ profileId: "test" });
+
+    expect(mainState.books[0]?.title).toBe("Reader Contract");
+    expect(testState.books[0]?.title).toBe("Test Profile Book");
+    expect(invokeMock).toHaveBeenNthCalledWith(1, "read_book_library_state", { profileId: "main" });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "read_book_library_state", { profileId: "test" });
   });
 });

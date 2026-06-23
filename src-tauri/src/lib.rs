@@ -1172,10 +1172,24 @@ async fn cache_library_cover(
     Ok(Some(target.to_string_lossy().into_owned()))
 }
 
-pub(crate) fn book_library_state_path() -> Result<PathBuf, String> {
+fn book_library_state_path_for_profile(profile_id: Option<&str>) -> Result<PathBuf, String> {
     let root = books_data_dir();
-    std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
-    Ok(root.join("library-state.json"))
+    let profile_key = profile_id
+        .and_then(sanitize_custom_profile_key)
+        .unwrap_or_else(|| "main".to_string());
+
+    if profile_key == "main" {
+        std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+        return Ok(root.join("library-state.json"));
+    }
+
+    let scoped_root = root.join("profiles").join(profile_key);
+    std::fs::create_dir_all(&scoped_root).map_err(|err| err.to_string())?;
+    Ok(scoped_root.join("library-state.json"))
+}
+
+pub(crate) fn book_library_state_path() -> Result<PathBuf, String> {
+    book_library_state_path_for_profile(Some("main"))
 }
 
 fn migration_journal_state_path() -> Result<PathBuf, String> {
@@ -3234,8 +3248,8 @@ fn read_novel_library_state(
 }
 
 #[tauri::command]
-fn read_book_library_state() -> Result<Option<String>, String> {
-    let path = book_library_state_path()?;
+fn read_book_library_state(profile_id: Option<String>) -> Result<Option<String>, String> {
+    let path = book_library_state_path_for_profile(profile_id.as_deref())?;
 
     if !path.exists() {
         return Ok(None);
@@ -3246,8 +3260,12 @@ fn read_book_library_state() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-fn write_book_library_state(contents: String, app: tauri::AppHandle) -> Result<String, String> {
-    let path = book_library_state_path()?;
+fn write_book_library_state(
+    contents: String,
+    app: tauri::AppHandle,
+    profile_id: Option<String>,
+) -> Result<String, String> {
+    let path = book_library_state_path_for_profile(profile_id.as_deref())?;
     let previous_contents = fs::read_to_string(&path).ok();
     std::fs::write(&path, contents).map_err(|err| err.to_string())?;
     let next_contents = fs::read_to_string(&path).map_err(|err| err.to_string())?;

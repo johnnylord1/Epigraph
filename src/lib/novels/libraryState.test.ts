@@ -118,6 +118,21 @@ describe("novel library state storage", () => {
     expect(peekNovelLibraryState(SCOPE).entries[0]?.title).toBe("MANACLED");
   });
 
+  it("uses the main local profile for empty desktop scopes", async () => {
+    invokeMock.mockResolvedValueOnce(JSON.stringify({
+      ...createState(),
+      scopeKey: "profile:main",
+    }));
+
+    const state = await loadNovelLibraryState();
+
+    expect(invokeMock).toHaveBeenCalledWith("read_novel_library_state", {
+      profileId: "main",
+      serverUrl: null,
+    });
+    expect(state.scopeKey).toBe("profile:main");
+  });
+
   it("migrates legacy localStorage novels state into desktop storage when no file exists yet", async () => {
     const legacy = createState();
     localStorage.setItem("aethon-novels-library-state", JSON.stringify({

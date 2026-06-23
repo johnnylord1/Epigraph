@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { translate } from "../../lib/i18n/runtime";
+  import { _ } from "../../lib/i18n/runtime";
   import { ArrowLeft, MagnifyingGlass, ArrowLeft as Prev, ArrowRight as Next, BookmarkSimple, FolderSimplePlus, Folder } from "phosphor-svelte";
   import { gql } from "../../lib/client";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
@@ -71,7 +73,7 @@
 
   function buildCtxItems(m: Manga): MenuEntry[] {
     return [
-      { label: m.inLibrary ? "In Library" : "Add to library", icon: BookmarkSimple, disabled: m.inLibrary,
+      { label: m.inLibrary ? translate("detail_status_inLibrary") : translate("ui_addToLibrary"), icon: BookmarkSimple, disabled: m.inLibrary,
         onClick: () => gql(UPDATE_MANGA, { id: m.id, inLibrary: true })
           .then(() => mangas = mangas.map((x) => x.id === m.id ? { ...x, inLibrary: true } : x))
           .catch(console.error) },
@@ -83,7 +85,7 @@
         })),
       ] : []),
       { separator: true },
-      { label: "New folder & add", icon: FolderSimplePlus, onClick: async () => {
+      { label: translate("ui_newFolderAdd"), icon: FolderSimplePlus, onClick: async () => {
         const name = prompt("Folder name:");
         if (!name?.trim()) return;
         const res = await gql<{ createCategory: { category: Category } }>(CREATE_CATEGORY, { name: name.trim() }).catch(console.error);
@@ -101,7 +103,7 @@
 <div class="root">
   <div class="header">
     <button class="back" onclick={() => setActiveSource(null)}>
-      <ArrowLeft size={13} weight="light" /><span>Sources</span>
+      <ArrowLeft size={13} weight="light" /><span>{$_("home_metrics_sources")}</span>
     </button>
     <span class="source-name">{store.activeSource.displayName}</span>
   </div>
@@ -113,11 +115,11 @@
           {mode.charAt(0) + mode.slice(1).toLowerCase()}
         </button>
       {/each}
-      {#if search}<button class="tab active">Search</button>{/if}
+      {#if search}<button class="tab active">{$_("novelSources_actions_search")}</button>{/if}
     </div>
     <div class="search-wrap">
       <MagnifyingGlass size={12} class="search-icon" weight="light" />
-      <input class="search" placeholder="Search source…" bind:value={searchInput}
+      <input class="search" placeholder={$_("ui_searchSource")} bind:value={searchInput}
         onkeydown={(e) => e.key === "Enter" && submitSearch()} />
     </div>
   </div>
@@ -135,7 +137,7 @@
         tone="info"
         icon="search"
         eyebrow="Source browse"
-        title="No results"
+        title={$_("ui_noResults")}
         body="Try another source, page, or search term."
       />
     </div>
@@ -146,7 +148,7 @@
           oncontextmenu={(e) => openCtx(e, m)}>
           <div class="cover-wrap">
             <img src={resolveMangaCoverUrl(m, { context: "source", persistence: "memory" })} alt={m.title} class="cover" />
-            {#if m.inLibrary}<span class="in-library-badge">In Library</span>{/if}
+            {#if m.inLibrary}<span class="in-library-badge">{$_("detail_status_inLibrary")}</span>{/if}
           </div>
           <p class="title">{m.title}</p>
         </button>
@@ -157,11 +159,11 @@
   {#if !loading && (page > 1 || hasNextPage)}
     <div class="pagination">
       <button class="page-btn" onclick={() => page = Math.max(1, page - 1)} disabled={page === 1}>
-        <Prev size={13} weight="light" /> Prev
+        <Prev size={13} weight="light" /> {$_("library_pagination_prev")}
       </button>
       <span class="page-num">{page}</span>
       <button class="page-btn" onclick={() => page++} disabled={!hasNextPage}>
-        Next <Next size={13} weight="light" />
+        {$_("library_pagination_next")} <Next size={13} weight="light" />
       </button>
     </div>
   {/if}

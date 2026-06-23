@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { translate } from "../../lib/i18n/runtime";
+  import { _ } from "../../lib/i18n/runtime";
   import { onDestroy } from "svelte";
   import { BookmarkSimple, FolderSimplePlus, Folder, Sparkle, ArrowsClockwise } from "phosphor-svelte";
   import { gql } from "../../lib/client";
@@ -278,7 +280,7 @@
   function buildCtxItems(m: Manga): MenuEntry[] {
     return [
       {
-        label: m.inLibrary ? "In Library" : "Add to library",
+        label: m.inLibrary ? translate("detail_status_inLibrary") : translate("ui_addToLibrary"),
         icon: BookmarkSimple, disabled: m.inLibrary,
         onClick: () => gql(UPDATE_MANGA, { id: m.id, inLibrary: true })
           .then(() => {
@@ -296,7 +298,7 @@
       ] : []),
       { separator: true },
       {
-        label: "New folder & add", icon: FolderSimplePlus,
+        label: translate("ui_newFolderAdd"), icon: FolderSimplePlus,
         onClick: async () => {
           const n = prompt("Folder name:");
           if (!n?.trim()) return;
@@ -319,7 +321,7 @@
 
     {#if !embedded}
       <div class="header">
-        <span class="heading">Featured</span>
+        <span class="heading">{$_("ui_featured")}</span>
         <div class="tab-strip">
           {#each GENRE_TABS as tab (tab)}
             <button
@@ -332,7 +334,7 @@
             </button>
           {/each}
         </div>
-        <button class="refresh-btn" class:spinning={refreshing} onclick={refresh} title="Refresh results" disabled={refreshing}>
+        <button class="refresh-btn" class:spinning={refreshing} onclick={refresh} title={$_("ui_refreshResults")} disabled={refreshing}>
           <ArrowsClockwise size={13} weight="bold" />
         </button>
       </div>
@@ -341,12 +343,12 @@
     {#if embedded}
       <div class="embedded-header">
         <div class="embedded-copy">
-          <span class="heading">Discover New Series</span>
-          <p class="embedded-subtitle">From <span class="embedded-highlight">{rotatedSources()[0]?.displayName ?? "sources"}</span> · {currentGenre === "All" ? "Popular" : currentGenre}</p>
+          <span class="heading">{$_("ui_discoverNewSeries")}</span>
+          <p class="embedded-subtitle">{$_("ui_from")} <span class="embedded-highlight">{rotatedSources()[0]?.displayName ?? "sources"}</span> · {currentGenre === "All" ? "Popular" : currentGenre}</p>
         </div>
         <div class="n-soft-pill embedded-pill">
           <span class="material-symbols-outlined text-xs" style="color: var(--n-primary-container);">analytics</span>
-          <span>{visibleGrid.length} Titles</span>
+          <span>{visibleGrid.length} {$_("home_metrics_titles")}</span>
         </div>
       </div>
     {/if}
@@ -365,7 +367,7 @@
           tone="danger"
           icon="plug"
           eyebrow="Discover"
-          title="Could not reach Suwayomi"
+          title={$_("library_error_title")}
           body="Connect the server and retry to load recommendations."
           actions={[{ label: "Retry", kind: "primary", icon: "retry", onClick: loadAll }]}
         />
@@ -393,9 +395,9 @@
                   <img src={resolveMangaCoverUrl(m, { context: "discover", persistence: "memory" })} alt={m.title} loading="lazy" decoding="async" />
                 </div>
                 {#if m.inLibrary}
-                  <div class="source-metric-banner" aria-label="In Library">
+                  <div class="source-metric-banner" aria-label={$_("detail_status_inLibrary")}>
                     <div class="source-metric-pill">
-                      <span class="source-metric-unread pill-only">In Library</span>
+                      <span class="source-metric-unread pill-only">{$_("detail_status_inLibrary")}</span>
                     </div>
                   </div>
                 {/if}
@@ -415,7 +417,7 @@
           <div class="embedded-load-more">
             <button class="n-btn-secondary embedded-load-more-btn gap-2" onclick={refresh}>
               <span class="material-symbols-outlined text-base">expand_more</span>
-              Load more titles
+              {$_("ui_loadMoreTitles")}
             </button>
           </div>
         {/if}

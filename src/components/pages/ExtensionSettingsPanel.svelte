@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { _ } from "../../lib/i18n/runtime";
   import { X } from "phosphor-svelte";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import type { ManagedExtension } from "../../lib/managedExtensions";
@@ -63,16 +64,16 @@
         onerror={(event) => applyServiceIconFallback(event, "extension")}
       />
       <div class="identityCopy">
-        <p class="eyebrow">Extension settings</p>
+        <p class="eyebrow">{$_("ui_extensionSettings")}</p>
         <h2>{extension.name}</h2>
         <div class="extensionMeta">
           <span>{extension.lang.toUpperCase()}</span>
           <span>v{extension.versionName}</span>
-          {#if extension.hasUpdate}<span>Update ready</span>{/if}
+          {#if extension.hasUpdate}<span>{$_("ui_updateReady")}</span>{/if}
         </div>
       </div>
     </div>
-    <button class="closeBtn" type="button" onclick={onClose} aria-label="Close extension settings">
+    <button class="closeBtn" type="button" onclick={onClose} aria-label={$_("ui_closeExtensionSettings")}>
       <X size={15} weight="bold" />
     </button>
   </header>
@@ -81,24 +82,24 @@
 
   <section class="detailsSection">
     <div class="detailTopline">
-      <span>Extension details</span>
+      <span>{$_("ui_extensionDetails")}</span>
       <small>{originLabel}</small>
     </div>
     <div class="detailsGrid">
       <div class="detailItem">
-        <span class="fieldLabel">Package</span>
+        <span class="fieldLabel">{$_("ui_package")}</span>
         <strong>{extension.pkgName}</strong>
       </div>
       <div class="detailItem">
-        <span class="fieldLabel">Install state</span>
+        <span class="fieldLabel">{$_("ui_installState")}</span>
         <strong>{installStateLabel}</strong>
       </div>
       <div class="detailItem">
-        <span class="fieldLabel">Language</span>
+        <span class="fieldLabel">{$_("sources_table_language")}</span>
         <strong>{extension.lang.toUpperCase()}</strong>
       </div>
       <div class="detailItem">
-        <span class="fieldLabel">Version</span>
+        <span class="fieldLabel">{$_("sources_table_version")}</span>
         <strong>v{extension.versionName}</strong>
       </div>
       <div class="detailItem detailItemWide">
@@ -106,17 +107,17 @@
         <strong>{repositoryLabel}</strong>
       </div>
       <div class="detailItem detailItemWide">
-        <span class="fieldLabel">{extension.kind === "novels" ? "Plugin artifact" : "APK package"}</span>
+        <span class="fieldLabel">{extension.kind === "novels" ? $_("ui_pluginArtifact") : $_("ui_apkPackage")}</span>
         <strong>{artifactLabel}</strong>
       </div>
       {#if extension.kind === "novels" && extension.novelPluginId}
         <div class="detailItem detailItemWide">
-          <span class="fieldLabel">Novel plugin id</span>
+          <span class="fieldLabel">{$_("ui_novelPluginId")}</span>
           <strong>{extension.novelPluginId}</strong>
         </div>
       {/if}
       {#if extension.isObsolete}
-        <div class="detailWarning">This extension is marked obsolete by the repository metadata.</div>
+        <div class="detailWarning">{$_("ui_thisExtensionIsMarkedObsoleteByTheRepository")}</div>
       {/if}
     </div>
   </section>
@@ -124,20 +125,20 @@
   {#if !extension.isInstalled}
     <section class="availablePanel">
       <button class="primaryCta" type="button" disabled={busy} onclick={() => onInstall(extension)}>
-        {busy ? "Installing..." : "Install extension"}
+        {busy ? "Installing..." : $_("ui_installExtension")}
       </button>
     </section>
   {:else}
     <section class="settingsSection">
       <div class="sectionTitle">
-        <span>Runtime</span>
-        <small>Autosaved</small>
+        <span>{$_("ui_runtime")}</span>
+        <small>{$_("ui_autosaved")}</small>
       </div>
 
       <label class="toggleRow">
         <span>
-          <strong>Enabled</strong>
-          <small>Allow this extension to appear across source-aware views.</small>
+          <strong>{$_("ui_enabled")}</strong>
+          <small>{$_("ui_allowThisExtensionToAppearAcrossSourceAware")}</small>
         </span>
         <input
           type="checkbox"
@@ -147,20 +148,20 @@
       </label>
 
       <label class="formRow">
-        <span>Sync interval</span>
+        <span>{$_("ui_syncInterval")}</span>
         <select
           value={config.syncInterval}
           onchange={(event) => update({ syncInterval: (event.currentTarget as HTMLSelectElement).value as MockExtensionSettings["syncInterval"] })}
         >
-          <option value="manual">Manual</option>
-          <option value="hourly">Hourly</option>
-          <option value="daily">Daily</option>
-          <option value="weekly">Weekly</option>
+          <option value="manual">{$_("ui_manual")}</option>
+          <option value="hourly">{$_("ui_hourly")}</option>
+          <option value="daily">{$_("ui_daily")}</option>
+          <option value="weekly">{$_("ui_weekly")}</option>
         </select>
       </label>
 
       <label class="formRow">
-        <span>Language preference</span>
+        <span>{$_("ui_languagePreference")}</span>
         <input
           value={config.languagePref}
           placeholder={extension.lang}
@@ -170,8 +171,8 @@
 
       <label class="toggleRow">
         <span>
-          <strong>Auto update</strong>
-          <small>Keep this extension updated when repository metadata changes.</small>
+          <strong>{$_("ui_autoUpdate")}</strong>
+          <small>{$_("ui_keepThisExtensionUpdatedWhenRepositoryMetadataChanges")}</small>
         </span>
         <input
           type="checkbox"
@@ -183,24 +184,24 @@
 
     <section class="settingsSection">
       <div class="sectionTitle">
-        <span>Credentials</span>
-        <small>Mock local state</small>
+        <span>{$_("ui_credentials")}</span>
+        <small>{$_("ui_mockLocalState")}</small>
       </div>
 
       <label class="formRow">
-        <span>Username</span>
+        <span>{$_("ui_username")}</span>
         <input
           value={config.credentials.username}
-          placeholder="Optional username"
+          placeholder={$_("ui_optionalUsername")}
           oninput={(event) => update({ credentials: { username: (event.currentTarget as HTMLInputElement).value } })}
         />
       </label>
 
       <label class="formRow">
-        <span>Token</span>
+        <span>{$_("ui_token")}</span>
         <input
           value={config.credentials.token}
-          placeholder="Optional token"
+          placeholder={$_("ui_optionalToken")}
           type="password"
           oninput={(event) => update({ credentials: { token: (event.currentTarget as HTMLInputElement).value } })}
         />
@@ -208,7 +209,7 @@
     </section>
 
     <footer class="settingsFooter">
-      <span>Last local save</span>
+      <span>{$_("ui_lastLocalSave")}</span>
       <strong>{new Date(config.updatedAt).toLocaleString()}</strong>
     </footer>
   {/if}

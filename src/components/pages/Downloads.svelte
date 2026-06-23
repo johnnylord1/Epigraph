@@ -608,7 +608,7 @@
   let storageSummary: string = $derived.by(() =>
     storageInfo
       ? `${fmtBytes(storageInfo.manga_bytes)} / ${fmtBytes(storageInfo.free_bytes)} free`
-      : "—",
+      : "ï¿½",
   );
   let speedSummary: string = $derived(
     activeCount === 0 ? $_("downloads.summary.idle") : observedSpeedPerSecond === null ? $_("downloads.summary.measuring") : `${formatObservedSpeed(observedSpeedPerSecond)}/s`,

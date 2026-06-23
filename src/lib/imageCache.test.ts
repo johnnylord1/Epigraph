@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   acquireResolvedMediaUrl,
+  getImageCacheStats,
   preloadBlobUrls,
   releaseResolvedMediaUrl,
   requiresAuthenticatedMediaFetch,
@@ -162,10 +163,43 @@ describe("imageCache", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
 
     action.destroy?.();
+    expect(getImageCacheStats().activeLeaseCount).toBe(0);
     resetImageCache();
 
     expect(revokeObjectUrlMock).toHaveBeenCalledWith("blob:first");
     expect(revokeObjectUrlMock).toHaveBeenCalledWith("blob:second");
+  });
+
+  it("releases an obsolete async lease after the image source changes", async () => {
+    updateSettings({
+      serverAuthEnabled: true,
+      serverAuthUser: "demo",
+      serverAuthPass: "secret",
+    });
+
+    let resolveFirst: ((response: Response) => void) | null = null;
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => {
+      resolveFirst = resolve;
+    }));
+    fetchMock.mockResolvedValueOnce(new Response(new Blob(["second"]), { status: 200 }));
+
+    const node = {
+      src: "",
+      removeAttribute: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    } as unknown as HTMLImageElement;
+    const action = resolvedImage(node, "http://127.0.0.1:4567/page-stale");
+    action.update?.("http://127.0.0.1:4567/page-current");
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    resolveFirst?.(new Response(new Blob(["first"]), { status: 200 }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(getImageCacheStats().activeLeaseCount).toBe(1);
+    action.destroy?.();
+    expect(getImageCacheStats().activeLeaseCount).toBe(0);
   });
 
   it("resolvedImage does not reapply the same failed source until the url changes", async () => {

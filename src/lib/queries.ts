@@ -11,6 +11,9 @@ export const GET_LIBRARY = `
         inLibrary
         downloadCount
         unreadCount
+        chapters {
+          totalCount
+        }
         status
         genre
         sourceId

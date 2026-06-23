@@ -20,6 +20,7 @@ const {
     title: fallbackTitle,
     author: null,
     description: null,
+    genres: ["Fantasy", "Adventure"],
     cover: {
       mediaType: "image/jpeg",
       ext: "jpg",
@@ -83,6 +84,7 @@ beforeEach(() => {
     title: fallbackTitle,
     author: null,
     description: null,
+    genres: ["Fantasy", "Adventure"],
     cover: {
       mediaType: "image/jpeg",
       ext: "jpg",
@@ -111,6 +113,7 @@ function makeBook(overrides: Partial<BookEntry> = {}): BookEntry {
     title: "Example",
     author: null,
     description: null,
+    genres: ["Fantasy"],
     coverPath: "C:\\books\\cover.jpg",
     subtype: "epub",
     createdAt: 0,
@@ -213,6 +216,41 @@ describe("needsCanonicalBookMigration", () => {
           sectionCount: 1,
           tocCount: 1,
           spineCount: 1,
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("requires migration for canonical EPUBs that still lack genres", () => {
+    expect(
+      needsCanonicalBookMigration(
+        makeBook({
+          coverUrl: undefined,
+          toc: undefined,
+          spine: undefined,
+          sectionsSummary: [{ id: "s1", label: "Chapter 1", href: "OPS/ch1.xhtml", depth: 0 }],
+          sectionCount: 1,
+          tocCount: 1,
+          spineCount: 1,
+          genres: [],
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not retry EPUB genre backfill once metadata was scanned", () => {
+    expect(
+      needsCanonicalBookMigration(
+        makeBook({
+          coverUrl: undefined,
+          toc: undefined,
+          spine: undefined,
+          sectionsSummary: [{ id: "s1", label: "Chapter 1", href: "OPS/ch1.xhtml", depth: 0 }],
+          sectionCount: 1,
+          tocCount: 1,
+          spineCount: 1,
+          genres: [],
+          metadataBackfillVersion: 1,
         }),
       ),
     ).toBe(false);
@@ -326,16 +364,41 @@ describe("BookAssetResolver.ensureCanonicalBookEntry", () => {
     });
   });
 
+  it("backfills EPUB genres without changing already canonical visual fields", async () => {
+    const patch = await BookAssetResolver.ensureCanonicalBookEntry(
+      makeBook({
+        coverPath: "C:\\books\\cover.jpg",
+        coverUrl: undefined,
+        toc: undefined,
+        spine: undefined,
+        sectionsSummary: [{ id: "s1", label: "Chapter 1", href: "OPS/ch1.xhtml", depth: 0 }],
+        sectionCount: 1,
+        tocCount: 1,
+        spineCount: 1,
+        genres: [],
+      }),
+    );
+
+    expect(mockedReadFileAsArrayBuffer).toHaveBeenCalledWith("C:\\books\\example.epub");
+    expect(mockedParseEpubArchive).toHaveBeenCalledOnce();
+    expect(mockedWriteBookCover).not.toHaveBeenCalled();
+    expect(patch).toEqual({
+      genres: ["Fantasy", "Adventure"],
+      metadataBackfillVersion: 1,
+    });
+  });
+
   it("migrates a legacy local book into the canonical asset model in one pass", async () => {
     const patch = await BookAssetResolver.ensureCanonicalBookEntry(
       makeBook({
         assetFingerprint: undefined,
+        genres: [],
         coverPath: null,
         coverUrl: "data:image/jpeg;base64,Zm9vYmFyYmF6cXV4cXV1eA==Zm9vYmFyYmF6cXV4cXV1eA==",
       }),
     );
 
-    expect(mockedReadFileAsArrayBuffer).not.toHaveBeenCalled();
+    expect(mockedReadFileAsArrayBuffer).toHaveBeenCalledWith("C:\\books\\example.epub");
     expect(mockedWriteBookCover).toHaveBeenCalledWith(
       "book-1",
       "Zm9vYmFyYmF6cXV4cXV1eA==Zm9vYmFyYmF6cXV4cXV1eA==",
@@ -349,6 +412,8 @@ describe("BookAssetResolver.ensureCanonicalBookEntry", () => {
       sectionCount: 1,
       tocCount: 1,
       spineCount: 1,
+      genres: ["Fantasy", "Adventure"],
+      metadataBackfillVersion: 1,
     });
     expect(mockedComputeFileSha256).toHaveBeenCalledWith("C:\\books\\example.epub");
     expect(patch?.assetFingerprint).toBe("native-file-hash");

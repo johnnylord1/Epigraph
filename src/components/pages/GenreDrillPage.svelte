@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { translate } from "../../lib/i18n/runtime";
+  import { _ } from "../../lib/i18n/runtime";
   import { ArrowLeft, BookmarkSimple, FolderSimplePlus, Folder, CircleNotch } from "phosphor-svelte";
   import { untrack } from "svelte";
   import { gql } from "../../lib/client";
@@ -160,7 +162,7 @@
 
   function buildCtxItems(m: Manga): MenuEntry[] {
     return [
-      { label: m.inLibrary ? "In Library" : "Add to library", icon: BookmarkSimple, disabled: m.inLibrary,
+      { label: m.inLibrary ? translate("detail_status_inLibrary") : translate("ui_addToLibrary"), icon: BookmarkSimple, disabled: m.inLibrary,
         onClick: () => gql(UPDATE_MANGA, { id: m.id, inLibrary: true }).then(() => { sourceManga = sourceManga.map((x) => x.id === m.id ? { ...x, inLibrary: true } : x); cache.clear(CACHE_KEYS.LIBRARY); }).catch(console.error) },
       ...(categories.length > 0 ? [
         { separator: true } as MenuEntry,
@@ -170,7 +172,7 @@
         })),
       ] : []),
       { separator: true },
-      { label: "New folder & add", icon: FolderSimplePlus, onClick: async () => {
+      { label: translate("ui_newFolderAdd"), icon: FolderSimplePlus, onClick: async () => {
         const name = prompt("Folder name:");
         if (!name?.trim()) return;
         const res = await gql<{ createCategory: { category: Category } }>(
@@ -192,14 +194,14 @@
 <div class="root">
   <div class="header">
     <button class="back" onclick={() => { setGenreFilter(""); setNavPage(prevNavPage); }}>
-      <ArrowLeft size={13} weight="light" /><span>Back</span>
+      <ArrowLeft size={13} weight="light" /><span>{$_("ui_back")}</span>
     </button>
     <span class="title">{label}</span>
     {#if !loadingInitial || filtered.length > 0}
-      <span class="result-count">{visibleItems.length}{filtered.length > visibleCount ? "+" : ""} of {filtered.length}</span>
+      <span class="result-count">{visibleItems.length}{filtered.length > visibleCount ? "+" : ""} {$_("ui_of")} {filtered.length}</span>
     {/if}
     {#if !loadingInitial && hasMoreNetwork}
-      <span class="loading-hint">More loading…</span>
+      <span class="loading-hint">{$_("ui_moreLoading")}</span>
     {/if}
   </div>
 
@@ -220,7 +222,7 @@
         <button class="card" onclick={() => setPreviewManga(m)} oncontextmenu={(e) => { e.stopPropagation(); openCtx(e, m); }}>
           <div class="cover-wrap">
             <img src={resolveMangaCoverUrl(m, { context: "discover", persistence: m.inLibrary ? "persistent" : "memory", cacheGeneration: store.libraryCoverCacheGeneration })} alt={m.title} class="cover" loading="lazy" decoding="async" />
-            {#if m.inLibrary}<span class="in-library-badge">Saved</span>{/if}
+            {#if m.inLibrary}<span class="in-library-badge">{$_("novelSources_status_saved")}</span>{/if}
           </div>
           <p class="card-title">{m.title}</p>
         </button>
@@ -228,7 +230,7 @@
       {#if hasMore}
         <div class="show-more-cell">
           <button class="show-more-btn" onclick={loadMore} disabled={loadingMore}>
-            {#if loadingMore}<CircleNotch size={13} weight="light" class="anim-spin" /> Loading…{:else}Show more{/if}
+            {#if loadingMore}<CircleNotch size={13} weight="light" class="anim-spin" /> {$_("ui_loading_33ce4174")}{:else}{$_("ui_showMore")}{/if}
           </button>
         </div>
       {/if}

@@ -8,9 +8,9 @@ import {
 } from "../localProfiles";
 import type { AethonPayloadRestorePlan, AethonRestorePlan } from "./aethonRestorePlanner";
 
-export type BackupExportMode = "unified" | "manga" | "novels" | "books" | "app";
+export type BackupExportMode = "unified" | "manga" | "manga-proto-gz" | "manga-proto" | "novels" | "novels-lnreader" | "books" | "app";
 export type RestoreTargetMode = "other-local-profile" | "current-profile";
-export type BackupImportKind = "aethon" | "manga";
+export type BackupImportKind = "aethon" | "manga" | "novels-lnreader";
 export type BackupExecutionSelection = Record<string, boolean>;
 
 export interface BackupLaunchIntent {
@@ -91,8 +91,10 @@ export function buildRestoreRelaunchArgs(input: {
   const args = [`--${input.targetProfileId}`];
   if (input.intent.kind === "aethon") {
     args.push(`--restore-aethon-backup=${input.intent.path}`);
-  } else {
+  } else if (input.intent.kind === "manga") {
     args.push(`--restore-manga-backup=${input.intent.path}`);
+  } else {
+    args.push(`--audit-novels-backup=${input.intent.path}`);
   }
   args.push("--restore-handoff");
   if (input.intent.sourceProfileId) {
@@ -109,10 +111,11 @@ export function detectBackupImportKind(path: string | null | undefined): BackupI
   if (normalized.endsWith(".tachibk") || normalized.endsWith(".proto.gz") || normalized.endsWith(".proto")) {
     return "manga";
   }
+  if (normalized.endsWith(".zip")) return "novels-lnreader";
   return null;
 }
 
-export function normalizeBackupSavePath(path: string, extension: ".aethonbk" | ".tachibk"): string {
+export function normalizeBackupSavePath(path: string, extension: ".aethonbk" | ".tachibk" | ".proto.gz" | ".proto" | ".zip"): string {
   const trimmed = path.trim();
   if (!trimmed) return trimmed;
   return trimmed.toLowerCase().endsWith(extension) ? trimmed : `${trimmed}${extension}`;

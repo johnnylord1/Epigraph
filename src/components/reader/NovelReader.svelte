@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { translate } from "../../lib/i18n/runtime";
+  import { _ } from "../../lib/i18n/runtime";
   import { onDestroy, onMount, tick, untrack } from "svelte";
   import { ArrowLeft, ArrowRight, BookmarkSimple, BookOpen, CaretLeft, CaretRight, CircleNotch, SlidersHorizontal, X } from "phosphor-svelte";
   import { addToast, bumpContentSetupVersion, closeNovelReader, setActiveNovelDetail, setSettingsOpen, store, updateSettings } from "../../store/state.svelte";
@@ -76,7 +78,7 @@
   const sliderValue = $derived(Math.max(1, currentChapterIndex + 1));
   const sliderPct = $derived(sliderMax > 1 ? ((sliderValue - 1) / (sliderMax - 1)) * 100 : 0);
   const progressLabel = $derived.by(() => {
-    if (!currentNovel || currentChapterIndex < 0) return "Chapter";
+    if (!currentNovel || currentChapterIndex < 0) return $_("ui_chapter");
     const percent = currentStats ? Math.round(currentStats.progressPercent * 100) : Math.round((sliderValue / sliderMax) * 100);
     return `${sliderValue} / ${sliderMax} - ${percent}%`;
   });
@@ -107,8 +109,8 @@
     if (!error) return "";
     if (!readerErrorIsSourceChallenge) return error;
     return store.settings.flareSolverrEnabled
-      ? "This LNReader source is still blocked by site protection. Check FlareSolverr and retry the chapter."
-      : "This LNReader source needs FlareSolverr for Cloudflare or anti-bot protection.";
+      ? $_("reader.novel.sourceStillBlocked")
+      : $_("reader.novel.sourceNeedsFlaresolverr");
   });
 
   async function startFlareSolverrForChapter() {
@@ -116,16 +118,16 @@
       await startLocalFlareSolverrAndEnable();
       addToast({
         kind: "success",
-        title: "FlareSolverr enabled",
-        body: "Retry the chapter after the local service is ready.",
+        title: translate("ui_flaresolverrEnabled"),
+        body: translate("ui_retryTheChapterAfterTheLocalServiceIs"),
       });
     } catch (startError) {
       addToast({
         kind: "error",
-        title: "FlareSolverr unavailable",
-        body: startError instanceof Error ? startError.message : "Open Settings to configure FlareSolverr.",
+        title: translate("ui_flaresolverrUnavailable"),
+        body: startError instanceof Error ? startError.message : translate("ui_openSettingsToConfigureFlaresolverr"),
         duration: 7000,
-        action: { label: "Open settings", run: () => setSettingsOpen(true) },
+        action: { label: translate("detail_actions_openSettings"), run: () => setSettingsOpen(true) },
       });
     }
   }
@@ -237,7 +239,7 @@
     bumpContentSetupVersion();
     addToast({
       kind: "info",
-      title: currentChapterBookmarked ? "Bookmark removed" : "Bookmark saved",
+      title: currentChapterBookmarked ? translate("ui_bookmarkRemoved") : translate("ui_bookmarkSaved"),
       body: activeReader.chapterTitle,
     });
   }
@@ -299,8 +301,8 @@
     if (!activeReader) {
       addToast({
         kind: "error",
-        title: "Novel reader could not start",
-        body: "No active chapter was selected.",
+        title: translate("ui_novelReaderCouldNotStart"),
+        body: translate("ui_noActiveChapterWasSelected"),
       });
     }
   });
@@ -313,7 +315,7 @@
 {#if activeReader}
   <ReaderHud
     bind:toolsOpen={toolsOpen}
-    title={currentNovel?.title ?? "Novel"}
+    title={currentNovel?.title ?? $_("ui_novel")}
     chapterTitle={activeReader?.chapterTitle ?? ""}
     progressLabel={progressLabel}
     sliderValue={sliderValue}
@@ -341,61 +343,61 @@
         <dl>
           {#if activeSubPanel === "main"}
             <div class="popover-tts-row" onclick={() => activeSubPanel = "appearance"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "appearance"; }}>
-              <dt>Appearance</dt>
+              <dt>{$_("ui_appearance")}</dt>
               <dd>{proseTheme} <span class="popover-chevron">&gt;</span></dd>
             </div>
             <div class="popover-tts-row" onclick={() => activeSubPanel = "typography"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "typography"; }}>
-              <dt>Typography</dt>
-              <dd>{proseFontSize}px · {proseLineHeight.toFixed(2)} <span class="popover-chevron">&gt;</span></dd>
+              <dt>{$_("ui_typography")}</dt>
+              <dd>{proseFontSize}{$_("ui_px")} {proseLineHeight.toFixed(2)} <span class="popover-chevron">&gt;</span></dd>
             </div>
             <div class="popover-tts-row" onclick={() => activeSubPanel = "layout"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "layout"; }}>
-              <dt>Layout</dt>
-              <dd>{store.settings.proseReaderFullWidth ? "Full" : `${proseContentWidth}px`} · {proseTextAlign} <span class="popover-chevron">&gt;</span></dd>
+              <dt>{$_("library_display_layout")}</dt>
+              <dd>{store.settings.proseReaderFullWidth ? $_("ui_full") : `${proseContentWidth}px`} · {proseTextAlign} <span class="popover-chevron">&gt;</span></dd>
             </div>
             <div class="popover-tts-row" onclick={() => activeSubPanel = "tts"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "tts"; }}>
-              <dt>Text to Speech</dt>
-              <dd>Configure <span class="popover-chevron">&gt;</span></dd>
+              <dt>{$_("ui_textToSpeech")}</dt>
+              <dd>{$_("ui_configure")} <span class="popover-chevron">&gt;</span></dd>
             </div>
           {:else if activeSubPanel === "appearance"}
             <div class="popover-tts-row" onclick={() => activeSubPanel = "main"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "main"; }}>
-              <dt>&lt; Back</dt>
-              <dd>Appearance</dd>
+              <dt>{$_("ui_back_f13dfaca")}</dt>
+              <dd>{$_("ui_appearance")}</dd>
             </div>
             <div>
-              <dt>Theme</dt>
+              <dt>{$_("ui_theme")}</dt>
               <dd>
                 <div class="popover-color-swatches" style="display: flex; flex-wrap: wrap; gap: 4px; max-width: 150px;">
-                  <button class="popover-swatch" style="background:#efe1c9;" class:active={proseTheme === "sepia"} onclick={() => updateSettings({ proseReaderTheme: "sepia" })} title="Sepia"></button>
-                  <button class="popover-swatch" style="background:#000000;" class:active={proseTheme === "oled"} onclick={() => updateSettings({ proseReaderTheme: "oled" })} title="OLED"></button>
-                  <button class="popover-swatch" style="background:#09080d;" class:active={proseTheme === "dark"} onclick={() => updateSettings({ proseReaderTheme: "dark" })} title="Dark"></button>
-                  <button class="popover-swatch" style="background:#f5f1ea;" class:active={proseTheme === "light"} onclick={() => updateSettings({ proseReaderTheme: "light" })} title="Light"></button>
-                  <button class="popover-swatch" style="background:#131316;" class:active={proseTheme === "nocturne"} onclick={() => updateSettings({ proseReaderTheme: "nocturne" })} title="Nocturne"></button>
-                  <button class="popover-swatch" style="background:#1e293b;" class:active={proseTheme === "slate"} onclick={() => updateSettings({ proseReaderTheme: "slate" })} title="Slate"></button>
-                  <button class="popover-swatch" style="background:#142217;" class:active={proseTheme === "forest"} onclick={() => updateSettings({ proseReaderTheme: "forest" })} title="Forest"></button>
-                  <button class="popover-swatch" style="background:#2e3440;" class:active={proseTheme === "nord"} onclick={() => updateSettings({ proseReaderTheme: "nord" })} title="Nord"></button>
-                  <button class="popover-swatch" style="background:#fbf5e6;" class:active={proseTheme === "warm"} onclick={() => updateSettings({ proseReaderTheme: "warm" })} title="Warm"></button>
+                  <button class="popover-swatch" style="background:#efe1c9;" class:active={proseTheme === "sepia"} onclick={() => updateSettings({ proseReaderTheme: "sepia" })} title={$_("ui_sepia")}></button>
+                  <button class="popover-swatch" style="background:#000000;" class:active={proseTheme === "oled"} onclick={() => updateSettings({ proseReaderTheme: "oled" })} title={$_("ui_oled")}></button>
+                  <button class="popover-swatch" style="background:#09080d;" class:active={proseTheme === "dark"} onclick={() => updateSettings({ proseReaderTheme: "dark" })} title={$_("ui_dark")}></button>
+                  <button class="popover-swatch" style="background:#f5f1ea;" class:active={proseTheme === "light"} onclick={() => updateSettings({ proseReaderTheme: "light" })} title={$_("ui_light")}></button>
+                  <button class="popover-swatch" style="background:#131316;" class:active={proseTheme === "nocturne"} onclick={() => updateSettings({ proseReaderTheme: "nocturne" })} title={$_("ui_nocturne")}></button>
+                  <button class="popover-swatch" style="background:#1e293b;" class:active={proseTheme === "slate"} onclick={() => updateSettings({ proseReaderTheme: "slate" })} title={$_("ui_slate")}></button>
+                  <button class="popover-swatch" style="background:#142217;" class:active={proseTheme === "forest"} onclick={() => updateSettings({ proseReaderTheme: "forest" })} title={$_("ui_forest")}></button>
+                  <button class="popover-swatch" style="background:#2e3440;" class:active={proseTheme === "nord"} onclick={() => updateSettings({ proseReaderTheme: "nord" })} title={$_("ui_nord")}></button>
+                  <button class="popover-swatch" style="background:#fbf5e6;" class:active={proseTheme === "warm"} onclick={() => updateSettings({ proseReaderTheme: "warm" })} title={$_("ui_warm")}></button>
                 </div>
               </dd>
             </div>
             <div>
-              <dt>Text Color</dt>
+              <dt>{$_("ui_textColor")}</dt>
               <dd>
-                <input class="popover-color-picker" type="color" value={prosePalette.text} onchange={(event) => updateProseColor("text", event.currentTarget.value)} title="Text color" />
+                <input class="popover-color-picker" type="color" value={prosePalette.text} onchange={(event) => updateProseColor("text", event.currentTarget.value)} title={$_("ui_textColor_1c7a30e5")} />
               </dd>
             </div>
             <div>
-              <dt>Paper Color</dt>
+              <dt>{$_("ui_paperColor")}</dt>
               <dd>
-                <input class="popover-color-picker" type="color" value={prosePalette.surface} onchange={(event) => updateProseColor("background", event.currentTarget.value)} title="Page background" />
+                <input class="popover-color-picker" type="color" value={prosePalette.surface} onchange={(event) => updateProseColor("background", event.currentTarget.value)} title={$_("ui_pageBackground")} />
               </dd>
             </div>
           {:else if activeSubPanel === "typography"}
             <div class="popover-tts-row" onclick={() => activeSubPanel = "main"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "main"; }}>
-              <dt>&lt; Back</dt>
-              <dd>Typography</dd>
+              <dt>{$_("ui_back_f13dfaca")}</dt>
+              <dd>{$_("ui_typography")}</dd>
             </div>
             <div>
-              <dt>Font</dt>
+              <dt>{$_("ui_font")}</dt>
               <dd>
                 <select class="popover-select" value={proseFontFamily} onchange={(event) => updateSettings({ proseReaderFontFamily: event.currentTarget.value })}>
                   <option value="Georgia, serif">Georgia</option>
@@ -410,17 +412,17 @@
               </dd>
             </div>
             <div>
-              <dt>Size</dt>
+              <dt>{$_("ui_size")}</dt>
               <dd>
                 <div class="popover-stepper">
                   <button class="popover-step-btn" onclick={() => updateFontSize(-1)} disabled={proseFontSize <= 12}>-</button>
-                  <span class="popover-step-val">{proseFontSize}px</span>
+                  <span class="popover-step-val">{proseFontSize}{$_("ui_px_07a65dd6")}</span>
                   <button class="popover-step-btn" onclick={() => updateFontSize(1)} disabled={proseFontSize >= 32}>+</button>
                 </div>
               </dd>
             </div>
             <div>
-              <dt>Line</dt>
+              <dt>{$_("ui_line")}</dt>
               <dd>
                 <div class="popover-stepper">
                   <button class="popover-step-btn" onclick={() => updateLineHeight(-0.05)} disabled={proseLineHeight <= 1.2}>-</button>
@@ -431,74 +433,74 @@
             </div>
           {:else if activeSubPanel === "layout"}
             <div class="popover-tts-row" onclick={() => activeSubPanel = "main"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "main"; }}>
-              <dt>&lt; Back</dt>
-              <dd>Layout</dd>
+              <dt>{$_("ui_back_f13dfaca")}</dt>
+              <dd>{$_("library_display_layout")}</dd>
             </div>
             <div>
-              <dt>Align</dt>
+              <dt>{$_("ui_align")}</dt>
               <dd>
                 <div class="popover-segmented">
-                  <button class="popover-segment" class:active={proseTextAlign === "left"} onclick={() => updateSettings({ proseReaderTextAlign: "left" })}>Left</button>
-                  <button class="popover-segment" class:active={proseTextAlign === "justify"} onclick={() => updateSettings({ proseReaderTextAlign: "justify" })}>Justified</button>
+                  <button class="popover-segment" class:active={proseTextAlign === "left"} onclick={() => updateSettings({ proseReaderTextAlign: "left" })}>{$_("ui_left")}</button>
+                  <button class="popover-segment" class:active={proseTextAlign === "justify"} onclick={() => updateSettings({ proseReaderTextAlign: "justify" })}>{$_("ui_justified")}</button>
                 </div>
               </dd>
             </div>
             <div>
-              <dt>Width</dt>
+              <dt>{$_("ui_width")}</dt>
               <dd style="display: flex; align-items: center; gap: 8px;">
                 <div class="popover-stepper">
                   <button class="popover-step-btn" onclick={() => updateContentWidth(-40)} disabled={store.settings.proseReaderFullWidth}>-</button>
                   <span class="popover-step-val" style={store.settings.proseReaderFullWidth ? "opacity: 0.5;" : ""}>
-                    {store.settings.proseReaderFullWidth ? "Full" : `${proseContentWidth}px`}
+                    {store.settings.proseReaderFullWidth ? $_("ui_full") : `${proseContentWidth}px`}
                   </span>
                   <button class="popover-step-btn" onclick={() => updateContentWidth(40)} disabled={store.settings.proseReaderFullWidth}>+</button>
                 </div>
-                <button class="popover-btn" class:active={store.settings.proseReaderFullWidth} onclick={() => updateSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}>Full</button>
+                <button class="popover-btn" class:active={store.settings.proseReaderFullWidth} onclick={() => updateSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}>{$_("ui_full")}</button>
               </dd>
             </div>
           {:else if false}
           <div>
-            <dt>Theme</dt>
+            <dt>{$_("ui_theme")}</dt>
             <dd>
               <div class="popover-color-swatches" style="display: flex; flex-wrap: wrap; gap: 4px; max-width: 150px;">
-                <button class="popover-swatch" style="background:#efe1c9;" class:active={proseTheme === "sepia"} onclick={() => updateSettings({ proseReaderTheme: "sepia" })} title="Sepia"></button>
-                <button class="popover-swatch" style="background:#000000;" class:active={proseTheme === "oled"} onclick={() => updateSettings({ proseReaderTheme: "oled" })} title="OLED"></button>
-                <button class="popover-swatch" style="background:#09080d;" class:active={proseTheme === "dark"} onclick={() => updateSettings({ proseReaderTheme: "dark" })} title="Dark"></button>
-                <button class="popover-swatch" style="background:#f5f1ea;" class:active={proseTheme === "light"} onclick={() => updateSettings({ proseReaderTheme: "light" })} title="Light"></button>
-                <button class="popover-swatch" style="background:#131316;" class:active={proseTheme === "nocturne"} onclick={() => updateSettings({ proseReaderTheme: "nocturne" })} title="Nocturne"></button>
-                <button class="popover-swatch" style="background:#1e293b;" class:active={proseTheme === "slate"} onclick={() => updateSettings({ proseReaderTheme: "slate" })} title="Slate"></button>
-                <button class="popover-swatch" style="background:#142217;" class:active={proseTheme === "forest"} onclick={() => updateSettings({ proseReaderTheme: "forest" })} title="Forest"></button>
-                <button class="popover-swatch" style="background:#2e3440;" class:active={proseTheme === "nord"} onclick={() => updateSettings({ proseReaderTheme: "nord" })} title="Nord"></button>
-                <button class="popover-swatch" style="background:#fbf5e6;" class:active={proseTheme === "warm"} onclick={() => updateSettings({ proseReaderTheme: "warm" })} title="Warm"></button>
+                <button class="popover-swatch" style="background:#efe1c9;" class:active={proseTheme === "sepia"} onclick={() => updateSettings({ proseReaderTheme: "sepia" })} title={$_("ui_sepia")}></button>
+                <button class="popover-swatch" style="background:#000000;" class:active={proseTheme === "oled"} onclick={() => updateSettings({ proseReaderTheme: "oled" })} title={$_("ui_oled")}></button>
+                <button class="popover-swatch" style="background:#09080d;" class:active={proseTheme === "dark"} onclick={() => updateSettings({ proseReaderTheme: "dark" })} title={$_("ui_dark")}></button>
+                <button class="popover-swatch" style="background:#f5f1ea;" class:active={proseTheme === "light"} onclick={() => updateSettings({ proseReaderTheme: "light" })} title={$_("ui_light")}></button>
+                <button class="popover-swatch" style="background:#131316;" class:active={proseTheme === "nocturne"} onclick={() => updateSettings({ proseReaderTheme: "nocturne" })} title={$_("ui_nocturne")}></button>
+                <button class="popover-swatch" style="background:#1e293b;" class:active={proseTheme === "slate"} onclick={() => updateSettings({ proseReaderTheme: "slate" })} title={$_("ui_slate")}></button>
+                <button class="popover-swatch" style="background:#142217;" class:active={proseTheme === "forest"} onclick={() => updateSettings({ proseReaderTheme: "forest" })} title={$_("ui_forest")}></button>
+                <button class="popover-swatch" style="background:#2e3440;" class:active={proseTheme === "nord"} onclick={() => updateSettings({ proseReaderTheme: "nord" })} title={$_("ui_nord")}></button>
+                <button class="popover-swatch" style="background:#fbf5e6;" class:active={proseTheme === "warm"} onclick={() => updateSettings({ proseReaderTheme: "warm" })} title={$_("ui_warm")}></button>
               </div>
             </dd>
           </div>
           <div>
-            <dt>Text Color</dt>
+            <dt>{$_("ui_textColor")}</dt>
             <dd>
               <input
                 class="popover-color-picker"
                 type="color"
                 value={prosePalette.text}
                 onchange={(event) => updateProseColor("text", event.currentTarget.value)}
-                title="Text color"
+                title={$_("ui_textColor_1c7a30e5")}
               />
             </dd>
           </div>
           <div>
-            <dt>Paper Color</dt>
+            <dt>{$_("ui_paperColor")}</dt>
             <dd>
               <input
                 class="popover-color-picker"
                 type="color"
                 value={prosePalette.surface}
                 onchange={(event) => updateProseColor("background", event.currentTarget.value)}
-                title="Page background"
+                title={$_("ui_pageBackground")}
               />
             </dd>
           </div>
           <div>
-            <dt>Font</dt>
+            <dt>{$_("ui_font")}</dt>
             <dd>
               <select
                 class="popover-select"
@@ -517,17 +519,17 @@
             </dd>
           </div>
           <div>
-            <dt>Size</dt>
+            <dt>{$_("ui_size")}</dt>
             <dd>
               <div class="popover-stepper">
                 <button class="popover-step-btn" onclick={() => updateFontSize(-1)}>−</button>
-                <span class="popover-step-val">{proseFontSize}px</span>
+                <span class="popover-step-val">{proseFontSize}{$_("ui_px_07a65dd6")}</span>
                 <button class="popover-step-btn" onclick={() => updateFontSize(1)}>+</button>
               </div>
             </dd>
           </div>
           <div>
-            <dt>Line</dt>
+            <dt>{$_("ui_line")}</dt>
             <dd>
               <div class="popover-stepper">
                 <button class="popover-step-btn" onclick={() => updateLineHeight(-0.05)}>−</button>
@@ -537,28 +539,28 @@
             </dd>
           </div>
           <div>
-            <dt>Align</dt>
+            <dt>{$_("ui_align")}</dt>
             <dd>
               <button class="popover-btn" onclick={() => updateSettings({ proseReaderTextAlign: proseTextAlign === "justify" ? "left" : "justify" })}>{proseTextAlign}</button>
             </dd>
           </div>
           <div>
-            <dt>Width</dt>
+            <dt>{$_("ui_width")}</dt>
             <dd style="display: flex; align-items: center; gap: 8px;">
               <div class="popover-stepper">
                 <button class="popover-step-btn" onclick={() => updateContentWidth(-40)} disabled={store.settings.proseReaderFullWidth}>−</button>
                 <span class="popover-step-val" style={store.settings.proseReaderFullWidth ? "opacity: 0.5;" : ""}>
-                  {store.settings.proseReaderFullWidth ? "Full" : `${proseContentWidth}px`}
+                  {store.settings.proseReaderFullWidth ? $_("ui_full") : `${proseContentWidth}px`}
                 </span>
                 <button class="popover-step-btn" onclick={() => updateContentWidth(40)} disabled={store.settings.proseReaderFullWidth}>+</button>
               </div>
-              <button class="popover-btn" class:active={store.settings.proseReaderFullWidth} onclick={() => updateSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}>Full</button>
+              <button class="popover-btn" class:active={store.settings.proseReaderFullWidth} onclick={() => updateSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}>{$_("ui_full")}</button>
             </dd>
           </div>
           <div class="popover-tts-row" onclick={() => activeSubPanel = "tts"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') activeSubPanel = "tts"; }}>
-            <dt style="color: var(--reader-text);">Text to Speech</dt>
+            <dt style="color: var(--reader-text);">{$_("ui_textToSpeech")}</dt>
             <dd style="color: var(--reader-accent-bright); font-weight: 600; display: flex; align-items: center; gap: 4px;">
-              <span>Configure</span>
+              <span>{$_("ui_configure")}</span>
               <span class="popover-chevron">&gt;</span>
             </dd>
           </div>
@@ -578,25 +580,25 @@
             layout="center"
             tone="danger"
             icon="warning"
-            eyebrow="Reader"
-            title="Could not load this chapter"
+            eyebrow={$_("ui_reader")}
+            title={$_("ui_couldNotLoadThisChapter")}
             body={readerErrorBody}
             detail={readerErrorIsSourceChallenge ? error : ""}
             actions={readerErrorIsSourceChallenge ? [
               {
-                label: store.settings.flareSolverrEnabled ? "Open settings" : "Start FlareSolverr",
+                label: store.settings.flareSolverrEnabled ? $_("ui_openSettings") : $_("ui_startFlaresolverr"),
                 kind: "primary",
                 icon: "plug",
                 onClick: store.settings.flareSolverrEnabled ? () => setSettingsOpen(true) : startFlareSolverrForChapter,
               },
               {
-                label: "Retry chapter",
+                label: $_("ui_retryChapter"),
                 kind: "secondary",
                 icon: "retry",
                 onClick: loadChapter,
               },
             ] : [{
-              label: "Retry chapter",
+              label: $_("ui_retryChapter"),
               kind: "primary",
               icon: "retry",
               onClick: loadChapter,
@@ -609,9 +611,9 @@
             layout="center"
             tone="warning"
             icon="info"
-            eyebrow="Reader"
-            title="No readable content"
-            body="This source returned an empty chapter."
+            eyebrow={$_("ui_reader")}
+            title={$_("ui_noReadableContent")}
+            body={$_("ui_emptyChapterReturned")}
           />
         </div>
       {:else}

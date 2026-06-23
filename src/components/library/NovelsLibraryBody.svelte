@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { _ } from "../../lib/i18n/runtime";
   import { onMount } from "svelte";
   import { computeLibraryLayout, type LibraryPreferredGridColumns, type LibraryViewMode } from "../../lib/libraryDisplay";
   import type { NovelShelfCard } from "../../lib/novels/libraryShelf";
@@ -36,18 +37,35 @@
     }),
   );
 
+  function syncContentWidth() {
+    if (!contentEl) return;
+    const nextWidth = contentEl.clientWidth;
+    if (nextWidth > 0 && nextWidth !== contentWidth) contentWidth = nextWidth;
+  }
+
   onMount(() => {
     let resizeObserver: ResizeObserver | null = null;
+    syncContentWidth();
     queueMicrotask(() => {
       if (!contentEl) return;
-      contentWidth = contentEl.clientWidth;
-      resizeObserver = new ResizeObserver((entries) => {
-        contentWidth = entries[0]?.contentRect.width ?? contentEl?.clientWidth ?? 0;
+      syncContentWidth();
+      resizeObserver = new ResizeObserver(() => {
+        syncContentWidth();
       });
       resizeObserver.observe(contentEl);
+      requestAnimationFrame(() => {
+        syncContentWidth();
+        requestAnimationFrame(syncContentWidth);
+      });
     });
+    window.addEventListener("resize", syncContentWidth, { passive: true });
+    window.visualViewport?.addEventListener("resize", syncContentWidth, { passive: true });
 
-    return () => resizeObserver?.disconnect();
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", syncContentWidth);
+      window.visualViewport?.removeEventListener("resize", syncContentWidth);
+    };
   });
 </script>
 
@@ -59,7 +77,7 @@
         tone="info"
         icon="books"
         eyebrow="Library"
-        title="No novels here yet"
+        title={$_("ui_noNovelsHereYet")}
         body={emptyMessage}
       />
     </div>

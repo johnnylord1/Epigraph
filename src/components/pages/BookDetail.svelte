@@ -593,7 +593,7 @@
       await removeBookAssets(removed.assetPath, removed.coverPath);
       addToast({
         kind: "info",
-        title: "Removed from Library",
+        title: translate("ui_removedFromLibrary"),
         body: removed.title,
       });
     } catch (error) {
@@ -601,7 +601,7 @@
         error instanceof Error ? error.message : "Book files could not be fully removed.";
       addToast({
         kind: "info",
-        title: "Removed from Library",
+        title: translate("ui_removedFromLibrary"),
         body: `${removed.title} (${message})`,
       });
     }
@@ -927,14 +927,14 @@
   <div class="root root--loading">
     <div class="loading-shell">
       <BookOpen size={28} weight="duotone" />
-      <p>Loading book library...</p>
+      <p>{$_("ui_loadingBookLibrary")}</p>
     </div>
   </div>
 {:else if store.activeBookId}
   <div class="root root--missing">
     <div class="loading-shell">
       <BookOpen size={28} weight="duotone" />
-      <p>Book could not be resolved yet.</p>
+      <p>{$_("ui_bookCouldNotBeResolvedYet")}</p>
     </div>
   </div>
 {/if}

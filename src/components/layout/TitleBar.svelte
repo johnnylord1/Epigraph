@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { _ } from "../../lib/i18n/runtime";
   import { onMount } from "svelte";
   import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
 
@@ -29,20 +30,20 @@
   }
 </script>
 
-<div class="window-controls" aria-label="Window controls">
-  <button type="button" class="window-btn" onclick={minimizeWindow} title="Minimize" aria-label="Minimize">
+<div class="window-controls" aria-label={$_("ui_windowControls")}>
+  <button type="button" class="window-btn" onclick={minimizeWindow} title={$_("ui_minimize")} aria-label={$_("ui_minimize")}>
     <svg width="10" height="1" viewBox="0 0 10 1" aria-hidden="true">
       <line x1="0" y1="0.5" x2="10" y2="0.5" stroke="currentColor" stroke-width="1.5" />
     </svg>
   </button>
 
-  <button type="button" class="window-btn" onclick={toggleMaximizeWindow} title="Maximize" aria-label="Maximize">
+  <button type="button" class="window-btn" onclick={toggleMaximizeWindow} title={$_("ui_maximize")} aria-label={$_("ui_maximize")}>
     <svg width="9" height="9" viewBox="0 0 9 9" aria-hidden="true">
       <rect x="0.75" y="0.75" width="7.5" height="7.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.5" />
     </svg>
   </button>
 
-  <button type="button" class="window-btn window-btn--close" onclick={closeWindow} title="Close" aria-label="Close">
+  <button type="button" class="window-btn window-btn--close" onclick={closeWindow} title={$_("ui_close_bbfa773e")} aria-label={$_("ui_close_bbfa773e")}>
     <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
       <line x1="1" y1="1" x2="9" y2="9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
       <line x1="9" y1="1" x2="1" y2="9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />

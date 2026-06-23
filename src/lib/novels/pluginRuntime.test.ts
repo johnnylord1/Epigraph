@@ -396,6 +396,7 @@ class HotNovelPubLikePlugin {
       summary: response.data.book.authorize.description,
       cover: this.site + response.data.book.image,
       status: response.data.book.status === "updating" ? NovelStatus.Ongoing : NovelStatus.Completed,
+      genre: response.data.tags,
       chapters: response.data.chapters.map((chapter, index) => ({
         name: chapter.title,
         path: chapter.slug,
@@ -417,8 +418,40 @@ exports.default = new HotNovelPubLikePlugin();
       firstChapterPath: "chapter-1",
       hasSummary: true,
       author: "Guiltythree",
+      tags: ["Fantasy", "Action"],
     });
     expect(tauriFetchMock).toHaveBeenCalled();
+  });
+
+  it("normalizes LNReader detail genres from tags_name objects and fallback fields", async () => {
+    const details = await readNovelPluginDetails({
+      pluginId: "lnreader-style",
+      artifactUrl: "https://example.com/lnreader-style.js",
+      pluginSource: `
+Object.defineProperty(exports, "__esModule", { value: true });
+class LnReaderStylePlugin {
+  constructor() {
+    this.id = "lnreader-style";
+    this.name = "LNReader Style";
+    this.site = "https://example.com";
+  }
+  async parseNovel(path) {
+    return {
+      path,
+      name: "Tagged Novel",
+      genre: { tags_name: ["Fantasy", "Action"] },
+      genres: ["Drama"],
+      tags: [{ name: "Mystery" }, "Fantasy"],
+      chapters: [{ name: "Chapter 1", path: "chapter-1" }],
+    };
+  }
+}
+exports.default = new LnReaderStylePlugin();
+`,
+      novelPath: "tagged-novel",
+    });
+
+    expect(details.tags).toEqual(["Fantasy", "Action", "Drama", "Mystery"]);
   });
 
   it("runs a 69shu-style details probe through fetchText and cheerio", async () => {

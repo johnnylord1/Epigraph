@@ -8,6 +8,7 @@ import type { Category, Chapter, Manga } from "../types";
 import type { LibraryUpdateIssueErrorType, LibraryUpdateIssueKind } from "../../store/state.svelte";
 import { classifySourceAccessError, sourceAccessErrorMessage } from "../sourceAccess";
 import { mergeMangaCountsFromChapters } from "./chapterCounts";
+import { translate } from "../i18n/runtime";
 
 export interface LibraryUpdateProgressNumbers {
   current: number;
@@ -93,25 +94,25 @@ export function formatLibraryUpdateProgress(jobsInfo: any) {
   const total = Number(jobsInfo?.totalJobs ?? 0);
   const skippedMangas = Number(jobsInfo?.skippedMangasCount ?? 0);
   if (total > 0) {
-    const skipped = skippedMangas > 0 ? `, ${skippedMangas} skipped by folder rules` : "";
+    const skipped = skippedMangas > 0 ? translate("libraryUpdate.skipped", { count: skippedMangas }) : "";
     if (finished <= 0 && jobsInfo?.isRunning) {
-      return `Starting update for ${total} titles${skipped}.`;
+      return translate("libraryUpdate.starting", { total, skipped });
     }
     const current = Math.min(Math.max(0, finished), total);
     const percent = libraryUpdatePercent(current, total);
     if (jobsInfo?.isRunning && current >= total) {
-      return `Finalizing update for ${total} titles${skipped}.`;
+      return translate("libraryUpdate.finalizing", { total, skipped });
     }
     if (!jobsInfo?.isRunning && current >= total) {
-      return `Checked ${total}/${total} titles - complete${skipped}.`;
+      return translate("libraryUpdate.checked", { total, skipped });
     }
     if (!jobsInfo?.isRunning && current < total) {
-      return `Stopped after ${current}/${total} titles${skipped}.`;
+      return translate("libraryUpdate.stopped", { current, total, skipped });
     }
-    return `Checking titles ${current}/${total} - ${percent}%${skipped}.`;
+    return translate("libraryUpdate.checking", { current, total, percent, skipped });
   }
-  if (jobsInfo?.isRunning) return "Suwayomi is checking your library.";
-  return "Preparing library update.";
+  if (jobsInfo?.isRunning) return translate("libraryUpdate.checkingServer");
+  return translate("libraryUpdate.preparing");
 }
 
 export function formatLibraryUpdateFinalSummary(
@@ -471,9 +472,9 @@ export function formatLibraryUpdateStalled(jobsInfo: any, stalledMs: number) {
   const finished = Math.max(0, Math.min(total, Number(jobsInfo?.finishedJobs ?? 0)));
   const seconds = Math.max(10, Math.floor(stalledMs / 1000));
   if (total > 0) {
-    return `Checking titles ${finished}/${total} - waiting on a slow source (${seconds}s).`;
+    return translate("libraryUpdate.stalled", { current: finished, total, seconds });
   }
-  return `Waiting on a slow source (${seconds}s).`;
+  return translate("libraryUpdate.waitingSlow", { seconds });
 }
 
 export function showLibraryUpdateProgress(
@@ -484,7 +485,7 @@ export function showLibraryUpdateProgress(
   const lowerBody = body.toLowerCase();
   setLibraryUpdateProgress({
     kind: lowerBody.includes("failed") ? "error" : lowerBody.includes("finished") || lowerBody.includes("complete") ? "success" : "download",
-    title: "Library update",
+    title: translate("libraryUpdate.title"),
     body,
     active: duration === 0,
     duration,

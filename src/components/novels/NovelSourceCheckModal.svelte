@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { _ } from "../../lib/i18n/runtime";
   import { CheckCircle, CircleNotch, WarningCircle, XCircle } from "phosphor-svelte";
 
   import {
@@ -73,7 +74,7 @@
   }
 </script>
 
-<button class="backdrop" type="button" aria-label="Close source check dialog" onclick={onClose}></button>
+<button class="backdrop" type="button" aria-label={$_("ui_closeSourceCheckDialog")} onclick={onClose}></button>
 
 <div class="modal" role="dialog" aria-modal="true" aria-label={statusTitle()}>
   <div class="modal-header">
@@ -82,14 +83,14 @@
       <span class="modal-title-name">{pluginName}</span>
     </div>
     {#if queueCount > 0}
-      <span class="modal-queue">{queueCount} queued</span>
+      <span class="modal-queue">{queueCount} {$_("ui_queued")}</span>
     {/if}
   </div>
 
   <div class="modal-body">
     <div class="modal-steps">
       <div class={`modal-step step-${stepState("installing")}`}>
-        <span>Installing extension</span>
+        <span>{$_("ui_installingExtension")}</span>
         {#if stepState("installing") === "active"}
           <CircleNotch size={14} class="spin" />
         {:else if stepState("installing") === "done"}
@@ -97,7 +98,7 @@
         {/if}
       </div>
       <div class={`modal-step step-${stepState("checking")}`}>
-        <span>Checking source</span>
+        <span>{$_("ui_checkingSource")}</span>
         {#if stepState("checking") === "active"}
           <CircleNotch size={14} class="spin" />
         {:else if stepState("checking") === "done"}
@@ -105,7 +106,7 @@
         {/if}
       </div>
       <div class={`modal-step step-${stepState("saving")}`}>
-        <span>Saving result</span>
+        <span>{$_("ui_savingResult")}</span>
         {#if stepState("saving") === "done"}
           <CheckCircle size={14} />
         {/if}
@@ -116,7 +117,7 @@
       <div class="modal-status__header">
         {#if stage === "failed"}
           <XCircle size={16} />
-        {:else if stage === "completed" && detail.longLabel === "Working with limits"}
+        {:else if stage === "completed" && detail.longLabel === $_("ui_workingWithLimits")}
           <WarningCircle size={16} />
         {:else if stage === "completed"}
           <CheckCircle size={16} />
@@ -148,7 +149,7 @@
         onclick={() => onRetryCheck?.()}
         disabled={retryBusy || stage === "installing" || stage === "checking"}
       >
-        {retryBusy ? "Checking..." : "Retry check"}
+        {retryBusy ? "Checking..." : $_("ui_retryCheck")}
       </button>
     {/if}
     <button
@@ -157,7 +158,7 @@
       onclick={onClose}
       disabled={stage === "installing" || stage === "checking"}
     >
-      Close
+      {$_("ui_close_bbfa773e")}
     </button>
   </div>
 </div>

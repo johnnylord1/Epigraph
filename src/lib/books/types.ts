@@ -27,6 +27,7 @@ export interface BookEntry {
   author: string | null;
   description: string | null;
   genres?: string[];
+  metadataBackfillVersion?: number;
   coverPath: string | null;
   /** Legacy migration-only field. Never use as an active render source. */
   coverUrl?: string | null;

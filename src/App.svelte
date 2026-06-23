@@ -69,6 +69,8 @@
   import { normalizeCategories } from "./lib/library/categories";
   import { reconcileComicsChapterSnapshot } from "./lib/library/comicsChapterSnapshot";
   import { loadLibrarySnapshot, saveLibrarySnapshot } from "./lib/library/snapshot";
+  import { setLibraryMotionEnvironment } from "./lib/library/motionGate";
+  import { getLibraryVisibilityRegistryStats } from "./lib/library/visibilityRegistry";
   import {
     clearStaleLibraryUpdateInFlight,
     formatLibraryUpdateFinalSummary,
@@ -96,7 +98,7 @@
   import type { ActiveDownload } from "./store/state.svelte";
   import { traceMediaAudit } from "./lib/mediaAudit";
   import { getImageCacheStats, trimImageCache } from "./lib/imageCache";
-  import { applyAppLanguage } from "./lib/i18n/runtime";
+  import { _, applyAppLanguage } from "./lib/i18n/runtime";
   import Toaster      from "./components/layout/Toaster.svelte";
   import SplashScreen from "./components/layout/SplashScreen.svelte";
   import Layout from "./components/layout/Layout.svelte";
@@ -208,8 +210,10 @@
   let startupFailureTitle = $state("Could not reach server");
   let startupFailureDetail = $state("Aethon couldn't reach the selected local profile.");
   let startupStatusText = $state("Initializing profile");
+  let startupHealthWatchInFlight = false;
   let idle          = $state(false);
   let uiMotionActive = $state(true);
+  let prefersReducedMotion = $state(false);
   let devSplash     = $state(false);
   let bootReadyNotified = false;
   let lastSyncdRevalidatedProfileId = $state<string | null>(null);
@@ -371,6 +375,7 @@
     lastDownloadEventAgeMs: number;
     cache: ReturnType<typeof cache.stats>;
     imageCache: ReturnType<typeof getImageCacheStats>;
+    libraryVisibility: ReturnType<typeof getLibraryVisibilityRegistryStats>;
     serverStandbyEligibleReason: string;
   };
 
@@ -389,8 +394,35 @@
       lastDownloadEventAgeMs: Math.max(0, Date.now() - lastDownloadEventAt),
       cache: cache.stats(),
       imageCache: getImageCacheStats(),
+      libraryVisibility: getLibraryVisibilityRegistryStats(),
       serverStandbyEligibleReason: serverStandbyEligibilityReason(),
     };
+  }
+
+  function attachKnownCategoryMembers(
+    categories: Category[],
+    mangas: Manga[],
+    persistedSnapshot: ReturnType<typeof loadLibrarySnapshot>,
+  ): Category[] {
+    const mangaById = new Map(mangas.map((manga) => [manga.id, manga]));
+    const currentById = new Map(store.categories.map((category) => [category.id, category]));
+
+    return normalizeCategories(categories).map((category) => {
+      const currentNodes = currentById.get(category.id)?.mangas?.nodes;
+      const memberIds = currentNodes
+        ? currentNodes.map((manga) => manga.id)
+        : persistedSnapshot?.categoryMembers[String(category.id)];
+      if (!memberIds) return category;
+
+      return {
+        ...category,
+        mangas: {
+          nodes: memberIds
+            .map((id) => mangaById.get(id))
+            .filter((manga): manga is Manga => Boolean(manga)),
+        },
+      };
+    });
   }
 
   function preloadLibrarySnapshot(force = false) {
@@ -410,7 +442,11 @@
         ...manga,
         chapterCount: manga.chapters?.totalCount ?? manga.chapterCount ?? 0,
       })));
-      setCategories(normalizeCategories(persistedSnapshot.categories));
+      setCategories(attachKnownCategoryMembers(
+        persistedSnapshot.categories,
+        persistedSnapshot.mangas,
+        persistedSnapshot,
+      ));
       setLibraryTrackingSummarySnapshot(persistedSnapshot.trackingSummary as TrackerCompletionTracker[]);
       setLibraryBootstrap("ready", scopeKey, persistedSnapshot.trackingSummary as TrackerCompletionTracker[]);
     }
@@ -439,7 +475,7 @@
     libraryBootstrapScopeKey = scopeKey;
     setLibraryBootstrap("loading", scopeKey);
     libraryBootstrapInFlight = (async () => {
-      const [mangas, categories, trackingSummary] = await Promise.all([
+      let [mangas, categories, trackingSummary] = await Promise.all([
         cache.get(
           CACHE_KEYS.LIBRARY,
           () => gql<{ mangas: { nodes: Manga[] } }>(GET_LIBRARY).then((d) => d.mangas.nodes),
@@ -460,12 +496,27 @@
         ),
       ]);
 
+      if (mangas.length === 0) {
+        cache.clear(CACHE_KEYS.LIBRARY);
+        const liveMangas = await gql<{ mangas: { nodes: Manga[] } }>(GET_LIBRARY, undefined, undefined, 12000)
+          .then((d) => d.mangas.nodes)
+          .catch(() => mangas);
+        if (liveMangas.length > 0) {
+          mangas = liveMangas;
+          cache.set(CACHE_KEYS.LIBRARY, liveMangas, CACHE_GROUPS.LIBRARY);
+        }
+      }
+
       const previousChapterCountById = new Map(store.libraryMangaSnapshot.map((manga) => [manga.id, manga.chapterCount]));
       const normalizedMangas = mangas.map((manga: any) => ({
         ...manga,
         chapterCount: manga.chapters?.totalCount ?? manga.chapterCount ?? previousChapterCountById.get(manga.id) ?? 0,
       }));
-      const normalizedCategories = normalizeCategories(categories);
+      const normalizedCategories = attachKnownCategoryMembers(
+        categories,
+        normalizedMangas,
+        persistedSnapshot,
+      );
       setLibraryMangaSnapshot(normalizedMangas);
       setCategories(normalizedCategories);
       setLibraryTrackingSummarySnapshot(trackingSummary);
@@ -1102,16 +1153,17 @@
   }
 
   async function readAuditBookLibraryPersistence() {
+    const profileId = store.runtimeResolvedLocalProfileId;
     const [{ reloadBookLibraryState }, rawState, storageRoot] = await Promise.all([
       import("./lib/books/libraryState"),
-      invoke<string | null>("read_book_library_state").catch(() => null),
+      invoke<string | null>("read_book_library_state", { profileId }).catch(() => null),
       invoke<string>("resolve_book_storage_root").catch(() => null),
     ]);
 
     return {
       storageRoot,
       rawState,
-      state: await reloadBookLibraryState(),
+      state: await reloadBookLibraryState({ profileId }),
     };
   }
 
@@ -1164,7 +1216,8 @@
       ? Math.max(0, Math.min(1, input.progressPercent))
       : 0.5;
 
-    const state = await reloadBookLibraryState();
+    const profileId = store.runtimeResolvedLocalProfileId;
+    const state = await reloadBookLibraryState({ profileId });
     const books = state.books.some((entry) => entry.id === AUDIT_SYNCD_BOOK_ID)
       ? state.books
       : [
@@ -1223,7 +1276,7 @@
       bookProgress,
       bookBookmarks,
       updatedAtMs: now,
-    });
+    }, { profileId });
 
     return {
       bookId: AUDIT_SYNCD_BOOK_ID,
@@ -1541,7 +1594,7 @@
 
   const idleEvents = ["mousemove", "mousedown", "keydown", "touchstart", "wheel"] as const;
 
-  function trimRuntimeMemory(options: { forceGc?: boolean; minIntervalMs?: number } = {}) {
+  function trimRuntimeMemory(options: { minIntervalMs?: number } = {}) {
     const now = Date.now();
     const minIntervalMs = options.minIntervalMs ?? 15_000;
     if (now - lastRuntimeTrimAt < minIntervalMs) return;
@@ -1550,18 +1603,6 @@
     cache.trimExpired(now);
     trimImageCache(false);
 
-    if (options.forceGc) {
-      const maybeGc = (globalThis as typeof globalThis & { gc?: () => void }).gc;
-      if (typeof maybeGc === "function") {
-        window.setTimeout(() => {
-          try {
-            maybeGc();
-          } catch (error) {
-            console.warn("Unable to run background JavaScript GC:", error);
-          }
-        }, 250);
-      }
-    }
   }
 
   function scheduleUiMotionPause() {
@@ -1756,24 +1797,16 @@
     store.runtimeServerUrl = resolved.effectiveServerUrl;
     store.runtimeServerLabel = resolved.displayLabel;
 
-    if (resolved.isOverrideSession && !resolved.attachOnly && resolved.profileId) {
-      updateSettings({
-      defaultLocalProfileId: resolved.profileId,
-        serverUrl: resolved.effectiveServerUrl,
-      });
-    }
-
     if (!resolved.isOverrideSession && normalizeLocalProfileIdFromSession(store.settings.defaultLocalProfileId) == null) {
-      store.settings = { ...store.settings, defaultLocalProfileId: DEFAULT_LOCAL_PROFILE_ID };
+      updateSettings({ defaultLocalProfileId: DEFAULT_LOCAL_PROFILE_ID });
     }
 
     if (typeof launchTarget?.serverAuthEnabledOverride === "boolean") {
-      store.settings = {
-        ...store.settings,
+      updateSettings({
         serverAuthEnabled: launchTarget.serverAuthEnabledOverride,
         serverAuthUser: launchTarget.serverAuthUserOverride ?? store.settings.serverAuthUser,
         serverAuthPass: launchTarget.serverAuthPassOverride ?? store.settings.serverAuthPass,
-      };
+      });
     }
 
     setStartupStatusCopy();
@@ -2082,10 +2115,15 @@
     });
 
     try {
-      const { restoreAethonNovelsPayload } = await import("./lib/backup/novelsBackup");
+      const [{ restoreAethonNovelsPayload }, { isLnReaderBackupZip, restoreLnReaderNovelsBackup }] = await Promise.all([
+        import("./lib/backup/novelsBackup"),
+        import("./lib/backup/lnreaderBackup"),
+      ]);
       const rawBytes = await readFileAsArrayBuffer(path);
       const runtime = await loadNovelAuditRuntimeState();
-      const restored = await restoreAethonNovelsPayload(rawBytes, runtime);
+      const restored = await isLnReaderBackupZip(rawBytes)
+        ? await restoreLnReaderNovelsBackup(rawBytes, runtime)
+        : await restoreAethonNovelsPayload(rawBytes, runtime);
 
       traceMediaAudit({
         event: "novels.restore.audit.classified",
@@ -2151,14 +2189,12 @@
 
     try {
       const [
-        { extractAethonMangaPayloadFile },
         { analyzeBackupReconciliation, overlayEntryFromAnalysis },
         { readOverlayFile, upsertOverlayEntry },
         { buildRestoreReadiness },
         { buildReconciledBackupFile },
         { loadSourceInventory },
       ] = await Promise.all([
-        import("./lib/backup/mangaBackup"),
         import("./lib/reconciliation/analyze"),
         import("./lib/reconciliation/overlay"),
         import("./lib/reconciliation/readiness"),
@@ -2166,7 +2202,8 @@
         import("./lib/reconciliation/sourceInventory"),
       ]);
       const rawBytes = await readFileAsArrayBuffer(path);
-      const extractedBackup = await extractAethonMangaPayloadFile(rawBytes);
+      const backupName = path.split(/[\\/]/).pop()?.trim() || "manga-backup.tachibk";
+      const extractedBackup = new File([rawBytes], backupName, { type: "application/octet-stream" });
       const trackersData = await gql<{ trackers: { nodes: Tracker[] } }>(GET_TRACKERS);
 
       let inventory = await loadSourceInventory();
@@ -2346,6 +2383,24 @@
     }
   }
 
+  async function reconcileStartupSplashWithHealthyServer() {
+    if (startupHealthWatchInFlight || shellReady || failed || notConfigured || !startupSplashVisible) return;
+    const bases = getProbeBases();
+    if (!bases.length) return;
+    startupHealthWatchInFlight = true;
+    try {
+      for (const base of bases) {
+        const healthy = await invoke<boolean>("probe_server_health", { serverUrl: base }).catch(() => false);
+        if (healthy && !shellReady && !failed && !notConfigured && startupSplashVisible) {
+          await finishStartupAfterProbe();
+          return;
+        }
+      }
+    } finally {
+      startupHealthWatchInFlight = false;
+    }
+  }
+
   function canBootFromLibrarySnapshot() {
     if (!store.runtimeResolvedLocalProfileId || !store.runtimeServerUrl) return false;
     return shouldBootFromLibrarySnapshot({
@@ -2407,6 +2462,12 @@
   }
 
   onMount(() => {
+    const reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const updateReducedMotion = () => {
+      prefersReducedMotion = reducedMotionQuery.matches;
+    };
+    updateReducedMotion();
+    reducedMotionQuery.addEventListener("change", updateReducedMotion);
     try {
       win = getCurrentWindow();
     } catch (error) {
@@ -2424,20 +2485,26 @@
     if (isNovelRuntimeHostWindow) {
       startupSplashVisible = false;
       shellReady = false;
-      return () => {};
+      return () => {
+        reducedMotionQuery.removeEventListener("change", updateReducedMotion);
+      };
     }
 
     const updatePageBackgroundState = () => {
-      pageHidden = document.hidden || !appWindowFocused;
+      const webviewFocused = document.hasFocus();
+      pageHidden = document.hidden || !(appWindowFocused || webviewFocused);
       uiMotionActive = !pageHidden;
       if (pageHidden) {
-        trimRuntimeMemory({ forceGc: true, minIntervalMs: 5_000 });
+        trimRuntimeMemory({ minIntervalMs: 5_000 });
       }
       scheduleUiMotionPause();
       updateRuntimeDiagnosticsBridge();
     };
 
     const handleVisibilityChange = () => {
+      updatePageBackgroundState();
+    };
+    const handleWindowFocusStateChange = () => {
       updatePageBackgroundState();
     };
 
@@ -2453,6 +2520,8 @@
     }
     updatePageBackgroundState();
     document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", handleWindowFocusStateChange, { passive: true });
+    window.addEventListener("blur", handleWindowFocusStateChange, { passive: true });
     window.addEventListener("storage", refreshAppReadingStateFromPersistence, { passive: true });
     libraryUpdateInterval = setInterval(() => {
       void runAutomaticLibraryUpdate("interval");
@@ -2472,7 +2541,7 @@
       if (payload.lastAppliedScopes.includes("books:global")) {
         try {
           const { reloadBookLibraryState } = await import("./lib/books/libraryState");
-          const next = await reloadBookLibraryState();
+          const next = await reloadBookLibraryState({ profileId: store.runtimeResolvedLocalProfileId });
           replaceBooksState({
             books: next.books,
             bookProgress: next.bookProgress,
@@ -2509,11 +2578,11 @@
       startProbe();
     };
     document.addEventListener("contextmenu", e => e.preventDefault());
-    ensureProbeStarted();
     void (async () => {
       const launchTarget = await invoke<LaunchTargetInfo>("get_launch_target").catch(() => null);
       if (cancelled) return;
       applyLaunchTarget(launchTarget);
+      ensureProbeStarted();
 
       const initialTarget = getServerTargetInfo();
       document.title = `Aethon [${initialTarget.title}]`;
@@ -2657,6 +2726,9 @@
       cancelled = true;
       cancelProbe = true;
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleWindowFocusStateChange);
+      window.removeEventListener("blur", handleWindowFocusStateChange);
+      reducedMotionQuery.removeEventListener("change", updateReducedMotion);
       window.removeEventListener("storage", refreshAppReadingStateFromPersistence);
       unlistenResize();
       unlistenScale();
@@ -2803,6 +2875,18 @@
   $effect(() => {
     document.documentElement.dataset.aethonMotion = uiMotionActive ? "active" : "idle";
     document.body.dataset.aethonMotion = uiMotionActive ? "active" : "idle";
+    document.documentElement.dataset.aethonIdle = idle ? "true" : "false";
+    document.body.dataset.aethonIdle = idle ? "true" : "false";
+  });
+
+  $effect(() => {
+    const webviewFocused = typeof document === "undefined" ? true : document.hasFocus();
+    setLibraryMotionEnvironment({
+      libraryVisible: store.navPage === "library",
+      windowFocused: !pageHidden || webviewFocused,
+      shellIdle: idle,
+      motionEnabled: !prefersReducedMotion,
+    });
   });
 
   $effect(() => {
@@ -2923,6 +3007,15 @@
   }
 
   $effect(() => {
+    if (isNovelRuntimeHostWindow || shellReady || failed || notConfigured || !startupSplashVisible) return;
+    void reconcileStartupSplashWithHealthyServer();
+    const interval = window.setInterval(() => {
+      void reconcileStartupSplashWithHealthyServer();
+    }, 1500);
+    return () => window.clearInterval(interval);
+  });
+
+  $effect(() => {
     if (isNovelRuntimeHostWindow || bootReadyNotified || !shellReady) {
       return;
     }
@@ -2960,21 +3053,21 @@
             {@const BookReaderView = BookReaderComponent}
             <BookReaderView />
           {:else}
-            <div class="page-loading" aria-busy="true" aria-live="polite">Loading book...</div>
+            <div class="page-loading" aria-busy="true" aria-live="polite">{$_("ui_loadingBook")}</div>
           {/if}
         {:else if store.activeNovelReader}
           {#if NovelReaderComponent}
             {@const NovelReaderView = NovelReaderComponent}
             <NovelReaderView />
           {:else}
-            <div class="page-loading" aria-busy="true" aria-live="polite">Loading novel...</div>
+            <div class="page-loading" aria-busy="true" aria-live="polite">{$_("ui_loadingNovel")}</div>
           {/if}
         {:else if store.activeNovelDetail}
           {#if NovelDetailComponent}
             {@const NovelDetailView = NovelDetailComponent}
             <NovelDetailView />
           {:else}
-            <div class="page-loading" aria-busy="true" aria-live="polite">Loading details...</div>
+            <div class="page-loading" aria-busy="true" aria-live="polite">{$_("ui_loadingDetails")}</div>
           {/if}
         {:else if store.navPage === "settings" || store.navPage === "home" || store.navPage === "library" || store.navPage === "search" || store.navPage === "downloads"}
           <Layout
@@ -2995,11 +3088,11 @@
         <button
           type="button"
           class="fullscreen-exit-btn"
-          title="Exit fullscreen"
-          aria-label="Exit fullscreen"
+          title={$_("ui_exitFullscreen")}
+          aria-label={$_("ui_exitFullscreen")}
           onclick={() => void exitFullscreen()}
         >
-          Exit fullscreen
+          {$_("ui_exitFullscreen")}
         </button>
       {/if}
       {#if themeEditorOpen}
@@ -3096,7 +3189,7 @@
     animation-play-state: paused !important;
   }
 
-  :global([data-aethon-motion="idle"] .aethon-app-shell *:not(.anim-spin)) {
+  :global([data-aethon-motion="idle"] .aethon-app-shell *:not(.anim-spin):not(.anim-liquid-progress)) {
     animation-play-state: paused !important;
   }
 

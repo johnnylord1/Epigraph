@@ -5,6 +5,7 @@ async function buildEpub(options?: {
   title?: string;
   author?: string | null;
   description?: string | null;
+  subjects?: string[];
   withCover?: boolean;
   withNav?: boolean;
   chapterCount?: number;
@@ -14,6 +15,7 @@ async function buildEpub(options?: {
     title = "Sample Book",
     author = "Sample Author",
     description = "Sample description",
+    subjects = [],
     withCover = true,
     withNav = true,
     chapterCount = 2,
@@ -69,6 +71,7 @@ async function buildEpub(options?: {
           <dc:title>${title}</dc:title>
           ${author ? `<dc:creator>${author}</dc:creator>` : ""}
           ${description ? `<dc:description>${description}</dc:description>` : ""}
+          ${subjects.map((subject) => `<dc:subject>${subject}</dc:subject>`).join("")}
           ${withCover ? `<meta name="cover" content="cover-image"/>` : ""}
         </metadata>
         <manifest>
@@ -95,9 +98,19 @@ describe("parseEpubArchive", () => {
     expect(parsed.title).toBe("Sample Book");
     expect(parsed.author).toBe("Sample Author");
     expect(parsed.description).toBe("Sample description");
+    expect(parsed.genres).toEqual([]);
     expect(parsed.cover?.ext).toBe("jpg");
     expect(parsed.toc.map(item => item.label)).toEqual(["Chapter 1", "Chapter 2"]);
     expect(parsed.spine).toHaveLength(2);
+  });
+
+  it("extracts unique subject metadata as genres", async () => {
+    const buffer = await buildEpub({
+      subjects: ["Fantasy", "Adventure", "fantasy"],
+    });
+    const parsed = await parseEpubArchive(buffer, "Fallback");
+
+    expect(parsed.genres).toEqual(["Fantasy", "Adventure"]);
   });
 
   it("falls back cleanly when metadata is missing", async () => {

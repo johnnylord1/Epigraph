@@ -71,6 +71,7 @@ export type LibraryBootstrapStatus = "idle" | "loading" | "ready" | "error";
 
 export type LibraryStatusFilter =
   | "ALL"
+  | "UNOPENED"
   | "ONGOING"
   | "COMPLETED"
   | "CANCELLED"
@@ -109,6 +110,88 @@ export interface BooksLibraryUiState {
   sortMode: "az" | "author" | "recentlyAdded" | "recentlyRead" | "sectionCount";
   sortDir: "asc" | "desc";
 }
+
+const PROFILE_SCOPED_SETTING_KEYS = [
+  "pageStyle",
+  "readingDirection",
+  "fitMode",
+  "launchIntoLibrary",
+  "readerZoom",
+  "proseReaderFontSize",
+  "proseReaderFontFamily",
+  "proseReaderLineHeight",
+  "proseReaderParagraphSpacing",
+  "proseReaderContentWidth",
+  "proseReaderTextColor",
+  "proseReaderBackgroundColor",
+  "proseReaderTheme",
+  "proseReaderTextAlign",
+  "bookReaderFlow",
+  "proseReaderFullWidth",
+  "pdfFitMode",
+  "pdfDarkMode",
+  "pdfReflowMode",
+  "pdfReflowCleanBackgrounds",
+  "pdfReflowIllustrationScale",
+  "pageGap",
+  "optimizeContrast",
+  "offsetDoubleSpreads",
+  "preloadPages",
+  "autoMarkRead",
+  "autoNextChapter",
+  "libraryCropCovers",
+  "libraryPageSize",
+  "showNsfw",
+  "filterBlockedTags",
+  "discordRpc",
+  "chapterSortDir",
+  "chapterSortMode",
+  "chapterPageSize",
+  "readerBrightness",
+  "uiZoom",
+  "appLanguage",
+  "compactSidebar",
+  "gpuAcceleration",
+  "autoStartServer",
+  "autoLibraryUpdatesEnabled",
+  "libraryUpdateIntervalHours",
+  "libraryUpdateIntensity",
+  "downloadNewNovelChapters",
+  "onlyUpdateOngoingNovels",
+  "localServerStandbyEnabled",
+  "localServerStandbyIdleMin",
+  "preferredExtensionLang",
+  "keybinds",
+  "idleTimeoutMin",
+  "splashCards",
+  "storageLimitGb",
+  "markReadOnNext",
+  "overlayBars",
+  "readerDebounceMs",
+  "autoBookmark",
+  "theme",
+  "libraryBranches",
+  "renderLimit",
+  "hiddenCategoryIds",
+  "defaultLibraryCategoryId",
+  "mangaReaderPrefs",
+  "adultContentTags",
+  "nsfwFilteredTags",
+  "nsfwAllowedSourceIds",
+  "nsfwBlockedSourceIds",
+  "libraryTabSort",
+  "libraryTabStatus",
+  "libraryViewMode",
+  "libraryPreferredGridColumns",
+  "libraryShowProgress",
+  "libraryShowCardOutline",
+  "defaultLibrarySection",
+  "extraScanDirs",
+  "serverDownloadsPath",
+  "serverLocalSourcePath",
+] as const satisfies readonly (keyof Settings)[];
+
+export type ProfileScopedSettings = Partial<Pick<Settings, typeof PROFILE_SCOPED_SETTING_KEYS[number]>>;
 
 export interface BooksRestoreHydrationInput {
   books: BookEntry[];
@@ -332,6 +415,7 @@ export interface ReadLogEntry {
 
 export interface LibraryUpdateNotification {
   id: string;
+  profileId?: LocalProfileId | null;
   kind?: "comics" | "novels";
   mangaId?: number;
   novelId?: string;
@@ -358,6 +442,7 @@ export type LibraryUpdateIssueErrorType =
 
 export interface LibraryUpdateIssue {
   id: string;
+  profileId?: LocalProfileId | null;
   runId: string;
   contentKind: LibraryUpdateIssueKind;
   title: string;
@@ -377,6 +462,7 @@ export interface LibraryUpdateIssue {
 
 export interface SystemNotification {
   id: string;
+  profileId?: LocalProfileId | null;
   kind: "success" | "error" | "info" | "download";
   title: string;
   body?: string;
@@ -501,6 +587,7 @@ export interface Settings {
   gpuAcceleration:         boolean;
   defaultLocalProfileId:   LocalProfileId;
   customLocalProfiles:     CustomLocalProfile[];
+  profileScopedSettings:   Record<LocalProfileId, ProfileScopedSettings>;
   serverUrl:               string;
   serverBinary:            string;
   autoStartServer:         boolean;
@@ -629,6 +716,7 @@ export const DEFAULT_SETTINGS: Settings = {
   gpuAcceleration:        true,
   defaultLocalProfileId:  "main",
   customLocalProfiles:    [],
+  profileScopedSettings:  {},
   serverUrl:              "http://127.0.0.1:4567",
   serverBinary:           "",
   autoStartServer:        true,
@@ -724,6 +812,142 @@ function normalizeLibraryUpdateIntensity(value: unknown): LibraryUpdateIntensity
   return value === "eco" || value === "fast" ? value : "balanced";
 }
 
+function cloneSettingValue<T>(value: T): T {
+  if (value === undefined || value === null || typeof value !== "object") return value;
+  if (typeof structuredClone === "function") {
+    try {
+      return structuredClone(value);
+    } catch {
+      // Svelte state proxies can reach this path while saving profile-scoped settings.
+      // The persisted settings are plain JSON, so JSON cloning is the correct fallback.
+    }
+  }
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function resolveSettingsProfileId(settings: Pick<Settings, "defaultLocalProfileId">): LocalProfileId {
+  return normalizeLocalProfileId(settings.defaultLocalProfileId) ?? DEFAULT_SETTINGS.defaultLocalProfileId;
+}
+
+function extractProfileScopedSettings(settings: Settings): ProfileScopedSettings {
+  const scoped: ProfileScopedSettings = {};
+  for (const key of PROFILE_SCOPED_SETTING_KEYS) {
+    if (key in settings) {
+      (scoped as Record<string, unknown>)[key] = cloneSettingValue(settings[key]);
+    }
+  }
+  return scoped;
+}
+
+function normalizeProfileScopedSettings(value: unknown): Record<LocalProfileId, ProfileScopedSettings> {
+  if (!value || typeof value !== "object") return {};
+  const entries = Object.entries(value as Record<string, unknown>)
+    .map(([rawProfileId, rawSettings]) => {
+      const profileId = normalizeLocalProfileId(rawProfileId);
+      if (!profileId || !rawSettings || typeof rawSettings !== "object") return null;
+      const scoped: ProfileScopedSettings = {};
+      const record = rawSettings as Record<string, unknown>;
+      for (const key of PROFILE_SCOPED_SETTING_KEYS) {
+        if (key in record) {
+          (scoped as Record<string, unknown>)[key] = cloneSettingValue(record[key]);
+        }
+      }
+      return [profileId, scoped] as const;
+    })
+    .filter((entry): entry is readonly [LocalProfileId, ProfileScopedSettings] => Boolean(entry));
+  return Object.fromEntries(entries);
+}
+
+function pruneProfileScopedSettings(
+  scoped: Record<LocalProfileId, ProfileScopedSettings>,
+  settings: Pick<Settings, "customLocalProfiles">,
+): Record<LocalProfileId, ProfileScopedSettings> {
+  const allowed = new Set(["main", ...normalizeCustomLocalProfiles(settings.customLocalProfiles).map((profile) => profile.id)]);
+  return Object.fromEntries(
+    Object.entries(scoped).filter(([profileId]) => allowed.has(profileId)),
+  );
+}
+
+function rememberProfileScopedSettings(
+  settings: Settings,
+  profileId = resolveSettingsProfileId(settings),
+): Settings {
+  const currentScoped = normalizeProfileScopedSettings(settings.profileScopedSettings);
+  const nextScoped = pruneProfileScopedSettings({
+    ...currentScoped,
+    [profileId]: extractProfileScopedSettings(settings),
+  }, settings);
+  return { ...settings, profileScopedSettings: nextScoped };
+}
+
+function applyProfileScopedSettings(settings: Settings, profileId = resolveSettingsProfileId(settings)): Settings {
+  const scoped = normalizeProfileScopedSettings(settings.profileScopedSettings);
+  const profileSettings = scoped[profileId];
+  if (!profileSettings) {
+    return rememberProfileScopedSettings({ ...settings, profileScopedSettings: scoped }, profileId);
+  }
+
+  return rememberProfileScopedSettings({
+    ...settings,
+    ...profileSettings,
+    defaultLocalProfileId: settings.defaultLocalProfileId,
+    customLocalProfiles: settings.customLocalProfiles,
+    profileScopedSettings: scoped,
+    serverUrl: settings.serverUrl,
+    serverBinary: settings.serverBinary,
+    serverAuthUser: settings.serverAuthUser,
+    serverAuthPass: settings.serverAuthPass,
+    serverAuthEnabled: settings.serverAuthEnabled,
+    socksProxyEnabled: settings.socksProxyEnabled,
+    socksProxyHost: settings.socksProxyHost,
+    socksProxyPort: settings.socksProxyPort,
+    socksProxyVersion: settings.socksProxyVersion,
+    socksProxyUsername: settings.socksProxyUsername,
+    socksProxyPassword: settings.socksProxyPassword,
+    flareSolverrEnabled: settings.flareSolverrEnabled,
+    flareSolverrUrl: settings.flareSolverrUrl,
+    flareSolverrTimeout: settings.flareSolverrTimeout,
+    flareSolverrSessionName: settings.flareSolverrSessionName,
+    flareSolverrSessionTtl: settings.flareSolverrSessionTtl,
+    flareSolverrFallback: settings.flareSolverrFallback,
+    flareSolverrLocalAutoStart: settings.flareSolverrLocalAutoStart,
+    appLockEnabled: settings.appLockEnabled,
+    appLockPin: settings.appLockPin,
+    customThemes: settings.customThemes,
+    booksCategories: settings.booksCategories,
+    booksCategoryAssignments: settings.booksCategoryAssignments,
+    booksLibraryUi: settings.booksLibraryUi,
+    lastLibraryUpdateAt: settings.lastLibraryUpdateAt,
+  }, profileId);
+}
+
+function updateSettingsWithProfileScope(
+  current: Settings,
+  patch: Partial<Settings>,
+  runtimeProfileId: LocalProfileId | null = null,
+): Settings {
+  const currentProfileId = resolveSettingsProfileId(current) ?? normalizeLocalProfileId(runtimeProfileId) ?? DEFAULT_SETTINGS.defaultLocalProfileId;
+  const rememberedCurrent = rememberProfileScopedSettings(current, currentProfileId);
+  const requestedProfileId = "defaultLocalProfileId" in patch
+    ? normalizeLocalProfileId(patch.defaultLocalProfileId)
+    : null;
+  const nextProfileId = requestedProfileId ?? currentProfileId;
+  const nextSettings = {
+    ...rememberedCurrent,
+    ...patch,
+    profileScopedSettings: normalizeProfileScopedSettings({
+      ...rememberedCurrent.profileScopedSettings,
+      ...(patch.profileScopedSettings ?? {}),
+    }),
+  } satisfies Settings;
+
+  if (requestedProfileId && requestedProfileId !== currentProfileId) {
+    return applyProfileScopedSettings(nextSettings, nextProfileId);
+  }
+
+  return rememberProfileScopedSettings(nextSettings, nextProfileId);
+}
+
 function cloneDefaultSettings(): Settings {
   if (typeof structuredClone === "function") {
     return structuredClone(DEFAULT_SETTINGS);
@@ -816,7 +1040,7 @@ function mergeSettings(saved: any): Settings {
       ? DEFAULT_SETTINGS.flareSolverrSessionName
       : savedFlareSolverrSessionName;
 
-  return {
+  const merged: Settings = {
     ...DEFAULT_SETTINGS,
     ...saved?.settings,
     keybinds:     { ...DEFAULT_KEYBINDS, ...saved?.settings?.keybinds },
@@ -843,6 +1067,7 @@ function mergeSettings(saved: any): Settings {
       : {},
     libraryTabSort:    saved?.settings?.libraryTabSort    ?? {},
     libraryTabStatus:  saved?.settings?.libraryTabStatus  ?? {},
+    profileScopedSettings: normalizeProfileScopedSettings(saved?.settings?.profileScopedSettings),
     booksLibraryUi: {
       ...savedBooksLibraryState.booksLibraryUi,
     },
@@ -862,6 +1087,7 @@ function mergeSettings(saved: any): Settings {
     nsfwAllowedSourceIds: saved?.settings?.nsfwAllowedSourceIds ?? [],
     nsfwBlockedSourceIds: saved?.settings?.nsfwBlockedSourceIds ?? [],
   };
+  return applyProfileScopedSettings(merged, coercedDefaultProfileId);
 }
 
 function sanitizeSettingsForPersistence(settings: Settings): Partial<Settings> {
@@ -910,6 +1136,7 @@ function normalizeLoadedReadLogEntry(entry: any): ReadLogEntry | null {
 function normalizeLoadedLibraryUpdateNotification(entry: any): LibraryUpdateNotification | null {
   if (!entry || typeof entry !== "object") return null;
   const kind = entry.kind === "novels" ? "novels" : "comics";
+  const profileId = normalizeLocalProfileId(entry.profileId);
   const mangaId = Number(entry.mangaId);
   const novelId = typeof entry.novelId === "string" && entry.novelId.trim() ? entry.novelId.trim() : null;
   const chapterDelta = Number(entry.chapterDelta);
@@ -932,6 +1159,7 @@ function normalizeLoadedLibraryUpdateNotification(entry: any): LibraryUpdateNoti
     id: typeof entry.id === "string" && entry.id.trim()
       ? entry.id
       : kind === "novels" ? `novel-update:${novelId}:${createdAt}` : `library-update:${mangaId}:${createdAt}`,
+    profileId,
     kind,
     mangaId: Number.isFinite(mangaId) ? mangaId : undefined,
     novelId: novelId ?? undefined,
@@ -961,6 +1189,7 @@ function normalizeLibraryUpdateIssueErrorType(value: unknown): LibraryUpdateIssu
 
 function normalizeLoadedLibraryUpdateIssue(entry: any): LibraryUpdateIssue | null {
   if (!entry || typeof entry !== "object") return null;
+  const profileId = normalizeLocalProfileId(entry.profileId);
   const createdAt = Number(entry.createdAt);
   const runId = String(entry.runId ?? "").trim();
   const itemId = String(entry.itemId ?? "").trim();
@@ -986,6 +1215,7 @@ function normalizeLoadedLibraryUpdateIssue(entry: any): LibraryUpdateIssue | nul
     id: typeof entry.id === "string" && entry.id.trim()
       ? entry.id
       : `update-issue:${runId}:${contentKind}:${itemId}:${message.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+    profileId,
     runId,
     contentKind,
     title,
@@ -1054,6 +1284,7 @@ function loadPersistedLibraryUpdateIssues(value: unknown) {
 
 function normalizeLoadedSystemNotification(entry: any): SystemNotification | null {
   if (!entry || typeof entry !== "object") return null;
+  const profileId = normalizeLocalProfileId(entry.profileId);
   const createdAt = Number(entry.createdAt);
   if (!Number.isFinite(createdAt)) return null;
   const kind = entry.kind === "success" || entry.kind === "error" || entry.kind === "download" ? entry.kind : "info";
@@ -1063,6 +1294,7 @@ function normalizeLoadedSystemNotification(entry: any): SystemNotification | nul
     id: typeof entry.id === "string" && entry.id.trim()
       ? entry.id
       : `system:${createdAt}:${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`,
+    profileId,
     kind,
     title,
     body: typeof entry.body === "string" && entry.body.trim() ? entry.body : undefined,
@@ -1341,6 +1573,7 @@ class Store {
   runtimeServerLabel:string | null    = $state(null);
   private bookCanonicalMigrationTask: Promise<number> | null = null;
   private bookCanonicalMigrationQueued = false;
+  private booksStateScopeKey: LocalProfileId | null = null;
   private booksStateHydrated = !canUseDesktopBookStorage();
   booksLibraryHydrated: boolean = $state(!canUseDesktopBookStorage());
   private booksStatePersistQueued = false;
@@ -1378,6 +1611,10 @@ class Store {
       $effect(() => { persist({ readingStats:  this.readingStats  }); });
       $effect(() => { persist({ settings:      sanitizeSettingsForPersistence(this.settings) }); });
       $effect(() => {
+        const profileId = this.runtimeResolvedLocalProfileId ?? resolveSettingsProfileId(this.settings);
+        void this.hydrateBookLibraryState(profileId);
+      });
+      $effect(() => {
         this.books;
         this.bookProgress;
         this.bookBookmarks;
@@ -1388,7 +1625,6 @@ class Store {
       });
     });
 
-    void this.hydrateBookLibraryState();
     this.queueCanonicalBookMigration();
   }
 
@@ -1409,9 +1645,15 @@ class Store {
     }
   }
 
-  private async hydrateBookLibraryState() {
+  private async hydrateBookLibraryState(profileId = resolveSettingsProfileId(this.settings)) {
+    if (this.booksStateScopeKey === profileId && this.booksStateHydrated) return;
+    this.booksStateScopeKey = profileId;
+    this.booksStateHydrated = false;
+    this.booksLibraryHydrated = false;
+
     try {
-      const snapshot = await loadBookLibraryState();
+      const snapshot = await loadBookLibraryState({ profileId });
+      if (this.booksStateScopeKey !== profileId) return;
       const validBookIds = new Set(snapshot.books.map((book) => book.id));
 
       this.books = snapshot.books;
@@ -1431,9 +1673,11 @@ class Store {
         this.activeBookReaderId = null;
       }
     } finally {
-      this.booksStateHydrated = true;
-      this.booksLibraryHydrated = true;
-      this.queueCanonicalBookMigration();
+      if (this.booksStateScopeKey === profileId) {
+        this.booksStateHydrated = true;
+        this.booksLibraryHydrated = true;
+        this.queueCanonicalBookMigration();
+      }
     }
   }
 
@@ -1463,7 +1707,7 @@ class Store {
           booksCategoryAssignments: this.settings.booksCategoryAssignments,
           booksLibraryUi: this.settings.booksLibraryUi,
           updatedAtMs: Date.now(),
-        });
+        }, { profileId: this.booksStateScopeKey ?? this.runtimeResolvedLocalProfileId ?? resolveSettingsProfileId(this.settings) });
       }
     } finally {
       this.booksStatePersistRunning = false;
@@ -1663,17 +1907,26 @@ class Store {
   clearHistory()                        { this.history = []; this.readLog = []; bumpContentSetupVersion(); }
   clearLibraryUpdateNotifications()     { this.libraryUpdateNotifications = []; this.libraryUpdateIssues = []; }
   clearSystemNotifications()            { this.systemNotifications = []; }
+  matchesRuntimeProfile(entry: { profileId?: LocalProfileId | null }) {
+    const runtimeProfileId = this.runtimeResolvedLocalProfileId;
+    if (!runtimeProfileId) return true;
+    return entry.profileId === runtimeProfileId;
+  }
+  notificationScopeKey(entry: { id: string; profileId?: LocalProfileId | null }) {
+    return `${entry.profileId ?? "global"}:${entry.id}`;
+  }
   recordLibraryUpdateIssues(issues: Array<Omit<LibraryUpdateIssue, "id" | "createdAt"> & { id?: string; createdAt?: number }>, createdAt = Date.now()) {
     const normalized = issues
       .map((issue) => normalizeLoadedLibraryUpdateIssue({
         ...issue,
+        profileId: issue.profileId ?? this.runtimeResolvedLocalProfileId,
         createdAt: issue.createdAt ?? createdAt,
         id: issue.id ?? `update-issue:${issue.runId}:${issue.contentKind}:${issue.itemId}:${issue.message.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
       }))
       .filter((issue): issue is LibraryUpdateIssue => Boolean(issue));
     if (!normalized.length) return [];
-    const existingKeys = new Set(this.libraryUpdateIssues.map((issue) => issue.id));
-    const nextIssues = normalized.filter((issue) => !existingKeys.has(issue.id));
+    const existingKeys = new Set(this.libraryUpdateIssues.map((issue) => this.notificationScopeKey(issue)));
+    const nextIssues = normalized.filter((issue) => !existingKeys.has(this.notificationScopeKey(issue)));
     if (!nextIssues.length) return [];
     this.libraryUpdateIssues = [...nextIssues, ...this.libraryUpdateIssues]
       .sort((left, right) => right.createdAt - left.createdAt);
@@ -1685,6 +1938,7 @@ class Store {
       ?? `system:${createdAt}:${entry.kind}:${entry.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
     const notification: SystemNotification = {
       id: stableId,
+      profileId: entry.profileId ?? this.runtimeResolvedLocalProfileId,
       kind: entry.kind,
       title: entry.title,
       body: entry.body,
@@ -1692,7 +1946,7 @@ class Store {
     };
     this.systemNotifications = [
       notification,
-      ...this.systemNotifications.filter((current) => current.id !== stableId),
+      ...this.systemNotifications.filter((current) => this.notificationScopeKey(current) !== this.notificationScopeKey(notification)),
     ]
       .sort((left, right) => right.createdAt - left.createdAt)
       .slice(0, 200);
@@ -1701,8 +1955,9 @@ class Store {
   recordLibraryUpdateNotifications(before: Manga[], after: Manga[], createdAt = Date.now()) {
     const entries = buildLibraryUpdateNotifications(before, after, createdAt);
     if (!entries.length) return [];
-    const existingKeys = new Set(this.libraryUpdateNotifications.map((entry) => entry.id));
-    const nextEntries = entries.filter((entry) => !existingKeys.has(entry.id));
+    const scopedEntries = entries.map((entry) => ({ ...entry, profileId: this.runtimeResolvedLocalProfileId }));
+    const existingKeys = new Set(this.libraryUpdateNotifications.map((entry) => this.notificationScopeKey(entry)));
+    const nextEntries = scopedEntries.filter((entry) => !existingKeys.has(this.notificationScopeKey(entry)));
     if (!nextEntries.length) return [];
     this.libraryUpdateNotifications = [...nextEntries, ...this.libraryUpdateNotifications].slice(0, 200);
     return nextEntries;
@@ -1710,8 +1965,9 @@ class Store {
   recordComicsUpdateNotifications(updates: ComicsUpdateNotificationInput[], createdAt = Date.now()) {
     const entries = buildComicsUpdateNotificationEntries(updates, createdAt);
     if (!entries.length) return [];
-    const existingKeys = new Set(this.libraryUpdateNotifications.map((entry) => entry.id));
-    const nextEntries = entries.filter((entry) => !existingKeys.has(entry.id));
+    const scopedEntries = entries.map((entry) => ({ ...entry, profileId: this.runtimeResolvedLocalProfileId }));
+    const existingKeys = new Set(this.libraryUpdateNotifications.map((entry) => this.notificationScopeKey(entry)));
+    const nextEntries = scopedEntries.filter((entry) => !existingKeys.has(this.notificationScopeKey(entry)));
     if (!nextEntries.length) return [];
     this.libraryUpdateNotifications = [...nextEntries, ...this.libraryUpdateNotifications].slice(0, 200);
     return nextEntries;
@@ -1719,8 +1975,9 @@ class Store {
   recordNovelUpdateNotifications(updates: NovelUpdateNotificationInput[], createdAt = Date.now()) {
     const entries = buildNovelUpdateNotificationEntries(updates, createdAt);
     if (!entries.length) return [];
-    const existingKeys = new Set(this.libraryUpdateNotifications.map((entry) => entry.id));
-    const nextEntries = entries.filter((entry) => !existingKeys.has(entry.id));
+    const scopedEntries = entries.map((entry) => ({ ...entry, profileId: this.runtimeResolvedLocalProfileId }));
+    const existingKeys = new Set(this.libraryUpdateNotifications.map((entry) => this.notificationScopeKey(entry)));
+    const nextEntries = scopedEntries.filter((entry) => !existingKeys.has(this.notificationScopeKey(entry)));
     if (!nextEntries.length) return [];
     this.libraryUpdateNotifications = [...nextEntries, ...this.libraryUpdateNotifications].slice(0, 200);
     return nextEntries;
@@ -2095,6 +2352,7 @@ class Store {
       this.activeChapter = null;
       this.activeChapterList = [];
     }
+    this.emitNavigationChange();
   }
   setActiveNovelReader(next: ActiveNovelReaderState | null) {
     this.activeNovelReader = next;
@@ -2107,6 +2365,7 @@ class Store {
       this.pageUrls = [];
       this.pageNumber = 1;
     }
+    this.emitNavigationChange();
   }
   setPreviewManga(next: Manga | null)            { this.previewManga     = next; }
   setActiveSource(next: Source | null)           { this.activeSource     = next; }
@@ -2133,9 +2392,22 @@ class Store {
   }
   setRuntimeSettingsTab(next: RuntimeSettingsTab | null) { this.runtimeSettingsTab = next; }
   setExtensionsPanelHint(next: "repos" | null)   { this.extensionsPanelHint = next; }
-  updateSettings(patch: Partial<Settings>)       { this.settings = { ...this.settings, ...patch }; }
-  resetSettings()                                { this.settings = cloneDefaultSettings(); }
-  resetKeybinds()                                { this.settings = { ...this.settings, keybinds: DEFAULT_KEYBINDS }; }
+  updateSettings(patch: Partial<Settings>)       {
+    this.settings = updateSettingsWithProfileScope(this.settings, patch, this.runtimeResolvedLocalProfileId);
+  }
+  resetSettings()                                {
+    const profileId = resolveSettingsProfileId(this.settings);
+    const reset = {
+      ...cloneDefaultSettings(),
+      defaultLocalProfileId: this.settings.defaultLocalProfileId,
+      customLocalProfiles: this.settings.customLocalProfiles,
+      profileScopedSettings: this.settings.profileScopedSettings,
+      serverUrl: this.settings.serverUrl,
+      serverBinary: this.settings.serverBinary,
+    };
+    this.settings = rememberProfileScopedSettings(reset, profileId);
+  }
+  resetKeybinds()                                { this.updateSettings({ keybinds: DEFAULT_KEYBINDS }); }
 
 
   saveCustomTheme(theme: CustomTheme) {
@@ -2149,7 +2421,7 @@ class Store {
   deleteCustomTheme(id: string) {
     const next = this.settings.customThemes.filter(t => t.id !== id);
     const wasActive = this.settings.theme === id;
-    this.settings = { ...this.settings, customThemes: next, theme: wasActive ? "nocturne" : this.settings.theme };
+    this.updateSettings({ customThemes: next, theme: wasActive ? "nocturne" : this.settings.theme });
   }
 
   /**
@@ -2289,7 +2561,7 @@ class Store {
   toggleHiddenCategory(id: number) {
     const ids = this.settings.hiddenCategoryIds ?? [];
     const next = ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id];
-    this.settings = { ...this.settings, hiddenCategoryIds: next };
+    this.updateSettings({ hiddenCategoryIds: next });
   }
 
   clearDiscoverCache() {

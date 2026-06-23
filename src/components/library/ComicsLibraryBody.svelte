@@ -1,4 +1,5 @@
 <script module lang="ts">
+  import { _ } from "../../lib/i18n/runtime";
   import { createComicsLibraryCardVmCache } from "../../lib/library/comicsSection";
 
   let sessionComicsScrollTop = 0;
@@ -7,6 +8,7 @@
 </script>
 
 <script lang="ts">
+  import { translate } from "../../lib/i18n/runtime";
   import { onMount } from "svelte";
   import { Books, CheckSquare, Folder, FolderSimplePlus, Trash, X } from "phosphor-svelte";
   import { createComicLibraryCardId } from "../../lib/library/cardIdentity";
@@ -135,7 +137,7 @@
   let lastVisibleCardsBuildMs = 0;
   let lastVisibleCardsCount = 0;
   const mountStartedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
-  const lazyVirtualizeAfter = 180;
+  const lazyVirtualizeAfter = 48;
 
   const mangaByCardId = $derived(
     new Map(mangas.map((manga) => [createComicLibraryCardId(manga.id), manga])),
@@ -150,6 +152,12 @@
       mode: viewMode,
     }),
   );
+
+  function syncContentWidth() {
+    if (!contentEl) return;
+    const nextWidth = contentEl.clientWidth;
+    if (nextWidth > 0 && nextWidth !== contentWidth) contentWidth = nextWidth;
+  }
   const visibleCards = $derived.by(() => {
     const start = typeof performance !== "undefined" ? performance.now() : Date.now();
     const cards = mangas.length > lazyVirtualizeAfter
@@ -642,28 +650,28 @@
 
     return [
       {
-        label: manga.inLibrary ? "Remove from library" : "Add to library",
+        label: manga.inLibrary ? translate("ui_removeFromLibrary") : translate("ui_addToLibrary"),
         icon: Books,
         onClick: () => (manga.inLibrary ? onRemoveFromLibrary(manga) : onAddToLibrary(manga)),
       },
       {
-        label: "Delete all downloads",
+        label: translate("ui_deleteAllDownloads"),
         icon: Trash,
         danger: true,
         disabled: !(manga.downloadCount && manga.downloadCount > 0),
         onClick: () => onDeleteAllDownloads(manga),
       },
       { separator: true },
-      { label: "Select this manga", icon: CheckSquare, onClick: () => enterSelectMode(manga.id) },
+      { label: translate("ui_selectThisManga"), icon: CheckSquare, onClick: () => enterSelectMode(manga.id) },
       ...(categoryEntries.length ? ([{ separator: true } as MenuEntry, ...categoryEntries]) : []),
       { separator: true },
-      { label: "New folder", icon: FolderSimplePlus, onClick: () => onCreateAndAssign(manga) },
+      { label: translate("ui_newFolder"), icon: FolderSimplePlus, onClick: () => onCreateAndAssign(manga) },
     ];
   }
 
   function buildEmptyCtx(): MenuEntry[] {
     return [{
-      label: "New folder",
+      label: translate("ui_newFolder"),
       icon: FolderSimplePlus,
       onClick: () => onCreateCategory(),
     }];
@@ -822,7 +830,7 @@
       previousActive = false;
       return;
     }
-    contentWidth = contentEl.clientWidth;
+    syncContentWidth();
     if (previousActive) return;
     previousActive = true;
 
@@ -840,8 +848,39 @@
     scheduleGridVisiblePerfLog("grid visible");
   });
 
+  $effect(() => {
+    const el = contentEl;
+    if (!active || !el) return;
+
+    let firstFrame: number | null = null;
+    let secondFrame: number | null = null;
+    const resizeObserver = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(syncContentWidth);
+
+    syncContentWidth();
+    resizeObserver?.observe(el);
+    window.addEventListener("resize", syncContentWidth, { passive: true });
+    window.visualViewport?.addEventListener("resize", syncContentWidth, { passive: true });
+    firstFrame = requestAnimationFrame(() => {
+      firstFrame = null;
+      syncContentWidth();
+      secondFrame = requestAnimationFrame(() => {
+        secondFrame = null;
+        syncContentWidth();
+      });
+    });
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", syncContentWidth);
+      window.visualViewport?.removeEventListener("resize", syncContentWidth);
+      if (firstFrame !== null) cancelAnimationFrame(firstFrame);
+      if (secondFrame !== null) cancelAnimationFrame(secondFrame);
+    };
+  });
+
   onMount(() => {
-    let resizeObserver: ResizeObserver | null = null;
     let longTaskObserver: PerformanceObserver | null = null;
     let longTaskCount = 0;
 
@@ -853,19 +892,10 @@
       }
     }
 
+    syncContentWidth();
     queueMicrotask(() => {
       if (contentEl) {
-        contentWidth = contentEl.clientWidth;
-        if (typeof ResizeObserver !== "undefined") {
-          resizeObserver = new ResizeObserver((entries) => {
-            const nextWidth = entries[0]?.contentRect.width ?? contentEl?.clientWidth ?? 0;
-            contentWidth = nextWidth;
-          });
-          resizeObserver.observe(contentEl);
-        }
-        requestAnimationFrame(() => {
-          if (contentEl) contentWidth = contentEl.clientWidth;
-        });
+        syncContentWidth();
       }
       if (store.libraryScrollTop > 0) {
         pendingScrollRestore = true;
@@ -908,7 +938,6 @@
       coverRetryTimers.clear();
       for (const timer of coverRecoveryTimers.values()) clearTimeout(timer);
       coverRecoveryTimers.clear();
-      resizeObserver?.disconnect();
       if (contentEl) sessionComicsScrollTop = contentEl.scrollTop;
       coverPrewarmQueue = [];
       pendingCachedCoverUrls.clear();
@@ -941,12 +970,12 @@
 {#if selectMode}
   <div class="select-bar">
     <div class="select-bar-left">
-      <button type="button" class="sel-btn sel-cancel" onclick={exitSelectMode} title="Cancel (Esc)">
+      <button type="button" class="sel-btn sel-cancel" onclick={exitSelectMode} title={$_("ui_cancelEsc")}>
         <X size={13} weight="bold" />
       </button>
-      <span class="sel-count">{selectedIds.size} selected</span>
-      <button type="button" class="sel-btn sel-all" onclick={selectAll} title="Select all">
-        Select all
+      <span class="sel-count">{selectedIds.size} {$_("ui_selected")}</span>
+      <button type="button" class="sel-btn sel-all" onclick={selectAll} title={$_("ui_selectAll")}>
+        {$_("ui_selectAll")}
       </button>
     </div>
     <div class="select-bar-right">
@@ -959,7 +988,7 @@
             onclick={() => bulkMoveOpen = !bulkMoveOpen}
           >
             <Folder size={13} weight="bold" />
-            Move to folder
+            {$_("ui_moveToFolder")}
           </button>
           {#if bulkMoveOpen}
             <div class="bulk-folder-list">
@@ -980,7 +1009,7 @@
         onclick={bulkRemoveFromLibrary}
       >
         <Trash size={13} weight="bold" />
-        Remove
+        {$_("sources_actions_remove")}
       </button>
     </div>
   </div>
@@ -1030,6 +1059,8 @@
         onCoverError={handleCoverError}
         onVisibleRangeChange={handleVisibleRangeChange}
         virtualizeAfter={lazyVirtualizeAfter}
+        {active}
+        panelMotionEnabled={!isScrolling}
       />
     {:else}
       <VirtualLibraryCardGrid
@@ -1049,6 +1080,8 @@
         onCoverError={handleCoverError}
         onVisibleRangeChange={handleVisibleRangeChange}
         virtualizeAfter={lazyVirtualizeAfter}
+        {active}
+        panelMotionEnabled={!isScrolling}
       />
     {/if}
   {/if}

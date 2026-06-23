@@ -94,6 +94,7 @@ export async function importLocalBookFile(
         author: parsed.author,
         description: parsed.description,
         genres: parsed.genres,
+        metadataBackfillVersion: 1,
         coverPath,
         subtype,
         createdAt: existing?.createdAt ?? now,

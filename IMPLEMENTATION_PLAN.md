@@ -18,12 +18,12 @@ Treat the current working tree as the source of truth. Several features were imp
   - Profile workspace data can be reset for `MAIN` and for additional profiles from Settings after a second confirmation click.
   - Resetting the active profile stops its local server first; the user should restart Aethon afterward so the active profile is recreated cleanly from disk.
 - The legacy `TEST` profile remains reserved for launch/restore compatibility, but it is not exposed as a normal Settings profile choice.
-- Settings now contains the first app-language package wiring:
+- Settings now contains the app-language package wiring:
   - Paraglide/Inlang is installed and compiled through Vite.
   - `project.inlang/settings.json` and `messages/{locale}.json` are the source translation catalogs.
   - Settings exposes an `App language` selector independent from `Preferred source language`.
-  - The language selector supports a broad locale list through `Intl.DisplayNames`.
-  - Settings language controls plus the shared sidebar, Home, Downloads, and page/detail loading states now use message keys; full-app localization still requires extracting domain-specific strings from the remaining major pages and readers.
+  - The release language set is English, Portuguese (Brazil), Spanish, Japanese, and Chinese (China).
+  - The native Aethon UI has been moved to Paraglide message keys across the primary shell, Settings, Library, Browse/Search/Sources, Downloads, detail pages, readers, overlays, dialogs, and update progress copy.
 - Settings storage/expansion controls were hardened:
   - dropdown menus use opaque Nocturne surfaces instead of transparent backgrounds;
   - Storage action rows are aligned;
@@ -63,18 +63,20 @@ Treat the current working tree as the source of truth. Several features were imp
   - Final signature SHA-256: `4CBE871C68BCB8A8612F786ECA9885B0886F457AF240C3B6BF21DC1204A1AE33`.
   - Tauri CLI 2.10.1 has no `signer verify` subcommand; successful key decryption/signing and the generated updater signature are the available local CLI validation.
   - The signing key remained outside the repository and was supplied only to the signing process.
-- Latest i18n and dev-app smoke:
-  - Shared sidebar labels and page/detail loading states now use `svelte-i18n` message keys.
-  - The runtime applies `dir=rtl` for Arabic, Persian, Hebrew, and Urdu locales and restores `dir=ltr` when returning to English or Portuguese.
-  - Real WebView2 smoke switched English -> Hebrew RTL -> Portuguese (Brazil) -> English; document language/direction and sidebar labels updated without JavaScript errors.
-  - Home, Library, Browse, Downloads, and Settings sidebar navigation was exercised in the fresh dev build.
-  - Library Comics rendered loaded covers at scroll offsets 0, 22000, and the end of the 48150px virtual surface; Books/Comics switching and Library keep-alive navigation also passed.
-  - Visual smoke found and fixed the missing `settings-row--stacked` CSS contract that compressed the Create profile label into a one-character column in narrow windows.
-  - `npm run test:browser -- src/components/settings/Settings.browser.test.ts -t "keeps the profile creation row readable"`, `npm test -- src/lib/i18n/runtime.test.ts`, and `npm run build` passed.
-  - With the dev app closed, `cargo test local_server_java_args_enable_extension_bytecode_compatibility` passed.
-  - The final signed NSIS installer completed a silent install with exit code `0` at `C:\Users\jhow-\AppData\Local\Aethon\aethon.exe`.
-  - Installed-release smoke opened `http://tauri.localhost/` with title `Aethon [MAIN :4567]`, rendered the real 633-title Library and Settings/Profiles, and recorded no JavaScript or console errors.
-  - The temporary localization smoke state was restored to English before leaving the installed app open.
+- Latest localization and dev-app smoke:
+  - The i18n runtime is Paraglide/Inlang, wrapped by `src/lib/i18n/runtime.ts` so existing `$_("key")` call sites remain compatible while new catalogs compile through Vite.
+  - Supported app languages are `en`, `pt-BR`, `es`, `ja`, and `zh-CN`; `Preferred source language` remains separate and still controls source/search defaults only.
+  - Each catalog currently has 1709 keys with 0 missing keys and 0 placeholder mismatches.
+  - A Svelte presentation scan found only four intentional `NSFW` fragments outside the catalogs.
+  - Real dev-app smoke switched Settings through Japanese, Chinese (China), Spanish, and Portuguese (Brazil), confirming that primary Settings labels update live without JavaScript errors.
+  - Browser visual snapshots are forced to English through `src/test/browser/setup.ts` so screenshot tests stay deterministic while app-language persistence remains user-controlled.
+  - `npm run test:unit` passed with 84 files and 436 tests.
+  - `npm run test:browser` passed with 5 files and 23 browser-component tests.
+  - `npm run build` passed with Paraglide compilation.
+  - Residual release risk: many non-English strings were machine-assisted and need native copy review before marketing them as polished translations.
+  - Residual build note: Vite still warns that the main `index` chunk is larger than 500 kB after minification.
+  - Dev config now explicitly mirrors the production window title/decorations so `pnpm tauri:dev` opens as the frameless `Aethon` window instead of the native `Tauri App` fallback.
+  - The refreshed dev app is open and responding with the Portuguese (Brazil) Settings UI visible.
 - Latest release-readiness cleanup:
   - Commit `2f26fcf` fixed the Library folder snapshot regression: transient category refresh failures no longer overwrite persisted folders with an empty category list, and Library category fetch now wakes the local server before querying.
   - Settings General was reorganized into separate `Startup`, `Profiles`, and `Desktop defaults` cards, with updated browser snapshots.
@@ -84,7 +86,7 @@ Treat the current working tree as the source of truth. Several features were imp
   - Backup test fixtures were aligned to release version `0.0.1`.
   - `npm test -- src/lib/backup/aethonBackup.test.ts src/lib/backup/booksBackup.test.ts` passed with 9 tests.
   - `npm run build` passed after the release cleanup; the previous Aethon-owned Svelte unused-selector warnings are gone.
-  - The i18n runtime was migrated from `svelte-i18n` to Paraglide with a compatibility wrapper for existing `$_("section.key")` call sites.
+  - The i18n runtime was migrated from the early `svelte-i18n` spike to Paraglide with a compatibility wrapper for existing `$_("section.key")` call sites.
   - Home and Downloads received the next message-key slice in Paraglide catalogs.
   - `npm test -- src/lib/i18n/runtime.test.ts src/components/pages/Downloads.test.ts`, `npm test -- --project shell-jsdom src/components/settings/Settings.test.ts src/components/pages/Downloads.test.ts src/lib/i18n/runtime.test.ts`, and `npm run build` passed after the Paraglide migration.
   - The Paraglide compatibility wrapper now supports the app's existing direct interpolation style (`$_("key", { count })`) as well as `{ values }`, with regression coverage in `src/lib/i18n/runtime.test.ts`.
@@ -123,20 +125,117 @@ Treat the current working tree as the source of truth. Several features were imp
   - Validation after the BookDetail localization slice:
     - `npm run build` passed with Paraglide compilation.
     - `npm test -- src/lib/i18n/runtime.test.ts` passed with 3 tests.
+  - Final Paraglide expansion covered English, Portuguese (Brazil), Spanish, Japanese, and Chinese (China) catalogs across primary shell surfaces, Library, Browse/Sources, Downloads, Settings, details, readers, overlays, dialogs, attributes, and update-progress copy.
+  - Validation after the final Paraglide expansion:
+    - `pnpm exec vitest run --project browser-components src/components/library/BooksLibraryBody.test.ts` passed with 4 tests after fixing a missing `_` import introduced by the expression-localization pass.
+    - Catalog parity check passed: 1709 keys per locale, no missing keys, no placeholder mismatches.
+    - Svelte expression scan passed with only intentional `NSFW` marker fragments remaining outside catalogs.
+    - `git diff --check` passed.
+    - `npm run test:unit` passed with 84 files and 436 tests.
+    - `npm run test:browser` passed with 5 files and 23 tests.
+    - `npm run build` passed with Paraglide compilation; the existing large-chunk warning remains.
+  - Latest Library display/boot stabilization:
+    - Real dev-app validation must use `npm run tauri:dev`, not `npm run tauri dev`; the latter serves the built bundle on `127.0.0.1:1430` and can test stale code.
+    - The correct dev app is now running from `tauri.dev.conf.json` with Vite `127.0.0.1:1420`, MAIN Suwayomi `127.0.0.1:4567`, and WebView2 CDP `127.0.0.1:9223`.
+    - Fixed the false empty-Library boot state by retrying a direct live `GET_LIBRARY` request when the Library/preload cache returns `[]` before accepting an empty result.
+    - Fixed the Library layout-switch freeze by removing row-height measurement from `VirtualLibraryCardGrid`; the measurement path could trigger Svelte `effect_update_depth_exceeded` while switching Grade/Compact/List.
+    - Virtual row sizing is now calculated from viewport width, active columns, mode, and stable row gaps; list mode uses a fixed estimate aligned to the current row height.
+    - Reduced layout-switch churn by no longer remounting virtual rows when only `showProgress` or `showOutline` changes.
+    - Preserved the animated display popover switches and pill-shaped density rail alignment work.
+    - Real dev-app CDP smoke after the fix covered:
+      - startup without stuck splash;
+      - Library loading `633 titulos`;
+      - `Grade -> Compacto -> Lista -> Grade -> Compacto -> Grade`;
+      - long wheel scroll to internal `scrollTop=3900`;
+      - `Comics -> Livros -> Comics`;
+      - no visible card overlap and no JavaScript exceptions.
+    - Targeted validation passed:
+      - `npm run test:unit -- src/lib/libraryDisplay.test.ts src/lib/i18n/runtime.test.ts`
+      - `npm run test:browser -- src/components/library/LibraryCardGrid.test.ts`
+      - `npm run build`
+    - After production build changed Paraglide generation to `message-modules`, the dev app was restarted again with `npm run tauri:dev`; final CDP sanity confirmed `127.0.0.1:1420`, no splash overlay, `633 titulos`, visible Library cards, and no runtime exceptions.
+  - Latest Settings function audit/mapping:
+    - Real dev-app click smoke confirmed the Settings sidebar button opens the Settings primary page and renders the reorganized General pane.
+    - Code audit mapped all Settings groups and non-destructive handlers:
+      - App/General: startup toggles, local-server startup/standby, idle timeout, Discord activity, active profile selection, app language selection, profile creation, profile data reset, server URL, and preferred source language.
+      - App/Appearance: theme selection/editor entry points, OLED/accent/motion/interface presentation controls, and custom theme deletion.
+      - App/Keybinds: key capture/remapping and reset.
+      - Reader & Library: reader defaults, Library display defaults, book/library filters, and Comics/Books category management.
+      - Content & Integrations: NSFW/content filtering, blocked tags, allowed/blocked source rules, tracker login/logout flows, Hardcover token flow, and Syncd panels.
+      - System/Storage: storage refresh, limits, cache cleanup, backup export/import/restore, path browsing/editing, migration, and advanced expansion/collapse.
+      - System/Performance: GPU/render/prefetch/cache/runtime responsiveness controls.
+      - System/Security: app lock/PIN, server auth, SOCKS proxy, FlareSolverr local/docker controls, fallback, timeout, and TTL.
+      - Advanced/About and Dev tools: releases/GitHub/update entry points, changelog expansion, idle-screen preview, app logs, and token previews.
+    - Opaque Settings dropdown styling and Storage expand/collapse behavior were confirmed in code and previous screenshots.
+    - Destructive or external side-effect actions were intentionally not executed on the real user profile during this audit: reset profile data, clean cache, wipe/reset-all settings, backup restore, delete categories/themes/profiles, auth enable/disable, FlareSolverr start/stop, tracker login/logout, and installer/update actions.
+- Latest Books/Novels source genre audit:
+  - Verified in the real dev app that the LNReader Illusia source does return genre data for `Lorde dos Mistérios`.
+  - Root cause was in Aethon's LNReader runtime adapter: detail `genre/tags` were only accepted as simple arrays, while LNReader sources can return objects such as `{ tags_name: [...] }`.
+  - `readNovelPluginDetails` now merges `genre`, `genres`, and `tags` and normalizes array, string, `{ tags_name }`, and common object-label formats without changing the external `NovelDetailRecord.tags` contract.
+  - The Illusia detail smoke returned `Chinesa`, `Ação`, `Aventura`, `Fantasia Sombria`, `GameLit`, `Histórico`, `Mistério`, `Psicológico`, `Sobrenatural`, `Steampunk`, and `Terror Cósmico`.
+  - Library Books now surfaces those source-novel tags as genre chips alongside folders/status filters.
+  - Source novels are profile-scoped through the novels storage path. EPUB/PDF imports intentionally remain global local app data for the first release, because typical real use is a single `MAIN` profile and global local imports reduce user confusion.
+  - Fixed a novels storage scope mismatch where empty frontend scope normalized to `profile:main` but desktop persistence could fall back to the backend `Test` profile root. Empty desktop novels scope now explicitly reads/writes the `MAIN` local profile.
+  - Real dev-app visual smoke after the fix covered Home, Browse, Downloads, Settings, Library Books, and the Illusia detail page. The final Library Books view showed `3 LIVROS SALVOS`, the restored Illusia card, and source genre chips.
+  - Validation passed:
+    - `npm run test:unit -- src/lib/novels/pluginRuntime.test.ts src/lib/novels/libraryState.test.ts src/lib/novels/libraryRefresh.test.ts`
+    - `npm run build`
+- Latest release preflight audit:
+  - Translation audit was repeated across `en`, `pt-BR`, `es`, `ja`, and `zh-CN`: all catalogs currently have 1767 keys, with no missing keys, no extra keys, no placeholder mismatches, and no empty values.
+  - This was a structural and spot-copy audit, not a native human copy review. The machine-assisted non-English copy still needs human review before marketing the localization as final-quality.
+  - Broad real dev-app smoke passed before release packaging:
+    - Home, Library, Browse, Downloads, Settings, Library Comics, Library Books, Library display popover, Illusia detail, and Recent Activity overlay were captured from the open dev WebView.
+    - The smoke found no captured JavaScript `pageerror` or `console.error` entries.
+    - Library Books showed `3 LIVROS SALVOS`, restored Illusia data, and source genre chips.
+    - Recent Activity did not close with Escape during this pass, but primary navigation closed it as expected.
+  - A signed `0.0.1` NSIS installer was generated from the current tree:
+    - `src-tauri/target/release/bundle/nsis/Aethon_0.0.1_x64-setup.exe`
+    - installer SHA-256: `3E803A03E691453A24B9012C0D0D71AF919621F938F83399E85BD7F53E69681B`
+    - `src-tauri/target/release/bundle/nsis/Aethon_0.0.1_x64-setup.exe.sig`
+    - signature SHA-256: `4CBE871C68BCB8A8612F786ECA9885B0886F457AF240C3B6BF21DC1204A1AE33`
+  - Installed-app smoke did not pass and is now a release blocker:
+    - The installed `C:\Users\jhow-\AppData\Local\Aethon\aethon.exe` opened and MAIN listened on `127.0.0.1:4567`.
+    - The installed WebView exposed CDP metadata for `Aethon [MAIN :4567]`, but CDP page commands did not respond, so the visual smoke used Win32 window captures.
+    - Library Comics stayed on card placeholders/skeletons for more than 60 seconds even though the header showed `633 TITLES`.
+    - Refresh and Comics/Books clicks did not recover the card rendering in the installed build.
+    - After stopping the installed app and launching `src-tauri/target/release/aethon.exe --main`, the launcher deadline initially reported `Could not start MAIN profile`; the MAIN port appeared later and the app entered Library, but the same placeholder/skeleton state remained while Library update progress was running.
+    - This release/installed Library startup state must be diagnosed before GitHub release publishing or installer distribution.
+- Latest backup/restore hardening:
+  - LNReader backup import now restores only entries explicitly marked `inLibrary`, preventing cache-only backup entries from appearing as extra/duplicated Library items.
+  - LNReader backup import now restores embedded cover assets as immediate local `data:image/...` covers, so a clean profile can render restored books before source sync completes.
+  - LNReader backup import now restores chapter read progress, unread counts, resume history, and chapter bookmarks when the backup contains bookmarks.
+  - The tested `lnreader_backup_2026-06-22_23_58.zip` contains 7 saved novels, 9564 chapters, 7 progress records, 7 resume-history entries, and 0 bookmarks because every chapter bookmark flag in that backup is unset.
+  - LNReader restore now extracts the embedded plugin inventory without executing backup `.js` files.
+  - LNReader restore no longer installs plugins automatically. The importer prepares the audited official LNReader repository/catalog for review only, then restores library data; plugin installs are explicit user actions.
+  - The restore UI now shows a top-level progress/report overlay with backup steps, results, and a Nocturne-styled extension list with icons, plugin metadata, per-extension install, and install-all controls.
+  - The Settings restore panel exposes the same manual LNReader extension list and install controls instead of dumping plugin IDs as unstructured chips.
+  - Recent Activity/library update/system notifications are now scoped by runtime profile for display, seen state, and deduplication, preventing notification state from one profile appearing in another profile.
+  - Clean-profile dev-app smoke restored the user-provided LNReader backup into `TEST`, showed exactly 7 books in Library Books, opened `Escravo das Sombras` detail, and opened `CONTINUE CH.1145` in the NovelReader with live Illusia content. Earlier smoke installed all 15 referenced LNReader plugins manually from the official catalog; automatic installation is now intentionally disabled.
+  - Validation after this backup pass:
+    - `npm run test:unit -- src/components/settings/Settings.test.ts src/store/navigation.test.ts src/lib/backup/lnreaderBackup.test.ts` passed with 25 tests.
+    - `npm run build` passed with Paraglide compilation.
+    - Dev-app screenshots were saved under `.codex-smoke/lnreader-restore-*` and `.codex-smoke/lnreader-backup-panel-*`.
+  - New observed issue: Settings Storage still displays the downloads path as `LocalServerMain\downloads` while a clean `TEST` session is running from `LocalServerTest`. The restore itself uses the correct `profile:test` novels state, but the displayed Storage path/profile label needs a focused follow-up.
 
 
 ### Remaining Work
 
 - Full app localization:
-  - Continue the hybrid production strategy: curated shared/core messages first, then machine-assisted domain catalogs with human review.
-  - Extract hardcoded user-facing strings from the remaining primary/detail surfaces: deeper Browse recommendation/discover/source-browser content, remaining SeriesDetail modals/menus, remaining BookDetail runtime/audit strings, NovelDetail, readers, dialogs/toasts, and the rest of Settings beyond General.
-  - Continue Sources coverage for operational toasts, source-manager side panels, and extension settings copy.
-  - Revisit NovelSources later only for deeper child-component/source-runtime strings such as `NovelSourceStatusDetails` internals and plugin-provided summaries.
-  - Revisit Library later only for deeper card/empty-state/domain strings that are generated by lower-level builders, after the remaining primary pages are covered.
-  - Expand message-key coverage tests beyond the locale resolver so new native strings do not bypass the i18n layer.
-  - Expand locale-specific visual coverage beyond the completed Hebrew RTL smoke.
+  - Human-review the machine-assisted Portuguese, Spanish, Japanese, and Chinese copy before calling the translations final-quality.
+  - Add a lightweight CI/catalog guard for new Svelte presentation literals so future native UI strings do not bypass Paraglide.
+  - Consider a later focused pass for low-level technical error/log text that is not normally visible in the native UI.
 - Local release readiness before GitHub publishing:
-  - Optional final installed-app smoke after the next signed installer is generated, if release artifacts are rebuilt again before publishing.
+  - Diagnose and fix the installed/release startup and Library skeleton blocker found during the latest release preflight.
+  - After the fix, rebuild the signed installer and repeat installed-app smoke before publishing.
+  - Re-run one final broad dev-app smoke if additional code changes are made while fixing the release blocker.
+- Books/Novels:
+  - Keep EPUB/PDF imports global for release unless the product direction changes to fully isolated multi-workspace profiles.
+  - If full profile isolation is desired later, migrate `read_book_library_state` / `write_book_library_state`, imported assets, covers, progress, bookmarks, categories, and UI state to profile-scoped paths with a one-time migration from the current global books state into `MAIN`.
+  - Do one more non-destructive live Books update smoke before signing if more novel-source changes land.
+- Backup/restore:
+  - Add focused coverage for Tachiyomi/Mihon `.tachibk`, `.proto.gz`, and `.proto` restore/export after the LNReader restore fixes, including progress/bookmarks and source-extension readiness.
+  - Add focused coverage for Aethon unified `.aethonbk` export/restore after the per-format flows are green.
+  - Fix the Settings Storage path display mismatch in non-`MAIN` profile sessions.
 - Final GitHub publishing step:
   - Create or select the GitHub repository after local readiness is complete.
   - Create the `v0.0.1` GitHub Release.
@@ -466,6 +565,23 @@ Treat the current working tree as the source of truth. Several features were imp
   - Books/Novels: LNReader-style local runtime/source plugins.
 - The Reader HUD visual redesign is explicitly out of scope for this pass unless a functional bug requires a small fix.
 
+### Latest Runtime Optimization Pass
+
+- Removed the remaining functional `globalThis.gc()` path. Manual GC is now used only through external CDP profiling and is not reachable from idle, navigation, focus, or application runtime code.
+- Added a centralized Library motion gate. Liquid progress motion now requires the Library page, active Books/Comics panel, focused window, non-idle shell, enabled motion, and real card intersection.
+- Added one shared `IntersectionObserver` registry per Library scroll container with explicit card unregister and empty-container disconnect behavior.
+- `VirtualLibraryCardGrid` now accepts active state: inactive keep-alive panels preserve rows/cards/scroll while suspending scroll, resize, visible-range, and prewarm callbacks.
+- Comics and Books body resize work is active-panel scoped and pending RAF work is cancelled during cleanup.
+- Image lease tests now cover normal destroy and stale async resolution; cache trimming remains restricted to unleased entries.
+- Home setup detection is abortable on destroy and the duplicate initial Home load path was removed without cancelling shared Library cache promises.
+- Fixed the cold-start Library skeleton race: a successful load now always clears the loading state, including when bootstrap was already `ready` before the first live snapshot arrived.
+- The liquid visual was preserved while its repaint cadence was bounded to about 14 fps. With 14 visible bars forced active in the real dev WebView, combined renderer/GPU CPU fell from the roughly 230% baseline to 58.7% (about 74.5% lower), while combined working-set growth was only 0.7 MB over 10 seconds. With Library motion gated off, the audited WebView processes stayed at 0% CPU and 0 MB growth over five seconds.
+- Real dev-app smoke passed Comics -> Books -> Comics, Grade/Compact/List, deep scroll, Library -> Home -> Library with scroll restoration, and SeriesDetail open/back without remounting the Library.
+- Verification passed:
+  - `npm run test:unit`: 86 files / 452 tests.
+  - `npm run test:browser`: 5 files / 27 tests.
+  - `npm run build` and `tauri build --no-bundle`.
+
 ### Still Pending / Known Risk
 
 - The Fast Comics update path has partial real desktop dev-app coverage:
@@ -489,11 +605,13 @@ Treat the current working tree as the source of truth. Several features were imp
   - verify retry only affects the blocked source/titles.
 - Comics cover fallback is unit/browser tested for one controlled retry and then a stable placeholder until URL/manual recovery changes.
 - Books/Novels source covers have synthetic large-shelf browser coverage for the lazy virtualized path; they still need real-data cover stress validation when a sufficiently large live Books/Novel shelf is available.
-- Library keep-alive/virtualization has real dev-app smoke coverage and still needs release/no-watch measurement:
+- Library keep-alive/virtualization has real dev-app smoke coverage and initial release/no-watch measurement:
   - confirmed primary navigation across Home, Library, Browse, Downloads, and Settings in the real dev WebView;
   - confirmed Library long-scroll positions load visible cards at top/middle/deep/near-bottom without an empty grid;
   - confirmed long scroll keeps DOM cards bounded in the audited real dev run;
-  - confirm retained decoded cover memory stays acceptable after visiting all major pages.
+  - motion-off and visible-motion CPU measurements now meet the current reduction target without changing card count, covers, badges, layout, or overscan;
+  - a clean production launch exposed and isolated a bootstrap race where Library remained on skeletons even after Suwayomi returned 633 titles; the loading-state condition is fixed and targeted browser/build validation passes, while one packaged cold-start confirmation remains useful before distribution;
+  - the dev/HMR renderer retained one disconnected Home/page-state tree per navigation cycle under external heap profiling. Card observer counts stayed stable, but release detached-node comparison remains pending because the production WebView CDP endpoint did not complete a diagnostic session.
 - Books/Comics tab switching is fixed for the current real dev data and now keeps both tab bodies mounted. Latest dev-app smoke measured about 150-170 ms for tab changes while an update was active. Synthetic browser coverage now exercises a 320-entry source novel shelf; only a larger live Books/Novel shelf smoke remains when real data is available.
 - The Activity/notification overlay close-on-navigation is implemented, unit-tested, and checked in the real dev WebView after reload.
 - Browse > Sources extension install/search/update/remove passes the current component/unit coverage; it still needs a final desktop audit against a live Suwayomi instance.

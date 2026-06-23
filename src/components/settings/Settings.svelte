@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { slide } from "svelte/transition";
-  import { _ } from "../../lib/i18n/runtime";
+  import { _, translate } from "../../lib/i18n/runtime";
   import "../../lib/i18n/runtime";
   import { Book, Image, Sliders, Info, Keyboard, Gear, HardDrives, FolderSimple, Plus, Pencil, Trash, Wrench, PaintBrush, ListChecks, Lock, Eye, EyeSlash, Star, ShieldCheck, Tag, CaretDown } from "phosphor-svelte";
   import { invoke } from "@tauri-apps/api/core";
@@ -99,8 +99,8 @@
   const AETHON_GITHUB_URL = AETHON_GITHUB_REPO ? `https://github.com/${AETHON_GITHUB_REPO}` : "";
   type Tab = "general" | "appearance" | "reader" | "library" | "performance" | "keybinds" | "storage" | "categories" | "tracking" | "security" | "content" | "about" | "devtools";
   type SettingsGroupId = "app" | "reader-library" | "content" | "system" | "advanced";
-  type SettingsNavItem = { id: Tab; label: string; desc: string; icon: any };
-  type SettingsNavGroup = { id: SettingsGroupId; label: string; icon: any; items: SettingsNavItem[] };
+  type SettingsNavItem = { id: Tab; labelKey: string; descKey: string; icon: any };
+  type SettingsNavGroup = { id: SettingsGroupId; labelKey: string; icon: any; items: SettingsNavItem[] };
   type FlareTestState = "idle" | "testing" | "ready" | "not-reachable" | "check-url";
   type DockerFlareSolverrStatus = {
     installed: boolean;
@@ -118,71 +118,59 @@
   const SETTINGS_GROUPS: SettingsNavGroup[] = [
     {
       id: "app",
-      label: "App",
+      labelKey: "settings.nav.app",
       icon: Gear,
       items: [
-        { id: "general",    label: "General",    desc: "Core desktop behavior, launch flow, profiles and everyday shell defaults.", icon: Gear       },
-        { id: "appearance", label: "Appearance", desc: "Theme, surfaces, accent tuning and visual polish.",                            icon: PaintBrush },
-        { id: "keybinds",   label: "Keybinds",   desc: "Keyboard shortcuts and desktop interaction patterns.",                         icon: Keyboard   },
+        { id: "general",    labelKey: "settings.nav.general",    descKey: "settings.desc.general",    icon: Gear       },
+        { id: "appearance", labelKey: "settings.nav.appearance", descKey: "settings.desc.appearance", icon: PaintBrush },
+        { id: "keybinds",   labelKey: "settings.nav.keybinds",   descKey: "settings.desc.keybinds",   icon: Keyboard   },
       ],
     },
     {
       id: "reader-library",
-      label: "Reader & Library",
+      labelKey: "settings.nav.readerLibrary",
       icon: Book,
       items: [
-        { id: "reader",     label: "Reader",     desc: "Reading modes, direction, zoom and chapter flow defaults.",  icon: Book         },
-        { id: "library",    label: "Library",    desc: "Card density, overlays, layout defaults and browsing behavior.", icon: Image     },
-        { id: "categories", label: "Categories", desc: "Comics and books category management.",                      icon: FolderSimple },
+        { id: "reader",     labelKey: "settings.nav.reader",     descKey: "settings.desc.reader",     icon: Book         },
+        { id: "library",    labelKey: "settings.nav.library",    descKey: "settings.desc.library",    icon: Image        },
+        { id: "categories", labelKey: "settings.nav.categories", descKey: "settings.desc.categories", icon: FolderSimple },
       ],
     },
     {
       id: "content",
-      label: "Content & Integrations",
+      labelKey: "settings.nav.contentIntegrations",
       icon: ShieldCheck,
       items: [
-        { id: "content",    label: "Content",    desc: "Blocked tags, source visibility and NSFW controls.", icon: ShieldCheck },
-        { id: "tracking",   label: "Tracking",   desc: "Connected tracking providers and sync state.",        icon: ListChecks  },
+        { id: "content",    labelKey: "settings.nav.content",  descKey: "settings.desc.content",  icon: ShieldCheck },
+        { id: "tracking",   labelKey: "settings.nav.tracking", descKey: "settings.desc.tracking", icon: ListChecks  },
       ],
     },
     {
       id: "system",
-      label: "System",
+      labelKey: "settings.nav.system",
       icon: HardDrives,
       items: [
-        { id: "storage",     label: "Storage",     desc: "Paths, usage, backup and local content management.",     icon: HardDrives },
-        { id: "performance", label: "Performance", desc: "GPU usage, rendering limits and runtime responsiveness.", icon: Sliders    },
-        { id: "security",    label: "Security",    desc: "PIN, proxy, FlareSolverr and trust-sensitive settings.", icon: Lock       },
+        { id: "storage",     labelKey: "settings.nav.storage",     descKey: "settings.desc.storage",     icon: HardDrives },
+        { id: "performance", labelKey: "settings.nav.performance", descKey: "settings.desc.performance", icon: Sliders    },
+        { id: "security",    labelKey: "settings.nav.security",    descKey: "settings.desc.security",    icon: Lock       },
       ],
     },
     {
       id: "advanced",
-      label: "Advanced",
+      labelKey: "settings.nav.advanced",
       icon: Wrench,
       items: [
-        { id: "about",      label: "About",      desc: "Version, update flow and project information.", icon: Info   },
-        { id: "devtools",   label: "Dev Tools",  desc: "Debug actions and internal preview helpers.",   icon: Wrench },
+        { id: "about",      labelKey: "settings.nav.about",    descKey: "settings.desc.about",    icon: Info   },
+        { id: "devtools",   labelKey: "settings.nav.devtools", descKey: "settings.desc.devtools", icon: Wrench },
       ],
     },
   ];
-  const TAB_LABELS: Record<Tab, string> = Object.fromEntries(
-    SETTINGS_GROUPS.flatMap((group) => group.items.map((item) => [item.id, item.label] as const))
+  const TAB_LABEL_KEYS: Record<Tab, string> = Object.fromEntries(
+    SETTINGS_GROUPS.flatMap((group) => group.items.map((item) => [item.id, item.labelKey] as const))
   ) as Record<Tab, string>;
-  const TAB_DESCRIPTIONS: Record<Tab, string> = {
-    general: "App defaults, profiles, startup behavior, and language preferences.",
-    appearance: "Theme, motion, and shell presentation across the desktop app.",
-    reader: "Reading defaults and layout controls shared by the active reader surfaces.",
-    library: "Library density, browse behavior, and presentation defaults.",
-    performance: "Runtime controls that affect startup, caching, and responsiveness.",
-    keybinds: "Keyboard shortcuts and remappable desktop actions.",
-    storage: "Downloads, imports, backup, restore, and profile-scoped data.",
-    categories: "Books category organization and assignment rules.",
-    tracking: "Tracker sign-in and progress integration settings.",
-    security: "Server auth, proxying, and request hardening options.",
-    content: "Source filtering, blocked tags and content visibility rules.",
-    about: "Versioning, releases, and update entry points.",
-    devtools: "Internal diagnostics and developer-only surfaces.",
-  };
+  const TAB_DESCRIPTION_KEYS: Record<Tab, string> = Object.fromEntries(
+    SETTINGS_GROUPS.flatMap((group) => group.items.map((item) => [item.id, item.descKey] as const))
+  ) as Record<Tab, string>;
   const TAB_TO_GROUP: Record<Tab, SettingsGroupId> = Object.fromEntries(
     SETTINGS_GROUPS.flatMap((group) => group.items.map((item) => [item.id, group.id] as const))
   ) as Record<Tab, SettingsGroupId>;
@@ -314,19 +302,19 @@
 
   function libraryUpdateIntervalLabel(value: number | null | undefined): string {
     const hours = Number(value ?? 12);
-    return hours === 1 ? "Every hour" : `Every ${hours} hours`;
+    return hours === 1 ? translate("settings_inline_everyHour") : translate("settings_inline_everyHours", { hours });
   }
 
   function libraryUpdateIntensityLabel(value: Settings["libraryUpdateIntensity"] | null | undefined): string {
-    if (value === "eco") return "Eco";
-    if (value === "fast") return "Fast";
-    return "Balanced";
+    if (value === "eco") return translate("settings_inline_eco");
+    if (value === "fast") return translate("settings_inline_fast");
+    return translate("settings_inline_balanced");
   }
 
   function libraryUpdateIntensityHint(value: Settings["libraryUpdateIntensity"] | null | undefined): string {
-    if (value === "eco") return "Lowest CPU/network use. Updates finish more slowly.";
-    if (value === "fast") return "Checks more sources in parallel. Uses more CPU while updating.";
-    return "Recommended balance between update speed and system load.";
+    if (value === "eco") return translate("settings_inline_ecoHint");
+    if (value === "fast") return translate("settings_inline_fastHint");
+    return translate("settings_inline_balancedHint");
   }
 
   function pageStyleLabel(value: Settings["pageStyle"]): string {
@@ -417,12 +405,14 @@
   const currentGroup = $derived.by(
     () => SETTINGS_GROUPS.find((group) => group.id === activeGroup) ?? SETTINGS_GROUPS[0]
   );
+  const currentGroupLabel = $derived.by(() => $_(currentGroup.labelKey));
   const currentTabMeta = $derived.by(
     () => {
       const item = currentGroup.items.find((entry) => entry.id === tab) ?? currentGroup.items[0];
       return {
         ...item,
-        desc: TAB_DESCRIPTIONS[item.id],
+        label: $_(item.labelKey),
+        desc: $_(item.descKey),
       };
     }
   );
@@ -501,17 +491,19 @@
   const settingsSearchMatches = $derived.by(() => {
     const query = normalizeSearchText(settingsSearchQuery);
     if (!query) return [] as Array<{ tab: Tab; score: number }>;
-    return (Object.keys(TAB_LABELS) as Tab[])
+    return (Object.keys(TAB_LABEL_KEYS) as Tab[])
       .map((candidate) => {
+        const label = translate(TAB_LABEL_KEYS[candidate]);
+        const description = translate(TAB_DESCRIPTION_KEYS[candidate]);
         const haystack = [
-          TAB_LABELS[candidate],
-          TAB_DESCRIPTIONS[candidate],
+          label,
+          description,
           SETTINGS_SEARCH_KEYWORDS[candidate].join(" "),
           TAB_TO_GROUP[candidate],
         ].join(" ");
         const normalizedHaystack = normalizeSearchText(haystack);
         const exactBoost = normalizedHaystack.includes(query) ? 10 : 0;
-        const startsBoost = normalizeSearchText(TAB_LABELS[candidate]).startsWith(query) ? 8 : 0;
+        const startsBoost = normalizeSearchText(label).startsWith(query) ? 8 : 0;
         const keywordBoost = SETTINGS_SEARCH_KEYWORDS[candidate].some((term) => normalizeSearchText(term).includes(query)) ? 4 : 0;
         return { tab: candidate, score: exactBoost + startsBoost + keywordBoost };
       })
@@ -541,7 +533,7 @@
     listeningKey = null;
     selectOpen = null;
     settingsSearchQuery = "";
-    settingsSearchAnnouncement = "All settings were reset to defaults.";
+    settingsSearchAnnouncement = translate("settings.search.resetAnnouncement");
     clearSettingsSearchHighlight();
     categoriesDetailsPane = null;
     contentSourceRulesOpen = false;
@@ -561,8 +553,8 @@
     paneScrollTop = { ...INITIAL_PANE_SCROLL_TOP };
     addToast({
       kind: "success",
-      title: "Settings reset",
-      body: "All configuration values were restored to their defaults.",
+      title: translate("settings.search.resetToastTitle"),
+      body: translate("settings.search.resetToastBody"),
     });
   }
   function handleSettingsSearchInput() {
@@ -589,7 +581,7 @@
       ? tab
       : settingsSearchMatches[0]?.tab ?? null;
     if (!targetTab) {
-      settingsSearchAnnouncement = `No settings match ${settingsSearchQuery}.`;
+      settingsSearchAnnouncement = translate("settings.search.noMatch", { query: settingsSearchQuery });
       return;
     }
     ensurePaneHydrated(targetTab);
@@ -600,11 +592,11 @@
       hit.classList.add("is-search-hit");
       activeSettingsSearchHit = hit;
       hit.scrollIntoView({ block: "center", behavior: "smooth" });
-      settingsSearchAnnouncement = `Opened ${TAB_LABELS[targetTab]} for ${settingsSearchQuery}.`;
+      settingsSearchAnnouncement = translate("settings.search.openedFor", { tab: translate(TAB_LABEL_KEYS[targetTab]), query: settingsSearchQuery });
       return;
     }
     contentBodyEl?.scrollTo({ top: 0, behavior: "smooth" });
-    settingsSearchAnnouncement = `Opened ${TAB_LABELS[targetTab]}.`;
+    settingsSearchAnnouncement = translate("settings.search.opened", { tab: translate(TAB_LABEL_KEYS[targetTab]) });
   }
   const settingsSearchOverlayActive = $derived.by(() => settingsSearchFocused || settingsSearchQuery.trim().length > 0);
 
@@ -839,13 +831,21 @@
   function openStoragePaths() {
     toggleStorageAdvanced("paths");
   }
+  let backupViewMode = $state<"create" | "restore" | null>(null);
   function openStorageBackupPanel() {
-    toggleStorageAdvanced("backup");
-    void tick().then(() => {
-      if (storageAdvancedSource === "backup") {
-        backupSectionEl?.scrollIntoView?.({ block: "start", behavior: "smooth" });
-      }
-    });
+    backupViewMode = "create";
+    advStorageOpen = true;
+    storageAdvancedSource = "backup";
+  }
+  function openStorageRestore() {
+    backupViewMode = "restore";
+    advStorageOpen = true;
+    storageAdvancedSource = "backup";
+  }
+  function closeStorageBackupPanel() {
+    backupViewMode = null;
+    advStorageOpen = false;
+    storageAdvancedSource = null;
   }
   const storageLimitBytes = $derived.by(() =>
     store.settings.storageLimitGb === null ? null : store.settings.storageLimitGb * 1024 ** 3
@@ -1193,13 +1193,13 @@
   function backupPayloadKindLabel(kind: string): string {
     switch (kind) {
       case "manga":
-        return "Manga";
+        return translate("settings_inline_manga");
       case "books":
-        return "Books";
+        return translate("settings_inline_books");
       case "novels":
-        return "Novels";
+        return translate("settings_inline_novels");
       case "app":
-        return "App metadata";
+        return translate("settings_inline_appMetadata");
       default:
         return kind;
     }
@@ -1208,21 +1208,21 @@
   function backupPayloadStatusLabel(status: AethonPayloadRestorePlan["status"] | "success" | "warning" | "failed"): string {
     switch (status) {
       case "restorable":
-        return "Restorable";
+        return translate("settings_inline_restorable");
       case "warning-only":
-        return "Warning only";
+        return translate("settings_inline_warningOnly");
       case "blocked":
-        return "Blocked";
+        return translate("settings_inline_blocked");
       case "unsupported":
-        return "Unsupported";
+        return translate("settings_inline_unsupported");
       case "skipped":
-        return "Skipped";
+        return translate("settings_inline_skipped");
       case "success":
-        return "Success";
+        return translate("settings_inline_success");
       case "warning":
-        return "Completed with warnings";
+        return translate("settings_inline_completedWithWarnings");
       case "failed":
-        return "Failed";
+        return translate("settings_inline_failed");
       default:
         return status;
     }
@@ -1235,9 +1235,9 @@
         : "Continue in other profile";
     }
     if (backupRestoring) {
-      return backupImportKind === "aethon" ? "Restoring..." : "Restoring manga...";
+      return backupImportKind === "aethon" ? translate("settings_inline_restoring") : translate("settings_inline_restoringManga");
     }
-    return backupImportKind === "aethon" ? "Restore selected payloads" : "Restore manga backup";
+    return backupImportKind === "aethon" ? translate("settings_inline_restoreSelectedPayloads") : translate("settings_inline_restoreMangaBackup");
   }
 
   function resetLegacyBackupState() {
@@ -1577,7 +1577,7 @@
         : "current-profile";
 
     if (!backupImportKind) {
-      backupError = "Choose an Aethon (.aethonbk) or manga (.tachibk/.proto.gz) backup file.";
+      backupError = translate("settings_inline_chooseBackupFileError");
       return;
     }
 
@@ -1638,7 +1638,7 @@
       && !backupRestoring;
     if (!shouldAnalyze) return;
     void loadLegacyBackupPath(backupSelectedFilePath!).catch((error) => {
-      backupError = error instanceof Error ? error.message : "Could not prepare manga restore.";
+      backupError = error instanceof Error ? error.message : translate("settings_inline_prepareMangaRestoreFailed");
     });
   });
 
@@ -1810,8 +1810,8 @@
     }
     if (backupReadiness?.blocksRestore) {
       backupError = backupReadiness.requiresInstallCount > 0
-        ? "Install the required extensions first so this restore lands on usable sources."
-        : "Some reconciled sources are unavailable on this server right now. Resolve them before restoring.";
+        ? translate("settings_inline_installRequiredExtensionsFirst")
+        : translate("settings_inline_unavailableSourcesResolveFirst");
       return { ok: false, finalState: null };
     }
     backupRestoring = true;
@@ -2166,11 +2166,11 @@
 
   async function applyUnifiedRestore() {
     if (!backupUnifiedPlan || !backupSelectedFilePath) {
-      throw new Error("Choose an Aethon backup before restoring.");
+      throw new Error(translate("settings_inline_chooseAethonBackupFirst"));
     }
     const selectedKinds = selectedExecutablePayloadKinds(backupUnifiedPlan, backupUnifiedSelection);
     if (selectedKinds.length === 0) {
-      throw new Error("Select at least one executable payload to restore.");
+      throw new Error(translate("settings_inline_selectExecutablePayload"));
     }
 
     const storageRuntime = await getStorageRuntime();
@@ -2296,7 +2296,7 @@
     }
 
     if (!backupRestoreHandoffSession && !backupRestoreCurrentProfileConfirmed) {
-      backupError = "Confirm the advanced current-profile restore before continuing.";
+      backupError = translate("settings_inline_confirmAdvancedRestoreFirst");
       return;
     }
 
@@ -2338,13 +2338,13 @@
     const item = backupReadiness?.items.find((entry) => entry.orphanSourceId === cluster.orphanSourceId);
     switch (item?.status) {
       case "ready_now":
-        return "Ready now";
+        return translate("settings_inline_readyNow");
       case "requires_install":
-        return "Requires install";
+        return translate("settings_inline_requiresInstall");
       case "unavailable":
-        return "Unavailable";
+        return translate("settings_inline_unavailable");
       default:
-        return "Needs review";
+        return translate("settings_inline_needsReviewStatus");
     }
   }
 
@@ -2730,7 +2730,7 @@
   });
   async function enableAuth() {
     if (!authUsername.trim() || !authPassword.trim()) {
-      secError = "Username and password are required"; return;
+      secError = translate("settings_inline_usernamePasswordRequired"); return;
     }
     secLoading = true; secError = null;
     updateSettings({ serverAuthEnabled: true, serverAuthUser: authUsername, serverAuthPass: authPassword });
@@ -2739,7 +2739,7 @@
       showSaved("auth");
     } catch (e: any) {
       updateSettings({ serverAuthEnabled: false });
-      secError = e?.message ?? "Failed to enable authentication";
+      secError = e?.message ?? translate("settings_inline_enableAuthFailed");
     } finally { secLoading = false; }
   }
   async function disableAuth() {
@@ -2750,7 +2750,7 @@
       authUsername = ""; authPassword = "";
       showSaved("auth");
     } catch (e: any) {
-      secError = e?.message ?? "Failed to disable authentication";
+      secError = e?.message ?? translate("settings_inline_disableAuthFailed");
     } finally { secLoading = false; }
   }
   async function saveSocksProxy() {
@@ -2768,7 +2768,7 @@
       });
       showSaved("socks");
     } catch (e: any) {
-      secError = e?.message ?? "Failed to save SOCKS proxy";
+      secError = e?.message ?? translate("settings_inline_saveSocksFailed");
     } finally { secLoading = false; }
   }
   async function saveFlareSolverr() {
@@ -2787,26 +2787,26 @@
       });
       showSaved("flare");
     } catch (e: any) {
-      secError = e?.message ?? "Failed to save FlareSolverr";
+      secError = e?.message ?? translate("settings_inline_saveFlareFailed");
     } finally { secLoading = false; }
   }
   function flareStatusLabel(state = flareTestState) {
-    if (state === "testing") return "Testing";
-    if (state === "ready") return "Ready";
-    if (state === "not-reachable") return "Not reachable";
-    if (state === "check-url") return "Check URL";
+    if (state === "testing") return translate("settings_inline_testing");
+    if (state === "ready") return translate("settings_inline_ready");
+    if (state === "not-reachable") return translate("settings_inline_notReachable");
+    if (state === "check-url") return translate("settings_inline_checkUrl");
     return "";
   }
   function flareLocalStateLabel() {
-    if (flareLocalBusy) return "Checking";
-    if (!flareLocalStatus?.installed) return "Not installed";
-    return flareLocalStatus.running ? "Running" : "Installed";
+    if (flareLocalBusy) return translate("settings_inline_checking");
+    if (!flareLocalStatus?.installed) return translate("settings_inline_notInstalled");
+    return flareLocalStatus.running ? translate("settings_inline_running") : translate("settings_inline_installed");
   }
   function flareDockerStateLabel() {
-    if (flareDockerBusy) return "Checking";
-    if (!flareDockerStatus?.installed) return "Docker not found";
-    if (!flareDockerStatus.daemon) return "Docker unavailable";
-    return flareDockerStatus.running ? "Running" : "Available";
+    if (flareDockerBusy) return translate("settings_inline_checking");
+    if (!flareDockerStatus?.installed) return translate("settings_inline_dockerNotFound");
+    if (!flareDockerStatus.daemon) return translate("settings_inline_dockerUnavailable");
+    return flareDockerStatus.running ? translate("settings_inline_running") : translate("settings_inline_available");
   }
   function setFlareLocalAutoStart(next: boolean) {
     flareLocalAutoStart = next;
@@ -3089,7 +3089,7 @@
       oauthAutoUnlisten?.();
       oauthAutoUnlisten = null;
     } catch (e: any) {
-      trackersError = e?.message ?? "Login failed";
+      trackersError = e?.message ?? translate("settings_inline_loginFailed");
     } finally {
       oauthSubmitting = false;
     }
@@ -3126,7 +3126,7 @@
       credsUsername  = "";
       credsPassword  = "";
     } catch (e: any) {
-      trackersError = e?.message ?? "Login failed";
+      trackersError = e?.message ?? translate("settings_inline_loginFailed");
     } finally {
       credsSubmitting = false;
     }
@@ -3379,7 +3379,7 @@
       <form
         class="n-search n-search--settings"
         role="search"
-        aria-label="Search settings"
+        aria-label={$_("settings_inline_searchSettings")}
         onsubmit={submitSettingsSearch}
         onfocusin={handleSettingsSearchFocusIn}
         onfocusout={handleSettingsSearchFocusOut}
@@ -3387,8 +3387,8 @@
         <span class="n-search__icon material-symbols-outlined" aria-hidden="true">search</span>
         <input
           class="n-search__input"
-          aria-label="Search settings"
-          placeholder="Search settings..."
+          aria-label={$_("settings_inline_searchSettings")}
+          placeholder={$_("settings_inline_searchSettingsPlaceholder")}
           bind:this={settingsSearchInputEl}
           bind:value={settingsSearchQuery}
           autocomplete="off"
@@ -3401,7 +3401,7 @@
     {/snippet}
     {#snippet right()}
       <ActivityButton />
-      <button class="n-icon-btn" aria-label="Open about settings" type="button" onclick={() => openTab("about")}>
+      <button class="n-icon-btn" aria-label={$_("settings_inline_openAboutSettings")} type="button" onclick={() => openTab("about")}>
         <Info size={16} weight="light" />
       </button>
       <WindowControlsInline />
@@ -3410,7 +3410,7 @@
   <div class="settings-search-overlay" class:is-active={settingsSearchOverlayActive} aria-hidden="true"></div>
 
   <aside class="settings-group-rail" id="settingsGroupRail">
-    <nav class="settings-group-rail__nav" aria-label="Settings groups">
+    <nav class="settings-group-rail__nav" aria-label={$_("settings.nav.groupsAria")}>
       {#each SETTINGS_GROUPS as group}
         <button
           class="cat-btn"
@@ -3420,7 +3420,7 @@
           onclick={() => openGroup(group.id)}
         >
           <span class="cat-btn__icon"><group.icon size={16} weight="light" /></span>
-          <span class="cat-btn__label">{group.id === "app" ? $_("settings.general.group") : group.label}</span>
+          <span class="cat-btn__label">{$_(group.labelKey)}</span>
         </button>
       {/each}
     </nav>
@@ -3436,7 +3436,7 @@
           </div>
         </div>
         <div class="settings-brand-card__actions">
-          <button class="settings-rail-action" type="button" onclick={openUpdatesPanel}>Updates</button>
+          <button class="settings-rail-action" type="button" onclick={openUpdatesPanel}>{$_("settings.brand.updates")}</button>
           <button class="settings-rail-action" type="button" onclick={openProjectGithub}>GitHub</button>
         </div>
       </div>
@@ -3444,8 +3444,8 @@
   </aside>
 
   <div class="settings-workbench">
-    <aside class="settings-subnav" aria-label={`${currentGroup.label} settings sections`}>
-      <p class="settings-subnav__eyebrow">{currentGroup.label}</p>
+    <aside class="settings-subnav" aria-label={$_("settings.nav.sectionsAria", { group: currentGroupLabel })}>
+      <p class="settings-subnav__eyebrow">{currentGroupLabel}</p>
       <div class="settings-subnav__list">
         {#each currentGroup.items as t}
           <button
@@ -3456,7 +3456,7 @@
             onclick={() => openTab(t.id)}
           >
             <span class="settings-subnav-btn__icon"><t.icon size={16} weight="light" /></span>
-            <span class="settings-subnav-btn__label">{t.id === "general" ? $_("settings.general.title") : t.label}</span>
+            <span class="settings-subnav-btn__label">{$_(t.labelKey)}</span>
           </button>
         {/each}
       </div>
@@ -3465,9 +3465,9 @@
     <section class="settings-pane-shell">
       <header class="settings-pane-header">
         <div>
-          <p class="settings-pane-header__eyebrow" id="settingsPaneGroupLabel">{tab === "general" ? $_("settings.general.group") : currentGroup.label}</p>
-          <h2 class="settings-pane-header__title" id="settingsPaneTitle">{tab === "general" ? $_("settings.general.title") : currentTabMeta.label}</h2>
-          <p class="settings-pane-header__desc" id="settingsPaneDesc">{tab === "general" ? $_("settings.general.description") : currentTabMeta.desc}</p>
+          <p class="settings-pane-header__eyebrow" id="settingsPaneGroupLabel">{currentGroupLabel}</p>
+          <h2 class="settings-pane-header__title" id="settingsPaneTitle">{currentTabMeta.label}</h2>
+          <p class="settings-pane-header__desc" id="settingsPaneDesc">{currentTabMeta.desc}</p>
         </div>
       </header>
 
@@ -3812,7 +3812,7 @@
         >
           <div class="settings-grid">
             <div class="settings-card settings-card--wide">
-              <p class="settings-card__title">Theme</p>
+              <p class="settings-card__title">{$_("settings_inline_theme")}</p>
               <div class="settings-theme-preview">
                 <div class="settings-theme-preview__glow"></div>
                 <div class="settings-theme-preview__topbar">
@@ -3828,8 +3828,8 @@
               <div class="settings-card__stack">
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Theme preset</p>
-                    <p class="settings-mini-row__hint">Choose the desktop surface palette.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_themePreset")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_themePresetHint")}</p>
                   </div>
                   <div class="select-wrap" id="appearance-theme">
                     <button class="select-btn" type="button" onclick={() => toggleSelect("appearance-theme")}>
@@ -3870,16 +3870,16 @@
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Custom theme editor</p>
-                    <p class="settings-mini-row__hint">Create or adjust custom Nocturne-derived palettes.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_customThemeEditor")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_customThemeEditorHint")}</p>
                   </div>
                   <div class="settings-section-actions settings-inline-actions">
-                    <button class="n-btn n-btn--sm n-btn-ghost" type="button" title="Create a custom theme" onclick={() => onOpenThemeEditor?.(null)}>
-                      New theme
+                    <button class="n-btn n-btn--sm n-btn-ghost" type="button" title={$_("settings_inline_createCustomTheme")} onclick={() => onOpenThemeEditor?.(null)}>
+                      {$_("settings_inline_newTheme")}
                     </button>
                     {#if (store.settings.customThemes ?? []).some((theme) => theme.id === store.settings.theme)}
-                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" title="Edit current theme" onclick={() => onOpenThemeEditor?.(store.settings.theme)}>
-                        Edit current
+                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" title={$_("settings_inline_editCurrentTheme")} onclick={() => onOpenThemeEditor?.(store.settings.theme)}>
+                        {$_("settings_inline_editCurrent")}
                       </button>
                     {/if}
                   </div>
@@ -3887,62 +3887,62 @@
                 <!-- Mockup-only controls preserved until dedicated appearance behaviors exist. -->
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">OLED dark mode</p>
-                    <p class="settings-mini-row__hint">Pure black surfaces for high contrast displays.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_oledDarkMode")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_oledDarkModeHint")}</p>
                   </div>
-                  <button class="settings-toggle is-on" type="button" aria-disabled="true" aria-label="OLED dark mode" data-inert-control="settings-oled-mode"></button>
+                  <button class="settings-toggle is-on" type="button" aria-disabled="true" aria-label={$_("settings_inline_oledDarkMode")} data-inert-control="settings-oled-mode"></button>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Accent intensity</p>
-                    <p class="settings-mini-row__hint">Tune the lavender highlight strength.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_accentIntensity")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_accentIntensityHint")}</p>
                   </div>
                   <input class="settings-range" type="range" min="0" max="100" value="62" aria-disabled="true" data-inert-control="settings-accent-intensity" />
                 </div>
               </div>
             </div>
             <div class="settings-card">
-              <p class="settings-card__title">Window chrome</p>
+              <p class="settings-card__title">{$_("settings_inline_windowChrome")}</p>
               <div class="settings-card__stack">
                 <!-- Mockup-only controls preserved until shell-level chrome options are implemented. -->
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Compact topbar</p>
-                    <p class="settings-mini-row__hint">Reduce shell chrome height for dense layouts.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_compactTopbar")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_compactTopbarHint")}</p>
                   </div>
-                  <button class="settings-toggle" type="button" aria-disabled="true" aria-label="Compact topbar" data-inert-control="settings-compact-topbar"></button>
+                  <button class="settings-toggle" type="button" aria-disabled="true" aria-label={$_("settings_inline_compactTopbar")} data-inert-control="settings-compact-topbar"></button>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Sidebar glow</p>
-                    <p class="settings-mini-row__hint">Keep brand glow subtle in dark mode.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_sidebarGlow")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_sidebarGlowHint")}</p>
                   </div>
-                  <button class="settings-toggle is-on" type="button" aria-disabled="true" aria-label="Sidebar glow" data-inert-control="settings-sidebar-glow"></button>
+                  <button class="settings-toggle is-on" type="button" aria-disabled="true" aria-label={$_("settings_inline_sidebarGlow")} data-inert-control="settings-sidebar-glow"></button>
                 </div>
               </div>
             </div>
             <div class="settings-card">
-              <p class="settings-card__title">UI density</p>
+              <p class="settings-card__title">{$_("settings_inline_uiDensity")}</p>
               <div class="settings-card__stack">
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Interface scale</p>
-                    <p class="settings-mini-row__hint">Desktop sizing for controls and labels.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_interfaceScale")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_interfaceScaleHint")}</p>
                   </div>
                   <div class="n-inline-segmented">
-                    <button class="n-inline-segment" class:is-selected={uiDensityMode(store.settings.uiZoom) === "compact"} type="button" onclick={() => applyUiDensity("compact")}>Compact</button>
-                    <button class="n-inline-segment" class:is-selected={uiDensityMode(store.settings.uiZoom) === "default"} type="button" onclick={() => applyUiDensity("default")}>Default</button>
-                    <button class="n-inline-segment" class:is-selected={uiDensityMode(store.settings.uiZoom) === "comfort"} type="button" onclick={() => applyUiDensity("comfort")}>Comfort</button>
+                    <button class="n-inline-segment" class:is-selected={uiDensityMode(store.settings.uiZoom) === "compact"} type="button" onclick={() => applyUiDensity("compact")}>{$_("settings_inline_compact")}</button>
+                    <button class="n-inline-segment" class:is-selected={uiDensityMode(store.settings.uiZoom) === "default"} type="button" onclick={() => applyUiDensity("default")}>{$_("settings_inline_default")}</button>
+                    <button class="n-inline-segment" class:is-selected={uiDensityMode(store.settings.uiZoom) === "comfort"} type="button" onclick={() => applyUiDensity("comfort")}>{$_("settings_inline_comfort")}</button>
                   </div>
                 </div>
                 <!-- Mockup-only control preserved until card emphasis tuning exists as a first-class setting. -->
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Card emphasis</p>
-                    <p class="settings-mini-row__hint">Covers vs metadata balance.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_cardEmphasis")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_cardEmphasisHint")}</p>
                   </div>
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button" aria-disabled="true" data-inert-control="settings-card-emphasis">
-                    Balanced
+                    {$_("settings_inline_balanced")}
                   </button>
                 </div>
               </div>
@@ -3958,23 +3958,23 @@
         >
           <div class="settings-grid">
             <div class="settings-card">
-              <p class="settings-card__title">Layout</p>
+              <p class="settings-card__title">{$_("settings_inline_layout")}</p>
               <div class="settings-card__stack">
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Page style</p>
-                    <p class="settings-mini-row__hint">How chapters open by default.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_pageStyle")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_pageStyleHint")}</p>
                   </div>
                   <div class="n-inline-segmented">
-                    <button class="n-inline-segment" class:is-selected={store.settings.pageStyle === "single"} type="button" onclick={() => updateSettings({ pageStyle: "single" })}>Single</button>
-                    <button class="n-inline-segment" class:is-selected={store.settings.pageStyle === "double"} type="button" onclick={() => updateSettings({ pageStyle: "double" })}>Double</button>
-                    <button class="n-inline-segment" class:is-selected={store.settings.pageStyle === "longstrip"} type="button" onclick={() => updateSettings({ pageStyle: "longstrip" })}>Longstrip</button>
+                    <button class="n-inline-segment" class:is-selected={store.settings.pageStyle === "single"} type="button" onclick={() => updateSettings({ pageStyle: "single" })}>{$_("settings_inline_single")}</button>
+                    <button class="n-inline-segment" class:is-selected={store.settings.pageStyle === "double"} type="button" onclick={() => updateSettings({ pageStyle: "double" })}>{$_("settings_inline_double")}</button>
+                    <button class="n-inline-segment" class:is-selected={store.settings.pageStyle === "longstrip"} type="button" onclick={() => updateSettings({ pageStyle: "longstrip" })}>{$_("settings_inline_longstrip")}</button>
                   </div>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Reading direction</p>
-                    <p class="settings-mini-row__hint">Left-to-right for most manga, right-to-left for Japanese.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_readingDirection")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_readingDirectionHint")}</p>
                   </div>
                   <div class="n-inline-segmented">
                     <button class="n-inline-segment" class:is-selected={store.settings.readingDirection === "ltr"} type="button" onclick={() => updateSettings({ readingDirection: "ltr" })}>LTR</button>
@@ -3985,42 +3985,42 @@
             </div>
 
             <div class="settings-card">
-              <p class="settings-card__title">Behavior</p>
+              <p class="settings-card__title">{$_("settings_inline_behavior")}</p>
               <div class="settings-card__stack">
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Page gap</p>
-                    <p class="settings-mini-row__hint">Keep a slim spacer between reader pages.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_pageGap")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_pageGapHint")}</p>
                   </div>
-                  <button role="switch" aria-checked={store.settings.pageGap} aria-label="Page gap" class="settings-toggle" class:is-on={store.settings.pageGap} type="button" onclick={() => updateSettings({ pageGap: !store.settings.pageGap })}></button>
+                  <button role="switch" aria-checked={store.settings.pageGap} aria-label={$_("settings_inline_pageGap")} class="settings-toggle" class:is-on={store.settings.pageGap} type="button" onclick={() => updateSettings({ pageGap: !store.settings.pageGap })}></button>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Overlay bars</p>
-                    <p class="settings-mini-row__hint">Keep top and bottom chrome docked over the page.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_overlayBars")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_overlayBarsHint")}</p>
                   </div>
-                  <button role="switch" aria-checked={store.settings.overlayBars ?? false} aria-label="Overlay bars" class="settings-toggle" class:is-on={store.settings.overlayBars ?? false} type="button" onclick={() => updateSettings({ overlayBars: !(store.settings.overlayBars ?? false) })}></button>
+                  <button role="switch" aria-checked={store.settings.overlayBars ?? false} aria-label={$_("settings_inline_overlayBars")} class="settings-toggle" class:is-on={store.settings.overlayBars ?? false} type="button" onclick={() => updateSettings({ overlayBars: !(store.settings.overlayBars ?? false) })}></button>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Auto next chapter</p>
-                    <p class="settings-mini-row__hint">Continue automatically when the current chapter ends.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_autoNextChapter")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_autoNextChapterHint")}</p>
                   </div>
-                  <button role="switch" aria-checked={store.settings.autoNextChapter ?? false} aria-label="Auto next chapter" class="settings-toggle" class:is-on={store.settings.autoNextChapter ?? false} type="button" onclick={() => updateSettings({ autoNextChapter: !(store.settings.autoNextChapter ?? false) })}></button>
+                  <button role="switch" aria-checked={store.settings.autoNextChapter ?? false} aria-label={$_("settings_inline_autoNextChapter")} class="settings-toggle" class:is-on={store.settings.autoNextChapter ?? false} type="button" onclick={() => updateSettings({ autoNextChapter: !(store.settings.autoNextChapter ?? false) })}></button>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Mark read on next</p>
-                    <p class="settings-mini-row__hint">Apply read state when skipping manually.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_markReadOnNext")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_markReadOnNextHint")}</p>
                   </div>
-                  <button role="switch" aria-checked={store.settings.markReadOnNext ?? true} aria-label="Mark read on next" class="settings-toggle" class:is-on={store.settings.markReadOnNext ?? true} type="button" disabled={store.settings.autoNextChapter ?? false} onclick={() => updateSettings({ markReadOnNext: !(store.settings.markReadOnNext ?? true) })}></button>
+                  <button role="switch" aria-checked={store.settings.markReadOnNext ?? true} aria-label={$_("settings_inline_markReadOnNext")} class="settings-toggle" class:is-on={store.settings.markReadOnNext ?? true} type="button" disabled={store.settings.autoNextChapter ?? false} onclick={() => updateSettings({ markReadOnNext: !(store.settings.markReadOnNext ?? true) })}></button>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Auto-bookmark</p>
-                    <p class="settings-mini-row__hint">Save your last page position as you read.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_autoBookmark")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_autoBookmarkHint")}</p>
                   </div>
-                  <button role="switch" aria-checked={store.settings.autoBookmark ?? true} aria-label="Auto-bookmark" class="settings-toggle" class:is-on={store.settings.autoBookmark ?? true} type="button" onclick={() => updateSettings({ autoBookmark: !(store.settings.autoBookmark ?? true) })}></button>
+                  <button role="switch" aria-checked={store.settings.autoBookmark ?? true} aria-label={$_("settings_inline_autoBookmark")} class="settings-toggle" class:is-on={store.settings.autoBookmark ?? true} type="button" onclick={() => updateSettings({ autoBookmark: !(store.settings.autoBookmark ?? true) })}></button>
                 </div>
               </div>
             </div>
@@ -4030,8 +4030,8 @@
               <div class="settings-card__stack">
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Default fit mode</p>
-                    <p class="settings-mini-row__hint">Choose how pages fill the reader when a chapter opens.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_defaultFitMode")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_defaultFitModeHint")}</p>
                   </div>
                   <div class="select-wrap" id="fit-mode">
                     <button class="select-btn" type="button" onclick={() => toggleSelect("fit-mode")}>
@@ -4049,8 +4049,8 @@
                 </div>
                 <div class="settings-row settings-mini-row settings-mini-row--stretch">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Default zoom</p>
-                    <p class="settings-mini-row__hint">100% fills the reader using the current fit mode.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_defaultZoom")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_defaultZoomHint")}</p>
                   </div>
                   <div class="settings-zoom-controls">
                     <div class="scale-row">
@@ -4073,7 +4073,7 @@
                         }}
                       />
                       <span class="scale-pct">%</span>
-                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => updateSettings({ readerZoom: 0.5 })} disabled={(store.settings.readerZoom ?? 0.5) === 0.5} title="Reset to 100%">100%</button>
+                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => updateSettings({ readerZoom: 0.5 })} disabled={(store.settings.readerZoom ?? 0.5) === 0.5} title={$_("settings_inline_resetTo100")}>100%</button>
                     </div>
                     <div class="settings-chip-list settings-chip-list--presets">
                       {#each [50, 75, 100, 125, 150, 200] as v}
@@ -4084,15 +4084,15 @@
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Optimize contrast</p>
-                    <p class="settings-mini-row__hint">Enhance faint panels and low-contrast scans.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_optimizeContrast")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_optimizeContrastHint")}</p>
                   </div>
-                  <button role="switch" aria-checked={store.settings.optimizeContrast} aria-label="Optimize contrast" class="settings-toggle" class:is-on={store.settings.optimizeContrast} type="button" onclick={() => updateSettings({ optimizeContrast: !store.settings.optimizeContrast })}></button>
+                  <button role="switch" aria-checked={store.settings.optimizeContrast} aria-label={$_("settings_inline_optimizeContrast")} class="settings-toggle" class:is-on={store.settings.optimizeContrast} type="button" onclick={() => updateSettings({ optimizeContrast: !store.settings.optimizeContrast })}></button>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Pages to preload</p>
-                    <p class="settings-mini-row__hint">Keep upcoming pages warm in memory for faster turns.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_pagesToPreload")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_pagesToPreloadHint")}</p>
                   </div>
                   <div class="step-controls">
                     <button class="step-btn" type="button" onclick={() => updateSettings({ preloadPages: Math.max(0, store.settings.preloadPages - 1) })} disabled={store.settings.preloadPages <= 0}>-</button>
@@ -4108,8 +4108,8 @@
               <div class="settings-card__stack">
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Default Font Family</p>
-                    <p class="settings-mini-row__hint">Select default typeface for novels and books.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_defaultFontFamily")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_defaultFontFamilyHint")}</p>
                   </div>
                   <div class="select-wrap" id="prose-font">
                     <button class="select-btn" type="button" onclick={() => toggleSelect("prose-font")}>
@@ -4127,8 +4127,8 @@
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Default Font Size</p>
-                    <p class="settings-mini-row__hint">Adjust text size in pixels.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_defaultFontSize")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_defaultFontSizeHint")}</p>
                   </div>
                   <div class="step-controls">
                     <button class="step-btn" type="button" onclick={() => updateSettings({ proseReaderFontSize: Math.max(12, (store.settings.proseReaderFontSize ?? 18) - 1) })} disabled={(store.settings.proseReaderFontSize ?? 18) <= 12}>-</button>
@@ -4138,8 +4138,8 @@
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Default Line Height</p>
-                    <p class="settings-mini-row__hint">Spacing between text lines.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_defaultLineHeight")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_defaultLineHeightHint")}</p>
                   </div>
                   <div class="step-controls">
                     <button class="step-btn" type="button" onclick={() => updateSettings({ proseReaderLineHeight: Math.round(Math.max(1.2, (store.settings.proseReaderLineHeight ?? 1.75) - 0.05) * 100) / 100 })} disabled={(store.settings.proseReaderLineHeight ?? 1.75) <= 1.2}>-</button>
@@ -4149,8 +4149,8 @@
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Default Column Width</p>
-                    <p class="settings-mini-row__hint">Constrain max width of the text block.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_defaultColumnWidth")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_defaultColumnWidthHint")}</p>
                   </div>
                   <div class="step-controls">
                     <button class="step-btn" type="button" onclick={() => updateSettings({ proseReaderContentWidth: Math.max(520, (store.settings.proseReaderContentWidth ?? 760) - 40) })} disabled={(store.settings.proseReaderContentWidth ?? 760) <= 520}>-</button>
@@ -4160,18 +4160,18 @@
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Text Alignment</p>
-                    <p class="settings-mini-row__hint">Choose left-aligned or justified spacing.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_textAlignment")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_textAlignmentHint")}</p>
                   </div>
                   <div class="n-inline-segmented">
-                    <button class="n-inline-segment" class:is-selected={(store.settings.proseReaderTextAlign ?? "left") === "left"} type="button" onclick={() => updateSettings({ proseReaderTextAlign: "left" })}>Left</button>
-                    <button class="n-inline-segment" class:is-selected={(store.settings.proseReaderTextAlign ?? "left") === "justify"} type="button" onclick={() => updateSettings({ proseReaderTextAlign: "justify" })}>Justify</button>
+                    <button class="n-inline-segment" class:is-selected={(store.settings.proseReaderTextAlign ?? "left") === "left"} type="button" onclick={() => updateSettings({ proseReaderTextAlign: "left" })}>{$_("settings_inline_left")}</button>
+                    <button class="n-inline-segment" class:is-selected={(store.settings.proseReaderTextAlign ?? "left") === "justify"} type="button" onclick={() => updateSettings({ proseReaderTextAlign: "justify" })}>{$_("settings_inline_justify")}</button>
                   </div>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Prose Reader Theme</p>
-                    <p class="settings-mini-row__hint">Select colors for text and background canvas.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_proseReaderTheme")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_proseReaderThemeHint")}</p>
                   </div>
                   <div class="select-wrap" id="prose-theme">
                     <button class="select-btn" type="button" onclick={() => toggleSelect("prose-theme")}>
@@ -4189,8 +4189,8 @@
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Custom Palette Colors</p>
-                    <p class="settings-mini-row__hint">Adjust text color (left) and paper background (right) directly.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_customPaletteColors")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_customPaletteColorsHint")}</p>
                   </div>
                   <div style="display: flex; gap: 8px;">
                     <input
@@ -4198,44 +4198,44 @@
                       value={store.settings.proseReaderTextColor || "#ffffff"}
                       onchange={(e) => updateSettings({ proseReaderTheme: "nocturne", proseReaderTextColor: e.currentTarget.value })}
                       style="width: 24px; height: 24px; border: 1px solid rgba(255, 255, 255, 0.1); padding: 0; background: transparent; cursor: pointer; border-radius: 9999px; overflow: hidden;"
-                      title="Custom text color"
+                      title={$_("settings_inline_customTextColor")}
                     />
                     <input
                       type="color"
                       value={store.settings.proseReaderBackgroundColor || "#131316"}
                       onchange={(e) => updateSettings({ proseReaderTheme: "nocturne", proseReaderBackgroundColor: e.currentTarget.value })}
                       style="width: 24px; height: 24px; border: 1px solid rgba(255, 255, 255, 0.1); padding: 0; background: transparent; cursor: pointer; border-radius: 9999px; overflow: hidden;"
-                      title="Custom paper color"
+                      title={$_("settings_inline_customPaperColor")}
                     />
                   </div>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Book Reader Flow</p>
-                    <p class="settings-mini-row__hint">Choose paginated pages or vertical continuous scroll.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_bookReaderFlow")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_bookReaderFlowHint")}</p>
                   </div>
                   <div class="n-inline-segmented">
-                    <button class="n-inline-segment" class:is-selected={(store.settings.bookReaderFlow ?? "paginated") === "paginated"} type="button" onclick={() => updateSettings({ bookReaderFlow: "paginated" })}>Paginated</button>
-                    <button class="n-inline-segment" class:is-selected={(store.settings.bookReaderFlow ?? "paginated") === "scrolled"} type="button" onclick={() => updateSettings({ bookReaderFlow: "scrolled" })}>Continuous</button>
+                    <button class="n-inline-segment" class:is-selected={(store.settings.bookReaderFlow ?? "paginated") === "paginated"} type="button" onclick={() => updateSettings({ bookReaderFlow: "paginated" })}>{$_("settings_inline_paginated")}</button>
+                    <button class="n-inline-segment" class:is-selected={(store.settings.bookReaderFlow ?? "paginated") === "scrolled"} type="button" onclick={() => updateSettings({ bookReaderFlow: "scrolled" })}>{$_("settings_inline_continuous")}</button>
                   </div>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Full Width Reading Panel</p>
-                    <p class="settings-mini-row__hint">Expand EPUB, PDF, and Novel text areas to the edge of the screen.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_fullWidthReadingPanel")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_fullWidthReadingPanelHint")}</p>
                   </div>
-                  <button role="switch" aria-checked={store.settings.proseReaderFullWidth ?? false} aria-label="Full Width Reading Panel" class="settings-toggle" class:is-on={store.settings.proseReaderFullWidth ?? false} type="button" onclick={() => updateSettings({ proseReaderFullWidth: !(store.settings.proseReaderFullWidth ?? false) })}></button>
+                  <button role="switch" aria-checked={store.settings.proseReaderFullWidth ?? false} aria-label={$_("settings_inline_fullWidthReadingPanel")} class="settings-toggle" class:is-on={store.settings.proseReaderFullWidth ?? false} type="button" onclick={() => updateSettings({ proseReaderFullWidth: !(store.settings.proseReaderFullWidth ?? false) })}></button>
                 </div>
               </div>
             </div>
 
             <div class="settings-card">
-              <p class="settings-card__title">PDF Defaults</p>
+              <p class="settings-card__title">{$_("settings_inline_pdfDefaults")}</p>
               <div class="settings-card__stack">
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Default PDF Fit Mode</p>
-                    <p class="settings-mini-row__hint">Choose default viewport layout for PDF pages.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_defaultPdfFitMode")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_defaultPdfFitModeHint")}</p>
                   </div>
                   <div class="select-wrap" id="pdf-fit">
                     <button class="select-btn" type="button" onclick={() => toggleSelect("pdf-fit")}>
@@ -4253,10 +4253,10 @@
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">PDF Dark Mode</p>
-                    <p class="settings-mini-row__hint">Enable dark mode canvas filter by default.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_pdfDarkMode")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_pdfDarkModeHint")}</p>
                   </div>
-                  <button role="switch" aria-checked={store.settings.pdfDarkMode ?? false} aria-label="PDF Dark Mode" class="settings-toggle" class:is-on={store.settings.pdfDarkMode ?? false} type="button" onclick={() => updateSettings({ pdfDarkMode: !(store.settings.pdfDarkMode ?? false) })}></button>
+                  <button role="switch" aria-checked={store.settings.pdfDarkMode ?? false} aria-label={$_("settings_inline_pdfDarkMode")} class="settings-toggle" class:is-on={store.settings.pdfDarkMode ?? false} type="button" onclick={() => updateSettings({ pdfDarkMode: !(store.settings.pdfDarkMode ?? false) })}></button>
                 </div>
               </div>
             </div>
@@ -4271,12 +4271,12 @@
         >
           <div class="settings-grid">
             <div class="settings-card">
-              <p class="settings-card__title">Display</p>
+              <p class="settings-card__title">{$_("settings_inline_display")}</p>
               <div class="settings-card__stack">
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Default layout</p>
-                    <p class="settings-mini-row__hint">Shared card presentation for Comics and Books.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_defaultLayout")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_defaultLayoutHint")}</p>
                   </div>
                   <div class="n-inline-segmented">
                     {#each [["grid", "Grid"], ["compact_grid", "Compact"], ["list", "List"]] as [mode, label]}
@@ -4286,8 +4286,8 @@
                 </div>
                 <div class="settings-row settings-mini-row settings-mini-row--stretch settings-mini-row--density">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Density</p>
-                    <p class="settings-mini-row__hint">Preferred items per row.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_density")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_densityHint")}</p>
                   </div>
                   <div
                     class="settings-density-slider"
@@ -4315,7 +4315,7 @@
                           oninput={handleLibraryDensitySliderInput}
                           class="scale-slider settings-density-slider__range"
                           disabled={store.settings.libraryViewMode === "list"}
-                          aria-label="Preferred items per row"
+                          aria-label={$_("settings_inline_preferredItemsPerRow")}
                         />
                       </div>
                       <div class="settings-density-slider__readout" aria-hidden="true">
@@ -4326,8 +4326,8 @@
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Library start</p>
-                    <p class="settings-mini-row__hint">Choose what opens first when you land in Library.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_libraryStart")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_libraryStartHint")}</p>
                   </div>
                   <div class="n-inline-segmented">
                     {#each LIBRARY_START_OPTIONS as option}
@@ -4339,12 +4339,12 @@
             </div>
 
             <div class="settings-card">
-              <p class="settings-card__title">Library updates</p>
+              <p class="settings-card__title">{$_("settings_inline_libraryUpdates")}</p>
               <div class="settings-card__stack">
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Automatic updates</p>
-                    <p class="settings-mini-row__hint">Check Comics and source Novels on schedule, then write Recent Activity events.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_automaticUpdates")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_automaticUpdatesHint")}</p>
                   </div>
                   <button
                     class="settings-toggle"
@@ -4352,14 +4352,14 @@
                     type="button"
                     role="switch"
                     aria-checked={store.settings.autoLibraryUpdatesEnabled}
-                    aria-label="Automatic library updates"
+                    aria-label={$_("settings_inline_automaticLibraryUpdates")}
                     onclick={() => updateSettings({ autoLibraryUpdatesEnabled: !store.settings.autoLibraryUpdatesEnabled })}
                   ></button>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Update interval</p>
-                    <p class="settings-mini-row__hint">How often Aethon checks libraries when automatic updates are enabled.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_updateInterval")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_updateIntervalHint")}</p>
                   </div>
                   <div class="select-wrap" id="library-update-interval">
                     <button class="select-btn" type="button" onclick={() => toggleSelect("library-update-interval")}>
@@ -4387,7 +4387,7 @@
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Comics intensity</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_comicsIntensity")}</p>
                     <p class="settings-mini-row__hint">{libraryUpdateIntensityHint(store.settings.libraryUpdateIntensity)}</p>
                   </div>
                   <div class="select-wrap" id="library-update-intensity">
@@ -4416,8 +4416,8 @@
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Only update ongoing novels</p>
-                    <p class="settings-mini-row__hint">Skip completed, cancelled, hiatus, and unknown novel statuses during Books refresh.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_onlyUpdateOngoingNovels")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_onlyUpdateOngoingNovelsHint")}</p>
                   </div>
                   <button
                     class="settings-toggle"
@@ -4425,14 +4425,14 @@
                     type="button"
                     role="switch"
                     aria-checked={store.settings.onlyUpdateOngoingNovels}
-                    aria-label="Only update ongoing novels"
+                    aria-label={$_("settings_inline_onlyUpdateOngoingNovels")}
                     onclick={() => updateSettings({ onlyUpdateOngoingNovels: !store.settings.onlyUpdateOngoingNovels })}
                   ></button>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Download new novel chapters</p>
-                    <p class="settings-mini-row__hint">Save newly discovered source chapters for offline reading; keep off to avoid unexpected storage use.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_downloadNewNovelChapters")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_downloadNewNovelChaptersHint")}</p>
                   </div>
                   <button
                     class="settings-toggle"
@@ -4440,7 +4440,7 @@
                     type="button"
                     role="switch"
                     aria-checked={store.settings.downloadNewNovelChapters}
-                    aria-label="Download new novel chapters"
+                    aria-label={$_("settings_inline_downloadNewNovelChapters")}
                     onclick={() => updateSettings({ downloadNewNovelChapters: !store.settings.downloadNewNovelChapters })}
                   ></button>
                 </div>
@@ -4448,39 +4448,39 @@
             </div>
 
             <div class="settings-card">
-              <p class="settings-card__title">Metadata overlays</p>
+              <p class="settings-card__title">{$_("settings_inline_metadataOverlays")}</p>
               <div class="settings-card__stack">
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Show progress</p>
-                    <p class="settings-mini-row__hint">Hide progress gracefully when an item has none.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_showProgress")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_showProgressHint")}</p>
                   </div>
-                  <button role="switch" aria-checked={store.settings.libraryShowProgress} aria-label="Show progress" class="settings-toggle" class:is-on={store.settings.libraryShowProgress} type="button" onclick={() => updateSettings({ libraryShowProgress: !store.settings.libraryShowProgress })}></button>
+                  <button role="switch" aria-checked={store.settings.libraryShowProgress} aria-label={$_("settings_inline_showProgress")} class="settings-toggle" class:is-on={store.settings.libraryShowProgress} type="button" onclick={() => updateSettings({ libraryShowProgress: !store.settings.libraryShowProgress })}></button>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Show outlines</p>
-                    <p class="settings-mini-row__hint">Keep focus, hover, and selection cues visible.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_showOutlines")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_showOutlinesHint")}</p>
                   </div>
-                  <button role="switch" aria-checked={store.settings.libraryShowCardOutline} aria-label="Show outlines" class="settings-toggle" class:is-on={store.settings.libraryShowCardOutline} type="button" onclick={() => updateSettings({ libraryShowCardOutline: !store.settings.libraryShowCardOutline })}></button>
+                  <button role="switch" aria-checked={store.settings.libraryShowCardOutline} aria-label={$_("settings_inline_showOutlines")} class="settings-toggle" class:is-on={store.settings.libraryShowCardOutline} type="button" onclick={() => updateSettings({ libraryShowCardOutline: !store.settings.libraryShowCardOutline })}></button>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Crop covers</p>
-                    <p class="settings-mini-row__hint">Keep Comics covers in cover mode while Books stays independent.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_cropCovers")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_cropCoversHint")}</p>
                   </div>
-                  <button role="switch" aria-checked={store.settings.libraryCropCovers} aria-label="Crop cover images" class="settings-toggle" class:is-on={store.settings.libraryCropCovers} type="button" onclick={() => updateSettings({ libraryCropCovers: !store.settings.libraryCropCovers })}></button>
+                  <button role="switch" aria-checked={store.settings.libraryCropCovers} aria-label={$_("settings_inline_cropCoverImages")} class="settings-toggle" class:is-on={store.settings.libraryCropCovers} type="button" onclick={() => updateSettings({ libraryCropCovers: !store.settings.libraryCropCovers })}></button>
                 </div>
               </div>
             </div>
 
             <div class="settings-card">
-              <p class="settings-card__title">Books defaults</p>
+              <p class="settings-card__title">{$_("settings_inline_booksDefaults")}</p>
               <div class="settings-card__stack">
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Default Books type filter</p>
-                    <p class="settings-mini-row__hint">Choose which type opens first in the Books view.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_defaultBooksTypeFilter")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_defaultBooksTypeFilterHint")}</p>
                   </div>
                   <div class="n-inline-segmented">
                     {#each BOOKS_TYPE_OPTIONS as option}
@@ -4490,8 +4490,8 @@
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Default Books reading status</p>
-                    <p class="settings-mini-row__hint">Choose which subset of your library opens first.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_defaultBooksReadingStatus")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_defaultBooksReadingStatusHint")}</p>
                   </div>
                   <div class="select-wrap" id="books-status-filter">
                     <button class="select-btn" type="button" onclick={() => toggleSelect("books-status-filter")}>
@@ -4522,21 +4522,21 @@
             </div>
 
             <div class="settings-card">
-              <p class="settings-card__title">History</p>
+              <p class="settings-card__title">{$_("settings_inline_history")}</p>
               <div class="settings-card__stack">
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Reading history</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_readingHistory")}</p>
                     <p class="settings-mini-row__hint">{store.history.length} entries saved for quick return.</p>
                   </div>
-                  <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger" type="button" onclick={clearHistory} disabled={store.history.length === 0}>Clear</button>
+                  <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger" type="button" onclick={clearHistory} disabled={store.history.length === 0}>{$_("settings_inline_clear")}</button>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Wipe all data</p>
-                    <p class="settings-mini-row__hint">History, stats, pins, and manga links.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_wipeAllData")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_wipeAllDataHint")}</p>
                   </div>
-                  <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger" type="button" onclick={wipeAllData}>Wipe</button>
+                  <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger" type="button" onclick={wipeAllData}>{$_("settings_inline_wipe")}</button>
                 </div>
               </div>
             </div>
@@ -4551,19 +4551,19 @@
         >
           <div class="settings-grid">
             <div class="settings-card">
-              <p class="settings-card__title">Rendering</p>
+              <p class="settings-card__title">{$_("settings_inline_rendering")}</p>
               <div class="settings-card__stack">
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">GPU acceleration</p>
-                    <p class="settings-mini-row__hint">Use GPU compositing for smoother surfaces when available.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_gpuAcceleration")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_gpuAccelerationHint")}</p>
                   </div>
-                  <button role="switch" aria-checked={store.settings.gpuAcceleration} aria-label="GPU acceleration" class="settings-toggle" class:is-on={store.settings.gpuAcceleration} type="button" onclick={() => updateSettings({ gpuAcceleration: !store.settings.gpuAcceleration })}></button>
+                  <button role="switch" aria-checked={store.settings.gpuAcceleration} aria-label={$_("settings_inline_gpuAcceleration")} class="settings-toggle" class:is-on={store.settings.gpuAcceleration} type="button" onclick={() => updateSettings({ gpuAcceleration: !store.settings.gpuAcceleration })}></button>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Render limit</p>
-                    <p class="settings-mini-row__hint">Lower values can feel faster on large libraries.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_renderLimit")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_renderLimitHint")}</p>
                   </div>
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button">{renderLimitLabel(store.settings.renderLimit)}</button>
                 </div>
@@ -4574,41 +4574,41 @@
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Animated splash cards</p>
-                    <p class="settings-mini-row__hint">Keep the splash card background in motion while idle.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_animatedSplashCards")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_animatedSplashCardsHint")}</p>
                   </div>
-                  <button role="switch" aria-checked={store.settings.splashCards ?? true} aria-label="Animated splash cards" class="settings-toggle" class:is-on={store.settings.splashCards ?? true} type="button" onclick={() => updateSettings({ splashCards: !(store.settings.splashCards ?? true) })}></button>
+                  <button role="switch" aria-checked={store.settings.splashCards ?? true} aria-label={$_("settings_inline_animatedSplashCards")} class="settings-toggle" class:is-on={store.settings.splashCards ?? true} type="button" onclick={() => updateSettings({ splashCards: !(store.settings.splashCards ?? true) })}></button>
                 </div>
               </div>
             </div>
 
             <div class="settings-card">
-              <p class="settings-card__title">Diagnostics</p>
+              <p class="settings-card__title">{$_("settings_inline_diagnostics")}</p>
               <div class="settings-card__stack">
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Compact sidebar</p>
-                    <p class="settings-mini-row__hint">Reduce rail spacing for denser navigation.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_compactSidebar")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_compactSidebarHint")}</p>
                   </div>
-                  <button role="switch" aria-checked={store.settings.compactSidebar} aria-label="Compact sidebar" class="settings-toggle" class:is-on={store.settings.compactSidebar} type="button" onclick={() => updateSettings({ compactSidebar: !store.settings.compactSidebar })}></button>
+                  <button role="switch" aria-checked={store.settings.compactSidebar} aria-label={$_("settings_inline_compactSidebar")} class="settings-toggle" class:is-on={store.settings.compactSidebar} type="button" onclick={() => updateSettings({ compactSidebar: !store.settings.compactSidebar })}></button>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Refresh metrics</p>
-                    <p class="settings-mini-row__hint">Update CPU, memory, and renderer indicators.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_refreshMetrics")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_refreshMetricsHint")}</p>
                   </div>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={refreshPerfMetrics}>Refresh</button>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={refreshPerfMetrics}>{$_("common_refresh")}</button>
                 </div>
               </div>
               <div class="settings-card__surface" style="margin-top:16px">
                 <div class="settings-card__head">
-                  <p class="settings-card__title">Session cache</p>
+                  <p class="settings-card__title">{$_("settings_inline_sessionCache")}</p>
                 </div>
                 <div class="settings-card__stack">
                   <div class="settings-row settings-mini-row">
                     <div class="settings-mini-row__body">
-                      <p class="settings-mini-row__label">Cache entries</p>
-                      <p class="settings-mini-row__hint">In-memory and cleared on restart.</p>
+                      <p class="settings-mini-row__label">{$_("settings_inline_cacheEntries")}</p>
+                      <p class="settings-mini-row__hint">{$_("settings_inline_cacheEntriesHint")}</p>
                     </div>
                     <div class="settings-stat-pill">
                       <span>{perfSnapshot?.cacheEntries ?? 0} entries</span>
@@ -4617,19 +4617,19 @@
                   {#if perfSnapshot && perfSnapshot.cacheEntries > 0}
                     <div class="settings-row settings-mini-row">
                       <div class="settings-mini-row__body">
-                        <p class="settings-mini-row__label">Oldest entry</p>
+                        <p class="settings-mini-row__label">{$_("settings_inline_oldestEntry")}</p>
                       </div>
                       <span class="perf-stat">{fmtAge(perfSnapshot.oldestEntryMs)}</span>
                     </div>
                     <div class="settings-row settings-mini-row">
                       <div class="settings-mini-row__body">
-                        <p class="settings-mini-row__label">Newest entry</p>
+                        <p class="settings-mini-row__label">{$_("settings_inline_newestEntry")}</p>
                       </div>
                       <span class="perf-stat">{fmtAge(perfSnapshot.newestEntryMs)}</span>
                     </div>
                     <div class="settings-row settings-mini-row">
                       <div class="settings-mini-row__body">
-                        <p class="settings-mini-row__label">Cached keys</p>
+                        <p class="settings-mini-row__label">{$_("settings_inline_cachedKeys")}</p>
                         <p class="settings-mini-row__hint">{perfSnapshot.cacheKeys.join(", ")}</p>
                       </div>
                     </div>
@@ -4649,10 +4649,10 @@
           <div class="settings-grid">
             <div class="settings-card settings-card--wide">
               <div class="settings-card__head">
-                <p class="settings-card__title">Keybinds</p>
-                <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={resetKeybinds}>Reset all</button>
+                <p class="settings-card__title">{$_("settings_inline_keybinds")}</p>
+                <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={resetKeybinds}>{$_("settings_inline_resetAll")}</button>
               </div>
-              <p class="settings-card__intro">Click a binding to rebind it, then press the new key combination.</p>
+              <p class="settings-card__intro">{$_("settings_inline_keybindsHint")}</p>
               <div class="settings-card__stack">
                 {#each Object.keys(KEYBIND_LABELS) as key}
                   {@const k = key as keyof Keybinds}
@@ -4661,13 +4661,13 @@
                   <div class="settings-row settings-mini-row">
                     <div class="settings-mini-row__body">
                       <p class="settings-mini-row__label">{KEYBIND_LABELS[k]}</p>
-                      <p class="settings-mini-row__hint">Desktop shortcut</p>
+                      <p class="settings-mini-row__hint">{$_("settings_inline_desktopShortcut")}</p>
                     </div>
                     <div class="settings-keybind-actions">
                       <button class="n-btn n-btn--sm n-btn-ghost settings-value-pill" class:listening={isListening} type="button" onclick={() => startListen(k)}>
                         {isListening ? "Press key..." : store.settings.keybinds[k]}
                       </button>
-                      <button class="n-btn n-btn--sm n-btn-ghost settings-mini-action" type="button" onclick={() => updateSettings({ keybinds: { ...store.settings.keybinds, [k]: DEFAULT_KEYBINDS[k] } })} disabled={isDefault} title="Reset">Reset</button>
+                      <button class="n-btn n-btn--sm n-btn-ghost settings-mini-action" type="button" onclick={() => updateSettings({ keybinds: { ...store.settings.keybinds, [k]: DEFAULT_KEYBINDS[k] } })} disabled={isDefault} title={$_("settings_inline_reset")}>{$_("settings_inline_reset")}</button>
                     </div>
                   </div>
                 {/each}
@@ -4683,690 +4683,162 @@
           aria-hidden={tab !== "storage"}
         >
           {#if shouldRenderPane("storage")}
-          <div class="settings-grid">
+          <div class="settings-grid" style="align-items: start;">
 
             <!-- Ã¢â€â‚¬Ã¢â€â‚¬ Migration banner Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ -->
             <!-- Ã¢â€â‚¬Ã¢â€â‚¬ Disk Usage Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ -->
             <div class="settings-card">
               <div class="settings-card__head">
-                <p class="settings-card__title">Usage</p>
+                <p class="settings-card__title">{$_("settings.storage.usage")}</p>
                 <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={fetchStorage} disabled={storageLoading}>
-                  {storageLoading ? "Refreshing..." : "Refresh"}
+                  {storageLoading ? $_("common.refreshing") : $_("common.refresh")}
                 </button>
               </div>
               {#if storageError}
                 <div class="settings-state">
-                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Storage" title="Could not load disk usage" body={storageError} />
+                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("settings.nav.storage")} title={$_("settings.storage.loadError")} body={storageError} />
                 </div>
               {:else if isExternalServer}
                 <div class="settings-state">
-                  <NocturneState layout="compact" tone="info" icon="info" eyebrow="Storage" title="Disk usage unavailable" body="External servers do not expose local filesystem usage to this desktop runtime." />
+                  <NocturneState layout="compact" tone="info" icon="info" eyebrow={$_("settings.nav.storage")} title={$_("settings.storage.unavailable")} body={$_("settings.storage.externalUnavailableBody")} />
                 </div>
               {:else}
                 <div class="settings-storage-meter">
-                  <span class="settings-mini-row__label">Storage usage</span>
-                  <span class="settings-mini-row__hint" style="font-family:var(--font-mono)">{storageUsageSummary.usageLabel}</span>
+                  <div class="settings-storage-meter__text">
+                    <span class="settings-mini-row__label">{$_("settings.storage.usageLabel")}</span>
+                    <span class="settings-mini-row__hint">{$_("settings.storage.usageHint")}</span>
+                  </div>
+                  <span
+                    class="settings-storage-meter__value"
+                    class:is-empty={storageUsageSummary.usageLabel === "No storage path configured."}
+                  >
+                    {storageUsageSummary.usageLabel === "No storage path configured." ? $_("settings.storage.noPath") : storageUsageSummary.usageLabel}
+                  </span>
                 </div>
                 <div class="storage-bar">
                   <div class="storage-bar-fill" class:critical={storageUsageSummary.pct > 90} class:warn={storageUsageSummary.pct > 75 && storageUsageSummary.pct <= 90} style="width:{storageUsageSummary.pct}%"></div>
                 </div>
                 <p class="settings-card__intro" style="margin-top:16px">
                   {store.settings.storageLimitGb === null
-                    ? "No limit is set yet. Use Advanced to define a warning threshold and extra scan paths."
-                    : `Warn when usage crosses ${store.settings.storageLimitGb} GB.`}
+                    ? $_("settings.storage.noLimit")
+                    : $_("settings.storage.warnAt", { gb: store.settings.storageLimitGb })}
                 </p>
-                <div class="settings-card__footer settings-card__footer--actions" style="margin-top:16px">
-                  <span class="settings-card__footer-status">{storageUsageSummary.freeLabel ?? ""}</span>
+                
+              {#if advStorageOpen && storageAdvancedSource === "limit"}
+                <div class="settings-card__surface" style="margin-top:16px">
+                  <div class="settings-card__head">
+                    <p class="settings-card__title">{$_("settings.storage.usageGuardrails")}</p>
+                  </div>
+                  <div class="settings-card__stack">
+                    <div class="settings-row settings-mini-row">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">{$_("settings.storage.warnWhenReached")}</p>
+                        <p class="settings-mini-row__hint">{$_("settings.storage.warnWhenReachedHint")}</p>
+                      </div>
+                      <div class="settings-input-line" style="max-width:180px">
+                        <input
+                          class="settings-text-input settings-text-input--short"
+                          bind:value={storageLimitInput}
+                          inputmode="decimal"
+                          placeholder="GB"
+                          spellcheck="false"
+                          onkeydown={(event) => event.key === "Enter" && applyStorageLimit()}
+                        />
+                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={applyStorageLimit}>{$_("common.save")}</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="settings-card__surface" style="margin-top:16px">
+                  <div class="settings-card__head">
+                    <p class="settings-card__title">{$_("settings.storage.extraScanPaths")}</p>
+                  </div>
+                  {#if extraScanDirs.length > 0}
+                    <div class="settings-card__stack">
+                      {#each extraScanDirs as dir}
+                        <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                          <div class="settings-mini-row__body">
+                            <p class="settings-mini-row__label" style="font-family:var(--font-mono)">{dir}</p>
+                            <p class="settings-mini-row__hint">{$_("settings.storage.extraScanDirectory")}</p>
+                          </div>
+                          <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger" type="button" onclick={() => removeExtraScanDir(dir)}>{$_("common.remove")}</button>
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
+                  <div class="settings-field-block" style="margin-top:16px">
+                    <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">{$_("settings.storage.additionalScanPath")}</p>
+                        <p class="settings-mini-row__hint">{$_("settings.storage.additionalScanPathHint")}</p>
+                      </div>
+                    </div>
+                    <div class="settings-input-line">
+                      <input
+                        class="settings-text-input settings-input-line__grow"
+                        bind:value={newScanDir}
+                        placeholder="/path/to/dir"
+                        spellcheck="false"
+                        onkeydown={(event) => event.key === "Enter" && addExtraScanDir()}
+                      />
+                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={addExtraScanDir} disabled={!newScanDir.trim() || extraScanDirs.includes(newScanDir.trim())}>
+                        {$_("common.add")}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              {/if}
+                <div class="settings-card__footer settings-card__footer--actions settings-storage-footer">
+                  {#if storageUsageSummary.freeLabel}
+                    <span class="settings-card__footer-status">{storageUsageSummary.freeLabel}</span>
+                  {/if}
                   <div class="settings-storage-action-group">
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={openStorageLimit}>
-                    {advStorageOpen && storageAdvancedSource === "limit" ? "Close" : store.settings.storageLimitGb === null ? "Set limit" : "Edit limit"}
-                  </button>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={handleClearCache} disabled={clearing}>
-                    {cleared ? "Cleared" : clearing ? "Clearing..." : "Clean cache"}
-                  </button>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={openStorageBackupPanel}>
-                    {advStorageOpen && storageAdvancedSource === "backup" ? "Hide backup" : "Create backup"}
-                  </button>
+                    <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={openStorageLimit}>
+                      {advStorageOpen && storageAdvancedSource === "limit" ? $_("common.close") : store.settings.storageLimitGb === null ? $_("settings.storage.setLimit") : $_("settings.storage.editLimit")}
+                    </button>
+                    <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={handleClearCache} disabled={clearing}>
+                      {cleared ? $_("settings.storage.cleared") : clearing ? $_("settings.storage.clearing") : $_("settings.storage.cleanCache")}
+                    </button>
                   </div>
                 </div>
               {/if}
             </div>
 
-            <!-- Ã¢â€â‚¬Ã¢â€â‚¬ Downloads path Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ -->
             <div class="settings-card">
-              <p class="settings-card__title">Paths</p>
+              <p class="settings-card__title">{$_("settings.storage.paths")}</p>
               {#if isExternalServer}
-                <p class="settings-card__intro">Connected to an external server. Path changes here update the server config directly, so they must be valid on the remote filesystem.</p>
+                <p class="settings-card__intro">{$_("settings.storage.externalPathsHint")}</p>
               {/if}
               <div class="settings-card__stack">
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Downloads path</p>
-                    <p class="settings-mini-row__hint" style="font-family:var(--font-mono)">{downloadsPathInput || defaultDownloadsPath || "Not configured"}</p>
+                    <p class="settings-mini-row__label">{$_("settings.storage.downloadsPath")}</p>
+                    <p class="settings-mini-row__hint" style={(downloadsPathInput || defaultDownloadsPath) ? "font-family:var(--font-mono)" : ""}>{downloadsPathInput || defaultDownloadsPath || $_("settings.storage.notConfigured")}</p>
                   </div>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => browseSettingsPath("downloads")} disabled={isExternalServer}>Browse</button>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => browseSettingsPath("downloads")} disabled={isExternalServer}>{$_("common.browse")}</button>
                 </div>
 
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Local source path</p>
-                    <p class="settings-mini-row__hint" style="font-family:var(--font-mono)">{localSourcePathInput || "Optional"}</p>
+                    <p class="settings-mini-row__label">{$_("settings.storage.localSourcePath")}</p>
+                    <p class="settings-mini-row__hint" style={localSourcePathInput ? "font-family:var(--font-mono)" : ""}>{localSourcePathInput || $_("common.optional")}</p>
                   </div>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => browseSettingsPath("local")} disabled={isExternalServer}>Browse</button>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => browseSettingsPath("local")} disabled={isExternalServer}>{$_("common.browse")}</button>
                 </div>
               </div>
-              <div class="settings-card__footer settings-card__footer--actions" style="margin-top:16px">
-                <span class="settings-card__footer-status">
-                {#if pathsError}
-                  <span class="settings-mini-row__hint" style="color:var(--color-error)">{pathsError}</span>
-                {:else if pathsSaved}
-                  <span class="settings-mini-row__hint" style="color:var(--accent-fg)">Paths saved.</span>
-                {:else}
-                  <span class="settings-mini-row__hint">Manual path edits and validation stay in Advanced.</span>
-                {/if}
-                </span>
-                <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={openStoragePaths}>
-                  {advStorageOpen && storageAdvancedSource === "paths" ? "Close" : "Edit paths"}
-                </button>
-              </div>
-            </div>
-
-            <!-- Ã¢â€â‚¬Ã¢â€â‚¬ Storage Limit Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ -->
-            <!-- Ã¢â€â‚¬Ã¢â€â‚¬ Advanced (collapsible) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ -->
-            {#if advStorageOpen && storageAdvancedSource === "backup"}
-            <div class="settings-card settings-card--wide" bind:this={backupSectionEl}>
-              <p class="settings-card__title">Backup & Restore</p>
-              <p class="settings-card__intro">
-                Unified Aethon backups now live here, while subsystem-only manga, novels, and Books flows remain available. Restore stays sandbox-first by default.
-              </p>
-              <div class="settings-card__surface">
-                <div class="settings-card__head">
-                  <p class="settings-card__title">Export</p>
-                </div>
-                <p class="settings-card__intro">Choose a unified backup or keep one subsystem isolated when that is safer.</p>
-                <div class="settings-chip-list" style="margin-top:14px">
-                  {#each [
-                    ["unified", "Unified Aethon"],
-                    ["manga", "Manga only"],
-                    ["books", "Books only"],
-                    ["novels", "Novels only"],
-                    ["app", "App metadata"],
-                  ] as [mode, label]}
-                    <button
-                      class="settings-chip"
-                      class:is-active={backupExportMode === mode}
-                      type="button"
-                      onclick={() => {
-                        backupExportMode = mode as BackupExportMode;
-                        backupSavedPath = null;
-                      }}
-                    >
-                      {label}
-                    </button>
-                  {/each}
-                </div>
-                <div class="settings-card__stack" style="margin-top:14px">
-                  {#if backupExportMode === "unified"}
-                    <div class="settings-row settings-mini-row">
-                      <div class="settings-mini-row__body">
-                        <p class="settings-mini-row__label">Include Manga</p>
-                        <p class="settings-mini-row__hint">Embeds the native .tachibk payload inside the unified .aethonbk file.</p>
-                      </div>
-                      <button role="switch" aria-checked={backupUnifiedIncludeManga} aria-label="Include Manga" class="settings-toggle" class:is-on={backupUnifiedIncludeManga} type="button" onclick={() => backupUnifiedIncludeManga = !backupUnifiedIncludeManga}></button>
-                    </div>
-                    <div class="settings-row settings-mini-row">
-                      <div class="settings-mini-row__body">
-                        <p class="settings-mini-row__label">Include Books</p>
-                        <p class="settings-mini-row__hint">Default is full EPUB/PDF files plus metadata, progress, bookmarks, and covers.</p>
-                      </div>
-                      <button role="switch" aria-checked={backupUnifiedIncludeBooks} aria-label="Include Books" class="settings-toggle" class:is-on={backupUnifiedIncludeBooks} type="button" onclick={() => backupUnifiedIncludeBooks = !backupUnifiedIncludeBooks}></button>
-                    </div>
-                    <div class="settings-row settings-mini-row">
-                      <div class="settings-mini-row__body">
-                        <p class="settings-mini-row__label">Include Novels</p>
-                        <p class="settings-mini-row__hint">Exports repository-aware novel state without bundling plugin binaries.</p>
-                      </div>
-                      <button role="switch" aria-checked={backupUnifiedIncludeNovels} aria-label="Include Novels" class="settings-toggle" class:is-on={backupUnifiedIncludeNovels} type="button" onclick={() => backupUnifiedIncludeNovels = !backupUnifiedIncludeNovels}></button>
-                    </div>
-                    <div class="settings-row settings-mini-row">
-                      <div class="settings-mini-row__body">
-                        <p class="settings-mini-row__label">Include app/profile metadata</p>
-                        <p class="settings-mini-row__hint">Optional and minimal. Carries only portable next-launch profile metadata.</p>
-                      </div>
-                      <button role="switch" aria-checked={backupUnifiedIncludeApp} aria-label="Include app metadata" class="settings-toggle" class:is-on={backupUnifiedIncludeApp} type="button" onclick={() => backupUnifiedIncludeApp = !backupUnifiedIncludeApp}></button>
-                    </div>
-                  {:else if backupExportMode === "books"}
-                    <div class="settings-row settings-mini-row">
-                      <div class="settings-mini-row__body">
-                        <p class="settings-mini-row__label">Metadata-only mode</p>
-                        <p class="settings-mini-row__hint">Exports Books metadata without packaging EPUB/PDF files.</p>
-                      </div>
-                      <button role="switch" aria-checked={backupBooksOnlyMetadataOnly} aria-label="Books metadata only" class="settings-toggle" class:is-on={backupBooksOnlyMetadataOnly} type="button" onclick={() => backupBooksOnlyMetadataOnly = !backupBooksOnlyMetadataOnly}></button>
-                    </div>
-                  {:else if backupExportMode === "manga"}
-                    <p class="settings-card__intro">Uses the native manga export flow and saves a .tachibk file.</p>
-                  {:else if backupExportMode === "novels"}
-                    <p class="settings-card__intro">Creates a single-payload .aethonbk with repository-aware novel metadata and progress.</p>
-                  {:else if backupExportMode === "app"}
-                    <p class="settings-card__intro">Exports portable profile metadata only. Machine-local settings are intentionally excluded.</p>
-                  {/if}
-                </div>
-                <div class="settings-row settings-mini-row settings-mini-row--stretch" style="margin-top:14px">
-                  <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Save backup</p>
-                    <p class="settings-mini-row__hint">
-                      {#if backupExportMode === "unified"}
-                        Produces one .aethonbk container with separated payloads.
-                      {:else if backupExportMode === "manga"}
-                        Produces a native .tachibk manga backup.
-                      {:else}
-                        Produces a single-payload .aethonbk backup for {backupPayloadKindLabel(backupExportMode)}.
-                      {/if}
-                    </p>
-                    {#if backupSavedPath}
-                      <p class="settings-mini-row__hint" style="color:var(--accent-fg)">{backupSavedPath}</p>
-                    {/if}
-                  </div>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={exportBackup} disabled={backupExporting || backupValidating || backupRestoring}>
-                    {backupExporting ? "Exporting..." : "Export backup"}
-                  </button>
-                </div>
-              </div>
-              <div class="settings-card__surface" style="margin-top:16px">
-                <div class="settings-card__head">
-                  <p class="settings-card__title">Import / Restore</p>
-                </div>
-                <p class="settings-card__intro">Pick a backup file, inspect the summary, then choose where restore should run.</p>
-                <div class="settings-row settings-mini-row settings-mini-row--stretch" style="margin-top:14px">
-                  <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Selected file</p>
-                    <p class="settings-mini-row__hint">{backupSelectedFileLabel ?? "No backup selected yet."}</p>
-                    {#if backupImportKind}
-                      <p class="settings-mini-row__hint">
-                        Detected format: {backupImportKind === "aethon" ? ".aethonbk" : "native manga backup"}
-                      </p>
-                    {/if}
-                    {#if backupRestoreHandoffSession}
-                      <p class="settings-mini-row__hint" style="color:var(--accent-fg)">
-                        Restore handoff active. Review the plan here and confirm it in this target profile session.
-                      </p>
-                    {:else if backupRestoreSourceProfileId}
-                      <p class="settings-mini-row__hint" style="color:var(--text-secondary)">
-                        Origin session: {getLocalProfileMeta(backupRestoreSourceProfileId)?.label ?? backupRestoreSourceProfileId.toUpperCase()}
-                      </p>
-                    {/if}
-                  </div>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={triggerBackupImport} disabled={backupExporting || backupValidating || backupRestoring}>
-                    {backupValidating ? "Inspecting..." : "Choose file"}
-                  </button>
-                </div>
-                {#if backupImportKind === "aethon" && backupUnifiedPlan}
-                  <div class="settings-card__surface" style="margin-top:16px">
-                    <div class="settings-card__head">
-                      <p class="settings-card__title">Restore summary</p>
-                    </div>
-                    <p class="settings-card__intro">{backupUnifiedPlan.summary.summaryLabel}</p>
-                    <p class="settings-card__intro">{backupUnifiedPlan.summary.summaryBody}</p>
-                    <div class="settings-chip-list" style="margin-top:14px">
-                      <span class="settings-chip">Recommended: other local profile</span>
-                      <span class="settings-chip">Blocked: {backupUnifiedBlockedCount}</span>
-                      <span class="settings-chip">Unsupported: {backupUnifiedUnsupportedCount}</span>
-                      <span class="settings-chip">Warnings: {backupUnifiedWarningCount}</span>
-                    </div>
-                    {#if backupUnifiedPlan.executionBlockedReason}
-                      <div class="settings-state settings-state--spaced">
-                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Restore" title="Restore is blocked" body={backupUnifiedPlan.executionBlockedReason} />
-                      </div>
-                    {/if}
-                    {#if backupUnifiedPlan.containerIssues.length > 0}
-                      <div class="settings-card__stack" style="margin-top:14px">
-                        {#each backupUnifiedPlan.containerIssues as issue}
-                          <div class="settings-row settings-mini-row settings-mini-row--stretch">
-                            <div class="settings-mini-row__body">
-                              <p class="settings-mini-row__label">Container issue</p>
-                              <p class="settings-mini-row__hint">{issue.code} - {issue.message}</p>
-                            </div>
-                          </div>
-                        {/each}
-                      </div>
-                    {/if}
-                    <div class="settings-card__stack" style="margin-top:14px">
-                      {#each backupUnifiedPlan.payloads as payload}
-                        <div class="settings-row settings-mini-row settings-mini-row--stretch">
-                          <div class="settings-mini-row__body">
-                            <p class="settings-mini-row__label">{backupPayloadKindLabel(payload.kind)} - {backupPayloadStatusLabel(payload.status)}</p>
-                            <p class="settings-mini-row__hint">{payload.summaryLabel}</p>
-                            <p class="settings-mini-row__hint">Ready now: {payload.canRestoreNow ? "Yes" : "No"} · Needs action: {payload.needsUserAction ? "Yes" : "No"} · Executable: {payload.canExecuteRestore ? "Yes" : "No"}</p>
-                            {#if payload.availableRestoreModes.length > 0}
-                              <p class="settings-mini-row__hint">Restore modes: {payload.availableRestoreModes.join(", ")}{payload.defaultRestoreMode ? ` · default: ${payload.defaultRestoreMode}` : ""}</p>
-                            {/if}
-                            {#if payload.reasons.length > 0}
-                              {#each payload.reasons as reason}
-                                <p class="settings-mini-row__hint">Reason: {reason.code} - {reason.message}</p>
-                              {/each}
-                            {/if}
-                            {#if payload.warnings.length > 0}
-                              {#each payload.warnings as warning}
-                                <p class="settings-mini-row__hint">Warning: {warning.code} - {warning.message}</p>
-                              {/each}
-                            {/if}
-                          </div>
-                          <div class="settings-section-actions settings-inline-actions">
-                            {#if isPayloadExecutable(payload)}
-                              <button
-                                class="settings-chip"
-                                class:is-active={Boolean(backupUnifiedSelection[payload.kind])}
-                                type="button"
-                                onclick={() => {
-                                  backupUnifiedSelection = {
-                                    ...backupUnifiedSelection,
-                                    [payload.kind]: !Boolean(backupUnifiedSelection[payload.kind]),
-                                  };
-                                }}
-                                disabled={!payload.canExecuteRestore || !payload.canRestoreNow || backupRestoring}
-                              >
-                                {backupUnifiedSelection[payload.kind] ? "Selected" : "Select"}
-                              </button>
-                            {:else}
-                              <span class="settings-chip">{payload.canExecuteRestore ? "Info" : "Preview"}</span>
-                            {/if}
-                          </div>
-                        </div>
-                      {/each}
-                    </div>
-                    {#if backupUnifiedPlan.topLevelSkipped.length > 0}
-                      <div class="settings-card__stack" style="margin-top:14px">
-                        {#each backupUnifiedPlan.topLevelSkipped as skipped}
-                          <div class="settings-row settings-mini-row settings-mini-row--stretch">
-                            <div class="settings-mini-row__body">
-                              <p class="settings-mini-row__label">{backupPayloadKindLabel(skipped.kind)} - {backupPayloadStatusLabel(skipped.status)}</p>
-                              <p class="settings-mini-row__hint">{skipped.summaryLabel}</p>
-                              <p class="settings-mini-row__hint">{skipped.reason}</p>
-                            </div>
-                          </div>
-                        {/each}
-                      </div>
-                    {/if}
-                  </div>
-                {:else if backupImportKind === "manga"}
-                  <div class="settings-card__surface" style="margin-top:16px">
-                    <div class="settings-card__head">
-                      <p class="settings-card__title">Manga restore path</p>
-                    </div>
-                    <p class="settings-card__intro">Native manga backups stay on the current Mihon-style restore flow. You can keep the restore sandboxed by handing it off to the other local profile first.</p>
-                    {#if backupRestoreTargetMode === "other-local-profile" && otherLocalProfileMeta}
-                      <p class="settings-card__intro">Aethon will relaunch into {otherLocalProfileMeta.label}, reopen this backup in Settings > Storage, and wait for confirmation there.</p>
-                    {:else if backupRestoreTargetMode === "current-profile"}
-                      <p class="settings-card__intro">Source reconciliation and restore readiness run in the current profile before restore is allowed.</p>
-                    {/if}
-                  </div>
-                {/if}
-                {#if backupImportKind}
-                  <div class="settings-card__surface" style="margin-top:16px">
-                    <div class="settings-card__head">
-                      <p class="settings-card__title">Restore target</p>
-                    </div>
-                    <p class="settings-card__intro">{backupCurrentTargetSummary}</p>
-                    {#if backupCanUseOtherProfileTarget}
-                      <div class="settings-chip-list" style="margin-top:14px">
-                        <button
-                          class="settings-chip"
-                          class:is-active={backupRestoreTargetMode === "other-local-profile"}
-                          type="button"
-                          onclick={() => {
-                            backupRestoreTargetMode = "other-local-profile";
-                            backupRestoreCurrentProfileConfirmed = false;
-                          }}
-                        >
-                          {otherLocalProfileMeta ? `Restore into ${otherLocalProfileMeta.label}` : "Other local profile"}
-                        </button>
-                        <button
-                          class="settings-chip"
-                          class:is-active={backupRestoreTargetMode === "current-profile"}
-                          type="button"
-                          onclick={() => (backupRestoreTargetMode = "current-profile")}
-                        >
-                          Current profile
-                        </button>
-                      </div>
-                    {:else if backupRestoreHandoffSession}
-                      <p class="settings-card__intro" style="margin-top:14px">This handoff is now scoped to the current profile session. Review the summary here and confirm to continue.</p>
-                    {:else}
-                      <p class="settings-card__intro" style="margin-top:14px">Restore execution is only available when the current session is already running on TEST or MAIN.</p>
-                    {/if}
-                    {#if backupCurrentProfileGateRequired}
-                      <div class="settings-row settings-mini-row settings-mini-row--stretch" style="margin-top:14px">
-                        <div class="settings-mini-row__body">
-                          <p class="settings-mini-row__label">Confirm current-profile restore</p>
-                          <p class="settings-mini-row__hint">This advanced path restores directly into {currentProfileMeta?.label ?? currentSessionProfileLabel} instead of the recommended sandbox target.</p>
-                        </div>
-                        <button
-                          role="switch"
-                          aria-checked={backupRestoreCurrentProfileConfirmed}
-                          aria-label="Confirm current profile restore"
-                          class="settings-toggle"
-                          class:is-on={backupRestoreCurrentProfileConfirmed}
-                          type="button"
-                          onclick={() => (backupRestoreCurrentProfileConfirmed = !backupRestoreCurrentProfileConfirmed)}
-                        ></button>
-                      </div>
-                    {/if}
-                    {#if backupResolvedExecutionBlockedReason}
-                      <div class="settings-state settings-state--spaced">
-                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Restore" title="Restore target needs attention" body={backupResolvedExecutionBlockedReason} />
-                      </div>
-                    {/if}
-                    <div class="settings-row settings-mini-row settings-mini-row--stretch" style="margin-top:14px">
-                      <div class="settings-mini-row__body">
-                        <p class="settings-mini-row__label">Restore action</p>
-                        <p class="settings-mini-row__hint">
-                          {#if backupRestoreTargetMode === "other-local-profile"}
-                            The selected backup will be handed off to the inactive local profile and confirmed there before restore starts.
-                          {:else if backupImportKind === "aethon"}
-                            Will restore: {backupExecutablePayloadKinds.length > 0 ? backupExecutablePayloadKinds.map((kind) => backupPayloadKindLabel(kind)).join(", ") : "nothing yet"}.
-                          {:else}
-                            Runs the proven manga restore path in the current profile after the current confirmation gate is satisfied.
-                          {/if}
-                        </p>
-                        {#if backupRestoreStatus}
-                          <p class="settings-mini-row__hint">{backupRestoreStatus.state} - {backupRestoreStatus.mangaProgress}/{backupRestoreStatus.totalManga || 0} manga</p>
-                        {/if}
-                      </div>
-                      <div class="settings-section-actions settings-inline-actions">
-                        {#if backupImportKind === "manga" && backupRestoreTargetMode === "current-profile"}
-                          <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={refreshBackupReadiness} disabled={!backupSelectedFile || backupValidating || backupRestoring}>
-                            Refresh readiness
-                          </button>
-                        {/if}
-                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={executeSelectedRestore} disabled={backupExecuteDisabled}>
-                          {backupRestoreButtonLabel()}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                {/if}
-                <input bind:this={backupFileInput} type="file" accept=".tachibk,.proto.gz,.proto,*/*" style="display:none" onchange={onBackupFileSelected} />
-              </div>
-              {#if backupImportKind === "manga" && backupAnalysis && backupRestoreTargetMode === "current-profile"}
+              
+              {#if advStorageOpen && storageAdvancedSource === "paths"}
                 <div class="settings-card__surface" style="margin-top:16px">
                   <div class="settings-card__head">
-                    <p class="settings-card__title">Reconciliation summary</p>
-                  </div>
-                  <p class="settings-card__intro">
-                    {#if backupAnalysis.exactMatches.length === 0 && backupAnalysis.autoReconciled.length === 0 && backupAnalysis.needsReview.length === 0 && backupAnalysis.unresolved.length === 0}
-                      No source reconciliation work was needed.
-                    {:else}
-                      Aethon parsed this backup locally, resolved exact matches first, and then ran bounded source inference on the leftovers.
-                    {/if}
-                  </p>
-                  {#if backupReadiness}
-                    <div class="settings-card__surface" style="margin-top:16px">
-                      <div class="settings-card__head">
-                        <p class="settings-card__title">Restore readiness</p>
-                      </div>
-                      <p class="settings-card__intro">
-                        Ready now: {backupReadiness.readyNowCount} · Requires install: {backupReadiness.requiresInstallCount} · Unavailable: {backupReadiness.unavailableCount} · Unresolved: {backupReadiness.unresolvedCount}
-                      </p>
-                      {#if backupReadiness.requiresInstallCount > 0}
-                        <p class="settings-card__intro">Restore is intentionally blocked until the required extensions are usable on this server.</p>
-                        {#if backupReadiness.installableExtensions.length > 0}
-                          <div class="settings-section-actions settings-inline-actions" style="margin-top:12px;flex-wrap:wrap">
-                            <button
-                              class="n-btn n-btn--sm n-btn-ghost"
-                              onclick={installRequiredRestoreExtensions}
-                              disabled={backupRestoring || backupValidating || backupReadiness.installableExtensions.every((extension) => backupInstalling.has(extension.pkgName))}
-                            >
-                              Install required extensions
-                            </button>
-                            <button class="n-btn n-btn--sm n-btn-ghost" onclick={() => openSearchSources("extensions", "repos")}>
-                              Open Extensions & Repos
-                            </button>
-                          </div>
-                        {/if}
-                      {/if}
-                      {#if backupReadiness.unavailableCount > 0}
-                        <p class="settings-card__intro">Some reconciled targets still have no installable extension candidate on this server. Restore stays blocked until those targets become available.</p>
-                      {/if}
-                    </div>
-                  {/if}
-                  {#if backupAnalysis.exactMatches.length > 0}
-                    <div class="settings-card__surface" style="margin-top:16px">
-                      <div class="settings-card__head">
-                        <p class="settings-card__title">Exact matches</p>
-                      </div>
-                      <div class="settings-card__stack">
-                        {#each backupAnalysis.exactMatches as cluster}
-                          <div class="settings-row settings-mini-row settings-mini-row--stretch">
-                            <div class="settings-mini-row__body">
-                              <p class="settings-mini-row__label">{cluster.sourceName}</p>
-                              <p class="settings-mini-row__hint">{cluster.selectedCandidate?.displayName} · {clusterConfidenceLabel(cluster)} · {clusterReasonLabel(cluster)}</p>
-                              {#if clusterReadinessDetail(cluster)}
-                                <p class="settings-mini-row__hint">{clusterReadinessLabel(cluster)} · {clusterReadinessDetail(cluster)}</p>
-                              {/if}
-                            </div>
-                            {#if cluster.selectedCandidate?.requiresInstall && extensionForPkg(cluster.selectedCandidate.extensionPkgName)}
-                              <button
-                                class="n-btn n-btn--sm n-btn-ghost"
-                                onclick={() => installMissingSourceExtension(extensionForPkg(cluster.selectedCandidate!.extensionPkgName)!)}
-                                disabled={backupRestoring || backupValidating || backupInstalling.has(cluster.selectedCandidate.extensionPkgName!)}
-                              >
-                                {backupInstalling.has(cluster.selectedCandidate.extensionPkgName!) ? "Installing..." : "Install"}
-                              </button>
-                            {/if}
-                          </div>
-                        {/each}
-                      </div>
-                    </div>
-                  {/if}
-                  {#if backupAnalysis.autoReconciled.length > 0}
-                    <div class="settings-card__surface" style="margin-top:16px">
-                      <div class="settings-card__head">
-                        <p class="settings-card__title">Auto-reconciled</p>
-                      </div>
-                      <div class="settings-card__stack">
-                        {#each backupAnalysis.autoReconciled as cluster}
-                          <div class="settings-row settings-mini-row settings-mini-row--stretch">
-                            <div class="settings-mini-row__body">
-                              <p class="settings-mini-row__label">{cluster.sourceName}</p>
-                              <p class="settings-mini-row__hint">{cluster.selectedCandidate?.displayName} · {clusterConfidenceLabel(cluster)} · {clusterReasonLabel(cluster)}</p>
-                              {#if clusterReadinessDetail(cluster)}
-                                <p class="settings-mini-row__hint">{clusterReadinessLabel(cluster)} · {clusterReadinessDetail(cluster)}</p>
-                              {/if}
-                            </div>
-                            {#if cluster.selectedCandidate?.requiresInstall && extensionForPkg(cluster.selectedCandidate.extensionPkgName)}
-                              <button
-                                class="n-btn n-btn--sm n-btn-ghost"
-                                onclick={() => installMissingSourceExtension(extensionForPkg(cluster.selectedCandidate!.extensionPkgName)!)}
-                                disabled={backupRestoring || backupValidating || backupInstalling.has(cluster.selectedCandidate.extensionPkgName!)}
-                              >
-                                {backupInstalling.has(cluster.selectedCandidate.extensionPkgName!) ? "Installing..." : "Install"}
-                              </button>
-                            {/if}
-                          </div>
-                        {/each}
-                      </div>
-                    </div>
-                  {/if}
-                  {#if backupAnalysis.needsReview.length > 0}
-                    <div class="settings-card__surface" style="margin-top:16px">
-                      <div class="settings-card__head">
-                        <p class="settings-card__title">Needs review</p>
-                      </div>
-                      <p class="settings-card__intro">Only these ambiguous leftovers need your approval. Choose a candidate or explicitly skip the remap.</p>
-                      <div class="settings-card__stack">
-                        {#each backupAnalysis.needsReview as cluster}
-                          <div class="settings-card__surface">
-                            <div class="settings-card__head">
-                              <p class="settings-card__title">{cluster.sourceName}</p>
-                            </div>
-                            <p class="settings-card__intro">Backup source ID {cluster.orphanSourceId}</p>
-                            <div class="settings-card__stack">
-                              {#if cluster.sampleManga.length > 0}
-                                <p class="settings-card__intro">Sample titles: {cluster.sampleManga.map((manga) => manga.title).join(", ")}</p>
-                              {/if}
-                              {#each cluster.candidates as candidate}
-                                <div class="settings-row settings-mini-row settings-mini-row--stretch">
-                                  <div class="settings-mini-row__body">
-                                    <p class="settings-mini-row__label">{candidate.displayName}</p>
-                                    <p class="settings-mini-row__hint">{Math.round(candidate.confidence * 100)}% · {candidate.evidenceSummary}</p>
-                                  </div>
-                                  <button
-                                    class="settings-chip"
-                                    class:is-active={backupReviewSelections[cluster.orphanSourceId] === candidate.sourceId}
-                                    type="button"
-                                    onclick={() => setBackupClusterSelection(cluster.orphanSourceId, candidate.sourceId)}
-                                  >
-                                    {backupReviewSelections[cluster.orphanSourceId] === candidate.sourceId ? "Selected" : "Choose"}
-                                  </button>
-                                </div>
-                              {/each}
-                              <div class="settings-row settings-mini-row settings-mini-row--stretch">
-                                <div class="settings-mini-row__body">
-                                  <p class="settings-mini-row__label">Skip remap</p>
-                                  <p class="settings-mini-row__hint">Keep this orphan source untouched in the reconciled restore payload.</p>
-                                </div>
-                                <button
-                                  class="settings-chip"
-                                  class:is-active={backupReviewSelections[cluster.orphanSourceId] === "skip"}
-                                  type="button"
-                                  onclick={() => setBackupClusterSelection(cluster.orphanSourceId, "skip")}
-                                >
-                                  {backupReviewSelections[cluster.orphanSourceId] === "skip" ? "Selected" : "Skip"}
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        {/each}
-                      </div>
-                    </div>
-                  {/if}
-                  {#if backupAnalysis.unresolved.length > 0}
-                    <div class="settings-card__surface" style="margin-top:16px">
-                      <div class="settings-card__head">
-                        <p class="settings-card__title">Unresolved</p>
-                      </div>
-                      <p class="settings-card__intro">These sources still could not be reconciled automatically. Restore can continue, but their original backup source IDs will stay untouched.</p>
-                      <p class="settings-card__intro">{backupAnalysis.unresolved.map((cluster) => cluster.sourceName).join(", ")}</p>
-                    </div>
-                  {/if}
-                  {#if backupMissingTrackers.length > 0}
-                    <div class="settings-card__surface" style="margin-top:16px">
-                      <div class="settings-card__head">
-                        <p class="settings-card__title">Missing trackers</p>
-                      </div>
-                      <p class="settings-card__intro">{backupMissingTrackers.map((tracker) => tracker.name).join(", ")}</p>
-                    </div>
-                  {/if}
-                  {#if backupSuggestedExtensions.length > 0 || backupExtensionLookupLoading || backupExtensionLookupError}
-                    <div class="settings-card__surface" style="margin-top:16px">
-                      <div class="settings-card__head">
-                        <p class="settings-card__title">Extension recovery</p>
-                      </div>
-                      {#if backupExtensionLookupLoading}
-                        <p class="settings-card__intro">Checking available extensions...</p>
-                      {:else if backupSuggestedExtensions.length > 0}
-                        <div class="settings-card__stack">
-                          <p class="settings-card__intro">Aethon found matching extensions for leftovers that still depend on source installs.</p>
-                          {#each backupSuggestedExtensions as suggestion}
-                            <div class="settings-row settings-mini-row settings-mini-row--stretch">
-                              <div class="settings-mini-row__body">
-                                <p class="settings-mini-row__label">{suggestion.extension.name}</p>
-                                <p class="settings-mini-row__hint">Matches backup source: {suggestion.missingSource.name} ({suggestion.matchedBy === "source-id" ? "matched by source id" : "matched by source name"})</p>
-                              </div>
-                              <button
-                                class="n-btn n-btn--sm n-btn-ghost"
-                                onclick={() => installMissingSourceExtension(suggestion.extension)}
-                                disabled={backupRestoring || backupValidating || backupInstalling.has(suggestion.extension.pkgName)}
-                              >
-                                {backupInstalling.has(suggestion.extension.pkgName) ? "Installing..." : "Install"}
-                              </button>
-                            </div>
-                          {/each}
-                        </div>
-                      {:else}
-                        <div class="settings-section-actions settings-inline-actions" style="margin-top:12px;flex-wrap:wrap">
-                          <p class="settings-card__intro" style="margin:0">No confident installable matches were found for the remaining leftovers.</p>
-                          <button class="n-btn n-btn--sm n-btn-ghost" onclick={() => openSearchSources("extensions", "repos")}>
-                            Open Extensions & Repos
-                          </button>
-                        </div>
-                      {/if}
-                      {#if backupExtensionLookupError}
-                        <div class="settings-state settings-state--spaced">
-                          <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Extensions" title="Could not inspect extension matches" body={backupExtensionLookupError} />
-                        </div>
-                      {/if}
-                    </div>
-                  {/if}
-                  {#if backupAnalysis.warnings.length > 0}
-                    <div class="settings-card__surface" style="margin-top:16px">
-                      <div class="settings-card__head">
-                        <p class="settings-card__title">Warnings</p>
-                      </div>
-                      <div class="settings-card__stack">
-                        {#each backupAnalysis.warnings as warning}
-                          <div class="settings-row settings-mini-row settings-mini-row--stretch">
-                            <div class="settings-mini-row__body">
-                              <p class="settings-mini-row__label">{warning.message}</p>
-                              {#if warning.details}
-                                <p class="settings-mini-row__hint">{warning.details}</p>
-                              {/if}
-                            </div>
-                          </div>
-                        {/each}
-                      </div>
-                    </div>
-                  {/if}
-                </div>
-              {/if}
-              {#if backupRestoreResults}
-                <div class="settings-card__surface" style="margin-top:16px">
-                  <div class="settings-card__head">
-                    <p class="settings-card__title">Restore results</p>
-                  </div>
-                  <div class="settings-card__stack" style="margin-top:12px">
-                    {#each backupRestoreResults as result}
-                      <div class="settings-row settings-mini-row settings-mini-row--stretch">
-                        <div class="settings-mini-row__body">
-                          <p class="settings-mini-row__label">{backupPayloadKindLabel(result.kind)} - {backupPayloadStatusLabel(result.status)}</p>
-                          <p class="settings-mini-row__hint">{result.summary}</p>
-                          {#if result.detail}
-                            <p class="settings-mini-row__hint">{result.detail}</p>
-                          {/if}
-                        </div>
-                      </div>
-                    {/each}
-                  </div>
-                </div>
-              {/if}
-              {#if backupError}
-                <div class="settings-state settings-state--spaced">
-                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Backup" title="Backup action failed" body={backupError} />
-                </div>
-              {/if}
-            </div>
-            {/if}
-
-            <div class="settings-card settings-card--wide">
-              <div class="settings-card__head">
-                <p class="settings-card__title">Advanced</p>
-                <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={openStorageAdvanced}>
-                  {advStorageOpen && storageAdvancedSource === "advanced" ? "Collapse" : "Expand"}
-                </button>
-              </div>
-              <p class="settings-card__intro">Limits, migration, extra scan directories and backup flows stay tucked here so the main shell keeps the approved composition.</p>
-              {#if advStorageOpen && storageAdvancedSource !== "backup"}
-                <div class="settings-card__surface" style="margin-top:16px">
-                  <div class="settings-card__head">
-                    <p class="settings-card__title">Path editor</p>
+                    <p class="settings-card__title">{$_("settings.storage.pathEditor")}</p>
                   </div>
                   <div class="settings-card__stack">
                     <div class="settings-row settings-mini-row settings-mini-row--stretch">
                       <div class="settings-mini-row__body">
-                        <p class="settings-mini-row__label">Downloads path</p>
-                        <p class="settings-mini-row__hint">Manual edit for the main downloads directory.</p>
+                        <p class="settings-mini-row__label">{$_("settings.storage.downloadsPath")}</p>
+                        <p class="settings-mini-row__hint">{$_("settings.storage.downloadsPathEditHint")}</p>
                       </div>
-                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => browseSettingsPath("downloads")} disabled={isExternalServer}>Browse</button>
+                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => browseSettingsPath("downloads")} disabled={isExternalServer}>{$_("common.browse")}</button>
                     </div>
                     <div class="settings-input-line settings-input-line--stack">
                       <div class="settings-input-line">
@@ -5374,25 +4846,25 @@
                           class="settings-text-input settings-input-line__grow"
                           class:path-input-error={!!pathsFieldError.dl}
                           bind:value={downloadsPathInput}
-                          placeholder={isExternalServer ? "Server default" : (defaultDownloadsPath || "Default location")}
+                          placeholder={isExternalServer ? $_("settings.storage.serverDefault") : (defaultDownloadsPath || $_("settings.storage.defaultLocation"))}
                           spellcheck="false"
                           onkeydown={(event) => event.key === "Enter" && savePaths()}
                           oninput={() => { pathsFieldError = { ...pathsFieldError, dl: undefined }; }}
                         />
                         <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={savePaths} disabled={pathsSaving}>
-                          {pathsSaved ? "Saved" : pathsSaving ? "Saving..." : "Save"}
+                          {pathsSaved ? $_("common.saved") : pathsSaving ? $_("common.saving") : $_("common.save")}
                         </button>
                       </div>
                       {#if pathsFieldError.dl}
-                        <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Path" title="Download path needs attention" body={pathsFieldError.dl} />
+                        <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("settings.storage.path")} title={$_("settings.storage.downloadPathAttention")} body={pathsFieldError.dl} />
                       {/if}
                     </div>
                     <div class="settings-row settings-mini-row settings-mini-row--stretch">
                       <div class="settings-mini-row__body">
-                        <p class="settings-mini-row__label">Local source path</p>
-                        <p class="settings-mini-row__hint">Optional directory for manga already present on disk.</p>
+                        <p class="settings-mini-row__label">{$_("settings.storage.localSourcePath")}</p>
+                        <p class="settings-mini-row__hint">{$_("settings.storage.localSourcePathHint")}</p>
                       </div>
-                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => browseSettingsPath("local")} disabled={isExternalServer}>Browse</button>
+                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => browseSettingsPath("local")} disabled={isExternalServer}>{$_("common.browse")}</button>
                     </div>
                     <div class="settings-input-line settings-input-line--stack">
                       <div class="settings-input-line">
@@ -5400,20 +4872,20 @@
                           class="settings-text-input settings-input-line__grow"
                           class:path-input-error={!!pathsFieldError.loc}
                           bind:value={localSourcePathInput}
-                          placeholder="Optional"
+                          placeholder={$_("common.optional")}
                           spellcheck="false"
                           onkeydown={(event) => event.key === "Enter" && savePaths()}
                           oninput={() => { pathsFieldError = { ...pathsFieldError, loc: undefined }; }}
                         />
                         <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={savePaths} disabled={pathsSaving}>
-                          {pathsSaved ? "Saved" : pathsSaving ? "Saving..." : "Save"}
+                          {pathsSaved ? $_("common.saved") : pathsSaving ? $_("common.saving") : $_("common.save")}
                         </button>
                       </div>
                       {#if pathsFieldError.loc}
-                        <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Path" title="Local source path needs attention" body={pathsFieldError.loc} />
+                        <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("settings.storage.path")} title={$_("settings.storage.localSourcePathAttention")} body={pathsFieldError.loc} />
                       {/if}
                       {#if pathsError}
-                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Path" title="Could not save paths" body={pathsError} />
+                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("settings.storage.path")} title={$_("settings.storage.pathSaveError")} body={pathsError} />
                       {/if}
                     </div>
                   </div>
@@ -5421,18 +4893,18 @@
                 {#if migrateFrom && !isExternalServer}
                   <div class="settings-card__surface" style="margin-top:16px">
                     <div class="settings-card__head">
-                      <p class="settings-card__title">Migration</p>
+                      <p class="settings-card__title">{$_("settings_inline_migration")}</p>
                       <div class="settings-section-actions settings-inline-actions">
                         <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={startMigration} disabled={migrating}>
                           {migrating ? (migrateProgress ? `Moving ${migrateProgress.done}/${migrateProgress.total}` : "Starting...") : "Move files"}
                         </button>
-                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={dismissMigration} disabled={migrating}>Skip</button>
+                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={dismissMigration} disabled={migrating}>{$_("settings_inline_skip")}</button>
                       </div>
                     </div>
-                    <p class="settings-card__intro">Manga was found at the previous downloads path. Move it now to keep the new location in sync with Aethon.</p>
+                    <p class="settings-card__intro">{$_("settings_inline_migrationHint")}</p>
                     <div class="settings-row settings-mini-row settings-mini-row--stretch">
                       <div class="settings-mini-row__body">
-                        <p class="settings-mini-row__label">Path change</p>
+                        <p class="settings-mini-row__label">{$_("settings_inline_pathChange")}</p>
                         <p class="settings-mini-row__hint" style="font-family:var(--font-mono)">{migrateFrom} ? {migrateTo}</p>
                       </div>
                       {#if migrateProgress && migrateProgress.total > 0}
@@ -5446,76 +4918,44 @@
                     {/if}
                     {#if migrateError}
                       <div class="settings-state settings-state--spaced">
-                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Migration" title="Path migration failed" body={migrateError} />
+                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Migration" title={$_("settings_inline_pathMigrationFailed")} body={migrateError} />
                       </div>
                     {/if}
                   </div>
                 {/if}
-                <div class="settings-card__surface" style="margin-top:16px">
-                  <div class="settings-card__head">
-                    <p class="settings-card__title">Usage guardrails</p>
-                  </div>
-                  <div class="settings-card__stack">
-                    <div class="settings-row settings-mini-row">
-                      <div class="settings-mini-row__body">
-                        <p class="settings-mini-row__label">Warn when limit is reached</p>
-                        <p class="settings-mini-row__hint">Set a soft threshold for local disk usage monitoring.</p>
-                      </div>
-                      <div class="settings-input-line" style="max-width:180px">
-                        <input
-                          class="settings-text-input settings-text-input--short"
-                          bind:value={storageLimitInput}
-                          inputmode="decimal"
-                          placeholder="GB"
-                          spellcheck="false"
-                          onkeydown={(event) => event.key === "Enter" && applyStorageLimit()}
-                        />
-                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={applyStorageLimit}>Save</button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div class="settings-card__surface" style="margin-top:16px">
-                  <div class="settings-card__head">
-                    <p class="settings-card__title">Extra scan paths</p>
-                  </div>
-                  {#if extraScanDirs.length > 0}
-                    <div class="settings-card__stack">
-                      {#each extraScanDirs as dir}
-                        <div class="settings-row settings-mini-row settings-mini-row--stretch">
-                          <div class="settings-mini-row__body">
-                            <p class="settings-mini-row__label" style="font-family:var(--font-mono)">{dir}</p>
-                            <p class="settings-mini-row__hint">Extra scan directory</p>
-                          </div>
-                          <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger" type="button" onclick={() => removeExtraScanDir(dir)}>Remove</button>
-                        </div>
-                      {/each}
-                    </div>
-                  {/if}
-                  <div class="settings-field-block" style="margin-top:16px">
-                    <div class="settings-row settings-mini-row settings-mini-row--stretch">
-                      <div class="settings-mini-row__body">
-                        <p class="settings-mini-row__label">Additional scan path</p>
-                        <p class="settings-mini-row__hint">Include an extra directory in disk usage readings.</p>
-                      </div>
-                    </div>
-                    <div class="settings-input-line">
-                      <input
-                        class="settings-text-input settings-input-line__grow"
-                        bind:value={newScanDir}
-                        placeholder="/path/to/dir"
-                        spellcheck="false"
-                        onkeydown={(event) => event.key === "Enter" && addExtraScanDir()}
-                      />
-                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={addExtraScanDir} disabled={!newScanDir.trim() || extraScanDirs.includes(newScanDir.trim())}>
-                        Add
-                      </button>
-                    </div>
-                  </div>
-                </div>
               {/if}
+<div class="settings-card__footer settings-card__footer--actions" style="margin-top:16px">
+                <span class="settings-card__footer-status">
+                {#if pathsError}
+                  <span class="settings-mini-row__hint" style="color:var(--color-error)">{pathsError}</span>
+                {:else if pathsSaved}
+                  <span class="settings-mini-row__hint" style="color:var(--accent-fg)">{$_("settings.storage.pathsSaved")}</span>
+                {:else}
+                  <span class="settings-mini-row__hint">{$_("settings.storage.verifyFolders")}</span>
+                {/if}
+                </span>
+                <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={openStoragePaths}>
+                  {advStorageOpen && storageAdvancedSource === "paths" ? $_("common.close") : $_("settings.storage.editPaths")}
+                </button>
+              </div>
             </div>
-          </div>
+
+                        <div class="settings-card settings-card--wide">
+              <p class="settings-card__title">{$_("settings.storage.backups")}</p>
+              <p class="settings-card__intro">
+                {$_("settings.storage.backupsIntro")}
+              </p>
+              <div class="settings-card__footer settings-card__footer--actions" style="margin-top:16px; justify-content: flex-end;">
+                <div class="settings-storage-action-group">
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={openStorageBackupPanel}>
+                    {$_("settings.storage.createBackup")}
+                  </button>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={openStorageRestore}>
+                    {$_("settings.storage.restoreBackup")}
+                  </button>
+                </div>
+              </div>
+            </div></div>
           {/if}
         </section>
         <section
@@ -5527,36 +4967,36 @@
         >
           <div class="settings-grid">
             <div class="settings-card settings-card--wide">
-              <p class="settings-card__title">Categories</p>
+              <p class="settings-card__title">{$_("settings_inline_categories")}</p>
               <div class="settings-chip-list">
                 {#each categoryPreviewChips as category}
                   <span class="settings-chip">{category}</span>
                 {/each}
                 {#if categoryPreviewChips.length === 0}
-                  <span class="settings-chip settings-chip--empty">No categories yet</span>
+                  <span class="settings-chip settings-chip--empty">{$_("settings_inline_noCategoriesYet")}</span>
                 {/if}
               </div>
               <div class="settings-card__stack">
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Comics categories</p>
-                    <p class="settings-mini-row__hint">Sync with the server and other clients.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_comicsCategories")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_comicsCategoriesHint")}</p>
                   </div>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => openCategoryManager("comics")}>Manage</button>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => openCategoryManager("comics")}>{$_("settings_inline_manage")}</button>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Books categories</p>
-                    <p class="settings-mini-row__hint">Local to desktop and separated from comics.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_booksCategories")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_booksCategoriesHint")}</p>
                   </div>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => openCategoryManager("books")}>Manage</button>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => openCategoryManager("books")}>{$_("settings_inline_manage")}</button>
                 </div>
               </div>
               {#if categoriesDetailsPane}
                 <div class="settings-card__surface" style="margin-top:16px">
                 <div class="settings-card__head">
                   <p class="settings-card__title">Manage {categoriesDetailsPane === "comics" ? "Comics" : "Books"} categories</p>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={closeCategoryManager}>Close</button>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={closeCategoryManager}>{$_("common_close")}</button>
                 </div>
                 <div class="n-inline-segmented">
                   {#each [
@@ -5580,20 +5020,20 @@
                 </p>
                 {#if categoryDomain === "comics" && catsError}
                   <div class="settings-state">
-                    <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Categories" title="Could not load comic folders" body={catsError} />
+                    <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Categories" title={$_("settings_inline_couldNotLoadComicFolders")} body={catsError} />
                   </div>
                 {/if}
                 <div class="settings-card__footer settings-card__footer--editor">
                   <div class="settings-input-line settings-input-line__grow">
-                    <input class="settings-text-input settings-input-line__grow" placeholder="New category name..." bind:value={newFolderName} onkeydown={(e) => e.key === "Enter" && createFolder()} />
+                    <input class="settings-text-input settings-input-line__grow" placeholder={$_("settings_inline_newCategoryName")} bind:value={newFolderName} onkeydown={(e) => e.key === "Enter" && createFolder()} />
                   </div>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={createFolder} disabled={!newFolderName.trim()}><Plus size={13} weight="bold" /> Create</button>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={createFolder} disabled={!newFolderName.trim()}><Plus size={13} weight="bold" /> {$_("common_create")}</button>
                 </div>
                 {#if categoryDomain === "comics"}
                   {#if catsLoading}
-                    <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Categories" title="Loading categories" />
+                    <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Categories" title={$_("settings_inline_loadingCategories")} />
                   {:else if store.categories.filter((c) => c.id !== 0).length === 0}
-                    <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Categories" title="No categories yet" body="Create one above to organize your library." />
+                    <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Categories" title={$_("settings_inline_noCategoriesYet")} body="Create one above to organize your library." />
                   {:else}
                     {@const displayCats = store.categories
                       .filter((c) => c.id !== 0)
@@ -5610,7 +5050,7 @@
                             <div class="settings-input-line settings-input-line__grow">
                               <input class="settings-text-input settings-input-line__grow" bind:value={editingName} onkeydown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") editingId = null; }} onblur={commitEdit} use:focusInput />
                             </div>
-                            <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" type="button" onclick={commitEdit} title="Save">Save</button>
+                            <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" type="button" onclick={commitEdit} title={$_("common_save")}>{$_("common_save")}</button>
                           {:else}
                             <div class="settings-mini-row__body">
                               <p class="settings-mini-row__label">{cat.name}</p>
@@ -5622,16 +5062,16 @@
                                 class:folder-update-excluded={cat.includeInUpdate === "EXCLUDE"}
                                 type="button"
                                 onclick={() => toggleComicFolderUpdates(cat)}
-                                title={cat.includeInUpdate === "EXCLUDE" ? "Include this folder in Library updates" : "Exclude this folder from Library updates"}
+                                title={cat.includeInUpdate === "EXCLUDE" ? $_("settings_inline_includeFolderLibraryUpdates") : $_("settings_inline_excludeFolderLibraryUpdates")}
                               >
-                                {cat.includeInUpdate === "EXCLUDE" ? "Skip updates" : "Update"}
+                                {cat.includeInUpdate === "EXCLUDE" ? $_("settings_inline_skipUpdates") : $_("settings_inline_update")}
                               </button>
-                              <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" class:folder-default-active={(store.settings.defaultLibraryCategoryId ?? null) === cat.id} type="button" onclick={() => updateSettings({ defaultLibraryCategoryId: (store.settings.defaultLibraryCategoryId ?? null) === cat.id ? null : cat.id })} title={(store.settings.defaultLibraryCategoryId ?? null) === cat.id ? "Remove as default category" : "Set as default category"}><Star size={13} weight={(store.settings.defaultLibraryCategoryId ?? null) === cat.id ? "fill" : "light"} /></button>
-                              <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" class:folder-hidden={(store.settings.hiddenCategoryIds ?? []).includes(cat.id)} type="button" onclick={() => toggleHiddenCategory(cat.id)} title={(store.settings.hiddenCategoryIds ?? []).includes(cat.id) ? "Show in Saved tab" : "Hide from Saved tab"}>{#if (store.settings.hiddenCategoryIds ?? []).includes(cat.id)}<EyeSlash size={13} weight="light" />{:else}<Eye size={13} weight="light" />{/if}</button>
-                              <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" type="button" onclick={() => moveCategory(cat.id, -1)} disabled={i === 0} title="Move up">Up</button>
-                              <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" type="button" onclick={() => moveCategory(cat.id, 1)} disabled={i === displayCats.length - 1} title="Move down">Down</button>
-                              <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" type="button" onclick={() => startEdit(cat.id, cat.name)} title="Rename"><Pencil size={12} weight="light" /></button>
-                              <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger settings-folder-action folder-delete" type="button" onclick={() => deleteFolder(cat.id)} title="Delete"><Trash size={12} weight="light" /></button>
+                              <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" class:folder-default-active={(store.settings.defaultLibraryCategoryId ?? null) === cat.id} type="button" onclick={() => updateSettings({ defaultLibraryCategoryId: (store.settings.defaultLibraryCategoryId ?? null) === cat.id ? null : cat.id })} title={(store.settings.defaultLibraryCategoryId ?? null) === cat.id ? $_("settings_inline_removeDefaultCategory") : $_("settings_inline_setDefaultCategory")}><Star size={13} weight={(store.settings.defaultLibraryCategoryId ?? null) === cat.id ? "fill" : "light"} /></button>
+                              <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" class:folder-hidden={(store.settings.hiddenCategoryIds ?? []).includes(cat.id)} type="button" onclick={() => toggleHiddenCategory(cat.id)} title={(store.settings.hiddenCategoryIds ?? []).includes(cat.id) ? $_("settings_inline_showInSavedTab") : $_("settings_inline_hideFromSavedTab")}>{#if (store.settings.hiddenCategoryIds ?? []).includes(cat.id)}<EyeSlash size={13} weight="light" />{:else}<Eye size={13} weight="light" />{/if}</button>
+                              <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" type="button" onclick={() => moveCategory(cat.id, -1)} disabled={i === 0} title={$_("settings_inline_moveUp")}>{$_("settings_inline_up")}</button>
+                              <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" type="button" onclick={() => moveCategory(cat.id, 1)} disabled={i === displayCats.length - 1} title={$_("settings_inline_moveDown")}>{$_("settings_inline_down")}</button>
+                              <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" type="button" onclick={() => startEdit(cat.id, cat.name)} title={$_("settings_inline_rename")}><Pencil size={12} weight="light" /></button>
+                              <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger settings-folder-action folder-delete" type="button" onclick={() => deleteFolder(cat.id)} title={$_("common_delete")}><Trash size={12} weight="light" /></button>
                             </div>
                           {/if}
                         </div>
@@ -5639,7 +5079,7 @@
                     </div>
                   {/if}
                 {:else if sortedBooksCategories.length === 0}
-                  <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Books categories" title="No categories yet" body="Create one above to organize books and novels." />
+                  <NocturneState layout="compact" tone="info" icon="folder" eyebrow={$_("settings_inline_booksCategories")} title={$_("settings_inline_noCategoriesYet")} body={$_("settings_inline_createCategoryAboveBooks")} />
                 {:else}
                   <div class="settings-card__stack" style="margin-top:16px">
                     {#each sortedBooksCategories as cat, i}
@@ -5648,7 +5088,7 @@
                           <div class="settings-input-line settings-input-line__grow">
                             <input class="settings-text-input settings-input-line__grow" bind:value={editingName} onkeydown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") editingId = null; }} onblur={commitEdit} use:focusInput />
                           </div>
-                          <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" type="button" onclick={commitEdit} title="Save">Save</button>
+                          <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" type="button" onclick={commitEdit} title={$_("common_save")}>{$_("common_save")}</button>
                         {:else}
                           <div class="settings-mini-row__body">
                             <p class="settings-mini-row__label">{cat.name}</p>
@@ -5660,14 +5100,14 @@
                               class:folder-update-excluded={normalizeBooksCategoryUpdateRule(cat.includeInUpdate) === "EXCLUDE"}
                               type="button"
                               onclick={() => toggleBooksFolderUpdates(cat)}
-                              title={normalizeBooksCategoryUpdateRule(cat.includeInUpdate) === "EXCLUDE" ? "Include this folder in Books updates" : "Exclude this folder from Books updates"}
+                              title={normalizeBooksCategoryUpdateRule(cat.includeInUpdate) === "EXCLUDE" ? $_("settings_inline_includeFolderBooksUpdates") : $_("settings_inline_excludeFolderBooksUpdates")}
                             >
-                              {normalizeBooksCategoryUpdateRule(cat.includeInUpdate) === "EXCLUDE" ? "Skip updates" : "Update"}
+                              {normalizeBooksCategoryUpdateRule(cat.includeInUpdate) === "EXCLUDE" ? $_("settings_inline_skipUpdates") : $_("settings_inline_update")}
                             </button>
-                            <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" type="button" onclick={() => moveCategory(cat.id, -1)} disabled={i === 0} title="Move up">Up</button>
-                            <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" type="button" onclick={() => moveCategory(cat.id, 1)} disabled={i === sortedBooksCategories.length - 1} title="Move down">Down</button>
-                            <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" type="button" onclick={() => startEdit(cat.id, cat.name)} title="Rename"><Pencil size={12} weight="light" /></button>
-                            <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger settings-folder-action folder-delete" type="button" onclick={() => deleteFolder(cat.id)} title="Delete"><Trash size={12} weight="light" /></button>
+                            <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" type="button" onclick={() => moveCategory(cat.id, -1)} disabled={i === 0} title={$_("settings_inline_moveUp")}>{$_("settings_inline_up")}</button>
+                            <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" type="button" onclick={() => moveCategory(cat.id, 1)} disabled={i === sortedBooksCategories.length - 1} title={$_("settings_inline_moveDown")}>{$_("settings_inline_down")}</button>
+                            <button class="n-btn n-btn--sm n-btn-ghost settings-folder-action" type="button" onclick={() => startEdit(cat.id, cat.name)} title={$_("settings_inline_rename")}><Pencil size={12} weight="light" /></button>
+                            <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger settings-folder-action folder-delete" type="button" onclick={() => deleteFolder(cat.id)} title={$_("common_delete")}><Trash size={12} weight="light" /></button>
                           </div>
                         {/if}
                       </div>
@@ -5689,14 +5129,14 @@
           {#if shouldRenderPane("tracking")}
           <div class="settings-grid">
             <div class="settings-card">
-              <p class="settings-card__title">Connected services</p>
+              <p class="settings-card__title">{$_("settings_inline_connectedServices")}</p>
               {#if trackersError}
                 <div class="settings-state">
-                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Trackers" title="Could not load trackers" body={trackersError} />
+                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Trackers" title={$_("settings_inline_couldNotLoadTrackers")} body={trackersError} />
                 </div>
               {/if}
               {#if trackersLoading}
-                <NocturneState layout="compact" tone="info" icon="retry" eyebrow="Trackers" title="Loading trackers" />
+                <NocturneState layout="compact" tone="info" icon="retry" eyebrow="Trackers" title={$_("settings_inline_loadingTrackers")} />
               {:else}
                 <div class="settings-card__stack">
                   {#each trackers as tracker}
@@ -5706,18 +5146,18 @@
                         <div class="tracker-name-block">
                           <span class="tracker-label">{tracker.name}</span>
                           <span class="tracker-status-pill" class:pill-on={tracker.isLoggedIn}>
-                            {tracker.isLoggedIn ? "Connected" : "Not connected"}
+                            {tracker.isLoggedIn ? $_("settings_inline_connected") : $_("settings_inline_notConnected")}
                           </span>
                         </div>
                       </div>
                       <div class="tracker-action">
                         {#if tracker.isLoggedIn}
                           <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger" type="button" onclick={() => logoutTracker(tracker.id)} disabled={loggingOut === tracker.id}>
-                            {loggingOut === tracker.id ? "Disconnecting..." : "Disconnect"}
+                            {loggingOut === tracker.id ? $_("settings_inline_disconnecting") : $_("settings_inline_disconnect")}
                           </button>
                         {:else}
                           <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => usesOAuth(tracker) ? startOAuth(tracker) : startCredentials(tracker)}>
-                            {usesOAuth(tracker) ? "Login" : "Connect"}
+                            {usesOAuth(tracker) ? $_("settings_inline_login") : $_("settings_inline_connect")}
                           </button>
                         {/if}
                       </div>
@@ -5738,18 +5178,18 @@
                       <div class="tracker-name-block">
                         <span class="tracker-label">Hardcover</span>
                         <span class="tracker-status-pill" class:pill-on={hardcoverState.auth.connected}>
-                          {hardcoverState.auth.connected ? "Connected" : "Not connected"}
+                          {hardcoverState.auth.connected ? $_("settings_inline_connected") : $_("settings_inline_notConnected")}
                         </span>
                       </div>
                     </div>
                     <div class="tracker-action">
                       {#if hardcoverState.auth.connected}
                         <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger" type="button" onclick={disconnectHardcoverAccount}>
-                          Disconnect
+                          {$_("settings_inline_disconnect")}
                         </button>
                       {:else}
                         <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={startHardcoverAuth}>
-                          Login
+                          {$_("settings_inline_login")}
                         </button>
                       {/if}
                     </div>
@@ -5759,19 +5199,19 @@
                   <div class="settings-card__surface" style="margin-top:16px">
                     <div class="settings-card__head">
                       <p class="settings-card__title">{activeTrackerDetail.name}</p>
-                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={closeTrackerDetail}>Close</button>
+                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={closeTrackerDetail}>{$_("common_close")}</button>
                     </div>
                     {#if activeTrackerDetailMode === "oauth"}
                       <p class="settings-card__intro">
                         {oauthAutoCapturing
-                          ? "Finish login in the Tracker Login window. Aethon will connect automatically when the tracker redirects back."
-                          : "Aethon opens a tracker login window and captures the OAuth callback automatically. If your system blocks it, paste the redirected callback URL below."}
+                          ? $_("settings_inline_finishTrackerLogin")
+                          : $_("settings_inline_trackerOauthWindowHint")}
                       </p>
                       <div class="settings-card__stack">
                         <div class="settings-row settings-mini-row settings-mini-row--stretch">
                           <div class="settings-mini-row__body">
-                            <p class="settings-mini-row__label">Callback URL</p>
-                            <p class="settings-mini-row__hint">Paste the full redirected URL or just the required callback token.</p>
+                            <p class="settings-mini-row__label">{$_("settings_inline_callbackUrl")}</p>
+                            <p class="settings-mini-row__hint">{$_("settings_inline_callbackUrlHint")}</p>
                           </div>
                         </div>
                         <input
@@ -5784,43 +5224,43 @@
                       </div>
                       <div class="settings-card__footer">
                         <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={submitOAuth} disabled={oauthSubmitting || !oauthCallbackInput.trim()}>
-                          {oauthSubmitting ? "Connecting..." : "Connect"}
+                          {oauthSubmitting ? $_("settings_inline_connecting") : $_("settings_inline_connect")}
                         </button>
-                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={cancelOAuth}>Cancel</button>
+                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={cancelOAuth}>{$_("settings_inline_cancel")}</button>
                       </div>
                     {:else if activeTrackerDetailMode === "credentials"}
-                      <p class="settings-card__intro">Credential-based trackers keep their login flow inside the same card instead of replacing the pane layout.</p>
+                      <p class="settings-card__intro">{$_("settings_inline_credentialsHint")}</p>
                       <div class="settings-card__stack">
                         <div class="settings-row settings-mini-row settings-mini-row--stretch">
                           <div class="settings-mini-row__body">
-                            <p class="settings-mini-row__label">Username or email</p>
+                            <p class="settings-mini-row__label">{$_("settings_inline_usernameOrEmail")}</p>
                           </div>
                         </div>
                         <input
                           class="settings-text-input"
-                          placeholder="Username / Email"
+                          placeholder={$_("settings_inline_usernameEmail")}
                           bind:value={credsUsername}
                           onkeydown={(e) => e.key === "Escape" && cancelCredentials()}
                           use:focusEl
                         />
                         <div class="settings-row settings-mini-row settings-mini-row--stretch">
                           <div class="settings-mini-row__body">
-                            <p class="settings-mini-row__label">Password</p>
+                            <p class="settings-mini-row__label">{$_("settings_inline_password")}</p>
                           </div>
                         </div>
                         <input
                           class="settings-text-input"
                           type="password"
-                          placeholder="Password"
+                          placeholder={$_("settings_inline_password")}
                           bind:value={credsPassword}
                           onkeydown={(e) => { if (e.key === "Enter") submitCredentials(); if (e.key === "Escape") cancelCredentials(); }}
                         />
                       </div>
                       <div class="settings-card__footer">
                         <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={submitCredentials} disabled={credsSubmitting || !credsUsername.trim() || !credsPassword.trim()}>
-                          {credsSubmitting ? "Connecting..." : "Connect"}
+                          {credsSubmitting ? $_("settings_inline_connecting") : $_("settings_inline_connect")}
                         </button>
-                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={cancelCredentials}>Cancel</button>
+                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={cancelCredentials}>{$_("settings_inline_cancel")}</button>
                       </div>
                     {/if}
                   </div>
@@ -5828,27 +5268,27 @@
                   <div class="settings-card__surface" style="margin-top:16px">
                     <div class="settings-card__head">
                       <p class="settings-card__title">Hardcover</p>
-                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={cancelHardcoverAuth}>Close</button>
+                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={cancelHardcoverAuth}>{$_("common_close")}</button>
                     </div>
                     <p class="settings-card__intro">
-                      Hardcover currently authenticates third-party apps with an API key. Aethon stores it only in this local profile and uses it for novels/books.
+                      {$_("settings_inline_hardcoverAuthIntro")}
                     </p>
                     {#if hardcoverError}
                       <div class="settings-state">
-                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Hardcover" title="Could not connect Hardcover" body={hardcoverError} />
+                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Hardcover" title={$_("settings_inline_couldNotConnectHardcover")} body={hardcoverError} />
                       </div>
                     {/if}
                     <div class="settings-card__stack">
                       <div class="settings-row settings-mini-row settings-mini-row--stretch">
                         <div class="settings-mini-row__body">
-                          <p class="settings-mini-row__label">Hardcover API key</p>
-                          <p class="settings-mini-row__hint">Create an API key in Hardcover account settings, then paste the key value here.</p>
+                          <p class="settings-mini-row__label">{$_("settings_inline_hardcoverApiKey")}</p>
+                          <p class="settings-mini-row__hint">{$_("settings_inline_hardcoverApiKeyHint")}</p>
                         </div>
                       </div>
                       <input
                         class="settings-text-input"
                         type="password"
-                        placeholder="Hardcover API key"
+                        placeholder={$_("settings_inline_hardcoverApiKey")}
                         bind:value={hardcoverTokenInput}
                         onkeydown={(e) => { if (e.key === "Enter") submitHardcoverToken(); if (e.key === "Escape") cancelHardcoverAuth(); }}
                         use:focusEl
@@ -5856,12 +5296,12 @@
                     </div>
                     <div class="settings-card__footer">
                       <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={submitHardcoverToken} disabled={hardcoverSubmitting || !hardcoverTokenInput.trim()}>
-                        {hardcoverSubmitting ? "Connecting..." : "Connect"}
+                        {hardcoverSubmitting ? $_("settings_inline_connecting") : $_("settings_inline_connect")}
                       </button>
                       <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => openUrl("https://hardcover.app/account/api")}>
-                        Get API key
+                        {$_("settings_inline_getApiKey")}
                       </button>
-                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={cancelHardcoverAuth}>Cancel</button>
+                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={cancelHardcoverAuth}>{$_("settings_inline_cancel")}</button>
                     </div>
                   </div>
                 {/if}
@@ -5869,28 +5309,28 @@
             </div>
 
             <div class="settings-card">
-              <p class="settings-card__title">Sync behavior</p>
+              <p class="settings-card__title">{$_("settings_inline_syncBehavior")}</p>
               <div class="settings-card__stack">
                 <!-- Mockup-only control preserved until tracker sync behavior is configurable from desktop settings. -->
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Update progress automatically</p>
-                    <p class="settings-mini-row__hint">Push chapter progress as you read.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_updateProgressAutomatically")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_updateProgressAutomaticallyHint")}</p>
                   </div>
-                  <button class="settings-toggle is-on" type="button" aria-disabled="true" aria-label="Update progress automatically" data-inert-control="settings-tracking-auto-progress"></button>
+                  <button class="settings-toggle is-on" type="button" aria-disabled="true" aria-label={$_("settings_inline_updateProgressAutomatically")} data-inert-control="settings-tracking-auto-progress"></button>
                 </div>
                 <!-- Mockup-only control preserved until tracker auth preference becomes a first-class setting. -->
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Prefer OAuth login</p>
-                    <p class="settings-mini-row__hint">Use browser auth when a tracker supports it.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_preferOauthLogin")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_preferOauthLoginHint")}</p>
                   </div>
-                  <button class="settings-toggle is-on" type="button" aria-disabled="true" aria-label="Prefer OAuth login" data-inert-control="settings-tracking-prefer-oauth"></button>
+                  <button class="settings-toggle is-on" type="button" aria-disabled="true" aria-label={$_("settings_inline_preferOauthLogin")} data-inert-control="settings-tracking-prefer-oauth"></button>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Desktop sync pairing</p>
-                    <p class="settings-mini-row__hint">Reconnect trusted desktop sync sessions without leaving the settings shell.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_desktopSyncPairing")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_desktopSyncPairingHint")}</p>
                   </div>
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (trackingSyncdOpen = !trackingSyncdOpen)}>
                     {trackingSyncdOpen ? "Close" : "Manage"}
@@ -5900,10 +5340,10 @@
               {#if trackingSyncdOpen}
                 <div class="settings-card__surface" style="margin-top:16px">
                   <div class="settings-card__head">
-                    <p class="settings-card__title">Desktop sync pairing</p>
-                    <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (trackingSyncdOpen = false)}>Close</button>
+                    <p class="settings-card__title">{$_("settings_inline_desktopSyncPairing")}</p>
+                    <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (trackingSyncdOpen = false)}>{$_("common_close")}</button>
                   </div>
-                  <p class="settings-card__intro">Keep the sync runtime tucked inside the existing card so the top-level layout stays faithful to the approved mockup.</p>
+                  <p class="settings-card__intro">{$_("settings_inline_syncRuntimeHint")}</p>
                   <div class="settings-card__embed">
                     <SyncdConnectionPanel
                       profileId={currentRuntimeProfileId}
@@ -5926,19 +5366,19 @@
           <div class="settings-grid">
             {#if secError}
               <div class="settings-card settings-card--wide">
-                <p class="settings-card__title">Security status</p>
+                <p class="settings-card__title">{$_("settings_inline_securityStatus")}</p>
                 <div class="settings-state">
-                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Security" title="Security setting failed" body={secError} />
+                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Security" title={$_("settings_inline_securitySettingFailed")} body={secError} />
                 </div>
               </div>
             {/if}
 
             <div class="settings-card">
-              <p class="settings-card__title">Security</p>
+              <p class="settings-card__title">{$_("settings_inline_security")}</p>
               <div class="settings-card__stack">
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Require PIN on open</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_requirePinOnOpen")}</p>
                     <p class="settings-mini-row__hint">
                       {store.settings.appLockEnabled ? "PIN lock is active for launch and idle resume." : "Protect the shell when reopening the app."}
                     </p>
@@ -5949,7 +5389,7 @@
                     type="button"
                     role="switch"
                     aria-checked={store.settings.appLockEnabled ?? false}
-                    aria-label="Require PIN on open"
+                    aria-label={$_("settings_inline_requirePinOnOpen")}
                     onclick={() => {
                       updateSettings({ appLockEnabled: !(store.settings.appLockEnabled ?? false) });
                       securityDetailPane = "pin";
@@ -5963,7 +5403,7 @@
                       {socksEnabled ? `${socksHost || "Unset host"}:${socksPort || "1080"}` : "Disabled"}
                     </p>
                   </div>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (securityDetailPane = securityDetailPane === "socks" ? null : "socks")}>Edit</button>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (securityDetailPane = securityDetailPane === "socks" ? null : "socks")}>{$_("settings_inline_edit")}</button>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
@@ -5976,7 +5416,7 @@
                     type="button"
                     role="switch"
                     aria-checked={flareEnabled}
-                    aria-label="Enable FlareSolverr"
+                    aria-label={$_("settings_inline_enableFlareSolverr")}
                     onclick={() => {
                       flareEnabled = !flareEnabled;
                       securityDetailPane = "flare";
@@ -5987,22 +5427,22 @@
             </div>
 
             <div class="settings-card">
-              <p class="settings-card__title">Authentication</p>
+              <p class="settings-card__title">{$_("settings_inline_authentication")}</p>
               <div class="settings-card__stack">
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Server auth</p>
-                    <p class="settings-mini-row__hint">Require credentials for remote access.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_serverAuth")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_serverAuthHint")}</p>
                   </div>
                   <div class="settings-section-actions settings-inline-actions">
-                    <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (securityDetailPane = securityDetailPane === "auth" ? null : "auth")}>Edit</button>
+                    <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (securityDetailPane = securityDetailPane === "auth" ? null : "auth")}>{$_("settings_inline_edit")}</button>
                     <button
                       class="settings-toggle"
                       class:is-on={store.settings.serverAuthEnabled}
                       type="button"
                       role="switch"
                       aria-checked={store.settings.serverAuthEnabled}
-                      aria-label="Enable server authentication"
+                      aria-label={$_("settings_inline_enableServerAuthentication")}
                       onclick={async () => {
                         if (store.settings.serverAuthEnabled) {
                           await disableAuth();
@@ -6015,8 +5455,8 @@
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Proxy mode</p>
-                    <p class="settings-mini-row__hint">Choose local, Docker, or custom instance routing.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_proxyMode")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_proxyModeHint")}</p>
                   </div>
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (securityDetailPane = securityDetailPane === "flare" ? null : "flare")}>
                     {flareDockerStatus?.running ? "Docker" : flareLocalStatus?.running ? "Local" : "Custom"}
@@ -6024,8 +5464,8 @@
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Desktop sync pairing</p>
-                    <p class="settings-mini-row__hint">Trust, reconnect, or revoke profile-scoped desktop sync sessions.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_desktopSyncPairing")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_desktopSyncTrustHint")}</p>
                   </div>
                   <button
                     class="n-btn n-btn--sm n-btn-ghost"
@@ -6039,7 +5479,7 @@
               </div>
               {#if store.settings.serverAuthEnabled}
                 <div class="settings-state">
-                  <NocturneState layout="compact" tone="info" icon="info" eyebrow="Security" title="Image proxy enabled" body="Images are proxied through Tauri while Basic Auth is active, so image loading can be slower." />
+                  <NocturneState layout="compact" tone="info" icon="info" eyebrow="Security" title={$_("settings_inline_imageProxyEnabled")} body="Images are proxied through Tauri while Basic Auth is active, so image loading can be slower." />
                 </div>
               {/if}
             </div>
@@ -6047,10 +5487,10 @@
             {#if securityDetailPane === "syncd"}
               <div class="settings-card settings-card--wide">
                 <div class="settings-card__head">
-                  <p class="settings-card__title">Desktop sync pairing</p>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (securityDetailPane = null)}>Close</button>
+                  <p class="settings-card__title">{$_("settings_inline_desktopSyncPairing")}</p>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (securityDetailPane = null)}>{$_("common_close")}</button>
                 </div>
-                <p class="settings-card__intro">Keep trusted desktop pairing controls inside Authentication so the top-level pane still matches the approved mockup.</p>
+                <p class="settings-card__intro">{$_("settings_inline_trustedPairingHint")}</p>
                 <div class="settings-card__embed">
                   <SyncdConnectionPanel
                     profileId={currentRuntimeProfileId}
@@ -6063,15 +5503,15 @@
             {#if securityDetailPane === "auth"}
               <div class="settings-card settings-card--wide">
                 <div class="settings-card__head">
-                  <p class="settings-card__title">Server authentication</p>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (securityDetailPane = null)}>Close</button>
+                  <p class="settings-card__title">{$_("settings_inline_serverAuthentication")}</p>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (securityDetailPane = null)}>{$_("common_close")}</button>
                 </div>
                 <div class="settings-card__stack">
                   <div class="settings-field-block">
                     <div class="settings-row settings-mini-row settings-mini-row--stretch">
                       <div class="settings-mini-row__body">
-                        <p class="settings-mini-row__label">Username</p>
-                        <p class="settings-mini-row__hint">Used by remote clients when Basic Auth is enabled.</p>
+                        <p class="settings-mini-row__label">{$_("settings_inline_username")}</p>
+                        <p class="settings-mini-row__hint">{$_("settings_inline_usernameHint")}</p>
                       </div>
                     </div>
                     <div class="settings-input-line">
@@ -6081,8 +5521,8 @@
                   <div class="settings-field-block">
                     <div class="settings-row settings-mini-row settings-mini-row--stretch">
                       <div class="settings-mini-row__body">
-                        <p class="settings-mini-row__label">Password</p>
-                        <p class="settings-mini-row__hint">Stored locally and sent to the server only when you save.</p>
+                        <p class="settings-mini-row__label">{$_("settings_inline_password")}</p>
+                        <p class="settings-mini-row__hint">{$_("settings_inline_passwordHint")}</p>
                       </div>
                     </div>
                     <div class="settings-input-line">
@@ -6118,14 +5558,14 @@
             {#if securityDetailPane === "pin"}
               <div class="settings-card settings-card--wide">
                 <div class="settings-card__head">
-                  <p class="settings-card__title">PIN lock</p>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (securityDetailPane = null)}>Close</button>
+                  <p class="settings-card__title">{$_("settings_inline_pinLock")}</p>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (securityDetailPane = null)}>{$_("common_close")}</button>
                 </div>
                 <div class="settings-card__stack">
                   <div class="settings-row settings-mini-row">
                     <div class="settings-mini-row__body">
-                      <p class="settings-mini-row__label">Require PIN on launch</p>
-                      <p class="settings-mini-row__hint">Prompt after startup and when returning from the idle splash.</p>
+                      <p class="settings-mini-row__label">{$_("settings_inline_requirePinOnLaunch")}</p>
+                      <p class="settings-mini-row__hint">{$_("settings_inline_requirePinOnLaunchHint")}</p>
                     </div>
                     <button
                       class="settings-toggle"
@@ -6133,7 +5573,7 @@
                       type="button"
                       role="switch"
                       aria-checked={store.settings.appLockEnabled ?? false}
-                      aria-label="Enable PIN lock"
+                      aria-label={$_("settings_inline_enablePinLock")}
                       onclick={() => updateSettings({ appLockEnabled: !(store.settings.appLockEnabled ?? false) })}
                     ></button>
                   </div>
@@ -6141,7 +5581,7 @@
                     <div class="settings-row settings-mini-row settings-mini-row--stretch">
                       <div class="settings-mini-row__body">
                         <p class="settings-mini-row__label">PIN</p>
-                        <p class="settings-mini-row__hint">Use 4 to 8 digits. Leave empty to clear the stored PIN.</p>
+                        <p class="settings-mini-row__hint">{$_("settings_inline_pinHint")}</p>
                       </div>
                     </div>
                     <div class="settings-input-line settings-input-line--stack">
@@ -6150,7 +5590,7 @@
                         <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={commitPin} disabled={pinInput.length > 0 && pinInput.length < 4}>{store.settings.appLockPin && pinInput === store.settings.appLockPin ? "Saved" : "Save"}</button>
                       </div>
                       {#if pinError}
-                        <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="PIN" title="PIN needs attention" body={pinError} />
+                        <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="PIN" title={$_("settings_inline_pinNeedsAttention")} body={pinError} />
                       {/if}
                     </div>
                   </div>
@@ -6161,13 +5601,13 @@
               <div class="settings-card settings-card--wide">
                 <div class="settings-card__head">
                   <p class="settings-card__title">SOCKS proxy</p>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (securityDetailPane = null)}>Close</button>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (securityDetailPane = null)}>{$_("common_close")}</button>
                 </div>
                 <div class="settings-card__stack">
                   <div class="settings-row settings-mini-row">
                     <div class="settings-mini-row__body">
-                      <p class="settings-mini-row__label">Enable proxy</p>
-                      <p class="settings-mini-row__hint">Route Suwayomi traffic through SOCKS4 or SOCKS5.</p>
+                      <p class="settings-mini-row__label">{$_("settings_inline_enableProxy")}</p>
+                      <p class="settings-mini-row__hint">{$_("settings_inline_enableProxyHint")}</p>
                     </div>
                     <button
                       class="settings-toggle"
@@ -6175,7 +5615,7 @@
                       type="button"
                       role="switch"
                       aria-checked={socksEnabled}
-                      aria-label="Enable SOCKS proxy"
+                      aria-label={$_("settings_inline_enableSocksProxy")}
                       onclick={() => (socksEnabled = !socksEnabled)}
                     ></button>
                   </div>
@@ -6183,8 +5623,8 @@
                   <div class="settings-field-block">
                     <div class="settings-row settings-mini-row settings-mini-row--stretch">
                       <div class="settings-mini-row__body">
-                        <p class="settings-mini-row__label">Version</p>
-                        <p class="settings-mini-row__hint">Choose the protocol expected by your proxy endpoint.</p>
+                        <p class="settings-mini-row__label">{$_("settings_inline_version")}</p>
+                        <p class="settings-mini-row__hint">{$_("settings_inline_proxyVersionHint")}</p>
                       </div>
                     </div>
                     <div class="n-inline-segmented">
@@ -6207,8 +5647,8 @@
                   <div class="settings-field-block">
                     <div class="settings-row settings-mini-row settings-mini-row--stretch">
                       <div class="settings-mini-row__body">
-                        <p class="settings-mini-row__label">Host</p>
-                        <p class="settings-mini-row__hint">Hostname or IP address of the proxy server.</p>
+                        <p class="settings-mini-row__label">{$_("settings_inline_host")}</p>
+                        <p class="settings-mini-row__hint">{$_("settings_inline_hostHint")}</p>
                       </div>
                     </div>
                     <div class="settings-input-line">
@@ -6219,8 +5659,8 @@
                   <div class="settings-field-block">
                     <div class="settings-row settings-mini-row settings-mini-row--stretch">
                       <div class="settings-mini-row__body">
-                        <p class="settings-mini-row__label">Port</p>
-                        <p class="settings-mini-row__hint">Default is 1080 for most local SOCKS bridges.</p>
+                        <p class="settings-mini-row__label">{$_("settings_inline_port")}</p>
+                        <p class="settings-mini-row__hint">{$_("settings_inline_portHint")}</p>
                       </div>
                     </div>
                     <div class="settings-input-line">
@@ -6231,8 +5671,8 @@
                   <div class="settings-field-block">
                     <div class="settings-row settings-mini-row settings-mini-row--stretch">
                       <div class="settings-mini-row__body">
-                        <p class="settings-mini-row__label">Username</p>
-                        <p class="settings-mini-row__hint">Optional, only if your proxy requires auth.</p>
+                        <p class="settings-mini-row__label">{$_("settings_inline_username")}</p>
+                        <p class="settings-mini-row__hint">{$_("settings_inline_proxyOptionalAuthHint")}</p>
                       </div>
                     </div>
                     <div class="settings-input-line">
@@ -6243,8 +5683,8 @@
                   <div class="settings-field-block">
                     <div class="settings-row settings-mini-row settings-mini-row--stretch">
                       <div class="settings-mini-row__body">
-                        <p class="settings-mini-row__label">Password</p>
-                        <p class="settings-mini-row__hint">Stored locally and applied only when you save.</p>
+                        <p class="settings-mini-row__label">{$_("settings_inline_password")}</p>
+                        <p class="settings-mini-row__hint">{$_("settings_inline_storedLocallyOnSave")}</p>
                       </div>
                     </div>
                     <div class="settings-input-line">
@@ -6279,13 +5719,13 @@
               <div class="settings-card settings-card--wide">
                 <div class="settings-card__head">
                   <p class="settings-card__title">FlareSolverr</p>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (securityDetailPane = null)}>Close</button>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (securityDetailPane = null)}>{$_("common_close")}</button>
                 </div>
                 <div class="settings-card__stack">
                   <div class="settings-row settings-mini-row">
                     <div class="settings-mini-row__body">
-                      <p class="settings-mini-row__label">Enable FlareSolverr</p>
-                      <p class="settings-mini-row__hint">Bypass Cloudflare challenges for supported sources.</p>
+                      <p class="settings-mini-row__label">{$_("settings_inline_enableFlareSolverr")}</p>
+                      <p class="settings-mini-row__hint">{$_("settings_inline_flareSolverrHint")}</p>
                     </div>
                     <button
                       class="settings-toggle"
@@ -6293,7 +5733,7 @@
                       type="button"
                       role="switch"
                       aria-checked={flareEnabled}
-                      aria-label="Enable FlareSolverr"
+                      aria-label={$_("settings_inline_enableFlareSolverr")}
                       onclick={() => (flareEnabled = !flareEnabled)}
                     ></button>
                   </div>
@@ -6302,7 +5742,7 @@
                     <div class="settings-row settings-mini-row settings-mini-row--stretch">
                       <div class="settings-mini-row__body">
                         <p class="settings-mini-row__label">URL</p>
-                        <p class="settings-mini-row__hint">Use a local, Docker, or custom FlareSolverr instance.</p>
+                        <p class="settings-mini-row__hint">{$_("settings_inline_flareSolverrUrlHint")}</p>
                       </div>
                     </div>
                     <div class="settings-input-line">
@@ -6312,7 +5752,7 @@
 
                   <div class="settings-row settings-mini-row">
                     <div class="settings-mini-row__body">
-                      <p class="settings-mini-row__label">Connection</p>
+                      <p class="settings-mini-row__label">{$_("settings_inline_connection")}</p>
                       <p class="settings-mini-row__hint">{flareStatusLabel() || "Check the instance status before saving."}</p>
                     </div>
                     <div class="settings-section-actions settings-inline-actions">
@@ -6326,23 +5766,23 @@
                   <div class="settings-card__surface">
                     <div class="settings-row settings-mini-row settings-mini-row--stretch">
                       <div class="settings-mini-row__body">
-                        <p class="settings-mini-row__label">Local instance</p>
+                        <p class="settings-mini-row__label">{$_("settings_inline_localInstance")}</p>
                         <p class="settings-mini-row__hint">{flareLocalStateLabel()}</p>
                       </div>
                       <div class="settings-section-actions settings-inline-actions">
-                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={refreshFlareLocalStatus} disabled={flareLocalBusy}>Refresh</button>
+                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={refreshFlareLocalStatus} disabled={flareLocalBusy}>{$_("common_refresh")}</button>
                         {#if flareLocalStatus?.installed}
                           {#if flareLocalStatus.running}
-                            <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={stopFlareLocal} disabled={flareLocalBusy}>Stop</button>
+                            <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={stopFlareLocal} disabled={flareLocalBusy}>{$_("settings_inline_stop")}</button>
                           {:else}
-                            <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={startFlareLocal} disabled={flareLocalBusy}>Start</button>
+                            <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={startFlareLocal} disabled={flareLocalBusy}>{$_("settings_inline_start")}</button>
                           {/if}
                         {/if}
                       </div>
                     </div>
                     <div class="settings-row settings-mini-row settings-mini-row--stretch">
                       <div class="settings-mini-row__body">
-                        <p class="settings-mini-row__label">Start on app launch</p>
+                        <p class="settings-mini-row__label">{$_("settings_inline_startOnAppLaunch")}</p>
                         <p class="settings-mini-row__hint">{flareLocalStatus?.path ?? "Install FlareSolverr locally to enable autostart."}</p>
                       </div>
                       <button
@@ -6351,7 +5791,7 @@
                         type="button"
                         role="switch"
                         aria-checked={flareLocalAutoStart}
-                        aria-label="Start FlareSolverr on app launch"
+                        aria-label={$_("settings_inline_startFlareSolverrOnLaunch")}
                         onclick={() => setFlareLocalAutoStart(!flareLocalAutoStart)}
                         disabled={!flareLocalStatus?.installed}
                       ></button>
@@ -6361,16 +5801,16 @@
                   <div class="settings-card__surface">
                     <div class="settings-row settings-mini-row settings-mini-row--stretch">
                       <div class="settings-mini-row__body">
-                        <p class="settings-mini-row__label">Docker instance</p>
+                        <p class="settings-mini-row__label">{$_("settings_inline_dockerInstance")}</p>
                         <p class="settings-mini-row__hint">{flareDockerStateLabel()}</p>
                       </div>
                       <div class="settings-section-actions settings-inline-actions">
-                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={refreshFlareDockerStatus} disabled={flareDockerBusy}>Refresh</button>
+                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={refreshFlareDockerStatus} disabled={flareDockerBusy}>{$_("common_refresh")}</button>
                         {#if flareDockerStatus?.installed && flareDockerStatus?.daemon}
                           {#if flareDockerStatus.running}
-                            <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={stopFlareDocker} disabled={flareDockerBusy}>Stop</button>
+                            <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={stopFlareDocker} disabled={flareDockerBusy}>{$_("settings_inline_stop")}</button>
                           {:else}
-                            <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={startFlareDocker} disabled={flareDockerBusy}>Start</button>
+                            <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={startFlareDocker} disabled={flareDockerBusy}>{$_("settings_inline_start")}</button>
                           {/if}
                         {/if}
                       </div>
@@ -6380,15 +5820,15 @@
                   <div class="settings-card__surface">
                     <div class="settings-row settings-mini-row settings-mini-row--stretch">
                       <div class="settings-mini-row__body">
-                        <p class="settings-mini-row__label">Advanced</p>
-                        <p class="settings-mini-row__hint">Tune timeout, session reuse, and response fallback.</p>
+                        <p class="settings-mini-row__label">{$_("settings_inline_advanced")}</p>
+                        <p class="settings-mini-row__hint">{$_("settings_inline_flareAdvancedHint")}</p>
                       </div>
                     </div>
                     <div class="settings-card__stack">
                       <div class="settings-row settings-mini-row">
                         <div class="settings-mini-row__body">
-                          <p class="settings-mini-row__label">Timeout</p>
-                          <p class="settings-mini-row__hint">Maximum wait per request in seconds.</p>
+                          <p class="settings-mini-row__label">{$_("settings_inline_timeout")}</p>
+                          <p class="settings-mini-row__hint">{$_("settings_inline_timeoutHint")}</p>
                         </div>
                         <div class="step-controls">
                           <button class="step-btn" type="button" onclick={() => (flareTimeout = Math.max(10, flareTimeout - 10))}>-</button>
@@ -6399,8 +5839,8 @@
                       <div class="settings-field-block">
                         <div class="settings-row settings-mini-row settings-mini-row--stretch">
                           <div class="settings-mini-row__body">
-                            <p class="settings-mini-row__label">Session name</p>
-                            <p class="settings-mini-row__hint">Reuse a named browser session between requests.</p>
+                            <p class="settings-mini-row__label">{$_("settings_inline_sessionName")}</p>
+                            <p class="settings-mini-row__hint">{$_("settings_inline_sessionNameHint")}</p>
                           </div>
                         </div>
                         <div class="settings-input-line">
@@ -6409,8 +5849,8 @@
                       </div>
                       <div class="settings-row settings-mini-row">
                         <div class="settings-mini-row__body">
-                          <p class="settings-mini-row__label">Session TTL</p>
-                          <p class="settings-mini-row__hint">Refresh the browser session after this many minutes.</p>
+                          <p class="settings-mini-row__label">{$_("settings_inline_sessionTtl")}</p>
+                          <p class="settings-mini-row__hint">{$_("settings_inline_sessionTtlHint")}</p>
                         </div>
                         <div class="step-controls">
                           <button class="step-btn" type="button" onclick={() => (flareTtl = Math.max(1, flareTtl - 1))}>-</button>
@@ -6420,8 +5860,8 @@
                       </div>
                       <div class="settings-row settings-mini-row">
                         <div class="settings-mini-row__body">
-                          <p class="settings-mini-row__label">Response fallback</p>
-                          <p class="settings-mini-row__hint">Use FlareSolverr's response when direct requests fail.</p>
+                          <p class="settings-mini-row__label">{$_("settings_inline_responseFallback")}</p>
+                          <p class="settings-mini-row__hint">{$_("settings_inline_responseFallbackHint")}</p>
                         </div>
                         <button
                           class="settings-toggle"
@@ -6429,7 +5869,7 @@
                           type="button"
                           role="switch"
                           aria-checked={flareFallback}
-                          aria-label="Use FlareSolverr response as fallback"
+                          aria-label={$_("settings_inline_useFlareResponseFallback")}
                           onclick={() => (flareFallback = !flareFallback)}
                         ></button>
                       </div>
@@ -6454,19 +5894,19 @@
         >
           <div class="settings-grid">
             <div class="settings-card">
-              <p class="settings-card__title">Content filters</p>
+              <p class="settings-card__title">{$_("settings_inline_contentFilters")}</p>
               <div class="settings-card__stack">
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Show adult content</p>
-                    <p class="settings-mini-row__hint">Allow titles and sources marked as adult or suggestive.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_showAdultContent")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_showAdultContentHint")}</p>
                   </div>
-                  <button role="switch" aria-checked={store.settings.showNsfw} aria-label="Show adult content" class="settings-toggle" class:is-on={store.settings.showNsfw} type="button" onclick={() => updateSettings({ showNsfw: !store.settings.showNsfw })}></button>
+                  <button role="switch" aria-checked={store.settings.showNsfw} aria-label={$_("settings_inline_showAdultContent")} class="settings-toggle" class:is-on={store.settings.showNsfw} type="button" onclick={() => updateSettings({ showNsfw: !store.settings.showNsfw })}></button>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Filter by blocked tags</p>
-                    <p class="settings-mini-row__hint">Hide anything matching your personal blocked tag list.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_filterByBlockedTags")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_filterByBlockedTagsHint")}</p>
                   </div>
                   <button
                     class="settings-toggle"
@@ -6474,7 +5914,7 @@
                     type="button"
                     role="switch"
                     aria-checked={store.settings.filterBlockedTags}
-                    aria-label="Filter by blocked tags"
+                    aria-label={$_("settings_inline_filterByBlockedTags")}
                     onclick={() => updateSettings({ filterBlockedTags: !store.settings.filterBlockedTags })}
                   ></button>
                 </div>
@@ -6482,63 +5922,63 @@
             </div>
 
             <div class="settings-card">
-              <p class="settings-card__title">Blocked tags</p>
+              <p class="settings-card__title">{$_("settings_inline_blockedTags")}</p>
               <div class="settings-chip-list">
                 {#each (store.settings.nsfwFilteredTags ?? []) as tag}
                   <span class="settings-chip settings-chip--removable">
                     <Tag size={10} weight="light" />
                     {tag}
-                    <button class="content-tag-remove" type="button" onclick={() => removeTag(tag)} title="Remove tag">×</button>
+                    <button class="content-tag-remove" type="button" onclick={() => removeTag(tag)} title={$_("settings_inline_removeTag")}>×</button>
                   </span>
                 {/each}
                 {#if (store.settings.nsfwFilteredTags ?? []).length === 0}
-                  <span class="settings-chip settings-chip--empty">No blocked tags</span>
+                  <span class="settings-chip settings-chip--empty">{$_("settings_inline_noBlockedTags")}</span>
                 {/if}
               </div>
               <div class="settings-card__footer">
                 <input
                   class="settings-text-input"
-                  placeholder="Add tag substring..."
+                  placeholder={$_("settings_inline_addTagSubstring")}
                   bind:value={newTagInput}
                   onkeydown={(e) => { if (e.key === "Enter") addTag(); }}
                 />
-                <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={addTag} disabled={!newTagInput.trim()}>Add</button>
-                <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={resetTags}>Reset</button>
+                <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={addTag} disabled={!newTagInput.trim()}>{$_("common_add")}</button>
+                <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={resetTags}>{$_("settings_inline_reset")}</button>
               </div>
             </div>
 
             <div class="settings-card">
-              <p class="settings-card__title">Source rules</p>
+              <p class="settings-card__title">{$_("settings_inline_sourceRules")}</p>
               <div class="settings-card__stack">
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Allowed sources</p>
-                    <p class="settings-mini-row__hint">Whitelist trusted catalogs.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_allowedSources")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_allowedSourcesHint")}</p>
                   </div>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => { contentSourceRulesMode = "allowed"; contentSourceRulesOpen = true; }}>Manage</button>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => { contentSourceRulesMode = "allowed"; contentSourceRulesOpen = true; }}>{$_("settings_inline_manage")}</button>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Blocked sources</p>
-                    <p class="settings-mini-row__hint">Hide noisy or broken catalogs.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_blockedSources")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_blockedSourcesHint")}</p>
                   </div>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => { contentSourceRulesMode = "blocked"; contentSourceRulesOpen = true; }}>Manage</button>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => { contentSourceRulesMode = "blocked"; contentSourceRulesOpen = true; }}>{$_("settings_inline_manage")}</button>
                 </div>
               </div>
               {#if contentSourceRulesOpen}
                 <div class="settings-card__surface" style="margin-top:16px">
                   <div class="settings-card__head">
                     <p class="settings-card__title">{contentSourceRulesMode === "allowed" ? "Allowed sources" : "Blocked sources"}</p>
-                    <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (contentSourceRulesOpen = false)}>Close</button>
+                    <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (contentSourceRulesOpen = false)}>{$_("common_close")}</button>
                   </div>
-                  <p class="settings-card__intro">Allow lets a source through even if flagged NSFW. Block always hides it.</p>
+                  <p class="settings-card__intro">{$_("settings_inline_sourceRulesHint")}</p>
                   <div class="content-source-search-wrap">
-                    <input class="settings-text-input" placeholder="Filter sources..." bind:value={sourceSearch} />
+                    <input class="settings-text-input" placeholder={$_("settings_inline_filterSources")} bind:value={sourceSearch} />
                   </div>
                   {#if contentSourcesLoading}
-                    <NocturneState layout="compact" tone="info" icon="retry" eyebrow="Sources" title="Loading sources" />
+                    <NocturneState layout="compact" tone="info" icon="retry" eyebrow="Sources" title={$_("settings_inline_loadingSources")} />
                   {:else if contentSources.length === 0}
-                    <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Sources" title="No sources found" body="Check your server connection or source visibility rules." />
+                    <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Sources" title={$_("settings_inline_noSourcesFound")} body="Check your server connection or source visibility rules." />
                   {:else}
                     <div class="content-source-list">
                       {#each contentSourcesFiltered as group (group.name)}
@@ -6560,14 +6000,14 @@
                               type="button"
                               onclick={() => toggleSourceAllowed(ids)}
                               title={isAllowed ? "Remove allow override" : "Allow this source through regardless of NSFW flag"}
-                            >Allow</button>
+                            >{$_("settings_inline_allow")}</button>
                             <button
                               class="content-action-btn"
                               class:content-action-active-block={isBlocked}
                               type="button"
                               onclick={() => toggleSourceBlocked(ids)}
                               title={isBlocked ? "Remove block override" : "Always block this source"}
-                            >Block</button>
+                            >{$_("settings_inline_block")}</button>
                           </div>
                         </div>
                       {/each}
@@ -6587,12 +6027,12 @@
         >
           <div class="settings-grid">
             <div class="settings-card settings-card--wide">
-              <p class="settings-card__title">About</p>
-              <p class="settings-card__intro settings-card__intro--body">Aethon is a desktop manga and books frontend for Suwayomi-inspired reading workflows, adapted here into the Nocturne shell.</p>
+              <p class="settings-card__title">{$_("settings_inline_about")}</p>
+              <p class="settings-card__intro settings-card__intro--body">{$_("settings_inline_aboutBody")}</p>
               <div class="settings-card__stack">
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Current build</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_currentBuild")}</p>
                     <p class="settings-mini-row__hint">v{appVersion}</p>
                   </div>
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => { releasesError = null; loadReleases(); }} disabled={releasesLoading}>
@@ -6601,8 +6041,8 @@
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Release history</p>
-                    <p class="settings-mini-row__hint">Browse recent builds and changelogs without leaving the page shell.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_releaseHistory")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_releaseHistoryHint")}</p>
                   </div>
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => { aboutReleasesOpen = !aboutReleasesOpen; if (aboutReleasesOpen) loadReleases(); }}>
                     {aboutReleasesOpen ? "Hide" : "Browse"}
@@ -6613,19 +6053,12 @@
                     <p class="settings-mini-row__label">GitHub</p>
                     <p class="settings-mini-row__hint">{AETHON_GITHUB_REPO ? AETHON_GITHUB_REPO : "Repository not configured yet."}</p>
                   </div>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={openProjectGithub}>Open</button>
-                </div>
-                <div class="settings-row settings-mini-row">
-                  <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Discord</p>
-                    <p class="settings-mini-row__hint">Community support and announcements.</p>
-                  </div>
-                  <a href="https://discord.gg/Jq3pwuNqPp" target="_blank" class="n-btn n-btn--sm n-btn-ghost">Open</a>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={openProjectGithub}>{$_("settings_inline_open")}</button>
                 </div>
               </div>
               {#if onLatestVersion}
                 <div class="settings-state">
-                  <NocturneState layout="compact" tone="success" icon="info" eyebrow="Updates" title="You're on the latest version" />
+                  <NocturneState layout="compact" tone="success" icon="info" eyebrow="Updates" title={$_("settings_inline_latestVersion")} />
                 </div>
               {/if}
               {#if updatePhase === "downloading" && IS_WINDOWS}
@@ -6642,32 +6075,32 @@
               {#if updatePhase === "ready"}
                 <div class="update-ready-row">
                   <span class="update-ready-label">{targetTag} downloaded - restart to finish installing.</span>
-                  <button class="update-action-btn primary" type="button" onclick={restartNow}>Restart now</button>
-                  <button class="n-btn n-btn--sm n-btn-ghost settings-mini-action" type="button" onclick={cancelUpdate} title="Dismiss">Dismiss</button>
+                  <button class="update-action-btn primary" type="button" onclick={restartNow}>{$_("settings_inline_restartNow")}</button>
+                  <button class="n-btn n-btn--sm n-btn-ghost settings-mini-action" type="button" onclick={cancelUpdate} title={$_("settings_inline_dismiss")}>{$_("settings_inline_dismiss")}</button>
                 </div>
               {/if}
               {#if updatePhase === "error"}
                 <div class="settings-state">
-                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Updates" title="Update failed" body={updateError} />
+                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Updates" title={$_("settings_inline_updateFailed")} body={updateError} />
                 </div>
                 <div class="update-error-row">
-                  <button class="n-btn n-btn--sm n-btn-ghost settings-mini-action" type="button" onclick={cancelUpdate}>Dismiss</button>
+                  <button class="n-btn n-btn--sm n-btn-ghost settings-mini-action" type="button" onclick={cancelUpdate}>{$_("settings_inline_dismiss")}</button>
                 </div>
               {/if}
               {#if aboutReleasesOpen}
               <div class="settings-card__surface" style="margin-top:16px">
                 <div class="settings-card__head">
-                  <p class="settings-card__title">Releases</p>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (aboutReleasesOpen = false)}>Close</button>
+                  <p class="settings-card__title">{$_("settings_inline_releases")}</p>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (aboutReleasesOpen = false)}>{$_("common_close")}</button>
                 </div>
                 {#if releasesError}
                   <div class="settings-state">
-                    <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Releases" title="Could not fetch releases" body={releasesError} />
+                    <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Releases" title={$_("settings_inline_couldNotFetchReleases")} body={releasesError} />
                   </div>
                 {:else if releasesLoading}
-                  <NocturneState layout="compact" tone="info" icon="retry" eyebrow="Releases" title="Fetching releases" />
+                  <NocturneState layout="compact" tone="info" icon="retry" eyebrow="Releases" title={$_("settings_inline_fetchingReleases")} />
                 {:else if releases.length === 0}
-                  <NocturneState layout="compact" tone="info" icon="info" eyebrow="Releases" title="No releases found" />
+                  <NocturneState layout="compact" tone="info" icon="info" eyebrow="Releases" title={$_("settings_inline_noReleasesFound")} />
                 {:else}
                   <div class="release-list-scroll">
                     <div class="release-list">
@@ -6697,7 +6130,7 @@
                                     {isInstalling ? "Downloading..." : "Install"}
                                   </button>
                                 {:else}
-                                  <button class="update-action-btn" type="button" onclick={() => installUpdate(release)}>Open on GitHub</button>
+                                  <button class="update-action-btn" type="button" onclick={() => installUpdate(release)}>{$_("settings_inline_openOnGithub")}</button>
                                 {/if}
                               {/if}
                             </div>
@@ -6726,51 +6159,51 @@
         >
           <div class="settings-grid">
             <div class="settings-card">
-              <p class="settings-card__title">Dev tools</p>
+              <p class="settings-card__title">{$_("settings_inline_devTools")}</p>
               <div class="settings-card__stack">
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Preview idle screen</p>
-                    <p class="settings-mini-row__hint">Show the idle splash. Shortcut: Ctrl+Alt+Shift+S also triggers it.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_previewIdleScreen")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_previewIdleScreenHint")}</p>
                   </div>
                   <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger" type="button" onclick={triggerSplash} style={splashTriggered ? "background:var(--accent-fg);color:var(--bg-base);border-color:var(--accent-fg);transition:all 0.15s ease" : ""}>
-                    Show idle
+                    {$_("settings_inline_showIdle")}
                   </button>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Open logs</p>
-                    <p class="settings-mini-row__hint">Inspect runtime output and diagnostics.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_openLogs")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_openLogsHint")}</p>
                   </div>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={openAppLogs}>Open</button>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={openAppLogs}>{$_("settings_inline_open")}</button>
                 </div>
                 <!-- Mockup-only control preserved until theme token inspector is promoted into a stable settings action. -->
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Inspect theme tokens</p>
-                    <p class="settings-mini-row__hint">Preview live Nocturne tokens and surface values.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_inspectThemeTokens")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_inspectThemeTokensHint")}</p>
                   </div>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" aria-disabled="true" data-inert-control="settings-inspect-theme-tokens">Inspect</button>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" aria-disabled="true" data-inert-control="settings-inspect-theme-tokens">{$_("settings_inline_inspect")}</button>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Build mode</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_buildMode")}</p>
                     <p class="settings-mini-row__hint settings-mini-row__hint--mono">{import.meta.env.MODE}</p>
                   </div>
                 </div>
               </div>
             </div>
             <div class="settings-card settings-reset-card">
-              <p class="settings-card__title">Reset settings</p>
-              <p class="settings-card__intro settings-card__intro--body">Restore reader, library, shell, security, theme and content preferences to their default Nocturne values.</p>
+              <p class="settings-card__title">{$_("settings_inline_resetSettings")}</p>
+              <p class="settings-card__intro settings-card__intro--body">{$_("settings_inline_resetSettingsHint")}</p>
               <div class="settings-card__surface settings-reset-card__surface">
                 <div class="settings-row settings-mini-row settings-mini-row--stretch">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">Reset all configs to default</p>
-                    <p class="settings-mini-row__hint">Saved library data, downloads and history stay intact. Only preferences and desktop settings are reset.</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_resetAllConfigsToDefault")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_resetAllConfigsHint")}</p>
                   </div>
                   <button class="n-btn n-btn--sm settings-reset-all-btn" type="button" onclick={resetAllSettingsToDefaults}>
-                    Reset all settings
+                    {$_("settings_inline_resetAllSettings")}
                   </button>
                 </div>
               </div>
@@ -6780,6 +6213,594 @@
       </div>
     </section>
   </div>
+  {#if advStorageOpen && storageAdvancedSource === "backup"}
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="storage-backup-panel-overlay" onclick={closeStorageBackupPanel}>
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="storage-backup-panel" onclick={(e) => e.stopPropagation()} bind:this={backupSectionEl}>
+        <div class="storage-backup-panel-header">
+          <p class="settings-card__title">
+            {backupViewMode === "create" ? "Create Backup" : "Restore Backup"}
+          </p>
+          <button class="n-btn n-btn--sm n-btn-ghost close-btn" type="button" onclick={closeStorageBackupPanel}>
+            Close
+          </button>
+        </div>
+        <div class="storage-backup-panel-content">
+          {#if backupViewMode === "create"}
+            <div class="settings-card__surface">
+                <div class="settings-card__head">
+                  <p class="settings-card__title">{$_("settings_inline_export")}</p>
+                </div>
+                <p class="settings-card__intro">{$_("settings_inline_exportHint")}</p>
+                <div class="settings-chip-list" style="margin-top:14px">
+                  {#each [
+                    ["unified", "Unified Aethon"],
+                    ["manga", "Manga only"],
+                    ["books", "Books only"],
+                    ["novels", "Novels only"],
+                    ["app", "App metadata"],
+                  ] as [mode, label]}
+                    <button
+                      class="settings-chip"
+                      class:is-active={backupExportMode === mode}
+                      type="button"
+                      onclick={() => {
+                        backupExportMode = mode as BackupExportMode;
+                        backupSavedPath = null;
+                      }}
+                    >
+                      {label}
+                    </button>
+                  {/each}
+                </div>
+                <div class="settings-card__stack" style="margin-top:14px">
+                  {#if backupExportMode === "unified"}
+                    <div class="settings-row settings-mini-row">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">{$_("settings_inline_includeManga")}</p>
+                        <p class="settings-mini-row__hint">{$_("settings_inline_includeMangaHint")}</p>
+                      </div>
+                      <button role="switch" aria-checked={backupUnifiedIncludeManga} aria-label={$_("settings_inline_includeManga")} class="settings-toggle" class:is-on={backupUnifiedIncludeManga} type="button" onclick={() => backupUnifiedIncludeManga = !backupUnifiedIncludeManga}></button>
+                    </div>
+                    <div class="settings-row settings-mini-row">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">{$_("settings_inline_includeBooks")}</p>
+                        <p class="settings-mini-row__hint">{$_("settings_inline_includeBooksHint")}</p>
+                      </div>
+                      <button role="switch" aria-checked={backupUnifiedIncludeBooks} aria-label={$_("settings_inline_includeBooks")} class="settings-toggle" class:is-on={backupUnifiedIncludeBooks} type="button" onclick={() => backupUnifiedIncludeBooks = !backupUnifiedIncludeBooks}></button>
+                    </div>
+                    <div class="settings-row settings-mini-row">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">{$_("settings_inline_includeNovels")}</p>
+                        <p class="settings-mini-row__hint">{$_("settings_inline_includeNovelsHint")}</p>
+                      </div>
+                      <button role="switch" aria-checked={backupUnifiedIncludeNovels} aria-label={$_("settings_inline_includeNovels")} class="settings-toggle" class:is-on={backupUnifiedIncludeNovels} type="button" onclick={() => backupUnifiedIncludeNovels = !backupUnifiedIncludeNovels}></button>
+                    </div>
+                    <div class="settings-row settings-mini-row">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">{$_("settings_inline_includeAppMetadata")}</p>
+                        <p class="settings-mini-row__hint">{$_("settings_inline_includeAppMetadataHint")}</p>
+                      </div>
+                      <button role="switch" aria-checked={backupUnifiedIncludeApp} aria-label={$_("settings_inline_includeAppMetadata")} class="settings-toggle" class:is-on={backupUnifiedIncludeApp} type="button" onclick={() => backupUnifiedIncludeApp = !backupUnifiedIncludeApp}></button>
+                    </div>
+                  {:else if backupExportMode === "books"}
+                    <div class="settings-row settings-mini-row">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">{$_("settings_inline_metadataOnlyMode")}</p>
+                        <p class="settings-mini-row__hint">{$_("settings_inline_booksMetadataOnlyHint")}</p>
+                      </div>
+                      <button role="switch" aria-checked={backupBooksOnlyMetadataOnly} aria-label={$_("settings_inline_booksMetadataOnly")} class="settings-toggle" class:is-on={backupBooksOnlyMetadataOnly} type="button" onclick={() => backupBooksOnlyMetadataOnly = !backupBooksOnlyMetadataOnly}></button>
+                    </div>
+                  {:else if backupExportMode === "manga"}
+                    <p class="settings-card__intro">{$_("settings_inline_mangaNativeExportHint")}</p>
+                  {:else if backupExportMode === "novels"}
+                    <p class="settings-card__intro">{$_("settings_inline_novelsExportHint")}</p>
+                  {:else if backupExportMode === "app"}
+                    <p class="settings-card__intro">{$_("settings_inline_appMetadataExportHint")}</p>
+                  {/if}
+                </div>
+                <div class="settings-row settings-mini-row settings-mini-row--stretch" style="margin-top:14px">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">{$_("settings_inline_saveBackup")}</p>
+                    <p class="settings-mini-row__hint">
+                      {#if backupExportMode === "unified"}
+                        {$_("settings_inline_exportUnifiedHint")}
+                      {:else if backupExportMode === "manga"}
+                        {$_("settings_inline_exportMangaHint")}
+                      {:else}
+                        {$_("settings_inline_exportSinglePayloadHint", { kind: backupPayloadKindLabel(backupExportMode) })}
+                      {/if}
+                    </p>
+                    {#if backupSavedPath}
+                      <p class="settings-mini-row__hint" style="color:var(--accent-fg)">{backupSavedPath}</p>
+                    {/if}
+                  </div>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={exportBackup} disabled={backupExporting || backupValidating || backupRestoring}>
+                    {backupExporting ? $_("settings_inline_exporting") : $_("settings_inline_exportBackup")}
+                  </button>
+                </div>
+              </div>
+          {:else if backupViewMode === "restore"}
+            <div class="settings-card__surface" style="margin-top:16px">
+                <div class="settings-card__head">
+                  <p class="settings-card__title">{$_("settings_inline_importRestore")}</p>
+                </div>
+                <p class="settings-card__intro">{$_("settings_inline_restorePickHint")}</p>
+                <div class="settings-row settings-mini-row settings-mini-row--stretch" style="margin-top:14px">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">{$_("settings_inline_selectedFile")}</p>
+                    <p class="settings-mini-row__hint">{backupSelectedFileLabel ?? $_("settings_inline_noBackupSelectedYet")}</p>
+                    {#if backupImportKind}
+                      <p class="settings-mini-row__hint">
+                        {$_("settings_inline_detectedFormat", { format: backupImportKind === "aethon" ? ".aethonbk" : $_("settings_inline_nativeMangaBackup") })}
+                      </p>
+                    {/if}
+                    {#if backupRestoreHandoffSession}
+                      <p class="settings-mini-row__hint" style="color:var(--accent-fg)">
+                        {$_("settings_inline_restoreHandoffActive")}
+                      </p>
+                    {:else if backupRestoreSourceProfileId}
+                      <p class="settings-mini-row__hint" style="color:var(--text-secondary)">
+                        {$_("settings_inline_originSession", { session: getLocalProfileMeta(backupRestoreSourceProfileId)?.label ?? backupRestoreSourceProfileId.toUpperCase() })}
+                      </p>
+                    {/if}
+                  </div>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={triggerBackupImport} disabled={backupExporting || backupValidating || backupRestoring}>
+                    {backupValidating ? $_("settings_inline_inspecting") : $_("settings_inline_chooseFile")}
+                  </button>
+                </div>
+                {#if backupImportKind === "aethon" && backupUnifiedPlan}
+                  <div class="settings-card__surface" style="margin-top:16px">
+                    <div class="settings-card__head">
+                      <p class="settings-card__title">{$_("settings_inline_restoreSummary")}</p>
+                    </div>
+                    <p class="settings-card__intro">{backupUnifiedPlan.summary.summaryLabel}</p>
+                    <p class="settings-card__intro">{backupUnifiedPlan.summary.summaryBody}</p>
+                    <div class="settings-chip-list" style="margin-top:14px">
+                      <span class="settings-chip">{$_("settings_inline_recommendedOtherProfile")}</span>
+                      <span class="settings-chip">{$_("settings_inline_blockedCount", { count: backupUnifiedBlockedCount })}</span>
+                      <span class="settings-chip">{$_("settings_inline_unsupportedCount", { count: backupUnifiedUnsupportedCount })}</span>
+                      <span class="settings-chip">{$_("settings_inline_warningsCount", { count: backupUnifiedWarningCount })}</span>
+                    </div>
+                    {#if backupUnifiedPlan.executionBlockedReason}
+                      <div class="settings-state settings-state--spaced">
+                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Restore" title={$_("settings_inline_restoreBlocked")} body={backupUnifiedPlan.executionBlockedReason} />
+                      </div>
+                    {/if}
+                    {#if backupUnifiedPlan.containerIssues.length > 0}
+                      <div class="settings-card__stack" style="margin-top:14px">
+                        {#each backupUnifiedPlan.containerIssues as issue}
+                          <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                            <div class="settings-mini-row__body">
+                              <p class="settings-mini-row__label">{$_("settings_inline_containerIssue")}</p>
+                              <p class="settings-mini-row__hint">{issue.code} - {issue.message}</p>
+                            </div>
+                          </div>
+                        {/each}
+                      </div>
+                    {/if}
+                    <div class="settings-card__stack" style="margin-top:14px">
+                      {#each backupUnifiedPlan.payloads as payload}
+                        <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                          <div class="settings-mini-row__body">
+                            <p class="settings-mini-row__label">{backupPayloadKindLabel(payload.kind)} - {backupPayloadStatusLabel(payload.status)}</p>
+                            <p class="settings-mini-row__hint">{payload.summaryLabel}</p>
+                            <p class="settings-mini-row__hint">Ready now: {payload.canRestoreNow ? "Yes" : "No"} · Needs action: {payload.needsUserAction ? "Yes" : "No"} · Executable: {payload.canExecuteRestore ? "Yes" : "No"}</p>
+                            {#if payload.availableRestoreModes.length > 0}
+                              <p class="settings-mini-row__hint">Restore modes: {payload.availableRestoreModes.join(", ")}{payload.defaultRestoreMode ? ` · default: ${payload.defaultRestoreMode}` : ""}</p>
+                            {/if}
+                            {#if payload.reasons.length > 0}
+                              {#each payload.reasons as reason}
+                                <p class="settings-mini-row__hint">{$_("settings_inline_reasonLine", { code: reason.code, message: reason.message })}</p>
+                              {/each}
+                            {/if}
+                            {#if payload.warnings.length > 0}
+                              {#each payload.warnings as warning}
+                                <p class="settings-mini-row__hint">{$_("settings_inline_warningLine", { code: warning.code, message: warning.message })}</p>
+                              {/each}
+                            {/if}
+                          </div>
+                          <div class="settings-section-actions settings-inline-actions">
+                            {#if isPayloadExecutable(payload)}
+                              <button
+                                class="settings-chip"
+                                class:is-active={Boolean(backupUnifiedSelection[payload.kind])}
+                                type="button"
+                                onclick={() => {
+                                  backupUnifiedSelection = {
+                                    ...backupUnifiedSelection,
+                                    [payload.kind]: !Boolean(backupUnifiedSelection[payload.kind]),
+                                  };
+                                }}
+                                disabled={!payload.canExecuteRestore || !payload.canRestoreNow || backupRestoring}
+                              >
+                                {backupUnifiedSelection[payload.kind] ? $_("settings_inline_selected") : $_("settings_inline_select")}
+                              </button>
+                            {:else}
+                              <span class="settings-chip">{payload.canExecuteRestore ? $_("settings_inline_info") : $_("settings_inline_preview")}</span>
+                            {/if}
+                          </div>
+                        </div>
+                      {/each}
+                    </div>
+                    {#if backupUnifiedPlan.topLevelSkipped.length > 0}
+                      <div class="settings-card__stack" style="margin-top:14px">
+                        {#each backupUnifiedPlan.topLevelSkipped as skipped}
+                          <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                            <div class="settings-mini-row__body">
+                              <p class="settings-mini-row__label">{backupPayloadKindLabel(skipped.kind)} - {backupPayloadStatusLabel(skipped.status)}</p>
+                              <p class="settings-mini-row__hint">{skipped.summaryLabel}</p>
+                              <p class="settings-mini-row__hint">{skipped.reason}</p>
+                            </div>
+                          </div>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
+                {:else if backupImportKind === "manga"}
+                  <div class="settings-card__surface" style="margin-top:16px">
+                    <div class="settings-card__head">
+                      <p class="settings-card__title">{$_("settings_inline_mangaRestorePath")}</p>
+                    </div>
+                    <p class="settings-card__intro">{$_("settings_inline_mangaRestorePathHint")}</p>
+                    {#if backupRestoreTargetMode === "other-local-profile" && otherLocalProfileMeta}
+                      <p class="settings-card__intro">Aethon will relaunch into {otherLocalProfileMeta.label}, reopen this backup in Settings > {$_("settings_inline_storageWaitConfirmation")}</p>
+                    {:else if backupRestoreTargetMode === "current-profile"}
+                      <p class="settings-card__intro">{$_("settings_inline_sourceReconciliationHint")}</p>
+                    {/if}
+                  </div>
+                {/if}
+                {#if backupImportKind}
+                  <div class="settings-card__surface" style="margin-top:16px">
+                    <div class="settings-card__head">
+                      <p class="settings-card__title">{$_("settings_inline_restoreTarget")}</p>
+                    </div>
+                    <p class="settings-card__intro">{backupCurrentTargetSummary}</p>
+                    {#if backupCanUseOtherProfileTarget}
+                      <div class="settings-chip-list" style="margin-top:14px">
+                        <button
+                          class="settings-chip"
+                          class:is-active={backupRestoreTargetMode === "other-local-profile"}
+                          type="button"
+                          onclick={() => {
+                            backupRestoreTargetMode = "other-local-profile";
+                            backupRestoreCurrentProfileConfirmed = false;
+                          }}
+                        >
+                          {otherLocalProfileMeta ? $_("settings_inline_restoreIntoProfile", { profile: otherLocalProfileMeta.label }) : $_("settings_inline_otherLocalProfile")}
+                        </button>
+                        <button
+                          class="settings-chip"
+                          class:is-active={backupRestoreTargetMode === "current-profile"}
+                          type="button"
+                          onclick={() => (backupRestoreTargetMode = "current-profile")}
+                        >
+                          {$_("settings_inline_currentProfile")}
+                        </button>
+                      </div>
+                    {:else if backupRestoreHandoffSession}
+                      <p class="settings-card__intro" style="margin-top:14px">{$_("settings_inline_handoffScopedHint")}</p>
+                    {:else}
+                      <p class="settings-card__intro" style="margin-top:14px">{$_("settings_inline_restoreExecutionProfileHint")}</p>
+                    {/if}
+                    {#if backupCurrentProfileGateRequired}
+                      <div class="settings-row settings-mini-row settings-mini-row--stretch" style="margin-top:14px">
+                        <div class="settings-mini-row__body">
+                          <p class="settings-mini-row__label">{$_("settings_inline_confirmCurrentProfileRestore")}</p>
+                          <p class="settings-mini-row__hint">{$_("settings_inline_currentProfileRestoreHint", { profile: currentProfileMeta?.label ?? currentSessionProfileLabel })}</p>
+                        </div>
+                        <button
+                          role="switch"
+                          aria-checked={backupRestoreCurrentProfileConfirmed}
+                          aria-label={$_("settings_inline_confirmCurrentProfileRestore2")}
+                          class="settings-toggle"
+                          class:is-on={backupRestoreCurrentProfileConfirmed}
+                          type="button"
+                          onclick={() => (backupRestoreCurrentProfileConfirmed = !backupRestoreCurrentProfileConfirmed)}
+                        ></button>
+                      </div>
+                    {/if}
+                    {#if backupResolvedExecutionBlockedReason}
+                      <div class="settings-state settings-state--spaced">
+                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Restore" title={$_("settings_inline_restoreTargetNeedsAttention")} body={backupResolvedExecutionBlockedReason} />
+                      </div>
+                    {/if}
+                    <div class="settings-row settings-mini-row settings-mini-row--stretch" style="margin-top:14px">
+                      <div class="settings-mini-row__body">
+                        <p class="settings-mini-row__label">{$_("settings_inline_restoreAction")}</p>
+                        <p class="settings-mini-row__hint">
+                          {#if backupRestoreTargetMode === "other-local-profile"}
+                            {$_("settings_inline_restoreHandoffTargetHint")}
+                          {:else if backupImportKind === "aethon"}
+                            {$_("settings_inline_willRestoreKinds", { kinds: backupExecutablePayloadKinds.length > 0 ? backupExecutablePayloadKinds.map((kind) => backupPayloadKindLabel(kind)).join(", ") : $_("settings_inline_nothingYet") })}
+                          {:else}
+                            {$_("settings_inline_mangaRestoreCurrentProfileHint")}
+                          {/if}
+                        </p>
+                        {#if backupRestoreStatus}
+                          <p class="settings-mini-row__hint">{$_("settings_inline_mangaRestoreProgress", { state: backupRestoreStatus.state, progress: backupRestoreStatus.mangaProgress, total: backupRestoreStatus.totalManga || 0 })}</p>
+                        {/if}
+                      </div>
+                      <div class="settings-section-actions settings-inline-actions">
+                        {#if backupImportKind === "manga" && backupRestoreTargetMode === "current-profile"}
+                          <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={refreshBackupReadiness} disabled={!backupSelectedFile || backupValidating || backupRestoring}>
+                            {$_("settings_inline_refreshReadiness")}
+                          </button>
+                        {/if}
+                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={executeSelectedRestore} disabled={backupExecuteDisabled}>
+                          {backupRestoreButtonLabel()}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                {/if}
+                <input bind:this={backupFileInput} type="file" accept=".tachibk,.proto.gz,.proto,*/*" style="display:none" onchange={onBackupFileSelected} />
+              </div>
+              {#if backupImportKind === "manga" && backupAnalysis && backupRestoreTargetMode === "current-profile"}
+                <div class="settings-card__surface" style="margin-top:16px">
+                  <div class="settings-card__head">
+                    <p class="settings-card__title">{$_("settings_inline_reconciliationSummary")}</p>
+                  </div>
+                  <p class="settings-card__intro">
+                    {#if backupAnalysis.exactMatches.length === 0 && backupAnalysis.autoReconciled.length === 0 && backupAnalysis.needsReview.length === 0 && backupAnalysis.unresolved.length === 0}
+                      {$_("settings_inline_noSourceReconciliationNeeded")}
+                    {:else}
+                      {$_("settings_inline_sourceReconciliationSummary")}
+                    {/if}
+                  </p>
+                  {#if backupReadiness}
+                    <div class="settings-card__surface" style="margin-top:16px">
+                      <div class="settings-card__head">
+                        <p class="settings-card__title">{$_("settings_inline_restoreReadiness")}</p>
+                      </div>
+                      <p class="settings-card__intro">
+                        {$_("settings_inline_restoreReadinessCounts", { ready: backupReadiness.readyNowCount, install: backupReadiness.requiresInstallCount, unavailable: backupReadiness.unavailableCount, unresolved: backupReadiness.unresolvedCount })}
+                      </p>
+                      {#if backupReadiness.requiresInstallCount > 0}
+                        <p class="settings-card__intro">{$_("settings_inline_restoreBlockedExtensionsHint")}</p>
+                        {#if backupReadiness.installableExtensions.length > 0}
+                          <div class="settings-section-actions settings-inline-actions" style="margin-top:12px;flex-wrap:wrap">
+                            <button
+                              class="n-btn n-btn--sm n-btn-ghost"
+                              onclick={installRequiredRestoreExtensions}
+                              disabled={backupRestoring || backupValidating || backupReadiness.installableExtensions.every((extension) => backupInstalling.has(extension.pkgName))}
+                            >
+                              {$_("settings_inline_installRequiredExtensions")}
+                            </button>
+                            <button class="n-btn n-btn--sm n-btn-ghost" onclick={() => openSearchSources("extensions", "repos")}>
+                              {$_("settings_inline_openExtensionsRepos")}
+                            </button>
+                          </div>
+                        {/if}
+                      {/if}
+                      {#if backupReadiness.unavailableCount > 0}
+                        <p class="settings-card__intro">{$_("settings_inline_restoreNoCandidateHint")}</p>
+                      {/if}
+                    </div>
+                  {/if}
+                  {#if backupAnalysis.exactMatches.length > 0}
+                    <div class="settings-card__surface" style="margin-top:16px">
+                      <div class="settings-card__head">
+                        <p class="settings-card__title">{$_("settings_inline_exactMatches")}</p>
+                      </div>
+                      <div class="settings-card__stack">
+                        {#each backupAnalysis.exactMatches as cluster}
+                          <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                            <div class="settings-mini-row__body">
+                              <p class="settings-mini-row__label">{cluster.sourceName}</p>
+                              <p class="settings-mini-row__hint">{cluster.selectedCandidate?.displayName} · {clusterConfidenceLabel(cluster)} · {clusterReasonLabel(cluster)}</p>
+                              {#if clusterReadinessDetail(cluster)}
+                                <p class="settings-mini-row__hint">{clusterReadinessLabel(cluster)} · {clusterReadinessDetail(cluster)}</p>
+                              {/if}
+                            </div>
+                            {#if cluster.selectedCandidate?.requiresInstall && extensionForPkg(cluster.selectedCandidate.extensionPkgName)}
+                              <button
+                                class="n-btn n-btn--sm n-btn-ghost"
+                                onclick={() => installMissingSourceExtension(extensionForPkg(cluster.selectedCandidate!.extensionPkgName)!)}
+                                disabled={backupRestoring || backupValidating || backupInstalling.has(cluster.selectedCandidate.extensionPkgName!)}
+                              >
+                                {backupInstalling.has(cluster.selectedCandidate.extensionPkgName!) ? $_("settings_inline_installing") : $_("settings_inline_install")}
+                              </button>
+                            {/if}
+                          </div>
+                        {/each}
+                      </div>
+                    </div>
+                  {/if}
+                  {#if backupAnalysis.autoReconciled.length > 0}
+                    <div class="settings-card__surface" style="margin-top:16px">
+                      <div class="settings-card__head">
+                        <p class="settings-card__title">{$_("settings_inline_autoReconciled")}</p>
+                      </div>
+                      <div class="settings-card__stack">
+                        {#each backupAnalysis.autoReconciled as cluster}
+                          <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                            <div class="settings-mini-row__body">
+                              <p class="settings-mini-row__label">{cluster.sourceName}</p>
+                              <p class="settings-mini-row__hint">{cluster.selectedCandidate?.displayName} · {clusterConfidenceLabel(cluster)} · {clusterReasonLabel(cluster)}</p>
+                              {#if clusterReadinessDetail(cluster)}
+                                <p class="settings-mini-row__hint">{clusterReadinessLabel(cluster)} · {clusterReadinessDetail(cluster)}</p>
+                              {/if}
+                            </div>
+                            {#if cluster.selectedCandidate?.requiresInstall && extensionForPkg(cluster.selectedCandidate.extensionPkgName)}
+                              <button
+                                class="n-btn n-btn--sm n-btn-ghost"
+                                onclick={() => installMissingSourceExtension(extensionForPkg(cluster.selectedCandidate!.extensionPkgName)!)}
+                                disabled={backupRestoring || backupValidating || backupInstalling.has(cluster.selectedCandidate.extensionPkgName!)}
+                              >
+                                {backupInstalling.has(cluster.selectedCandidate.extensionPkgName!) ? $_("settings_inline_installing") : $_("settings_inline_install")}
+                              </button>
+                            {/if}
+                          </div>
+                        {/each}
+                      </div>
+                    </div>
+                  {/if}
+                  {#if backupAnalysis.needsReview.length > 0}
+                    <div class="settings-card__surface" style="margin-top:16px">
+                      <div class="settings-card__head">
+                        <p class="settings-card__title">{$_("settings_inline_needsReview")}</p>
+                      </div>
+                      <p class="settings-card__intro">{$_("settings_inline_needsReviewHint")}</p>
+                      <div class="settings-card__stack">
+                        {#each backupAnalysis.needsReview as cluster}
+                          <div class="settings-card__surface">
+                            <div class="settings-card__head">
+                              <p class="settings-card__title">{cluster.sourceName}</p>
+                            </div>
+                            <p class="settings-card__intro">{$_("settings_inline_backupSourceId", { id: cluster.orphanSourceId })}</p>
+                            <div class="settings-card__stack">
+                              {#if cluster.sampleManga.length > 0}
+                                <p class="settings-card__intro">{$_("settings_inline_sampleTitles", { titles: cluster.sampleManga.map((manga) => manga.title).join(", ") })}</p>
+                              {/if}
+                              {#each cluster.candidates as candidate}
+                                <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                                  <div class="settings-mini-row__body">
+                                    <p class="settings-mini-row__label">{candidate.displayName}</p>
+                                    <p class="settings-mini-row__hint">{Math.round(candidate.confidence * 100)}% · {candidate.evidenceSummary}</p>
+                                  </div>
+                                  <button
+                                    class="settings-chip"
+                                    class:is-active={backupReviewSelections[cluster.orphanSourceId] === candidate.sourceId}
+                                    type="button"
+                                    onclick={() => setBackupClusterSelection(cluster.orphanSourceId, candidate.sourceId)}
+                                  >
+                                    {backupReviewSelections[cluster.orphanSourceId] === candidate.sourceId ? $_("settings_inline_selected") : $_("settings_inline_choose")}
+                                  </button>
+                                </div>
+                              {/each}
+                              <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                                <div class="settings-mini-row__body">
+                                  <p class="settings-mini-row__label">{$_("settings_inline_skipRemap")}</p>
+                                  <p class="settings-mini-row__hint">{$_("settings_inline_skipRemapHint")}</p>
+                                </div>
+                                <button
+                                  class="settings-chip"
+                                  class:is-active={backupReviewSelections[cluster.orphanSourceId] === "skip"}
+                                  type="button"
+                                  onclick={() => setBackupClusterSelection(cluster.orphanSourceId, "skip")}
+                                >
+                                  {backupReviewSelections[cluster.orphanSourceId] === "skip" ? $_("settings_inline_selected") : $_("settings_inline_skip")}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        {/each}
+                      </div>
+                    </div>
+                  {/if}
+                  {#if backupAnalysis.unresolved.length > 0}
+                    <div class="settings-card__surface" style="margin-top:16px">
+                      <div class="settings-card__head">
+                        <p class="settings-card__title">{$_("settings_inline_unresolved")}</p>
+                      </div>
+                      <p class="settings-card__intro">{$_("settings_inline_unresolvedHint")}</p>
+                      <p class="settings-card__intro">{backupAnalysis.unresolved.map((cluster) => cluster.sourceName).join(", ")}</p>
+                    </div>
+                  {/if}
+                  {#if backupMissingTrackers.length > 0}
+                    <div class="settings-card__surface" style="margin-top:16px">
+                      <div class="settings-card__head">
+                        <p class="settings-card__title">{$_("settings_inline_missingTrackers")}</p>
+                      </div>
+                      <p class="settings-card__intro">{backupMissingTrackers.map((tracker) => tracker.name).join(", ")}</p>
+                    </div>
+                  {/if}
+                  {#if backupSuggestedExtensions.length > 0 || backupExtensionLookupLoading || backupExtensionLookupError}
+                    <div class="settings-card__surface" style="margin-top:16px">
+                      <div class="settings-card__head">
+                        <p class="settings-card__title">{$_("settings_inline_extensionRecovery")}</p>
+                      </div>
+                      {#if backupExtensionLookupLoading}
+                        <p class="settings-card__intro">{$_("settings_inline_checkingAvailableExtensions")}</p>
+                      {:else if backupSuggestedExtensions.length > 0}
+                        <div class="settings-card__stack">
+                          <p class="settings-card__intro">{$_("settings_inline_extensionMatchesHint")}</p>
+                          {#each backupSuggestedExtensions as suggestion}
+                            <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                              <div class="settings-mini-row__body">
+                                <p class="settings-mini-row__label">{suggestion.extension.name}</p>
+                                <p class="settings-mini-row__hint">{$_("settings_inline_matchesBackupSource", { source: suggestion.missingSource.name, reason: suggestion.matchedBy === "source-id" ? $_("settings_inline_matchedBySourceId") : $_("settings_inline_matchedBySourceName") })}</p>
+                              </div>
+                              <button
+                                class="n-btn n-btn--sm n-btn-ghost"
+                                onclick={() => installMissingSourceExtension(suggestion.extension)}
+                                disabled={backupRestoring || backupValidating || backupInstalling.has(suggestion.extension.pkgName)}
+                              >
+                                {backupInstalling.has(suggestion.extension.pkgName) ? $_("settings_inline_installing") : $_("settings_inline_install")}
+                              </button>
+                            </div>
+                          {/each}
+                        </div>
+                      {:else}
+                        <div class="settings-section-actions settings-inline-actions" style="margin-top:12px;flex-wrap:wrap">
+                          <p class="settings-card__intro" style="margin:0">{$_("settings_inline_noConfidentMatches")}</p>
+                          <button class="n-btn n-btn--sm n-btn-ghost" onclick={() => openSearchSources("extensions", "repos")}>
+                            {$_("settings_inline_openExtensionsRepos")}
+                          </button>
+                        </div>
+                      {/if}
+                      {#if backupExtensionLookupError}
+                        <div class="settings-state settings-state--spaced">
+                          <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Extensions" title={$_("settings_inline_couldNotInspectExtensionMatches")} body={backupExtensionLookupError} />
+                        </div>
+                      {/if}
+                    </div>
+                  {/if}
+                  {#if backupAnalysis.warnings.length > 0}
+                    <div class="settings-card__surface" style="margin-top:16px">
+                      <div class="settings-card__head">
+                        <p class="settings-card__title">{$_("settings_inline_warnings")}</p>
+                      </div>
+                      <div class="settings-card__stack">
+                        {#each backupAnalysis.warnings as warning}
+                          <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                            <div class="settings-mini-row__body">
+                              <p class="settings-mini-row__label">{warning.message}</p>
+                              {#if warning.details}
+                                <p class="settings-mini-row__hint">{warning.details}</p>
+                              {/if}
+                            </div>
+                          </div>
+                        {/each}
+                      </div>
+                    </div>
+                  {/if}
+                </div>
+              {/if}
+              {#if backupRestoreResults}
+                <div class="settings-card__surface" style="margin-top:16px">
+                  <div class="settings-card__head">
+                    <p class="settings-card__title">{$_("settings_inline_restoreResults")}</p>
+                  </div>
+                  <div class="settings-card__stack" style="margin-top:12px">
+                    {#each backupRestoreResults as result}
+                      <div class="settings-row settings-mini-row settings-mini-row--stretch">
+                        <div class="settings-mini-row__body">
+                          <p class="settings-mini-row__label">{backupPayloadKindLabel(result.kind)} - {backupPayloadStatusLabel(result.status)}</p>
+                          <p class="settings-mini-row__hint">{result.summary}</p>
+                          {#if result.detail}
+                            <p class="settings-mini-row__hint">{result.detail}</p>
+                          {/if}
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+              {#if backupError}
+                <div class="settings-state settings-state--spaced">
+                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Backup" title={$_("settings_inline_backupActionFailed")} body={backupError} />
+                </div>
+              {/if}
+          {/if}
+        </div>
+      </div>
+    </div>
+  {/if}
 </main>
 <script module lang="ts">
   function focusInput(node: HTMLElement) { node.focus(); }
@@ -6846,6 +6867,70 @@
   }
   .settings-state--spaced {
     margin-top: 14px;
+  }
+  .settings-storage-meter {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: var(--sp-4);
+    margin-top: 20px;
+  }
+  .settings-storage-meter__text {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .settings-storage-meter__value {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-semibold);
+    color: var(--text-muted);
+    line-height: var(--leading-snug);
+    white-space: nowrap;
+    text-align: right;
+  }
+  .settings-storage-meter__value.is-empty {
+    font-family: var(--font-ui);
+    color: var(--text-faint);
+  }
+  .storage-bar {
+    width: 100%;
+    height: 5px;
+    margin-top: 14px;
+    overflow: hidden;
+    border-radius: var(--radius-full);
+    background: rgba(255, 255, 255, 0.055);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.025);
+  }
+  .storage-bar-fill {
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, rgba(190, 167, 255, 0.86), rgba(213, 198, 255, 0.94));
+    transition: width 220ms ease;
+  }
+  .storage-bar-fill.warn {
+    background: linear-gradient(90deg, rgba(234, 203, 138, 0.86), rgba(255, 225, 157, 0.94));
+  }
+  .storage-bar-fill.critical {
+    background: linear-gradient(90deg, rgba(255, 135, 135, 0.82), rgba(255, 177, 177, 0.94));
+  }
+  .settings-storage-footer {
+    margin-top: 18px;
+    justify-content: space-between;
+    gap: var(--sp-3);
+  }
+  .settings-storage-footer .settings-card__footer-status {
+    min-width: 0;
+    white-space: nowrap;
+  }
+  .settings-storage-action-group {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--sp-2);
+    flex-wrap: wrap;
+    margin-left: auto;
   }
   .path-input-error {
     border-color: rgba(216, 180, 255, 0.32) !important;
@@ -6953,6 +7038,50 @@
   .content-action-btn:hover { color: var(--text-muted); border-color: var(--border-strong); background: var(--bg-overlay); }
   .content-action-active-allow { color: var(--color-success) !important; border-color: color-mix(in srgb, var(--color-success) 40%, transparent) !important; background: color-mix(in srgb, var(--color-success) 10%, transparent) !important; }
   .content-action-active-block  { color: var(--color-error)   !important; border-color: color-mix(in srgb, var(--color-error)   40%, transparent) !important; background: color-mix(in srgb, var(--color-error)   10%, transparent) !important; }
+
+  .storage-backup-panel-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.72);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1100;
+    animation: fadeIn 0.15s ease both;
+  }
+  .storage-backup-panel {
+    background: linear-gradient(180deg, rgb(24, 22, 31), rgb(18, 17, 24));
+    border: 1px solid rgba(72, 69, 79, 0.72);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+    max-width: 680px;
+    width: 90%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 20px 48px rgba(0, 0, 0, 0.6);
+    position: relative;
+    animation: scaleIn 0.15s ease both;
+  }
+  .storage-backup-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    padding-bottom: 12px;
+  }
+  .storage-backup-panel-header .settings-card__title {
+    margin: 0;
+  }
+  .storage-backup-panel-content {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
 </style>
 
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { _ } from "../../lib/i18n/runtime";
   import { onMount } from "svelte";
   import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
 
@@ -28,12 +29,12 @@
   }
 </script>
 
-<div class="window-controls-inline" aria-label="Window controls">
-  <button type="button" class="window-controls-inline__btn" onclick={minimizeWindow} title="Minimize" aria-label="Minimize">
+<div class="window-controls-inline" aria-label={$_("ui_windowControls")}>
+  <button type="button" class="window-controls-inline__btn" onclick={minimizeWindow} title={$_("ui_minimize")} aria-label={$_("ui_minimize")}>
     <span class="material-symbols-outlined" aria-hidden="true">remove</span>
   </button>
 
-  <button type="button" class="window-controls-inline__btn" onclick={toggleMaximizeWindow} title="Maximize" aria-label="Maximize">
+  <button type="button" class="window-controls-inline__btn" onclick={toggleMaximizeWindow} title={$_("ui_maximize")} aria-label={$_("ui_maximize")}>
     <span class="material-symbols-outlined" aria-hidden="true">crop_square</span>
   </button>
 
@@ -41,8 +42,8 @@
     type="button"
     class="window-controls-inline__btn window-controls-inline__btn--close"
     onclick={closeWindow}
-    title="Close"
-    aria-label="Close"
+    title={$_("ui_close_bbfa773e")}
+    aria-label={$_("ui_close_bbfa773e")}
   >
     <span class="material-symbols-outlined" aria-hidden="true">close</span>
   </button>

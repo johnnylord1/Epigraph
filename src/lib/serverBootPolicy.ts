@@ -21,7 +21,5 @@ export function shouldAutoStartManagedServer(input: ServerAutoStartPolicyInput) 
   if (input.attachOnly) return false;
   if (!input.isLoopback) return false;
   if (!input.autoStartServer) return false;
-  if (!input.standbyEnabled) return true;
-  if (!input.hasSnapshot) return true;
-  return input.updateDue;
+  return true;
 }

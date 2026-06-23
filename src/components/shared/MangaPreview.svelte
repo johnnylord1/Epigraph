@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { translate } from "../../lib/i18n/runtime";
+  import { _ } from "../../lib/i18n/runtime";
   import { onMount, onDestroy } from "svelte";
   import { X, BookmarkSimple, ArrowSquareOut, Play, CircleNotch, Books, CaretDown, FolderSimplePlus, Folder, LinkSimpleHorizontalBreak } from "phosphor-svelte";
   import { gql } from "../../lib/client";
@@ -93,7 +95,7 @@
     if (inProgress) return { ch: inProgress, label: `Continue · Ch.${inProgress.chapterNumber}` };
     const firstUnread = chapters.find((c) => !c.isRead);
     if (firstUnread) return { ch: firstUnread, label: `Start · Ch.${firstUnread.chapterNumber}` };
-    return { ch: chapters[0], label: "Read again" };
+    return { ch: chapters[0], label: translate("detail_actions_readAgain") };
   });
 
   $effect(() => { if (store.previewManga) { load(store.previewManga.id); loadCategories(store.previewManga.id); } });
@@ -158,7 +160,7 @@
     cache.get(CACHE_KEYS.MANGA(manga.id), () => Promise.resolve(manga!));
     cache.clear(CACHE_KEYS.LIBRARY);
     togglingLib = false;
-    addToast({ kind: "success", title: next ? "Added to library" : "Removed from library" });
+    addToast({ kind: "success", title: next ? translate("ui_addedToLibrary") : translate("ui_removedFromLibrary_520e5a01") });
   }
 
   async function downloadAll() {
@@ -166,7 +168,7 @@
     if (!ids.length) return;
     queueingAll = true;
     await gql(ENQUEUE_CHAPTERS_DOWNLOAD, { chapterIds: ids }).catch(console.error);
-    addToast({ kind: "download", title: "Downloading", body: `${ids.length} chapters queued` });
+    addToast({ kind: "download", title: translate("ui_downloading"), body: `${ids.length} chapters queued` });
     queueingAll = false;
   }
 
@@ -248,7 +250,7 @@
 
 {#if store.previewManga}
 <div class="backdrop" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) close(); }} onkeydown={(e) => { if (e.key === "Escape") close(); }}>
-  <div class="modal" role="dialog" aria-label="Manga preview">
+  <div class="modal" role="dialog" aria-label={$_("ui_mangaPreview")}>
 
     <div class="cover-col">
       <div class="cover-wrap">
@@ -269,25 +271,25 @@
 
         <button class="action-btn" class:active={inLibrary} onclick={toggleLibrary} disabled={togglingLib || loadingDetail}>
           <span class="action-icon"><BookmarkSimple size={13} weight={inLibrary ? "fill" : "light"} /></span>
-          <span class="action-label">{togglingLib ? "…" : inLibrary ? "In Library" : "Add to Library"}</span>
+          <span class="action-label">{togglingLib ? "…" : inLibrary ? $_("detail_status_inLibrary") : $_("detail_actions_addToLibrary")}</span>
         </button>
 
         <button class="action-btn" onclick={openSeriesDetail}>
           <span class="action-icon"><Books size={13} weight="light" /></span>
-          <span class="action-label">Series Detail</span>
+          <span class="action-label">{$_("ui_seriesDetail")}</span>
         </button>
 
         <div class="folder-wrap" bind:this={folderRef}>
           <button class="action-btn" class:active={assignedFolders.length > 0} onclick={() => folderOpen = !folderOpen}>
             <span class="action-icon"><FolderSimplePlus size={13} weight={assignedFolders.length > 0 ? "fill" : "light"} /></span>
-            <span class="action-label">{assignedFolders.length > 0 ? assignedFolders.map((f) => getCategoryDisplayName(f)).join(", ") : "Add to folder"}</span>
+            <span class="action-label">{assignedFolders.length > 0 ? assignedFolders.map((f) => getCategoryDisplayName(f)).join(", ") : $_("ui_addToFolder")}</span>
           </button>
           {#if folderOpen}
             <div class="folder-menu">
               {#if catsLoading}
-                <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Folders" title="Loading folders" />
+                <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Folders" title={$_("detail_folders_loading")} />
               {:else if allCategories.length === 0 && !creatingFolder}
-                <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Folders" title="No folders yet" body="Create a folder in Settings to organize this series." />
+                <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Folders" title={$_("detail_folders_emptyTitle")} body="Create a folder in Settings to organize this series." />
               {/if}
               {#each allCategories as cat}
                 {@const isIn = mangaCategories.some(c => c.id === cat.id)}
@@ -298,13 +300,13 @@
               <div class="folder-divider"></div>
               {#if creatingFolder}
                 <div class="folder-create-row">
-                  <input class="folder-input" placeholder="Folder name…" bind:value={newFolderName}
+                  <input class="folder-input" placeholder={$_("ui_folderName")} bind:value={newFolderName}
                     onkeydown={(e) => { if (e.key === "Enter") handleFolderCreate(); if (e.key === "Escape") { creatingFolder = false; newFolderName = ""; } }}
                     use:focusAction />
-                  <button class="folder-ok" onclick={handleFolderCreate} disabled={!newFolderName.trim()}>Add</button>
+                  <button class="folder-ok" onclick={handleFolderCreate} disabled={!newFolderName.trim()}>{$_("detail_folders_add")}</button>
                 </div>
               {:else}
-                <button class="folder-new" onclick={() => creatingFolder = true}>+ New folder</button>
+                <button class="folder-new" onclick={() => creatingFolder = true}>{$_("detail_folders_new")}</button>
               {/if}
             </div>
           {/if}
@@ -312,7 +314,7 @@
 
         <button class="action-btn" class:active={linkedIds.length > 0} onclick={openLinkPicker}>
           <span class="action-icon"><LinkSimpleHorizontalBreak size={13} weight={linkedIds.length > 0 ? "fill" : "light"} /></span>
-          <span class="action-label">{linkedIds.length > 0 ? `Series Link (${linkedIds.length})` : "Series Link"}</span>
+          <span class="action-label">{linkedIds.length > 0 ? `Series Link (${linkedIds.length})` : $_("ui_seriesLink")}</span>
         </button>
 
       </div>
@@ -338,7 +340,7 @@
             tone="warning"
             icon="warning"
             eyebrow="Preview"
-            title="Could not refresh this manga"
+            title={$_("ui_couldNotRefreshThisManga")}
             body={fetchError}
           />
         {/if}
@@ -349,9 +351,9 @@
           <div class="badges">
             {#if statusLabel}<span class="badge" class:badge-green={displayManga?.status === "ONGOING"}>{statusLabel}</span>{/if}
             {#if displayManga?.source}<span class="badge">{displayManga.source.displayName}</span>{/if}
-            {#if inLibrary}<span class="badge badge-accent">In Library</span>{/if}
-            {#if !loadingChapters && unreadCount > 0}<span class="badge badge-unread">{unreadCount} unread</span>{/if}
-            {#if !loadingChapters && bookmarkCount > 0}<span class="badge">{bookmarkCount} bookmarked</span>{/if}
+            {#if inLibrary}<span class="badge badge-accent">{$_("detail_status_inLibrary")}</span>{/if}
+            {#if !loadingChapters && unreadCount > 0}<span class="badge badge-unread">{unreadCount} {$_("ui_unread")}</span>{/if}
+            {#if !loadingChapters && bookmarkCount > 0}<span class="badge">{bookmarkCount} {$_("ui_bookmarked")}</span>{/if}
           </div>
         {/if}
 
@@ -359,7 +361,7 @@
           {#if loadingChapters}
             <div class="chapter-loading">
               <CircleNotch size={13} weight="light" class="anim-spin" style="color:var(--text-faint)" />
-              <span class="chapter-loading-label">Loading chapters…</span>
+              <span class="chapter-loading-label">{$_("ui_loadingChapters")}</span>
             </div>
           {:else if totalCount > 0}
             <div class="chapter-meta">
@@ -369,7 +371,7 @@
               {#if unreadCount > 0}
                 <button class="dl-all-btn" onclick={downloadAll} disabled={queueingAll}>
                   {#if queueingAll}<CircleNotch size={11} weight="light" class="anim-spin" />{/if}
-                  {queueingAll ? "Queuing…" : "Download unread"}
+                  {queueingAll ? "Queuing…" : $_("ui_downloadUnread")}
                 </button>
               {/if}
             </div>
@@ -382,7 +384,7 @@
               </button>
             {/if}
           {:else if !loadingDetail}
-            <span class="chapter-label" style="color:var(--text-faint)">No chapters in local library</span>
+            <span class="chapter-label" style="color:var(--text-faint)">{$_("ui_noChaptersInLocalLibrary")}</span>
           {/if}
         </div>
 
@@ -397,7 +399,7 @@
             <p class="desc" class:desc-open={descExpanded}>{displayManga.description}</p>
             {#if displayManga.description.length > 220}
               <button class="desc-toggle" onclick={() => descExpanded = !descExpanded}>
-                {descExpanded ? "Show less" : "Show more"}
+                {descExpanded ? $_("ui_showLess") : $_("ui_showMore")}
                 <CaretDown size={10} weight="light" style="transform:{descExpanded ? 'rotate(180deg)' : 'none'};transition:transform 0.15s ease" />
               </button>
             {/if}
@@ -414,19 +416,19 @@
 
         {#if !loadingDetail}
           <div class="meta-table">
-            {#if displayManga?.author}<div class="meta-row"><span class="meta-key">Author</span><span class="meta-val">{displayManga.author}</span></div>{/if}
-            {#if displayManga?.artist && displayManga.artist !== displayManga.author}<div class="meta-row"><span class="meta-key">Artist</span><span class="meta-val">{displayManga.artist}</span></div>{/if}
-            {#if statusLabel}<div class="meta-row"><span class="meta-key">Status</span><span class="meta-val">{statusLabel}</span></div>{/if}
-            {#if displayManga?.source}<div class="meta-row"><span class="meta-key">Source</span><span class="meta-val">{displayManga.source.displayName}</span></div>{/if}
+            {#if displayManga?.author}<div class="meta-row"><span class="meta-key">{$_("library_sort_author")}</span><span class="meta-val">{displayManga.author}</span></div>{/if}
+            {#if displayManga?.artist && displayManga.artist !== displayManga.author}<div class="meta-row"><span class="meta-key">{$_("ui_artist")}</span><span class="meta-val">{displayManga.artist}</span></div>{/if}
+            {#if statusLabel}<div class="meta-row"><span class="meta-key">{$_("downloads_summary_status")}</span><span class="meta-val">{statusLabel}</span></div>{/if}
+            {#if displayManga?.source}<div class="meta-row"><span class="meta-key">{$_("detail_fields_source")}</span><span class="meta-val">{displayManga.source.displayName}</span></div>{/if}
             {#if !loadingChapters && scanlators.length > 0}<div class="meta-row"><span class="meta-key">{scanlators.length === 1 ? "Scanlator" : "Scanlators"}</span><span class="meta-val">{scanlators.join(", ")}</span></div>{/if}
             {#if !loadingChapters && firstUpload && lastUpload}
               <div class="meta-row">
-                <span class="meta-key">Published</span>
+                <span class="meta-key">{$_("ui_published")}</span>
                 <span class="meta-val">{firstUpload.getTime() === lastUpload.getTime() ? formatDate(firstUpload) : `${formatDate(firstUpload)} – ${formatDate(lastUpload)}`}</span>
               </div>
             {/if}
-            {#if !loadingChapters && downloadedCount > 0}<div class="meta-row"><span class="meta-key">Downloaded</span><span class="meta-val">{downloadedCount} / {totalCount} chapters</span></div>{/if}
-            {#if displayManga?.realUrl}<div class="meta-row"><span class="meta-key">Link</span><a href={displayManga.realUrl} target="_blank" rel="noreferrer" class="meta-link">Open <ArrowSquareOut size={11} weight="light" /></a></div>{/if}
+            {#if !loadingChapters && downloadedCount > 0}<div class="meta-row"><span class="meta-key">{$_("detail_stats_downloaded")}</span><span class="meta-val">{downloadedCount} / {totalCount} {$_("ui_chapters")}</span></div>{/if}
+            {#if displayManga?.realUrl}<div class="meta-row"><span class="meta-key">{$_("ui_link")}</span><a href={displayManga.realUrl} target="_blank" rel="noreferrer" class="meta-link">{$_("ui_open")} <ArrowSquareOut size={11} weight="light" /></a></div>{/if}
           </div>
         {/if}
       </div>
@@ -440,21 +442,20 @@
     onkeydown={(e) => e.key === "Escape" && closeLinkPicker()}>
     <div class="link-modal">
       <div class="link-header">
-        <span class="link-title">Link as same series</span>
+        <span class="link-title">{$_("ui_linkAsSameSeries")}</span>
         <button class="close-btn" onclick={closeLinkPicker}><X size={14} weight="light" /></button>
       </div>
       <p class="link-hint">
-        Mark two manga as the same series so duplicates are merged in search and discover.
-        Click a linked entry again to unlink.
+        {$_("ui_markTwoMangaAsTheSameSeriesSo")}
       </p>
       <div class="link-search-wrap">
-        <input class="link-search" placeholder="Search your library…" bind:value={linkSearch} use:focusAction />
+        <input class="link-search" placeholder={$_("ui_searchYourLibrary_4b07d7e6")} bind:value={linkSearch} use:focusAction />
         </div>
         <div class="link-list">
         {#if loadingLinkList}
-          <NocturneState layout="compact" tone="info" icon="search" eyebrow="Links" title="Loading library" />
+          <NocturneState layout="compact" tone="info" icon="search" eyebrow="Links" title={$_("ui_loadingLibrary")} />
         {:else if linkPickerResults.length === 0}
-          <NocturneState layout="compact" tone="info" icon="search" eyebrow="Links" title="No matching manga" body="Try another title from your library." />
+          <NocturneState layout="compact" tone="info" icon="search" eyebrow="Links" title={$_("ui_noMatchingManga")} body="Try another title from your library." />
         {:else}
           {#each linkPickerResults as m (m.id)}
             {@const isLinked = linkedIds.includes(m.id)}
@@ -464,7 +465,7 @@
                 <span class="link-manga-title">{m.title}</span>
                 {#if m.source?.displayName}<span class="link-source">{m.source.displayName}</span>{/if}
               </div>
-              <span class="link-status">{isLinked ? "✓ Linked" : "Link"}</span>
+              <span class="link-status">{isLinked ? $_("ui_linked") : "Link"}</span>
             </button>
           {/each}
         {/if}

@@ -9,6 +9,7 @@ const NON_CONTENT_EXTENSION_PKG_NAMES = new Set([
 
 export type SetupStateKind =
   | "server_offline"
+  | "server_initializing"
   | "no_extension_repos"
   | "no_installed_extensions"
   | "no_usable_sources"
@@ -51,12 +52,21 @@ function isContentExtension(extension: Pick<Extension, "pkgName">): boolean {
   return !NON_CONTENT_EXTENSION_PKG_NAMES.has(extension.pkgName);
 }
 
-export async function detectSetupState(settings: SetupSettings): Promise<SetupState> {
+export function isSuwayomiSchemaInitializingError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /JdbcSQLSyntaxErrorException/i.test(message)
+    && /Table\s+"(?:MANGA|SOURCE|EXTENSION|TRACKRECORD)"\s+not\s+found/i.test(message);
+}
+
+export async function detectSetupState(
+  settings: SetupSettings,
+  signal?: AbortSignal,
+): Promise<SetupState> {
   try {
     const [settingsData, extensionsData, sourcesData] = await Promise.all([
-      gql<{ settings: { extensionRepos: string[] } }>(GET_SETTINGS),
-      gql<{ extensions: { nodes: Extension[] } }>(GET_EXTENSIONS),
-      gql<{ sources: { nodes: Source[] } }>(GET_SOURCES),
+      gql<{ settings: { extensionRepos: string[] } }>(GET_SETTINGS, undefined, signal),
+      gql<{ extensions: { nodes: Extension[] } }>(GET_EXTENSIONS, undefined, signal),
+      gql<{ sources: { nodes: Source[] } }>(GET_SOURCES, undefined, signal),
     ]);
 
     const extensionRepoCount = settingsData.settings.extensionRepos?.length ?? 0;
@@ -91,6 +101,20 @@ export async function detectSetupState(settings: SetupSettings): Promise<SetupSt
       errorMessage: null,
     };
   } catch (error) {
+    if (signal?.aborted) throw error;
+    if (isSuwayomiSchemaInitializingError(error)) {
+      return {
+        kind: "server_initializing",
+        extensionRepoCount: null,
+        installedExtensionCount: null,
+        installedContentExtensionCount: null,
+        installedHelperExtensionCount: null,
+        totalSourceCount: null,
+        usableSourceCount: null,
+        hiddenSourceCount: null,
+        errorMessage: null,
+      };
+    }
     return {
       kind: "server_offline",
       extensionRepoCount: null,
@@ -112,6 +136,12 @@ export function getSetupStatePresentation(state: SetupState, surface: SetupSurfa
         title: surface === "home" ? "Aethon can't reach Suwayomi yet" : "Suwayomi isn't reachable right now",
         body: "The app is running, but the server is unavailable, so extensions, sources, and search can't load yet.",
         actions: [{ kind: "retry_connection", label: "Retry connection" }],
+      };
+    case "server_initializing":
+      return {
+        title: "Suwayomi is preparing this profile",
+        body: "The local server is running, but its database is not ready yet. Wait a moment, then retry loading sources.",
+        actions: [{ kind: "retry_connection", label: "Retry" }],
       };
     case "no_extension_repos":
       return {

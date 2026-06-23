@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { translate } from "../../lib/i18n/runtime";
   import { flushSync, onMount } from "svelte";
   import { _ } from "../../lib/i18n/runtime";
   import { gql } from "../../lib/client";
@@ -77,7 +78,7 @@
     if (source.isNsfw) {
       parts.push("NSFW");
     }
-    return parts.join(" · ");
+    return parts.join(" ï¿½ ");
   }
 
   function normalizeExtensionSourceKey(name: string): string {
@@ -96,6 +97,8 @@
   let setupState: SetupState | null = $state(null);
   let loadLibraryRequest: Promise<void> | null = null;
   let loadHomeMetaRequest: Promise<void> | null = null;
+  let setupStateController: AbortController | null = null;
+  let componentActive = true;
   let scheduledHomeMetaLoad: number | null = null;
   let homeSources: Source[] = $state([]);
   let homeTrackers: Tracker[] = $state([]);
@@ -212,9 +215,6 @@
   }
 
   onMount(() => {
-    void loadLibrary();
-    scheduleHomeMetaLoad();
-    void refreshSetupState();
     const handleServerReady = () => {
       void loadLibrary();
       scheduleHomeMetaLoad();
@@ -225,6 +225,9 @@
     const unsubTracking = cache.subscribe(CACHE_KEYS.LIBRARY_TRACKING_SUMMARY, () => loadLibrary());
     const unsubSources = cache.subscribe(CACHE_KEYS.SOURCES, () => loadHomeMeta());
     return () => {
+      componentActive = false;
+      setupStateController?.abort();
+      setupStateController = null;
       document.body.classList.remove("aethon-home-search-engaged");
       cancelScheduledHomeMetaLoad();
       window.removeEventListener(SERVER_READY_EVENT, handleServerReady);
@@ -248,7 +251,19 @@
   });
 
   async function refreshSetupState() {
-    setupState = await detectSetupState(store.settings);
+    setupStateController?.abort();
+    const controller = new AbortController();
+    setupStateController = controller;
+    try {
+      const nextSetupState = await detectSetupState(store.settings, controller.signal);
+      if (componentActive && setupStateController === controller) {
+        setupState = nextSetupState;
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) console.error(error);
+    } finally {
+      if (setupStateController === controller) setupStateController = null;
+    }
   }
 
   function loadCategoriesSnapshot() {
@@ -342,6 +357,7 @@
       }),
     ])
       .then(([sources, extensions, trackers]) => {
+        if (!componentActive) return;
         homeSources = sources.filter((source) => !shouldHideSource(source, store.settings));
         homeExtensions = extensions;
         homeTrackers = trackers;
@@ -378,6 +394,7 @@
       }),
     ])
       .then(([mangas, categories, trackingSummary]) => {
+        if (!componentActive) return;
         const previousChapterCountById = new Map(store.libraryMangaSnapshot.map((manga) => [manga.id, manga.chapterCount]));
         setLibraryMangaSnapshot(mangas.map((manga: any) => ({
           ...manga,
@@ -390,7 +407,7 @@
       })
       .catch(console.error)
       .finally(() => {
-        loadingLibrary = false;
+        if (componentActive) loadingLibrary = false;
         loadLibraryRequest = null;
       });
 
@@ -473,7 +490,7 @@
         return {
           kind: "manga" as const,
           ts: entry.readAt,
-          eyebrow: index === 0 ? "In Progress" : index === 1 ? "Resume" : "Library",
+          eyebrow: index === 0 ? translate("ui_inProgress") : index === 1 ? translate("home_continue_resume") : translate("library_error_eyebrow"),
           title: entry.mangaTitle,
           subtitle: manga.author ?? "",
           metricValue: metric.value,
@@ -500,7 +517,7 @@
         return {
           kind: "book" as const,
           ts: progress.lastReadAt || book.updatedAt || book.createdAt,
-          eyebrow: presented.readPercent >= 0.8 ? "Resume" : "In Progress",
+          eyebrow: presented.readPercent >= 0.8 ? translate("home_continue_resume") : translate("ui_inProgress"),
           title: presented.title,
           subtitle: presented.authorLabel,
           metricValue: presented.readPercentLabel,
@@ -678,7 +695,7 @@
     }
     const max = Math.max(...counts, 1);
     return counts.map((count, index) => ({
-      label: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][index],
+      label: [translate("ui_mon"), translate("ui_tue"), translate("ui_wed"), translate("ui_thu"), translate("ui_fri"), translate("ui_sat"), translate("ui_sun")][index],
       height: `${Math.max(14, Math.round((count / max) * 100))}%`,
       isToday: index === 6,
     }));
@@ -830,7 +847,7 @@
           activeDownloadCount ? $_("home.quick.downloadActive", { values: { count: activeDownloadCount } }) : "",
           queuedDownloadCount ? $_("home.quick.downloadQueued", { values: { count: queuedDownloadCount } }) : "",
           pausedDownloadCount ? $_("home.quick.downloadPaused", { values: { count: pausedDownloadCount } }) : "",
-        ].filter(Boolean).join(" · ")
+        ].filter(Boolean).join(" ï¿½ ")
       : "",
   );
 

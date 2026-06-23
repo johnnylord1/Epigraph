@@ -4,6 +4,7 @@
 </script>
 
 <script lang="ts">
+  import { _, translate } from "../../lib/i18n/runtime";
   import { onMount } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { Folder, FolderSimplePlus, UploadSimple } from "phosphor-svelte";
@@ -94,7 +95,7 @@
   let coverPrewarmHandle: ReturnType<typeof setTimeout> | number | null = null;
   let coverPrewarmUsesIdleCallback = false;
   let coverFlushTimer: ReturnType<typeof setTimeout> | null = null;
-  const lazyVirtualizeAfter = 180;
+  const lazyVirtualizeAfter = 48;
 
   const bookByCardId = $derived(
     new Map(books.map((book) => [createBookLibraryCardId(book.id), book])),
@@ -138,6 +139,12 @@
     }),
   );
 
+  function syncContentWidth() {
+    if (!contentEl) return;
+    const nextWidth = contentEl.clientWidth;
+    if (nextWidth > 0 && nextWidth !== contentWidth) contentWidth = nextWidth;
+  }
+
   function bookCoverKey(book: Pick<BookEntry, "id" | "coverPath" | "updatedAt">): string {
     return `${book.id}:${book.coverPath ?? "none"}:${book.updatedAt}`;
   }
@@ -157,7 +164,7 @@
     const readCount = getBookReadChapterCount(book, progress);
     const unreadCount = Math.max(0, chapterCount - readCount);
     const badges = !hasLocalAsset
-      ? [{ kind: "status" as const, label: "Missing file" }]
+      ? [{ kind: "status" as const, label: translate("ui_missingFile") }]
       : [];
     const metaChips = [buildBookWorkStatus(hasLocalAsset, readCount >= chapterCount && chapterCount > 0)];
     if (!hasLocalAsset) metaChips.push("Metadata only");
@@ -292,8 +299,8 @@
     if (!supported.length) {
       addToast({
         kind: "info",
-        title: "No supported books detected",
-        body: "Drop EPUB or PDF files into the Books shelf.",
+        title: translate("ui_noSupportedBooksDetected"),
+        body: translate("ui_dropEpubOrPdfFilesIntoTheBooks"),
       });
       return;
     }
@@ -301,8 +308,8 @@
     if (skipped.length) {
       addToast({
         kind: "info",
-        title: "Some files were skipped",
-        body: "Only EPUB and PDF files can be imported into Books.",
+        title: translate("ui_someFilesWereSkipped"),
+        body: translate("ui_onlyEpubAndPdfFilesCanBeImported"),
       });
     }
 
@@ -338,7 +345,7 @@
     if (!hasBookLocalAsset(book)) {
       addToast({
         kind: "info",
-        title: "File missing",
+        title: translate("bookDetail_fileMissing"),
         body: MISSING_BOOK_ASSET_MESSAGE,
       });
       return;
@@ -397,7 +404,7 @@
       ...categoryItems,
       ...(categoryItems.length ? ([{ separator: true } as MenuEntry]) : []),
       {
-        label: "New category",
+        label: translate("ui_newCategory"),
         icon: FolderSimplePlus,
         onClick: () => createCategoryAndAssign(book),
       },
@@ -619,9 +626,40 @@
     scheduleCoverPrewarm(entries);
   });
 
+  $effect(() => {
+    const el = contentEl;
+    if (!active || !el) return;
+
+    let firstFrame: number | null = null;
+    let secondFrame: number | null = null;
+    const resizeObserver = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(syncContentWidth);
+
+    syncContentWidth();
+    resizeObserver?.observe(el);
+    window.addEventListener("resize", syncContentWidth, { passive: true });
+    window.visualViewport?.addEventListener("resize", syncContentWidth, { passive: true });
+    firstFrame = requestAnimationFrame(() => {
+      firstFrame = null;
+      syncContentWidth();
+      secondFrame = requestAnimationFrame(() => {
+        secondFrame = null;
+        syncContentWidth();
+      });
+    });
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", syncContentWidth);
+      window.visualViewport?.removeEventListener("resize", syncContentWidth);
+      if (firstFrame !== null) cancelAnimationFrame(firstFrame);
+      if (secondFrame !== null) cancelAnimationFrame(secondFrame);
+    };
+  });
+
   onMount(() => {
     let unlisten: (() => void) | undefined;
-    let resizeObserver: ResizeObserver | null = null;
 
     void (async () => {
       unlisten = await win.onDragDropEvent((event) => {
@@ -642,14 +680,10 @@
       });
     })();
 
+    syncContentWidth();
     queueMicrotask(() => {
       if (contentEl) {
-        contentWidth = contentEl.clientWidth;
-        resizeObserver = new ResizeObserver((entries) => {
-          const nextWidth = entries[0]?.contentRect.width ?? contentEl?.clientWidth ?? 0;
-          contentWidth = nextWidth;
-        });
-        resizeObserver.observe(contentEl);
+        syncContentWidth();
       }
     });
 
@@ -673,7 +707,6 @@
         coverFlushTimer = null;
       }
       clearCoverPrewarmSchedule();
-      resizeObserver?.disconnect();
       unlisten?.();
     };
   });
@@ -687,7 +720,7 @@
         tone="info"
         icon="books"
         eyebrow="Library"
-        title="No books here yet"
+        title={$_("ui_noBooksHereYet")}
         body={vm.emptyMessage}
       />
     </div>
@@ -707,6 +740,8 @@
       onCoverError={handleCoverError}
       onVisibleRangeChange={handleVisibleRangeChange}
       virtualizeAfter={lazyVirtualizeAfter}
+      {active}
+      panelMotionEnabled={!isScrolling}
     />
   {/if}
 
@@ -715,8 +750,8 @@
       <div class="book-drop-panel">
         <UploadSimple size={22} weight="bold" />
         <div class="book-drop-copy">
-          <strong>{importingDrop ? "Importing books..." : "Drop EPUB or PDF files here"}</strong>
-          <span>{importingDrop ? "Aethon is adding them to the Books shelf." : "Imported books stay separate from Comics."}</span>
+          <strong>{importingDrop ? $_("ui_importingBooks") : $_("ui_dropEpubOrPdfFilesHere")}</strong>
+          <span>{importingDrop ? $_("ui_aethonIsAddingThemToTheBooksShelf") : $_("ui_importedBooksStaySeparateFromComics")}</span>
         </div>
       </div>
     </div>

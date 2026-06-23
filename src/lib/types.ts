@@ -19,6 +19,9 @@ export interface Manga {
   downloadCount?: number;
   unreadCount?: number;
   chapterCount?: number;
+  chapters?: {
+    totalCount?: number;
+  } | null;
   description?: string | null;
   status?: string | null;
   author?: string | null;

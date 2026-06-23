@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { _ } from "../../lib/i18n/runtime";
   import { onMount } from "svelte";
   import { openActivityPanel, store } from "../../store/state.svelte";
 
@@ -7,9 +8,10 @@
 
   let lastActivitySeenAt = $state(0);
   const historyEntries = $derived(store.history ?? []);
-  const updateNotifications = $derived(store.libraryUpdateNotifications ?? []);
-  const updateIssues = $derived(store.libraryUpdateIssues ?? []);
-  const systemNotifications = $derived(store.systemNotifications ?? []);
+  const updateNotifications = $derived((store.libraryUpdateNotifications ?? []).filter((entry) => store.matchesRuntimeProfile(entry)));
+  const updateIssues = $derived((store.libraryUpdateIssues ?? []).filter((entry) => store.matchesRuntimeProfile(entry)));
+  const systemNotifications = $derived((store.systemNotifications ?? []).filter((entry) => store.matchesRuntimeProfile(entry)));
+  const activitySeenStorageKey = $derived(`${ACTIVITY_SEEN_STORAGE_KEY}:${store.runtimeResolvedLocalProfileId ?? "pending"}`);
 
   const latestActivityAt = $derived(Math.max(
     historyEntries.reduce((latest, entry) => Math.max(latest, Number(entry.readAt) || 0), 0),
@@ -37,7 +39,7 @@
     if (latestActivityAt <= 0) return;
     lastActivitySeenAt = latestActivityAt;
     try {
-      localStorage.setItem(ACTIVITY_SEEN_STORAGE_KEY, String(latestActivityAt));
+      localStorage.setItem(activitySeenStorageKey, String(latestActivityAt));
     } catch {
       // Some test/private contexts expose localStorage but reject access.
     }
@@ -57,14 +59,14 @@
     }
 
     function syncActivitySeenFromStorage(event: StorageEvent) {
-      if (event.key !== ACTIVITY_SEEN_STORAGE_KEY) return;
+      if (event.key !== activitySeenStorageKey) return;
       const seenAt = Number(event.newValue ?? 0);
       if (!Number.isFinite(seenAt)) return;
       lastActivitySeenAt = Math.max(lastActivitySeenAt, seenAt);
     }
 
     try {
-      const storedLastSeen = Number(localStorage.getItem(ACTIVITY_SEEN_STORAGE_KEY) ?? 0);
+      const storedLastSeen = Number(localStorage.getItem(activitySeenStorageKey) ?? 0);
       lastActivitySeenAt = Number.isFinite(storedLastSeen) ? storedLastSeen : 0;
     } catch {
       lastActivitySeenAt = 0;
@@ -84,7 +86,7 @@
   class="n-icon-btn activity-btn"
   class:has-new-activity={newActivityCount > 0}
   type="button"
-  title="Recent activity"
+  title={$_("ui_recentActivity")}
   aria-label={newActivityCount > 0 ? `Recent activity, ${newActivityCount} new` : "Recent activity"}
   onclick={openActivity}
 >

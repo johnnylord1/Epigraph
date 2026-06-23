@@ -26,7 +26,7 @@ export function buildVirtualLibraryRows(
 }
 
 export function estimateLibraryVirtualRowSize(viewMode: LibraryViewMode): number {
-  if (viewMode === "list") return 96;
+  if (viewMode === "list") return 156;
   if (viewMode === "compact_grid") return 236;
   return 276;
 }

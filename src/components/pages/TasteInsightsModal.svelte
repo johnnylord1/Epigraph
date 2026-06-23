@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { translate } from "../../lib/i18n/runtime";
+  import { _ } from "../../lib/i18n/runtime";
   import { fade, fly } from "svelte/transition";
   import type { TasteProfile, RecommendationItem } from "../../lib/recommendations/types";
   import { X, Info, BookOpen, Sparkle, Star } from "phosphor-svelte";
@@ -30,7 +32,7 @@
           name,
           weight: Math.round(normalized * 100),
           rawWeight,
-          label: normalized > 0.5 ? "Primary Focus" : normalized > 0.15 ? "Secondary" : "Unexplored"
+          label: normalized > 0.5 ? translate("ui_primaryFocus") : normalized > 0.15 ? translate("ui_secondary") : translate("ui_unexplored")
         };
       })
       .sort((a, b) => b.rawWeight - a.rawWeight);
@@ -67,14 +69,14 @@
   const recommendedExtensions = $derived(
     contentType === "novels"
       ? [
-          { name: "Royal Road", detail: "Unlocks 15 recommended LN titles", pkg: "ext.royalroad" },
-          { name: "Scribble Hub", detail: "Unlocks 8 recommended LN titles", pkg: "ext.scribblehub" },
-          { name: "NovelFull", detail: "Unlocks 5 recommended LN titles", pkg: "ext.novelfull" }
+          { name: "Royal Road", detail: translate("ui_unlocks15RecommendedLnTitles"), pkg: "ext.royalroad" },
+          { name: "Scribble Hub", detail: translate("ui_unlocks8RecommendedLnTitles"), pkg: "ext.scribblehub" },
+          { name: "NovelFull", detail: translate("ui_unlocks5RecommendedLnTitles"), pkg: "ext.novelfull" }
         ]
       : [
-          { name: "MangaDex", detail: "Unlocks 24 recommended manga titles", pkg: "ext.mangadex" },
-          { name: "Asura Scans", detail: "Unlocks 12 recommended manga titles", pkg: "ext.asura" },
-          { name: "MangaLife", detail: "Unlocks 9 recommended manga titles", pkg: "ext.mangalife" }
+          { name: "MangaDex", detail: translate("ui_unlocks24RecommendedMangaTitles"), pkg: "ext.mangadex" },
+          { name: "Asura Scans", detail: translate("ui_unlocks12RecommendedMangaTitles"), pkg: "ext.asura" },
+          { name: "MangaLife", detail: translate("ui_unlocks9RecommendedMangaTitles"), pkg: "ext.mangalife" }
         ]
   );
 
@@ -88,10 +90,10 @@
   <div class="insights-surface" transition:fly={{ y: 20, duration: 200 }} onclick={(e) => e.stopPropagation()} role="presentation">
     <header class="insights-header">
       <div class="insights-header-text">
-        <h2>Taste Insights & Analytics</h2>
-        <p class="subtitle">Built from {profile.seedCount} entries in your library</p>
+        <h2>{$_("ui_tasteInsightsAnalytics")}</h2>
+        <p class="subtitle">{$_("ui_builtFrom")} {profile.seedCount} {$_("ui_entriesInYourLibrary")}</p>
       </div>
-      <button class="insights-close-btn" onclick={onClose} aria-label="Close Insights">
+      <button class="insights-close-btn" onclick={onClose} aria-label={$_("ui_closeInsights")}>
         <X size={22} weight="bold" />
       </button>
     </header>
@@ -104,9 +106,9 @@
         <section class="insights-card">
           <div class="insights-section-title">
             <Sparkle size={16} weight="fill" style="color: var(--accent-bright, #9c27b0)" />
-            <h3>Top Genre & Tag Affinities</h3>
+            <h3>{$_("ui_topGenreTagAffinities")}</h3>
           </div>
-          <p class="section-desc">Relative preference strength calculated from your reading list ratings and completion rates.</p>
+          <p class="section-desc">{$_("ui_relativePreferenceStrengthCalculatedFromYourReadingList")}</p>
           <div class="affinity-list">
             {#if tagAffinities.length > 0}
               {#each tagAffinities.slice(0, 8) as tag}
@@ -125,7 +127,7 @@
                 </div>
               {/each}
             {:else}
-              <p class="empty-state">No tags found. Add more ratings to warm up your profile.</p>
+              <p class="empty-state">{$_("ui_noTagsFoundAddMoreRatingsToWarm")}</p>
             {/if}
           </div>
         </section>
@@ -134,9 +136,9 @@
         <section class="insights-card">
           <div class="insights-section-title">
             <BookOpen size={16} weight="fill" style="color: var(--accent-bright, #9c27b0)" />
-            <h3>Format Preferences</h3>
+            <h3>{$_("ui_formatPreferences")}</h3>
           </div>
-          <p class="section-desc">Format match percentages mapped across catalog results.</p>
+          <p class="section-desc">{$_("ui_formatMatchPercentagesMappedAcrossCatalogResults")}</p>
           <div class="format-list">
             {#each formats as fmt}
               <div class="format-row">
@@ -157,44 +159,44 @@
         <section class="insights-card insights-card--span">
           <div class="insights-section-title">
             <Info size={16} weight="fill" style="color: var(--accent-bright, #9c27b0)" />
-            <h3>Recommendation Score Breakdown</h3>
+            <h3>{$_("ui_recommendationScoreBreakdown")}</h3>
           </div>
-          <p class="section-desc">Average factor weight distributions across your current recommended picks.</p>
+          <p class="section-desc">{$_("ui_averageFactorWeightDistributionsAcrossYourCurrentRecommended")}</p>
           <div class="breakdown-grid">
             <div class="breakdown-item">
-              <span class="breakdown-label">Personal Affinity</span>
+              <span class="breakdown-label">{$_("ui_personalAffinity")}</span>
               <div class="breakdown-metric">
                 <div class="metric-circle-container">
                   <span class="metric-number">{averages.personal}%</span>
                 </div>
-                <p>Matches rated title tags</p>
+                <p>{$_("ui_matchesRatedTitleTags")}</p>
               </div>
             </div>
             <div class="breakdown-item">
-              <span class="breakdown-label">Consensus Score</span>
+              <span class="breakdown-label">{$_("ui_consensusScore")}</span>
               <div class="breakdown-metric">
                 <div class="metric-circle-container">
                   <span class="metric-number">{averages.consensus}%</span>
                 </div>
-                <p>Tracker review consensus</p>
+                <p>{$_("ui_trackerReviewConsensus")}</p>
               </div>
             </div>
             <div class="breakdown-item">
-              <span class="breakdown-label">Trending Velocity</span>
+              <span class="breakdown-label">{$_("ui_trendingVelocity")}</span>
               <div class="breakdown-metric">
                 <div class="metric-circle-container">
                   <span class="metric-number">{averages.trending}%</span>
                 </div>
-                <p>Global interest momentum</p>
+                <p>{$_("ui_globalInterestMomentum")}</p>
               </div>
             </div>
             <div class="breakdown-item">
-              <span class="breakdown-label">Novelty / Freshness</span>
+              <span class="breakdown-label">{$_("ui_noveltyFreshness")}</span>
               <div class="breakdown-metric">
                 <div class="metric-circle-container">
                   <span class="metric-number">{averages.novelty}%</span>
                 </div>
-                <p>Discover diversity variance</p>
+                <p>{$_("ui_discoverDiversityVariance")}</p>
               </div>
             </div>
           </div>
@@ -204,9 +206,9 @@
         <section class="insights-card insights-card--span">
           <div class="insights-section-title">
             <Star size={16} weight="fill" style="color: var(--accent-bright, #9c27b0)" />
-            <h3>Recommended Extensions</h3>
+            <h3>{$_("ui_recommendedExtensions")}</h3>
           </div>
-          <p class="section-desc">Unlock more recommendation picks by installing these content plugins.</p>
+          <p class="section-desc">{$_("ui_unlockMoreRecommendationPicksByInstallingTheseContent")}</p>
           <div class="ext-rec-list">
             {#each recommendedExtensions as ext}
               <div class="ext-rec-row">
@@ -215,7 +217,7 @@
                   <span class="ext-rec-detail">{ext.detail}</span>
                 </div>
                 <button class="ext-rec-btn" onclick={goToExtensions}>
-                  Browse Extensions
+                  {$_("ui_browseExtensions")}
                 </button>
               </div>
             {/each}

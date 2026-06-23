@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { translate } from "../../lib/i18n/runtime";
   import { onMount, untrack } from "svelte";
   import {
     ArrowsClockwise,
@@ -245,7 +246,7 @@
   async function recoverLockedExtensionInstall(extension: ManagedExtension) {
     addToast({
       kind: "info",
-      title: "Restarting extension manager",
+      title: translate("ui_restartingExtensionManager"),
       body: `${extension.name} is already cached, but Suwayomi is holding the file. Aethon will restart the local server and check again.`,
       duration: 6000,
     });
@@ -431,8 +432,8 @@
       newRepoUrl = "";
       addToast({
         kind: "success",
-        title: "Novel repository added",
-        body: "The repository is now available in Sources.",
+        title: translate("ui_novelRepositoryAdded"),
+        body: translate("ui_theRepositoryIsNowAvailableInSources"),
       });
     } catch (error) {
       repoError = error instanceof Error ? error.message : "Failed to add novel repository";
@@ -450,10 +451,10 @@
       await saveNovelState(result.state);
       addToast({
         kind: result.status === "error" ? "error" : "success",
-        title: result.status === "not-modified" ? "Repository already current" : "Novel repository refreshed",
+        title: result.status === translate("ui_notModified") ? translate("ui_repositoryAlreadyCurrent") : translate("ui_novelRepositoryRefreshed"),
         body:
-          result.status === "error"
-            ? (result.repository.lastError ?? "Refresh failed.")
+          result.status === translate("ui_error")
+            ? (result.repository.lastError ?? translate("ui_refreshFailed_0a5e2c85"))
             : `${result.catalogCount} source plugins cached.`,
       });
     } catch (error) {
@@ -493,7 +494,7 @@
       const result = await ensureExtensionRepo(RECOMMENDED_EXTENSION_REPO);
       addToast({
         kind: result.status === "added" ? "success" : "info",
-        title: result.status === "added" ? "Recommended repo added" : "Recommended repo already added",
+        title: result.status === translate("ui_added") ? translate("ui_recommendedRepoAdded") : translate("ui_recommendedRepoAlreadyAdded"),
         body: `${result.repo.name} is ready for extension management.`,
       });
       filter = "available";
@@ -503,8 +504,8 @@
     } catch (error) {
       addToast({
         kind: "error",
-        title: "Could not add the recommended repo",
-        body: error instanceof Error ? error.message : "Aethon couldn't save the recommended repo.",
+        title: translate("ui_couldNotAddTheRecommendedRepo"),
+        body: error instanceof Error ? error.message : translate("ui_aethonCouldnTSaveTheRecommendedRepo"),
       });
     } finally {
       setupActionBusy = false;
@@ -548,7 +549,7 @@
       setExtensionOperationError(pkgName, message);
       addToast({
         kind: "error",
-        title: "Extension action unavailable",
+        title: translate("ui_extensionActionUnavailable"),
         body: message,
         duration: 6000,
       });
@@ -568,7 +569,7 @@
       setExtensionOperationError(pkgName, message);
       addToast({
         kind: "error",
-        title: "Extension action failed",
+        title: translate("ui_extensionActionFailed"),
         body: message,
         duration: 6000,
       });
@@ -583,7 +584,7 @@
       if (!novelRepositoryState || !extension.novelPluginId || !extension.novelRepositoryId) {
         const message = "Novel repository metadata is not loaded yet. Refresh novel sources and try again.";
         setExtensionOperationError(extension.pkgName, message);
-        addToast({ kind: "error", title: "Could not install novel source", body: message });
+        addToast({ kind: "error", title: translate("ui_couldNotInstallNovelSource"), body: message });
         return;
       }
       const entry = novelRepositoryState.catalogEntries.find((item) => (
@@ -593,7 +594,7 @@
       if (!entry) {
         const message = "This novel source is no longer present in the cached repository catalog.";
         setExtensionOperationError(extension.pkgName, message);
-        addToast({ kind: "error", title: "Could not install novel source", body: message });
+        addToast({ kind: "error", title: translate("ui_couldNotInstallNovelSource"), body: message });
         return;
       }
 
@@ -611,7 +612,7 @@
         selectedPkgName = extension.pkgName;
         addToast({
           kind: "success",
-          title: extension.hasUpdate ? "Novel source updated" : "Novel source installed",
+          title: extension.hasUpdate ? translate("ui_novelSourceUpdated") : translate("ui_novelSourceInstalled"),
           body: `${extension.name} is ready to use.`,
         });
       } catch (error) {
@@ -620,7 +621,7 @@
         setExtensionOperationError(extension.pkgName, message);
         addToast({
           kind: "error",
-          title: "Could not install novel source",
+          title: translate("ui_couldNotInstallNovelSource"),
           body: message,
         });
       } finally {
@@ -653,7 +654,7 @@
           setExtensionOperationError(extension.pkgName, extensionErrorMessage(recoveryError));
           addToast({
             kind: "error",
-            title: "Extension install needs restart",
+            title: translate("ui_extensionInstallNeedsRestart"),
             body: extensionErrorMessage(recoveryError),
             duration: 8000,
           });
@@ -664,7 +665,7 @@
         setExtensionOperationError(extension.pkgName, extensionErrorMessage(error));
         addToast({
           kind: "error",
-          title: "Could not install extension",
+          title: translate("ui_couldNotInstallExtension"),
           body: extensionErrorMessage(error),
           duration: 7000,
         });
@@ -683,7 +684,7 @@
     selectedPkgName = extension.pkgName;
     addToast({
       kind: "success",
-      title: "Extension installed",
+      title: translate("ui_extensionInstalled"),
       body: `${extension.name} is ready to use.`,
     });
 
@@ -691,7 +692,7 @@
       filter = "installed";
       addToast({
         kind: "success",
-        title: "First extension installed",
+        title: translate("ui_firstExtensionInstalled"),
         body: `${extension.name} is installed. Sources is now ready for management.`,
       });
     }
@@ -770,7 +771,7 @@
         }
         addToast({
           kind: "success",
-          title: "Novel source removed",
+          title: translate("ui_novelSourceRemoved"),
           body: `${extension.name} was removed.`,
         });
       } catch (error) {
@@ -781,8 +782,8 @@
         );
         addToast({
           kind: "error",
-          title: "Could not remove novel source",
-          body: error instanceof Error ? error.message : "Aethon could not remove this novel plugin.",
+          title: translate("ui_couldNotRemoveNovelSource"),
+          body: error instanceof Error ? error.message : translate("ui_aethonCouldNotRemoveThisNovelPlugin"),
         });
       } finally {
         finishExtensionOperation(extension.pkgName);
@@ -806,7 +807,7 @@
       ));
       addToast({
         kind: "success",
-        title: "Extension removed",
+        title: translate("ui_extensionRemoved"),
         body: `${extension.name} was removed. Suwayomi will unload the running source after its next restart.`,
       });
     }
@@ -836,7 +837,7 @@
     mockSettingsStore.refreshConfig(extension.pkgName, refreshed);
     addToast({
       kind: "success",
-      title: "Extension updated",
+      title: translate("ui_extensionUpdated"),
       body: `${extension.name} is installed. Suwayomi will load the new version after its next restart.`,
     });
   }
@@ -916,7 +917,7 @@
       const succeededCount = candidates.length - failedUpdateCount;
       addToast({
         kind: failedUpdateCount > 0 ? "error" : "success",
-        title: failedUpdateCount > 0 ? "Some extensions could not update" : "Extensions updated",
+        title: failedUpdateCount > 0 ? translate("ui_someExtensionsCouldNotUpdate") : translate("ui_extensionsUpdated"),
         body:
           failedUpdateCount > 0
             ? `${succeededCount}/${candidates.length} extension${candidates.length === 1 ? "" : "s"} updated. Check the highlighted source errors.`
@@ -926,8 +927,8 @@
       console.error(error);
       addToast({
         kind: "error",
-        title: "Could not update all extensions",
-        body: error instanceof Error ? error.message : "Aethon could not finish the update queue.",
+        title: translate("ui_couldNotUpdateAllExtensions"),
+        body: error instanceof Error ? error.message : translate("ui_aethonCouldNotFinishTheUpdateQueue"),
       });
     } finally {
       for (const extension of candidates) {
@@ -1163,7 +1164,7 @@
           <div class="inlineForm">
             <input
               class:error={repoError}
-              placeholder="https://example.com/plugins.min.json"
+              placeholder={$_("ui_httpsExampleComPluginsMinJson")}
               bind:value={newRepoUrl}
               disabled={savingRepos}
               oninput={() => (repoError = null)}
@@ -1201,7 +1202,7 @@
           <div class="inlineForm">
             <input
               class:error={installError}
-              placeholder="https://example.com/extension.apk"
+              placeholder={$_("ui_httpsExampleComExtensionApk")}
               bind:value={externalUrl}
               disabled={installingExternal}
               oninput={() => (installError = null)}
@@ -1267,7 +1268,7 @@
           <div class="inlineForm">
             <input
               class:error={repoError}
-              placeholder="https://example.com/index.min.json"
+              placeholder={$_("ui_httpsExampleComIndexMinJson")}
               bind:value={newRepoUrl}
               disabled={savingRepos}
               oninput={() => (repoError = null)}

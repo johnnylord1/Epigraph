@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { translate } from "../../lib/i18n/runtime";
+  import { _ } from "../../lib/i18n/runtime";
   import {
     ArrowSquareOut,
     CircleNotch,
@@ -100,7 +102,7 @@
         searchResults = results;
         brokenCoverIds = new Set();
       }
-      if (searchResults.length === 0) error = `No results for "${query.trim()}".`;
+      if (searchResults.length === 0) error = translate("browse_source_noResultsFor", { query: query.trim() });
     } catch (err: any) {
       if (!append) error = err?.message ?? "Hardcover search failed";
       if (!append) searchResults = [];
@@ -129,7 +131,7 @@
       state = loadHardcoverState(scopeInput);
       searchResults = [];
       activeTab = "records";
-      addToast({ kind: "success", title: "Now tracking", body: book.title });
+      addToast({ kind: "success", title: translate("ui_nowTracking"), body: book.title });
     } catch (err: any) {
       error = err?.message ?? "Hardcover link failed";
     } finally {
@@ -161,7 +163,7 @@
     state = unlinkHardcoverRecord(scopeInput, sourceNovelId, record.bookId);
     searchResults = [];
     error = null;
-    addToast({ kind: "info", title: "Unlinked from Hardcover" });
+    addToast({ kind: "info", title: translate("ui_unlinkedFromHardcover") });
   }
 
   function recordToBook(record: HardcoverNovelTrackRecord): HardcoverBookSearchResult {
@@ -204,16 +206,16 @@
   <div class="modal" role="dialog" aria-label={`${contentLabel} tracking`}>
     <div class="modal-header">
       <div class="header-left">
-        <span class="modal-title">Tracking</span>
+        <span class="modal-title">{$_("home_sections_tracking")}</span>
         <span class="modal-subtitle">{title}</span>
       </div>
-      <button class="close-btn" type="button" onclick={onClose} aria-label="Close tracking">
+      <button class="close-btn" type="button" onclick={onClose} aria-label={$_("ui_closeTracking")}>
         <X size={15} weight="light" />
       </button>
     </div>
 
     {#if !loggedIn}
-      <NocturneState layout="compact" tone="info" icon="info" eyebrow="Tracking" title="No novel trackers connected" body="Go to Settings > Tracking and connect Hardcover." />
+      <NocturneState layout="compact" tone="info" icon="info" eyebrow={$_("detail.actions.tracking")} title={$_("ui_noNovelTrackersConnected")} body={$_("ui_trackingGoToSettings")} />
     {:else}
       <div class="tabs">
         <button
@@ -222,7 +224,7 @@
           type="button"
           onclick={() => activeTab = "records"}
         >
-          My List
+          {$_("ui_myList")}
           {#if record}
             <span class="tab-badge">1</span>
           {/if}
@@ -234,7 +236,7 @@
           onclick={() => activeTab = "hardcover"}
         >
           <span class="tab-icon tab-icon-text">HC</span>
-          Hardcover
+          {$_("ui_hardcover")}
           {#if record}
             <span class="tab-dot"></span>
           {/if}
@@ -244,7 +246,7 @@
       {#if activeTab === "records"}
         <div class="tab-body">
           {#if !record}
-            <NocturneState layout="compact" tone="info" icon="search" eyebrow="Tracking" title={`Not tracking this ${contentLabel.toLowerCase()} yet`} body="Click the Hardcover tab above to search and add it." />
+            <NocturneState layout="compact" tone="info" icon="search" eyebrow={$_("detail.actions.tracking")} title={$_("ui_notTrackingYet")} body={$_("ui_trackingNotTrackingNovelBody")} />
           {:else}
             <div class="record-row" class:record-busy={updating}>
               <div class="record-main">
@@ -275,8 +277,8 @@
                   <div class="record-meta">
                     <span class="result-tag">{ratingLabel(record.rating)}</span>
                     {#if record.status}<span class="result-tag">{record.status}</span>{/if}
-                    <span class="result-tag">Hardcover ID {record.bookId}</span>
-                    {#if record.progress}<span class="result-tag">Progress {record.progress}</span>{/if}
+                    <span class="result-tag">{$_("ui_hardcoverId")} {record.bookId}</span>
+                    {#if record.progress}<span class="result-tag">{$_("ui_progress")} {record.progress}</span>{/if}
                   </div>
                   <div class="record-controls">
                 <select
@@ -300,14 +302,14 @@
                   }}
                 >
                   {#each scoreOptions as option}
-                    <option value={option}>{option ? `★ ${option}` : "No score"}</option>
+                    <option value={option}>{option ? `★ ${option}` : $_("ui_noScore")}</option>
                   {/each}
                 </select>
 
                 <button
                   class="record-icon-btn icon-danger"
                   type="button"
-                  title="Unlink"
+                  title={$_("ui_unlink")}
                   disabled={updating}
                   onclick={() => unbind(record)}
                 >
@@ -319,7 +321,7 @@
             </div>
           {/if}
           {#if error}
-            <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Tracking" title="Tracking update failed" body={error} />
+            <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("detail.actions.tracking")} title={$_("ui_trackingUpdateFailed")} body={error} />
           {/if}
         </div>
       {:else}
@@ -327,7 +329,7 @@
           <MagnifyingGlass size={13} weight="light" class="search-icon" />
           <input
             class="search-input"
-            placeholder="Search Hardcover..."
+            placeholder={$_("ui_searchHardcover")}
             bind:value={searchQuery}
             onkeydown={(event) => event.key === "Enter" && doSearch(searchQuery)}
           />
@@ -338,11 +340,11 @@
 
         <div class="search-results" onscroll={handleSearchScroll}>
           {#if searching && searchResults.length === 0}
-            <NocturneState layout="compact" tone="info" icon="search" eyebrow="Hardcover" title="Searching" />
+            <NocturneState layout="compact" tone="info" icon="search" eyebrow="Hardcover" title={$_("ui_searching")} />
           {:else if error}
-            <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Hardcover" title="Search failed" body={error} />
+            <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Hardcover" title={$_("ui_searchFailed")} body={error} />
           {:else if !searchQuery.trim()}
-            <NocturneState layout="compact" tone="info" icon="search" eyebrow="Hardcover" title="Type a title to search" />
+            <NocturneState layout="compact" tone="info" icon="search" eyebrow="Hardcover" title={$_("ui_typeATitleToSearch")} />
           {:else}
             {#each searchResults as result (result.id)}
               {@const isBound = record?.bookId === result.id}
@@ -372,14 +374,14 @@
                   </div>
                 </div>
                 <span class="result-action" class:result-action-on={isBound}>
-                  {isBound ? "Tracking" : "Track"}
+                  {isBound ? $_("ui_tracking") : $_("ui_track")}
                 </span>
               </button>
             {/each}
             {#if loadingMore}
               <div class="results-loading">
                 <CircleNotch size={13} weight="light" class="anim-spin search-icon" />
-                <span>Loading more...</span>
+                <span>{$_("ui_loadingMore")}</span>
               </div>
             {/if}
           {/if}

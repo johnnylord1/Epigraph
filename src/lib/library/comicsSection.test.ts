@@ -126,6 +126,60 @@ describe("buildComicsSectionState", () => {
     expect(state.vm.cards.map((card) => card.id)).toEqual(["comic:3"]);
   });
 
+  it("filters not-started comics by titles with no chapters read", () => {
+    const unopened = manga({
+      id: 11,
+      title: "Unopened",
+      chapterCount: 12,
+      unreadCount: 12,
+    });
+    const partiallyRead = manga({
+      id: 12,
+      title: "Partially Read",
+      chapterCount: 12,
+      unreadCount: 8,
+    });
+    const finished = manga({
+      id: 13,
+      title: "Finished",
+      chapterCount: 12,
+      unreadCount: 0,
+    });
+    const empty = manga({
+      id: 14,
+      title: "No Chapters",
+      chapterCount: 0,
+      unreadCount: 0,
+    });
+
+    const state = buildComicsSectionState({
+      librarySection: "comics",
+      libraryFilter: "library",
+      mangas: [partiallyRead, unopened, finished, empty],
+      categories: [],
+      defaultCategoryId: null,
+      hiddenCategoryIds: [],
+      search: "",
+      sortMode: "az",
+      sortDir: "asc",
+      statusFilter: "UNOPENED",
+      recentReads: [],
+      trackedCompletedIds: new Set(),
+      trackedChapterTotalsByMangaId: new Map(),
+      settings: {
+        showNsfw: false,
+        nsfwFilteredTags: [],
+        nsfwAllowedSourceIds: [],
+        nsfwBlockedSourceIds: [],
+        libraryCropCovers: true,
+      },
+      loading: false,
+      error: null,
+    });
+
+    expect(state.filteredManga.map((entry) => entry.id)).toEqual([11]);
+  });
+
   it("resolves id-only category members against the library snapshot", () => {
     const alpha = manga();
 

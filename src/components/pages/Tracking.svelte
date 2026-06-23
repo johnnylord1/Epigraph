@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { translate } from "../../lib/i18n/runtime";
+  import { _ } from "../../lib/i18n/runtime";
   import { CircleNotch, ArrowSquareOut, ArrowsClockwise, X, Lock, MagnifyingGlass, Funnel } from "phosphor-svelte";
   import { gql } from "../../lib/client";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
@@ -125,7 +127,7 @@
       );
       patchRecord(record.trackerId, res.updateTrack.trackRecord);
     } catch (e: any) {
-      addToast({ kind: "error", title: "Update failed", body: e?.message });
+      addToast({ kind: "error", title: translate("ui_updateFailed"), body: e?.message });
     } finally {
       updatingId = null;
     }
@@ -139,7 +141,7 @@
       );
       patchRecord(record.trackerId, res.updateTrack.trackRecord);
     } catch (e: any) {
-      addToast({ kind: "error", title: "Update failed", body: e?.message });
+      addToast({ kind: "error", title: translate("ui_updateFailed"), body: e?.message });
     } finally {
       updatingId = null;
     }
@@ -152,9 +154,9 @@
         FETCH_TRACK, { recordId: record.id }
       );
       patchRecord(record.trackerId, res.fetchTrack.trackRecord);
-      addToast({ kind: "success", title: "Synced from tracker" });
+      addToast({ kind: "success", title: translate("ui_syncedFromTracker") });
     } catch (e: any) {
-      addToast({ kind: "error", title: "Sync failed", body: e?.message });
+      addToast({ kind: "error", title: translate("ui_syncFailed"), body: e?.message });
     } finally {
       syncingId = null;
     }
@@ -171,9 +173,9 @@
         }
       );
       cache.clearGroup(CACHE_GROUPS.LIBRARY);
-      addToast({ kind: "info", title: "Unlinked from " + record.tracker.name });
+      addToast({ kind: "info", title: translate("ui_unlinkedFrom") + record.tracker.name });
     } catch (e: any) {
-      addToast({ kind: "error", title: "Unbind failed", body: e?.message });
+      addToast({ kind: "error", title: translate("ui_unbindFailed"), body: e?.message });
     } finally {
       updatingId = null;
     }
@@ -216,7 +218,7 @@
       );
       patchRecord(record.trackerId, res.updateTrack.trackRecord);
     } catch (e: any) {
-      addToast({ kind: "error", title: "Update failed", body: e?.message });
+      addToast({ kind: "error", title: translate("ui_updateFailed"), body: e?.message });
     } finally {
       updatingId = null;
     }
@@ -228,9 +230,9 @@
   <!-- ── Header ──────────────────────────────────────────────────────────── -->
   <div class="header">
     <div class="header-top">
-      <h1 class="heading">Tracking</h1>
+      <h1 class="heading">{$_("home_sections_tracking")}</h1>
       <div class="header-actions">
-        <button class="icon-btn" onclick={load} disabled={loading} title="Refresh all">
+        <button class="icon-btn" onclick={load} disabled={loading} title={$_("ui_refreshAll")}>
           <ArrowsClockwise size={14} weight="light" class={loading ? "anim-spin" : ""} />
         </button>
       </div>
@@ -244,7 +246,7 @@
           class:tab-active={activeTrackerId === "all"}
           onclick={() => { activeTrackerId = "all"; statusFilter = "all"; }}
         >
-          All
+          {$_("downloads_filter_all")}
           <span class="tab-count">{totalCount}</span>
         </button>
         {#each loggedInTrackers as t}
@@ -267,7 +269,7 @@
           <MagnifyingGlass size={12} weight="light" class="search-ico" />
           <input
             class="filter-search"
-            placeholder="Search titles…"
+            placeholder={$_("ui_searchTitles")}
             bind:value={searchQuery}
           />
         </div>
@@ -279,17 +281,17 @@
               const v = (e.target as HTMLSelectElement).value;
               statusFilter = v === "all" ? "all" : parseInt(v);
             }}>
-            <option value="all">All statuses</option>
+            <option value="all">{$_("library_status_all")}</option>
             {#each statusOptions as s}
               <option value={s.value}>{s.name}</option>
             {/each}
           </select>
 
           <select class="filter-select" bind:value={sortBy}>
-            <option value="title">Sort: Title</option>
-            <option value="status">Sort: Status</option>
-            <option value="score">Sort: Score</option>
-            <option value="progress">Sort: Progress</option>
+            <option value="title">{$_("ui_sortTitle")}</option>
+            <option value="status">{$_("ui_sortStatus")}</option>
+            <option value="score">{$_("ui_sortScore")}</option>
+            <option value="progress">{$_("ui_sortProgress")}</option>
           </select>
         </div>
       </div>
@@ -301,7 +303,7 @@
 
     {#if loading}
       <div class="state-center">
-        <NocturneState layout="center" tone="info" icon="retry" eyebrow="Tracking" title="Loading tracking data" />
+        <NocturneState layout="center" tone="info" icon="retry" eyebrow={$_("detail.actions.tracking")} title={$_("ui_loadingTrackingData")} />
       </div>
 
     {:else if error}
@@ -310,10 +312,10 @@
           layout="center"
           tone="danger"
           icon="warning"
-          eyebrow="Tracking"
-          title="Could not load tracking data"
+          eyebrow={$_("detail.actions.tracking")}
+          title={$_("ui_couldNotLoadTrackingData")}
           body={error}
-          actions={[{ label: "Retry", kind: "primary", icon: "retry", onClick: load }]}
+          actions={[{ label: $_("shell.pageState.retry"), kind: "primary", icon: "retry", onClick: load }]}
         />
       </div>
 
@@ -323,9 +325,9 @@
           layout="center"
           tone="info"
           icon="plug"
-          eyebrow="Tracking"
-          title="No trackers connected"
-          body="Go to Settings -> Tracking to log in to AniList, MAL, or others."
+          eyebrow={$_("detail.actions.tracking")}
+          title={$_("ui_noTrackersConnected")}
+          body={$_("ui_trackingGoToSettingsDetailed")}
         />
       </div>
 
@@ -335,10 +337,10 @@
           layout="center"
           tone="info"
           icon="search"
-          eyebrow="Tracking"
-          title={searchQuery || statusFilter !== "all" ? "No results match your filters" : "Nothing tracked yet"}
-          body={searchQuery || statusFilter !== "all" ? "Clear the current filters to return to your full tracker list." : "Tracked entries will appear here after you link a series."}
-          actions={searchQuery || statusFilter !== "all" ? [{ label: "Clear filters", kind: "primary", icon: "retry", onClick: () => { searchQuery = ""; statusFilter = "all"; } }] : []}
+          eyebrow={$_("detail.actions.tracking")}
+          title={searchQuery || statusFilter !== "all" ? $_("ui_trackingNoResultsMatchFilters") : $_("ui_trackingNothingTrackedYet")}
+          body={searchQuery || statusFilter !== "all" ? $_("ui_trackingClearFiltersBody") : $_("ui_trackingEntriesAppearBody")}
+          actions={searchQuery || statusFilter !== "all" ? [{ label: $_("ui_clearFilters"), kind: "primary", icon: "retry", onClick: () => { searchQuery = ""; statusFilter = "all"; } }] : []}
         />
       </div>
 
@@ -390,7 +392,7 @@
                   {#if isSyncing}
                     <CircleNotch size={12} weight="light" class="anim-spin" style="color:var(--text-faint)" />
                   {:else}
-                    <button class="card-icon-btn" title="Sync from tracker" onclick={() => syncRecord(record)}>
+                    <button class="card-icon-btn" title={$_("ui_syncFromTracker")} onclick={() => syncRecord(record)}>
                       <ArrowsClockwise size={12} weight="light" />
                     </button>
                   {/if}
@@ -399,7 +401,7 @@
                       <ArrowSquareOut size={12} weight="light" />
                     </a>
                   {/if}
-                  <button class="card-icon-btn danger" title="Unlink" onclick={() => unbind(record)} disabled={isBusy}>
+                  <button class="card-icon-btn danger" title={$_("ui_unlink")} onclick={() => unbind(record)} disabled={isBusy}>
                     <X size={12} weight="bold" />
                   </button>
                 </div>
@@ -430,7 +432,7 @@
                 </select>
 
                 {#if record.private}
-                  <span class="private-badge" title="Private"><Lock size={10} weight="fill" /></span>
+                  <span class="private-badge" title={$_("ui_private")}><Lock size={10} weight="fill" /></span>
                 {/if}
               </div>
 
@@ -438,7 +440,7 @@
               {#if editingChapter === record.id}
                 <div class="chapter-editor">
                   <div class="chapter-editor-top">
-                    <span class="chapter-editor-label">Chapter read</span>
+                    <span class="chapter-editor-label">{$_("ui_chapterRead")}</span>
                     <div class="chapter-input-wrap">
                       <input
                         type="number"
@@ -469,30 +471,30 @@
                     />
                   {/if}
                   <div class="chapter-editor-actions">
-                    <button class="chapter-save-btn" onclick={() => submitChapter(record)}>Save</button>
-                    <button class="chapter-cancel-btn" onclick={cancelChapterEditor}>Cancel</button>
+                    <button class="chapter-save-btn" onclick={() => submitChapter(record)}>{$_("ui_save")}</button>
+                    <button class="chapter-cancel-btn" onclick={cancelChapterEditor}>{$_("ui_cancel")}</button>
                   </div>
                 </div>
               {:else if progress !== null}
                 <div class="record-progress clickable" role="button" tabindex="0"
                   onclick={() => openChapterEditor(record)}
                   onkeydown={(e) => e.key === "Enter" && openChapterEditor(record)}
-                  title="Click to edit"
+                  title={$_("ui_clickToEdit")}
                 >
                   <div class="progress-track">
                     <div class="progress-fill" style="width:{progress}%"></div>
                   </div>
-                  <span class="progress-label">Ch. {record.lastChapterRead} / {record.totalChapters}</span>
+                  <span class="progress-label">{$_("ui_ch")} {record.lastChapterRead} / {record.totalChapters}</span>
                   <span class="progress-edit-hint">✎</span>
                 </div>
               {:else}
                 <div class="record-progress clickable no-total" role="button" tabindex="0"
                   onclick={() => openChapterEditor(record)}
                   onkeydown={(e) => e.key === "Enter" && openChapterEditor(record)}
-                  title="Click to set chapter"
+                  title={$_("ui_clickToSetChapter")}
                 >
                   <span class="progress-label">
-                    {record.lastChapterRead > 0 ? `Ch. ${record.lastChapterRead} read` : "Set chapter…"}
+                    {record.lastChapterRead > 0 ? `Ch. ${record.lastChapterRead} read` : $_("ui_setChapter")}
                   </span>
                   <span class="progress-edit-hint">✎</span>
                 </div>

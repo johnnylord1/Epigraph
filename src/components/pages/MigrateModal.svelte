@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { translate } from "../../lib/i18n/runtime";
+  import { _ } from "../../lib/i18n/runtime";
   import { X, MagnifyingGlass, CircleNotch, ArrowRight, Check, Warning, Sparkle, StackSimple } from "phosphor-svelte";
   import { untrack } from "svelte";
   import { gql } from "../../lib/client";
@@ -258,23 +260,23 @@
 
       addToast({
         kind: "success",
-        title: "Source migrated",
-        body: `${manga.title} moved to ${selectedMatch.manga.source?.displayName ?? selectedSource?.displayName ?? "the new source"}.`,
+        title: translate("ui_sourceMigrated"),
+        body: `${manga.title} moved to ${selectedMatch.manga.source?.displayName ?? selectedSource?.displayName ?? translate("ui_theNewSource")}.`,
         duration: 7000,
         action: {
-          label: "Undo",
+          label: translate("ui_undo"),
           run: () => {
             void undoMangaMigration(result.journalEntryId).then(() => {
               addToast({
                 kind: "info",
-                title: "Migration undone",
+                title: translate("ui_migrationUndone"),
                 body: manga.title,
               });
               onMigrated({ ...manga, inLibrary: true });
             }).catch((undoError) => {
               addToast({
                 kind: "error",
-                title: "Could not undo migration",
+                title: translate("ui_couldNotUndoMigration"),
                 body: undoError instanceof Error ? undoError.message : String(undoError),
               });
             });
@@ -301,23 +303,23 @@
 
       addToast({
         kind: "success",
-        title: "Mass migration applied",
-        body: `${result.migratedCount} title${result.migratedCount !== 1 ? "s" : ""} moved to ${selectedSource?.displayName ?? "the new source"}.`,
+        title: translate("ui_massMigrationApplied"),
+        body: `${result.migratedCount} title${result.migratedCount !== 1 ? "s" : ""} moved to ${selectedSource?.displayName ?? translate("ui_theNewSource")}.`,
         duration: 9000,
         action: {
-          label: "Undo",
+          label: translate("ui_undo"),
           run: () => {
             void undoMangaMigration(result.journalEntryId).then(() => {
               addToast({
                 kind: "info",
-                title: "Mass migration undone",
+                title: translate("ui_massMigrationUndone"),
                 body: `${result.migratedCount} title${result.migratedCount !== 1 ? "s" : ""}`,
               });
               onMigrated({ ...manga, inLibrary: true });
             }).catch((undoError) => {
               addToast({
                 kind: "error",
-                title: "Could not undo mass migration",
+                title: translate("ui_couldNotUndoMassMigration"),
                 body: undoError instanceof Error ? undoError.message : String(undoError),
               });
             });
@@ -346,7 +348,7 @@
     <!-- Header -->
     <div class="modal-header">
       <div class="modal-title">
-        <span class="modal-title-label">Migrate source</span>
+        <span class="modal-title-label">{$_("ui_migrateSource")}</span>
         <span class="modal-title-manga">{manga.title}</span>
       </div>
       <button class="close-btn" onclick={onClose}><X size={14} weight="light" /></button>
@@ -361,11 +363,11 @@
           </span>
           <span class="step-label">
             {st === "source"
-              ? "Pick source"
+              ? $_("ui_pickSource")
               : st === "search"
                 ? (selectedSource ? selectedSource.displayName : "Search")
                 : mode === "mass"
-                  ? "Preview batch"
+                  ? $_("ui_previewBatch")
                   : "Confirm"}
           </span>
         </div>
@@ -376,10 +378,10 @@
     <div class="body">
       <div class="mode-tabs">
         <button class="mode-tab" class:mode-tab-active={mode === "single"} onclick={() => setMode("single")}>
-          Single
+          {$_("ui_single")}
         </button>
         <button class="mode-tab" class:mode-tab-active={mode === "mass"} onclick={() => setMode("mass")}>
-          <StackSimple size={12} weight="bold" /> Mass
+          <StackSimple size={12} weight="bold" /> {$_("ui_mass")}
         </button>
       </div>
 
@@ -390,13 +392,13 @@
             <CircleNotch size={16} weight="light" class="anim-spin" style="color:var(--text-faint)" />
           </div>
         {:else if sources.length === 0}
-          <div class="centered"><span class="hint">No other sources installed.</span></div>
+          <div class="centered"><span class="hint">{$_("ui_noOtherSourcesInstalled")}</span></div>
         {:else}
           {#if hasMultipleLangs}
             <div class="src-lang-bar">
               <button class="src-lang-nav" onclick={() => scrollLangStrip(-1)}>‹</button>
               <div class="src-lang-chips" bind:this={langStripEl}>
-                <button class="src-lang-chip" class:src-lang-chip-active={selectedLang === "all"} onclick={() => selectedLang = "all"}>All</button>
+                <button class="src-lang-chip" class:src-lang-chip-active={selectedLang === "all"} onclick={() => selectedLang = "all"}>{$_("downloads_filter_all")}</button>
                 {#each availableLangs as lang}
                   <button class="src-lang-chip" class:src-lang-chip-active={selectedLang === lang} onclick={() => selectedLang = lang}>
                     {lang.toUpperCase()}
@@ -409,7 +411,7 @@
           {#if mode === "mass"}
             <div class="notice inline">
               <StackSimple size={14} weight="light" />
-              <span>This previews all library manga from {manga.source?.displayName ?? "the current source"} into one target source, then applies only the ready matches by default.</span>
+              <span>{$_("ui_thisPreviewsAllLibraryMangaFrom")} {manga.source?.displayName ?? $_("ui_theCurrentSource")} {$_("ui_intoOneTargetSourceThenAppliesOnlyThe")}</span>
             </div>
           {/if}
           <div class="source-list">
@@ -436,7 +438,7 @@
                 {:else}
                   <StackSimple size={13} weight="bold" />
                 {/if}
-                Preview mass migration
+                {$_("ui_previewMassMigration")}
               </button>
             </div>
           {/if}
@@ -452,7 +454,7 @@
               <img src={resolveServiceIconUrl(selectedSource, { kind: "source" })} alt="" class="search-context-icon"
                 onerror={(e) => applyServiceIconFallback(e, "source")} />
               <span class="search-context-name">{selectedSource.displayName}</span>
-              <button class="search-context-change" onclick={() => { step = "source"; results = []; }}>Change</button>
+              <button class="search-context-change" onclick={() => { step = "source"; results = []; }}>{$_("ui_change")}</button>
             </div>
           {/if}
 
@@ -461,7 +463,7 @@
               <MagnifyingGlass size={13} weight="light" class="search-icon" />
                 <input class="search-input" bind:value={query}
                 onkeydown={(e) => e.key === "Enter" && selectedSource && searchSource(selectedSource, query)}
-                placeholder="Search title…" use:focusOnMount />
+                placeholder={$_("ui_searchTitle")} use:focusOnMount />
             </div>
             <button class="search-btn"
               onclick={() => selectedSource && searchSource(selectedSource, query)}
@@ -469,8 +471,7 @@
               {#if searching}
                 <CircleNotch size={13} weight="light" class="anim-spin" />
               {:else}
-                <MagnifyingGlass size={12} weight="bold" /> Search
-              {/if}
+                <MagnifyingGlass size={12} weight="bold" /> {$_("novelSources_actions_search")}{/if}
             </button>
           </div>
 
@@ -499,10 +500,10 @@
                     <span class="result-title">{m.title}</span>
                     <div class="result-meta">
                       {#if idx === 0 && similarity > 0.5}
-                        <span class="best-match-badge"><Sparkle size={9} weight="fill" /> Best match</span>
+                        <span class="best-match-badge"><Sparkle size={9} weight="fill" /> {$_("ui_bestMatch")}</span>
                       {/if}
                       <span class="sim-bar"><span class="sim-fill" style="width:{Math.round(similarity * 100)}%"></span></span>
-                      <span class="sim-label">{Math.round(similarity * 100)}% match</span>
+                      <span class="sim-label">{Math.round(similarity * 100)}{$_("ui_match")}</span>
                     </div>
                   </div>
                   {#if loadingMatchId === m.id}
@@ -514,7 +515,7 @@
               {/each}
               {#if !searching && results.length === 0 && !error}
                 <div class="centered">
-                  <span class="hint">{query ? "No results — try a different title." : "Enter a title to search."}</span>
+                  <span class="hint">{query ? $_("ui_noResultsTryADifferentTitle") : $_("ui_enterATitleToSearch")}</span>
                 </div>
               {/if}
             {/if}
@@ -525,16 +526,16 @@
       {:else if step === "mass-preview" && massPreview}
         <div class="confirm-step">
           <div class="confirm-actions" style="justify-content: space-between;">
-            <button class="back-btn" onclick={() => step = "source"} disabled={migrating}>Back</button>
+            <button class="back-btn" onclick={() => step = "source"} disabled={migrating}>{$_("ui_back")}</button>
             <span class="source-meta">
-              {massPreview.readyCount} ready • {massPreview.needsReviewCount} needs review • {massPreview.blockedCount} blocked
+              {massPreview.readyCount} {$_("ui_ready_8a670e1b")} {massPreview.needsReviewCount} {$_("ui_needsReview")} {massPreview.blockedCount} {$_("ui_blocked")}
             </span>
           </div>
 
           <div class="confirm-stats">
-            <div class="stat-row"><span class="stat-label">Source from</span><strong>{manga.source?.displayName ?? "Unknown"}</strong></div>
-            <div class="stat-row"><span class="stat-label">Source to</span><strong>{selectedSource?.displayName ?? "Unknown"}</strong></div>
-            <div class="stat-row"><span class="stat-label">Selected ready items</span><strong>{massSelectedIds.size}</strong></div>
+            <div class="stat-row"><span class="stat-label">{$_("ui_sourceFrom")}</span><strong>{manga.source?.displayName ?? "Unknown"}</strong></div>
+            <div class="stat-row"><span class="stat-label">{$_("ui_sourceTo")}</span><strong>{selectedSource?.displayName ?? "Unknown"}</strong></div>
+            <div class="stat-row"><span class="stat-label">{$_("ui_selectedReadyItems")}</span><strong>{massSelectedIds.size}</strong></div>
           </div>
 
           <div class="results">
@@ -556,9 +557,9 @@
                     <span class="sim-label">{item.status}</span>
                     <span class="sim-label">{item.reasonCode}</span>
                     {#if item.match}
-                      <span class="sim-label">{Math.round(item.match.similarity * 100)}% match</span>
+                      <span class="sim-label">{Math.round(item.match.similarity * 100)}{$_("ui_match")}</span>
                     {/if}
-                    <span class="sim-label">{item.matchedReadCount} read matched</span>
+                    <span class="sim-label">{item.matchedReadCount} {$_("ui_readMatched")}</span>
                   </div>
                   {#if item.match}
                     <span class="source-meta">{item.match.manga.title}</span>
@@ -570,20 +571,20 @@
 
           <div class="notice">
             <Check size={14} weight="light" />
-            <span>The original library items stay protected by the migration journal and can be undone from the toast after applying the batch.</span>
+            <span>{$_("ui_theOriginalLibraryItemsStayProtectedByThe")}</span>
           </div>
 
           {#if error}<p class="error"><Warning size={13} weight="light" /> {error}</p>{/if}
 
           <div class="confirm-actions">
-            <button class="back-btn" onclick={() => step = "source"} disabled={migrating}>Back</button>
+            <button class="back-btn" onclick={() => step = "source"} disabled={migrating}>{$_("ui_back")}</button>
             <button class="migrate-btn" onclick={applyMassMigration} disabled={migrating || massSelectedIds.size === 0}>
               {#if migrating}
                 <CircleNotch size={13} weight="light" class="anim-spin" />
               {:else}
                 <StackSimple size={13} weight="bold" />
               {/if}
-              Apply ready items
+              {$_("ui_applyReadyItems")}
             </button>
           </div>
         </div>
@@ -597,7 +598,7 @@
               </div>
               <p class="confirm-title">{manga.title}</p>
               <p class="confirm-source">{manga.source?.displayName ?? "Unknown"}</p>
-              <span class="confirm-tag">Current</span>
+              <span class="confirm-tag">{$_("bookDetail_filter_current")}</span>
             </div>
 
             <div class="confirm-divider">
@@ -610,13 +611,13 @@
               </div>
               <p class="confirm-title">{selectedMatch.manga.title}</p>
               <p class="confirm-source">{selectedSource?.displayName ?? "Unknown"}</p>
-              <span class="confirm-tag confirm-tag-new">New</span>
+              <span class="confirm-tag confirm-tag-new">{$_("ui_new")}</span>
             </div>
           </div>
 
           <div class="confirm-stats">
             <div class="stat-row">
-              <span class="stat-label">Title match</span>
+              <span class="stat-label">{$_("ui_titleMatch")}</span>
               <span class="stat-val"
                 class:stat-good={selectedMatch.similarity > 0.7}
                 class:stat-warn={selectedMatch.similarity > 0.4 && selectedMatch.similarity <= 0.7}
@@ -625,39 +626,37 @@
               </span>
             </div>
             <div class="stat-row">
-              <span class="stat-label">Chapters on new source</span>
+              <span class="stat-label">{$_("ui_chaptersOnNewSource")}</span>
               <span class="stat-val" class:stat-warn={chapterDiff < -5}>
                 {selectedMatch.chapters.length}
                 {#if chapterDiff !== 0}
-                  <span class="chapter-diff">{chapterDiff > 0 ? `+${chapterDiff}` : chapterDiff} vs current</span>
+                  <span class="chapter-diff">{chapterDiff > 0 ? `+${chapterDiff}` : chapterDiff} {$_("ui_vsCurrent")}</span>
                 {/if}
               </span>
             </div>
             <div class="stat-row">
-              <span class="stat-label">Read progress to carry over</span>
-              <span class="stat-val">{selectedMatch.readCount} / {readCount} chapters</span>
+              <span class="stat-label">{$_("ui_readProgressToCarryOver")}</span>
+              <span class="stat-val">{selectedMatch.readCount} / {readCount} {$_("ui_chapters")}</span>
             </div>
           </div>
 
           {#if chapterDiff < -5}
             <div class="warn-box">
               <Warning size={13} weight="light" />
-              New source has {Math.abs(chapterDiff)} fewer chapters — some content may be missing.
+              {$_("ui_newSourceHas")} {Math.abs(chapterDiff)} {$_("ui_fewerChaptersSomeContentMayBeMissing")}
             </div>
           {/if}
 
-          <p class="confirm-note">The current entry will be removed from your library. Downloads are not transferred.</p>
+          <p class="confirm-note">{$_("ui_theCurrentEntryWillBeRemovedFromYour")}</p>
 
           {#if error}<p class="error"><Warning size={13} weight="light" /> {error}</p>{/if}
 
           <div class="confirm-actions">
-            <button class="back-btn" onclick={() => step = "search"} disabled={migrating}>Back</button>
+            <button class="back-btn" onclick={() => step = "search"} disabled={migrating}>{$_("ui_back")}</button>
             <button class="migrate-btn" onclick={migrate} disabled={migrating}>
               {#if migrating}
-                <CircleNotch size={13} weight="light" class="anim-spin" /> Migrating…
-              {:else}
-                <Check size={13} weight="bold" /> Migrate
-              {/if}
+                <CircleNotch size={13} weight="light" class="anim-spin" /> {$_("ui_migrating")}{:else}
+                <Check size={13} weight="bold" /> {$_("detail_actions_migrate")}{/if}
             </button>
           </div>
         </div>

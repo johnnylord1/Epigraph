@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { _ } from "../../lib/i18n/runtime";
   import type { Snippet } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { ArrowLeft, BookOpen, Info } from "phosphor-svelte";
@@ -99,11 +100,11 @@
   <!-- svelte-ignore a11y_no_static_element_interactions: desktop window drag must start from empty detail topbar regions. -->
   <header class="n-topbar" data-tauri-drag-region onpointerdown={handleTopbarPointerDown}>
     <div class="n-topbar-left">
-      <button class="n-icon-btn" type="button" title="Back" onclick={onBack}>
+      <button class="n-icon-btn" type="button" title={$_("ui_back")} onclick={onBack}>
         <ArrowLeft size={17} weight="light" />
       </button>
       <div class="crumbs">
-        <span>Library</span>
+        <span>{$_("library_error_eyebrow")}</span>
         <span class="crumb-sep">/</span>
         <strong>{titleText}</strong>
       </div>
@@ -192,7 +193,7 @@
         <div class="secondary-slot">
           {@render secondaryActions?.()}
         </div>
-        <button class="details-toggle" type="button" class:is-open={detailsOpen} onclick={onDetailsToggle} title="Series details" aria-label="Series details">
+        <button class="details-toggle" type="button" class:is-open={detailsOpen} onclick={onDetailsToggle} title={$_("ui_seriesDetails")} aria-label={$_("ui_seriesDetails")}>
           <Info size={16} weight={detailsOpen ? "fill" : "light"} />
         </button>
       </div>
@@ -204,7 +205,7 @@
     {#if detailsOpen}
       <section class="details-drawer">
         <div class="detail-card detail-card-main">
-          <span class="detail-label">Synopsis</span>
+          <span class="detail-label">{$_("ui_synopsis")}</span>
           <p>{description || emptyDetailsLabel}</p>
         </div>
         <div class="detail-card">

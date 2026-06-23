@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { translate } from "../../lib/i18n/runtime";
+  import { _ } from "../../lib/i18n/runtime";
   import { X, FloppyDisk, UploadSimple, DownloadSimple, ArrowLeft, Trash } from "phosphor-svelte";
   import {
     store, updateSettings, saveCustomTheme, deleteCustomTheme,
@@ -22,28 +24,28 @@
 
   // ── Token group definitions ───────────────────────────────────────────────
 
-  const TOKEN_GROUPS: { label: string; tokens: (keyof ThemeTokens)[] }[] = [
+  const TOKEN_GROUPS: { label: string; tokens: (keyof ThemeTokens)[] }[] = $derived.by(() => [
     {
-      label: "Backgrounds",
+      label: $_("ui_backgrounds"),
       tokens: ["bg-void", "bg-base", "bg-surface", "bg-raised", "bg-overlay", "bg-subtle"],
     },
     {
-      label: "Borders",
+      label: $_("ui_borders"),
       tokens: ["border-dim", "border-base", "border-strong", "border-focus"],
     },
     {
-      label: "Text",
+      label: $_("ui_text"),
       tokens: ["text-primary", "text-secondary", "text-muted", "text-faint", "text-disabled"],
     },
     {
-      label: "Accent",
+      label: $_("ui_accent"),
       tokens: ["accent", "accent-dim", "accent-muted", "accent-fg", "accent-bright"],
     },
     {
-      label: "Semantic",
+      label: $_("ui_semantic"),
       tokens: ["color-error", "color-error-bg", "color-success", "color-info", "color-info-bg"],
     },
-  ];
+  ]);
 
   const TOKEN_LABELS: Record<keyof ThemeTokens, string> = {
     "bg-void":    "Void (deepest bg)",
@@ -98,23 +100,23 @@
     hud: HudThemeTokens;
     tokens?: ThemeTokens;
     motion: ThemeMotionPreset;
-  }[] = [
+  }[] = $derived.by(() => [
     {
       id: "default",
-      label: "Default HUD",
-      description: "Matches the current compact Aethon shell",
+      label: $_("ui_defaultHud"),
+      description: $_("ui_matchesTheCurrentCompactAethonShell"),
       hud: DEFAULT_HUD_THEME_TOKENS,
       motion: "soft",
     },
     {
       id: "nocturne",
-      label: "Nocturne HUD",
-      description: "Compact lunar controls for the new identity",
+      label: $_("ui_nocturneHud"),
+      description: $_("ui_compactLunarControlsForTheNewIdentity"),
       hud: NOCTURNE_HUD_THEME_TOKENS,
       tokens: NOCTURNE_THEME_TOKENS,
       motion: "soft",
     },
-  ];
+  ]);
 
   const HUD_SLIDER_TOKENS: {
     token: keyof HudThemeTokens;
@@ -287,7 +289,7 @@
   <div
     class="te-shell"
     role="dialog"
-    aria-label="Theme editor"
+    aria-label={$_("ui_themeEditor")}
     tabindex="-1"
     onclick={(e) => e.stopPropagation()}
   >
@@ -295,13 +297,13 @@
     <!-- ── Header ──────────────────────────────────────────────────────── -->
     <header class="te-header">
       <div class="te-header-left">
-        <button class="te-icon-btn" onclick={onClose} title="Close editor">
+        <button class="te-icon-btn" onclick={onClose} title={$_("ui_closeEditor")}>
           <ArrowLeft size={14} weight="bold" />
         </button>
         <input
           bind:value={themeName}
           class="te-name-input"
-          placeholder="Theme name"
+          placeholder={$_("ui_themeName")}
           maxlength={40}
           spellcheck={false}
         />
@@ -311,27 +313,27 @@
         {#if importError}
           <span class="te-import-err">{importError}</span>
         {/if}
-        <button class="te-action-btn" onclick={handleImport} title="Import from JSON">
+        <button class="te-action-btn" onclick={handleImport} title={$_("ui_importFromJson")}>
           <UploadSimple size={13} />
-          <span>Import</span>
+          <span>{$_("ui_import")}</span>
         </button>
-        <button class="te-action-btn" onclick={handleExport} title="Export as JSON">
+        <button class="te-action-btn" onclick={handleExport} title={$_("ui_exportAsJson")}>
           <DownloadSimple size={13} />
-          <span>Export</span>
+          <span>{$_("ui_export")}</span>
         </button>
-        <button class="te-action-btn te-ghost" onclick={resetToDefaults} title="Reset all to Nocturne defaults">
-          Reset
+        <button class="te-action-btn te-ghost" onclick={resetToDefaults} title={$_("ui_resetAllToNocturneDefaults")}>
+          {$_("ui_reset")}
         </button>
         {#if editingId}
-          <button class="te-action-btn te-danger" onclick={handleDelete} title="Delete theme">
+          <button class="te-action-btn te-danger" onclick={handleDelete} title={$_("ui_deleteTheme")}>
             <Trash size={13} />
           </button>
         {/if}
         <button class="te-save-btn" class:saved={saveStatus === "saved"} onclick={handleSave}>
           <FloppyDisk size={13} />
-          <span>{saveStatus === "saved" ? "Saved!" : "Save Theme"}</span>
+          <span>{saveStatus === "saved" ? "Saved!" : $_("ui_saveTheme")}</span>
         </button>
-        <button class="te-icon-btn" onclick={onClose} title="Close">
+        <button class="te-icon-btn" onclick={onClose} title={$_("ui_close_bbfa773e")}>
           <X size={14} weight="bold" />
         </button>
       </div>
@@ -342,7 +344,7 @@
 
       <!-- Left: live preview -->
       <aside class="te-preview-pane">
-        <div class="te-pane-label">Live Preview</div>
+        <div class="te-pane-label">{$_("ui_livePreview")}</div>
 
         <!--
           FIX 1: toCssVars scoped only to this element, so only the
@@ -369,8 +371,8 @@
                 <div class="prv-bar" style="width:18px;background:var(--accent)"></div>
               </div>
               <div class="prv-toolbar">
-                <span class="prv-control active">Sort</span>
-                <span class="prv-control">Filter</span>
+                <span class="prv-control active">{$_("library_sort")}</span>
+                <span class="prv-control">{$_("library_filter")}</span>
                 <span class="prv-icon-control"></span>
               </div>
               <div class="prv-popover">
@@ -392,7 +394,7 @@
                 <div class="prv-reader-chrome bottom"></div>
               </div>
               <div class="prv-chapter-row">
-                <span class="prv-status-pill">READING</span>
+                <span class="prv-status-pill">{$_("ui_reading_f09e6eca")}</span>
                 <span class="prv-progress-track"><span></span></span>
               </div>
               <div class="prv-toast">
@@ -426,8 +428,8 @@
       <!-- Right: token editor -->
       <div class="te-editor-pane">
         <div class="te-editor-tabs">
-          <button class:active={editorTab === "colors"} onclick={() => (editorTab = "colors")}>Colors</button>
-          <button class:active={editorTab === "hud"} onclick={() => (editorTab = "hud")}>HUD</button>
+          <button class:active={editorTab === "colors"} onclick={() => (editorTab = "colors")}>{$_("ui_colors")}</button>
+          <button class:active={editorTab === "hud"} onclick={() => (editorTab = "hud")}>{$_("ui_hud")}</button>
         </div>
 
         {#if editorTab === "colors"}
@@ -446,7 +448,7 @@
                           tokens = { ...tokens, [token]: v };
                         }}
                         class="te-color-picker-input"
-                        title="Choose color visually"
+                        title={$_("ui_chooseColorVisually")}
                       />
                     </span>
                     <span class="te-token-name">{TOKEN_LABELS[token]}</span>
@@ -474,7 +476,7 @@
           {/each}
         {:else}
           <div class="te-group">
-            <div class="te-group-label">HUD preset</div>
+            <div class="te-group-label">{$_("ui_hudPreset")}</div>
             <div class="te-preset-grid">
               {#each HUD_PRESETS as preset}
                 <button class="te-preset-card" onclick={() => applyHudPreset(preset.id)}>
@@ -486,7 +488,7 @@
           </div>
 
           <div class="te-group">
-            <div class="te-group-label">Motion</div>
+            <div class="te-group-label">{$_("ui_motion")}</div>
             <div class="te-motion-row">
               {#each ["minimal", "soft", "expressive"] as option}
                 <button
@@ -501,7 +503,7 @@
           </div>
 
           <div class="te-group">
-            <div class="te-group-label">HUD geometry</div>
+            <div class="te-group-label">{$_("ui_hudGeometry")}</div>
             <div class="te-token-list">
               {#each HUD_SLIDER_TOKENS as item}
                 <div class="te-token-row te-slider-row">
@@ -524,7 +526,7 @@
           </div>
 
           <div class="te-group">
-            <div class="te-group-label">HUD colors</div>
+            <div class="te-group-label">{$_("ui_hudColors")}</div>
             <div class="te-token-list">
               {#each ["hud-selection-bg", "hud-selection-border"] as token}
                 <div class="te-token-row">
@@ -537,7 +539,7 @@
                         hud = { ...hud, [token]: v };
                       }}
                       class="te-color-picker-input"
-                      title="Choose color visually"
+                      title={$_("ui_chooseColorVisually")}
                     />
                   </span>
                   <span class="te-token-name">{HUD_TOKEN_LABELS[token as keyof HudThemeTokens]}</span>

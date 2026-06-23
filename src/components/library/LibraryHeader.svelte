@@ -117,4 +117,21 @@
     width: 100%;
     min-width: 0;
   }
+
+  .header :global(button),
+  .header :global(input),
+  .header :global(select),
+  .header :global(textarea),
+  .header :global(a),
+  .header :global([role="button"]),
+  .header :global([role="menu"]),
+  .header :global(.n-popover-surface) {
+    -webkit-app-region: no-drag;
+  }
+
+  .header :global(button *),
+  .header :global(a *),
+  .header :global([role="button"] *) {
+    -webkit-app-region: no-drag;
+  }
 </style>

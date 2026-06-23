@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { translate } from "../../lib/i18n/runtime";
+  import { _ } from "../../lib/i18n/runtime";
   import {
     ArrowRight,
     BookOpen,
@@ -196,11 +198,11 @@
 
       addToast({
         kind: "success",
-        title: "Novel migrated",
-        body: `${active.novel.title} moved to ${selectedSource?.name ?? "the new source"}.`,
+        title: translate("ui_novelMigrated"),
+        body: `${active.novel.title} moved to ${selectedSource?.name ?? translate("ui_theNewSource")}.`,
         duration: 7000,
         action: {
-          label: "Undo",
+          label: translate("ui_undo"),
           run: () => {
             void undoNovelMigration({
               scopeInput,
@@ -217,13 +219,13 @@
               });
               addToast({
                 kind: "info",
-                title: "Migration undone",
+                title: translate("ui_migrationUndone"),
                 body: active.novel.title,
               });
             }).catch((undoError) => {
               addToast({
                 kind: "error",
-                title: "Could not undo migration",
+                title: translate("ui_couldNotUndoMigration"),
                 body: undoError instanceof Error ? undoError.message : String(undoError),
               });
             });
@@ -254,11 +256,11 @@
 
       addToast({
         kind: "success",
-        title: "Mass migration applied",
-        body: `${result.migratedCount} novel${result.migratedCount !== 1 ? "s" : ""} moved to ${selectedSource?.name ?? "the new source"}.`,
+        title: translate("ui_massMigrationApplied"),
+        body: `${result.migratedCount} novel${result.migratedCount !== 1 ? "s" : ""} moved to ${selectedSource?.name ?? translate("ui_theNewSource")}.`,
         duration: 9000,
         action: {
-          label: "Undo",
+          label: translate("ui_undo"),
           run: () => {
             void undoNovelMigration({
               scopeInput,
@@ -276,13 +278,13 @@
               }
               addToast({
                 kind: "info",
-                title: "Mass migration undone",
+                title: translate("ui_massMigrationUndone"),
                 body: `${result.migratedCount} novel${result.migratedCount !== 1 ? "s" : ""}`,
               });
             }).catch((undoError) => {
               addToast({
                 kind: "error",
-                title: "Could not undo mass migration",
+                title: translate("ui_couldNotUndoMassMigration"),
                 body: undoError instanceof Error ? undoError.message : String(undoError),
               });
             });
@@ -328,11 +330,11 @@
 </script>
 
 <div class="overlay">
-  <button class="backdrop" type="button" aria-label="Close migration modal" onclick={onClose}></button>
-  <div class="modal" role="dialog" aria-modal="true" aria-label="Migrate novel">
+  <button class="backdrop" type="button" aria-label={$_("ui_closeMigrationModal")} onclick={onClose}></button>
+  <div class="modal" role="dialog" aria-modal="true" aria-label={$_("ui_migrateNovel")}>
     <div class="modal-header">
       <div class="modal-title">
-        <span class="modal-title-label">Migrate novel</span>
+        <span class="modal-title-label">{$_("ui_migrateNovel")}</span>
         <span class="modal-title-name">{active.novel.title}</span>
       </div>
       <button class="close-btn" type="button" onclick={onClose}><X size={14} weight="light" /></button>
@@ -347,11 +349,11 @@
       <div class="body">
         <div class="mode-tabs">
           <button class="mode-tab" class:mode-tab-active={mode === "single"} type="button" onclick={() => setMode("single")}>
-            Single
+            {$_("ui_single")}
           </button>
           <button class="mode-tab" class:mode-tab-active={mode === "mass"} type="button" onclick={() => setMode("mass")}>
             <StackSimple size={12} weight="bold" />
-            Mass
+            {$_("ui_mass")}
           </button>
         </div>
 
@@ -362,7 +364,7 @@
                 <input
                   bind:value={query}
                   class="search-input"
-                  placeholder="Search title..."
+                  placeholder={$_("ui_searchTitle_276e2d1e")}
                   onkeydown={(event) => event.key === "Enter" && runSearch()}
                 />
                 <button class="search-btn" type="button" disabled={searching || !selectedSource || !query.trim()} onclick={runSearch}>
@@ -371,13 +373,13 @@
                   {:else}
                     <MagnifyingGlass size={12} weight="bold" />
                   {/if}
-                  Search
+                  {$_("novelSources_actions_search")}
                 </button>
               </div>
             {:else}
               <div class="notice inline">
                 <StackSimple size={14} weight="light" />
-                <span>This previews all library novels from the current source into one migration-safe target source, then applies only the ready matches by default.</span>
+                <span>{$_("ui_thisPreviewsAllLibraryNovelsFromTheCurrent")}</span>
               </div>
             {/if}
 
@@ -386,7 +388,7 @@
             {:else if sources.length === 0}
               <div class="notice">
                 <Warning size={14} weight="light" />
-                <span>No installed trusted novel source is marked migration-safe yet.</span>
+                <span>{$_("ui_noInstalledTrustedNovelSourceIsMarkedMigration")}</span>
               </div>
             {:else}
               <div class="source-list">
@@ -413,7 +415,7 @@
                     {:else}
                       <StackSimple size={13} weight="bold" />
                     {/if}
-                    Preview mass migration
+                    {$_("ui_previewMassMigration")}
                   </button>
                 </div>
               {/if}
@@ -421,9 +423,9 @@
           </div>
         {:else if step === "search"}
           <div class="section">
-            <button class="back-btn" type="button" onclick={() => step = "source"}>Back</button>
+            <button class="back-btn" type="button" onclick={() => step = "source"}>{$_("ui_back")}</button>
             {#if error}
-              <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Migration" title="Search failed" body={error} />
+              <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Migration" title={$_("ui_searchFailed")} body={error} />
             {/if}
             <div class="results">
               {#each results as result (result.path)}
@@ -446,15 +448,15 @@
           </div>
         {:else if step === "mass-preview" && massPreview}
           <div class="section">
-            <button class="back-btn" type="button" onclick={() => step = "source"} disabled={migrating}>Back</button>
+            <button class="back-btn" type="button" onclick={() => step = "source"} disabled={migrating}>{$_("ui_back")}</button>
             <div class="stats">
-              <div class="stat-row"><span>Ready</span><strong>{massPreview.readyCount}</strong></div>
-              <div class="stat-row"><span>Needs review</span><strong>{massPreview.needsReviewCount}</strong></div>
-              <div class="stat-row"><span>Blocked</span><strong>{massPreview.blockedCount}</strong></div>
-              <div class="stat-row"><span>Selected to apply</span><strong>{massSelectedIds.size}</strong></div>
+              <div class="stat-row"><span>{$_("ui_ready")}</span><strong>{massPreview.readyCount}</strong></div>
+              <div class="stat-row"><span>{$_("ui_needsReview_33a506cf")}</span><strong>{massPreview.needsReviewCount}</strong></div>
+              <div class="stat-row"><span>{$_("ui_blocked_99613c74")}</span><strong>{massPreview.blockedCount}</strong></div>
+              <div class="stat-row"><span>{$_("ui_selectedToApply")}</span><strong>{massSelectedIds.size}</strong></div>
             </div>
             {#if error}
-              <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Migration" title="Mass migration failed" body={error} />
+              <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Migration" title={$_("ui_massMigrationFailed")} body={error} />
             {/if}
             <div class="results">
               {#each massPreview.items as item (item.currentNovelId)}
@@ -475,15 +477,14 @@
                         {" · "}
                         {item.match.detail.title}
                         {" · "}
-                        {Math.round(item.match.similarity * 100)}% match
-                      {:else}
+                        {Math.round(item.match.similarity * 100)}{$_("ui_match")}{:else}
                         {" · "}
                         {item.reasonCode}
                       {/if}
                     </span>
                     {#if item.preview}
                       <span class="source-meta">
-                        {item.preview.matchedChapterCount} matched chapters · {item.preview.transferredReadCount} read carried · {item.preview.transferredBookmarkCount} bookmarks carried
+                        {item.preview.matchedChapterCount} {$_("ui_matchedChapters")} {item.preview.transferredReadCount} {$_("ui_readCarried")} {item.preview.transferredBookmarkCount} {$_("ui_bookmarksCarried")}
                       </span>
                     {/if}
                   </div>
@@ -497,40 +498,40 @@
                 {:else}
                   <StackSimple size={13} weight="bold" />
                 {/if}
-                Apply ready items
+                {$_("ui_applyReadyItems")}
               </button>
             </div>
           </div>
         {:else if selectedTarget && preview}
           <div class="section confirm">
-            <button class="back-btn" type="button" onclick={() => step = "search"} disabled={migrating}>Back</button>
+            <button class="back-btn" type="button" onclick={() => step = "search"} disabled={migrating}>{$_("ui_back")}</button>
             <div class="compare">
               <div class="compare-card">
                 <span class="source-name">{active.novel.title}</span>
-                <span class="source-meta">{active.novel.source.sourceName ?? active.novel.source.pluginName ?? "Current source"}</span>
+                <span class="source-meta">{active.novel.source.sourceName ?? active.novel.source.pluginName ?? $_("ui_currentSource")}</span>
               </div>
               <ArrowRight size={16} weight="light" />
               <div class="compare-card">
                 <span class="source-name">{selectedTarget.title}</span>
-                <span class="source-meta">{selectedSource?.name ?? "Target source"}</span>
+                <span class="source-meta">{selectedSource?.name ?? $_("ui_targetSource")}</span>
               </div>
             </div>
             <div class="stats">
-              <div class="stat-row"><span>Title confidence</span><strong>{Math.round(preview.confidence * 100)}%</strong></div>
-              <div class="stat-row"><span>Matched chapters</span><strong>{preview.matchedChapterCount}</strong></div>
-              <div class="stat-row"><span>Read state transferred</span><strong>{preview.transferredReadCount}</strong></div>
-              <div class="stat-row"><span>Bookmarks transferred</span><strong>{preview.transferredBookmarkCount}</strong></div>
-              <div class="stat-row"><span>Chapter diff</span><strong>{preview.chapterDiff > 0 ? `+${preview.chapterDiff}` : preview.chapterDiff}</strong></div>
+              <div class="stat-row"><span>{$_("ui_titleConfidence")}</span><strong>{Math.round(preview.confidence * 100)}%</strong></div>
+              <div class="stat-row"><span>{$_("ui_matchedChapters_ff5d3901")}</span><strong>{preview.matchedChapterCount}</strong></div>
+              <div class="stat-row"><span>{$_("ui_readStateTransferred")}</span><strong>{preview.transferredReadCount}</strong></div>
+              <div class="stat-row"><span>{$_("ui_bookmarksTransferred")}</span><strong>{preview.transferredBookmarkCount}</strong></div>
+              <div class="stat-row"><span>{$_("ui_chapterDiff")}</span><strong>{preview.chapterDiff > 0 ? `+${preview.chapterDiff}` : preview.chapterDiff}</strong></div>
             </div>
             {#if preview.confidence < 0.5}
-              <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Migration" title="Low-confidence match" body="Review carefully before replacing the source." />
+              <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Migration" title={$_("ui_lowConfidenceMatch")} body="Review carefully before replacing the source." />
             {/if}
             <div class="notice inline">
               <Check size={14} weight="light" />
-              <span>The old novel will be replace-hidden through the migration journal, and Undo stays available for a short window.</span>
+              <span>{$_("ui_theOldNovelWillBeReplaceHiddenThrough")}</span>
             </div>
             {#if error}
-              <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Migration" title="Migration failed" body={error} />
+              <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Migration" title={$_("ui_migrationFailed")} body={error} />
             {/if}
             <div class="actions-row">
               <button class="search-btn primary" type="button" disabled={migrating} onclick={applyMigration}>
@@ -539,7 +540,7 @@
                 {:else}
                   <Check size={12} weight="bold" />
                 {/if}
-                Migrate
+                {$_("detail_actions_migrate")}
               </button>
             </div>
           </div>

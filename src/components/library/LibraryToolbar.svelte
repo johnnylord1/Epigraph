@@ -180,7 +180,7 @@
           type="button"
           class="n-icon-btn library-toolbar-btn"
           class:is-active={sortPanelOpen}
-          title="Sort"
+          title={$_("library_sort")}
           onclick={openSortPanel}
         >
           <SortAscending size={15} weight={sortPanelOpen ? "fill" : "bold"} />
@@ -317,6 +317,12 @@
   .library-toolbar-btn :global(svg) {
     width: var(--library-toolbar-icon-size, calc(15px * var(--n-hud-scale)));
     height: var(--library-toolbar-icon-size, calc(15px * var(--n-hud-scale)));
+    -webkit-app-region: no-drag;
+    pointer-events: none;
+  }
+
+  .library-toolbar-btn :global(*) {
+    -webkit-app-region: no-drag;
   }
 
   .dropdown-panel {

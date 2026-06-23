@@ -36,6 +36,21 @@ describe("libraryDisplay", () => {
     expect(narrow.effectiveColumns).toBe(3);
   });
 
+  it("uses the same items-per-row rule for grid and compact modes", () => {
+    const grid = computeLibraryLayout({
+      availableWidth: 1200,
+      preferredColumns: "auto",
+      mode: "grid",
+    });
+    const compact = computeLibraryLayout({
+      availableWidth: 1200,
+      preferredColumns: "auto",
+      mode: "compact_grid",
+    });
+
+    expect(compact.effectiveColumns).toBe(grid.effectiveColumns);
+  });
+
   it("respects explicit preferred columns when they fit", () => {
     const layout = computeLibraryLayout({
       availableWidth: 1700,

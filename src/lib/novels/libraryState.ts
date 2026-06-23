@@ -6,7 +6,7 @@ import {
   type AethonNovelProgressEntry,
 } from "../backup/novelsBackup";
 import { resolveNovelsProfileScope } from "../backup/novelsProfileState";
-import { normalizeLocalProfileId, normalizeServerUrl } from "../localProfiles";
+import { DEFAULT_LOCAL_PROFILE_ID, normalizeLocalProfileId, normalizeServerUrl } from "../localProfiles";
 import type { NovelRepositoryScopeInput } from "./repositoryState";
 import {
   type NovelMigrationChapterSnapshot,
@@ -45,9 +45,11 @@ function canUseDesktopNovelStorage(): boolean {
 }
 
 function normalizeScopeInput(input: NovelRepositoryScopeInput = {}): { profileId: string | null; serverUrl: string | null } {
+  const profileId = normalizeLocalProfileId(input.profileId);
+  const serverUrl = normalizeServerUrl(input.serverUrl);
   return {
-    profileId: normalizeLocalProfileId(input.profileId),
-    serverUrl: normalizeServerUrl(input.serverUrl),
+    profileId: profileId ?? (serverUrl ? null : DEFAULT_LOCAL_PROFILE_ID),
+    serverUrl,
   };
 }
 

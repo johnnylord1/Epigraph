@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { translate } from "../../lib/i18n/runtime";
+  import { _ } from "../../lib/i18n/runtime";
   import { addToast } from "../../store/state.svelte";
   import {
     addNovelRepositoryToState,
@@ -228,8 +230,8 @@
       addRepositoryUrl = "";
       addToast({
         kind: "success",
-        title: "Novel repository saved",
-        body: "The LNReader repository is now scoped to this profile.",
+        title: translate("ui_novelRepositorySaved"),
+        body: translate("ui_theLnreaderRepositoryIsNowScopedToThis"),
       });
     } catch (error) {
       panelError = error instanceof Error ? error.message : String(error);
@@ -250,10 +252,10 @@
       await persist(result.state);
       addToast({
         kind: result.status === "error" ? "error" : "success",
-        title: result.status === "not-modified" ? "Catalog already current" : "Novel catalog refreshed",
+        title: result.status === translate("ui_notModified") ? translate("ui_catalogAlreadyCurrent") : translate("ui_novelCatalogRefreshed"),
         body:
-          result.status === "error"
-            ? (result.repository.lastError ?? "Refresh failed.")
+          result.status === translate("ui_error")
+            ? (result.repository.lastError ?? translate("ui_refreshFailed_0a5e2c85"))
             : `${result.catalogCount} plugin entries available for ${repository.normalizedUrl}.`,
       });
     } catch (error) {
@@ -272,7 +274,7 @@
       const failures = result.results.filter((entry) => entry.status === "error").length;
       addToast({
         kind: failures > 0 ? "info" : "success",
-        title: failures > 0 ? "Refresh completed with warnings" : "All novel catalogs refreshed",
+        title: failures > 0 ? translate("ui_refreshCompletedWithWarnings") : translate("ui_allNovelCatalogsRefreshed"),
         body:
           failures > 0
             ? `${failures} repository refreshes failed. Their previous cache was kept.`
@@ -362,7 +364,7 @@
         const record = classificationRecordForPlugin(job.entry.pluginId);
         sourceCheckModalState = {
           ...sourceCheckModalState!,
-          actionLabel: "Already checked",
+          actionLabel: translate("ui_alreadyChecked"),
           stage: "completed",
           record,
           errorMessage: null,
@@ -441,7 +443,7 @@
     panelError = null;
     enqueueSourceCheckJob({
       entry,
-      actionLabel: installStateForEntry(entry).status === "update-available" ? "Update extension" : "Install extension",
+      actionLabel: installStateForEntry(entry).status === translate("ui_updateAvailable") ? translate("ui_updateExtension") : translate("ui_installExtension"),
       runInstall: true,
     });
   }
@@ -450,7 +452,7 @@
     retryingClassificationPluginId = entry.pluginId;
     enqueueSourceCheckJob({
       entry,
-      actionLabel: "Retry check",
+      actionLabel: translate("ui_retryCheck"),
       runInstall: false,
     });
   }
@@ -461,8 +463,8 @@
       await persist(setInstalledNovelPluginEnabled(repositoryState, pluginId, enabled));
       addToast({
         kind: "success",
-        title: enabled ? "Novel plugin enabled" : "Novel plugin disabled",
-        body: `${pluginId} ${enabled ? "is now available in" : "was removed from"} Novel Sources for this profile.`,
+        title: enabled ? translate("ui_novelPluginEnabled") : translate("ui_novelPluginDisabled"),
+        body: `${pluginId} ${enabled ? translate("ui_isNowAvailableIn") : translate("ui_wasRemovedFrom")} Novel Sources for this profile.`,
       });
     } catch (error) {
       panelError = error instanceof Error ? error.message : String(error);
@@ -479,7 +481,7 @@
       ));
       addToast({
         kind: "success",
-        title: "Novel plugin removed",
+        title: translate("ui_novelPluginRemoved"),
         body: `${pluginId} was removed from this profile-scoped novels storage.`,
       });
     } catch (error) {
@@ -509,7 +511,7 @@
       });
       addToast({
         kind: "success",
-        title: "Novel runtime smoke passed",
+        title: translate("ui_novelRuntimeSmokePassed"),
         body: `${catalogEntry.pluginId} crossed the hidden host boundary, resolved novel details and one chapter, and shut down cleanly.`,
       });
     } catch (error) {
@@ -567,9 +569,9 @@
   <div class="novel-repos-hero">
     <div class="novel-repos-header">
       <div>
-        <p class="settings-card__title">Novel sources</p>
+        <p class="settings-card__title">{$_("novelSources_eyebrow")}</p>
         <p class="novel-repos-scope">
-          Profile-scoped LNReader repositories for <strong>{scopeLabel}</strong>. Keep the shell minimal and only reveal repository management when you need it.
+          {$_("ui_profileScopedLnreaderRepositoriesFor")} <strong>{scopeLabel}</strong>{$_("ui_keepTheShellMinimalAndOnlyRevealRepository")}
         </p>
       </div>
       <div class="novel-repos-header__actions">
@@ -579,19 +581,19 @@
           onclick={refreshAllRepositories}
           disabled={loading || refreshingAll || repositoryState.repositories.length === 0}
         >
-          {refreshingAll ? "Refreshing..." : "Refresh all"}
+          {refreshingAll ? "Refreshing..." : $_("ui_refreshAll")}
         </button>
         <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (controlsOpen = !controlsOpen)}>
-          {controlsOpen ? "Hide controls" : "Manage repos"}
+          {controlsOpen ? $_("ui_hideControls") : $_("sources_repositories_manageManga")}
         </button>
       </div>
     </div>
 
     <div class="novel-repos-summary">
-      <span class="novel-repos-summary__pill">{repositoryState.repositories.length} repositories</span>
-      <span class="novel-repos-summary__pill">{visibleCatalogEntries.length} visible plugins</span>
-      <span class="novel-repos-summary__pill">{installedSourceIds.length} installed</span>
-      <span class="novel-repos-summary__pill">{repositoryState.catalogEntries.length} cached entries</span>
+      <span class="novel-repos-summary__pill">{repositoryState.repositories.length} {$_("ui_repositories")}</span>
+      <span class="novel-repos-summary__pill">{visibleCatalogEntries.length} {$_("ui_visiblePlugins")}</span>
+      <span class="novel-repos-summary__pill">{installedSourceIds.length} {$_("ui_installed")}</span>
+      <span class="novel-repos-summary__pill">{repositoryState.catalogEntries.length} {$_("ui_cachedEntries")}</span>
     </div>
   </div>
 
@@ -599,8 +601,8 @@
     <div class="novel-repos-controls novel-repos-controls--open">
       <div class="novel-repos-controls__grid">
         <div class="novel-repos-control-block">
-          <span class="settings-mini-row__label">Repository feed</span>
-          <span class="settings-mini-row__hint">Add a custom feed or seed the audited official index.</span>
+          <span class="settings-mini-row__label">{$_("ui_repositoryFeed")}</span>
+          <span class="settings-mini-row__hint">{$_("ui_addACustomFeedOrSeedTheAudited")}</span>
           <div class="novel-repos-add">
             <input
               class="novel-repos-input"
@@ -609,28 +611,28 @@
               spellcheck="false"
             />
             <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => addRepository(addRepositoryUrl)} disabled={!addRepositoryUrl.trim() || saving}>
-              Add repo
+              {$_("ui_addRepo")}
             </button>
             <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => addRepository(LNREADER_AUDITED_OFFICIAL_REPOSITORY_URL, true)} disabled={saving}>
-              Official
+              {$_("sources_actions_official")}
             </button>
           </div>
         </div>
 
         <div class="novel-repos-control-block">
-          <span class="settings-mini-row__label">Filters</span>
-          <span class="settings-mini-row__hint">Narrow the cached catalog without flooding the pane with admin UI.</span>
+          <span class="settings-mini-row__label">{$_("ui_filters")}</span>
+          <span class="settings-mini-row__hint">{$_("ui_narrowTheCachedCatalogWithoutFloodingThePane")}</span>
           <div class="novel-repos-filter-grid">
             <label class="novel-repos-field">
-              <span>Language</span>
+              <span>{$_("sources_table_language")}</span>
               <div class="novel-repos-filter-controls">
-                <input class="novel-repos-input" bind:value={languageFilterInput} spellcheck="false" placeholder="en, pt-br" />
-                <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={updateLanguageFilter} disabled={saving}>Apply</button>
+                <input class="novel-repos-input" bind:value={languageFilterInput} spellcheck="false" placeholder={$_("ui_enPtBr")} />
+                <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={updateLanguageFilter} disabled={saving}>{$_("ui_apply")}</button>
               </div>
             </label>
             <label class="novel-repos-field">
-              <span>Catalog search</span>
-              <input class="novel-repos-input" bind:value={catalogSearchInput} spellcheck="false" placeholder="allnovel, archiveofourown, pt-br..." />
+              <span>{$_("ui_catalogSearch")}</span>
+              <input class="novel-repos-input" bind:value={catalogSearchInput} spellcheck="false" placeholder={$_("ui_allnovelArchiveofourownPtBr")} />
             </label>
           </div>
         </div>
@@ -644,15 +646,15 @@
       tone="danger"
       icon="warning"
       eyebrow="Novel repositories"
-      title="Could not update repository settings"
+      title={$_("ui_couldNotUpdateRepositorySettings")}
       body={panelError}
     />
   {/if}
 
   {#if loading}
-    <NocturneState layout="compact" tone="info" icon="retry" eyebrow="Novel repositories" title="Loading repositories" body="Loading profile-scoped novel repositories..." />
+    <NocturneState layout="compact" tone="info" icon="retry" eyebrow="Novel repositories" title={$_("ui_loadingRepositories")} body="Loading profile-scoped novel repositories..." />
   {:else if repositoryState.repositories.length === 0}
-    <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Novel repositories" title="No repositories saved" body="No LNReader repositories are saved for this profile yet." />
+    <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Novel repositories" title={$_("ui_noRepositoriesSaved")} body="No LNReader repositories are saved for this profile yet." />
   {:else}
     <div class="novel-repos-list">
       {#each repositoryState.repositories as repository (repository.id)}
@@ -667,13 +669,13 @@
                 <span class="novel-repo-card__title">{repository.normalizedUrl}</span>
                 <p class="novel-repo-card__summary">
                   {repository.enabled
-                    ? "Enabled for this profile and ready to feed Novel Sources."
-                    : "Saved locally but disabled until you want it active again."}
+                    ? $_("ui_enabledForThisProfileAndReadyToFeed")
+                    : $_("ui_savedLocallyButDisabledUntilYouWantIt")}
                 </p>
                 <div class="novel-repo-card__badges">
                   <span class="novel-repo-badge" data-variant={uiState}>{uiState}</span>
                   {#if repository.recommendedSeed}
-                    <span class="novel-repo-badge" data-variant="seed">official seed</span>
+                    <span class="novel-repo-badge" data-variant="seed">{$_("ui_officialSeed")}</span>
                   {/if}
                   <span class="novel-repo-badge" data-variant={repository.trustState}>{repository.trustState}</span>
                 </div>
@@ -690,43 +692,43 @@
                 {repository.enabled ? "Disable" : "Enable"}
               </button>
               <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger" type="button" onclick={() => { void persist(removeNovelRepositoryFromState(repositoryState, repository.id)).catch(() => {}); }}>
-                Remove
+                {$_("sources_actions_remove")}
               </button>
             </div>
           </div>
 
           <div class="novel-repo-card__metrics">
-            <span>{totalEntries} plugins cached</span>
-            <span>Last fetch {fmtWhen(repository.lastFetchedAtMs)}</span>
-            <span>Last success {fmtWhen(repository.lastSuccessAtMs)}</span>
+            <span>{totalEntries} {$_("ui_pluginsCached")}</span>
+            <span>{$_("ui_lastFetch")} {fmtWhen(repository.lastFetchedAtMs)}</span>
+            <span>{$_("ui_lastSuccess")} {fmtWhen(repository.lastSuccessAtMs)}</span>
           </div>
 
           <div class="novel-repo-card__trust">
             <div class="novel-repo-card__trust-copy">
-              <span class="settings-mini-row__label">Trust gate</span>
-              <span class="settings-mini-row__hint">Cached feeds still need explicit trust before runtime execution is allowed.</span>
+              <span class="settings-mini-row__label">{$_("ui_trustGate")}</span>
+              <span class="settings-mini-row__hint">{$_("ui_cachedFeedsStillNeedExplicitTrustBeforeRuntime")}</span>
             </div>
             <div class="novel-repo-card__trust-buttons">
-              <button class="content-action-btn" class:content-action-active-allow={repository.trustState === "unknown"} type="button" onclick={() => { void persist(setNovelRepositoryTrustState(repositoryState, repository.id, "unknown")).catch(() => {}); }}>Untrusted</button>
-              <button class="content-action-btn" class:content-action-active-allow={repository.trustState === "trusted"} type="button" onclick={() => { void persist(setNovelRepositoryTrustState(repositoryState, repository.id, "trusted")).catch(() => {}); }}>Trusted</button>
-              <button class="content-action-btn" class:content-action-active-block={repository.trustState === "blocked"} type="button" onclick={() => { void persist(setNovelRepositoryTrustState(repositoryState, repository.id, "blocked")).catch(() => {}); }}>Blocked</button>
+              <button class="content-action-btn" class:content-action-active-allow={repository.trustState === "unknown"} type="button" onclick={() => { void persist(setNovelRepositoryTrustState(repositoryState, repository.id, "unknown")).catch(() => {}); }}>{$_("ui_untrusted")}</button>
+              <button class="content-action-btn" class:content-action-active-allow={repository.trustState === "trusted"} type="button" onclick={() => { void persist(setNovelRepositoryTrustState(repositoryState, repository.id, "trusted")).catch(() => {}); }}>{$_("ui_trusted")}</button>
+              <button class="content-action-btn" class:content-action-active-block={repository.trustState === "blocked"} type="button" onclick={() => { void persist(setNovelRepositoryTrustState(repositoryState, repository.id, "blocked")).catch(() => {}); }}>{$_("ui_blocked_99613c74")}</button>
             </div>
           </div>
 
           {#if repository.lastError}
-            <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Repository" title="Last refresh failed" body={repository.lastError} />
+            <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Repository" title={$_("ui_lastRefreshFailed")} body={repository.lastError} />
           {/if}
 
           <div class="novel-repo-card__catalog-shell">
             <button class="novel-repo-card__catalog-toggle" type="button" onclick={() => toggleRepositoryCatalogExpansion(repository.id)}>
-              <span>Catalog preview</span>
+              <span>{$_("ui_catalogPreview")}</span>
               <span>{isCatalogOpen ? "Hide" : `Show ${Math.min(totalEntries, 8)}${totalEntries > 8 ? "+" : ""}`}</span>
             </button>
 
             {#if isCatalogOpen}
               <div class="novel-repo-card__catalog novel-repo-card__catalog--open">
                 {#if repoEntries.length === 0}
-                  <p class="settings-mini-row__hint">No cached entries match the current language filter for this repository.</p>
+                  <p class="settings-mini-row__hint">{$_("ui_noCachedEntriesMatchTheCurrentLanguageFilter")}</p>
                 {:else}
                   <div class="novel-repo-entry-list">
                     {#each repoEntries as entry (entry.pluginId)}
@@ -756,17 +758,17 @@
                             </button>
                           {:else if installState.status === "installed"}
                             <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => setPluginEnabled(entry.pluginId, false)} disabled={saving}>
-                              Disable
+                              {$_("sources_actions_disable")}
                             </button>
                             <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger" type="button" onclick={() => removePlugin(entry.pluginId)} disabled={saving}>
-                              Remove
+                              {$_("sources_actions_remove")}
                             </button>
                           {:else if installState.status === "disabled"}
                             <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => setPluginEnabled(entry.pluginId, true)} disabled={saving}>
-                              Enable
+                              {$_("sources_actions_enable")}
                             </button>
                             <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger" type="button" onclick={() => removePlugin(entry.pluginId)} disabled={saving}>
-                              Remove
+                              {$_("sources_actions_remove")}
                             </button>
                           {/if}
                         </div>
@@ -784,14 +786,14 @@
 
   {#if lastSmokeResult}
     <div class="novel-smoke-result">
-      <p class="settings-card__title">Runtime smoke result</p>
+      <p class="settings-card__title">{$_("ui_runtimeSmokeResult")}</p>
       <div class="novel-smoke-result__grid">
-        <span>Plugin: {lastSmokeResult.pluginId}</span>
-        <span>Startup: {lastSmokeResult.startupConfirmed ? "yes" : "no"}</span>
-        <span>Shutdown: {lastSmokeResult.shutdownConfirmed ? "yes" : "no"}</span>
-        <span>Details: {lastSmokeResult.detailsConfirmed ? "yes" : "no"}</span>
-        <span>Chapter: {lastSmokeResult.chapterConfirmed ? "yes" : "no"}</span>
-        <span>Summary present: {lastSmokeResult.detailsSummaryPresent ? "yes" : "no"}</span>
+        <span>{$_("ui_plugin")} {lastSmokeResult.pluginId}</span>
+        <span>{$_("ui_startup")} {lastSmokeResult.startupConfirmed ? "yes" : "no"}</span>
+        <span>{$_("ui_shutdown")} {lastSmokeResult.shutdownConfirmed ? "yes" : "no"}</span>
+        <span>{$_("ui_details")} {lastSmokeResult.detailsConfirmed ? "yes" : "no"}</span>
+        <span>{$_("ui_chapter")} {lastSmokeResult.chapterConfirmed ? "yes" : "no"}</span>
+        <span>{$_("ui_summaryPresent")} {lastSmokeResult.detailsSummaryPresent ? "yes" : "no"}</span>
       </div>
     </div>
   {/if}

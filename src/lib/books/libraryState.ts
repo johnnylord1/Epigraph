@@ -6,7 +6,10 @@ import { normalizeBookBookmark, normalizeBookProgress } from "./progress";
 import type { BookBookmarkEntry, BookEntry, BookProgress } from "./types";
 
 const BOOK_LIBRARY_STATE_VERSION = 1 as const;
-const bookLibraryStateCacheKey = "global";
+
+export interface BookLibraryStateScope {
+  profileId?: string | null;
+}
 
 export interface PersistedBooksCategory {
   id: string;
@@ -36,6 +39,13 @@ export interface PersistedBookLibraryState {
 }
 
 const bookLibraryStateCache = new Map<string, PersistedBookLibraryState>();
+
+function bookLibraryStateCacheKey(scope: BookLibraryStateScope = {}) {
+  const profileId = typeof scope.profileId === "string" && scope.profileId.trim()
+    ? scope.profileId.trim().toLowerCase()
+    : "main";
+  return profileId;
+}
 
 export function canUseDesktopBookStorage(): boolean {
   if (typeof window === "undefined") return false;
@@ -70,6 +80,7 @@ function normalizeLoadedBook(book: any): BookEntry {
     author: typeof book?.author === "string" ? book.author : null,
     description: typeof book?.description === "string" ? book.description : null,
     genres: Array.isArray(book?.genres) ? book.genres.filter((entry: unknown): entry is string => typeof entry === "string") : undefined,
+    metadataBackfillVersion: typeof book?.metadataBackfillVersion === "number" ? book.metadataBackfillVersion : undefined,
     coverPath: typeof book?.coverPath === "string" ? book.coverPath : null,
     coverUrl: typeof book?.coverUrl === "string" ? book.coverUrl : undefined,
     subtype: book?.subtype === "pdf" ? "pdf" : "epub",
@@ -167,8 +178,11 @@ function normalizeBooksLibraryUi(value: unknown): PersistedBooksLibraryUiState {
   };
 }
 
-function persistBookLibraryStateCache(state: PersistedBookLibraryState): PersistedBookLibraryState {
-  bookLibraryStateCache.set(bookLibraryStateCacheKey, state);
+function persistBookLibraryStateCache(
+  state: PersistedBookLibraryState,
+  scope: BookLibraryStateScope = {},
+): PersistedBookLibraryState {
+  bookLibraryStateCache.set(bookLibraryStateCacheKey(scope), state);
   return state;
 }
 
@@ -209,7 +223,7 @@ export function normalizeBookLibraryState(value: unknown): PersistedBookLibraryS
 }
 
 export function peekBookLibraryState(): PersistedBookLibraryState {
-  return bookLibraryStateCache.get(bookLibraryStateCacheKey)
+  return bookLibraryStateCache.get(bookLibraryStateCacheKey())
     ?? createEmptyState();
 }
 
@@ -227,6 +241,7 @@ export function peekPersistedBookProgress(bookId: string): BookProgress | null {
 
 async function persistBookLibraryStateToDesktop(
   state: PersistedBookLibraryState,
+  scope: BookLibraryStateScope = {},
 ): Promise<PersistedBookLibraryState> {
   const normalized = normalizeBookLibraryState({
     ...state,
@@ -235,38 +250,42 @@ async function persistBookLibraryStateToDesktop(
 
   await invoke("write_book_library_state", {
     contents: JSON.stringify(normalized, null, 2),
+    profileId: bookLibraryStateCacheKey(scope),
   });
 
-  return persistBookLibraryStateCache(normalized);
+  return persistBookLibraryStateCache(normalized, scope);
 }
 
-export async function loadBookLibraryState(): Promise<PersistedBookLibraryState> {
-  const cached = bookLibraryStateCache.get(bookLibraryStateCacheKey);
+export async function loadBookLibraryState(scope: BookLibraryStateScope = {}): Promise<PersistedBookLibraryState> {
+  const cached = bookLibraryStateCache.get(bookLibraryStateCacheKey(scope));
   if (cached) return cached;
-  return reloadBookLibraryState();
+  return reloadBookLibraryState(scope);
 }
 
-export async function reloadBookLibraryState(): Promise<PersistedBookLibraryState> {
-  bookLibraryStateCache.delete(bookLibraryStateCacheKey);
+export async function reloadBookLibraryState(scope: BookLibraryStateScope = {}): Promise<PersistedBookLibraryState> {
+  bookLibraryStateCache.delete(bookLibraryStateCacheKey(scope));
 
   if (!canUseDesktopBookStorage()) {
-    return persistBookLibraryStateCache(createEmptyState());
+    return persistBookLibraryStateCache(createEmptyState(), scope);
   }
 
-  const raw = await invoke<string | null>("read_book_library_state").catch(() => null);
+  const raw = await invoke<string | null>("read_book_library_state", {
+    profileId: bookLibraryStateCacheKey(scope),
+  }).catch(() => null);
   if (raw) {
     try {
-      return persistBookLibraryStateCache(normalizeBookLibraryState(JSON.parse(raw)));
+      return persistBookLibraryStateCache(normalizeBookLibraryState(JSON.parse(raw)), scope);
     } catch {
-      return persistBookLibraryStateCache(createEmptyState());
+      return persistBookLibraryStateCache(createEmptyState(), scope);
     }
   }
 
-  return persistBookLibraryStateCache(createEmptyState());
+  return persistBookLibraryStateCache(createEmptyState(), scope);
 }
 
 export async function saveBookLibraryState(
   state: PersistedBookLibraryState,
+  scope: BookLibraryStateScope = {},
 ): Promise<PersistedBookLibraryState> {
   const normalized = normalizeBookLibraryState({
     ...state,
@@ -274,8 +293,8 @@ export async function saveBookLibraryState(
   });
 
   if (!canUseDesktopBookStorage()) {
-    return persistBookLibraryStateCache(normalized);
+    return persistBookLibraryStateCache(normalized, scope);
   }
 
-  return persistBookLibraryStateToDesktop(normalized);
+  return persistBookLibraryStateToDesktop(normalized, scope);
 }

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { translate } from "../../lib/i18n/runtime";
+  import { _ } from "../../lib/i18n/runtime";
   import { onMount } from "svelte";
   import { addToast } from "../../store/state.svelte";
   import { buildSyncdQrDataUrl, decodeSyncdQrDataUrl, decodeSyncdQrFile } from "../../lib/syncdQr";
@@ -297,8 +299,8 @@
       copiedBundle = false;
       addToast({
         kind: "success",
-        title: "Sync host is ready",
-        body: "The bootstrap bundle and QR payload are live and waiting for a second desktop to claim them.",
+        title: translate("ui_syncHostIsReady"),
+        body: translate("ui_theBootstrapBundleAndQrPayloadAreLive"),
       });
     } catch (error) {
       panelError = error instanceof Error ? error.message : String(error);
@@ -331,8 +333,8 @@
       }));
       addToast({
         kind: "info",
-        title: "Sync pairing started",
-        body: "Waiting for the host desktop to approve or reject this connection.",
+        title: translate("ui_syncPairingStarted"),
+        body: translate("ui_waitingForTheHostDesktopToApproveOr"),
       });
       void refreshPersistedSessions();
     } catch (error) {
@@ -350,10 +352,10 @@
       host = mergeHostState(host, await syncdHostDecidePairing(host.sessionId, decision));
       addToast({
         kind: decision === "approve" ? "success" : "info",
-        title: decision === "approve" ? "Sync pairing approved" : "Sync pairing rejected",
-        body: decision === "approve"
-          ? "The remote desktop can now retrieve its profile-bound session."
-          : "The remote desktop was told to stop before any token was issued.",
+        title: decision === translate("ui_approve") ? translate("ui_syncPairingApproved") : translate("ui_syncPairingRejected"),
+        body: decision === translate("ui_approve")
+          ? translate("ui_theRemoteDesktopCanNowRetrieveItsProfile")
+          : translate("ui_theRemoteDesktopWasToldToStopBefore"),
       });
     } catch (error) {
       panelError = error instanceof Error ? error.message : String(error);
@@ -369,8 +371,8 @@
       copiedBundle = true;
       addToast({
         kind: "success",
-        title: "Bootstrap bundle copied",
-        body: "Paste it into the second desktop to finish the pairing proof.",
+        title: translate("ui_bootstrapBundleCopied"),
+        body: translate("ui_pasteItIntoTheSecondDesktopToFinish"),
       });
       setTimeout(() => {
         copiedBundle = false;
@@ -417,8 +419,8 @@
       bootstrapBundleInput = await loadBundle();
       addToast({
         kind: "success",
-        title: "Sync QR loaded",
-        body: "The bootstrap bundle was filled from the QR image and is ready to connect.",
+        title: translate("ui_syncQrLoaded"),
+        body: translate("ui_theBootstrapBundleWasFilledFromTheQr"),
       });
     } catch (error) {
       panelError = error instanceof Error ? error.message : "Could not decode the selected sync QR image.";
@@ -468,8 +470,8 @@
       persistedSessions = persistedSessions.filter((session) => session.sessionKey !== sessionKey);
       addToast({
         kind: "success",
-        title: "Sync session removed",
-        body: "The local desktop forgot the approved sync session.",
+        title: translate("ui_syncSessionRemoved"),
+        body: translate("ui_theLocalDesktopForgotTheApprovedSyncSession"),
       });
     } catch (error) {
       panelError = error instanceof Error ? error.message : String(error);
@@ -487,8 +489,8 @@
       void refreshPersistedSessions();
       addToast({
         kind: "success",
-        title: "Active sync session updated",
-        body: "Replication will now follow the selected desktop session.",
+        title: translate("ui_activeSyncSessionUpdated"),
+        body: translate("ui_replicationWillNowFollowTheSelectedDesktopSession"),
       });
     } catch (error) {
       panelError = error instanceof Error ? error.message : String(error);
@@ -566,8 +568,8 @@
       void refreshPersistedSessions();
       addToast({
         kind: "success",
-        title: "Sync session forgotten",
-        body: "The local catalog no longer keeps that inactive desktop session.",
+        title: translate("ui_syncSessionForgotten"),
+        body: translate("ui_theLocalCatalogNoLongerKeepsThatInactive"),
       });
     } catch (error) {
       panelError = error instanceof Error ? error.message : String(error);
@@ -675,8 +677,8 @@
   <div class="syncd-card" data-testid="syncd-host-card">
     <div class="syncd-card__head">
       <div>
-        <p class="syncd-card__title">Sync host</p>
-        <p class="syncd-card__intro">Create one short-lived bootstrap bundle for the current desktop profile and approve or reject the claim locally.</p>
+        <p class="syncd-card__title">{$_("ui_syncHost")}</p>
+        <p class="syncd-card__intro">{$_("ui_createOneShortLivedBootstrapBundleForThe")}</p>
       </div>
       <span class={"syncd-pill syncd-pill--" + connectStatusTone(host?.status ?? "pending")} data-testid="syncd-host-status">
         {host ? statusLabel(host.status) : "Idle"}
@@ -686,48 +688,48 @@
     <div class="syncd-stack">
       <div class="syncd-row">
         <div>
-          <p class="syncd-row__label">Scope</p>
+          <p class="syncd-row__label">{$_("ui_scope")}</p>
           <p class="syncd-row__hint">{scopeLabel}</p>
         </div>
         <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-host-start" onclick={startHostPairing} disabled={!hasProfile() || loadingHost}>
-          {loadingHost ? "Starting..." : host ? "Refresh bundle" : "Start host pairing"}
+          {loadingHost ? "Starting..." : host ? $_("ui_refreshBundle") : $_("ui_startHostPairing")}
         </button>
       </div>
-      <p class="syncd-row__hint" data-testid="syncd-host-start-stage">Host start stage: {hostStartStage}</p>
+      <p class="syncd-row__hint" data-testid="syncd-host-start-stage">{$_("ui_hostStartStage")} {hostStartStage}</p>
 
       {#if host}
         <div class="syncd-surface">
           <div class="syncd-row">
             <div>
-              <p class="syncd-row__label">Advertised origin</p>
+              <p class="syncd-row__label">{$_("ui_advertisedOrigin")}</p>
               <p class="syncd-row__hint">{host.advertisedBaseUrl}</p>
             </div>
             <span class={"syncd-pill syncd-pill--" + connectStatusTone(host.status)} data-testid="syncd-host-status-live">{statusLabel(host.status)}</span>
           </div>
           <div class="syncd-meta-grid">
             <div>
-              <span class="syncd-meta__label">Pairing code</span>
+              <span class="syncd-meta__label">{$_("ui_pairingCode")}</span>
               <span class="syncd-meta__value">{host.pairingCode}</span>
             </div>
             <div>
-              <span class="syncd-meta__label">Expires</span>
+              <span class="syncd-meta__label">{$_("ui_expires")}</span>
               <span class="syncd-meta__value">{formatWhen(host.expiresAtMs)}</span>
             </div>
             <div>
-              <span class="syncd-meta__label">TLS fingerprint</span>
+              <span class="syncd-meta__label">{$_("ui_tlsFingerprint")}</span>
               <span class="syncd-meta__value syncd-meta__value--mono">{host.tlsCertSha256}</span>
             </div>
             <div>
-              <span class="syncd-meta__label">Claimed device</span>
+              <span class="syncd-meta__label">{$_("ui_claimedDevice")}</span>
               <span class="syncd-meta__value">{host.claimedDeviceId ?? "Waiting"}</span>
             </div>
           </div>
           <label class="syncd-field">
-            <span class="syncd-row__label">Bootstrap bundle</span>
+            <span class="syncd-row__label">{$_("ui_bootstrapBundle")}</span>
             <textarea class="syncd-textarea" data-testid="syncd-bootstrap-bundle-host" readonly value={host.bootstrapBundle}></textarea>
           </label>
           <div class="syncd-field">
-            <span class="syncd-row__label">Bootstrap QR</span>
+            <span class="syncd-row__label">{$_("ui_bootstrapQr")}</span>
             <div class="syncd-qr-surface" data-testid="syncd-host-qr-surface">
               {#if qrCodeDataUrl}
                 <img
@@ -736,21 +738,21 @@
                   data-session-id={host.sessionId}
                   data-origin={host.advertisedBaseUrl}
                   src={qrCodeDataUrl}
-                  alt="Sync bootstrap QR code"
+                  alt={$_("ui_syncBootstrapQrCode")}
                 />
               {:else if qrBusy}
-                <NocturneState layout="compact" tone="info" icon="retry" eyebrow="Pairing" title="Rendering QR" />
+                <NocturneState layout="compact" tone="info" icon="retry" eyebrow="Pairing" title={$_("ui_renderingQr")} />
               {:else}
-                <NocturneState layout="compact" tone="info" icon="info" eyebrow="Pairing" title="QR waiting" body="The QR payload will appear here once the host bundle is ready." />
+                <NocturneState layout="compact" tone="info" icon="info" eyebrow="Pairing" title={$_("ui_qrWaiting")} body="The QR payload will appear here once the host bundle is ready." />
               {/if}
             </div>
           </div>
           <div class="syncd-actions">
             <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-host-copy-bundle" onclick={copyBootstrapBundle}>
-              {copiedBundle ? "Copied" : "Copy bundle"}
+              {copiedBundle ? "Copied" : $_("ui_copyBundle")}
             </button>
             <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-host-save-qr" onclick={saveBootstrapQrCode} disabled={!qrCodeDataUrl}>
-              Save QR image
+              {$_("ui_saveQrImage")}
             </button>
             {#if host.status === "claimed"}
               <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-host-approve" onclick={() => decideHostPairing("approve")} disabled={hostDecisionBusy !== null}>
@@ -763,12 +765,12 @@
           </div>
           {#if host.error}
             <div data-testid="syncd-host-error">
-              <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Host" title="Host pairing failed" body={host.error} />
+              <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Host" title={$_("ui_hostPairingFailed")} body={host.error} />
             </div>
           {/if}
         </div>
       {:else}
-        <NocturneState layout="compact" tone="info" icon="info" eyebrow="Host" title="Host mode is idle" body="Start one pairing session to generate a bundle and wait for the second desktop to claim it." />
+        <NocturneState layout="compact" tone="info" icon="info" eyebrow="Host" title={$_("ui_hostModeIsIdle")} body="Start one pairing session to generate a bundle and wait for the second desktop to claim it." />
       {/if}
     </div>
   </div>
@@ -776,11 +778,11 @@
   <div class="syncd-card" data-testid="syncd-connect-card">
     <div class="syncd-card__head">
       <div>
-        <p class="syncd-card__title">Sync connect</p>
-        <p class="syncd-card__intro">Discover a remote desktop, paste its bootstrap bundle, and let the existing live pairing channel carry approval or rejection.</p>
+        <p class="syncd-card__title">{$_("ui_syncConnect")}</p>
+        <p class="syncd-card__intro">{$_("ui_discoverARemoteDesktopPasteItsBootstrapBundle")}</p>
       </div>
       <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-connect-refresh-peers" onclick={refreshDiscoveryCandidates} disabled={loadingCandidates}>
-        {loadingCandidates ? "Refreshing..." : "Refresh peers"}
+        {loadingCandidates ? "Refreshing..." : $_("ui_refreshPeers")}
       </button>
     </div>
 
@@ -788,8 +790,8 @@
       <div class="syncd-surface">
         <div class="syncd-row">
           <div>
-            <p class="syncd-row__label">Discovered peers</p>
-            <p class="syncd-row__hint">mDNS candidates already resolve through the syncd client-contract and guidance layers.</p>
+            <p class="syncd-row__label">{$_("ui_discoveredPeers")}</p>
+            <p class="syncd-row__hint">{$_("ui_mdnsCandidatesAlreadyResolveThroughTheSyncdClient")}</p>
           </div>
           <span class="syncd-pill syncd-pill--neutral">{candidates.length}</span>
         </div>
@@ -800,39 +802,39 @@
                 <div class="syncd-list__body">
                   <p class="syncd-list__title">{candidate.instanceName}</p>
                   <p class="syncd-list__hint">{candidate.effectiveOrigin}</p>
-                  <p class="syncd-list__meta">{sourceLabel(candidate.effectiveSource)} | live pairing {candidate.supportsLivePairingStatus ? "on" : "off"}</p>
+                  <p class="syncd-list__meta">{sourceLabel(candidate.effectiveSource)} {$_("ui_livePairing")} {candidate.supportsLivePairingStatus ? $_("common.on") : $_("common.off")}</p>
                 </div>
                 <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-peer-use-origin" onclick={() => (manualOrigin = candidate.discoveryOrigin)}>
-                  Use origin
+                  {$_("ui_useOrigin")}
                 </button>
               </div>
             {/each}
           </div>
         {:else}
-          <NocturneState layout="compact" tone="info" icon="search" eyebrow="Discovery" title="No LAN peers visible" body="Manual origin fallback is ready below." />
+          <NocturneState layout="compact" tone="info" icon="search" eyebrow={$_("ui_discoverySource")} title={$_("ui_noLanPeersVisible")} body={$_("ui_manualOriginFallbackReady")} />
         {/if}
       </div>
 
       <label class="syncd-field">
-        <span class="syncd-row__label">Manual origin fallback</span>
+        <span class="syncd-row__label">{$_("ui_manualOriginFallback")}</span>
         <input
           bind:this={manualOriginInput}
           class="syncd-input"
           data-testid="syncd-manual-origin"
           bind:value={manualOrigin}
-          placeholder="https://192.168.1.25:4777"
+          placeholder={$_("ui_https1921681254777")}
           spellcheck="false"
         />
       </label>
 
       <label class="syncd-field">
-        <span class="syncd-row__label">Bootstrap bundle</span>
+        <span class="syncd-row__label">{$_("ui_bootstrapBundle")}</span>
         <textarea
           bind:this={bootstrapBundleTextarea}
           class="syncd-textarea"
           data-testid="syncd-bootstrap-bundle-input"
           bind:value={bootstrapBundleInput}
-          placeholder='Paste the host bundle JSON here.'
+          placeholder={$_("ui_pasteTheHostBundleJsonHere")}
         ></textarea>
       </label>
       <input
@@ -846,13 +848,13 @@
 
       <div class="syncd-actions">
         <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-connect-submit" onclick={connectToRemote} disabled={!hasProfile() || connectBusy || !bootstrapBundleInput.trim()}>
-          {connectBusy ? "Connecting..." : "Connect to host"}
+          {connectBusy ? "Connecting..." : $_("ui_connectToHost")}
         </button>
         <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-connect-load-qr" onclick={openQrImagePicker} disabled={qrDecodeBusy}>
-          {qrDecodeBusy ? "Reading QR..." : "Load QR image"}
+          {qrDecodeBusy ? $_("ui_readingQr") : $_("ui_loadQrImage")}
         </button>
         <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-revalidate-sessions" onclick={revalidatePersisted} disabled={!hasProfile() || revalidateBusy}>
-          {revalidateBusy ? "Revalidating..." : "Revalidate saved sessions"}
+          {revalidateBusy ? "Revalidating..." : $_("ui_revalidateSavedSessions")}
         </button>
       </div>
 
@@ -860,32 +862,32 @@
         <div class="syncd-surface" data-testid="syncd-connect-state">
           <div class="syncd-row">
             <div>
-              <p class="syncd-row__label">Current connection</p>
+              <p class="syncd-row__label">{$_("ui_currentConnection")}</p>
               <p class="syncd-row__hint">{connect.remoteOrigin}</p>
             </div>
             <span class={"syncd-pill syncd-pill--" + connectStatusTone(connect.status)} data-testid="syncd-connect-status">{statusLabel(connect.status)}</span>
           </div>
           <div class="syncd-meta-grid">
             <div>
-              <span class="syncd-meta__label">Attempted origin</span>
+              <span class="syncd-meta__label">{$_("ui_attemptedOrigin")}</span>
               <span class="syncd-meta__value">{connect.attemptedOrigin}</span>
             </div>
             <div>
-              <span class="syncd-meta__label">Remote profile</span>
+              <span class="syncd-meta__label">{$_("ui_remoteProfile")}</span>
               <span class="syncd-meta__value">{connect.remoteProfileId || "Waiting"}</span>
             </div>
             <div>
-              <span class="syncd-meta__label">Fallbacks</span>
+              <span class="syncd-meta__label">{$_("ui_fallbacks")}</span>
               <span class="syncd-meta__value">{connect.fallbackOrigins.length}</span>
             </div>
             <div>
-              <span class="syncd-meta__label">Claimed device</span>
+              <span class="syncd-meta__label">{$_("ui_claimedDevice")}</span>
               <span class="syncd-meta__value">{connect.claimedDeviceId ?? "Waiting"}</span>
             </div>
           </div>
           {#if connect.error}
             <div data-testid="syncd-connect-error">
-              <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Connect" title="Pairing failed" body={connect.error} />
+              <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Connect" title={$_("ui_pairingFailed")} body={connect.error} />
             </div>
           {/if}
         </div>
@@ -894,8 +896,8 @@
       <div class="syncd-surface">
         <div class="syncd-row">
           <div>
-            <p class="syncd-row__label">Replication</p>
-            <p class="syncd-row__hint">One approved session can stay active for continuous replay, local mutation upload, and reconnect.</p>
+            <p class="syncd-row__label">{$_("ui_replication")}</p>
+            <p class="syncd-row__hint">{$_("ui_oneApprovedSessionCanStayActiveForContinuous")}</p>
           </div>
           <span class={"syncd-pill syncd-pill--" + replicationStatusTone(replicationSnapshot?.replicationStatus ?? "idle")} data-testid="syncd-replication-status">
             {statusLabel(replicationSnapshot?.replicationStatus ?? "idle")}
@@ -903,24 +905,24 @@
         </div>
         <div class="syncd-meta-grid">
           <div>
-            <span class="syncd-meta__label">Active session</span>
-                <span class="syncd-meta__value" data-testid="syncd-replication-active-session">{replicationSnapshot?.activeSessionKey ?? "None selected"}</span>
+            <span class="syncd-meta__label">{$_("ui_activeSession")}</span>
+                <span class="syncd-meta__value" data-testid="syncd-replication-active-session">{replicationSnapshot?.activeSessionKey ?? $_("ui_noneSelected")}</span>
           </div>
           <div>
-            <span class="syncd-meta__label">Last connected</span>
+            <span class="syncd-meta__label">{$_("ui_lastConnected")}</span>
             <span class="syncd-meta__value">{formatWhen(replicationSnapshot?.lastConnectedAtMs)}</span>
           </div>
           <div>
-            <span class="syncd-meta__label">Books checkpoint</span>
+            <span class="syncd-meta__label">{$_("ui_booksCheckpoint")}</span>
             <span class="syncd-meta__value">{replicationSnapshot?.booksScopeCheckpoint?.lastAppliedServerVersion ?? 0}</span>
           </div>
           <div>
-            <span class="syncd-meta__label">Novels checkpoint</span>
+            <span class="syncd-meta__label">{$_("ui_novelsCheckpoint")}</span>
             <span class="syncd-meta__value">{replicationSnapshot?.novelsScopeCheckpoint?.lastAppliedServerVersion ?? 0}</span>
           </div>
         </div>
         {#if replicationSnapshot?.lastError}
-          <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Replication" title="Sync replay failed" body={replicationSnapshot.lastError} />
+          <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Replication" title={$_("ui_syncReplayFailed")} body={replicationSnapshot.lastError} />
         {/if}
         <div class="syncd-actions">
           <button
@@ -930,7 +932,7 @@
             onclick={replicationSnapshot?.paused ? resumeReplication : pauseReplication}
             disabled={!replicationSnapshot?.activeSessionKey || replicationActionBusy !== null}
           >
-            {#if replicationActionBusy === "pause"}Pausing...{:else if replicationActionBusy === "resume"}Resuming...{:else}{replicationSnapshot?.paused ? "Resume replication" : "Pause replication"}{/if}
+            {#if replicationActionBusy === "pause"}{$_("ui_pausing")}{:else if replicationActionBusy === "resume"}{$_("ui_resuming")}{:else}{replicationSnapshot?.paused ? $_("ui_resumeReplication") : $_("ui_pauseReplication")}{/if}
           </button>
           <button
             class="n-btn n-btn--sm n-btn-ghost"
@@ -939,7 +941,7 @@
             onclick={reconnectReplication}
             disabled={!replicationSnapshot?.activeSessionKey || replicationActionBusy !== null}
           >
-            {replicationActionBusy === "reconnect" ? "Reconnecting..." : "Reconnect now"}
+            {replicationActionBusy === "reconnect" ? "Reconnecting..." : $_("ui_reconnectNow")}
           </button>
         </div>
       </div>
@@ -947,8 +949,8 @@
       <div class="syncd-surface">
         <div class="syncd-row">
           <div>
-            <p class="syncd-row__label">Sessions</p>
-            <p class="syncd-row__hint">Approved profile-bound tokens stay local and one session at a time can own continuous replication.</p>
+            <p class="syncd-row__label">{$_("ui_sessions")}</p>
+            <p class="syncd-row__hint">{$_("ui_approvedProfileBoundTokensStayLocalAndOne")}</p>
           </div>
           <span class="syncd-pill syncd-pill--neutral">{loadingPersisted ? "..." : persistedSessions.length}</span>
         </div>
@@ -980,7 +982,7 @@
             {/each}
           </div>
         {:else}
-          <NocturneState layout="compact" tone="info" icon="info" eyebrow="Sessions" title="No approved sessions" body="Pair another desktop to start continuous sync for this profile." />
+          <NocturneState layout="compact" tone="info" icon="info" eyebrow="Sessions" title={$_("ui_noApprovedSessions")} body="Pair another desktop to start continuous sync for this profile." />
         {/if}
       </div>
     </div>
@@ -991,7 +993,7 @@
         tone="danger"
         icon="warning"
         eyebrow="Sync"
-        title="Sync action failed"
+        title={$_("ui_syncActionFailed")}
         body={panelError}
       />
     {/if}

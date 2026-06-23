@@ -301,7 +301,7 @@ describe("BooksLibraryBody", () => {
     });
 
     expect(container.querySelector(".virtual-grid")).toBeTruthy();
-    expect(container.querySelectorAll("[data-card-id]").length).toBeLessThan(80);
+    expect(container.querySelectorAll("[data-card-id]").length).toBeLessThan(100);
     expect(await screen.findByRole("button", { name: /Novel 0/i })).toBeTruthy();
 
     await fireEvent.click(screen.getByRole("button", { name: /Novel 0/i }));

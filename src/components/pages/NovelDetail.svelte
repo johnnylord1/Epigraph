@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { translate } from "../../lib/i18n/runtime";
+  import { _ } from "../../lib/i18n/runtime";
   import { invoke } from "@tauri-apps/api/core";
   import { ArrowsClockwise, ArrowsLeftRight, BookOpen, BookmarkSimple, CaretDown, ChartLineUp, Check, CheckCircle, Circle, DownloadSimple, FolderSimplePlus, Link, List, Play, SortAscending, SortDescending, SquaresFour, X } from "phosphor-svelte";
   import {
@@ -148,7 +150,7 @@
     });
     addToast({
       kind: "success",
-      title: "Novel added to Library",
+      title: translate("ui_novelAddedToLibrary"),
       body: activeDetail.novel.title,
     });
   }
@@ -164,7 +166,7 @@
     });
     addToast({
       kind: "info",
-      title: "Novel removed from Library",
+      title: translate("ui_novelRemovedFromLibrary"),
       body: activeDetail.novel.title,
     });
   }
@@ -311,7 +313,7 @@
   async function exportNovelChapterBatch(chaptersToExport: typeof sortedNovelChapters, label: string) {
     if (!activeDetail || !displayedNovel || downloadingNovel) return;
     if (chaptersToExport.length === 0) {
-      addToast({ kind: "info", title: "No chapters to download", body: displayedNovel.title });
+      addToast({ kind: "info", title: translate("ui_noChaptersToDownload"), body: displayedNovel.title });
       return;
     }
 
@@ -329,12 +331,12 @@
       const fileName = `${sanitizeFilename(displayedNovel.title)}-${sanitizeFilename(label).toLowerCase()}-${Date.now()}.html`;
       const targetPath = await join(await downloadDir(), fileName);
       await invoke("write_file_base64", { path: targetPath, bytesBase64: encodeBase64Utf8(html) });
-      addToast({ kind: "success", title: "Novel downloaded", body: fileName, duration: 4500 });
+      addToast({ kind: "success", title: translate("ui_novelDownloaded"), body: fileName, duration: 4500 });
     } catch (error) {
       addToast({
         kind: "error",
-        title: "Novel download failed",
-        body: error instanceof Error ? error.message : "Aethon could not export this novel.",
+        title: translate("ui_novelDownloadFailed"),
+        body: error instanceof Error ? error.message : translate("ui_aethonCouldNotExportThisNovel"),
       });
     } finally {
       downloadingNovel = false;
@@ -430,7 +432,7 @@
     {#snippet primaryAction()}
       <button class="series-primary" disabled={!resumeChapter} onclick={() => resumeChapter && openChapter(resumeChapter.id, resumeChapter.path, resumeChapter.title)}>
         <Play size={13} weight="fill" />
-        {resumeChapter ? (lastReadChapterId ? `Continue Ch.${resumeChapter.order + 1}` : "Start reading") : "No chapters"}
+        {resumeChapter ? (lastReadChapterId ? `Continue Ch.${resumeChapter.order + 1}` : $_("detail_actions_startReading")) : $_("detail_empty_noChapters")}
       </button>
     {/snippet}
 
@@ -438,21 +440,21 @@
       <button class="series-action series-icon-action" class:active={activeDetail.inLibrary} onclick={activeDetail.inLibrary ? removeFromLibrary : addToLibrary} title={activeDetail.inLibrary ? "In Library" : "Add to Library"} aria-label={activeDetail.inLibrary ? "In Library" : "Add to Library"}>
         <BookmarkSimple size={13} weight={activeDetail.inLibrary ? "fill" : "light"} />
       </button>
-      <button class="series-action series-icon-action" type="button" onclick={() => trackingOpen = true} title="Tracking" aria-label="Tracking">
+      <button class="series-action series-icon-action" type="button" onclick={() => trackingOpen = true} title={$_("home_sections_tracking")} aria-label={$_("home_sections_tracking")}>
         <ChartLineUp size={13} weight="light" />
       </button>
     {/snippet}
 
     {#snippet utilityActions()}
       <div class="fp-wrap" bind:this={folderPickerRef}>
-        <button class="series-utility" class:active={hasFolders} type="button" onclick={() => folderPickerOpen = !folderPickerOpen} title="Folders">
+        <button class="series-utility" class:active={hasFolders} type="button" onclick={() => folderPickerOpen = !folderPickerOpen} title={$_("detail_actions_folders")}>
           <FolderSimplePlus size={13} weight={hasFolders ? "fill" : "light"} />
-          Folder
+          {$_("detail_actions_folder")}
         </button>
         {#if folderPickerOpen}
           <div class="fp-menu">
             {#if allBookCategories.length === 0 && !folderCreating}
-              <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Folders" title="No folders yet" body="Create a folder in Settings to organize this novel." />
+              <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Folders" title={$_("detail_folders_emptyTitle")} body="Create a folder in Settings to organize this novel." />
             {/if}
             {#each allBookCategories as category}
               <button class="fp-item" class:fp-item-active={assignedNovelCategoryIds.includes(category.id)} type="button" onclick={() => toggleNovelFolder(category.id)}>
@@ -465,46 +467,46 @@
             <div class="fp-div"></div>
             {#if folderCreating}
               <div class="fp-create">
-                <input class="fp-input" placeholder="Folder name..." bind:value={folderNewName} onkeydown={(event) => { if (event.key === "Enter") createFolder(); if (event.key === "Escape") closeFolderPicker(); }} />
-                <button class="fp-confirm" type="button" onclick={createFolder} disabled={!folderNewName.trim()}>Add</button>
-                <button class="fp-cancel" type="button" onclick={() => { folderCreating = false; folderNewName = ""; }} aria-label="Cancel folder creation">
+                <input class="fp-input" placeholder={$_("detail_folders_namePlaceholder")} bind:value={folderNewName} onkeydown={(event) => { if (event.key === "Enter") createFolder(); if (event.key === "Escape") closeFolderPicker(); }} />
+                <button class="fp-confirm" type="button" onclick={createFolder} disabled={!folderNewName.trim()}>{$_("detail_folders_add")}</button>
+                <button class="fp-cancel" type="button" onclick={() => { folderCreating = false; folderNewName = ""; }} aria-label={$_("detail_folders_cancelCreation")}>
                   <X size={12} weight="light" />
                 </button>
               </div>
             {:else}
-              <button class="fp-new" type="button" onclick={() => folderCreating = true}>+ New folder</button>
+              <button class="fp-new" type="button" onclick={() => folderCreating = true}>{$_("detail_folders_new")}</button>
             {/if}
           </div>
         {/if}
       </div>
-      <button class="series-utility" class:active={linkedNovelIds.length > 0} type="button" onclick={openLinkPicker} title="Link as same novel">
+      <button class="series-utility" class:active={linkedNovelIds.length > 0} type="button" onclick={openLinkPicker} title={$_("ui_linkAsSameNovel")}>
         <Link size={13} weight={linkedNovelIds.length > 0 ? "fill" : "light"} />
-        Link{linkedNovelIds.length > 0 ? ` (${linkedNovelIds.length})` : ""}
+        {$_("ui_link")}{linkedNovelIds.length > 0 ? ` (${linkedNovelIds.length})` : ""}
       </button>
       <div class="dl-wrap">
-        <button class="series-utility dl-unified-btn" class:active={dlOpen || downloadingNovel} class:dl-downloading={downloadingNovel} type="button" onclick={() => dlOpen = !dlOpen} title="Download options">
+        <button class="series-utility dl-unified-btn" class:active={dlOpen || downloadingNovel} class:dl-downloading={downloadingNovel} type="button" onclick={() => dlOpen = !dlOpen} title={$_("detail_download_options")}>
           <DownloadSimple size={13} weight={downloadingNovel ? "fill" : "light"} />
-          Download
+          {$_("detail_actions_download")}
           <span class="dl-unified-count" class:dl-unified-count-empty={!downloadingNovel}>{downloadingNovel ? 1 : 0}</span>
         </button>
         {#if dlOpen}
           <div class="dl-dropdown">
             <div class="dl-pop-head">
               <div>
-                <span class="dl-kicker">Downloads</span>
+                <span class="dl-kicker">{$_("downloads_eyebrow")}</span>
                 <strong>0 / {novelCounts.total}</strong>
               </div>
               <span class="dl-state-label">{downloadingNovel ? "Working" : "Ready"}</span>
             </div>
             {#if resumeChapter}
               <div class="dl-section">
-                <p class="dl-section-label">From Ch.{resumeChapter.order + 1}</p>
+                <p class="dl-section-label">{$_("ui_fromCh")}{resumeChapter.order + 1}</p>
                 <div class="dl-next-row">
                   {#each [5, 10, 25] as amount}
                     {@const available = chaptersFromResume(amount).length}
                     <button class="dl-next-btn" type="button" disabled={available === 0 || downloadingNovel} onclick={() => downloadNext(amount)}>
-                      <span>Next {amount}</span>
-                      <span class="dl-next-sub">{available} new</span>
+                      <span>{$_("library_pagination_next")} {amount}</span>
+                      <span class="dl-next-sub">{available} {$_("ui_new_c2a6b03f")}</span>
                     </button>
                   {/each}
                 </div>
@@ -513,51 +515,51 @@
             <div class="dl-section dl-section-compact">
               {#if !showRange}
                 <button class="dl-item dl-range-trigger" type="button" onclick={() => showRange = true}>
-                  <span>Custom range</span>
-                  <span class="dl-item-sub">Choose chapters</span>
+                  <span>{$_("ui_customRange")}</span>
+                  <span class="dl-item-sub">{$_("ui_chooseChapters")}</span>
                 </button>
               {:else}
                 <div class="dl-range-row">
-                  <button class="dl-range-back" type="button" onclick={() => showRange = false} aria-label="Close custom range">&lt;</button>
-                  <input class="dl-range-input" placeholder="From" bind:value={rangeFrom} onkeydown={(event) => event.key === "Enter" && downloadRange()} />
+                  <button class="dl-range-back" type="button" onclick={() => showRange = false} aria-label={$_("ui_closeCustomRange")}>&lt;</button>
+                  <input class="dl-range-input" placeholder={$_("ui_from")} bind:value={rangeFrom} onkeydown={(event) => event.key === "Enter" && downloadRange()} />
                   <span class="dl-range-sep">-</span>
-                  <input class="dl-range-input" placeholder="To" bind:value={rangeTo} onkeydown={(event) => event.key === "Enter" && downloadRange()} />
-                  <button class="dl-range-go" type="button" disabled={!rangeFrom.trim() || !rangeTo.trim() || downloadingNovel} onclick={downloadRange}>Go</button>
+                  <input class="dl-range-input" placeholder={$_("ui_to")} bind:value={rangeTo} onkeydown={(event) => event.key === "Enter" && downloadRange()} />
+                  <button class="dl-range-go" type="button" disabled={!rangeFrom.trim() || !rangeTo.trim() || downloadingNovel} onclick={downloadRange}>{$_("ui_go")}</button>
                 </div>
               {/if}
             </div>
             <div class="dl-section dl-actions">
               <button class="dl-item" type="button" onclick={downloadUnread} disabled={novelCounts.unread === 0 || downloadingNovel}>
-                <span>Unread chapters</span>
-                <span class="dl-item-sub">{novelCounts.unread} remaining</span>
+                <span>{$_("library_sort_unreadChapters")}</span>
+                <span class="dl-item-sub">{novelCounts.unread} {$_("ui_remaining_398658a6")}</span>
               </button>
               <button class="dl-item dl-item-primary" type="button" onclick={downloadAll} disabled={novelCounts.total === 0 || downloadingNovel}>
-                <span>Download all</span>
-                <span class="dl-item-sub">{novelCounts.total} not downloaded</span>
+                <span>{$_("ui_downloadAll")}</span>
+                <span class="dl-item-sub">{novelCounts.total} {$_("ui_notDownloaded")}</span>
               </button>
             </div>
             <div class="dl-section dl-danger-zone dl-danger-zone-empty">
               <button class="dl-item dl-item-danger" type="button" disabled>
-                <span>Delete all downloads</span>
-                <span class="dl-item-sub">0 downloaded</span>
+                <span>{$_("ui_deleteAllDownloads")}</span>
+                <span class="dl-item-sub">{$_("ui_0Downloaded")}</span>
               </button>
             </div>
           </div>
         {/if}
       </div>
-      <button class="series-utility" disabled={!activeDetail.inLibrary || Boolean(migrationBlocker)} title={migrationBlocker ?? "Migrate this novel to another source"} aria-label="Migrate this novel to another source" onclick={() => migrateOpen = true}>
+      <button class="series-utility" disabled={!activeDetail.inLibrary || Boolean(migrationBlocker)} title={migrationBlocker ?? "Migrate this novel to another source"} aria-label={$_("ui_migrateThisNovelToAnotherSource")} onclick={() => migrateOpen = true}>
         <ArrowsLeftRight size={15} weight="light" />
-        Migrate
+        {$_("detail_actions_migrate")}
       </button>
     {/snippet}
 
     {#snippet detailsExtra()}
       <div class="v3-details-stack">
-        {#if sourceName}<div class="detail-row"><span class="detail-key">Source</span><span class="detail-val">{sourceName}</span></div>{/if}
-        {#if displayedNovel?.status}<div class="detail-row"><span class="detail-key">Status</span><span class="detail-val">{displayedNovel.status}</span></div>{/if}
-        {#if displayedNovel?.author}<div class="detail-row"><span class="detail-key">Author</span><span class="detail-val">{displayedNovel.author}</span></div>{/if}
-        {#if activeDetail.novel.source.lang}<div class="detail-row"><span class="detail-key">Language</span><span class="detail-val">{activeDetail.novel.source.lang.toUpperCase()}</span></div>{/if}
-        {#if activeDetail.inLibrary && lastReadChapterId}<div class="detail-row"><span class="detail-key">Resume</span><span class="detail-val">Last saved chapter available</span></div>{/if}
+        {#if sourceName}<div class="detail-row"><span class="detail-key">{$_("detail_fields_source")}</span><span class="detail-val">{sourceName}</span></div>{/if}
+        {#if displayedNovel?.status}<div class="detail-row"><span class="detail-key">{$_("downloads_summary_status")}</span><span class="detail-val">{displayedNovel.status}</span></div>{/if}
+        {#if displayedNovel?.author}<div class="detail-row"><span class="detail-key">{$_("library_sort_author")}</span><span class="detail-val">{displayedNovel.author}</span></div>{/if}
+        {#if activeDetail.novel.source.lang}<div class="detail-row"><span class="detail-key">{$_("sources_table_language")}</span><span class="detail-val">{activeDetail.novel.source.lang.toUpperCase()}</span></div>{/if}
+        {#if activeDetail.inLibrary && lastReadChapterId}<div class="detail-row"><span class="detail-key">{$_("home_continue_resume")}</span><span class="detail-val">{$_("ui_lastSavedChapterAvailable")}</span></div>{/if}
       </div>
     {/snippet}
 
@@ -566,29 +568,29 @@
         <div class="sort-wrap">
           <button class="series-toolbar-btn" type="button" onclick={() => sortMenuOpen = !sortMenuOpen}>
             {#if chapterSortDir === "desc"}<SortDescending size={14} weight="light" />{:else}<SortAscending size={14} weight="light" />{/if}
-            Sort
+            {$_("library_sort")}
             <CaretDown size={10} weight="light" />
           </button>
           {#if sortMenuOpen}
             <div class="sort-menu" role="presentation" onmouseleave={() => sortMenuOpen = false}>
-              <p class="sort-section-label">Chapter order</p>
-              <button class="sort-option" class:active={chapterSortDir === "desc"} onclick={() => setSortDir("desc")}>Descending</button>
-              <button class="sort-option" class:active={chapterSortDir === "asc"} onclick={() => setSortDir("asc")}>Ascending</button>
+              <p class="sort-section-label">{$_("bookDetail_chapterOrder")}</p>
+              <button class="sort-option" class:active={chapterSortDir === "desc"} onclick={() => setSortDir("desc")}>{$_("library_sort_descending")}</button>
+              <button class="sort-option" class:active={chapterSortDir === "asc"} onclick={() => setSortDir("asc")}>{$_("library_sort_ascending")}</button>
             </div>
           {/if}
         </div>
       </div>
       <div class="list-header-right">
-        <div class="view-segmented" aria-label="Chapter view">
-          <button class="series-icon" class:active={viewMode === "list"} onclick={() => viewMode = "list"} title="List view"><List size={14} weight="light" /></button>
-          <button class="series-icon" class:active={viewMode === "grid"} onclick={() => viewMode = "grid"} title="Grid view"><SquaresFour size={14} weight="light" /></button>
+        <div class="view-segmented" aria-label={$_("detail_chapterView")}>
+          <button class="series-icon" class:active={viewMode === "list"} onclick={() => viewMode = "list"} title={$_("detail_view_list")}><List size={14} weight="light" /></button>
+          <button class="series-icon" class:active={viewMode === "grid"} onclick={() => viewMode = "grid"} title={$_("detail_view_grid")}><SquaresFour size={14} weight="light" /></button>
         </div>
       </div>
     {/snippet}
 
     {#snippet chapterList()}
       {#if !displayedNovel || displayedNovel.chapters.length === 0}
-        <NocturneState layout="compact" tone="info" icon="books" eyebrow="Chapters" title="No chapter metadata" body="This source did not expose chapter metadata for this novel." />
+        <NocturneState layout="compact" tone="info" icon="books" eyebrow="Chapters" title={$_("ui_noChapterMetadata")} body="This source did not expose chapter metadata for this novel." />
       {:else}
         <div class={viewMode === "grid" ? "ch-grid v3-ch-grid" : "ch-list v3-ch-list"}>
           {#if viewMode === "grid"}
@@ -599,16 +601,16 @@
                 <span class="grid-cell-title">{chapterPrimaryLabel(chapter)}</span>
                 {#if chapterSecondaryLabel(chapter)}<span class="grid-cell-sub">{chapterSecondaryLabel(chapter)}</span>{/if}
                 <span class="chapter-progress"><span class="chapter-progress__fill" style={`width: ${chapter.unread ? 0 : 100}%`}></span></span>
-                {#if isCurrent}<span class="grid-cell-dl novel-current-dot" title="Current"></span>{/if}
-                {#if isBookmarked}<span class="grid-cell-dot" title="Bookmarked"></span>{/if}
+                {#if isCurrent}<span class="grid-cell-dl novel-current-dot" title={$_("bookDetail_filter_current")}></span>{/if}
+                {#if isBookmarked}<span class="grid-cell-dot" title={$_("bookDetail_filter_bookmarked")}></span>{/if}
               </button>
             {/each}
           {:else}
             <div class="chapter-table-header">
-              <span>Chapter</span>
-              <span>Source</span>
-              <span>Date</span>
-              <span>Status</span>
+              <span>{$_("detail_table_chapter")}</span>
+              <span>{$_("detail_fields_source")}</span>
+              <span>{$_("detail_table_date")}</span>
+              <span>{$_("downloads_summary_status")}</span>
             </div>
             {#each pageChapters as chapter (chapter.id)}
               {@const isCurrent = chapter.id === lastReadChapterId}
@@ -618,9 +620,9 @@
                   <span class="ch-name">{chapterPrimaryLabel(chapter)}</span>
                   <div class="ch-meta">
                     {#if chapterSecondaryLabel(chapter)}<span class="ch-meta-item">{chapterSecondaryLabel(chapter)}</span>{/if}
-                    {#if isCurrent}<span class="ch-meta-item current">Current</span>{/if}
-                    {#if isBookmarked}<span class="ch-meta-item bookmarked">Bookmarked</span>{/if}
-                    {#if chapter.unread}<span class="ch-meta-item unread">Unread</span>{/if}
+                    {#if isCurrent}<span class="ch-meta-item current">{$_("bookDetail_filter_current")}</span>{/if}
+                    {#if isBookmarked}<span class="ch-meta-item bookmarked">{$_("bookDetail_filter_bookmarked")}</span>{/if}
+                    {#if chapter.unread}<span class="ch-meta-item unread">{$_("detail_stats_unread")}</span>{/if}
                   </div>
                   <div class="chapter-progress"><div class="chapter-progress__fill" style={`width: ${chapter.unread ? 0 : 100}%`}></div></div>
                 </div>
@@ -630,13 +632,13 @@
                   <span class="ch-status-read"></span>
                   <span class="ch-status-main">
                     {#if isCurrent}
-                      <BookOpen size={14} weight="fill" class="read-icon" title="Current" />
+                      <BookOpen size={14} weight="fill" class="read-icon" title={$_("bookDetail_filter_current")} />
                     {:else if isBookmarked}
-                      <BookmarkSimple size={14} weight="fill" class="read-icon" title="Bookmarked" />
+                      <BookmarkSimple size={14} weight="fill" class="read-icon" title={$_("bookDetail_filter_bookmarked")} />
                     {:else if !chapter.unread}
-                      <CheckCircle size={14} weight="fill" class="read-icon" title="Read" />
+                      <CheckCircle size={14} weight="fill" class="read-icon" title={$_("bookDetail_filter_read")} />
                     {:else if chapter.unread}
-                      <Circle size={14} weight="regular" class="unread-icon" title="Unread" />
+                      <Circle size={14} weight="regular" class="unread-icon" title={$_("detail_stats_unread")} />
                     {/if}
                   </span>
                   <span class="ch-status-action"></span>
@@ -651,9 +653,9 @@
     {#snippet chapterFooter()}
       {#if displayedNovel && displayedNovel.chapters.length > 0 && viewMode === "list" && totalPages >= 1}
         <div class="pagination-bottom v3-pagination">
-          <button class="series-page-btn" onclick={() => chapterPage = Math.max(1, chapterPage - 1)} disabled={chapterPage === 1}>Prev</button>
+          <button class="series-page-btn" onclick={() => chapterPage = Math.max(1, chapterPage - 1)} disabled={chapterPage === 1}>{$_("library_pagination_prev")}</button>
           <span class="page-num">{chapterPage} / {totalPages}</span>
-          <button class="series-page-btn" onclick={() => chapterPage = Math.min(totalPages, chapterPage + 1)} disabled={chapterPage === totalPages}>Next</button>
+          <button class="series-page-btn" onclick={() => chapterPage = Math.min(totalPages, chapterPage + 1)} disabled={chapterPage === totalPages}>{$_("library_pagination_next")}</button>
         </div>
       {/if}
     {/snippet}
@@ -671,22 +673,22 @@
 
 {#if linkPickerOpen && activeDetail}
   <div class="link-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) closeLinkPicker(); }}>
-    <div class="link-modal" role="dialog" aria-modal="true" aria-label="Link novels">
+    <div class="link-modal" role="dialog" aria-modal="true" aria-label={$_("ui_linkNovels")}>
       <div class="link-header">
         <div>
-          <span class="link-title">Link as same novel</span>
+          <span class="link-title">{$_("ui_linkAsSameNovel")}</span>
           <p class="link-subtitle">{activeDetail.novel.title}</p>
         </div>
-        <button class="link-close" type="button" onclick={closeLinkPicker} aria-label="Close link picker">
+        <button class="link-close" type="button" onclick={closeLinkPicker} aria-label={$_("ui_closeLinkPicker")}>
           <X size={14} weight="light" />
         </button>
       </div>
       <div class="link-search-wrap">
-        <input class="link-search" placeholder="Search your novel library..." bind:value={linkSearch} />
+        <input class="link-search" placeholder={$_("ui_searchYourNovelLibrary")} bind:value={linkSearch} />
       </div>
       <div class="link-list">
         {#if linkPickerResults.length === 0}
-          <NocturneState layout="compact" tone="info" icon="search" eyebrow="Links" title="No novels to link" body="Add another novel to your library before linking duplicates." />
+          <NocturneState layout="compact" tone="info" icon="search" eyebrow="Links" title={$_("ui_noNovelsToLink")} body="Add another novel to your library before linking duplicates." />
         {:else}
           {#each linkPickerResults as novel (novel.id)}
             {@const isLinked = linkedNovelIds.includes(novel.id)}

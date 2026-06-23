@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { closeActivityPanel, openActivityPanel, openBookReader, openHomeDashboard, openHomeHistory, openMangaDetail, openReader, openSearchSources, setNavPage, setSettingsOpen, store } from "./state.svelte";
+import { closeActivityPanel, openActivityPanel, openBookReader, openHomeDashboard, openHomeHistory, openMangaDetail, openReader, openSearchSources, setNavPage, setSettingsOpen, store, updateSettings } from "./state.svelte";
 
 describe("navigation subscriptions", () => {
   afterEach(() => {
@@ -273,6 +273,60 @@ describe("navigation subscriptions", () => {
       (globalThis as { document?: Document }).document = previousDocument;
     } else {
       delete (globalThis as { document?: Document }).document;
+    }
+  });
+
+  test("profile scoped settings follow the selected local profile", () => {
+    const previousSettings = store.settings;
+    const previousRuntimeProfileId = store.runtimeResolvedLocalProfileId;
+
+    try {
+      store.runtimeResolvedLocalProfileId = "main";
+      store.settings = {
+        ...previousSettings,
+        defaultLocalProfileId: "main",
+        customLocalProfiles: [
+          { id: "profile-a", label: "Profile A", serverUrl: "http://127.0.0.1:4777", port: 4777, createdAt: 1 },
+        ],
+        profileScopedSettings: {},
+        serverUrl: "http://127.0.0.1:4567",
+        serverAuthEnabled: true,
+      };
+
+      updateSettings({
+        appLanguage: "pt-BR",
+        libraryViewMode: "grid",
+        libraryShowProgress: true,
+      });
+      updateSettings({
+        defaultLocalProfileId: "profile-a",
+        serverUrl: "http://127.0.0.1:4777",
+      });
+      updateSettings({
+        appLanguage: "ja",
+        libraryViewMode: "compact",
+        libraryShowProgress: false,
+      });
+
+      expect(store.settings.profileScopedSettings.main?.appLanguage).toBe("pt-BR");
+      expect(store.settings.profileScopedSettings.main?.libraryViewMode).toBe("grid");
+      expect(store.settings.profileScopedSettings["profile-a"]?.appLanguage).toBe("ja");
+      expect(store.settings.profileScopedSettings["profile-a"]?.libraryViewMode).toBe("compact");
+      expect(store.settings.serverAuthEnabled).toBe(true);
+
+      updateSettings({
+        defaultLocalProfileId: "main",
+        serverUrl: "http://127.0.0.1:4567",
+      });
+
+      expect(store.settings.defaultLocalProfileId).toBe("main");
+      expect(store.settings.appLanguage).toBe("pt-BR");
+      expect(store.settings.libraryViewMode).toBe("grid");
+      expect(store.settings.libraryShowProgress).toBe(true);
+      expect(store.settings.serverAuthEnabled).toBe(true);
+    } finally {
+      store.settings = previousSettings;
+      store.runtimeResolvedLocalProfileId = previousRuntimeProfileId;
     }
   });
 });

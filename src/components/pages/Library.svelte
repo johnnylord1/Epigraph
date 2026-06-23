@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { translate } from "../../lib/i18n/runtime";
   import { onMount, untrack } from "svelte";
   import { gql } from "../../lib/client";
   import { cache, CACHE_GROUPS, CACHE_KEYS, DEFAULT_TTL_MS } from "../../lib/cache";
@@ -164,6 +165,7 @@
   let libraryLoadRetryCount = 0;
   let categoryLoadRetryTimer: ReturnType<typeof setTimeout> | null = null;
   let categoryLoadRetryCount = 0;
+  const categoryMemberRefreshAttempts = new Set<number>();
   let lastLoadedScopeKey: string | null = null;
   const libraryLoadRetryLimit = 30;
   const categoryLoadRetryLimit = 12;
@@ -189,6 +191,11 @@
       ? store.libraryBootstrapStatus
       : "idle",
   );
+
+  $effect(() => {
+    libraryBootstrapScopeKey;
+    categoryMemberRefreshAttempts.clear();
+  });
 
   $effect(() => {
     settledLibrarySection = store.librarySection;
@@ -521,13 +528,21 @@
     }, Math.min(5000, 500 * categoryLoadRetryCount));
   }
 
-  function loadLibrary() {
-    return cache.get(
+  async function loadLibrary() {
+    const nodes = await cache.get(
       CACHE_KEYS.LIBRARY,
       () => gql<{ mangas: { nodes: Manga[] } }>(GET_LIBRARY, undefined, undefined, 8000).then((data) => data.mangas.nodes),
       DEFAULT_TTL_MS,
       CACHE_GROUPS.LIBRARY,
     );
+    if (nodes.length > 0) return nodes;
+
+    cache.clear(CACHE_KEYS.LIBRARY);
+    const live = await gql<{ mangas: { nodes: Manga[] } }>(GET_LIBRARY, undefined, undefined, 12000)
+      .then((data) => data.mangas.nodes)
+      .catch(() => nodes);
+    if (live.length > 0) cache.set(CACHE_KEYS.LIBRARY, live, CACHE_GROUPS.LIBRARY);
+    return live;
   }
 
   function loadLibraryChapterCounts() {
@@ -685,7 +700,7 @@
         }, 700 * libraryLoadRetryCount);
       }
     } finally {
-      if (shouldBlockForLoad) loading = false;
+      loading = false;
       loadDataInFlight = false;
     }
   }
@@ -846,10 +861,14 @@
     const id = Number(filter);
     if (!Number.isFinite(id) || id <= 0) return;
     if (!store.categories.some((category) => category.id === id)) return;
-    if (categoryHasMangaMembers(id)) return;
+    const category = store.categories.find((entry) => entry.id === id);
+    if ((category?.mangas?.nodes.length ?? 0) > 0) return;
+    if (categoryMemberRefreshAttempts.has(id)) return;
+    categoryMemberRefreshAttempts.add(id);
 
     untrack(() => {
-      void hydrateCategoryMembers(false).catch((memberError) => {
+      void hydrateCategoryMembers(true).catch((memberError) => {
+        categoryMemberRefreshAttempts.delete(id);
         console.warn("Could not hydrate category members:", memberError);
       });
     });
@@ -997,6 +1016,7 @@
         }
       : {
           ALL: "library.status.all",
+          UNOPENED: "library.status.unopened",
           ONGOING: "library.status.ongoing",
           COMPLETED: "library.status.completed",
           CANCELLED: "library.status.cancelled",
@@ -1111,7 +1131,10 @@
     genreChipsFromCounts(collectGenreCounts(allManga.flatMap((manga) => manga.genre ?? []))),
   );
   const booksGenreChips = $derived(
-    genreChipsFromCounts(collectGenreCounts(novelsLibraryState.entries.flatMap((entry) => entry.tags ?? []))),
+    genreChipsFromCounts(collectGenreCounts([
+      ...(booksSectionState?.filteredBooks ?? []).flatMap((book) => book.genres ?? []),
+      ...visibleNovelEntries.flatMap((entry) => entry.tags ?? []),
+    ])),
   );
   const activeGenreChips = $derived(visualLibrarySection === "books" ? booksGenreChips : comicsGenreChips);
   const hasScrollableGenreChips = $derived(activeGenreChips.length > 4);
@@ -1139,7 +1162,11 @@
     if (activeBooksStandardFilter === "finished") return visibleNovelEntries.filter((entry) => isFinishedNovel(entry.id));
     return visibleNovelEntries;
   });
-  const genreFilteredBooks = $derived(activeLibraryGenre ? [] : standardFilteredBooks);
+  const genreFilteredBooks = $derived(
+    activeLibraryGenre
+      ? standardFilteredBooks.filter((book) => genreListMatches(book.genres, activeLibraryGenre))
+      : standardFilteredBooks,
+  );
   const genreFilteredNovelEntries = $derived(
     activeLibraryGenre
       ? standardFilteredNovelEntries.filter((entry) => genreListMatches(entry.tags, activeLibraryGenre))
@@ -1529,8 +1556,8 @@
       showSharedLibraryUpdateProgress("Library update already running.", 1800);
       addToast({
         kind: "info",
-        title: "Library update already running",
-        body: "Aethon is already checking your library.",
+        title: translate("ui_libraryUpdateAlreadyRunning"),
+        body: translate("ui_aethonIsAlreadyCheckingYourLibrary"),
         duration: 2400,
       });
       return;
@@ -1546,7 +1573,7 @@
   async function refreshComicsLibrary() {
     const beforeUpdate = [...store.libraryMangaSnapshot];
     const updateRun = await runSharedLibraryUpdate({
-      reason: "manual-library-update",
+      reason: translate("ui_manualLibraryUpdate"),
       categories: manualUpdateCategoryIds(),
       onLiveRefresh: refreshLibrarySnapshotLive,
     });
@@ -1561,8 +1588,8 @@
       showSharedLibraryUpdateProgress("Comics library update stopped.", 1800);
       addToast({
         kind: "info",
-        title: "Comics update stopped",
-        body: "Aethon kept the titles that Suwayomi already refreshed.",
+        title: translate("ui_comicsUpdateStopped"),
+        body: translate("ui_aethonKeptTheTitlesThatSuwayomiAlreadyRefreshed"),
       });
       return updateRun;
     }
@@ -1599,22 +1626,22 @@
     );
     addSystemNotification({
       kind: issues.length > 0 ? "info" : "success",
-      title: issues.length > 0 ? "Comics library refreshed with issues" : entries.length > 0 ? "New chapters found" : "Comics library sync completed",
+      title: issues.length > 0 ? translate("ui_comicsLibraryRefreshedWithIssues") : entries.length > 0 ? translate("ui_newChaptersFound") : translate("ui_comicsLibrarySyncCompleted"),
       body: issues.length > 0
         ? `${issues.length} title${issues.length === 1 ? "" : "s"} could not update across ${new Set(issues.map((issue) => issue.sourceId)).size} source${new Set(issues.map((issue) => issue.sourceId)).size === 1 ? "" : "s"}.`
         : entries.length > 0
           ? `${entries.reduce((sum, entry) => sum + entry.chapterDelta, 0)} new chapters added across ${entries.length} titles.`
-          : "Aethon refreshed your comics library.",
+          : translate("ui_aethonRefreshedYourComicsLibrary"),
       createdAt: updatedAt,
     });
     addToast({
       kind: issues.length > 0 ? "info" : "success",
-      title: issues.length > 0 ? "Comics updated with issues" : entries.length > 0 ? "New chapters found" : "Comics library updated",
+      title: issues.length > 0 ? translate("ui_comicsUpdatedWithIssues") : entries.length > 0 ? translate("ui_newChaptersFound") : translate("ui_comicsLibraryUpdated"),
       body: issues.length > 0
         ? `${issues.length} title${issues.length === 1 ? "" : "s"} could not update. See Recent Activity.`
         : entries.length > 0
           ? `${entries.reduce((sum, entry) => sum + entry.chapterDelta, 0)} new chapters added across ${entries.length} titles.`
-          : "Aethon refreshed your comics library.",
+          : translate("ui_aethonRefreshedYourComicsLibrary"),
     });
     return updateRun;
   }
@@ -1693,7 +1720,7 @@
     );
     addSystemNotification({
       kind: result.failed > 0 ? "info" : "success",
-      title: novelNotifications.length > 0 ? "New novel chapters found" : title,
+      title: novelNotifications.length > 0 ? translate("ui_newNovelChaptersFound") : title,
       body: novelIssues.length > 0
         ? `${body} ${novelIssues.length} issue${novelIssues.length === 1 ? "" : "s"} were saved to Recent Activity.`
         : body,
@@ -1713,8 +1740,8 @@
       showSharedLibraryUpdateProgress("Library update already running.", 1800);
       addToast({
         kind: "info",
-        title: "Library update already running",
-        body: "Aethon is already checking your library.",
+        title: translate("ui_libraryUpdateAlreadyRunning"),
+        body: translate("ui_aethonIsAlreadyCheckingYourLibrary"),
         duration: 2400,
       });
       return;
@@ -1738,13 +1765,13 @@
       showSharedLibraryUpdateProgress("Library update failed.", 1800);
       addToast({
         kind: "error",
-        title: "Could not update library",
-        body: refreshError instanceof Error ? refreshError.message : "Aethon could not reach Suwayomi.",
+        title: translate("ui_couldNotUpdateLibrary"),
+        body: refreshError instanceof Error ? refreshError.message : translate("ui_aethonCouldNotReachSuwayomi"),
       });
       addSystemNotification({
         kind: "error",
-        title: "Could not update library",
-        body: refreshError instanceof Error ? refreshError.message : "Aethon could not reach Suwayomi.",
+        title: translate("ui_couldNotUpdateLibrary"),
+        body: refreshError instanceof Error ? refreshError.message : translate("ui_aethonCouldNotReachSuwayomi"),
       });
     } finally {
       manualRefreshInFlight = false;
@@ -1815,7 +1842,7 @@
     if (failedIds.length) {
       addToast({
         kind: "error",
-        title: "Could not remove every title",
+        title: translate("ui_couldNotRemoveEveryTitle"),
         body: `${failedIds.length} of ${idSet.size} selected titles could not be removed.`,
       });
     }
@@ -1893,7 +1920,7 @@
     if (failed) {
       addToast({
         kind: "error",
-        title: "Could not update every folder item",
+        title: translate("ui_couldNotUpdateEveryFolderItem"),
         body: `${failed} of ${ids.length} selected titles could not be updated.`,
       });
     }
@@ -2116,7 +2143,7 @@
     >
       <BooksLibraryBody
         vm={localizedBooksSectionVm}
-        active={visualLibrarySection === "books"}
+        active={store.navPage === "library" && visualLibrarySection === "books"}
         books={genreFilteredBooks}
         totalBooks={genreFilteredBooksTotal}
         viewKey={booksBodyViewKey}
@@ -2137,7 +2164,7 @@
     >
       <ComicsLibraryBody
         vm={localizedComicsSectionVm}
-        active={visualLibrarySection === "comics"}
+        active={store.navPage === "library" && visualLibrarySection === "comics"}
         mangas={genreFilteredComicsManga}
         categories={comicsSectionState?.visibleCategories ?? []}
         categoryMangaMap={comicsSectionState?.categoryMangaMap ?? new Map()}

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { translate } from "../../lib/i18n/runtime";
+  import { _ } from "../../lib/i18n/runtime";
   import { invoke } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-shell";
   import { ClockCounterClockwise, Trash, Play } from "phosphor-svelte";
@@ -135,10 +137,13 @@
   }
 
   const sessions = $derived(buildSessions(store.history));
+  const updateNotifications = $derived((store.libraryUpdateNotifications ?? []).filter((entry) => store.matchesRuntimeProfile(entry)));
+  const updateIssues = $derived((store.libraryUpdateIssues ?? []).filter((entry) => store.matchesRuntimeProfile(entry)));
+  const systemNotifications = $derived((store.systemNotifications ?? []).filter((entry) => store.matchesRuntimeProfile(entry)));
 
   const updateEntries = $derived.by(() => {
     const mangaById = new Map(store.libraryMangaSnapshot.map((manga) => [manga.id, manga]));
-    return store.libraryUpdateNotifications
+    return updateNotifications
       .map((notification): UpdateEntry => {
         const manga = typeof notification.mangaId === "number" ? mangaById.get(notification.mangaId) ?? null : null;
         const count = Math.max(1, Number(notification.chapterDelta ?? 1));
@@ -150,7 +155,7 @@
           notification,
           manga,
           isNovel: notification.kind === "novels",
-          title: notification.mangaTitle || manga?.title || "Unknown title",
+          title: notification.mangaTitle || manga?.title || translate("downloads_unknownTitle"),
           subtitle: `${chapterText} added in the latest refresh`,
           count,
           source: notification.sourceName || manga?.source?.displayName || manga?.source?.name || "Library",
@@ -163,7 +168,7 @@
 
   const issueGroups = $derived.by(() => {
     const groups = new Map<string, IssueGroup>();
-    for (const issue of store.libraryUpdateIssues) {
+    for (const issue of updateIssues) {
       const key = `${issue.runId}:${issue.contentKind}:${issue.sourceId}:${issue.extensionName}`;
       const current = groups.get(key) ?? {
         id: key,
@@ -190,7 +195,7 @@
   });
 
   const systemEntries = $derived.by(() => {
-    return [...store.systemNotifications]
+    return [...systemNotifications]
       .sort((left, right) => right.createdAt - left.createdAt)
       .slice(0, 80);
   });
@@ -256,15 +261,15 @@
       await startLocalFlareSolverrAndEnable();
       addToast({
         kind: "success",
-        title: "FlareSolverr enabled",
-        body: "Retry the affected source when you are ready.",
+        title: translate("ui_flaresolverrEnabled"),
+        body: translate("ui_retryTheAffectedSourceWhenYouAreReady"),
       });
     } catch (error) {
       addToast({
         kind: "error",
-        title: "FlareSolverr unavailable",
-        body: error instanceof Error ? error.message : "Open Settings to configure a local, Docker, or custom instance.",
-        action: { label: "Open Settings", run: () => setSettingsOpen(true) },
+        title: translate("ui_flaresolverrUnavailable"),
+        body: error instanceof Error ? error.message : translate("ui_openSettingsToConfigureALocalDockerOr"),
+        action: { label: translate("ui_openSettings"), run: () => setSettingsOpen(true) },
       });
     }
   }
@@ -285,8 +290,8 @@
     } catch (error) {
       addToast({
         kind: "error",
-        title: "Could not open challenge",
-        body: error instanceof Error ? error.message : "Aethon could not open the source challenge page.",
+        title: translate("ui_couldNotOpenChallenge"),
+        body: error instanceof Error ? error.message : translate("ui_aethonCouldNotOpenTheSourceChallengePage"),
       });
     }
   }
@@ -299,8 +304,8 @@
     if (store.libraryUpdateInFlight) {
       addToast({
         kind: "info",
-        title: "Library update already running",
-        body: "Wait for the active update before retrying this source.",
+        title: translate("ui_libraryUpdateAlreadyRunning"),
+        body: translate("ui_waitForTheActiveUpdateBeforeRetryingThis"),
         duration: 2400,
       });
       return;
@@ -337,7 +342,7 @@
         })), updatedAt);
         addToast({
           kind: result.failed > 0 ? "info" : "success",
-          title: result.failed > 0 ? "Source retry finished with issues" : "Source retry finished",
+          title: result.failed > 0 ? translate("ui_sourceRetryFinishedWithIssues") : translate("ui_sourceRetryFinished"),
           body: `${result.updated}/${result.checked} novels refreshed${result.newChapters > 0 ? `, ${result.newChapters} new chapters` : ""}.`,
         });
         return;
@@ -347,14 +352,14 @@
       recordLibraryUpdateIssues(result.issues, result.updatedAt);
       addToast({
         kind: result.issues.length > 0 ? "info" : "success",
-        title: result.issues.length > 0 ? "Source retry finished with issues" : "Source retry finished",
+        title: result.issues.length > 0 ? translate("ui_sourceRetryFinishedWithIssues") : translate("ui_sourceRetryFinished"),
         body: `${result.changedMangaIds.length} comics checked for ${issue.sourceName}.`,
       });
     } catch (error) {
       addToast({
         kind: "error",
-        title: "Could not retry source",
-        body: error instanceof Error ? error.message : "Aethon could not retry this source.",
+        title: translate("ui_couldNotRetrySource"),
+        body: error instanceof Error ? error.message : translate("ui_aethonCouldNotRetryThisSource"),
       });
     } finally {
       setLibraryUpdateInFlight(false);
@@ -381,24 +386,24 @@
 <div class="activity-root">
   <header class="activity-head">
     <div class="title-stack">
-      <span class="eyebrow">Notifications</span>
-      <h2>Recent activity</h2>
-      <p>Your latest reading, update, and system events.</p>
+      <span class="eyebrow">{$_("ui_notifications")}</span>
+      <h2>{$_("ui_recentActivity")}</h2>
+      <p>{$_("ui_yourLatestReadingUpdateAndSystemEvents")}</p>
     </div>
 
     <div class="head-actions">
-      <div class="filters" role="tablist" aria-label="Notification filters">
+      <div class="filters" role="tablist" aria-label={$_("ui_notificationFilters")}>
         <button class="filter" class:active={activeTab === "all"} type="button" role="tab" aria-selected={activeTab === "all"} onclick={() => activeTab = "all"}>
-          All <span class="filter-count">{totalVisibleCount}</span>
+          {$_("downloads_filter_all")} <span class="filter-count">{totalVisibleCount}</span>
         </button>
         <button class="filter" class:active={activeTab === "updates"} type="button" role="tab" aria-selected={activeTab === "updates"} onclick={() => activeTab = "updates"}>
-          Updates <span class="filter-count">{updateEntries.length + issueGroups.length}</span>
+          {$_("sources_filters_updates")} <span class="filter-count">{updateEntries.length + issueGroups.length}</span>
         </button>
         <button class="filter" class:active={activeTab === "history"} type="button" role="tab" aria-selected={activeTab === "history"} onclick={() => activeTab = "history"}>
-          History <span class="filter-count">{sessions.length}</span>
+          {$_("ui_history")} <span class="filter-count">{sessions.length}</span>
         </button>
         <button class="filter" class:active={activeTab === "system"} type="button" role="tab" aria-selected={activeTab === "system"} onclick={() => activeTab = "system"}>
-          System <span class="filter-count">{systemEntries.length}</span>
+          {$_("ui_system")} <span class="filter-count">{systemEntries.length}</span>
         </button>
       </div>
 
@@ -416,12 +421,12 @@
     {#if activeTab === "all" || activeTab === "updates"}
       <section class="activity-section">
         <div class="section-title">
-          <span>Updates</span>
+          <span>{$_("sources_filters_updates")}</span>
           <small>{updateEntries.length + issueGroups.length}</small>
         </div>
 
         {#if updateEntries.length === 0 && issueGroups.length === 0}
-          <p class="compact-empty">No new chapter updates.</p>
+          <p class="compact-empty">{$_("ui_noNewChapterUpdates")}</p>
         {:else}
           {#if issueGroups.length > 0}
             <div class="issue-list">
@@ -431,20 +436,20 @@
                   <div class="item-copy">
                     <span class="item-title">{group.extensionName}</span>
                     <span class="item-subtitle">
-                      {group.count} title{group.count === 1 ? "" : "s"} could not update from {group.sourceName}.
+                      {group.count} {$_("ui_title")}{group.count === 1 ? "" : "s"} {$_("ui_couldNotUpdateFrom")} {group.sourceName}.
                     </span>
                     <span class="issue-titles">
                       {group.items.map((issue) => `${issue.title}: ${issue.message}`).join(" | ")}
                     </span>
                     {#if isSourceChallengeGroup(group)}
                       <div class="issue-actions">
-                        <button class="issue-action" type="button" onclick={startFlareSolverr}>Start FlareSolverr</button>
+                        <button class="issue-action" type="button" onclick={startFlareSolverr}>{$_("ui_startFlaresolverr")}</button>
                         {#if primaryIssue(group)?.actionUrl}
                           <button class="issue-action" type="button" onclick={(event) => openIssueWebView(group, event)}>
-                            {primaryIssue(group)?.contentKind === "manga" ? "Open WebView" : "Open source"}
+                            {primaryIssue(group)?.contentKind === "manga" ? $_("ui_openWebview") : $_("ui_openSource")}
                           </button>
                         {/if}
-                        <button class="issue-action" type="button" onclick={(event) => retryIssueSource(group, event)}>Retry source</button>
+                        <button class="issue-action" type="button" onclick={(event) => retryIssueSource(group, event)}>{$_("ui_retrySource")}</button>
                       </div>
                     {/if}
                   </div>
@@ -465,7 +470,7 @@
                   <span class="item-subtitle">{entry.subtitle} - {entry.source}</span>
                 </div>
                 <span class="item-time">{timeAgo(entry.readAt)}</span>
-                <span class="action-pill">Open</span>
+                <span class="action-pill">{$_("ui_open")}</span>
               </button>
             {/each}
           </div>
@@ -476,12 +481,12 @@
     {#if activeTab === "all"}
       <section class="activity-section">
         <div class="section-title">
-          <span>History</span>
+          <span>{$_("ui_history")}</span>
           <small>{sessions.length}</small>
         </div>
 
         {#if sessions.length === 0}
-          <p class="compact-empty">No reading history yet.</p>
+          <p class="compact-empty">{$_("ui_noReadingHistoryYet")}</p>
         {:else}
           <div class="event-list">
             {#each sessions.slice(0, 8) as session (session.latestChapterId)}
@@ -497,7 +502,7 @@
                   <span class="item-subtitle">{session.latestChapterName}</span>
                 </div>
                 <span class="item-time">{timeAgo(session.readAt)}</span>
-                <span class="action-pill"><Play size={10} weight="fill" /> Resume</span>
+                <span class="action-pill"><Play size={10} weight="fill" /> {$_("home_continue_resume")}</span>
               </button>
             {/each}
           </div>
@@ -507,13 +512,13 @@
       {#if sessions.length === 0}
         <section class="activity-section">
           <div class="section-title">
-            <span>History</span>
+            <span>{$_("ui_history")}</span>
             <small>0</small>
           </div>
           <div class="full-empty">
             <ClockCounterClockwise size={28} weight="light" />
-            <p>No reading history yet.</p>
-            <span>Chapters you read will appear here.</span>
+            <p>{$_("ui_noReadingHistoryYet")}</p>
+            <span>{$_("ui_chaptersYouReadWillAppearHere")}</span>
           </div>
         </section>
       {:else}
@@ -547,7 +552,7 @@
                     </span>
                   </div>
                   <span class="item-time">{timeAgo(session.readAt)}</span>
-                  <span class="action-pill"><Play size={10} weight="fill" /> Resume</span>
+                  <span class="action-pill"><Play size={10} weight="fill" /> {$_("home_continue_resume")}</span>
                 </button>
               {/each}
             </div>
@@ -559,12 +564,12 @@
     {#if activeTab === "all" || activeTab === "system"}
       <section class="activity-section">
         <div class="section-title">
-          <span>System</span>
+          <span>{$_("ui_system")}</span>
           <small>{systemEntries.length}</small>
         </div>
 
         {#if systemEntries.length === 0}
-          <p class="compact-empty">No system events.</p>
+          <p class="compact-empty">{$_("ui_noSystemEvents")}</p>
         {:else}
           <div class="timeline">
             {#each systemEntries as entry (entry.id)}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { translate } from "../../lib/i18n/runtime";
   import { onDestroy, onMount, tick, untrack } from "svelte";
   import { gql } from "../../lib/client";
   import { _ } from "../../lib/i18n/runtime";
@@ -7,6 +8,7 @@
   import { GET_SOURCES, FETCH_SOURCE_MANGA, GET_TRACKERS, SEARCH_TRACKER, GET_LIBRARY, GET_ALL_TRACKER_RECORDS } from "../../lib/queries";
   import { fetchSourceMangaSearchWithFallback } from "../../lib/manga/sourceSearch";
   import { cache, CACHE_KEYS, getPageSet } from "../../lib/cache";
+  import { loadLibrarySnapshot } from "../../lib/library/snapshot";
   import { dedupeSources, dedupeMangaById, dedupeMangaByTitle, shouldHideNsfw, shouldHideSource } from "../../lib/util";
   import { store, updateSettings, setSearchPrefill, setPreviewManga, setExtensionsPanelHint, addToast, setSearchTabHint, setSearchBrowseHint, setSearchSourcesPaneHint, setActiveNovelDetail, setActiveBookId, setActiveManga, setNavPage } from "../../store/state.svelte";
   import type { Manga, Source, Tracker, TrackRecord, TrackSearch } from "../../lib/types";
@@ -14,7 +16,7 @@
   import SetupStatusCard from "../shared/SetupStatusCard.svelte";
   import SourcesView from "./SourcesView.svelte";
   import TasteInsightsModal from "./TasteInsightsModal.svelte";
-  import { detectSetupState, type SetupState } from "../../lib/setupState";
+  import { detectSetupState, isSuwayomiSchemaInitializingError, type SetupState } from "../../lib/setupState";
   import { SERVER_READY_EVENT } from "../../lib/serverLifecycle";
   import { ensureExtensionRepo, RECOMMENDED_EXTENSION_REPO } from "../../lib/defaultRepos";
   import AppTopbar from "../layout/AppTopbar.svelte";
@@ -101,6 +103,22 @@
     return activeContentType === "novels"
       ? $_("browse.search.placeholderNovelSources")
       : $_("browse.search.placeholderExtensions");
+  }
+
+  function catalogFeedLabel(feed: CatalogFeed) {
+    if (feed === "latest") return $_("ui_latest");
+    if (feed === "popular") return $_("ui_popular");
+    return $_("ui_all");
+  }
+
+  function activeContentTypeLabel() {
+    return activeContentType === "novels" ? $_("ui_novels") : $_("ui_manga");
+  }
+
+  function sourceSearchPlaceholder() {
+    if (src_activeSource) return $_("browse.source.searchPlaceholderNamed", { name: src_activeSource.displayName });
+    if (src_activeNovelSource) return $_("browse.source.searchPlaceholderNamed", { name: src_activeNovelSource.name });
+    return $_("browse.source.searchPlaceholder");
   }
 
   function logSearchRecommendationSourceIssue(context: string, sourceName: string, error: unknown) {
@@ -536,7 +554,7 @@
   let searchTrackerScoreAbortCtrl: AbortController | null = null;
   let pendingPrefill         = $state("");
   let novelLibraryState = $state(safePeekNovelLibraryState());
-  let searchLibraryManga: Manga[] = $state(store.libraryMangaSnapshot ?? []);
+  let searchLibraryManga: Manga[] = $state([]);
   let searchTrackRecordsByMangaId: Map<number, TrackRecord[]> = $state(new Map());
   let searchTrackRecords: TrackRecord[] = $state([]);
   let searchTrackerSeedItems: TasteProfileSeedItem[] = $state([]);
@@ -578,6 +596,12 @@
   let searchRecommendationMoreTriggeredAt: Map<string, number> = $state(new Map());
   let searchRecommendationMoreRequestedWidths: Map<string, number> = $state(new Map());
   let searchRecommendationSectionOrder: Map<string, string[]> = $state(new Map());
+  let lastSearchRuntimeScopeKey = $state("");
+
+  const searchRuntimeScopeKey = $derived([
+    store.runtimeResolvedLocalProfileId ?? "default",
+    store.runtimeServerUrl ?? "",
+  ].join("::"));
 
   refreshSetupState();
 
@@ -593,8 +617,8 @@
       const result = await ensureExtensionRepo(RECOMMENDED_EXTENSION_REPO);
       addToast({
         kind: result.status === "added" ? "success" : "info",
-        title: result.status === "added" ? "Recommended repo added" : "Recommended repo already added",
-        body: result.status === "added"
+        title: result.status === translate("ui_added") ? translate("ui_recommendedRepoAdded") : translate("ui_recommendedRepoAlreadyAdded"),
+        body: result.status === translate("ui_added")
           ? `${result.repo.name} is ready. Next, install your first extension.`
           : `${result.repo.name} is already configured. Next, install your first extension.`,
       });
@@ -603,8 +627,8 @@
     } catch (error) {
       addToast({
         kind: "error",
-        title: "Could not add the recommended repo",
-        body: error instanceof Error ? error.message : "Aethon couldn't save the recommended repo.",
+        title: translate("ui_couldNotAddTheRecommendedRepo"),
+        body: error instanceof Error ? error.message : translate("ui_aethonCouldnTSaveTheRecommendedRepo"),
       });
     } finally {
       setupActionBusy = false;
@@ -785,6 +809,39 @@
     tag_loadingMoreSource = false;
     src_loadingBrowse = false;
   }
+
+  $effect(() => {
+    const scopeKey = searchRuntimeScopeKey;
+    if (!scopeKey || scopeKey === lastSearchRuntimeScopeKey) return;
+    const previousScopeKey = lastSearchRuntimeScopeKey;
+    lastSearchRuntimeScopeKey = scopeKey;
+    if (!previousScopeKey) return;
+
+    untrack(() => {
+      releaseBrowseTransientState();
+      setupState = null;
+      setupLoading = true;
+      allSources = [];
+      allNovelSources = [];
+      allTrackers = [];
+      searchLibraryManga = [];
+      searchTrackRecords = [];
+      searchTrackRecordsByMangaId = new Map();
+      novelLibraryState = null;
+      void refreshSetupState();
+      void refreshSources();
+      void refreshTrackers();
+      void refreshSearchProfileLibrary();
+      void refreshSearchTrackRecords();
+      void refreshSearchHardcoverRecords();
+      void loadNovelLibraryState({
+        profileId: store.runtimeResolvedLocalProfileId,
+        serverUrl: store.runtimeServerUrl,
+      }).then((state) => {
+        novelLibraryState = state;
+      }).catch(() => {});
+    });
+  });
 
   function resetContentTypeTransientState() {
     src_abortCtrl?.abort();
@@ -980,7 +1037,9 @@
       if (mangaSources.status === "fulfilled") {
         allSources = mangaSources.value.sources.nodes.filter((src: Source) => src.id !== "0");
       } else {
-        console.warn("Could not refresh manga sources for Browse.", mangaSources.reason);
+        if (!isSuwayomiSchemaInitializingError(mangaSources.reason)) {
+          console.warn("Could not refresh manga sources for Browse.", mangaSources.reason);
+        }
         allSources = [];
       }
       if (novelSources.status === "fulfilled") {
@@ -1002,7 +1061,7 @@
       const d = await gql<{ trackers: { nodes: BrowseTrackerEntry[] } }>(GET_TRACKERS);
       allTrackers = d.trackers.nodes ?? [];
     } catch (error) {
-      console.error(error);
+      if (!isSuwayomiSchemaInitializingError(error)) console.error(error);
       allTrackers = [];
     } finally {
       loadingTrackers = false;
@@ -1010,10 +1069,16 @@
   }
 
   async function refreshSearchProfileLibrary() {
-    const snapshot = Array.isArray(store.libraryMangaSnapshot) ? store.libraryMangaSnapshot : [];
+    const scope = {
+      profileId: store.runtimeResolvedLocalProfileId,
+      serverUrl: store.runtimeServerUrl,
+    };
+    const persistedSnapshot = loadLibrarySnapshot(scope);
+    const snapshot = persistedSnapshot?.mangas ?? [];
     if (snapshot.length > 0) {
       searchLibraryManga = snapshot;
-      return;
+    } else {
+      searchLibraryManga = [];
     }
 
     try {
@@ -1025,7 +1090,7 @@
       }));
       store.setLibraryMangaSnapshot(searchLibraryManga);
     } catch (error) {
-      console.error(error);
+      if (!isSuwayomiSchemaInitializingError(error)) console.error(error);
       searchLibraryManga = [];
     }
   }
@@ -1549,6 +1614,8 @@
       titles: searchTrackerScoreTitles,
       trackers: searchScoreTrackers.map((tracker) => tracker.id),
       nsfw: includeNsfwSources,
+      profile: store.runtimeResolvedLocalProfileId,
+      server: store.runtimeServerUrl,
   }));
 
   $effect(() => {
@@ -1567,6 +1634,7 @@
   });
 
   const searchTrackerTrendingExpectedKey = $derived.by(() => JSON.stringify({
+    scope: searchRuntimeScopeKey,
     contentType: activeContentType,
     tab: activeBrowseTab,
     submitted: Boolean(kw_submitted),
@@ -1710,6 +1778,7 @@
   });
 
   const searchRecommendationCompositionKey = $derived.by(() => JSON.stringify({
+    scope: searchRuntimeScopeKey,
     contentType: activeContentType,
     includeLibrary: searchIncludeLibrary,
     profile: [...searchRecommendationResult.profile.contentTypeWeights.entries()],
@@ -1833,6 +1902,7 @@
     if (!underfilledSection && !needsCandidateDepth) return;
     const key = [
       "search-source-seeds",
+      searchRuntimeScopeKey,
       activeContentType,
       includeNsfwSources ? "nsfw" : "safe",
       src_selectedLang,
@@ -1860,6 +1930,7 @@
     if (!underfilled && !needsCandidateDepth) return;
     const key = [
       "search-source-seeds",
+      searchRuntimeScopeKey,
       activeContentType,
       includeNsfwSources ? "nsfw" : "safe",
       src_selectedLang,
@@ -1875,33 +1946,35 @@
   const searchHeroStatusText = $derived.by(() => {
     if (searchRecommendationHydrating) {
       return activeContentType === "novels"
-        ? "Collecting LNReader candidates and Hardcover ratings before ranking."
-        : "Collecting source candidates and tracker scores before ranking.";
+        ? $_("browse.search.hydratingNovels")
+        : $_("browse.search.hydratingManga");
     }
     if (!searchHasAnyRecommendationCandidates) {
       return activeContentType === "novels"
-        ? "No LNReader source data is available yet."
-        : "No Suwayomi source data is available yet.";
+        ? $_("browse.search.noNovelData")
+        : $_("browse.search.noMangaData");
     }
-    return `${searchDisplayedRecommendationCount} recommendations from ${activeContentType === "novels" ? "LNReader sources and your prose library profile" : "installed sources, synced trackers, and your library profile"}.`;
+    return activeContentType === "novels"
+      ? $_("browse.search.recommendationsSummaryNovels", { count: searchDisplayedRecommendationCount })
+      : $_("browse.search.recommendationsSummaryManga", { count: searchDisplayedRecommendationCount });
   });
 
   const searchEmptyStateMessage = $derived.by(() => {
     if (setupState?.kind && setupState.kind !== "ready") {
       return setupState.kind === "server_offline"
-        ? "Suwayomi is offline. Connect the server to load recommendations."
-        : "Finish setup to load recommendations from your sources.";
+        ? $_("browse.search.suwayomiOffline")
+        : $_("browse.search.finishSetup");
     }
     if (searchRecommendationHydrating) return "";
     if (!searchHasAnyRecommendationCandidates) {
       return activeContentType === "novels"
-        ? "No LNReader source returned novels yet. Check installed novel sources or try again."
-        : "No Suwayomi source or tracker returned manga yet. Check the server and installed sources.";
+        ? $_("browse.search.noNovelSourceResults")
+        : $_("browse.search.noMangaSourceResults");
     }
     if (searchDisplayedRecommendationCount === 0) {
       return searchIncludeLibrary
-        ? "No recommendations match the current filters."
-        : "No new recommendations remain after filtering your library and tracker titles.";
+        ? $_("browse.search.noRecommendationMatches")
+        : $_("browse.search.noNewRecommendations");
     }
     return "";
   });
@@ -1944,13 +2017,13 @@
     ).length;
     const sourceBacked = searchRecommendationItems.filter((item) => item.candidate.providers.some((provider) => provider.kind === "source")).length;
     const providerLine = activeContentType === "novels"
-      ? `${sourceBacked} pick${sourceBacked !== 1 ? "s" : ""} are available from installed LNReader sources.`
-      : `${sourceBacked} pick${sourceBacked !== 1 ? "s" : ""} are currently available from installed sources.`;
+      ? $_("browse.search.sourcePicksNovels", { count: sourceBacked })
+      : $_("browse.search.sourcePicksManga", { count: sourceBacked });
     return [
-      tags ? `Strongest profile signal: ${tags}.` : "Profile is still warming up from your library and trackers.",
+      tags ? $_("browse.search.strongestProfileSignal", { tags }) : $_("browse.search.profileWarming"),
       activeContentType === "novels"
-        ? `${hardcoverBacked} recommendation${hardcoverBacked !== 1 ? "s" : ""} include Hardcover ratings.`
-        : `${trackerBacked} recommendation${trackerBacked !== 1 ? "s" : ""} include synced tracker scores.`,
+        ? $_("browse.search.hardcoverSignals", { count: hardcoverBacked })
+        : $_("browse.search.trackerSignals", { count: trackerBacked }),
       providerLine,
     ];
   });
@@ -2334,6 +2407,7 @@
       .join(",");
     return [
       "search-more",
+      searchRuntimeScopeKey,
       activeContentType,
       sectionKey,
       searchIncludeLibrary ? "include-known" : "new-only",
@@ -2657,7 +2731,7 @@
       activeBrowseTab = "source";
       src_browseQuery = item.candidate.title;
       src_submitted = "";
-      addToast({ kind: "info", title: "Open it from its source", body: "Search is ready in Sources for this recommendation." });
+      addToast({ kind: "info", title: translate("ui_openItFromItsSource"), body: translate("ui_searchIsReadyInSourcesForThisRecommendation") });
       return;
     }
 
@@ -3591,6 +3665,7 @@
     if (!searchRecommendationsReady) return;
     const key = [
       "search-source-seeds",
+      searchRuntimeScopeKey,
       activeContentType,
       includeNsfwSources ? "nsfw" : "safe",
       src_selectedLang,
@@ -3838,7 +3913,7 @@
       id: Number(item.id),
       trackerId: tracker.id,
       remoteId: String(item.id),
-      title: sourceTitle || item.title?.english || item.title?.romaji || item.title?.native || "Untitled",
+      title: sourceTitle || item.title?.english || item.title?.romaji || item.title?.native || translate("ui_untitled"),
       coverUrl: item.coverImage?.extraLarge ?? item.coverImage?.large ?? null,
       summary: null,
       publishingStatus: item.status ?? null,
@@ -3869,7 +3944,7 @@
       id: Number(item.mal_id),
       trackerId: tracker.id,
       remoteId: String(item.mal_id),
-      title: sourceTitle || item.title_english || item.title || item.title_japanese || "Untitled",
+      title: sourceTitle || item.title_english || item.title || item.title_japanese || translate("ui_untitled"),
       coverUrl: item.images?.webp?.large_image_url ?? item.images?.jpg?.large_image_url ?? item.images?.jpg?.image_url ?? null,
       summary: item.synopsis ?? null,
       publishingStatus: item.status ?? null,
@@ -4882,8 +4957,8 @@
       const message = sourceBrowseErrorBody(error);
       addToast({
         kind: "error",
-        title: "Could not open novel details",
-        body: message || "Aethon couldn't open this novel.",
+        title: translate("novelSources_errors_openDetailTitle"),
+        body: message || translate("ui_aethonCouldnTOpenThisNovel"),
       });
     } finally {
       src_openingNovelPath = null;
@@ -5056,7 +5131,7 @@
                             {/if}
                           </div>
                           {#if bannerInfo}
-                            <div class="source-metric-banner" aria-label="Tracker rating banner">
+                            <div class="source-metric-banner" aria-label={$_("ui_trackerRatingBanner")}>
                               <span
                                 class="source-metric-flag"
                                 aria-label={bannerInfo.tracker}
@@ -5103,7 +5178,7 @@
                                 {/if}
                               </span>
                               <div class="source-metric-pill has-flag">
-                                <span class="source-metric-downloaded has-flag pill-only" aria-label="Score">
+                                <span class="source-metric-downloaded has-flag pill-only" aria-label={$_("ui_score")}>
                                   <span class="source-metric-score-val">{bannerInfo.score}</span>
                                   <!-- Golden Star Icon -->
                                   <svg viewBox="0 0 24 24" class="source-metric-star-img" fill="#ffb800" xmlns="http://www.w3.org/2000/svg">
@@ -5130,7 +5205,7 @@
                     tone="info"
                     icon="search"
                     eyebrow={section.title}
-                    title="No matching picks yet"
+                    title={$_("ui_noMatchingPicksYet")}
                     body={`No new matches in this category after filtering your ${activeContentType === "novels" ? "saved novels and local books" : "library and tracker titles"}.`}
                   />
                 {/if}
@@ -5143,17 +5218,17 @@
           <aside class="searchInsightPanel">
             <section class="searchInsightCard searchTasteCard">
               <div class="searchPanelTitle">
-                <span>Taste profile</span>
+                <span>{$_("ui_tasteProfile")}</span>
                 <span class="material-symbols-outlined" aria-hidden="true">info</span>
               </div>
-              <p class="searchPanelLabel">Top genres</p>
+              <p class="searchPanelLabel">{$_("ui_topGenres")}</p>
               <div class="searchTastePills">
                 {#if searchTasteTags.length > 0}
                   {#each searchTasteTags as tag (tag)}
                     <span>{tag}</span>
                   {/each}
                 {:else}
-                  <span class="is-muted">No library genres yet</span>
+                  <span class="is-muted">{$_("ui_noLibraryGenresYet")}</span>
                 {/if}
               </div>
 
@@ -5165,35 +5240,35 @@
                   aria-pressed={searchIncludeLibrary}
                   onclick={() => (searchIncludeLibrary = !searchIncludeLibrary)}
                 >
-                  <span>{activeContentType === "novels" ? "Include saved prose titles" : "Include library/tracker titles"}</span>
+                  <span>{activeContentType === "novels" ? $_("ui_includeSavedProseTitles") : $_("ui_includeLibraryTrackerTitles")}</span>
                   <span class="browseSwitch" aria-hidden="true"></span>
                 </button>
-                <p>{searchIncludeLibrary ? "Known titles can appear for comparison." : activeContentType === "novels" ? "Only novels outside your saved novels and local books are shown." : "Only titles outside your local and tracker libraries are shown."}</p>
+                <p>{searchIncludeLibrary ? $_("ui_knownTitlesCanAppearForComparison") : activeContentType === "novels" ? $_("ui_onlyNovelsOutsideYourSavedNovelsAndLocal") : $_("ui_onlyTitlesOutsideYourLocalAndTrackerLibraries")}</p>
               </div>
 
               <div class="searchDiversity">
                 <div class="searchDiversityHeader">
-                  <span>Diversity</span>
+                  <span>{$_("ui_diversity")}</span>
                 </div>
                 <div class="searchDiversityTrack">
                   <span style={`width:${searchDiversityValue}%`}></span>
                   <i style={`left:${searchDiversityValue}%`}></i>
                 </div>
                 <div class="searchDiversityLabels">
-                  <span>Focused</span>
-                  <span>Balanced</span>
-                  <span>Diverse</span>
+                  <span>{$_("ui_focused")}</span>
+                  <span>{$_("ui_balanced")}</span>
+                  <span>{$_("ui_diverse")}</span>
                 </div>
               </div>
 
               <div class="searchDivergentNote">
                 <span class="material-symbols-outlined" aria-hidden="true">diversity_2</span>
-                <p>Includes a few divergent picks to avoid loops.</p>
+                <p>{$_("ui_includesAFewDivergentPicksToAvoidLoops")}</p>
               </div>
 
               <div class="searchInsights">
                 <div class="searchPanelTitle">
-                  <span>Insights</span>
+                  <span>{$_("ui_insights")}</span>
                   <span class="material-symbols-outlined" aria-hidden="true">info</span>
                 </div>
                 {#each searchInsightLines as insight (insight)}
@@ -5203,7 +5278,7 @@
 
               <button class="searchInsightsButton" type="button" onclick={() => isInsightsOpen = true}>
                 <span class="material-symbols-outlined" aria-hidden="true">bar_chart</span>
-                View full insights
+                {$_("ui_viewFullInsights")}
               </button>
             </section>
           </aside>
@@ -5248,7 +5323,7 @@
                     <path d="M232,128a104,104,0,0,1-208,0c0-41,23.81-78.36,60.66-95.27a8,8,0,0,1,6.68,14.54C60.15,61.59,40,93.27,40,128a88,88,0,0,0,176,0c0-34.73-20.15-66.41-51.34-80.73a8,8,0,0,1,6.68-14.54C208.19,49.64,232,87,232,128Z"/>
                   </svg>
                 {:else if novels.length > 0}
-                  <span class="resultCount">{novels.length} results</span>
+                  <span class="resultCount">{novels.length} {$_("ui_results")}</span>
                 {/if}
               </div>
 
@@ -5258,7 +5333,7 @@
                   tone="warning"
                   icon="warning"
                   eyebrow="Source"
-                  title="Could not load this novel source"
+                  title={$_("ui_couldNotLoadThisNovelSource")}
                   body={error}
                 />
               {:else if loading}
@@ -5278,17 +5353,17 @@
                         {#if result.coverUrl}
                           <img src={resolveMangaCoverUrl(result.coverUrl, { context: "browse", persistence: "memory" })} alt={result.title} loading="lazy" decoding="async" />
                         {:else}
-                          <div class="coverFallback">Book</div>
+                          <div class="coverFallback">{$_("ui_book")}</div>
                         {/if}
                         {#if novelLibraryState && isNovelInLibrary(novelLibraryState, createNovelLibraryId(result.sourceId, result.path))}
-                          <span class="n-library-card__badge">In Library</span>
+                          <span class="n-library-card__badge">{$_("detail_status_inLibrary")}</span>
                         {/if}
                       </div>
                       <div class="n-library-card__info">
                         <p class="n-library-card__title">{result.title}</p>
                         <div class="n-library-card__meta">
                           <span class="n-library-card__author">{source.name}</span>
-                          <span class="n-library-card__vol">{src_openingNovelPath === result.path ? "Opening..." : source.lang.toUpperCase()}</span>
+                          <span class="n-library-card__vol">{src_openingNovelPath === result.path ? $_("ui_opening") : source.lang.toUpperCase()}</span>
                         </div>
                       </div>
                     </button>
@@ -5318,7 +5393,7 @@
                   <path d="M232,128a104,104,0,0,1-208,0c0-41,23.81-78.36,60.66-95.27a8,8,0,0,1,6.68,14.54C60.15,61.59,40,93.27,40,128a88,88,0,0,0,176,0c0-34.73-20.15-66.41-51.34-80.73a8,8,0,0,1,6.68-14.54C208.19,49.64,232,87,232,128Z"/>
                 </svg>
               {:else if mangas.length > 0}
-                <span class="resultCount">{mangas.length} results</span>
+                <span class="resultCount">{mangas.length} {$_("ui_results")}</span>
               {/if}
             </div>
 
@@ -5328,7 +5403,7 @@
                 tone="warning"
                 icon="warning"
                 eyebrow="Source"
-                title="Could not load this manga source"
+                title={$_("ui_couldNotLoadThisMangaSource")}
                 body={error}
               />
             {:else if loading}
@@ -5355,9 +5430,9 @@
                         />
                       </div>
                       {#if m.inLibrary}
-                        <div class="source-metric-banner" aria-label="In Library">
+                        <div class="source-metric-banner" aria-label={$_("detail_status_inLibrary")}>
                           <div class="source-metric-pill">
-                            <span class="source-metric-unread pill-only">In Library</span>
+                            <span class="source-metric-unread pill-only">{$_("detail_status_inLibrary")}</span>
                           </div>
                         </div>
                       {/if}
@@ -5382,9 +5457,9 @@
             layout="center"
             tone="info"
             icon="search"
-            eyebrow="Keyword search"
-            title={`No results for "${kw_submitted}"`}
-            body="Try a different spelling, fewer words, or another source."
+            eyebrow={$_("browse.search.keywordEyebrow")}
+            title={$_("browse.source.noResultsFor", { query: kw_submitted })}
+            body={$_("browse.search.noKeywordResultsBody")}
           />
         {/if}
       </div>
@@ -5400,30 +5475,30 @@
       <div class="splitSidebar catalogSidebar">
         <section class="browseFilterSection browseFilterCard">
           <div class="browseCardHeader">
-            <h3 class="browseCardTitle">Filters</h3>
+            <h3 class="browseCardTitle">{$_("ui_filters")}</h3>
             <button class="browseResetButton" type="button" onclick={resetBrowseSidebarFilters}>
-              Reset
+              {$_("ui_reset")}
               <span class="material-symbols-outlined" aria-hidden="true">refresh</span>
             </button>
           </div>
           <div class="browseField">
-            <p class="browseFieldLabel">Status</p>
+            <p class="browseFieldLabel">{$_("downloads_summary_status")}</p>
             <div class="browseSegment">
-              <button class:is-active={catalogFeed === "all"} onclick={() => selectCatalogFeed("all")}>All</button>
-              <button class:is-active={catalogFeed === "popular"} onclick={() => selectCatalogFeed("popular")}>Popular</button>
-              <button class:is-active={catalogFeed === "latest"} onclick={() => selectCatalogFeed("latest")}>Latest</button>
+              <button class:is-active={catalogFeed === "all"} onclick={() => selectCatalogFeed("all")}>{$_("downloads_filter_all")}</button>
+              <button class:is-active={catalogFeed === "popular"} onclick={() => selectCatalogFeed("popular")}>{$_("ui_popular")}</button>
+              <button class:is-active={catalogFeed === "latest"} onclick={() => selectCatalogFeed("latest")}>{$_("ui_latest")}</button>
             </div>
           </div>
           <div class="browseField browsePickerField browseLanguageField">
-            <p class="browseFieldLabel">Language</p>
+            <p class="browseFieldLabel">{$_("sources_table_language")}</p>
             <button class="browseSelectRow" class:is-open={catalogLanguagePickerOpen} type="button" onclick={() => { catalogLanguagePickerOpen = !catalogLanguagePickerOpen; catalogSourcePickerOpen = false; catalogTrackingPickerOpen = false; }}>
-              <span>{src_selectedLang === "all" ? "All languages" : src_selectedLang.toUpperCase()}</span>
+              <span>{src_selectedLang === "all" ? $_("ui_allLanguages") : src_selectedLang.toUpperCase()}</span>
               <span class="material-symbols-outlined" aria-hidden="true">expand_more</span>
             </button>
             {#if catalogLanguagePickerOpen}
               <div class="browseInlinePicker browseLanguagePicker n-popover-surface n-popover-menu">
                 {#if src_selectedLang !== "all"}
-                  <button class="n-popover-item" onclick={() => { src_selectedLang = "all"; catalogLanguagePickerOpen = false; }}>All languages</button>
+                  <button class="n-popover-item" onclick={() => { src_selectedLang = "all"; catalogLanguagePickerOpen = false; }}>{$_("ui_allLanguages")}</button>
                 {/if}
                 {#each src_availableLangs.filter((lang) => lang !== src_selectedLang) as lang (lang)}
                   <button class="n-popover-item" onclick={() => { src_selectedLang = lang; catalogLanguagePickerOpen = false; }}>{lang.toUpperCase()}</button>
@@ -5432,17 +5507,17 @@
             {/if}
           </div>
           <div class="browseField browsePickerField browseSourceField">
-            <p class="browseFieldLabel">Source</p>
+            <p class="browseFieldLabel">{$_("detail_fields_source")}</p>
             <button class="browseSelectRow" class:is-open={catalogSourcePickerOpen} class:is-paused={!!discoverFocusedTracker} type="button" onclick={() => { if (discoverFocusedTracker) return; catalogSourcePickerOpen = !catalogSourcePickerOpen; catalogLanguagePickerOpen = false; catalogTrackingPickerOpen = false; }}>
-              <span>{discoverFocusedTracker ? "Using tracking catalog" : discoverFocusedSource ? sourceNameWithoutLanguage(discoverFocusedSource) : "All sources"}</span>
+              <span>{discoverFocusedTracker ? $_("ui_usingTrackingCatalog") : discoverFocusedSource ? sourceNameWithoutLanguage(discoverFocusedSource) : $_("ui_allSources")}</span>
               <span class="material-symbols-outlined" aria-hidden="true">expand_more</span>
             </button>
             {#if catalogSourcePickerOpen}
               <div class="browseInlinePicker browseSourcePicker n-popover-surface n-popover-menu">
                 {#if discoverSelectedSource}
                   <button class="n-popover-item" onclick={() => { discoverSelectedSource = ""; catalogSourcePickerOpen = false; }}>
-                    <span>All sources</span>
-                    <span>ALL</span>
+                    <span>{$_("ui_allSources")}</span>
+                    <span>{$_("ui_all")}</span>
                   </button>
                 {/if}
                 {#each src_visibleSources.filter((src) => src.id !== discoverSelectedSource) as src (src.id)}
@@ -5455,35 +5530,35 @@
             {/if}
           </div>
           <div class="browseField browsePickerField browseTrackingField">
-            <p class="browseFieldLabel">Tracking</p>
+            <p class="browseFieldLabel">{$_("home_sections_tracking")}</p>
             <button class="browseSelectRow" class:is-open={catalogTrackingPickerOpen} type="button" onclick={() => { catalogTrackingPickerOpen = !catalogTrackingPickerOpen; catalogLanguagePickerOpen = false; catalogSourcePickerOpen = false; }}>
               <span>{discoverFocusedTracker?.name ?? "Off"}</span>
               <span class="material-symbols-outlined" aria-hidden="true">expand_more</span>
             </button>
-            <p class="browseFieldHint">{discoverFocusedTracker ? "Browsing this tracker catalog instead of extension sources." : "Turn on a tracker catalog when you want AniList/MAL discovery."}</p>
+            <p class="browseFieldHint">{discoverFocusedTracker ? $_("ui_browsingThisTrackerCatalogInsteadOfExtensionSources") : $_("ui_turnOnATrackerCatalogWhenYouWant")}</p>
             {#if catalogTrackingPickerOpen}
               <div class="browseInlinePicker browseTrackingPicker n-popover-surface n-popover-menu">
                 {#if discoverSelectedTracker !== null}
                   <button class="n-popover-item" onclick={() => { discoverSelectedTracker = null; catalogTrackingPickerOpen = false; }}>
-                    <span>Tracking off</span>
-                    <span>OFF</span>
+                    <span>{$_("ui_trackingOff")}</span>
+                    <span>{$_("ui_off")}</span>
                   </button>
                 {/if}
                 {#if loadingTrackers}
                   <button class="n-popover-item" disabled>
-                    <span>Loading tracking...</span>
+                    <span>{$_("ui_loadingTracking")}</span>
                     <span></span>
                   </button>
                 {:else if trackingFilterOptions.length === 0}
                   <button class="n-popover-item" disabled>
-                    <span>No tracking ready</span>
+                    <span>{$_("ui_noTrackingReady")}</span>
                     <span></span>
                   </button>
                 {:else}
                   {#each trackingFilterOptions.filter((tracker) => tracker.id !== discoverSelectedTracker) as tracker (tracker.id)}
                     <button class="n-popover-item" onclick={() => selectDiscoverTrackerFilter(tracker)}>
                       <span>{tracker.name}</span>
-                      <span>ON</span>
+                      <span>{$_("ui_on")}</span>
                     </button>
                   {/each}
                 {/if}
@@ -5497,7 +5572,7 @@
             aria-pressed={includeNsfwSources}
             onclick={toggleIncludeNsfwSources}
           >
-            <span>Include NSFW extensions</span>
+            <span>{$_("ui_includeNsfwExtensions")}</span>
             <span class="browseSwitch" aria-hidden="true"></span>
           </button>
           <button
@@ -5507,14 +5582,14 @@
             aria-pressed={includeInLibrary}
             onclick={() => (includeInLibrary = !includeInLibrary)}
           >
-            <span>Include In Library</span>
+            <span>{$_("ui_includeInLibrary")}</span>
             <span class="browseSwitch" aria-hidden="true"></span>
           </button>
         </section>
 
         <section class="browseFilterSection browseGenresSection">
           <div class="browseSectionHeader">
-            <h3 class="browseCardTitle">Genres</h3>
+            <h3 class="browseCardTitle">{$_("ui_genres")}</h3>
           </div>
           <div class="browseSectionBody">
             <div class="splitSearchWrap catalogSearchWrap">
@@ -5524,10 +5599,10 @@
           <input
             bind:value={tag_tagFilter}
             class="splitSearchInput"
-            placeholder="Filter genres..."
+            placeholder={$_("ui_filterGenres")}
           />
           {#if tag_tagFilter}
-            <button class="splitSearchClear" title="Clear" onclick={() => (tag_tagFilter = "")}>x</button>
+            <button class="splitSearchClear" title={$_("ui_clear")} onclick={() => (tag_tagFilter = "")}>x</button>
           {/if}
             </div>
             <div class="catalogTagList">
@@ -5542,7 +5617,7 @@
             </button>
           {/each}
           {#if tag_filteredGenres.length === 0}
-            <p class="splitEmpty">No matching genres</p>
+            <p class="splitEmpty">{$_("ui_noMatchingGenres")}</p>
           {/if}
             </div>
           </div>
@@ -5584,9 +5659,9 @@
                   <path d="M232,128a104,104,0,0,1-208,0c0-41,23.81-78.36,60.66-95.27a8,8,0,0,1,6.68,14.54C60.15,61.59,40,93.27,40,128a88,88,0,0,0,176,0c0-34.73-20.15-66.41-51.34-80.73a8,8,0,0,1,6.68-14.54C208.19,49.64,232,87,232,128Z"/>
                 </svg>
               {:else if src_activeSource && src_browseResults.length > 0}
-                <span class="splitResultCount">{src_browseResults.length} results</span>
+                <span class="splitResultCount">{src_browseResults.length} {$_("ui_results")}</span>
               {:else if src_activeNovelSource && src_novelBrowseResults.length > 0}
-                <span class="splitResultCount">{src_novelBrowseResults.length} results</span>
+                <span class="splitResultCount">{src_novelBrowseResults.length} {$_("ui_results")}</span>
               {/if}
             </div>
           </div>
@@ -5599,11 +5674,11 @@
               <input
                 bind:value={src_browseQuery}
                 class="searchInput"
-                placeholder={src_activeSource ? `Search ${src_activeSource.displayName}...` : src_activeNovelSource ? `Search ${src_activeNovelSource.name}...` : "Search source..."}
+                placeholder={sourceSearchPlaceholder()}
                 onkeydown={(e) => e.key === "Enter" && srcHandleSearch()}
               />
               {#if src_submitted}
-                <button class="clearBtn" title="Clear search" onclick={srcClearSearch}>x</button>
+                <button class="clearBtn" title={$_("ui_clearSearch")} onclick={srcClearSearch}>x</button>
               {/if}
             </div>
             <button
@@ -5611,7 +5686,7 @@
               onclick={srcHandleSearch}
               disabled={!src_browseQuery.trim() || src_loadingBrowse}
             >
-              Search
+              {$_("novelSources_actions_search")}
             </button>
           </div>
 
@@ -5633,9 +5708,9 @@
                       <img src={resolveMangaCoverUrl(m, { context: "browse", persistence: m.inLibrary ? "persistent" : "memory", cacheGeneration: store.libraryCoverCacheGeneration })} alt={m.title} loading="lazy" decoding="async" />
                     </div>
                     {#if m.inLibrary}
-                      <div class="source-metric-banner" aria-label="In Library">
+                      <div class="source-metric-banner" aria-label={$_("detail_status_inLibrary")}>
                         <div class="source-metric-pill">
-                          <span class="source-metric-unread pill-only">In Library</span>
+                          <span class="source-metric-unread pill-only">{$_("detail_status_inLibrary")}</span>
                         </div>
                       </div>
                     {/if}
@@ -5643,7 +5718,7 @@
                   <div class="n-library-card__info">
                     <p class="n-library-card__title">{m.title}</p>
                     <div class="n-library-card__meta">
-                      <span class="n-library-card__author">{m.source?.displayName ?? src_activeSource?.displayName ?? "Source"}</span>
+                      <span class="n-library-card__author">{m.source?.displayName ?? src_activeSource?.displayName ?? $_("ui_source")}</span>
                       <span class="n-library-card__vol">{m.chapterCount ? `CH ${m.chapterCount}` : m.status ?? ""}</span>
                     </div>
                   </div>
@@ -5662,7 +5737,7 @@
                     src_currentPage + 1,
                   )}
                 >
-                  {#if src_loadingBrowse}Loading...{:else}Load more{/if}
+                  {#if src_loadingBrowse}{$_("ui_loading")}{:else}{$_("ui_loadMore")}{/if}
                 </button>
               </div>
             {/if}
@@ -5674,17 +5749,17 @@
                     {#if result.coverUrl}
                       <img src={resolveMangaCoverUrl(result.coverUrl, { context: "browse", persistence: "memory" })} alt={result.title} loading="lazy" decoding="async" />
                     {:else}
-                      <div class="coverFallback">Book</div>
+                      <div class="coverFallback">{$_("ui_book")}</div>
                     {/if}
                     {#if novelLibraryState && isNovelInLibrary(novelLibraryState, createNovelLibraryId(result.sourceId, result.path))}
-                      <span class="n-library-card__badge">In Library</span>
+                      <span class="n-library-card__badge">{$_("detail_status_inLibrary")}</span>
                     {/if}
                   </div>
                   <div class="n-library-card__info">
                     <p class="n-library-card__title">{result.title}</p>
                     <div class="n-library-card__meta">
                       <span class="n-library-card__author">{src_activeNovelSource.name}</span>
-                      <span class="n-library-card__vol">{src_openingNovelPath === result.path ? "Opening..." : src_activeNovelSource.lang.toUpperCase()}</span>
+                      <span class="n-library-card__vol">{src_openingNovelPath === result.path ? $_("ui_opening") : src_activeNovelSource.lang.toUpperCase()}</span>
                     </div>
                   </div>
                 </button>
@@ -5702,7 +5777,7 @@
                     src_currentPage + 1,
                   )}
                 >
-                  {#if src_loadingBrowse}Loading...{:else}Load more{/if}
+                  {#if src_loadingBrowse}{$_("ui_loading")}{:else}{$_("ui_loadMore")}{/if}
                 </button>
               </div>
             {/if}
@@ -5711,8 +5786,8 @@
               layout="center"
               tone="warning"
               icon="warning"
-              eyebrow="Source"
-              title="Could not load this source"
+              eyebrow={$_("ui_source")}
+              title={$_("ui_couldNotLoadThisSource")}
               body={src_browseError}
             />
           {:else if !src_loadingBrowse}
@@ -5720,23 +5795,22 @@
               layout="center"
               tone="info"
               icon="search"
-              eyebrow="Source search"
-              title={src_submitted ? `No results for "${src_submitted}"` : "No results"}
-              body="Try another source, language, or search term."
+              eyebrow={$_("browse.source.searchEyebrow")}
+              title={src_submitted ? $_("browse.source.noResultsFor", { query: src_submitted }) : $_("ui_noResults")}
+              body={$_("browse.source.noResultsBody")}
             />
           {/if}
         {:else}
           <section class="discoverPanel">
             <div class="splitContentHeader discoverPanelHeader">
               <div class="catalogHeaderCopy">
-                <span class="n-eyebrow">Discover New Series</span>
+                <span class="n-eyebrow">{$_("ui_discoverNewSeries")}</span>
                 <p class="catalogSubtitle">
                   {#if tag_hasActiveTags}
-                    {catalogActiveSummary} - Genres - Manga{#if tag_searchSources} - Sources enabled{/if}
+                    {catalogActiveSummary} {$_("ui_genresManga")}{#if tag_searchSources}{$_("ui_sourcesEnabled")}{/if}
                   {:else if discoverFocusedTracker}
-                    {discoverFocusedTracker.name} - {catalogFeed === "latest" ? "Latest" : catalogFeed === "popular" ? "Popular" : "All"} - Manga catalog
-                  {:else}
-                  {discoverSourceLabel} - {catalogFeed === "latest" ? "Latest" : catalogFeed === "popular" ? "Popular" : "All"} - {activeContentType === "novels" ? "Novels" : "Manga"}
+                    {discoverFocusedTracker.name} - {catalogFeedLabel(catalogFeed)} {$_("ui_mangaCatalog")}{:else}
+                  {discoverSourceLabel} - {catalogFeedLabel(catalogFeed)} - {activeContentTypeLabel()}
                   {/if}
                 </p>
               </div>
@@ -5747,12 +5821,9 @@
               {:else}
                 <span class="catalogCountBadge">
                   {#if tag_hasActiveTags}
-                    {tag_totalVisible}{tag_localHasNext || tag_sourceHasMore ? "+" : ""} titles
-                  {:else if discoverFocusedTracker}
-                    {discoverResultCount} titles
-                  {:else}
-                    {discoverResultCount}{discoverHasNextPage ? "+" : ""} titles
-                  {/if}
+                    {tag_totalVisible}{tag_localHasNext || tag_sourceHasMore ? "+" : ""} {$_("ui_titles")}{:else if discoverFocusedTracker}
+                    {discoverResultCount} {$_("ui_titles")}{:else}
+                    {discoverResultCount}{discoverHasNextPage ? "+" : ""} {$_("ui_titles")}{/if}
                 </span>
               {/if}
             </div>
@@ -5775,9 +5846,9 @@
                         <img src={resolveMangaCoverUrl(m, { context: "browse", persistence: m.inLibrary ? "persistent" : "memory", cacheGeneration: store.libraryCoverCacheGeneration })} alt={m.title} loading="lazy" decoding="async" />
                       </div>
                       {#if m.inLibrary}
-                        <div class="source-metric-banner" aria-label="In Library">
+                        <div class="source-metric-banner" aria-label={$_("detail_status_inLibrary")}>
                           <div class="source-metric-pill">
-                            <span class="source-metric-unread pill-only">In Library</span>
+                            <span class="source-metric-unread pill-only">{$_("detail_status_inLibrary")}</span>
                           </div>
                         </div>
                       {/if}
@@ -5801,7 +5872,7 @@
                 {/if}
                 {#if tag_loadingMoreLocal || tag_loadingMoreSource}
                   <div class="showMoreCell">
-                    <span class="inlineLoading">Loading more...</span>
+                    <span class="inlineLoading">{$_("ui_loadingMore")}</span>
                   </div>
                 {/if}
               </div>
@@ -5810,9 +5881,9 @@
                 layout="center"
                 tone="info"
                 icon="search"
-                eyebrow="Discover"
-                title="Nothing found for this view"
-                body="Try another genre, source, or language."
+                eyebrow={$_("browse.tabs.discover")}
+                title={$_("ui_nothingFoundForThisView")}
+                body={$_("browse.discover.noGenreResultsBody")}
               />
             {:else if discoverFocusedTracker && trackerCatalogResults.length > 0}
               <div class="tagGrid" onscroll={handleCatalogGridScroll}>
@@ -5822,21 +5893,21 @@
                       {#if item.coverUrl}
                         <img src={resolveMangaCoverUrl(item.coverUrl, { context: "browse", persistence: "memory" })} alt={item.title} loading="lazy" decoding="async" />
                       {:else}
-                        <div class="coverFallback">Manga</div>
+                        <div class="coverFallback">{$_("ui_manga")}</div>
                       {/if}
                     </div>
                     <div class="n-library-card__info">
                       <p class="n-library-card__title">{item.title}</p>
                       <div class="n-library-card__meta">
                         <span class="n-library-card__author">{discoverFocusedTracker.name}</span>
-                        <span class="n-library-card__vol">{item.publishingStatus ?? item.publishingType ?? (item.totalChapters ? `${item.totalChapters} CH` : "Reading")}</span>
+                        <span class="n-library-card__vol">{item.publishingStatus ?? item.publishingType ?? (item.totalChapters ? `${item.totalChapters} CH` : $_("ui_reading"))}</span>
                       </div>
                     </div>
                   </a>
                 {/each}
                 {#if trackerCatalogLoadingMore}
                   <div class="showMoreCell">
-                    <span class="inlineLoading">Loading more...</span>
+                    <span class="inlineLoading">{$_("ui_loadingMore")}</span>
                   </div>
                 {/if}
               </div>
@@ -5845,8 +5916,8 @@
                 layout="center"
                 tone="danger"
                 icon="warning"
-                eyebrow="Tracker catalog"
-                title="Could not load tracker catalog"
+                eyebrow={$_("browse.discover.trackerCatalog")}
+                title={$_("ui_couldNotLoadTrackerCatalog")}
                 body={trackerCatalogError}
               />
             {:else if discoverFocusedTracker}
@@ -5854,9 +5925,9 @@
                 layout="center"
                 tone="info"
                 icon="books"
-                eyebrow="Tracker catalog"
-                title="No reading titles found"
-                body="Try Popular, Latest, or another connected tracker."
+                eyebrow={$_("browse.discover.trackerCatalog")}
+                title={$_("ui_noReadingTitlesFound")}
+                body={$_("browse.discover.noTrackerResultsBody")}
               />
             {:else if discoverLoading && discoverResultCount === 0}
               <div class="tagGrid" onscroll={handleCatalogGridScroll}>
@@ -5872,8 +5943,8 @@
                 layout="center"
                 tone="danger"
                 icon="warning"
-                eyebrow="Discover"
-                title="Could not load Discover"
+                eyebrow={$_("browse.tabs.discover")}
+                title={$_("ui_couldNotLoadDiscover")}
                 body={discoverError}
               />
             {:else if activeContentType === "novels" && discoverNovelResults.length > 0}
@@ -5885,13 +5956,13 @@
                         {#if result.coverUrl}
                           <img src={resolveMangaCoverUrl(result.coverUrl, { context: "browse", persistence: "memory" })} alt={result.title} loading="lazy" decoding="async" />
                         {:else}
-                          <div class="coverFallback">Book</div>
+                          <div class="coverFallback">{$_("ui_book")}</div>
                         {/if}
                       </div>
                       {#if novelLibraryState && isNovelInLibrary(novelLibraryState, createNovelLibraryId(result.sourceId, result.path))}
-                        <div class="source-metric-banner" aria-label="In Library">
+                        <div class="source-metric-banner" aria-label={$_("detail_status_inLibrary")}>
                           <div class="source-metric-pill">
-                            <span class="source-metric-unread pill-only">In Library</span>
+                            <span class="source-metric-unread pill-only">{$_("detail_status_inLibrary")}</span>
                           </div>
                         </div>
                       {/if}
@@ -5899,15 +5970,15 @@
                     <div class="n-library-card__info">
                       <p class="n-library-card__title">{result.title}</p>
                       <div class="n-library-card__meta">
-                        <span class="n-library-card__author">{discoverFocusedSource?.name ?? "Discover"}</span>
-                        <span class="n-library-card__vol">{src_openingNovelPath === result.path ? "Opening..." : "Novel"}</span>
+                        <span class="n-library-card__author">{discoverFocusedSource?.name ?? $_("browse.tabs.discover")}</span>
+                        <span class="n-library-card__vol">{src_openingNovelPath === result.path ? $_("ui_opening") : $_("ui_novel")}</span>
                       </div>
                     </div>
                   </button>
                 {/each}
                 {#if discoverLoadingMore}
                   <div class="showMoreCell">
-                    <span class="inlineLoading">Loading more...</span>
+                    <span class="inlineLoading">{$_("ui_loadingMore")}</span>
                   </div>
                 {/if}
               </div>
@@ -5920,9 +5991,9 @@
                         <img src={resolveMangaCoverUrl(m, { context: "browse", persistence: m.inLibrary ? "persistent" : "memory", cacheGeneration: store.libraryCoverCacheGeneration })} alt={m.title} loading="lazy" decoding="async" />
                       </div>
                       {#if m.inLibrary}
-                        <div class="source-metric-banner" aria-label="In Library">
+                        <div class="source-metric-banner" aria-label={$_("detail_status_inLibrary")}>
                           <div class="source-metric-pill">
-                            <span class="source-metric-unread pill-only">In Library</span>
+                            <span class="source-metric-unread pill-only">{$_("detail_status_inLibrary")}</span>
                           </div>
                         </div>
                       {/if}
@@ -5938,7 +6009,7 @@
                 {/each}
                 {#if discoverLoadingMore}
                   <div class="showMoreCell">
-                    <span class="inlineLoading">Loading more...</span>
+                    <span class="inlineLoading">{$_("ui_loadingMore")}</span>
                   </div>
                 {/if}
               </div>
@@ -5947,9 +6018,9 @@
                 layout="center"
                 tone="info"
                 icon="search"
-                eyebrow="Discover"
-                title="Nothing found for this view"
-                body="Try another source, language, or switch to Search for a keyword lookup."
+                eyebrow={$_("browse.tabs.discover")}
+                title={$_("ui_nothingFoundForThisView")}
+                body={$_("browse.discover.noResultsBody")}
               />
             {/if}
           </section>

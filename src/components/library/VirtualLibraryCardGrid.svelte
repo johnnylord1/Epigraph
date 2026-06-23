@@ -6,6 +6,12 @@
     virtualRowsToItemRange,
   } from "../../lib/library/virtualGrid";
   import LibraryCard from "./LibraryCard.svelte";
+  import {
+    DEFAULT_LIBRARY_MOTION_ENVIRONMENT,
+    libraryMotionEnvironment,
+    type LibraryMotionEnvironment,
+  } from "../../lib/library/motionGate";
+  import { onMount } from "svelte";
 
   type Props = {
     items?: LibraryCardVM[];
@@ -27,6 +33,8 @@
     onCoverError?: (id: string) => void;
     onVisibleRangeChange?: (startIndex: number, endIndex: number) => void;
     virtualizeAfter?: number;
+    active?: boolean;
+    panelMotionEnabled?: boolean;
   };
 
   let {
@@ -49,7 +57,11 @@
     onCoverError,
     onVisibleRangeChange,
     virtualizeAfter = 1200,
+    active = true,
+    panelMotionEnabled = true,
   }: Props = $props();
+
+  let motionEnvironment: LibraryMotionEnvironment = $state(DEFAULT_LIBRARY_MOTION_ENVIRONMENT);
 
   const safeColumns = $derived(viewMode === "list" ? 1 : Math.max(1, effectiveColumns || 1));
   const resolvedItemCount = $derived(itemCount ?? items.length);
@@ -60,14 +72,25 @@
       ? ""
       : `--library-columns:${safeColumns};`,
   );
-  const estimateSize = $derived(estimateLibraryVirtualRowSize(viewMode));
-  let measuredRowSize = $state(0);
-  const rowSize = $derived(measuredRowSize > 0 ? measuredRowSize : estimateSize);
+  let viewportWidth = $state(0);
+  const estimatedDynamicRowSize = $derived.by(() => {
+    const estimateSize = estimateLibraryVirtualRowSize(viewMode);
+    if (viewMode === "list") return estimateSize;
+    const columns = Math.max(1, safeColumns);
+    const columnGap = viewMode === "compact_grid" ? 18 : 24;
+    const rowGap = viewMode === "compact_grid" ? 32 : 40;
+    const usableWidth = Math.max(0, viewportWidth - columnGap * (columns - 1));
+    const columnWidth = usableWidth > 0 ? usableWidth / columns : 148;
+    const coverHeight = columnWidth * 1.5;
+    const copyHeight = viewMode === "compact_grid" ? 38 : 66;
+    return Math.max(estimateSize, Math.ceil(coverHeight + copyHeight + rowGap));
+  });
+  const rowSize = $derived(estimatedDynamicRowSize);
   const overscanRows = $derived(viewMode === "list" ? 5 : 4);
   let virtualGridEl: HTMLDivElement | null = $state(null);
   let viewportScrollTop = $state(0);
   let viewportClientHeight = $state(0);
-  const measuredVirtualRows = new Map<number, number>();
+  const layoutVersion = $derived(`${safeColumns}:${viewMode}`);
 
   const visibleStartRow = $derived(
     Math.max(0, Math.floor(viewportScrollTop / Math.max(1, rowSize)) - overscanRows),
@@ -95,15 +118,21 @@
   );
   const totalSize = $derived(virtualRowCount * rowSize);
 
+  onMount(() => libraryMotionEnvironment.subscribe((environment) => {
+    motionEnvironment = environment;
+  }));
+
   $effect(() => {
     const el = scrollElement;
-    if (!shouldVirtualize || !el) return;
+    if (!active || !shouldVirtualize || !el) return;
     let syncFrame: number | null = null;
+    let initialSyncFrame: number | null = null;
 
     const syncViewport = () => {
       const gridTop = virtualGridEl?.offsetTop ?? 0;
       viewportScrollTop = Math.max(0, el.scrollTop - gridTop);
       viewportClientHeight = el.clientHeight;
+      viewportWidth = virtualGridEl?.clientWidth ?? el.clientWidth;
     };
 
     const scheduleViewportSync = () => {
@@ -115,53 +144,52 @@
     };
 
     syncViewport();
-    requestAnimationFrame(syncViewport);
+    initialSyncFrame = requestAnimationFrame(() => {
+      initialSyncFrame = null;
+      syncViewport();
+    });
     el.addEventListener("scroll", scheduleViewportSync, { passive: true });
 
     return () => {
       el.removeEventListener("scroll", scheduleViewportSync);
       if (syncFrame !== null) cancelAnimationFrame(syncFrame);
+      if (initialSyncFrame !== null) cancelAnimationFrame(initialSyncFrame);
     };
   });
-
-  function measureVirtualRow(node: HTMLDivElement) {
-    const rowIndex = Number(node.dataset.index);
-    let observer: ResizeObserver | null = null;
-
-    const updateMeasurement = () => {
-      if (!Number.isFinite(rowIndex)) return;
-      const nextSize = node.getBoundingClientRect().height;
-      if (!(nextSize > 0)) return;
-      measuredVirtualRows.set(rowIndex, nextSize);
-      measuredRowSize = Math.max(...measuredVirtualRows.values());
-    };
-
-    updateMeasurement();
-    if (typeof ResizeObserver !== "undefined") {
-      observer = new ResizeObserver(updateMeasurement);
-      observer.observe(node);
-    }
-
-    return {
-      destroy() {
-        observer?.disconnect();
-        if (Number.isFinite(rowIndex)) measuredVirtualRows.delete(rowIndex);
-        measuredRowSize = measuredVirtualRows.size > 0
-          ? Math.max(...measuredVirtualRows.values())
-          : 0;
-      },
-    };
-  }
 
   $effect(() => {
     safeColumns;
     viewMode;
-    measuredVirtualRows.clear();
-    measuredRowSize = 0;
+    showProgress;
+    showOutline;
+    if (!active) return;
+    const frame = requestAnimationFrame(() => {
+      const el = scrollElement;
+      if (!el || !virtualGridEl) return;
+      viewportScrollTop = Math.max(0, el.scrollTop - virtualGridEl.offsetTop);
+      viewportClientHeight = el.clientHeight;
+      viewportWidth = virtualGridEl.clientWidth || el.clientWidth;
+    });
+    return () => cancelAnimationFrame(frame);
   });
 
   $effect(() => {
-    if (!onVisibleRangeChange) return;
+    const el = virtualGridEl;
+    if (!active || !el || typeof ResizeObserver === "undefined") return;
+    let lastWidth = el.clientWidth;
+    const observer = new ResizeObserver(() => {
+      const nextWidth = el.clientWidth;
+      if (Math.abs(nextWidth - lastWidth) < 1) return;
+      lastWidth = nextWidth;
+      viewportWidth = nextWidth;
+    });
+    observer.observe(el);
+    viewportWidth = el.clientWidth;
+    return () => observer.disconnect();
+  });
+
+  $effect(() => {
+    if (!active || !onVisibleRangeChange) return;
     if (!shouldVirtualize) {
       onVisibleRangeChange(0, Math.min(resolvedItemCount, safeColumns * 8));
       return;
@@ -216,13 +244,12 @@
     bind:this={virtualGridEl}
     style={`height:${totalSize}px;`}
   >
-    {#each renderedVirtualItems as virtualRow (virtualRow.key)}
+    {#each renderedVirtualItems as virtualRow (`${layoutVersion}:${virtualRow.key}`)}
       {@const rowItems = getVirtualRowItems(virtualRow.index)}
       {#if rowItems.length}
         <div
           class="virtual-row"
           data-index={virtualRow.index}
-          use:measureVirtualRow
           style={`transform:translateY(${virtualRow.start}px);`}
         >
           <div class="grid" class:grid-compact={viewMode === "compact_grid"} class:grid-list={viewMode === "list"} style={gridStyle}>
@@ -240,6 +267,10 @@
                 {onPointerLeave}
                 {onCoverLoad}
                 {onCoverError}
+                panelActive={active}
+                {scrollElement}
+                {motionEnvironment}
+                {panelMotionEnabled}
               />
             {/each}
           </div>
@@ -265,6 +296,10 @@
           {onPointerLeave}
           {onCoverLoad}
           {onCoverError}
+          panelActive={active}
+          {scrollElement}
+          {motionEnvironment}
+          {panelMotionEnabled}
         />
       {/if}
     {/each}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { _ } from "../../lib/i18n/runtime";
   import { onMount } from "svelte";
   import { MagnifyingGlass, CircleNotch, CaretDown, CaretRight } from "phosphor-svelte";
   import { gql } from "../../lib/client";
@@ -49,10 +50,10 @@
 
 <div class="root">
   <div class="header">
-    <h1 class="heading">Sources</h1>
+    <h1 class="heading">{$_("home_metrics_sources")}</h1>
     <div class="search-wrap">
       <MagnifyingGlass size={12} class="search-icon" weight="light" />
-      <input class="search" placeholder="Search" bind:value={search} />
+      <input class="search" placeholder={$_("novelSources_actions_search")} bind:value={search} />
     </div>
   </div>
 
@@ -68,7 +69,7 @@
   {#if loading}
     <div class="empty"><CircleNotch size={16} weight="light" class="anim-spin" style="color:var(--text-faint)" /></div>
   {:else if groups.length === 0}
-    <NocturneState layout="center" tone="info" icon="search" eyebrow="Sources" title="No sources found" body="Try another language filter or check your installed extensions." />
+    <NocturneState layout="center" tone="info" icon="search" eyebrow="Sources" title={$_("sources_empty_noNovelSources")} body="Try another language filter or check your installed extensions." />
   {:else}
     <div class="list">
       {#each groups as g}

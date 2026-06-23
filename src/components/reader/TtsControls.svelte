@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { _ } from "../../lib/i18n/runtime";
   import { CaretLeft, CaretRight, Pause, Play, SpeakerHigh, Stop } from "phosphor-svelte";
   import type { createTtsController } from "../../lib/reader/tts";
 
@@ -100,18 +101,18 @@
     return controller.state.segmentCount;
   });
   const disabled = $derived(!supported || !hasProvider || segmentCount === 0);
-  const voiceLabel = $derived(voices.length ? "Voice" : "Voices unavailable");
+  const voiceLabel = $derived(voices.length ? $_("ui_voice") : $_("ui_voicesUnavailable"));
 </script>
 
-<div class="tts-panel" aria-label="Text to speech controls">
+<div class="tts-panel" aria-label={$_("ui_textToSpeechControls")}>
   <!-- Header with back button -->
   {#if onback}
     <div class="tts-header">
-      <button class="tts-back-btn" onclick={onback} title="Back to settings">
+      <button class="tts-back-btn" onclick={onback} title={$_("ui_backToSettings")}>
         <CaretLeft size={14} weight="bold" />
-        <span>Back</span>
+        <span>{$_("ui_back")}</span>
       </button>
-      <span class="tts-title">Text to Speech</span>
+      <span class="tts-title">{$_("ui_textToSpeech")}</span>
     </div>
   {/if}
 
@@ -122,8 +123,8 @@
       type="button"
       onclick={() => isPlaying ? controller.pause() : controller.play()}
       disabled={disabled}
-      aria-label={isPlaying ? "Pause reading aloud" : "Play reading aloud"}
-      title={isPlaying ? "Pause" : "Play"}
+      aria-label={isPlaying ? $_("ui_pauseReadingAloud") : $_("ui_playReadingAloud")}
+      title={isPlaying ? $_("ui_pause") : $_("ui_play")}
     >
       {#if isPlaying}
         <Pause size={15} weight="fill" />
@@ -131,13 +132,13 @@
         <Play size={15} weight="fill" />
       {/if}
     </button>
-    <button class="tts-btn" type="button" onclick={controller.stop} disabled={disabled} aria-label="Stop reading" title="Stop">
+    <button class="tts-btn" type="button" onclick={controller.stop} disabled={disabled} aria-label={$_("ui_stopReading")} title={$_("ui_stop")}>
       <Stop size={15} weight="fill" />
     </button>
-    <button class="tts-btn" type="button" onclick={controller.previous} disabled={disabled} aria-label="Previous paragraph" title="Previous">
+    <button class="tts-btn" type="button" onclick={controller.previous} disabled={disabled} aria-label={$_("ui_previousParagraph")} title={$_("ui_previous")}>
       <CaretLeft size={15} weight="bold" />
     </button>
-    <button class="tts-btn" type="button" onclick={controller.next} disabled={disabled} aria-label="Next paragraph" title="Next">
+    <button class="tts-btn" type="button" onclick={controller.next} disabled={disabled} aria-label={$_("ui_nextParagraph")} title={$_("library_pagination_next")}>
       <CaretRight size={15} weight="bold" />
     </button>
   </div>
@@ -145,7 +146,7 @@
   <!-- Settings rows -->
   <div class="tts-settings-list">
     <div class="tts-settings-row">
-      <span class="tts-settings-label">Speed</span>
+      <span class="tts-settings-label">{$_("downloads_summary_speed")}</span>
       <div class="tts-speed-control">
         <span class="tts-speed-val">{playbackRate.toFixed(1)}x</span>
         <input
@@ -157,13 +158,13 @@
           value={playbackRate}
           oninput={(event) => setPlaybackRate(Number(event.currentTarget.value))}
           disabled={!supported}
-          aria-label="Playback speed"
+          aria-label={$_("ui_playbackSpeed")}
         />
       </div>
     </div>
 
     <div class="tts-settings-row">
-      <span class="tts-settings-label">Voice</span>
+      <span class="tts-settings-label">{$_("ui_voice")}</span>
       <div class="tts-voice-control">
         <SpeakerHigh size={14} weight="regular" style="margin-right: 2px;" />
         <select
@@ -171,9 +172,9 @@
           value={selectedVoice}
           onchange={(event) => setSelectedVoice(event.currentTarget.value)}
           disabled={!supported || voices.length === 0}
-          aria-label="Speech voice"
+          aria-label={$_("ui_speechVoice")}
         >
-          <option value="">System voice</option>
+          <option value="">{$_("ui_systemVoice")}</option>
           {#each voices as voice}
             <option value={voice.name}>{voice.name}</option>
           {/each}
@@ -182,11 +183,11 @@
     </div>
 
     <div class="tts-settings-row">
-      <span class="tts-settings-label">Status</span>
+      <span class="tts-settings-label">{$_("downloads_summary_status")}</span>
       {#if !supported}
-        <span class="tts-status-val">Unavailable</span>
+        <span class="tts-status-val">{$_("ui_unavailable")}</span>
       {:else if !hasProvider || segmentCount === 0}
-        <span class="tts-status-val">No text</span>
+        <span class="tts-status-val">{$_("ui_noText")}</span>
       {:else}
         <span class="tts-status-val">{Math.min(currentSegmentIndex + 1, segmentCount)} / {segmentCount}</span>
       {/if}

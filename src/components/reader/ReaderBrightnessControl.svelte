@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { _ } from "../../lib/i18n/runtime";
   import { store, updateSettings } from "../../store/state.svelte";
 
   const MIN_BRIGHTNESS = 0.2;
@@ -16,14 +17,14 @@
 </script>
 
 <div>
-  <dt>Brightness</dt>
+  <dt>{$_("ui_brightness")}</dt>
   <dd>
     <div class="popover-stepper">
       <button
         class="popover-step-btn"
         type="button"
-        aria-label="Decrease reader brightness"
-        title="Decrease brightness"
+        aria-label={$_("ui_decreaseReaderBrightness")}
+        title={$_("ui_decreaseBrightness")}
         onclick={() => setBrightness(brightness - BRIGHTNESS_STEP)}
         disabled={brightness <= MIN_BRIGHTNESS + 0.01}
       >-</button>
@@ -31,8 +32,8 @@
       <button
         class="popover-step-btn"
         type="button"
-        aria-label="Increase reader brightness"
-        title="Increase brightness"
+        aria-label={$_("ui_increaseReaderBrightness")}
+        title={$_("ui_increaseBrightness")}
         onclick={() => setBrightness(brightness + BRIGHTNESS_STEP)}
         disabled={brightness >= MAX_BRIGHTNESS - 0.01}
       >+</button>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { translate } from "../../lib/i18n/runtime";
   import { onMount, untrack } from "svelte";
   import { BookmarkSimple, Download, CheckCircle, Circle, ArrowSquareOut, CircleNotch, Play, SortAscending, SortDescending, CaretDown, ArrowsClockwise, ArrowsLeftRight, List, SquaresFour, FolderSimplePlus, Trash, DownloadSimple, X, LinkSimpleHorizontalBreak, ChartLineUp } from "phosphor-svelte";
   import { gql } from "../../lib/client";
@@ -282,7 +283,7 @@
       await gql(START_DOWNLOADER);
       void refreshDownloadQueue();
       scheduleDownloadQueueRefresh(800);
-      addToast({ kind: "download", title: "Download started", body: queuedLabel(ids.length, label) });
+      addToast({ kind: "download", title: translate("ui_downloadStarted"), body: queuedLabel(ids.length, label) });
 
       const failed = await waitForDownloadFailure(ids);
       if (failed) {
@@ -595,17 +596,17 @@
     chapterStore.delete(store.activeManga.id);
     gql(FETCH_CHAPTERS, { mangaId: store.activeManga.id })
       .then(() => reloadChapters(store.activeManga!.id))
-      .then(() => addToast({ kind: "success", title: "Chapters refreshed" }))
+      .then(() => addToast({ kind: "success", title: translate("ui_chaptersRefreshed") }))
       .catch((error) => {
         const message = sourceAccessErrorMessage(error);
         const challenge = isSourceChallengeMessage(message);
         addToast({
           kind: "error",
-          title: "Refresh failed",
+          title: translate("ui_refreshFailed"),
           body: challenge
             ? store.settings.flareSolverrEnabled
-              ? "Check FlareSolverr and retry this source."
-              : "This source needs FlareSolverr for Cloudflare or anti-bot protection."
+              ? translate("ui_checkFlaresolverrAndRetryThisSource")
+              : translate("novelSources_errors_blockedFlareDisabled")
             : message,
           duration: challenge ? 7000 : undefined,
       action: challenge ? { label: $_("detail.actions.openSettings"), run: () => setSettingsOpen(true) } : undefined,
@@ -617,18 +618,18 @@
   function buildCtxItems(ch: Chapter, idx: number): MenuEntry[] {
     const above = sortedChapters.slice(0, idx + 1), below = sortedChapters.slice(idx), last = sortedChapters.length - 1;
     return [
-      { label: ch.isRead ? "Mark as unread" : "Mark as read", icon: ch.isRead ? Circle : CheckCircle, onClick: () => markRead(ch.id, !ch.isRead) },
+      { label: ch.isRead ? translate("ui_markAsUnread") : translate("ui_markAsRead"), icon: ch.isRead ? Circle : CheckCircle, onClick: () => markRead(ch.id, !ch.isRead) },
       { separator: true },
-      { label: "Mark above as read",   icon: CheckCircle, onClick: () => markAboveRead(idx),   disabled: above.filter(c => !c.isRead).length === 0 },
-      { label: "Mark above as unread", icon: Circle,      onClick: () => markAboveUnread(idx), disabled: above.filter(c => c.isRead).length === 0 },
+      { label: translate("ui_markAboveAsRead"),   icon: CheckCircle, onClick: () => markAboveRead(idx),   disabled: above.filter(c => !c.isRead).length === 0 },
+      { label: translate("ui_markAboveAsUnread"), icon: Circle,      onClick: () => markAboveUnread(idx), disabled: above.filter(c => c.isRead).length === 0 },
       { separator: true },
-      { label: "Mark below as read",   icon: CheckCircle, onClick: () => markBelowRead(idx),   disabled: idx === last || below.filter(c => !c.isRead).length === 0 },
-      { label: "Mark below as unread", icon: Circle,      onClick: () => markBelowUnread(idx), disabled: idx === last || below.filter(c => c.isRead).length === 0 },
+      { label: translate("ui_markBelowAsRead"),   icon: CheckCircle, onClick: () => markBelowRead(idx),   disabled: idx === last || below.filter(c => !c.isRead).length === 0 },
+      { label: translate("ui_markBelowAsUnread"), icon: Circle,      onClick: () => markBelowUnread(idx), disabled: idx === last || below.filter(c => c.isRead).length === 0 },
       { separator: true },
-      { label: ch.isDownloaded ? "Delete download" : "Download", icon: ch.isDownloaded ? Trash : Download, danger: ch.isDownloaded, onClick: () => ch.isDownloaded ? deleteDownloaded(ch.id) : enqueueChapterIds([ch.id], ch.name) },
+      { label: ch.isDownloaded ? translate("detail_download_delete") : translate("detail_actions_download"), icon: ch.isDownloaded ? Trash : Download, danger: ch.isDownloaded, onClick: () => ch.isDownloaded ? deleteDownloaded(ch.id) : enqueueChapterIds([ch.id], ch.name) },
       { separator: true },
-      { label: "Download next 5 from here", icon: DownloadSimple, onClick: () => enqueueMultiple(sortedChapters.slice(idx, idx + 5).filter(c => !c.isDownloaded).map(c => c.id)) },
-      { label: "Download all from here",    icon: DownloadSimple, onClick: () => enqueueMultiple(sortedChapters.slice(idx).filter(c => !c.isDownloaded).map(c => c.id)) },
+      { label: translate("ui_downloadNext5FromHere"), icon: DownloadSimple, onClick: () => enqueueMultiple(sortedChapters.slice(idx, idx + 5).filter(c => !c.isDownloaded).map(c => c.id)) },
+      { label: translate("ui_downloadAllFromHere"),    icon: DownloadSimple, onClick: () => enqueueMultiple(sortedChapters.slice(idx).filter(c => !c.isDownloaded).map(c => c.id)) },
     ];
   }
 
@@ -811,16 +812,16 @@
             {/each}
             <div class="fp-div"></div>
             {#if folderCreating}
-              <div class="fp-create"><input class="fp-input" placeholder="Folder name..." bind:value={folderNewName} onkeydown={(e) => { if (e.key === "Enter") createCategory(); if (e.key === "Escape") { folderCreating = false; folderNewName = ""; } }} use:focusOnMount /><button class="fp-confirm" onclick={createCategory} disabled={!folderNewName.trim()}>Add</button><button class="fp-cancel" onclick={() => { folderCreating = false; folderNewName = ""; }}><X size={12} weight="light" /></button></div>
+              <div class="fp-create"><input class="fp-input" placeholder={$_("detail_folders_namePlaceholder")} bind:value={folderNewName} onkeydown={(e) => { if (e.key === "Enter") createCategory(); if (e.key === "Escape") { folderCreating = false; folderNewName = ""; } }} use:focusOnMount /><button class="fp-confirm" onclick={createCategory} disabled={!folderNewName.trim()}>{$_("detail_folders_add")}</button><button class="fp-cancel" onclick={() => { folderCreating = false; folderNewName = ""; }}><X size={12} weight="light" /></button></div>
             {:else}
-              <button class="fp-new" onclick={() => folderCreating = true}>+ New folder</button>
+              <button class="fp-new" onclick={() => folderCreating = true}>{$_("detail_folders_new")}</button>
             {/if}
           </div>
         {/if}
       </div>
       <button class="series-utility" class:active={linkedIds.length > 0} onclick={openLinkPicker}>
         <LinkSimpleHorizontalBreak size={13} weight={linkedIds.length > 0 ? "fill" : "light"} />
-        Link{linkedIds.length > 0 ? ` (${linkedIds.length})` : ""}
+        {$_("ui_link")}{linkedIds.length > 0 ? ` (${linkedIds.length})` : ""}
       </button>
       {#if chapters.length > 0}
         <div class="dl-wrap" bind:this={dlDropRef}>
@@ -835,7 +836,7 @@
             <div class="dl-dropdown">
               <div class="dl-pop-head">
                 <div>
-                  <span class="dl-kicker">Downloads</span>
+                  <span class="dl-kicker">{$_("downloads_eyebrow")}</span>
                   <strong>{downloadedCount} / {totalCount}</strong>
                 </div>
                 <span class="dl-state-label">{activeSeriesDownloadCount > 0 ? `${activeSeriesDownloadCount} active` : "Ready"}</span>
@@ -844,13 +845,13 @@
                 {@const contIdx = sortedChapters.indexOf(continueChapter.chapter)}
                 {#if contIdx >= 0}
                   <div class="dl-section">
-                    <p class="dl-section-label">From Ch.{continueChapter.chapter.chapterNumber}</p>
+                    <p class="dl-section-label">{$_("ui_fromCh")}{continueChapter.chapter.chapterNumber}</p>
                     <div class="dl-next-row">
                       {#each [5, 10, 25] as n}
                         {@const avail = sortedChapters.slice(contIdx, contIdx + n).filter(c => !c.isDownloaded).length}
                         <button class="dl-next-btn" disabled={avail === 0} onclick={() => { enqueueNext(n); dlOpen = false; }}>
-                          <span>Next {n}</span>
-                          <span class="dl-next-sub">{avail} new</span>
+                          <span>{$_("library_pagination_next")} {n}</span>
+                          <span class="dl-next-sub">{avail} {$_("ui_new_c2a6b03f")}</span>
                         </button>
                       {/each}
                     </div>
@@ -860,33 +861,33 @@
               <div class="dl-section dl-section-compact">
                 {#if !showRange}
                   <button class="dl-item dl-range-trigger" onclick={() => showRange = true}>
-                    <span>Custom range</span>
-                    <span class="dl-item-sub">Choose chapters</span>
+                    <span>{$_("ui_customRange")}</span>
+                    <span class="dl-item-sub">{$_("ui_chooseChapters")}</span>
                   </button>
                 {:else}
                   <div class="dl-range-row">
-                    <button class="dl-range-back" onclick={() => showRange = false} aria-label="Close custom range">&lt;</button>
-                    <input class="dl-range-input" placeholder="From" bind:value={rangeFrom} onkeydown={(e) => e.key === "Enter" && enqueueRange()} use:focusOnMount />
+                    <button class="dl-range-back" onclick={() => showRange = false} aria-label={$_("ui_closeCustomRange")}>&lt;</button>
+                    <input class="dl-range-input" placeholder={$_("ui_from")} bind:value={rangeFrom} onkeydown={(e) => e.key === "Enter" && enqueueRange()} use:focusOnMount />
                     <span class="dl-range-sep">-</span>
-                    <input class="dl-range-input" placeholder="To" bind:value={rangeTo} onkeydown={(e) => e.key === "Enter" && enqueueRange()} />
-                    <button class="dl-range-go" disabled={!rangeFrom.trim() || !rangeTo.trim()} onclick={enqueueRange}>Go</button>
+                    <input class="dl-range-input" placeholder={$_("ui_to")} bind:value={rangeTo} onkeydown={(e) => e.key === "Enter" && enqueueRange()} />
+                    <button class="dl-range-go" disabled={!rangeFrom.trim() || !rangeTo.trim()} onclick={enqueueRange}>{$_("ui_go")}</button>
                   </div>
                 {/if}
               </div>
               <div class="dl-section dl-actions">
                 <button class="dl-item" onclick={() => { enqueueMultiple(sortedChapters.filter(c => !c.isRead && !c.isDownloaded).map(c => c.id)); dlOpen = false; }}>
-                  <span>Unread chapters</span>
-                  <span class="dl-item-sub">{sortedChapters.filter(c => !c.isRead && !c.isDownloaded).length} remaining</span>
+                  <span>{$_("library_sort_unreadChapters")}</span>
+                  <span class="dl-item-sub">{sortedChapters.filter(c => !c.isRead && !c.isDownloaded).length} {$_("ui_remaining_398658a6")}</span>
                 </button>
                 <button class="dl-item dl-item-primary" onclick={() => { enqueueMultiple(sortedChapters.filter(c => !c.isDownloaded).map(c => c.id)); dlOpen = false; }}>
-                  <span>Download all</span>
-                  <span class="dl-item-sub">{sortedChapters.filter(c => !c.isDownloaded).length} not downloaded</span>
+                  <span>{$_("ui_downloadAll")}</span>
+                  <span class="dl-item-sub">{sortedChapters.filter(c => !c.isDownloaded).length} {$_("ui_notDownloaded")}</span>
                 </button>
               </div>
               <div class="dl-section dl-danger-zone" class:dl-danger-zone-empty={downloadedCount === 0}>
                 <button class="dl-item dl-item-danger" onclick={() => { deleteAllDownloads(); dlOpen = false; }} disabled={downloadedCount === 0 || deletingAll}>
-                  <span>{deletingAll ? "Deleting..." : "Delete all downloads"}</span>
-                  <span class="dl-item-sub">{downloadedCount} downloaded</span>
+                  <span>{deletingAll ? "Deleting..." : $_("ui_deleteAllDownloads")}</span>
+                  <span class="dl-item-sub">{downloadedCount} {$_("ui_downloaded")}</span>
                 </button>
               </div>
             </div>
@@ -902,10 +903,10 @@
     {#snippet detailsExtra()}
       <div class="v3-details-stack">
         {#if manga?.source}<div class="detail-row"><span class="detail-key">{$_("detail.fields.source")}</span><span class="detail-val">{manga.source.displayName}</span></div>{/if}
-        {#if manga?.status}<div class="detail-row"><span class="detail-key">Status</span><span class="detail-val">{statusLabel}</span></div>{/if}
-        {#if manga?.author}<div class="detail-row"><span class="detail-key">Author</span><span class="detail-val">{manga.author}</span></div>{/if}
-        {#if manga?.artist && manga.artist !== manga.author}<div class="detail-row"><span class="detail-key">Artist</span><span class="detail-val">{manga.artist}</span></div>{/if}
-        {#if hasFolders}<div class="detail-row"><span class="detail-key">Folders</span><span class="detail-val">{assignedFolders.map(getCategoryDisplayName).join(", ")}</span></div>{/if}
+        {#if manga?.status}<div class="detail-row"><span class="detail-key">{$_("downloads_summary_status")}</span><span class="detail-val">{statusLabel}</span></div>{/if}
+        {#if manga?.author}<div class="detail-row"><span class="detail-key">{$_("library_sort_author")}</span><span class="detail-val">{manga.author}</span></div>{/if}
+        {#if manga?.artist && manga.artist !== manga.author}<div class="detail-row"><span class="detail-key">{$_("ui_artist")}</span><span class="detail-val">{manga.artist}</span></div>{/if}
+        {#if hasFolders}<div class="detail-row"><span class="detail-key">{$_("detail_actions_folders")}</span><span class="detail-val">{assignedFolders.map(getCategoryDisplayName).join(", ")}</span></div>{/if}
       </div>
     {/snippet}
 
@@ -928,14 +929,14 @@
               </button>
               {#if scanlatorMenuOpen}
                 <div class="sort-menu scanlator-menu" role="presentation" onmouseleave={() => scanlatorMenuOpen = false}>
-                  <p class="sort-section-label">Filter</p>
-                  <button class="sort-option" class:active={mangaReaderPrefs.scanlatorFilter.length === 0} onclick={() => { updateScanlatorPrefs({ scanlatorFilter: [] }); scanlatorMenuOpen = false; }}>Any scanlator</button>
+                  <p class="sort-section-label">{$_("library_filter")}</p>
+                  <button class="sort-option" class:active={mangaReaderPrefs.scanlatorFilter.length === 0} onclick={() => { updateScanlatorPrefs({ scanlatorFilter: [] }); scanlatorMenuOpen = false; }}>{$_("ui_anyScanlator")}</button>
                   {#each scanlatorOptions as scanlator}
                     <button class="sort-option" class:active={mangaReaderPrefs.scanlatorFilter.includes(scanlator)} onclick={() => toggleScanlatorFilter(scanlator)}>{scanlator}</button>
                   {/each}
                   <div class="sort-divider"></div>
-                  <p class="sort-section-label">Prefer</p>
-                  <button class="sort-option" class:active={!mangaReaderPrefs.preferredScanlator} onclick={() => { updateScanlatorPrefs({ preferredScanlator: "" }); scanlatorMenuOpen = false; }}>No preference</button>
+                  <p class="sort-section-label">{$_("ui_prefer")}</p>
+                  <button class="sort-option" class:active={!mangaReaderPrefs.preferredScanlator} onclick={() => { updateScanlatorPrefs({ preferredScanlator: "" }); scanlatorMenuOpen = false; }}>{$_("ui_noPreference")}</button>
                   {#each scanlatorOptions as scanlator}
                     <button class="sort-option" class:active={mangaReaderPrefs.preferredScanlator === scanlator} onclick={() => { updateScanlatorPrefs({ preferredScanlator: scanlator }); scanlatorMenuOpen = false; }}>{scanlator}</button>
                   {/each}
@@ -946,17 +947,17 @@
           <div class="sort-wrap">
             <button class="series-toolbar-btn" onclick={() => { sortMenuOpen = !sortMenuOpen; scanlatorMenuOpen = false; }}>
               {#if sortDir === "desc"}<SortDescending size={14} weight="light" />{:else}<SortAscending size={14} weight="light" />{/if}
-              Sort
+              {$_("library_sort")}
               <CaretDown size={10} weight="light" />
             </button>
             {#if sortMenuOpen}
               <div class="sort-menu" role="presentation" onmouseleave={() => sortMenuOpen = false}>
-                {#each [["source","Source order"],["chapterNumber","Chapter number"],["uploadDate","Upload date"]] as [val, label]}
+                {#each [["source",$_("ui_sourceOrder")],["chapterNumber",$_("ui_chapterNumber")],["uploadDate",$_("ui_uploadDate")]] as [val, label]}
                   <button class="sort-option" class:active={sortMode === val} onclick={() => { updateSettings({ chapterSortMode: val as any }); chapterPage = 1; sortMenuOpen = false; }}>{label}</button>
                 {/each}
                 <div class="sort-divider"></div>
-                <button class="sort-option" class:active={sortDir === "desc"} onclick={() => { updateSettings({ chapterSortDir: "desc" }); chapterPage = 1; sortMenuOpen = false; }}>Descending</button>
-                <button class="sort-option" class:active={sortDir === "asc"} onclick={() => { updateSettings({ chapterSortDir: "asc" }); chapterPage = 1; sortMenuOpen = false; }}>Ascending</button>
+                <button class="sort-option" class:active={sortDir === "desc"} onclick={() => { updateSettings({ chapterSortDir: "desc" }); chapterPage = 1; sortMenuOpen = false; }}>{$_("library_sort_descending")}</button>
+                <button class="sort-option" class:active={sortDir === "asc"} onclick={() => { updateSettings({ chapterSortDir: "asc" }); chapterPage = 1; sortMenuOpen = false; }}>{$_("library_sort_ascending")}</button>
               </div>
             {/if}
           </div>
@@ -1011,7 +1012,7 @@
                 {/if}
                 {#if ch.lastPageRead && ch.lastPageRead > 0 && !ch.isRead}
                   <div class="ch-meta">
-                    <span class="ch-meta-item">Page {ch.lastPageRead}</span>
+                    <span class="ch-meta-item">{$_("bookDetail_page")} {ch.lastPageRead}</span>
                   </div>
                 {/if}
                 <div class="chapter-progress"><div class="chapter-progress__fill" style={`width: ${rowProgress}%`}></div></div>
@@ -1042,7 +1043,7 @@
     {/snippet}
 
     {#snippet chapterFooter()}
-      {#if totalPages >= 1}<div class="pagination-bottom v3-pagination"><button class="series-page-btn" onclick={() => chapterPage = Math.max(1, chapterPage - 1)} disabled={chapterPage === 1}>Prev</button><span class="page-num">{chapterPage} / {totalPages}</span><button class="series-page-btn" onclick={() => chapterPage = Math.min(totalPages, chapterPage + 1)} disabled={chapterPage === totalPages}>Next</button></div>{/if}
+      {#if totalPages >= 1}<div class="pagination-bottom v3-pagination"><button class="series-page-btn" onclick={() => chapterPage = Math.max(1, chapterPage - 1)} disabled={chapterPage === 1}>{$_("library_pagination_prev")}</button><span class="page-num">{chapterPage} / {totalPages}</span><button class="series-page-btn" onclick={() => chapterPage = Math.min(totalPages, chapterPage + 1)} disabled={chapterPage === totalPages}>{$_("library_pagination_next")}</button></div>{/if}
     {/snippet}
   </SeriesDetailV3Shell>
 
@@ -1054,18 +1055,18 @@
     <div class="link-backdrop" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) closeLinkPicker(); }} onkeydown={(e) => e.key === "Escape" && closeLinkPicker()}>
       <div class="link-modal">
         <div class="link-header">
-          <span class="link-title">Link as same series</span>
+          <span class="link-title">{$_("ui_linkAsSameSeries")}</span>
           <button class="link-close" onclick={closeLinkPicker}><X size={14} weight="light" /></button>
         </div>
-        <p class="link-hint">Mark two manga as the same series so duplicates are merged in search and discover. Click a linked entry again to unlink.</p>
+        <p class="link-hint">{$_("ui_markTwoMangaAsTheSameSeriesSo")}</p>
         <div class="link-search-wrap">
-          <input class="link-search" placeholder="Search your library..." bind:value={linkSearch} use:focusOnMount />
+          <input class="link-search" placeholder={$_("ui_searchYourLibrary")} bind:value={linkSearch} use:focusOnMount />
         </div>
         <div class="link-list">
           {#if loadingLinkList}
-            <NocturneState layout="compact" tone="info" icon="search" eyebrow="Links" title="Loading library" />
+            <NocturneState layout="compact" tone="info" icon="search" eyebrow="Links" title={$_("ui_loadingLibrary")} />
           {:else if linkPickerResults.length === 0}
-            <NocturneState layout="compact" tone="info" icon="search" eyebrow="Links" title="No matching series" body="Try another title from your library." />
+            <NocturneState layout="compact" tone="info" icon="search" eyebrow="Links" title={$_("ui_noMatchingSeries")} body="Try another title from your library." />
           {:else}
             {#each linkPickerResults as m (m.id)}
               {@const isLinked = linkedIds.includes(m.id)}

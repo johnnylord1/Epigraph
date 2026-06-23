@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { _ } from "../../lib/i18n/runtime";
   import { Info, X } from "phosphor-svelte";
   import type { PersistedSyncSessionView } from "../../lib/syncdDesktop";
   import NocturneState from "../shared/NocturneState.svelte";
@@ -118,16 +119,16 @@
       <div class="syncd-session-copy__title-wrap">
         <p class="syncd-list__title" data-testid="syncd-session-title">{session.remoteProfileId} @ {session.canonicalOrigin}</p>
         <p class="syncd-list__hint" data-testid="syncd-session-status">{summary}</p>
-        <p class="syncd-list__meta">Validated {lastValidatedLabel}</p>
+        <p class="syncd-list__meta">{$_("ui_validated")} {lastValidatedLabel}</p>
         {#if reconnectError}
-          <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Session" title="Reconnect failed" body={reconnectError} />
+          <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Session" title={$_("ui_reconnectFailed")} body={reconnectError} />
         {/if}
       </div>
 
       <div class="syncd-session-copy__status">
         <span class={`syncd-pill syncd-pill--${statusTone}`} data-testid="syncd-session-status-pill">{statusLabel}</span>
         {#if session.isActiveForSync}
-          <span class="syncd-pill syncd-pill--success">Active</span>
+          <span class="syncd-pill syncd-pill--success">{$_("downloads_filter_active")}</span>
         {/if}
         <button
           type="button"
@@ -154,7 +155,7 @@
     >
       <div class="syncd-session-popover__head">
         <div class="syncd-session-popover__title-wrap">
-          <p class="syncd-session-popover__eyebrow">Session details</p>
+          <p class="syncd-session-popover__eyebrow">{$_("ui_sessionDetails")}</p>
           <p id={headingId} class="syncd-session-popover__title">{session.remoteProfileId}</p>
         </div>
         <button
@@ -167,45 +168,45 @@
         </button>
       </div>
 
-      <div class="syncd-session-popover__status-strip" aria-label="Session status summary">
+      <div class="syncd-session-popover__status-strip" aria-label={$_("ui_sessionStatusSummary")}>
         <span class={`syncd-pill syncd-pill--${statusTone}`}>{statusLabel}</span>
         {#if session.isActiveForSync}
-          <span class="syncd-pill syncd-pill--success">Active</span>
+          <span class="syncd-pill syncd-pill--success">{$_("downloads_filter_active")}</span>
         {/if}
         {#if session.isActiveForSync && isReplicationPaused}
-          <span class="syncd-pill syncd-pill--neutral">Paused</span>
+          <span class="syncd-pill syncd-pill--neutral">{$_("downloads_filter_paused")}</span>
         {/if}
         <span class="syncd-pill syncd-pill--info">{replicationLabel}</span>
       </div>
 
       <div class="syncd-session-popover__body">
         <div class="syncd-session-popover__row">
-          <span class="syncd-session-popover__label">Connection</span>
+          <span class="syncd-session-popover__label">{$_("ui_connection")}</span>
           <p class="syncd-session-popover__summary">{statusLabel} | {summary}</p>
         </div>
         <div class="syncd-session-popover__meta-grid">
           <div>
-            <span class="syncd-session-popover__label">Session key</span>
+            <span class="syncd-session-popover__label">{$_("ui_sessionKey")}</span>
             <span class="syncd-session-popover__meta">{session.sessionKey}</span>
           </div>
           <div>
-            <span class="syncd-session-popover__label">Remote server</span>
+            <span class="syncd-session-popover__label">{$_("ui_remoteServer")}</span>
             <span class="syncd-session-popover__meta">{session.remoteServerId}</span>
           </div>
           <div>
-            <span class="syncd-session-popover__label">Canonical origin</span>
+            <span class="syncd-session-popover__label">{$_("ui_canonicalOrigin")}</span>
             <span class="syncd-session-popover__meta">{session.canonicalOrigin}</span>
           </div>
           <div>
-            <span class="syncd-session-popover__label">Discovery source</span>
+            <span class="syncd-session-popover__label">{$_("ui_discoverySource")}</span>
             <span class="syncd-session-popover__meta">{session.lastDiscoverySource}</span>
           </div>
           <div>
-            <span class="syncd-session-popover__label">Replication</span>
-            <span class="syncd-session-popover__meta">{replicationLabel}{session.isActiveForSync && isReplicationPaused ? " · paused" : ""}</span>
+            <span class="syncd-session-popover__label">{$_("ui_replication")}</span>
+            <span class="syncd-session-popover__meta">{replicationLabel}{session.isActiveForSync && isReplicationPaused ? $_("ui_paused") : ""}</span>
           </div>
           <div>
-            <span class="syncd-session-popover__label">Fallback origins</span>
+            <span class="syncd-session-popover__label">{$_("ui_fallbackOrigins")}</span>
             <span class="syncd-session-popover__meta">{session.fallbackOrigins.length}</span>
           </div>
         </div>
@@ -221,7 +222,7 @@
             onclick={() => onSetActive()}
             disabled={!session.actions.canSetActive || setActiveBusy}
           >
-            {setActiveBusy ? "Switching..." : "Set active"}
+            {setActiveBusy ? "Switching..." : $_("ui_setActive")}
           </button>
         {/if}
         {#if onRevalidate}
@@ -245,7 +246,7 @@
             onclick={() => onPauseResume()}
             disabled={pauseResumeBusy}
           >
-            {pauseResumeBusy ? "Updating..." : (isReplicationPaused ? "Resume replication" : "Pause replication")}
+            {pauseResumeBusy ? "Updating..." : (isReplicationPaused ? $_("ui_resumeReplication") : $_("ui_pauseReplication"))}
           </button>
         {/if}
         {#if onDisconnect}

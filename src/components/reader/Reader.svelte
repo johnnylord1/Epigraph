@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { _ } from "../../lib/i18n/runtime";
   import { onMount, onDestroy, untrack, tick } from "svelte";
   import {
     X, CaretLeft, CaretRight, ArrowLeft, ArrowRight,
@@ -1015,39 +1016,39 @@
     <dl>
       {#if activeSubPanel === "main"}
         <div class="popover-tts-row" role="button" tabindex="0" onclick={() => activeSubPanel = "reading"} onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "reading"; }}>
-          <dt>Reading</dt>
+          <dt>{$_("ui_reading")}</dt>
           <dd>{style === "longstrip" ? "Strip" : style === "double" ? "Double" : style === "fade" ? "Fade" : "Single"} · {rtl ? "RTL" : "LTR"} <span class="popover-chevron">&gt;</span></dd>
         </div>
         <div class="popover-tts-row" role="button" tabindex="0" onclick={() => activeSubPanel = "display"} onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "display"; }}>
-          <dt>Display</dt>
+          <dt>{$_("library_display_title")}</dt>
           <dd>{fitLabel} · {zoomPct}% <span class="popover-chevron">&gt;</span></dd>
         </div>
         <div class="popover-tts-row" role="button" tabindex="0" onclick={() => activeSubPanel = "behavior"} onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "behavior"; }}>
-          <dt>Behavior</dt>
-          <dd>{store.settings.preloadPages ?? 2} preload <span class="popover-chevron">&gt;</span></dd>
+          <dt>{$_("ui_behavior")}</dt>
+          <dd>{store.settings.preloadPages ?? 2} {$_("ui_preload")} <span class="popover-chevron">&gt;</span></dd>
         </div>
         <div class="popover-tts-row" role="button" tabindex="0" onclick={() => activeSubPanel = "downloads"} onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "downloads"; }}>
-          <dt>Downloads</dt>
-          <dd>Manager <span class="popover-chevron">&gt;</span></dd>
+          <dt>{$_("downloads_eyebrow")}</dt>
+          <dd>{$_("ui_manager")} <span class="popover-chevron">&gt;</span></dd>
         </div>
       {:else if activeSubPanel === "reading"}
         <div class="popover-tts-row" role="button" tabindex="0" onclick={() => activeSubPanel = "main"} onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "main"; }}>
-          <dt>&lt; Back</dt>
-          <dd>Reading</dd>
+          <dt>{$_("ui_back_f13dfaca")}</dt>
+          <dd>{$_("ui_reading")}</dd>
         </div>
         <div>
-          <dt>Style</dt>
+          <dt>{$_("ui_style")}</dt>
           <dd>
             <div class="popover-segmented">
-              <button class="popover-segment" class:active={style === "single"} onclick={() => updateSettings({ pageStyle: "single" })}>Single</button>
-              <button class="popover-segment" class:active={style === "double"} onclick={() => updateSettings({ pageStyle: "double" })}>Double</button>
-              <button class="popover-segment" class:active={style === "longstrip"} onclick={() => updateSettings({ pageStyle: "longstrip" })}>Strip</button>
-              <button class="popover-segment" class:active={style === "fade"} onclick={() => updateSettings({ pageStyle: "fade" })}>Fade</button>
+              <button class="popover-segment" class:active={style === "single"} onclick={() => updateSettings({ pageStyle: "single" })}>{$_("ui_single")}</button>
+              <button class="popover-segment" class:active={style === "double"} onclick={() => updateSettings({ pageStyle: "double" })}>{$_("ui_double")}</button>
+              <button class="popover-segment" class:active={style === "longstrip"} onclick={() => updateSettings({ pageStyle: "longstrip" })}>{$_("ui_strip")}</button>
+              <button class="popover-segment" class:active={style === "fade"} onclick={() => updateSettings({ pageStyle: "fade" })}>{$_("ui_fade")}</button>
             </div>
           </dd>
         </div>
         <div>
-          <dt>Direction</dt>
+          <dt>{$_("ui_direction")}</dt>
           <dd>
             <div class="popover-segmented">
               <button class="popover-segment" class:active={!rtl} onclick={() => updateSettings({ readingDirection: "ltr" })}>LTR</button>
@@ -1057,17 +1058,17 @@
         </div>
       {:else if activeSubPanel === "display"}
         <div class="popover-tts-row" role="button" tabindex="0" onclick={() => activeSubPanel = "main"} onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "main"; }}>
-          <dt>&lt; Back</dt>
-          <dd>Display</dd>
+          <dt>{$_("ui_back_f13dfaca")}</dt>
+          <dd>{$_("library_display_title")}</dd>
         </div>
         <div>
-          <dt>Fit Mode</dt>
+          <dt>{$_("ui_fitMode")}</dt>
           <dd>
             <button class="popover-btn" onclick={cycleFit}>{fitLabel}</button>
           </dd>
         </div>
         <div>
-          <dt>Zoom</dt>
+          <dt>{$_("ui_zoom")}</dt>
           <dd>
             <div class="popover-stepper">
               <button class="popover-step-btn" onclick={() => adjustZoom(-ZOOM_STEP)} disabled={zoom <= ZOOM_MIN}>-</button>
@@ -1077,34 +1078,34 @@
           </dd>
         </div>
         <div>
-          <dt>Contrast</dt>
+          <dt>{$_("ui_contrast")}</dt>
           <dd>
-            <button class="popover-toggle" type="button" aria-label="Toggle contrast optimization" title="Toggle contrast optimization" class:active={store.settings.optimizeContrast} onclick={() => updateSettings({ optimizeContrast: !store.settings.optimizeContrast })}></button>
+            <button class="popover-toggle" type="button" aria-label={$_("ui_toggleContrastOptimization")} title={$_("ui_toggleContrastOptimization")} class:active={store.settings.optimizeContrast} onclick={() => updateSettings({ optimizeContrast: !store.settings.optimizeContrast })}></button>
           </dd>
         </div>
         {#if style === "double"}
           <div>
-            <dt>Spread Offset</dt>
+            <dt>{$_("ui_spreadOffset")}</dt>
             <dd>
-              <button class="popover-toggle" type="button" aria-label="Toggle offset spreads" title="Toggle offset spreads" class:active={store.settings.offsetDoubleSpreads} onclick={() => updateSettings({ offsetDoubleSpreads: !store.settings.offsetDoubleSpreads })}></button>
+              <button class="popover-toggle" type="button" aria-label={$_("ui_toggleOffsetSpreads")} title={$_("ui_toggleOffsetSpreads")} class:active={store.settings.offsetDoubleSpreads} onclick={() => updateSettings({ offsetDoubleSpreads: !store.settings.offsetDoubleSpreads })}></button>
             </dd>
           </div>
         {/if}
         {#if style === "longstrip"}
           <div>
-            <dt>Page Gap</dt>
+            <dt>{$_("ui_pageGap")}</dt>
             <dd>
-              <button class="popover-toggle" type="button" aria-label="Toggle page gap" title="Toggle page gap" class:active={store.settings.pageGap} onclick={() => updateSettings({ pageGap: !store.settings.pageGap })}></button>
+              <button class="popover-toggle" type="button" aria-label={$_("ui_togglePageGap")} title={$_("ui_togglePageGap")} class:active={store.settings.pageGap} onclick={() => updateSettings({ pageGap: !store.settings.pageGap })}></button>
             </dd>
           </div>
         {/if}
       {:else if activeSubPanel === "behavior"}
         <div class="popover-tts-row" role="button" tabindex="0" onclick={() => activeSubPanel = "main"} onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "main"; }}>
-          <dt>&lt; Back</dt>
-          <dd>Behavior</dd>
+          <dt>{$_("ui_back_f13dfaca")}</dt>
+          <dd>{$_("ui_behavior")}</dd>
         </div>
         <div>
-          <dt>Preload Pages</dt>
+          <dt>{$_("ui_preloadPages")}</dt>
           <dd>
             <div class="popover-stepper">
               <button class="popover-step-btn" onclick={() => updateSettings({ preloadPages: Math.max(0, (store.settings.preloadPages ?? 2) - 1) })} disabled={(store.settings.preloadPages ?? 2) <= 0}>-</button>
@@ -1115,35 +1116,35 @@
         </div>
       {:else if activeSubPanel === "downloads"}
         <div class="popover-tts-row" role="button" tabindex="0" onclick={() => activeSubPanel = "main"} onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "main"; }}>
-          <dt>&lt; Back</dt>
-          <dd>Downloads</dd>
+          <dt>{$_("ui_back_f13dfaca")}</dt>
+          <dd>{$_("downloads_eyebrow")}</dd>
         </div>
         <div>
-          <dt>Manager</dt>
+          <dt>{$_("ui_manager")}</dt>
           <dd>
-            <button class="popover-btn" onclick={() => dlOpen = true}>Open Manager</button>
+            <button class="popover-btn" onclick={() => dlOpen = true}>{$_("ui_openManager")}</button>
           </dd>
         </div>
       {:else if false}
       <div>
-        <dt>Layout</dt>
+        <dt>{$_("library_display_layout")}</dt>
         <dd>
           <div class="popover-segmented">
-            <button class="popover-segment" class:active={style === "single"} onclick={() => updateSettings({ pageStyle: "single" })}>Single</button>
-            <button class="popover-segment" class:active={style === "double"} onclick={() => updateSettings({ pageStyle: "double" })}>Double</button>
-            <button class="popover-segment" class:active={style === "longstrip"} onclick={() => updateSettings({ pageStyle: "longstrip" })}>Strip</button>
-            <button class="popover-segment" class:active={style === "fade"} onclick={() => updateSettings({ pageStyle: "fade" })}>Fade</button>
+            <button class="popover-segment" class:active={style === "single"} onclick={() => updateSettings({ pageStyle: "single" })}>{$_("ui_single")}</button>
+            <button class="popover-segment" class:active={style === "double"} onclick={() => updateSettings({ pageStyle: "double" })}>{$_("ui_double")}</button>
+            <button class="popover-segment" class:active={style === "longstrip"} onclick={() => updateSettings({ pageStyle: "longstrip" })}>{$_("ui_strip")}</button>
+            <button class="popover-segment" class:active={style === "fade"} onclick={() => updateSettings({ pageStyle: "fade" })}>{$_("ui_fade")}</button>
           </div>
         </dd>
       </div>
       <div>
-        <dt>Fit Mode</dt>
+        <dt>{$_("ui_fitMode")}</dt>
         <dd>
           <button class="popover-btn" onclick={cycleFit}>{fitLabel}</button>
         </dd>
       </div>
       <div>
-        <dt>Zoom</dt>
+        <dt>{$_("ui_zoom")}</dt>
         <dd>
           <div class="popover-stepper">
             <button class="popover-step-btn" onclick={() => adjustZoom(-ZOOM_STEP)} disabled={zoom <= ZOOM_MIN}>−</button>
@@ -1153,7 +1154,7 @@
         </dd>
       </div>
       <div>
-        <dt>Direction</dt>
+        <dt>{$_("ui_direction")}</dt>
         <dd>
           <div class="popover-segmented">
             <button class="popover-segment" class:active={!rtl} onclick={() => updateSettings({ readingDirection: "ltr" })}>LTR</button>
@@ -1162,29 +1163,29 @@
         </dd>
       </div>
       <div>
-        <dt>Contrast</dt>
+        <dt>{$_("ui_contrast")}</dt>
         <dd>
-          <button class="popover-toggle" type="button" aria-label="Toggle contrast optimization" title="Toggle contrast optimization" class:active={store.settings.optimizeContrast} onclick={() => updateSettings({ optimizeContrast: !store.settings.optimizeContrast })}></button>
+          <button class="popover-toggle" type="button" aria-label={$_("ui_toggleContrastOptimization")} title={$_("ui_toggleContrastOptimization")} class:active={store.settings.optimizeContrast} onclick={() => updateSettings({ optimizeContrast: !store.settings.optimizeContrast })}></button>
         </dd>
       </div>
       {#if style === "double"}
         <div>
-          <dt>Offset Spreads</dt>
+          <dt>{$_("ui_offsetSpreads")}</dt>
           <dd>
-            <button class="popover-toggle" type="button" aria-label="Toggle offset spreads" title="Toggle offset spreads" class:active={store.settings.offsetDoubleSpreads} onclick={() => updateSettings({ offsetDoubleSpreads: !store.settings.offsetDoubleSpreads })}></button>
+            <button class="popover-toggle" type="button" aria-label={$_("ui_toggleOffsetSpreads")} title={$_("ui_toggleOffsetSpreads")} class:active={store.settings.offsetDoubleSpreads} onclick={() => updateSettings({ offsetDoubleSpreads: !store.settings.offsetDoubleSpreads })}></button>
           </dd>
         </div>
       {/if}
       {#if style === "longstrip"}
         <div>
-          <dt>Page Gap</dt>
+          <dt>{$_("ui_pageGap")}</dt>
           <dd>
-            <button class="popover-toggle" type="button" aria-label="Toggle page gap" title="Toggle page gap" class:active={store.settings.pageGap} onclick={() => updateSettings({ pageGap: !store.settings.pageGap })}></button>
+            <button class="popover-toggle" type="button" aria-label={$_("ui_togglePageGap")} title={$_("ui_togglePageGap")} class:active={store.settings.pageGap} onclick={() => updateSettings({ pageGap: !store.settings.pageGap })}></button>
           </dd>
         </div>
       {/if}
       <div>
-        <dt>Preload Pages</dt>
+        <dt>{$_("ui_preloadPages")}</dt>
         <dd>
           <div class="popover-stepper">
             <button class="popover-step-btn" onclick={() => updateSettings({ preloadPages: Math.max(0, (store.settings.preloadPages ?? 2) - 1) })} disabled={(store.settings.preloadPages ?? 2) <= 0}>−</button>
@@ -1194,9 +1195,9 @@
         </dd>
       </div>
       <div>
-        <dt>Downloads</dt>
+        <dt>{$_("downloads_eyebrow")}</dt>
         <dd>
-          <button class="popover-btn" onclick={() => dlOpen = true}>Open Manager</button>
+          <button class="popover-btn" onclick={() => dlOpen = true}>{$_("ui_openManager")}</button>
         </dd>
       </div>
       {/if}
@@ -1211,7 +1212,7 @@
       aria-label={`Dismiss bookmark resume notice for page ${resumePage}`}
       onclick={() => { resumeVisible = false; resumeFading = false; }}
     >
-      <span>Bookmark at page {resumePage}</span>
+      <span>{$_("ui_bookmarkAtPage")} {resumePage}</span>
     </button>
   {/if}
 
@@ -1235,18 +1236,18 @@
           layout="center"
           tone="danger"
           icon="warning"
-          eyebrow="Reader"
-          title="Could not load chapter pages"
+          eyebrow={$_("ui_reader")}
+          title={$_("ui_couldNotLoadChapterPages")}
           body={error}
           actions={canOpenWebView ? [
             {
-              label: webViewWindowOpen ? "Close web view" : "Try web view",
+              label: webViewWindowOpen ? $_("ui_closeWebView") : $_("ui_tryWebView"),
               kind: "primary",
               icon: "plug",
               onClick: toggleReaderWebView,
             },
             {
-              label: "Open in browser",
+              label: $_("ui_openInBrowser"),
               kind: "secondary",
               icon: "info",
               onClick: openExternalWebView,
@@ -1307,17 +1308,17 @@
     {@const queueable = adjacent.remaining.filter(c => !c.isDownloaded)}
     <div class="dl-backdrop" role="presentation" onclick={() => dlOpen = false}>
       <div class="dl-modal" role="presentation" onclick={(e) => e.stopPropagation()}>
-        <p class="dl-title">Download</p>
+        <p class="dl-title">{$_("detail_actions_download")}</p>
         <button class="dl-option" disabled={dlBusy || !!store.activeChapter.isDownloaded}
           onclick={() => runDl(() => gql(ENQUEUE_DOWNLOAD, { chapterId: store.activeChapter!.id }))}>
-          This chapter
-          <span class="dl-sub">{store.activeChapter.isDownloaded ? "Already downloaded" : store.activeChapter.name}</span>
+          {$_("ui_thisChapter")}
+          <span class="dl-sub">{store.activeChapter.isDownloaded ? $_("ui_alreadyDownloaded") : store.activeChapter.name}</span>
         </button>
         <div class="dl-row">
           <button class="dl-option" disabled={dlBusy || queueable.length === 0}
             onclick={() => runDl(() => gql(ENQUEUE_CHAPTERS_DOWNLOAD, { chapterIds: queueable.slice(0, nextN).map(c => c.id) }))}>
-            Next chapters
-            <span class="dl-sub">{Math.min(nextN, queueable.length)} not yet downloaded</span>
+            {$_("ui_nextChapters")}
+            <span class="dl-sub">{Math.min(nextN, queueable.length)} {$_("ui_notYetDownloaded")}</span>
           </button>
           <div class="dl-stepper" role="presentation" onclick={(e) => e.stopPropagation()}>
             <button class="dl-step-btn" onclick={() => nextN = Math.max(1, nextN - 1)} disabled={nextN <= 1}>−</button>
@@ -1327,8 +1328,8 @@
         </div>
         <button class="dl-option" disabled={dlBusy || queueable.length === 0}
           onclick={() => runDl(() => gql(ENQUEUE_CHAPTERS_DOWNLOAD, { chapterIds: queueable.map(c => c.id) }))}>
-          All remaining
-          <span class="dl-sub">{queueable.length} not yet downloaded</span>
+          {$_("ui_allRemaining")}
+          <span class="dl-sub">{queueable.length} {$_("ui_notYetDownloaded")}</span>
         </button>
       </div>
     </div>

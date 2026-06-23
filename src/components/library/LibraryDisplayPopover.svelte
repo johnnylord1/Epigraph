@@ -13,11 +13,15 @@
     onShowOutlineChange?: (value: boolean) => void;
   };
 
-  const VIEW_OPTIONS: { id: LibraryViewMode; label: string }[] = [
-    { id: "grid", label: "library.display.grid" },
-    { id: "compact_grid", label: "library.display.compactGrid" },
-    { id: "list", label: "library.display.list" },
+  const VIEW_OPTIONS: { id: LibraryViewMode; labelKey: string }[] = [
+    { id: "grid", labelKey: "library.display.grid" },
+    { id: "compact_grid", labelKey: "library.display.compact" },
+    { id: "list", labelKey: "library.display.list" },
   ];
+  const SWITCH_SYNC_HOLD_MS = 620;
+  let viewModeSyncHoldUntil = 0;
+  let progressSyncHoldUntil = 0;
+  let outlineSyncHoldUntil = 0;
 
   let {
     settings,
@@ -31,13 +35,58 @@
   const densityLabel = $derived(
     settings.preferredColumns === "auto" ? $_("library.display.auto") : String(settings.preferredColumns),
   );
+  let visualViewMode = $state<LibraryViewMode>("grid");
+  let visualShowProgress = $state(true);
+  let visualShowOutline = $state(true);
+
+  $effect(() => {
+    if (Date.now() < viewModeSyncHoldUntil) return;
+    visualViewMode = settings.viewMode;
+  });
+
+  $effect(() => {
+    if (Date.now() < progressSyncHoldUntil) return;
+    visualShowProgress = settings.showProgress;
+  });
+
+  $effect(() => {
+    if (Date.now() < outlineSyncHoldUntil) return;
+    visualShowOutline = settings.showOutline;
+  });
+
   const viewModeLabel = $derived(
-    settings.viewMode === "compact_grid"
-      ? $_("library.display.compactGrid")
-      : settings.viewMode === "list"
+    visualViewMode === "compact_grid"
+      ? $_("library.display.compact")
+      : visualViewMode === "list"
         ? $_("library.display.list")
         : $_("library.display.grid"),
   );
+  const viewModeIndex = $derived(Math.max(0, VIEW_OPTIONS.findIndex((option) => option.id === visualViewMode)));
+
+  function holdViewModeSync() {
+    viewModeSyncHoldUntil = Date.now() + SWITCH_SYNC_HOLD_MS;
+  }
+
+  function selectViewMode(event: MouseEvent, mode: LibraryViewMode) {
+    event.currentTarget instanceof HTMLElement && event.currentTarget.blur();
+    holdViewModeSync();
+    visualViewMode = mode;
+    requestAnimationFrame(() => onViewModeChange(mode));
+  }
+
+  function selectShowProgress(event: MouseEvent, value: boolean) {
+    event.currentTarget instanceof HTMLElement && event.currentTarget.blur();
+    progressSyncHoldUntil = Date.now() + 300;
+    visualShowProgress = value;
+    onShowProgressChange(value);
+  }
+
+  function selectShowOutline(event: MouseEvent, value: boolean) {
+    event.currentTarget instanceof HTMLElement && event.currentTarget.blur();
+    outlineSyncHoldUntil = Date.now() + 300;
+    visualShowOutline = value;
+    onShowOutlineChange(value);
+  }
 </script>
 
   <div class="display-panel" role="menu" aria-label={$_("library.display.viewSettings")}>
@@ -66,32 +115,48 @@
         <span class="n-popover-meta">{viewModeLabel}</span>
       </div>
 
-      <div class="n-mini-switch n-layout-switch" role="group" aria-label={$_("library.display.layoutMode")}>
+      <div
+        class="n-mini-switch n-layout-switch"
+        role="group"
+        aria-label={$_("library.display.layoutMode")}
+        data-index={viewModeIndex}
+      >
+        <span class="n-mini-switch-thumb" aria-hidden="true"></span>
         {#each VIEW_OPTIONS as option}
           <button
             type="button"
-            class:is-selected={settings.viewMode === option.id}
-            onclick={() => onViewModeChange(option.id)}
+            class:is-selected={visualViewMode === option.id}
+            onclick={(event) => selectViewMode(event, option.id)}
           >
-            {option.id === "compact_grid" ? $_("library.display.compact") : $_(option.label)}
+            {$_(option.labelKey)}
           </button>
         {/each}
       </div>
 
       <div class="n-toggle-row">
         <span class="n-toggle-label">{$_("library.display.showProgress")}</span>
-      <div class="n-mini-switch" data-toggle="progress">
-        <button type="button" class:is-selected={settings.showProgress} onclick={() => onShowProgressChange(true)}>{$_("common.on")}</button>
-        <button type="button" class:is-selected={!settings.showProgress} onclick={() => onShowProgressChange(false)}>{$_("common.off")}</button>
-      </div>
+        <button
+          type="button"
+          class="n-compact-toggle"
+          class:is-on={visualShowProgress}
+          role="switch"
+          aria-checked={visualShowProgress}
+          aria-label={$_("library.display.showProgress")}
+          onclick={(event) => selectShowProgress(event, !visualShowProgress)}
+        ></button>
       </div>
 
       <div class="n-toggle-row">
         <span class="n-toggle-label">{$_("library.display.showOutlines")}</span>
-        <div class="n-mini-switch" data-toggle="outline">
-          <button type="button" class:is-selected={settings.showOutline} onclick={() => onShowOutlineChange(true)}>{$_("common.on")}</button>
-          <button type="button" class:is-selected={!settings.showOutline} onclick={() => onShowOutlineChange(false)}>{$_("common.off")}</button>
-        </div>
+        <button
+          type="button"
+          class="n-compact-toggle"
+          class:is-on={visualShowOutline}
+          role="switch"
+          aria-checked={visualShowOutline}
+          aria-label={$_("library.display.showOutlines")}
+          onclick={(event) => selectShowOutline(event, !visualShowOutline)}
+        ></button>
       </div>
     </section>
   {:else}
@@ -119,32 +184,48 @@
         <span class="n-popover-meta">{viewModeLabel}</span>
       </div>
 
-      <div class="n-mini-switch n-layout-switch" role="group" aria-label={$_("library.display.layoutMode")}>
+      <div
+        class="n-mini-switch n-layout-switch"
+        role="group"
+        aria-label={$_("library.display.layoutMode")}
+        data-index={viewModeIndex}
+      >
+        <span class="n-mini-switch-thumb" aria-hidden="true"></span>
         {#each VIEW_OPTIONS as option}
           <button
             type="button"
-            class:is-selected={settings.viewMode === option.id}
-            onclick={() => onViewModeChange(option.id)}
+            class:is-selected={visualViewMode === option.id}
+            onclick={(event) => selectViewMode(event, option.id)}
           >
-            {option.id === "compact_grid" ? $_("library.display.compact") : $_(option.label)}
+            {$_(option.labelKey)}
           </button>
         {/each}
       </div>
 
       <div class="n-toggle-row">
         <span class="n-toggle-label">{$_("library.display.showProgress")}</span>
-        <div class="n-mini-switch" data-toggle="progress">
-          <button type="button" class:is-selected={settings.showProgress} onclick={() => onShowProgressChange(true)}>{$_("common.on")}</button>
-          <button type="button" class:is-selected={!settings.showProgress} onclick={() => onShowProgressChange(false)}>{$_("common.off")}</button>
-        </div>
+        <button
+          type="button"
+          class="n-compact-toggle"
+          class:is-on={visualShowProgress}
+          role="switch"
+          aria-checked={visualShowProgress}
+          aria-label={$_("library.display.showProgress")}
+          onclick={(event) => selectShowProgress(event, !visualShowProgress)}
+        ></button>
       </div>
 
       <div class="n-toggle-row">
         <span class="n-toggle-label">{$_("library.display.showOutlines")}</span>
-        <div class="n-mini-switch" data-toggle="outline">
-          <button type="button" class:is-selected={settings.showOutline} onclick={() => onShowOutlineChange(true)}>{$_("common.on")}</button>
-          <button type="button" class:is-selected={!settings.showOutline} onclick={() => onShowOutlineChange(false)}>{$_("common.off")}</button>
-        </div>
+        <button
+          type="button"
+          class="n-compact-toggle"
+          class:is-on={visualShowOutline}
+          role="switch"
+          aria-checked={visualShowOutline}
+          aria-label={$_("library.display.showOutlines")}
+          onclick={(event) => selectShowOutline(event, !visualShowOutline)}
+        ></button>
       </div>
     </section>
   {/if}
@@ -154,15 +235,15 @@
   .display-panel {
     display: flex;
     flex-direction: column;
-    gap: 16px;
-    width: min(304px, calc(100vw - 40px));
+    gap: 14px;
+    width: min(300px, calc(100vw - 40px));
     min-width: 0;
   }
 
   .n-popover-panel {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 9px;
     padding: 0;
   }
 
@@ -173,12 +254,17 @@
     gap: 12px;
   }
 
+  .n-popover-head > div {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
   .n-popover-title {
     margin: 0;
     font-family: var(--font-sans);
-    font-size: 10.5px;
-    font-weight: 700;
-    letter-spacing: 0.09em;
+    font-size: 10px;
+    font-weight: 620;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
     color: var(--n-popover-label);
   }
@@ -186,17 +272,19 @@
   .n-popover-note {
     margin: 2px 0 0;
     font-family: var(--font-sans);
-    font-size: 12.5px;
-    font-weight: 680;
+    font-size: 11px;
+    line-height: 1.45;
+    font-weight: 500;
     letter-spacing: 0;
     color: var(--n-popover-text);
   }
 
   .n-popover-meta {
+    flex: 0 0 auto;
     font-family: var(--font-sans);
-    font-size: 10.5px;
-    font-weight: 720;
-    letter-spacing: 0.08em;
+    font-size: 10px;
+    font-weight: 620;
+    letter-spacing: 0.055em;
     text-transform: uppercase;
     color: var(--n-popover-meta);
     white-space: nowrap;
@@ -220,55 +308,142 @@
 
   .n-toggle-label {
     font-family: var(--font-sans);
-    font-size: 10.5px;
-    font-weight: 700;
-    letter-spacing: 0.07em;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.045em;
     text-transform: uppercase;
     color: rgba(207, 199, 226, 0.62);
   }
 
+  .n-compact-toggle {
+    position: relative;
+    flex: 0 0 auto;
+    width: calc(40px * var(--n-hud-scale, 1));
+    height: calc(22px * var(--n-hud-scale, 1));
+    padding: 0;
+    border: none;
+    border-radius: 999px;
+    background: rgba(148, 143, 154, 0.2);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+    cursor: pointer;
+    transition:
+      background 180ms ease,
+      box-shadow 180ms ease,
+      transform 90ms ease;
+  }
+
+  .n-compact-toggle::after {
+    content: "";
+    position: absolute;
+    top: calc(2px * var(--n-hud-scale, 1));
+    left: calc(2px * var(--n-hud-scale, 1));
+    width: calc(18px * var(--n-hud-scale, 1));
+    height: calc(18px * var(--n-hud-scale, 1));
+    border-radius: 999px;
+    background: rgba(202, 196, 208, 0.56);
+    transition: transform 180ms ease, background 180ms ease;
+  }
+
+  .n-compact-toggle.is-on {
+    background: var(--n-primary-container);
+  }
+
+  .n-compact-toggle.is-on::after {
+    transform: translateX(calc(18px * var(--n-hud-scale, 1)));
+    background: var(--n-on-primary-container);
+  }
+
+  .n-compact-toggle:hover {
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+      0 0 0 1px rgba(184, 167, 234, 0.08);
+  }
+
+  .n-compact-toggle:active {
+    transform: scale(0.97);
+  }
+
   .n-mini-switch {
-    display: inline-flex;
+    --switch-count: 2;
+    position: relative;
+    isolation: isolate;
+    display: grid;
+    grid-template-columns: repeat(var(--switch-count, 2), minmax(0, 1fr));
     gap: 4px;
     padding: 4px;
     border-radius: 9999px;
-    background: var(--n-popover-control-bg);
-    border: 1px solid var(--n-popover-control-border);
+    background: rgba(36, 33, 43, 0.6);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    overflow: hidden;
   }
 
-  .n-mini-switch button {
-    min-width: 32px;
-    min-height: 28px;
-    padding: 0 12px;
+  .n-layout-switch {
+    --switch-count: 3;
+  }
+
+  .n-mini-switch-thumb {
+    position: absolute;
+    z-index: 0;
+    top: 4px;
+    bottom: 4px;
+    left: 4px;
+    width: calc((100% - 12px) / 2);
+    border-radius: 9999px;
+    background: var(--n-gradient-primary);
+    box-shadow: 0 4px 14px rgba(184, 167, 234, 0.4);
+    transform: translateX(0);
+    transition: transform 620ms cubic-bezier(0.22, 1, 0.36, 1);
+    pointer-events: none;
+    will-change: transform;
+  }
+
+  .n-mini-switch[data-index="1"] .n-mini-switch-thumb {
+    transform: translateX(calc(100% + 4px));
+  }
+
+  .n-mini-switch[data-index="2"] .n-mini-switch-thumb {
+    transform: translateX(calc(200% + 8px));
+  }
+
+  .n-layout-switch .n-mini-switch-thumb {
+    width: calc((100% - 16px) / 3);
+  }
+
+  .n-mini-switch > button:not(.n-mini-switch-hit) {
+    position: relative;
+    z-index: 2;
+    min-width: 28px;
+    min-height: 22px;
+    padding: 0 8px;
     border-radius: 9999px;
     border: none;
     background: transparent;
     color: var(--n-popover-text);
     font-family: var(--font-sans);
-    font-size: 11.5px;
-    font-weight: 720;
-    letter-spacing: 0.04em;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.05em;
     text-transform: uppercase;
     cursor: pointer;
-    transition:
-      background 160ms ease,
-      color 160ms ease,
-      box-shadow 160ms ease,
-      transform 160ms ease;
+    transition: all 250ms var(--n-ease-spring);
   }
 
-  .n-mini-switch button:hover:not(.is-selected) {
+  .n-mini-switch > button:not(.n-mini-switch-hit):hover:not(.is-selected) {
     color: var(--n-popover-text-strong);
     background: var(--n-popover-item-hover);
   }
 
-  .n-mini-switch button.is-selected {
+  .n-mini-switch > button:not(.n-mini-switch-hit).is-selected {
     color: var(--n-on-primary);
-    background: var(--n-gradient-primary);
-    box-shadow: 0 6px 16px rgba(184, 167, 234, 0.2);
   }
 
-  .n-mini-switch button.is-selected:hover {
-    transform: translateY(-1px);
+  @media (prefers-reduced-motion: reduce) {
+    .n-mini-switch-thumb,
+    .n-mini-switch button,
+    .n-compact-toggle,
+    .n-compact-toggle::after {
+      transition-duration: 1ms;
+    }
   }
 </style>

@@ -208,5 +208,20 @@
   - Compressed the Discover tab filters sidebar (`.catalogSidebar` / `.splitSidebar`) dimensions: reduced margin-bottoms, gaps, paddings, option checkmark sizes, search inputs, select dropdown rows, and status buttons to fit the filter configuration and genre tag list in standard viewports without vertical scrolling.
   - Configured the Suwayomi offline setup status card container (`.setup-banner` and `.setupWrap`) to float on top of the page content via `position: fixed`, centering it horizontally at `top: 68px` with `pointer-events: none` (allowing clicks to pass through transparent regions) and `pointer-events: auto` on the inner card. This prevents the server error card from shifting/pushing layout components downwards across the Browse, Extensions, and Sources pages.
 
+## 2026-06-23 Storage Settings Consolidation Milestone
+- Refactored `Settings > System > Storage` pane layout:
+  - Removed the redundant "Advanced" card entirely from the UI.
+  - Consolidated the storage limit settings (soft threshold and extra scan paths) directly inline under the **Usage** card.
+  - Consolidated manual downloads and local source path inputs directly inline under the **Paths** card.
+  - Added a dedicated, wide **Backups** card at the bottom of the grid with "Create backup" and "Restore backup" controls.
+  - Wired a new `openStorageRestore` helper to automatically trigger file picking when launching the restore flow.
+  - Cleaned up the template text prompts to reference the new consolidated edit panel layouts instead of "Advanced".
+  - Aligned typography by restricting monospace fonts strictly to active paths, rendering placeholders like "Optional" and "Not configured" in standard UI fonts.
+  - Set `align-items: start` on the storage layout grid to prevent vertical stretching of cards.
+  - Dynamically aligned and hid empty footer status elements to resolve layout spacing gaps.
+  - Segregated the backups overlay modal content: clicking "Create backup" displays only Export settings, while clicking "Restore backup" displays only Import/Restore options, plans, reconciliation flows, and restore results.
+  - Dynamically updated modal titles to "Create Backup" and "Restore Backup" respectively, resolving test suite element collisions.
+  - Updated all unit testing cases in `Settings.test.ts` to assert against the updated DOM, verifying limit and paths editors toggle inline and the backup/restore panel toggles from the new card correctly.
+
 ## Reference Docs
 - Historical refactor detail: [`docs/LIBRARY_SHARED_SHELL_REFACTOR.md`](docs/LIBRARY_SHARED_SHELL_REFACTOR.md)

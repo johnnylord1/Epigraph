@@ -57,6 +57,11 @@ const {
     buildAethonMangaPayload: vi.fn(async () => ({})),
     buildAethonNovelsPayload: vi.fn(async () => ({})),
     restoreAethonNovelsPayload: vi.fn(async () => ({ summary: { totalEntries: 0, restoredMetadataOnlyCount: 0, restoredUsableCount: 0 } })),
+    buildLnReaderNovelsBackupZip: vi.fn(async () => new Uint8Array()),
+    restoreLnReaderNovelsBackup: vi.fn(async () => ({ summary: { totalEntries: 0, restoredMetadataOnlyCount: 0, restoredUsableCount: 0, restoredNeedsRepositoryCount: 0, restoredNeedsPluginCount: 0 } })),
+    isLnReaderBackupZip: vi.fn(async () => true),
+    extractLnReaderBackupPluginIds: vi.fn(async () => []),
+    normalizeNativeMangaBackupBytes: vi.fn((bytes) => bytes),
     buildAethonNovelsSnapshotFromAuthoritativeState: vi.fn((input) => input.libraryState),
     applyRestoredNovelsSnapshotToLibraryState: vi.fn(({ currentState }) => currentState),
     loadBookLibraryState: vi.fn(async () => ({ books: [], bookProgress: [], bookBookmarks: [], booksCategories: [], booksCategoryAssignments: {}, booksLibraryUi: { activeCategoryId: null, typeFilter: "all", statusFilter: "all", search: "", sortMode: "recentlyAdded", sortDir: "desc" } })),
@@ -72,6 +77,8 @@ const {
     buildReconciledBackupFile: vi.fn(() => new File([], "reconciled.tachibk")),
     readFileAsArrayBuffer: vi.fn(async () => new ArrayBuffer(0)),
     loadNovelRepositoryState: vi.fn(async () => ({ repositories: [], installedPlugins: [], catalogEntries: [] })),
+    saveNovelRepositoryState: vi.fn(async (state) => state),
+    installNovelCatalogPlugin: vi.fn(async ({ state }) => state),
   })),
   gqlMock: vi.fn(async (query: string) => {
     const normalized = String(query).toLowerCase();
@@ -294,11 +301,17 @@ describe("Settings", () => {
     await fireEvent.click(screen.getAllByRole("button", { name: "Close" }).find((button) => button.textContent?.trim() === "Close")!);
     expect(screen.queryByText("Path editor")).toBeNull();
 
-    expect(screen.queryByText("Backup & Restore")).toBeNull();
+    expect(screen.queryByText("Usage guardrails")).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: /limit$/i }));
+    expect(screen.getByText("Usage guardrails")).toBeTruthy();
+    await fireEvent.click(screen.getAllByRole("button", { name: "Close" }).find((button) => button.textContent?.trim() === "Close")!);
+    expect(screen.queryByText("Usage guardrails")).toBeNull();
+
+    expect(screen.queryByText("Export")).toBeNull();
     await fireEvent.click(screen.getByRole("button", { name: "Create backup" }));
-    expect(screen.getByText("Backup & Restore")).toBeTruthy();
-    await fireEvent.click(screen.getByRole("button", { name: "Hide backup" }));
-    expect(screen.queryByText("Backup & Restore")).toBeNull();
+    expect(screen.getByText("Export")).toBeTruthy();
+    await fireEvent.click(screen.getAllByRole("button", { name: "Close" }).find((button) => button.textContent?.trim() === "Close")!);
+    expect(screen.queryByText("Export")).toBeNull();
   });
 
   test("rebinds the appearance pane theme editor affordances and help action", async () => {

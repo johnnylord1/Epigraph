@@ -278,15 +278,60 @@ function normalizeChapterList(payload: unknown): Array<{
 }
 
 function normalizeTagList(payload: unknown): string[] {
-  if (!Array.isArray(payload)) {
-    return [];
-  }
+  const tags: string[] = [];
+  const seen = new Set<string>();
+  const visited = new WeakSet<object>();
 
-  return [...new Set(
-    payload
-      .map((entry) => normalizeText(entry))
-      .filter((entry): entry is string => Boolean(entry)),
-  )];
+  const addTag = (value: unknown) => {
+    const text = normalizeText(value);
+    if (!text) return;
+
+    const parts = text.includes(",") || text.includes(";")
+      ? text.split(/[;,]/).map((entry) => entry.trim()).filter(Boolean)
+      : [text];
+
+    for (const part of parts) {
+      const key = part.toLocaleLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      tags.push(part);
+    }
+  };
+
+  const visit = (value: unknown) => {
+    if (!value) return;
+
+    if (Array.isArray(value)) {
+      for (const entry of value) visit(entry);
+      return;
+    }
+
+    if (typeof value === "string" || typeof value === "number") {
+      addTag(value);
+      return;
+    }
+
+    if (typeof value !== "object") return;
+    if (visited.has(value)) return;
+    visited.add(value);
+
+    const record = value as Record<string, unknown>;
+    visit(record.tags_name);
+    visit(record.genre);
+    visit(record.genres);
+    visit(record.tags);
+    addTag(record.name);
+    addTag(record.label);
+    addTag(record.title);
+    addTag(record.value);
+  };
+
+  visit(payload);
+  return tags;
+}
+
+function normalizeDetailTagList(detailRecord: Record<string, unknown>): string[] {
+  return normalizeTagList([detailRecord.genre, detailRecord.genres, detailRecord.tags]);
 }
 
 function getDefaultUserAgent(): string {
@@ -1072,7 +1117,7 @@ export async function readNovelPluginDetails(input: NovelPluginDetailsSmokeInput
     cover: normalizeText(detailRecord.cover),
     summary,
     status: normalizeText(detailRecord.status),
-    tags: normalizeTagList(detailRecord.genre ?? detailRecord.tags),
+    tags: normalizeDetailTagList(detailRecord),
     chapters: normalizeChapterList(chapters),
   };
 }

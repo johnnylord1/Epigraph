@@ -1,6 +1,7 @@
 import "../../styles/global.css";
 import { commands, page } from "@vitest/browser/context";
 import { afterEach, beforeEach, expect } from "vitest";
+import { applyAppLanguage } from "../../lib/i18n/runtime";
 
 const FREEZE_STYLE_ID = "aethon-browser-freeze-style";
 const FONT_READY_TIMEOUT_MS = 1500;
@@ -61,6 +62,7 @@ expect.extend({
 });
 
 beforeEach(async () => {
+  applyAppLanguage("en");
   await page.viewport(1280, 800);
 
   document.documentElement.style.margin = "0";

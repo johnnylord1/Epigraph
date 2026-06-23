@@ -302,3 +302,22 @@
 - Swapped the generic Svelte logo water droplet in the brand card badge with the official desktop application logo (`src-tauri/icons/icon.png`) imported reactively.
 - Enlarged the app logo symbol size from `20px` to `24px` inside the `32px` badge container to improve visibility and proportions.
 - Implemented an animated subtle pulsing purple border glow using a keyframe animation (`aethon-purple-glow-pulse`) that transitions border colors and shadows gently over a 4s loop. Hovering over the card pauses this loop and expands into a focused static glow.
+
+## 2026-06-23 - Storage Settings Page Consolidation
+- Retired the redundant "Advanced" card in `Settings > System > Storage`.
+- Consolidated all manual edit fields and settings inline within their respective primary cards:
+  - Consolidated storage limits setting ("Usage guardrails") and additional scan paths inline within the **Usage** card, triggered by the "Set limit" / "Edit limit" button.
+  - Consolidated manual downloads and local source path edits ("Path editor" and "Migration" options) inline within the **Paths** card, triggered by the "Edit paths" button.
+- Added a dedicated, always-visible **Backups** card in the settings grid at the bottom.
+  - Provided direct "Create backup" and "Restore backup" triggers.
+  - Created `openStorageRestore` to automatically launch the file selection dialog immediately after opening the backup overlay panel.
+- Aligned typography and spacing across the Storage settings pane:
+  - Fixed vertical grid card stretching by forcing cards to align to the top of the grid.
+  - Restrained monospace font usage strictly to active path strings, ensuring placeholder texts like "Optional" and "Not configured" render in normal, readable UI sans-serif fonts.
+  - Removed empty status wrapper tags and aligned buttons to the right dynamically to prevent unwanted line wraps.
+- Segregated visual scopes within the Backups overlay modal:
+  - Opening the backup modal via "Create backup" renders strictly Export preferences.
+  - Opening the backup modal via "Restore backup" renders strictly Import / Restore steps, plans, warnings, and results.
+  - Set dynamic overlay titles ("Create Backup" vs "Restore Backup") to maintain context and avoid duplicate DOM labels in testing environments.
+- Cleaned up all textual references to "Advanced" in the storage templates, redirecting users to the inline actions instead.
+- Refactored `Settings.test.ts` to assert against the updated inline expansion panels and consolidated card titles.

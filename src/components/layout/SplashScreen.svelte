@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { _ } from "../../lib/i18n/runtime";
   import { onMount } from "svelte";
   import { store } from "../../store/state.svelte";
   import splashMarkUrl from "../../assets/aethon-splash-mark.png";
@@ -547,22 +548,22 @@
     {/if}
   </div>
 
-  <div class="state-dock" aria-label="Splash state">
+  <div class="state-dock" aria-label={$_("ui_splashState")}>
     <div class="state loading">
       <div class="state-value">{loadingLabel}</div>
       <div class="line" aria-hidden="true"><span></span></div>
     </div>
 
     <div class="state idle">
-      <div class="state-value">Ready</div>
+      <div class="state-value">{$_("ui_ready")}</div>
       <div class="line" aria-hidden="true"></div>
       {#if canDismissIdle}
-        <div class="aethon-splash__hint">Press any key</div>
+        <div class="aethon-splash__hint">{$_("ui_pressAnyKey")}</div>
       {/if}
     </div>
 
     <div class="state pin">
-      <div class="state-value">PIN Required</div>
+      <div class="state-value">{$_("ui_pinRequired")}</div>
       <div class="dots pin-dots" class:is-shake={pinShake} aria-hidden="true">
         {#each Array(pinLength) as _, index}
           <i class="pin-dot" class:is-filled={index < pinEntry.length}></i>
@@ -572,10 +573,10 @@
         type="button"
         class="aethon-splash__hidden-submit"
         tabindex="-1"
-        aria-label="Submit PIN"
+        aria-label={$_("ui_submitPin")}
         onclick={submitPin}
       >
-        Unlock
+        {$_("ui_unlock")}
       </button>
     </div>
 
@@ -585,8 +586,8 @@
         <div>{failureDetail}</div>
       {/if}
       <div class="error-actions">
-        <button type="button" class="error-action" onclick={handleRetry}>Retry</button>
-        <button type="button" class="error-action error-action--primary" onclick={handleBypass}>Enter app</button>
+        <button type="button" class="error-action" onclick={handleRetry}>{$_("downloads_actions_retry")}</button>
+        <button type="button" class="error-action error-action--primary" onclick={handleBypass}>{$_("ui_enterApp")}</button>
       </div>
     </div>
   </div>
@@ -600,7 +601,7 @@
     data-state={visualState}
     style:pointer-events={interactive ? "auto" : "none"}
     bind:this={splashRoot}
-    aria-label="Dismiss splash screen"
+    aria-label={$_("ui_dismissSplashScreen")}
     onclick={dismissIdle}
     onkeydown={handleIdleKeydown}
   >
@@ -613,7 +614,7 @@
     data-state={visualState}
     style:pointer-events={interactive ? "auto" : "none"}
     bind:this={splashRoot}
-    aria-label="Aethon splash screen"
+    aria-label={$_("ui_aethonSplashScreen")}
   >
     {@render SplashContent()}
   </div>

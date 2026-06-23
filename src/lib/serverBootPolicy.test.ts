@@ -32,11 +32,22 @@ describe("server boot policy", () => {
     })).toBe(true);
   });
 
-  it("keeps the managed server asleep when snapshot boot is enough", () => {
+  it("auto-starts the managed server when the user enabled auto-start, even if snapshot boot is enough", () => {
     expect(shouldAutoStartManagedServer({
       attachOnly: false,
       isLoopback: true,
       autoStartServer: true,
+      standbyEnabled: true,
+      hasSnapshot: true,
+      updateDue: false,
+    })).toBe(true);
+  });
+
+  it("keeps the managed server asleep only when auto-start is disabled", () => {
+    expect(shouldAutoStartManagedServer({
+      attachOnly: false,
+      isLoopback: true,
+      autoStartServer: false,
       standbyEnabled: true,
       hasSnapshot: true,
       updateDue: false,

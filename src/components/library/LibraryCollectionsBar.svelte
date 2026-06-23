@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { _ } from "../../lib/i18n/runtime";
   import { BookOpen, Books, DownloadSimple, FileText, Folder, Stack, Star } from "phosphor-svelte";
   import type { LibraryCollectionVM, LibraryCollectionsReorderApi } from "../../lib/library/contracts";
 
@@ -15,7 +16,7 @@
   }: Props = $props();
 </script>
 
-<div class="tabs collections-bar" aria-label="Collections">
+<div class="tabs collections-bar" aria-label={$_("ui_collections")}>
   {#each collections as collection, index}
     {#if reorderApi && reorderApi.activeId && reorderApi.insertIndex === index}
       <div class="tab-insert-bar" aria-hidden="true"></div>

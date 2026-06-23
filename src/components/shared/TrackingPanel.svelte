@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { translate } from "../../lib/i18n/runtime";
+  import { _ } from "../../lib/i18n/runtime";
   import { CircleNotch, X, MagnifyingGlass, ArrowSquareOut, Lock, LockOpen, ArrowsClockwise } from "phosphor-svelte";
   import { gql } from "../../lib/client";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
@@ -56,7 +58,7 @@
       trackers = tRes.trackers.nodes;
       records  = rRes.manga.trackRecords.nodes;
     } catch (e: any) {
-      addToast({ kind: "error", title: "Failed to load tracking", body: e?.message });
+      addToast({ kind: "error", title: translate("ui_failedToLoadTracking"), body: e?.message });
     } finally {
       loading = false;
     }
@@ -102,7 +104,7 @@
       );
       searchResults = res.searchTracker.trackSearches;
     } catch (e: any) {
-      addToast({ kind: "error", title: "Search failed", body: e?.message });
+      addToast({ kind: "error", title: translate("ui_searchFailed"), body: e?.message });
     } finally {
       searching = false;
     }
@@ -119,10 +121,10 @@
       );
       records = [...records.filter(r => r.trackerId !== activeTab), res.bindTrack.trackRecord];
       cache.clearGroup(CACHE_GROUPS.LIBRARY);
-      addToast({ kind: "success", title: "Now tracking", body: result.title });
+      addToast({ kind: "success", title: translate("ui_nowTracking"), body: result.title });
       activeTab = "records";
     } catch (e: any) {
-      addToast({ kind: "error", title: "Failed to bind", body: e?.message });
+      addToast({ kind: "error", title: translate("ui_failedToBind"), body: e?.message });
     } finally {
       binding = false;
     }
@@ -134,9 +136,9 @@
       await gql(UNBIND_TRACK, { recordId: record.id });
       records = records.filter(r => r.id !== record.id);
       cache.clearGroup(CACHE_GROUPS.LIBRARY);
-      addToast({ kind: "info", title: "Unlinked from " + trackerFor(record.trackerId)?.name });
+      addToast({ kind: "info", title: translate("ui_unlinkedFrom") + trackerFor(record.trackerId)?.name });
     } catch (e: any) {
-      addToast({ kind: "error", title: "Failed to unlink", body: e?.message });
+      addToast({ kind: "error", title: translate("ui_failedToUnlink"), body: e?.message });
     } finally {
       updatingRecord = null;
     }
@@ -152,7 +154,7 @@
       );
       patchRecord(res.updateTrack.trackRecord);
     } catch (e: any) {
-      addToast({ kind: "error", title: "Update failed", body: e?.message });
+      addToast({ kind: "error", title: translate("ui_updateFailed"), body: e?.message });
     } finally {
       updatingRecord = null;
     }
@@ -166,7 +168,7 @@
       );
       patchRecord(res.updateTrack.trackRecord);
     } catch (e: any) {
-      addToast({ kind: "error", title: "Update failed", body: e?.message });
+      addToast({ kind: "error", title: translate("ui_updateFailed"), body: e?.message });
     } finally {
       updatingRecord = null;
     }
@@ -180,7 +182,7 @@
       );
       patchRecord(res.updateTrack.trackRecord);
     } catch (e: any) {
-      addToast({ kind: "error", title: "Update failed", body: e?.message });
+      addToast({ kind: "error", title: translate("ui_updateFailed"), body: e?.message });
     } finally {
       updatingRecord = null;
     }
@@ -194,9 +196,9 @@
       );
       patchRecord(res.fetchTrack.trackRecord);
       cache.clearGroup(CACHE_GROUPS.LIBRARY);
-      addToast({ kind: "success", title: "Synced from tracker" });
+      addToast({ kind: "success", title: translate("ui_syncedFromTracker") });
     } catch (e: any) {
-      addToast({ kind: "error", title: "Sync failed", body: e?.message });
+      addToast({ kind: "error", title: translate("ui_syncFailed"), body: e?.message });
     } finally {
       syncing = null;
     }
@@ -225,7 +227,7 @@
       );
       patchRecord(res.updateTrack.trackRecord);
     } catch (e: any) {
-      addToast({ kind: "error", title: "Update failed", body: e?.message });
+      addToast({ kind: "error", title: translate("ui_updateFailed"), body: e?.message });
     } finally {
       updatingRecord = null;
     }
@@ -239,22 +241,22 @@
   role="presentation"
   onclick={(e) => { if (e.target === e.currentTarget) onClose(); }}
 >
-  <div class="modal" role="dialog" aria-label="Tracking">
+  <div class="modal" role="dialog" aria-label={$_("home_sections_tracking")}>
 
     <!-- ── Header ─────────────────────────────────────────────────────────── -->
     <div class="modal-header">
       <div class="header-left">
-        <span class="modal-title">Tracking</span>
+        <span class="modal-title">{$_("home_sections_tracking")}</span>
         <span class="modal-subtitle">{mangaTitle}</span>
       </div>
       <button class="close-btn" onclick={onClose}><X size={15} weight="light" /></button>
     </div>
 
     {#if loading}
-      <NocturneState layout="compact" tone="info" icon="retry" eyebrow="Tracking" title="Loading trackers" />
+      <NocturneState layout="compact" tone="info" icon="retry" eyebrow={$_("detail.actions.tracking")} title={$_("ui_loadingTrackers")} />
 
     {:else if loggedInTrackers.length === 0}
-      <NocturneState layout="compact" tone="info" icon="info" eyebrow="Tracking" title="No trackers connected" body="Go to Settings > Tracking to log in." />
+      <NocturneState layout="compact" tone="info" icon="info" eyebrow={$_("detail.actions.tracking")} title={$_("ui_noTrackersConnected")} body={$_("ui_trackingGoToSettings")} />
 
     {:else}
       <!-- ── Tabs ──────────────────────────────────────────────────────────── -->
@@ -264,7 +266,7 @@
           class:tab-active={activeTab === "records"}
           onclick={() => activeTab = "records"}
         >
-          My List
+          {$_("ui_myList")}
           {#if records.length > 0}
             <span class="tab-badge">{records.length}</span>
           {/if}
@@ -287,7 +289,7 @@
       {#if activeTab === "records"}
         <div class="tab-body">
           {#if records.length === 0}
-            <NocturneState layout="compact" tone="info" icon="search" eyebrow="Tracking" title="Not tracking this manga yet" body="Click a tracker tab above to search and add it." />
+            <NocturneState layout="compact" tone="info" icon="search" eyebrow={$_("detail.actions.tracking")} title={$_("ui_notTrackingThisMangaYet")} body={$_("ui_trackingNotTrackingMangaBody")} />
           {:else}
             {#each records as record (record.id)}
               {@const tracker = trackerFor(record.trackerId)}
@@ -349,7 +351,7 @@
 
                   <button
                     class="record-icon-btn"
-                    title="Sync from tracker"
+                    title={$_("ui_syncFromTracker")}
                     disabled={syncing === record.id}
                     onclick={() => syncRecord(record)}
                   >
@@ -358,7 +360,7 @@
 
                   <button
                     class="record-icon-btn icon-danger"
-                    title="Unlink"
+                    title={$_("ui_unlink")}
                     disabled={isBusy}
                     onclick={() => unbind(record)}
                   >
@@ -369,7 +371,7 @@
                 {#if editingChapter === record.id}
                   <div class="chapter-editor">
                     <div class="chapter-editor-top">
-                      <span class="chapter-editor-label">Chapter read</span>
+                      <span class="chapter-editor-label">{$_("ui_chapterRead")}</span>
                       <div class="chapter-input-wrap">
                         <input
                           type="number"
@@ -400,17 +402,17 @@
                       />
                     {/if}
                     <div class="chapter-editor-actions">
-                      <button class="chapter-save-btn" onclick={() => submitChapter(record)}>Save</button>
-                      <button class="chapter-cancel-btn" onclick={cancelChapterEditor}>Cancel</button>
+                      <button class="chapter-save-btn" onclick={() => submitChapter(record)}>{$_("ui_save")}</button>
+                      <button class="chapter-cancel-btn" onclick={cancelChapterEditor}>{$_("ui_cancel")}</button>
                     </div>
                   </div>
                 {:else if record.totalChapters > 0}
                   <div class="record-progress clickable" role="button" tabindex="0"
                     onclick={() => openChapterEditor(record)}
                     onkeydown={(e) => e.key === "Enter" && openChapterEditor(record)}
-                    title="Click to edit"
+                    title={$_("ui_clickToEdit")}
                   >
-                    <span class="record-progress-label">Ch. {record.lastChapterRead} / {record.totalChapters} <span class="edit-hint">✎</span></span>
+                    <span class="record-progress-label">{$_("ui_ch")} {record.lastChapterRead} / {record.totalChapters} <span class="edit-hint">✎</span></span>
                     <div class="record-progress-track">
                       <div class="record-progress-fill" style="width:{Math.min(100,(record.lastChapterRead/record.totalChapters)*100)}%"></div>
                     </div>
@@ -419,10 +421,10 @@
                   <div class="record-progress clickable" role="button" tabindex="0"
                     onclick={() => openChapterEditor(record)}
                     onkeydown={(e) => e.key === "Enter" && openChapterEditor(record)}
-                    title="Click to set chapter"
+                    title={$_("ui_clickToSetChapter")}
                   >
                     <span class="record-progress-label">
-                      {record.lastChapterRead > 0 ? `Ch. ${record.lastChapterRead} read` : "Set chapter…"} <span class="edit-hint">✎</span>
+                      {record.lastChapterRead > 0 ? `Ch. ${record.lastChapterRead} read` : $_("ui_setChapter")} <span class="edit-hint">✎</span>
                     </span>
                   </div>
                 {/if}
@@ -453,11 +455,11 @@
 
         <div class="search-results">
           {#if searching && searchResults.length === 0}
-            <NocturneState layout="compact" tone="info" icon="search" eyebrow="Tracking" title="Searching" />
+            <NocturneState layout="compact" tone="info" icon="search" eyebrow={$_("detail.actions.tracking")} title={$_("ui_searching")} />
           {:else if !searching && searchQuery.trim() && searchResults.length === 0}
-            <NocturneState layout="compact" tone="info" icon="search" eyebrow="Tracking" title="No tracker results" body={`No results for "${searchQuery}".`} />
+            <NocturneState layout="compact" tone="info" icon="search" eyebrow={$_("detail.actions.tracking")} title={$_("ui_noTrackerResults")} body={$_("browse.source.noResultsFor", { query: searchQuery })} />
           {:else if !searchQuery.trim()}
-            <NocturneState layout="compact" tone="info" icon="search" eyebrow="Tracking" title="Type a title to search" />
+            <NocturneState layout="compact" tone="info" icon="search" eyebrow={$_("detail.actions.tracking")} title={$_("ui_typeATitleToSearch")} />
           {:else}
             {#each searchResults as result (result.trackerId + ":" + result.remoteId)}
               {@const isBound = boundRecord?.remoteId === result.remoteId}
@@ -483,14 +485,14 @@
                   <div class="result-meta">
                     {#if result.publishingType}<span class="result-tag">{result.publishingType}</span>{/if}
                     {#if result.publishingStatus}<span class="result-tag">{result.publishingStatus}</span>{/if}
-                    {#if result.totalChapters > 0}<span class="result-tag">{result.totalChapters} ch</span>{/if}
+                    {#if result.totalChapters > 0}<span class="result-tag">{result.totalChapters} {$_("ui_ch_482bd64c")}</span>{/if}
                   </div>
                   {#if result.summary}
                     <p class="result-summary">{result.summary.slice(0,140)}{result.summary.length > 140 ? "…" : ""}</p>
                   {/if}
                 </div>
                 <span class="result-action" class:result-action-on={isBound}>
-                  {isBound ? "✓ Tracking" : "Track"}
+                  {isBound ? $_("ui_tracking") : $_("ui_track")}
                 </span>
               </button>
             {/each}

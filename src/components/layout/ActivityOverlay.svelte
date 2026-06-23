@@ -1,17 +1,18 @@
 <script lang="ts">
+  import { _ } from "../../lib/i18n/runtime";
   import { closeActivityPanel, store } from "../../store/state.svelte";
   import RecentActivity from "./RecentActivity.svelte";
 
   function backLabel() {
-    if (store.activityPanelReturnPage === "library") return "Back to Library";
-    if (store.activityPanelReturnPage === "search") return "Back to Browse";
-    if (store.activityPanelReturnPage === "downloads") return "Back to Downloads";
-    if (store.activityPanelReturnPage === "settings") return "Back to Settings";
-    return "Back to Home";
+    if (store.activityPanelReturnPage === "library") return $_("home.activity.backToLibrary");
+    if (store.activityPanelReturnPage === "search") return $_("home.activity.backToBrowse");
+    if (store.activityPanelReturnPage === "downloads") return $_("home.activity.backToDownloads");
+    if (store.activityPanelReturnPage === "settings") return $_("home.activity.backToSettings");
+    return $_("home.activity.backToHome");
   }
 </script>
 
-<div class="activity-overlay" role="dialog" aria-label="Recent activity">
+<div class="activity-overlay" role="dialog" aria-label={$_("ui_recentActivity")}>
   <div class="activity-overlay__header">
     <button class="activity-overlay__back" type="button" onclick={closeActivityPanel}>
       <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>

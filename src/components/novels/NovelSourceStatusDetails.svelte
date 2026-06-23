@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { _ } from "../../lib/i18n/runtime";
   import { Info } from "phosphor-svelte";
   import {
     getNovelSourceClassificationDetailPresentation,
@@ -96,7 +97,7 @@
 
       <div class="source-status-popover__body">
         <div class="source-status-popover__row">
-          <span class="source-status-popover__label">{presentation.isTransient ? "Still checking" : "Summary"}</span>
+          <span class="source-status-popover__label">{presentation.isTransient ? $_("ui_stillChecking") : "Summary"}</span>
           <p
             class="source-status-popover__summary"
             class:source-status-popover__summary-transient={presentation.isTransient}
@@ -107,7 +108,7 @@
 
         {#if presentation.primaryReason}
           <div class="source-status-popover__row">
-            <span class="source-status-popover__label">Primary reason</span>
+            <span class="source-status-popover__label">{$_("ui_primaryReason")}</span>
             <p class="source-status-popover__reason">{presentation.primaryReason}</p>
           </div>
         {/if}
@@ -121,7 +122,7 @@
               disabled={retryBusy}
             >
               <Info size={12} weight="bold" />
-              {retryBusy ? "Checking..." : "Retry check"}
+              {retryBusy ? "Checking..." : $_("ui_retryCheck")}
             </button>
           </div>
         {/if}

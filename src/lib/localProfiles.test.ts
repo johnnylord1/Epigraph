@@ -26,6 +26,14 @@ describe("resolveSessionProfile", () => {
     expect(resolved.resolutionSource).toBe("invalid-default-fallback");
   });
 
+  it("resolves the hidden test profile when it is the stored default", () => {
+    const resolved = resolveSessionProfile(null, "test", null);
+
+    expect(resolved.profileId).toBe("test");
+    expect(resolved.profileMeta).toEqual(getLocalProfileMeta("test"));
+    expect(resolved.resolutionSource).toBe("settings-default");
+  });
+
   it("treats explicit launch overrides as session-only runtime resolution", () => {
     const resolved = resolveSessionProfile({
       serverUrlOverride: "http://127.0.0.1:4567",
@@ -39,7 +47,7 @@ describe("resolveSessionProfile", () => {
     expect(resolved.effectiveServerUrl).toBe("http://127.0.0.1:4567");
   });
 
-  it("marks attach-only audit launches as override sessions without rewriting the default target", () => {
+  it("marks attach-only audit launches as override sessions while preserving the stored default", () => {
     const resolved = resolveSessionProfile({
       attachOnlyOverride: true,
       auditOpenOverride: "settings-security",

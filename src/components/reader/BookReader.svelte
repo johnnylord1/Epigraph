@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { translate } from "../../lib/i18n/runtime";
+  import { _ } from "../../lib/i18n/runtime";
   import { onDestroy, onMount, tick, untrack } from "svelte";
   import {
     ArrowLeft,
@@ -1451,7 +1453,7 @@
   onDestroy(() => {
     tts.destroy();
     if (auditOpenBookId && !auditCloseSent) {
-      auditReader("books.reader.closed", { reason: "destroy" });
+      auditReader("books.reader.closed", { reason: translate("ui_destroy") });
       auditCloseSent = true;
     }
     ++loadToken;
@@ -1494,119 +1496,119 @@
             </div>
             {#if pdfReflowMode}
               <div class="popover-tts-row" onclick={() => activeSubPanel = "appearance"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "appearance"; }}>
-                <dt>Appearance</dt>
+                <dt>{$_("ui_appearance")}</dt>
                 <dd>{proseTheme} <span class="popover-chevron">&gt;</span></dd>
               </div>
               <div class="popover-tts-row" onclick={() => activeSubPanel = "typography"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "typography"; }}>
-                <dt>Typography</dt>
-                <dd>{proseFontSize}px · {proseLineHeight.toFixed(2)} <span class="popover-chevron">&gt;</span></dd>
+                <dt>{$_("ui_typography")}</dt>
+                <dd>{proseFontSize}{$_("ui_px")} {proseLineHeight.toFixed(2)} <span class="popover-chevron">&gt;</span></dd>
               </div>
               <div class="popover-tts-row" onclick={() => activeSubPanel = "layout"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "layout"; }}>
-                <dt>Layout</dt>
-                <dd>{store.settings.proseReaderFullWidth ? "Full" : `${proseContentWidth}px`} · {proseTextAlign} <span class="popover-chevron">&gt;</span></dd>
+                <dt>{$_("library_display_layout")}</dt>
+                <dd>{store.settings.proseReaderFullWidth ? $_("ui_full") : `${proseContentWidth}px`} · {proseTextAlign} <span class="popover-chevron">&gt;</span></dd>
               </div>
               <div class="popover-tts-row" onclick={() => activeSubPanel = "images"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "images"; }}>
-                <dt>Images</dt>
+                <dt>{$_("ui_images")}</dt>
                 <dd>{Math.round(pdfReflowIllustrationScale * 100)}% <span class="popover-chevron">&gt;</span></dd>
               </div>
               <div class="popover-tts-row" onclick={() => { if (reflowedPages.length > 0) activeSubPanel = "tts"; }} role="button" tabindex="0" aria-disabled={reflowedPages.length === 0} onkeydown={(e) => { if ((e.key === "Enter" || e.key === " ") && reflowedPages.length > 0) activeSubPanel = "tts"; }}>
-                <dt>Text to Speech</dt>
-                <dd>{reflowedPages.length > 0 ? "Configure" : "Waiting for reflow"} <span class="popover-chevron">&gt;</span></dd>
+                <dt>{$_("ui_textToSpeech")}</dt>
+                <dd>{reflowedPages.length > 0 ? $_("ui_configure") : $_("ui_waitingForReflow")} <span class="popover-chevron">&gt;</span></dd>
               </div>
             {:else}
               <div class="popover-tts-row" onclick={() => activeSubPanel = "display"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "display"; }}>
-                <dt>Display</dt>
+                <dt>{$_("library_display_title")}</dt>
                 <dd>{pdfFitMode} · {Math.round(zoom * 100)}% <span class="popover-chevron">&gt;</span></dd>
               </div>
               <div class="popover-tts-row" onclick={() => activeSubPanel = "layout"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "layout"; }}>
-                <dt>Layout</dt>
-                <dd>{store.settings.bookReaderFlow === "scrolled" ? "Scroll" : "Page"} <span class="popover-chevron">&gt;</span></dd>
+                <dt>{$_("library_display_layout")}</dt>
+                <dd>{store.settings.bookReaderFlow === "scrolled" ? $_("ui_scroll") : $_("bookDetail_page")} <span class="popover-chevron">&gt;</span></dd>
               </div>
             {/if}
           {:else if activeBook?.subtype === "epub"}
             <div class="popover-tts-row" onclick={() => activeSubPanel = "appearance"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "appearance"; }}>
-              <dt>Appearance</dt>
+              <dt>{$_("ui_appearance")}</dt>
               <dd>{proseTheme} <span class="popover-chevron">&gt;</span></dd>
             </div>
             <div class="popover-tts-row" onclick={() => activeSubPanel = "typography"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "typography"; }}>
-              <dt>Typography</dt>
-              <dd>{proseFontSize}px · {proseLineHeight.toFixed(2)} <span class="popover-chevron">&gt;</span></dd>
+              <dt>{$_("ui_typography")}</dt>
+              <dd>{proseFontSize}{$_("ui_px")} {proseLineHeight.toFixed(2)} <span class="popover-chevron">&gt;</span></dd>
             </div>
             <div class="popover-tts-row" onclick={() => activeSubPanel = "layout"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "layout"; }}>
-              <dt>Layout</dt>
-              <dd>{store.settings.bookReaderFlow === "scrolled" ? "Scroll" : "Page"} · {store.settings.proseReaderFullWidth ? "Full" : `${proseContentWidth}px`} <span class="popover-chevron">&gt;</span></dd>
+              <dt>{$_("library_display_layout")}</dt>
+              <dd>{store.settings.bookReaderFlow === "scrolled" ? $_("ui_scroll") : $_("bookDetail_page")} · {store.settings.proseReaderFullWidth ? $_("ui_full") : `${proseContentWidth}px`} <span class="popover-chevron">&gt;</span></dd>
             </div>
             <div class="popover-tts-row" onclick={() => activeSubPanel = "tts"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "tts"; }}>
-              <dt>Text to Speech</dt>
-              <dd>Configure <span class="popover-chevron">&gt;</span></dd>
+              <dt>{$_("ui_textToSpeech")}</dt>
+              <dd>{$_("ui_configure")} <span class="popover-chevron">&gt;</span></dd>
             </div>
           {/if}
         {:else if activeSubPanel === "pdf" && activeBook?.subtype === "pdf"}
           <div class="popover-tts-row" onclick={() => activeSubPanel = "main"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "main"; }}>
-            <dt>&lt; Back</dt>
+            <dt>{$_("ui_back_f13dfaca")}</dt>
             <dd>PDF</dd>
           </div>
           <div>
-            <dt>Reflow</dt>
+            <dt>{$_("ui_reflow")}</dt>
             <dd>
-              <button class="popover-toggle" type="button" aria-label="Toggle PDF reflow mode" title="Toggle PDF reflow mode" class:active={pdfReflowMode} onclick={() => updateSettings({ pdfReflowMode: !pdfReflowMode })}></button>
+              <button class="popover-toggle" type="button" aria-label={$_("ui_togglePdfReflowMode")} title={$_("ui_togglePdfReflowMode")} class:active={pdfReflowMode} onclick={() => updateSettings({ pdfReflowMode: !pdfReflowMode })}></button>
             </dd>
           </div>
           {#if pdfReflowMode}
             <div>
-              <dt>Clean BG</dt>
+              <dt>{$_("ui_cleanBg")}</dt>
               <dd>
-                <button class="popover-toggle" type="button" aria-label="Remove PDF backgrounds and watermarks" title="Remove PDF backgrounds and watermarks" class:active={pdfReflowCleanBackgrounds} onclick={() => updateSettings({ pdfReflowCleanBackgrounds: !pdfReflowCleanBackgrounds })}></button>
+                <button class="popover-toggle" type="button" aria-label={$_("ui_removePdfBackgroundsAndWatermarks")} title={$_("ui_removePdfBackgroundsAndWatermarks")} class:active={pdfReflowCleanBackgrounds} onclick={() => updateSettings({ pdfReflowCleanBackgrounds: !pdfReflowCleanBackgrounds })}></button>
               </dd>
             </div>
           {:else}
             <div>
-              <dt>Dark PDF</dt>
+              <dt>{$_("ui_darkPdf")}</dt>
               <dd>
-                <button class="popover-toggle" type="button" aria-label="Toggle dark PDF mode" title="Toggle dark PDF mode" class:active={pdfDarkMode} onclick={() => updateSettings({ pdfDarkMode: !pdfDarkMode })}></button>
+                <button class="popover-toggle" type="button" aria-label={$_("ui_toggleDarkPdfMode")} title={$_("ui_toggleDarkPdfMode")} class:active={pdfDarkMode} onclick={() => updateSettings({ pdfDarkMode: !pdfDarkMode })}></button>
               </dd>
             </div>
           {/if}
         {:else if activeSubPanel === "appearance"}
           <div class="popover-tts-row" onclick={() => activeSubPanel = "main"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "main"; }}>
-            <dt>&lt; Back</dt>
-            <dd>Appearance</dd>
+            <dt>{$_("ui_back_f13dfaca")}</dt>
+            <dd>{$_("ui_appearance")}</dd>
           </div>
           <div>
-            <dt>Theme</dt>
+            <dt>{$_("ui_theme")}</dt>
             <dd>
               <div class="popover-color-swatches" style="display: flex; flex-wrap: wrap; gap: 4px; max-width: 150px;">
-                <button class="popover-swatch" style="background:#efe1c9;" class:active={proseTheme === "sepia"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "sepia" }) : updateSettings({ proseReaderTheme: "sepia" })} title="Sepia"></button>
-                <button class="popover-swatch" style="background:#000000;" class:active={proseTheme === "oled"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "oled" }) : updateSettings({ proseReaderTheme: "oled" })} title="OLED"></button>
-                <button class="popover-swatch" style="background:#09080d;" class:active={proseTheme === "dark"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "dark" }) : updateSettings({ proseReaderTheme: "dark" })} title="Dark"></button>
-                <button class="popover-swatch" style="background:#f5f1ea;" class:active={proseTheme === "light"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "light" }) : updateSettings({ proseReaderTheme: "light" })} title="Light"></button>
-                <button class="popover-swatch" style="background:#131316;" class:active={proseTheme === "nocturne"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "nocturne" }) : updateSettings({ proseReaderTheme: "nocturne" })} title="Nocturne"></button>
-                <button class="popover-swatch" style="background:#1e293b;" class:active={proseTheme === "slate"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "slate" }) : updateSettings({ proseReaderTheme: "slate" })} title="Slate"></button>
-                <button class="popover-swatch" style="background:#142217;" class:active={proseTheme === "forest"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "forest" }) : updateSettings({ proseReaderTheme: "forest" })} title="Forest"></button>
-                <button class="popover-swatch" style="background:#2e3440;" class:active={proseTheme === "nord"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "nord" }) : updateSettings({ proseReaderTheme: "nord" })} title="Nord"></button>
-                <button class="popover-swatch" style="background:#fbf5e6;" class:active={proseTheme === "warm"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "warm" }) : updateSettings({ proseReaderTheme: "warm" })} title="Warm"></button>
+                <button class="popover-swatch" style="background:#efe1c9;" class:active={proseTheme === "sepia"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "sepia" }) : updateSettings({ proseReaderTheme: "sepia" })} title={$_("ui_sepia")}></button>
+                <button class="popover-swatch" style="background:#000000;" class:active={proseTheme === "oled"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "oled" }) : updateSettings({ proseReaderTheme: "oled" })} title={$_("ui_oled")}></button>
+                <button class="popover-swatch" style="background:#09080d;" class:active={proseTheme === "dark"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "dark" }) : updateSettings({ proseReaderTheme: "dark" })} title={$_("ui_dark")}></button>
+                <button class="popover-swatch" style="background:#f5f1ea;" class:active={proseTheme === "light"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "light" }) : updateSettings({ proseReaderTheme: "light" })} title={$_("ui_light")}></button>
+                <button class="popover-swatch" style="background:#131316;" class:active={proseTheme === "nocturne"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "nocturne" }) : updateSettings({ proseReaderTheme: "nocturne" })} title={$_("ui_nocturne")}></button>
+                <button class="popover-swatch" style="background:#1e293b;" class:active={proseTheme === "slate"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "slate" }) : updateSettings({ proseReaderTheme: "slate" })} title={$_("ui_slate")}></button>
+                <button class="popover-swatch" style="background:#142217;" class:active={proseTheme === "forest"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "forest" }) : updateSettings({ proseReaderTheme: "forest" })} title={$_("ui_forest")}></button>
+                <button class="popover-swatch" style="background:#2e3440;" class:active={proseTheme === "nord"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "nord" }) : updateSettings({ proseReaderTheme: "nord" })} title={$_("ui_nord")}></button>
+                <button class="popover-swatch" style="background:#fbf5e6;" class:active={proseTheme === "warm"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "warm" }) : updateSettings({ proseReaderTheme: "warm" })} title={$_("ui_warm")}></button>
               </div>
             </dd>
           </div>
           <div>
-            <dt>Text Color</dt>
+            <dt>{$_("ui_textColor")}</dt>
             <dd>
-              <input class="popover-color-picker" type="color" value={prosePalette.text} onchange={(event) => updateProseColor("text", event.currentTarget.value)} title="Text color" />
+              <input class="popover-color-picker" type="color" value={prosePalette.text} onchange={(event) => updateProseColor("text", event.currentTarget.value)} title={$_("ui_textColor_1c7a30e5")} />
             </dd>
           </div>
           <div>
-            <dt>Paper Color</dt>
+            <dt>{$_("ui_paperColor")}</dt>
             <dd>
-              <input class="popover-color-picker" type="color" value={prosePalette.surface} onchange={(event) => updateProseColor("background", event.currentTarget.value)} title="Page background" />
+              <input class="popover-color-picker" type="color" value={prosePalette.surface} onchange={(event) => updateProseColor("background", event.currentTarget.value)} title={$_("ui_pageBackground")} />
             </dd>
           </div>
         {:else if activeSubPanel === "typography"}
           <div class="popover-tts-row" onclick={() => activeSubPanel = "main"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "main"; }}>
-            <dt>&lt; Back</dt>
-            <dd>Typography</dd>
+            <dt>{$_("ui_back_f13dfaca")}</dt>
+            <dd>{$_("ui_typography")}</dd>
           </div>
           <div>
-            <dt>Font</dt>
+            <dt>{$_("ui_font")}</dt>
             <dd>
               <select class="popover-select" value={proseFontFamily} onchange={(event) => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderFontFamily: event.currentTarget.value }) : updateSettings({ proseReaderFontFamily: event.currentTarget.value })}>
                 <option value="Georgia, serif">Georgia</option>
@@ -1621,17 +1623,17 @@
             </dd>
           </div>
           <div>
-            <dt>Text Size</dt>
+            <dt>{$_("ui_textSize")}</dt>
             <dd>
               <div class="popover-stepper">
                 <button class="popover-step-btn" onclick={() => updateFontSize(-1)} disabled={proseFontSize <= 12}>-</button>
-                <span class="popover-step-val">{proseFontSize}px</span>
+                <span class="popover-step-val">{proseFontSize}{$_("ui_px_07a65dd6")}</span>
                 <button class="popover-step-btn" onclick={() => updateFontSize(1)} disabled={proseFontSize >= 32}>+</button>
               </div>
             </dd>
           </div>
           <div>
-            <dt>Line Height</dt>
+            <dt>{$_("ui_lineHeight")}</dt>
             <dd>
               <div class="popover-stepper">
                 <button class="popover-step-btn" onclick={() => updateLineHeight(-0.05)} disabled={proseLineHeight <= 1.2}>-</button>
@@ -1642,65 +1644,65 @@
           </div>
         {:else if activeSubPanel === "layout"}
           <div class="popover-tts-row" onclick={() => activeSubPanel = "main"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "main"; }}>
-            <dt>&lt; Back</dt>
-            <dd>Layout</dd>
+            <dt>{$_("ui_back_f13dfaca")}</dt>
+            <dd>{$_("library_display_layout")}</dd>
           </div>
           {#if activeBook?.subtype === "epub" || pdfReflowMode}
             <div>
-              <dt>Align</dt>
+              <dt>{$_("ui_align")}</dt>
               <dd>
                 <div class="popover-segmented">
-                  <button class="popover-segment" class:active={proseTextAlign === "left"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTextAlign: "left" }) : updateSettings({ proseReaderTextAlign: "left" })}>Left</button>
-                  <button class="popover-segment" class:active={proseTextAlign === "justify"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTextAlign: "justify" }) : updateSettings({ proseReaderTextAlign: "justify" })}>Justified</button>
+                  <button class="popover-segment" class:active={proseTextAlign === "left"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTextAlign: "left" }) : updateSettings({ proseReaderTextAlign: "left" })}>{$_("ui_left")}</button>
+                  <button class="popover-segment" class:active={proseTextAlign === "justify"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTextAlign: "justify" }) : updateSettings({ proseReaderTextAlign: "justify" })}>{$_("ui_justified")}</button>
                 </div>
               </dd>
             </div>
             <div>
-              <dt>Width</dt>
+              <dt>{$_("ui_width")}</dt>
               <dd style="display: flex; align-items: center; gap: 8px;">
                 <div class="popover-stepper">
                   <button class="popover-step-btn" onclick={() => updateContentWidth(-40)} disabled={store.settings.proseReaderFullWidth}>-</button>
                   <span class="popover-step-val" style={store.settings.proseReaderFullWidth ? "opacity: 0.5;" : ""}>
-                    {store.settings.proseReaderFullWidth ? "Full" : `${proseContentWidth}px`}
+                    {store.settings.proseReaderFullWidth ? $_("ui_full") : `${proseContentWidth}px`}
                   </span>
                   <button class="popover-step-btn" onclick={() => updateContentWidth(40)} disabled={store.settings.proseReaderFullWidth}>+</button>
                 </div>
-                <button class="popover-btn" class:active={store.settings.proseReaderFullWidth} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth }) : updateSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}>Full</button>
+                <button class="popover-btn" class:active={store.settings.proseReaderFullWidth} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth }) : updateSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}>{$_("ui_full")}</button>
               </dd>
             </div>
           {/if}
           {#if activeBook?.subtype === "epub" || !pdfReflowMode}
             <div>
-              <dt>Flow</dt>
+              <dt>{$_("ui_flow")}</dt>
               <dd>
                 <div class="popover-segmented">
-                  <button class="popover-segment" class:active={store.settings.bookReaderFlow !== "scrolled"} onclick={() => updateSettings({ bookReaderFlow: "paginated" })}>Page</button>
-                  <button class="popover-segment" class:active={store.settings.bookReaderFlow === "scrolled"} onclick={() => updateSettings({ bookReaderFlow: "scrolled" })}>Scroll</button>
+                  <button class="popover-segment" class:active={store.settings.bookReaderFlow !== "scrolled"} onclick={() => updateSettings({ bookReaderFlow: "paginated" })}>{$_("bookDetail_page")}</button>
+                  <button class="popover-segment" class:active={store.settings.bookReaderFlow === "scrolled"} onclick={() => updateSettings({ bookReaderFlow: "scrolled" })}>{$_("ui_scroll")}</button>
                 </div>
               </dd>
             </div>
           {/if}
           {#if activeBook?.subtype === "pdf" && !pdfReflowMode}
             <div>
-              <dt>Full Width</dt>
+              <dt>{$_("ui_fullWidth")}</dt>
               <dd>
-                <button class="popover-toggle" type="button" aria-label="Toggle full width reading" title="Toggle full width reading" class:active={store.settings.proseReaderFullWidth} onclick={() => updateSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}></button>
+                <button class="popover-toggle" type="button" aria-label={$_("ui_toggleFullWidthReading")} title={$_("ui_toggleFullWidthReading")} class:active={store.settings.proseReaderFullWidth} onclick={() => updateSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}></button>
               </dd>
             </div>
           {/if}
         {:else if activeSubPanel === "display" && activeBook?.subtype === "pdf"}
           <div class="popover-tts-row" onclick={() => activeSubPanel = "main"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "main"; }}>
-            <dt>&lt; Back</dt>
-            <dd>Display</dd>
+            <dt>{$_("ui_back_f13dfaca")}</dt>
+            <dd>{$_("library_display_title")}</dd>
           </div>
           <div>
-            <dt>Fit Mode</dt>
+            <dt>{$_("ui_fitMode")}</dt>
             <dd>
               <button class="popover-btn" onclick={cyclePdfFit}>{pdfFitMode}</button>
             </dd>
           </div>
           <div>
-            <dt>Zoom</dt>
+            <dt>{$_("ui_zoom")}</dt>
             <dd>
               <div class="popover-stepper">
                 <button class="popover-step-btn" onclick={() => adjustZoom(-ZOOM_STEP)} disabled={zoom <= ZOOM_MIN}>-</button>
@@ -1711,11 +1713,11 @@
           </div>
         {:else if activeSubPanel === "images" && activeBook?.subtype === "pdf" && pdfReflowMode}
           <div class="popover-tts-row" onclick={() => activeSubPanel = "main"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "main"; }}>
-            <dt>&lt; Back</dt>
-            <dd>Images</dd>
+            <dt>{$_("ui_back_f13dfaca")}</dt>
+            <dd>{$_("ui_images")}</dd>
           </div>
           <div>
-            <dt>Image Size</dt>
+            <dt>{$_("ui_imageSize")}</dt>
             <dd>
               <div class="popover-stepper">
                 <button class="popover-step-btn" onclick={() => updateIllustrationScale(-0.1)} disabled={pdfReflowIllustrationScale <= 0.5}>-</button>
@@ -1727,47 +1729,47 @@
         {:else if false}
         {#if activeBook?.subtype === "epub"}
         <div>
-          <dt>Theme</dt>
+          <dt>{$_("ui_theme")}</dt>
           <dd>
             <div class="popover-color-swatches" style="display: flex; flex-wrap: wrap; gap: 4px; max-width: 150px;">
-              <button class="popover-swatch" style="background:#efe1c9;" class:active={proseTheme === "sepia"} onclick={() => updateSettings({ proseReaderTheme: "sepia" })} title="Sepia"></button>
-              <button class="popover-swatch" style="background:#000000;" class:active={proseTheme === "oled"} onclick={() => updateSettings({ proseReaderTheme: "oled" })} title="OLED"></button>
-              <button class="popover-swatch" style="background:#09080d;" class:active={proseTheme === "dark"} onclick={() => updateSettings({ proseReaderTheme: "dark" })} title="Dark"></button>
-              <button class="popover-swatch" style="background:#f5f1ea;" class:active={proseTheme === "light"} onclick={() => updateSettings({ proseReaderTheme: "light" })} title="Light"></button>
-              <button class="popover-swatch" style="background:#131316;" class:active={proseTheme === "nocturne"} onclick={() => updateSettings({ proseReaderTheme: "nocturne" })} title="Nocturne"></button>
-              <button class="popover-swatch" style="background:#1e293b;" class:active={proseTheme === "slate"} onclick={() => updateSettings({ proseReaderTheme: "slate" })} title="Slate"></button>
-              <button class="popover-swatch" style="background:#142217;" class:active={proseTheme === "forest"} onclick={() => updateSettings({ proseReaderTheme: "forest" })} title="Forest"></button>
-              <button class="popover-swatch" style="background:#2e3440;" class:active={proseTheme === "nord"} onclick={() => updateSettings({ proseReaderTheme: "nord" })} title="Nord"></button>
-              <button class="popover-swatch" style="background:#fbf5e6;" class:active={proseTheme === "warm"} onclick={() => updateSettings({ proseReaderTheme: "warm" })} title="Warm"></button>
+              <button class="popover-swatch" style="background:#efe1c9;" class:active={proseTheme === "sepia"} onclick={() => updateSettings({ proseReaderTheme: "sepia" })} title={$_("ui_sepia")}></button>
+              <button class="popover-swatch" style="background:#000000;" class:active={proseTheme === "oled"} onclick={() => updateSettings({ proseReaderTheme: "oled" })} title={$_("ui_oled")}></button>
+              <button class="popover-swatch" style="background:#09080d;" class:active={proseTheme === "dark"} onclick={() => updateSettings({ proseReaderTheme: "dark" })} title={$_("ui_dark")}></button>
+              <button class="popover-swatch" style="background:#f5f1ea;" class:active={proseTheme === "light"} onclick={() => updateSettings({ proseReaderTheme: "light" })} title={$_("ui_light")}></button>
+              <button class="popover-swatch" style="background:#131316;" class:active={proseTheme === "nocturne"} onclick={() => updateSettings({ proseReaderTheme: "nocturne" })} title={$_("ui_nocturne")}></button>
+              <button class="popover-swatch" style="background:#1e293b;" class:active={proseTheme === "slate"} onclick={() => updateSettings({ proseReaderTheme: "slate" })} title={$_("ui_slate")}></button>
+              <button class="popover-swatch" style="background:#142217;" class:active={proseTheme === "forest"} onclick={() => updateSettings({ proseReaderTheme: "forest" })} title={$_("ui_forest")}></button>
+              <button class="popover-swatch" style="background:#2e3440;" class:active={proseTheme === "nord"} onclick={() => updateSettings({ proseReaderTheme: "nord" })} title={$_("ui_nord")}></button>
+              <button class="popover-swatch" style="background:#fbf5e6;" class:active={proseTheme === "warm"} onclick={() => updateSettings({ proseReaderTheme: "warm" })} title={$_("ui_warm")}></button>
             </div>
           </dd>
         </div>
         <div>
-          <dt>Text Color</dt>
+          <dt>{$_("ui_textColor")}</dt>
           <dd>
             <input
               class="popover-color-picker"
               type="color"
               value={prosePalette.text}
               onchange={(event) => updateProseColor("text", event.currentTarget.value)}
-              title="Text color"
+              title={$_("ui_textColor_1c7a30e5")}
             />
           </dd>
         </div>
         <div>
-          <dt>Paper Color</dt>
+          <dt>{$_("ui_paperColor")}</dt>
           <dd>
             <input
               class="popover-color-picker"
               type="color"
               value={prosePalette.surface}
               onchange={(event) => updateProseColor("background", event.currentTarget.value)}
-              title="Page background"
+              title={$_("ui_pageBackground")}
             />
           </dd>
         </div>
         <div>
-          <dt>Font</dt>
+          <dt>{$_("ui_font")}</dt>
           <dd>
             <select
               class="popover-select"
@@ -1786,17 +1788,17 @@
           </dd>
         </div>
         <div>
-          <dt>Size</dt>
+          <dt>{$_("ui_size")}</dt>
           <dd>
             <div class="popover-stepper">
               <button class="popover-step-btn" onclick={() => updateFontSize(-1)}>−</button>
-              <span class="popover-step-val">{proseFontSize}px</span>
+              <span class="popover-step-val">{proseFontSize}{$_("ui_px_07a65dd6")}</span>
               <button class="popover-step-btn" onclick={() => updateFontSize(1)}>+</button>
             </div>
           </dd>
         </div>
         <div>
-          <dt>Line</dt>
+          <dt>{$_("ui_line")}</dt>
           <dd>
             <div class="popover-stepper">
               <button class="popover-step-btn" onclick={() => updateLineHeight(-0.05)}>−</button>
@@ -1806,59 +1808,59 @@
           </dd>
         </div>
         <div>
-          <dt>Align</dt>
+          <dt>{$_("ui_align")}</dt>
           <dd>
             <div class="popover-segmented">
-              <button class="popover-segment" class:active={proseTextAlign === "left"} onclick={() => updateSettings({ proseReaderTextAlign: "left" })}>Left</button>
-              <button class="popover-segment" class:active={proseTextAlign === "justify"} onclick={() => updateSettings({ proseReaderTextAlign: "justify" })}>Justified</button>
+              <button class="popover-segment" class:active={proseTextAlign === "left"} onclick={() => updateSettings({ proseReaderTextAlign: "left" })}>{$_("ui_left")}</button>
+              <button class="popover-segment" class:active={proseTextAlign === "justify"} onclick={() => updateSettings({ proseReaderTextAlign: "justify" })}>{$_("ui_justified")}</button>
             </div>
           </dd>
         </div>
         <div>
-          <dt>Width</dt>
+          <dt>{$_("ui_width")}</dt>
           <dd style="display: flex; align-items: center; gap: 8px;">
             <div class="popover-stepper">
               <button class="popover-step-btn" onclick={() => updateContentWidth(-40)} disabled={store.settings.proseReaderFullWidth}>−</button>
               <span class="popover-step-val" style={store.settings.proseReaderFullWidth ? "opacity: 0.5;" : ""}>
-                {store.settings.proseReaderFullWidth ? "Full" : `${proseContentWidth}px`}
+                {store.settings.proseReaderFullWidth ? $_("ui_full") : `${proseContentWidth}px`}
               </span>
               <button class="popover-step-btn" onclick={() => updateContentWidth(40)} disabled={store.settings.proseReaderFullWidth}>+</button>
             </div>
-            <button class="popover-btn" class:active={store.settings.proseReaderFullWidth} onclick={() => updateSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}>Full</button>
+            <button class="popover-btn" class:active={store.settings.proseReaderFullWidth} onclick={() => updateSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}>{$_("ui_full")}</button>
           </dd>
         </div>
         <div>
-          <dt>Flow</dt>
+          <dt>{$_("ui_flow")}</dt>
           <dd>
             <div class="popover-segmented">
-              <button class="popover-segment" class:active={store.settings.bookReaderFlow !== "scrolled"} onclick={() => updateSettings({ bookReaderFlow: "paginated" })}>Page</button>
-              <button class="popover-segment" class:active={store.settings.bookReaderFlow === "scrolled"} onclick={() => updateSettings({ bookReaderFlow: "scrolled" })}>Scroll</button>
+              <button class="popover-segment" class:active={store.settings.bookReaderFlow !== "scrolled"} onclick={() => updateSettings({ bookReaderFlow: "paginated" })}>{$_("bookDetail_page")}</button>
+              <button class="popover-segment" class:active={store.settings.bookReaderFlow === "scrolled"} onclick={() => updateSettings({ bookReaderFlow: "scrolled" })}>{$_("ui_scroll")}</button>
             </div>
           </dd>
         </div>
         <div class="popover-tts-row" onclick={() => activeSubPanel = "tts"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') activeSubPanel = "tts"; }}>
-          <dt style="color: var(--reader-text);">Text to Speech</dt>
+          <dt style="color: var(--reader-text);">{$_("ui_textToSpeech")}</dt>
           <dd style="color: var(--reader-accent-bright); font-weight: 600; display: flex; align-items: center; gap: 4px;">
-            <span>Configure</span>
+            <span>{$_("ui_configure")}</span>
             <span class="popover-chevron">&gt;</span>
           </dd>
         </div>
       {:else if activeBook?.subtype === "pdf"}
         <div>
-          <dt>Reflow</dt>
+          <dt>{$_("ui_reflow")}</dt>
           <dd>
-            <button class="popover-toggle" type="button" aria-label="Toggle PDF reflow mode" title="Toggle PDF reflow mode" class:active={pdfReflowMode} onclick={() => updateSettings({ pdfReflowMode: !pdfReflowMode })}></button>
+            <button class="popover-toggle" type="button" aria-label={$_("ui_togglePdfReflowMode")} title={$_("ui_togglePdfReflowMode")} class:active={pdfReflowMode} onclick={() => updateSettings({ pdfReflowMode: !pdfReflowMode })}></button>
           </dd>
         </div>
         {#if !pdfReflowMode}
         <div>
-          <dt>Fit Mode</dt>
+          <dt>{$_("ui_fitMode")}</dt>
           <dd>
             <button class="popover-btn" onclick={cyclePdfFit}>{pdfFitMode}</button>
           </dd>
         </div>
         <div>
-          <dt>Zoom</dt>
+          <dt>{$_("ui_zoom")}</dt>
           <dd>
             <div class="popover-stepper">
               <button class="popover-step-btn" onclick={() => adjustZoom(-ZOOM_STEP)} disabled={zoom <= ZOOM_MIN}>−</button>
@@ -1868,83 +1870,83 @@
           </dd>
         </div>
         <div>
-          <dt>Flow</dt>
+          <dt>{$_("ui_flow")}</dt>
           <dd>
             <div class="popover-segmented">
-              <button class="popover-segment" class:active={store.settings.bookReaderFlow !== "scrolled"} onclick={() => updateSettings({ bookReaderFlow: "paginated" })}>Page</button>
-              <button class="popover-segment" class:active={store.settings.bookReaderFlow === "scrolled"} onclick={() => updateSettings({ bookReaderFlow: "scrolled" })}>Scroll</button>
+              <button class="popover-segment" class:active={store.settings.bookReaderFlow !== "scrolled"} onclick={() => updateSettings({ bookReaderFlow: "paginated" })}>{$_("bookDetail_page")}</button>
+              <button class="popover-segment" class:active={store.settings.bookReaderFlow === "scrolled"} onclick={() => updateSettings({ bookReaderFlow: "scrolled" })}>{$_("ui_scroll")}</button>
             </div>
           </dd>
         </div>
         <div>
-          <dt>Dark PDF</dt>
+          <dt>{$_("ui_darkPdf")}</dt>
           <dd>
-            <button class="popover-toggle" type="button" aria-label="Toggle dark PDF mode" title="Toggle dark PDF mode" class:active={pdfDarkMode} onclick={() => updateSettings({ pdfDarkMode: !pdfDarkMode })}></button>
+            <button class="popover-toggle" type="button" aria-label={$_("ui_toggleDarkPdfMode")} title={$_("ui_toggleDarkPdfMode")} class:active={pdfDarkMode} onclick={() => updateSettings({ pdfDarkMode: !pdfDarkMode })}></button>
           </dd>
         </div>
         <div>
-          <dt>Full Width</dt>
+          <dt>{$_("ui_fullWidth")}</dt>
           <dd>
-            <button class="popover-toggle" type="button" aria-label="Toggle full width reading" title="Toggle full width reading" class:active={store.settings.proseReaderFullWidth} onclick={() => updateSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}></button>
+            <button class="popover-toggle" type="button" aria-label={$_("ui_toggleFullWidthReading")} title={$_("ui_toggleFullWidthReading")} class:active={store.settings.proseReaderFullWidth} onclick={() => updateSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}></button>
           </dd>
         </div>
         {/if}
         {#if pdfReflowMode}
           <div>
-            <dt>Clean BG</dt>
+            <dt>{$_("ui_cleanBg")}</dt>
             <dd>
               <button
                 class="popover-toggle"
                 type="button"
-                aria-label="Remove PDF backgrounds and watermarks"
-                title="Remove PDF backgrounds and watermarks"
+                aria-label={$_("ui_removePdfBackgroundsAndWatermarks")}
+                title={$_("ui_removePdfBackgroundsAndWatermarks")}
                 class:active={pdfReflowCleanBackgrounds}
                 onclick={() => updateSettings({ pdfReflowCleanBackgrounds: !pdfReflowCleanBackgrounds })}
               ></button>
             </dd>
           </div>
           <div>
-            <dt>Theme</dt>
+            <dt>{$_("ui_theme")}</dt>
             <dd>
               <div class="popover-color-swatches" style="display: flex; flex-wrap: wrap; gap: 4px; max-width: 150px;">
-                <button class="popover-swatch" style="background:#efe1c9;" class:active={proseTheme === "sepia"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "sepia" })} title="Sepia"></button>
-                <button class="popover-swatch" style="background:#000000;" class:active={proseTheme === "oled"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "oled" })} title="OLED"></button>
-                <button class="popover-swatch" style="background:#09080d;" class:active={proseTheme === "dark"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "dark" })} title="Dark"></button>
-                <button class="popover-swatch" style="background:#f5f1ea;" class:active={proseTheme === "light"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "light" })} title="Light"></button>
-                <button class="popover-swatch" style="background:#131316;" class:active={proseTheme === "nocturne"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "nocturne" })} title="Nocturne"></button>
-                <button class="popover-swatch" style="background:#1e293b;" class:active={proseTheme === "slate"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "slate" })} title="Slate"></button>
-                <button class="popover-swatch" style="background:#142217;" class:active={proseTheme === "forest"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "forest" })} title="Forest"></button>
-                <button class="popover-swatch" style="background:#2e3440;" class:active={proseTheme === "nord"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "nord" })} title="Nord"></button>
-                <button class="popover-swatch" style="background:#fbf5e6;" class:active={proseTheme === "warm"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "warm" })} title="Warm"></button>
+                <button class="popover-swatch" style="background:#efe1c9;" class:active={proseTheme === "sepia"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "sepia" })} title={$_("ui_sepia")}></button>
+                <button class="popover-swatch" style="background:#000000;" class:active={proseTheme === "oled"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "oled" })} title={$_("ui_oled")}></button>
+                <button class="popover-swatch" style="background:#09080d;" class:active={proseTheme === "dark"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "dark" })} title={$_("ui_dark")}></button>
+                <button class="popover-swatch" style="background:#f5f1ea;" class:active={proseTheme === "light"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "light" })} title={$_("ui_light")}></button>
+                <button class="popover-swatch" style="background:#131316;" class:active={proseTheme === "nocturne"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "nocturne" })} title={$_("ui_nocturne")}></button>
+                <button class="popover-swatch" style="background:#1e293b;" class:active={proseTheme === "slate"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "slate" })} title={$_("ui_slate")}></button>
+                <button class="popover-swatch" style="background:#142217;" class:active={proseTheme === "forest"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "forest" })} title={$_("ui_forest")}></button>
+                <button class="popover-swatch" style="background:#2e3440;" class:active={proseTheme === "nord"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "nord" })} title={$_("ui_nord")}></button>
+                <button class="popover-swatch" style="background:#fbf5e6;" class:active={proseTheme === "warm"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "warm" })} title={$_("ui_warm")}></button>
               </div>
             </dd>
           </div>
           <div>
-            <dt>Text Color</dt>
+            <dt>{$_("ui_textColor")}</dt>
             <dd>
               <input
                 class="popover-color-picker"
                 type="color"
                 value={prosePalette.text}
                 onchange={(event) => updateProseColor("text", event.currentTarget.value)}
-                title="Text color"
+                title={$_("ui_textColor_1c7a30e5")}
               />
             </dd>
           </div>
           <div>
-            <dt>Paper Color</dt>
+            <dt>{$_("ui_paperColor")}</dt>
             <dd>
               <input
                 class="popover-color-picker"
                 type="color"
                 value={prosePalette.surface}
                 onchange={(event) => updateProseColor("background", event.currentTarget.value)}
-                title="Page background"
+                title={$_("ui_pageBackground")}
               />
             </dd>
           </div>
           <div>
-            <dt>Font</dt>
+            <dt>{$_("ui_font")}</dt>
             <dd>
               <select class="popover-select" value={proseFontFamily} onchange={(e) => updateAnchoredReaderSettings({ proseReaderFontFamily: (e.target as HTMLSelectElement).value })}>
                 <option value="Georgia, serif">Georgia</option>
@@ -1959,17 +1961,17 @@
             </dd>
           </div>
           <div>
-            <dt>Text Size</dt>
+            <dt>{$_("ui_textSize")}</dt>
             <dd>
               <div class="popover-stepper">
                 <button class="popover-step-btn" onclick={() => updateFontSize(-1)} disabled={proseFontSize <= 12}>-</button>
-                <span class="popover-step-val">{proseFontSize}px</span>
+                <span class="popover-step-val">{proseFontSize}{$_("ui_px_07a65dd6")}</span>
                 <button class="popover-step-btn" onclick={() => updateFontSize(1)} disabled={proseFontSize >= 32}>+</button>
               </div>
             </dd>
           </div>
           <div>
-            <dt>Line Height</dt>
+            <dt>{$_("ui_lineHeight")}</dt>
             <dd>
               <div class="popover-stepper">
                 <button class="popover-step-btn" onclick={() => updateLineHeight(-0.05)} disabled={proseLineHeight <= 1.2}>-</button>
@@ -1979,29 +1981,29 @@
             </dd>
           </div>
           <div>
-            <dt>Align</dt>
+            <dt>{$_("ui_align")}</dt>
             <dd>
               <div class="popover-segmented">
-                <button class="popover-segment" class:active={proseTextAlign === "left"} onclick={() => updateAnchoredReaderSettings({ proseReaderTextAlign: "left" })}>Left</button>
-                <button class="popover-segment" class:active={proseTextAlign === "justify"} onclick={() => updateAnchoredReaderSettings({ proseReaderTextAlign: "justify" })}>Justified</button>
+                <button class="popover-segment" class:active={proseTextAlign === "left"} onclick={() => updateAnchoredReaderSettings({ proseReaderTextAlign: "left" })}>{$_("ui_left")}</button>
+                <button class="popover-segment" class:active={proseTextAlign === "justify"} onclick={() => updateAnchoredReaderSettings({ proseReaderTextAlign: "justify" })}>{$_("ui_justified")}</button>
               </div>
             </dd>
           </div>
           <div>
-            <dt>Width</dt>
+            <dt>{$_("ui_width")}</dt>
             <dd style="display: flex; align-items: center; gap: 8px;">
               <div class="popover-stepper">
                 <button class="popover-step-btn" onclick={() => updateContentWidth(-40)} disabled={store.settings.proseReaderFullWidth}>-</button>
                 <span class="popover-step-val" style={store.settings.proseReaderFullWidth ? "opacity: 0.5;" : ""}>
-                  {store.settings.proseReaderFullWidth ? "Full" : `${proseContentWidth}px`}
+                  {store.settings.proseReaderFullWidth ? $_("ui_full") : `${proseContentWidth}px`}
                 </span>
                 <button class="popover-step-btn" onclick={() => updateContentWidth(40)} disabled={store.settings.proseReaderFullWidth}>+</button>
               </div>
-              <button class="popover-btn" class:active={store.settings.proseReaderFullWidth} onclick={() => updateAnchoredReaderSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}>Full</button>
+              <button class="popover-btn" class:active={store.settings.proseReaderFullWidth} onclick={() => updateAnchoredReaderSettings({ proseReaderFullWidth: !store.settings.proseReaderFullWidth })}>{$_("ui_full")}</button>
             </dd>
           </div>
           <div>
-            <dt>Image Size</dt>
+            <dt>{$_("ui_imageSize")}</dt>
             <dd>
               <div class="popover-stepper">
                 <button class="popover-step-btn" onclick={() => updateIllustrationScale(-0.1)} disabled={pdfReflowIllustrationScale <= 0.5}>-</button>
@@ -2011,9 +2013,9 @@
             </dd>
           </div>
           <div class="popover-tts-row" onclick={() => { if (reflowedPages.length > 0) activeSubPanel = "tts"; }} role="button" tabindex="0" aria-disabled={reflowedPages.length === 0} onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && reflowedPages.length > 0) activeSubPanel = "tts"; }}>
-            <dt style="color: var(--reader-text);">Text to Speech</dt>
+            <dt style="color: var(--reader-text);">{$_("ui_textToSpeech")}</dt>
             <dd style="color: var(--reader-accent-bright); font-weight: 600; display: flex; align-items: center; gap: 4px;">
-              <span>{reflowedPages.length > 0 ? "Configure" : "Waiting for reflow"}</span>
+              <span>{reflowedPages.length > 0 ? $_("ui_configure") : $_("ui_waitingForReflow")}</span>
               <span class="popover-chevron">&gt;</span>
             </dd>
           </div>
@@ -2105,8 +2107,8 @@
           layout="center"
           tone="danger"
           icon="warning"
-          eyebrow="Reader"
-          title="Could not open this book"
+          eyebrow={$_("ui_reader")}
+          title={$_("bookDetail_errors_couldNotOpen")}
           body={error}
         />
       </div>

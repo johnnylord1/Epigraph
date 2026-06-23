@@ -36,6 +36,22 @@ function firstText(...values: unknown[]): string | null {
   return null;
 }
 
+function allText(...values: unknown[]): string[] {
+  const seen = new Set<string>();
+  const texts: string[] = [];
+  for (const value of values) {
+    for (const entry of asArray(value)) {
+      const text = textValue(entry);
+      if (!text) continue;
+      const key = text.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      texts.push(text);
+    }
+  }
+  return texts;
+}
+
 function dirname(path: string): string {
   const normalized = path.replace(/\\/g, "/");
   const idx = normalized.lastIndexOf("/");
@@ -226,7 +242,7 @@ export async function parseEpubArchive(buffer: ArrayBuffer, fallbackTitle: strin
     title: firstText(metadata.title, metadata["dc:title"]) ?? fallbackTitle,
     author: firstText(metadata.creator, metadata["dc:creator"]),
     description: firstText(metadata.description, metadata["dc:description"]),
-    genres: [],
+    genres: allText(metadata.subject, metadata["dc:subject"]),
     toc,
     spine,
     cover,

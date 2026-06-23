@@ -41,9 +41,9 @@ const DISPLAY_SPECS: Record<LibraryViewMode, LibraryDisplaySpec> = {
   },
   compact_grid: {
     mode: "compact_grid",
-    gap: 10,
-    minCardWidth: 116,
-    targetCardWidth: 124,
+    gap: 16,
+    minCardWidth: 140,
+    targetCardWidth: 148,
   },
   list: {
     mode: "list",
@@ -81,11 +81,7 @@ export function computeEffectiveLibraryColumns(input: ComputeEffectiveLibraryCol
   const maxColumnsThatFit = getMaxColumnsForWidth(availableWidth, minCardWidth, gap);
 
   if (input.preferredColumns === "auto") {
-    const targetCardWidth = Math.max(minCardWidth, input.targetCardWidth ?? minCardWidth);
-    const autoCandidate = clampColumns(
-      Math.max(1, Math.floor((availableWidth + gap) / (targetCardWidth + gap))),
-    );
-    return Math.min(autoCandidate, maxColumnsThatFit);
+    return maxColumnsThatFit;
   }
 
   let columns = Math.min(clampColumns(input.preferredColumns), maxColumnsThatFit);

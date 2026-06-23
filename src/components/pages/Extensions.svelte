@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { translate } from "../../lib/i18n/runtime";
+  import { _ } from "../../lib/i18n/runtime";
   import { onMount, untrack } from "svelte";
   import { MagnifyingGlass, ArrowsClockwise, Plus, CircleNotch, CaretRight, CaretDown, X, Check, GitBranch } from "phosphor-svelte";
   import { gql } from "../../lib/client";
@@ -83,8 +85,8 @@
       const result = await ensureExtensionRepo(RECOMMENDED_EXTENSION_REPO);
       addToast({
         kind: result.status === "added" ? "success" : "info",
-        title: result.status === "added" ? "Recommended repo added" : "Recommended repo already added",
-        body: result.status === "added"
+        title: result.status === translate("ui_added") ? translate("ui_recommendedRepoAdded") : translate("ui_recommendedRepoAlreadyAdded"),
+        body: result.status === translate("ui_added")
           ? `${result.repo.name} is ready. Browse Available and install your first extension.`
           : `${result.repo.name} is already configured. Browse Available and install your first extension.`,
       });
@@ -96,8 +98,8 @@
     } catch (error) {
       addToast({
         kind: "error",
-        title: "Could not add the recommended repo",
-        body: error instanceof Error ? error.message : "Aethon couldn't save the recommended repo.",
+        title: translate("ui_couldNotAddTheRecommendedRepo"),
+        body: error instanceof Error ? error.message : translate("ui_aethonCouldnTSaveTheRecommendedRepo"),
       });
     } finally {
       setupActionBusy = false;
@@ -138,8 +140,8 @@
     filter = "installed";
     addToast({
       kind: "success",
-      title: "First extension installed",
-      body: setupState?.kind === "ready"
+      title: translate("ui_firstExtensionInstalled"),
+      body: setupState?.kind === translate("ui_ready_75c05337")
         ? `${extension.name} is installed. You can head to Search or browse sources now.`
         : `${extension.name} is installed. If search is still empty, try another content extension or review available sources.`,
     });
@@ -211,12 +213,12 @@
   const remainingCount = $derived(Math.max(0, groups.length - renderVisible));
   const updateCount = $derived(extensions.filter((e) => e.hasUpdate).length);
 
-  const FILTERS: { id: Filter; label: string }[] = [
-    { id: "installed", label: "Installed" },
-    { id: "available", label: "Available" },
-    { id: "updates",   label: "Updates" },
-    { id: "all",       label: "All" },
-  ];
+  const FILTERS: { id: Filter; label: string }[] = $derived.by(() => [
+    { id: "installed", label: $_("sources_status_installed") },
+    { id: "available", label: $_("sources_status_available") },
+    { id: "updates",   label: $_("sources_filters_updates") },
+    { id: "all",       label: $_("downloads_filter_all") },
+  ]);
 
   function toggleExpand(base: string) {
     const next = new Set(expanded);
@@ -251,7 +253,7 @@
 
 <div class="root">
   <div class="header">
-    <h1 class="heading">Extensions</h1>
+    <h1 class="heading">{$_("ui_extensions")}</h1>
     <div class="tabs">
       {#each FILTERS as f}
         <button class="tab" class:active={filter === f.id} onclick={() => filter = f.id}>
@@ -262,15 +264,15 @@
     <div class="header-right">
       <div class="search-wrap">
         <MagnifyingGlass size={12} class="search-icon" weight="light" />
-        <input class="search" placeholder="Search" bind:value={search} />
+        <input class="search" placeholder={$_("novelSources_actions_search")} bind:value={search} />
       </div>
-      <button class="icon-btn" class:active={panel === "repos"} onclick={() => openPanel("repos")} title="Manage repos">
+      <button class="icon-btn" class:active={panel === "repos"} onclick={() => openPanel("repos")} title={$_("sources_repositories_manageManga")}>
         <GitBranch size={14} weight="light" />
       </button>
-      <button class="icon-btn" class:active={panel === "apk"} onclick={() => openPanel("apk")} title="Install from URL">
+      <button class="icon-btn" class:active={panel === "apk"} onclick={() => openPanel("apk")} title={$_("ui_installFromUrl")}>
         <Plus size={14} weight="light" />
       </button>
-      <button class="icon-btn" onclick={fetchFromRepo} disabled={refreshing} title="Refresh repo">
+      <button class="icon-btn" onclick={fetchFromRepo} disabled={refreshing} title={$_("ui_refreshRepo")}>
         <ArrowsClockwise size={14} weight="light" class={refreshing ? "anim-spin" : ""} />
       </button>
     </div>
@@ -294,18 +296,17 @@
   {#if panel === "apk"}
     <div class="ext-panel">
       <div class="panel-header">
-        <span class="panel-title">Install from APK URL</span>
+        <span class="panel-title">{$_("ui_installFromApkUrl")}</span>
         <button class="icon-btn" onclick={() => panel = null}><X size={14} weight="light" /></button>
       </div>
       <div class="ext-row">
-        <input class="ext-input" class:error={installError} placeholder="https://example.com/extension.apk"
+        <input class="ext-input" class:error={installError} placeholder={$_("ui_httpsExampleComExtensionApk")}
           bind:value={externalUrl} disabled={installing}
           oninput={() => installError = null}
           onkeydown={(e) => e.key === "Enter" && !installing && installExternal()} use:focusOnMount />
         <button class="install-btn" class:success={installSuccess} onclick={installExternal} disabled={installing || !externalUrl.trim()}>
           {#if installing}<CircleNotch size={13} weight="light" class="anim-spin" />
-          {:else if installSuccess}<Check size={13} weight="bold" /> Done
-          {:else}Install{/if}
+          {:else if installSuccess}<Check size={13} weight="bold" /> {$_("sources_actions_done")}{:else}{$_("sources_actions_install")}{/if}
         </button>
       </div>
       {#if installError}
@@ -314,7 +315,7 @@
           tone="danger"
           icon="info"
           eyebrow="Install"
-          title="Could not install extension"
+          title={$_("ui_couldNotInstallExtension")}
           body={installError}
         />
       {/if}
@@ -324,20 +325,20 @@
   {#if panel === "repos"}
     <div class="ext-panel">
       <div class="panel-header">
-        <span class="panel-title">Extension Repositories</span>
+        <span class="panel-title">{$_("ui_extensionRepositories")}</span>
         <button class="icon-btn" onclick={() => panel = null}><X size={14} weight="light" /></button>
       </div>
       {#if reposLoading}
-        <NocturneState layout="compact" tone="info" icon="retry" eyebrow="Repositories" title="Loading repositories" />
+        <NocturneState layout="compact" tone="info" icon="retry" eyebrow="Repositories" title={$_("ui_loadingRepositories")} />
       {:else}
         {#if repos.length === 0}
-          <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Repositories" title="No repositories configured" body="Add a repository URL before extensions can appear here." />
+          <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Repositories" title={$_("sources_repositories_emptyTitle")} body="Add a repository URL before extensions can appear here." />
         {:else}
           <div class="repo-list">
             {#each repos as url}
               <div class="repo-row">
                 <span class="repo-url">{url}</span>
-                <button class="repo-remove" onclick={() => removeRepo(url)} disabled={savingRepos} title="Remove repo">
+                <button class="repo-remove" onclick={() => removeRepo(url)} disabled={savingRepos} title={$_("ui_removeRepo")}>
                   {#if savingRepos}<CircleNotch size={12} weight="light" class="anim-spin" />{:else}<X size={12} weight="bold" />{/if}
                 </button>
               </div>
@@ -345,12 +346,12 @@
           </div>
         {/if}
         <div class="ext-row" style="margin-top:var(--sp-2)">
-          <input class="ext-input" class:error={repoError} placeholder="https://example.com/index.min.json"
+          <input class="ext-input" class:error={repoError} placeholder={$_("ui_httpsExampleComIndexMinJson")}
             bind:value={newRepoUrl} disabled={savingRepos}
             oninput={() => repoError = null}
             onkeydown={(e) => e.key === "Enter" && !savingRepos && addRepo()} />
           <button class="install-btn" onclick={addRepo} disabled={savingRepos || !newRepoUrl.trim()}>
-            {#if savingRepos}<CircleNotch size={13} weight="light" class="anim-spin" />{:else}Add{/if}
+            {#if savingRepos}<CircleNotch size={13} weight="light" class="anim-spin" />{:else}{$_("detail_folders_add")}{/if}
           </button>
         </div>
         {#if repoError}
@@ -359,7 +360,7 @@
             tone="danger"
             icon="info"
             eyebrow="Repository"
-            title="Could not save repository"
+            title={$_("ui_couldNotSaveRepository")}
             body={repoError}
           />
         {/if}
@@ -371,7 +372,7 @@
 
   {#if loading}
     <div class="empty">
-      <NocturneState layout="center" tone="info" icon="retry" eyebrow="Extensions" title="Loading extensions" />
+      <NocturneState layout="center" tone="info" icon="retry" eyebrow="Extensions" title={$_("ui_loadingExtensions")} />
     </div>
   {:else if groups.length === 0}
     <div class="empty">
@@ -416,13 +417,13 @@
               <CircleNotch size={14} weight="light" class="anim-spin" style="color:var(--text-faint)" />
             {:else if primary.hasUpdate}
               <div class="row-actions">
-                <button class="action-btn" onclick={() => mutate(() => gql(UPDATE_EXTENSION, { id: primary.pkgName, update: true }), primary.pkgName)}>Update</button>
-                <button class="action-btn-dim" onclick={() => mutate(() => gql(UPDATE_EXTENSION, { id: primary.pkgName, uninstall: true }), primary.pkgName)}>Remove</button>
+                <button class="action-btn" onclick={() => mutate(() => gql(UPDATE_EXTENSION, { id: primary.pkgName, update: true }), primary.pkgName)}>{$_("sources_actions_update")}</button>
+                <button class="action-btn-dim" onclick={() => mutate(() => gql(UPDATE_EXTENSION, { id: primary.pkgName, uninstall: true }), primary.pkgName)}>{$_("sources_actions_remove")}</button>
               </div>
             {:else if primary.isInstalled}
-              <button class="action-btn-dim" onclick={() => mutate(() => gql(UPDATE_EXTENSION, { id: primary.pkgName, uninstall: true }), primary.pkgName)}>Remove</button>
+              <button class="action-btn-dim" onclick={() => mutate(() => gql(UPDATE_EXTENSION, { id: primary.pkgName, uninstall: true }), primary.pkgName)}>{$_("sources_actions_remove")}</button>
             {:else}
-              <button class="action-btn" onclick={() => installExtension(primary)}>Install</button>
+              <button class="action-btn" onclick={() => installExtension(primary)}>{$_("sources_actions_install")}</button>
             {/if}
             {#if hasVariants}
               <button class="expand-btn" onclick={() => toggleExpand(base)} title="{variants.length + 1} languages">
@@ -443,11 +444,11 @@
                     {#if working.has(v.pkgName)}
                       <CircleNotch size={14} weight="light" class="anim-spin" style="color:var(--text-faint)" />
                     {:else if v.hasUpdate}
-                      <button class="action-btn" onclick={() => mutate(() => gql(UPDATE_EXTENSION, { id: v.pkgName, update: true }), v.pkgName)}>Update</button>
+                      <button class="action-btn" onclick={() => mutate(() => gql(UPDATE_EXTENSION, { id: v.pkgName, update: true }), v.pkgName)}>{$_("sources_actions_update")}</button>
                     {:else if v.isInstalled}
-                      <button class="action-btn-dim" onclick={() => mutate(() => gql(UPDATE_EXTENSION, { id: v.pkgName, uninstall: true }), v.pkgName)}>Remove</button>
+                      <button class="action-btn-dim" onclick={() => mutate(() => gql(UPDATE_EXTENSION, { id: v.pkgName, uninstall: true }), v.pkgName)}>{$_("sources_actions_remove")}</button>
                     {:else}
-                      <button class="action-btn" onclick={() => installExtension(v)}>Install</button>
+                      <button class="action-btn" onclick={() => installExtension(v)}>{$_("sources_actions_install")}</button>
                     {/if}
                   </div>
                 </div>
@@ -459,8 +460,8 @@
       {#if hasMore}
         <div class="load-more-row">
           <button type="button" class="load-more-btn" onclick={loadMore}>
-            Show {Math.min(remainingCount, renderLimit)} more
-            <span class="load-more-count">({remainingCount} remaining)</span>
+            {$_("downloads_filter_show")} {Math.min(remainingCount, renderLimit)} {$_("ui_more")}
+            <span class="load-more-count">({remainingCount} {$_("ui_remaining")}</span>
           </button>
         </div>
       {/if}

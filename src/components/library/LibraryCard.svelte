@@ -1,7 +1,14 @@
 <script lang="ts">
+  import { _ } from "../../lib/i18n/runtime";
   import { BookOpen, Books, CheckSquare, Stack } from "phosphor-svelte";
   import { requiresAuthenticatedMediaFetch, resolvedImage } from "../../lib/imageCache";
   import type { LibraryCardVM } from "../../lib/library/contracts";
+  import {
+    canRunLibraryMotion,
+    DEFAULT_LIBRARY_MOTION_ENVIRONMENT,
+    type LibraryMotionEnvironment,
+  } from "../../lib/library/motionGate";
+  import { observeLibraryCardVisibility } from "../../lib/library/visibilityRegistry";
 
   type Props = {
     vm: LibraryCardVM;
@@ -17,6 +24,10 @@
     onCoverLoad?: (id: string) => void;
     onCoverError?: (id: string) => void;
     coverLoading?: "lazy" | "eager";
+    panelActive?: boolean;
+    scrollElement?: HTMLElement | null;
+    motionEnvironment?: LibraryMotionEnvironment;
+    panelMotionEnabled?: boolean;
   };
 
   let {
@@ -33,10 +44,64 @@
     onCoverLoad,
     onCoverError,
     coverLoading = "lazy",
+    panelActive = true,
+    scrollElement = null,
+    motionEnvironment = DEFAULT_LIBRARY_MOTION_ENVIRONMENT,
+    panelMotionEnabled = true,
   }: Props = $props();
+  let cardElement: HTMLButtonElement | null = $state(null);
+  let cardActuallyVisible = $state(false);
   let suppressNextClick = false;
   let flagImageFailed = $state(false);
   const coverNeedsResolvedImage = $derived(requiresAuthenticatedMediaFetch(vm.coverSrc));
+  const liquidMotionAllowed = $derived(canRunLibraryMotion({
+    ...motionEnvironment,
+    motionEnabled: motionEnvironment.motionEnabled && panelMotionEnabled,
+    panelActive,
+    cardActuallyVisible,
+  }));
+
+  $effect(() => {
+    const node = cardElement;
+    const container = scrollElement;
+    if (!node || !container || !panelActive) {
+      cardActuallyVisible = false;
+      return;
+    }
+
+    let firstFrame: number | null = null;
+    let secondFrame: number | null = null;
+    let fallbackTimer: number | null = null;
+
+    const syncGeometryVisibility = () => {
+      cardActuallyVisible = isCardInsideScrollViewport(node, container);
+    };
+
+    const unsubscribe = observeLibraryCardVisibility(node, (visible) => {
+      cardActuallyVisible = visible && isCardInsideScrollViewport(node, container, true);
+    }, container);
+
+    syncGeometryVisibility();
+    firstFrame = requestAnimationFrame(() => {
+      firstFrame = null;
+      syncGeometryVisibility();
+      secondFrame = requestAnimationFrame(() => {
+        secondFrame = null;
+        syncGeometryVisibility();
+      });
+    });
+    fallbackTimer = window.setTimeout(() => {
+      fallbackTimer = null;
+      syncGeometryVisibility();
+    }, 120);
+
+    return () => {
+      unsubscribe();
+      if (firstFrame !== null) cancelAnimationFrame(firstFrame);
+      if (secondFrame !== null) cancelAnimationFrame(secondFrame);
+      if (fallbackTimer !== null) window.clearTimeout(fallbackTimer);
+    };
+  });
 
   $effect(() => {
     if (vm.sourceMetricBanner) {
@@ -80,6 +145,7 @@
   const bottomLeftBadges = $derived(
     showOverlayBadges && viewMode === "list" ? (vm.listBottomLeftBadges ?? vm.badges.filter((badge) => badge.kind === "subtype")) : [],
   );
+  const displayedGridBadge = $derived(primaryGridBadge);
 
   function formatGridStateLabel(label: string, _kind: string): string {
     return label;
@@ -89,6 +155,29 @@
     const normalized = label?.trim();
     if (!normalized) return null;
     return normalized;
+  }
+
+  function toCoverProgressWidth(percent: number | null | undefined): number {
+    if (typeof percent !== "number" || !Number.isFinite(percent)) return 0;
+    return Math.max(0, Math.min(100, percent * 100));
+  }
+
+  function isCardInsideScrollViewport(node: HTMLElement, container: HTMLElement, allowLayoutless = false): boolean {
+    const rect = node.getBoundingClientRect();
+    const root = container.getBoundingClientRect();
+    if (allowLayoutless
+      && rect.width === 0
+      && rect.height === 0
+      && root.width === 0
+      && root.height === 0) {
+      return true;
+    }
+    return rect.bottom > root.top
+      && rect.top < root.bottom
+      && rect.right > root.left
+      && rect.left < root.right
+      && rect.width > 0
+      && rect.height > 0;
   }
 
   function getLanguageFlag(lang: string | null | undefined, sourceName?: string | null): string {
@@ -194,6 +283,7 @@
 </script>
 
 <button
+  bind:this={cardElement}
   type="button"
   class="card"
   class:n-library-card={viewMode !== "list"}
@@ -203,6 +293,7 @@
   data-card-id={vm.id}
   class:card-selected={vm.selected}
   class:card-selectable={vm.selectable}
+  class:library-motion-running={liquidMotionAllowed}
   disabled={vm.disabled}
   onclick={(event) => {
     if (suppressNextClick) {
@@ -266,8 +357,8 @@
         </div>
       {/if}
 
-      {#if viewMode !== "list" && primaryGridBadge}
-        <span class="n-library-card__badge">{formatGridStateLabel(primaryGridBadge.label, primaryGridBadge.kind)}</span>
+      {#if viewMode !== "list" && displayedGridBadge}
+        <span class="n-library-card__badge">{formatGridStateLabel(displayedGridBadge.label, displayedGridBadge.kind)}</span>
       {/if}
       {#if topLeftBadges.length}
         <div class="badge-cluster badge-cluster-top-left">
@@ -291,6 +382,17 @@
         </div>
       {/if}
 
+      {#if viewMode === "grid" && showProgress && vm.progress}
+        {@const coverProgressWidth = toCoverProgressWidth(vm.progress.percent)}
+        <div class="cover-progress-track" aria-label={vm.progress.primaryLabel}>
+          <div
+            class="cover-progress-fill anim-liquid-progress"
+            class:has-visible-progress={coverProgressWidth > 0}
+            style={`--cover-progress-width:${coverProgressWidth}%;`}
+          ></div>
+        </div>
+      {/if}
+
       {#if showSelectableState && vm.selectable}
         <div class="select-overlay" aria-hidden="true">
           <div class="select-check" class:checked={vm.selected}>
@@ -304,20 +406,22 @@
       {/if}
     </div>
 
-    {#if viewMode !== "list" && vm.sourceMetricBanner && (vm.sourceMetricBanner.newCount > 0 || vm.sourceMetricBanner.downloadedCount > 0 || hasFlag)}
-      <div class="source-metric-banner" aria-label="Source info: flag, downloaded, unread">
-        {#if hasFlag}
+    {#if viewMode !== "list" && vm.sourceMetricBanner && (vm.sourceMetricBanner.newCount > 0 || vm.sourceMetricBanner.downloadedCount > 0 || (viewMode === "grid" && hasFlag))}
+      <div class="source-metric-banner" class:source-metric-banner-compact={viewMode === "compact_grid"} aria-label={$_("ui_sourceInfoFlagDownloadedUnread")}>
+        {#if viewMode === "grid" && hasFlag}
           <span
             class="source-metric-flag"
             class:flag-only={!(vm.sourceMetricBanner.downloadedCount > 0 || vm.sourceMetricBanner.newCount > 0)}
-            aria-label="Source language"
+            aria-label={$_("ui_sourceLanguage")}
           >
             {#if getCountryCode(vm.sourceMetricBanner.flagLabel, vm.sourceMetricBanner.sourceName) && !flagImageFailed}
               <img
                 class="source-metric-flag-img"
-                src="https://flagcdn.com/w40/{getCountryCode(vm.sourceMetricBanner.flagLabel, vm.sourceMetricBanner.sourceName)}.png"
+                src="https://flagcdn.com/w160/{getCountryCode(vm.sourceMetricBanner.flagLabel, vm.sourceMetricBanner.sourceName)}.png"
+                srcset={`https://flagcdn.com/w80/${getCountryCode(vm.sourceMetricBanner.flagLabel, vm.sourceMetricBanner.sourceName)}.png 1x, https://flagcdn.com/w160/${getCountryCode(vm.sourceMetricBanner.flagLabel, vm.sourceMetricBanner.sourceName)}.png 2x, https://flagcdn.com/w320/${getCountryCode(vm.sourceMetricBanner.flagLabel, vm.sourceMetricBanner.sourceName)}.png 4x`}
                 alt={vm.sourceMetricBanner.flagLabel}
                 loading="lazy"
+                decoding="async"
                 draggable="false"
                 onerror={() => {
                   flagImageFailed = true;
@@ -330,25 +434,25 @@
         {/if}
 
         {#if vm.sourceMetricBanner.downloadedCount > 0 || vm.sourceMetricBanner.newCount > 0}
-          <div class="source-metric-pill" class:has-flag={hasFlag}>
+          <div class="source-metric-pill" class:has-flag={viewMode === "grid" && hasFlag}>
             {#if vm.sourceMetricBanner.downloadedCount > 0}
               <span
                 class="source-metric-downloaded"
                 class:pill-only={vm.sourceMetricBanner.newCount === 0}
-                class:has-flag={hasFlag}
-                aria-label="Downloaded chapters"
+                class:has-flag={viewMode === "grid" && hasFlag}
+                aria-label={$_("ui_downloadedChapters")}
               >
-                {vm.sourceMetricBanner.downloadedCount}
+                <span class="source-metric-value">{vm.sourceMetricBanner.downloadedCount}</span>
               </span>
             {/if}
             {#if vm.sourceMetricBanner.newCount > 0}
               <span
                 class="source-metric-unread"
                 class:pill-only={vm.sourceMetricBanner.downloadedCount === 0}
-                class:has-flag={hasFlag}
-                aria-label="Unread chapters"
+                class:has-flag={viewMode === "grid" && hasFlag}
+                aria-label={$_("library_sort_unreadChapters")}
               >
-                {vm.sourceMetricBanner.newCount}
+                <span class="source-metric-value">{vm.sourceMetricBanner.newCount}</span>
               </span>
             {/if}
           </div>
@@ -359,7 +463,7 @@
 
   <div class="card-copy" class:n-library-card__info={viewMode !== "list"}>
     <p class="title" class:n-library-card__title={viewMode !== "list"}>{vm.title}</p>
-    {#if viewMode !== "list"}
+    {#if viewMode === "grid"}
       <div class="n-library-card__meta" aria-hidden={!vm.subtitle && !vm.progress?.primaryLabel}>
         {#if vm.subtitle}
           <span class="n-library-card__author">{vm.subtitle}</span>
@@ -368,7 +472,7 @@
           <span class="n-library-card__vol">{visibleGridStatusLabel(vm.metaChips[0])}</span>
         {/if}
       </div>
-    {:else if vm.subtitle}
+    {:else if viewMode === "list" && vm.subtitle}
       <p class="subtitle">{vm.subtitle}</p>
     {/if}
     {#if viewMode === "list" && vm.badges.length}
@@ -429,16 +533,17 @@
 
   .card-list {
     display: grid;
-    grid-template-columns: 86px minmax(0, 1fr);
-    gap: var(--sp-4);
-    align-items: stretch;
-    padding: var(--sp-3);
+    grid-template-columns: calc(76px * var(--n-hud-scale, 1)) minmax(0, 1fr);
+    gap: calc(16px * var(--n-hud-scale, 1));
+    align-items: center;
+    min-height: calc(122px * var(--n-hud-scale, 1));
+    padding: calc(10px * var(--n-hud-scale, 1));
     border: 1px solid var(--border-dim);
     background: color-mix(in srgb, var(--bg-raised) 76%, transparent);
   }
 
   .card-compact {
-    gap: 0;
+    gap: calc(6px * var(--n-hud-scale, 1));
   }
 
   .card:hover .cover {
@@ -499,6 +604,7 @@
   .cover-wrap {
     position: relative;
     aspect-ratio: 2 / 3;
+    container-type: inline-size;
     overflow: hidden;
     border-radius: var(--radius-md);
     background: var(--bg-raised);
@@ -511,8 +617,10 @@
   .cover-wrap.n-library-card__cover {
     border-radius: var(--library-card-cover-radius, calc(16px * var(--n-hud-scale, 1)));
     background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
+    border: 1px solid rgba(218, 207, 255, 0.16);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.08),
+      0 2px 8px rgba(0, 0, 0, 0.24);
   }
 
   .card-list .cover-wrap {
@@ -522,6 +630,7 @@
 
   .card-outline-off .cover-wrap {
     border-color: transparent;
+    box-shadow: none;
   }
 
   .card-outline-off.card-list {
@@ -679,6 +788,100 @@
     background: rgba(0, 0, 0, 0.3);
   }
 
+  .cover-progress-track {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 2;
+    height: var(
+      --library-card-progress-height,
+      clamp(calc(3.5px * var(--n-hud-scale, 1)), 3.2cqw, calc(6px * var(--n-hud-scale, 1)))
+    );
+    border-radius: 0 0 inherit inherit;
+    background: rgba(36, 33, 43, 0.72);
+    overflow: hidden;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.08),
+      0 -1px 0 rgba(255, 255, 255, 0.16);
+    pointer-events: none;
+  }
+
+  .cover-progress-track::after {
+    content: none;
+  }
+
+  .cover-progress-fill {
+    display: block;
+    position: relative;
+    z-index: 1;
+    width: var(--cover-progress-width, 0%);
+    max-width: 100%;
+    height: 100%;
+    min-width: 0;
+    overflow: hidden;
+    border-radius: 0 999px 999px 0;
+    background: linear-gradient(90deg, #8f7bd5 0%, #a996e8 55%, #b9a8ef 100%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.24),
+      0 0 0 1px rgba(184, 167, 234, 0.2);
+    clip-path: polygon(0 0, calc(100% - 3px) 0, 100% 20%, calc(100% - 1px) 48%, 100% 76%, calc(100% - 3px) 100%, 0 100%);
+    transition: width 220ms cubic-bezier(0.2, 0.78, 0.24, 1);
+  }
+
+  .cover-progress-fill.has-visible-progress {
+    min-width: max(calc(5px * var(--n-hud-scale, 1)), 3.2cqw);
+  }
+
+  .cover-progress-fill::before,
+  .cover-progress-fill::after {
+    content: "";
+    position: absolute;
+    pointer-events: none;
+  }
+
+  .cover-progress-fill::before {
+    inset: 0 -132px 0 0;
+    background-image:
+      radial-gradient(circle at 18px 70%, rgba(255, 255, 255, 0.56) 0 1px, transparent 1.35px),
+      radial-gradient(circle at 56px 38%, rgba(255, 255, 255, 0.36) 0 0.8px, transparent 1.2px),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 132 12' preserveAspectRatio='none'%3E%3Cpath d='M0 5 C16 1 28 1 44 5 S72 9 88 5 S116 1 132 5 V12 H0 Z' fill='%23d8ccff'/%3E%3C/svg%3E");
+    background-repeat: repeat-x;
+    background-size: 74px 12px, 96px 12px, 132px 100%;
+    background-position: 0 0, 0 0, 0 0;
+    opacity: 0.6;
+    animation: coverProgressLiquidFlow 6.8s steps(96, end) infinite;
+    animation-play-state: paused;
+  }
+
+  .card.library-motion-running .cover-progress-fill::before {
+    animation-play-state: running;
+  }
+
+  .cover-progress-fill::after {
+    inset: 0;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.22), transparent 52%),
+      linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.18) 58%, transparent 100%);
+    opacity: 0.72;
+  }
+
+  @keyframes coverProgressLiquidFlow {
+    from { background-position: 0 0, 0 0, 0 0; }
+    to { background-position: -132px 0, -132px 0, -132px 0; }
+  }
+
+  :global([data-aethon-idle="true"]) .cover-progress-fill,
+  :global([data-aethon-idle="true"]) .cover-progress-fill::before,
+  :global([data-aethon-idle="true"]) .cover-progress-fill::after {
+    animation-play-state: paused !important;
+  }
+
+  :global(.source-metric-banner.source-metric-banner-compact) {
+    top: -4.5cqw;
+    left: -4.5cqw;
+  }
+
   .card-copy {
     display: flex;
     flex-direction: column;
@@ -699,8 +902,8 @@
   }
 
   .card-compact .card-copy {
-    margin-top: 6px;
-    gap: 6px;
+    margin-top: 0;
+    gap: 0;
   }
 
   .title {
@@ -730,7 +933,7 @@
   }
 
   .card-compact .title {
-    font-size: var(--text-xs);
+    font-size: var(--library-card-title-font-size, var(--text-xs));
     min-height: calc(var(--leading-snug) * 2em);
   }
 

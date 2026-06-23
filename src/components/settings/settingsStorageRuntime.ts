@@ -13,6 +13,11 @@ export type SettingsStorageRuntime = {
   buildAethonMangaPayload: typeof import("../../lib/backup/mangaBackup").buildAethonMangaPayload;
   buildAethonNovelsPayload: typeof import("../../lib/backup/novelsBackup").buildAethonNovelsPayload;
   restoreAethonNovelsPayload: typeof import("../../lib/backup/novelsBackup").restoreAethonNovelsPayload;
+  buildLnReaderNovelsBackupZip: typeof import("../../lib/backup/lnreaderBackup").buildLnReaderNovelsBackupZip;
+  restoreLnReaderNovelsBackup: typeof import("../../lib/backup/lnreaderBackup").restoreLnReaderNovelsBackup;
+  isLnReaderBackupZip: typeof import("../../lib/backup/lnreaderBackup").isLnReaderBackupZip;
+  extractLnReaderBackupPluginIds: typeof import("../../lib/backup/lnreaderBackup").extractLnReaderBackupPluginIds;
+  normalizeNativeMangaBackupBytes: typeof import("../../lib/backup/mangaNativeFormat").normalizeNativeMangaBackupBytes;
   buildAethonNovelsSnapshotFromAuthoritativeState: typeof import("../../lib/backup/novelsStateBridge").buildAethonNovelsSnapshotFromAuthoritativeState;
   applyRestoredNovelsSnapshotToLibraryState: typeof import("../../lib/backup/novelsStateBridge").applyRestoredNovelsSnapshotToLibraryState;
   loadNovelsProfileSnapshot: typeof import("../../lib/backup/novelsProfileState").loadNovelsProfileSnapshot;
@@ -26,6 +31,11 @@ export type SettingsStorageRuntime = {
   readFileAsArrayBuffer: typeof import("../../lib/books/storage").readFileAsArrayBuffer;
   loadBookLibraryState: typeof import("../../lib/books/libraryState").loadBookLibraryState;
   loadNovelRepositoryState: typeof import("../../lib/novels/repositoryState").loadNovelRepositoryState;
+  saveNovelRepositoryState: typeof import("../../lib/novels/repositoryState").saveNovelRepositoryState;
+  addNovelRepositoryToState: typeof import("../../lib/novels/repositoryState").addNovelRepositoryToState;
+  setNovelRepositoryTrustState: typeof import("../../lib/novels/repositoryState").setNovelRepositoryTrustState;
+  refreshNovelRepositoryCatalog: typeof import("../../lib/novels/repositoryState").refreshNovelRepositoryCatalog;
+  installNovelCatalogPlugin: typeof import("../../lib/novels/packages").installNovelCatalogPlugin;
   loadNovelLibraryState: typeof import("../../lib/novels/libraryState").loadNovelLibraryState;
   saveNovelLibraryState: typeof import("../../lib/novels/libraryState").saveNovelLibraryState;
 };
@@ -41,6 +51,8 @@ export function loadSettingsStorageRuntime(): Promise<SettingsStorageRuntime> {
     import("../../lib/backup/booksBackup"),
     import("../../lib/backup/mangaBackup"),
     import("../../lib/backup/novelsBackup"),
+    import("../../lib/backup/lnreaderBackup"),
+    import("../../lib/backup/mangaNativeFormat"),
     import("../../lib/backup/novelsStateBridge"),
     import("../../lib/backup/novelsProfileState"),
     import("../../lib/reconciliation/sourceInventory"),
@@ -50,6 +62,7 @@ export function loadSettingsStorageRuntime(): Promise<SettingsStorageRuntime> {
     import("../../lib/books/storage"),
     import("../../lib/books/libraryState"),
     import("../../lib/novels/repositoryState"),
+    import("../../lib/novels/packages"),
     import("../../lib/novels/libraryState"),
   ]).then(
     ([
@@ -60,6 +73,8 @@ export function loadSettingsStorageRuntime(): Promise<SettingsStorageRuntime> {
       booksBackup,
       mangaBackup,
       novelsBackup,
+      lnreaderBackup,
+      mangaNativeFormat,
       novelsStateBridge,
       novelsProfileState,
       sourceInventory,
@@ -69,6 +84,7 @@ export function loadSettingsStorageRuntime(): Promise<SettingsStorageRuntime> {
       booksStorage,
       booksLibraryState,
       novelRepositoryState,
+      novelPackages,
       novelLibraryState,
     ]) => ({
       parseMihonBackup: mihonBackup.parseMihonBackup,
@@ -83,6 +99,11 @@ export function loadSettingsStorageRuntime(): Promise<SettingsStorageRuntime> {
       buildAethonMangaPayload: mangaBackup.buildAethonMangaPayload,
       buildAethonNovelsPayload: novelsBackup.buildAethonNovelsPayload,
       restoreAethonNovelsPayload: novelsBackup.restoreAethonNovelsPayload,
+      buildLnReaderNovelsBackupZip: lnreaderBackup.buildLnReaderNovelsBackupZip,
+      restoreLnReaderNovelsBackup: lnreaderBackup.restoreLnReaderNovelsBackup,
+      isLnReaderBackupZip: lnreaderBackup.isLnReaderBackupZip,
+      extractLnReaderBackupPluginIds: lnreaderBackup.extractLnReaderBackupPluginIds,
+      normalizeNativeMangaBackupBytes: mangaNativeFormat.normalizeNativeMangaBackupBytes,
       buildAethonNovelsSnapshotFromAuthoritativeState: novelsStateBridge.buildAethonNovelsSnapshotFromAuthoritativeState,
       applyRestoredNovelsSnapshotToLibraryState: novelsStateBridge.applyRestoredNovelsSnapshotToLibraryState,
       loadNovelsProfileSnapshot: novelsProfileState.loadNovelsProfileSnapshot,
@@ -96,6 +117,11 @@ export function loadSettingsStorageRuntime(): Promise<SettingsStorageRuntime> {
       readFileAsArrayBuffer: booksStorage.readFileAsArrayBuffer,
       loadBookLibraryState: booksLibraryState.loadBookLibraryState,
       loadNovelRepositoryState: novelRepositoryState.loadNovelRepositoryState,
+      saveNovelRepositoryState: novelRepositoryState.saveNovelRepositoryState,
+      addNovelRepositoryToState: novelRepositoryState.addNovelRepositoryToState,
+      setNovelRepositoryTrustState: novelRepositoryState.setNovelRepositoryTrustState,
+      refreshNovelRepositoryCatalog: novelRepositoryState.refreshNovelRepositoryCatalog,
+      installNovelCatalogPlugin: novelPackages.installNovelCatalogPlugin,
       loadNovelLibraryState: novelLibraryState.loadNovelLibraryState,
       saveNovelLibraryState: novelLibraryState.saveNovelLibraryState,
     }),

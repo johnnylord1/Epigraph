@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { _ } from "../../lib/i18n/runtime";
   import type { Snippet } from "svelte";
   import { CaretLeft, CaretRight, BookmarkSimple, SlidersHorizontal, Sun } from "phosphor-svelte";
   import { store, updateSettings } from "../../store/state.svelte";
@@ -97,11 +98,11 @@
 
   <!-- Floating UI HUD Overlay -->
   <div class="reader-hud-overlay" class:hidden={!effectiveHudVisible}>
-    <button class="reader-back-link" onclick={onclose} title="Back to library">
+    <button class="reader-back-link" onclick={onclose} title={$_("ui_backToLibrary")}>
       <span class="reader-back-icon" aria-hidden="true">
         <CaretLeft size={14} weight="bold" />
       </span>
-      <span>Library</span>
+      <span>{$_("library_error_eyebrow")}</span>
     </button>
 
     <!-- Series / Chapter Title Metadata (Centered above capsule) -->
@@ -134,7 +135,7 @@
           step={0.05}
           value={store.settings.readerBrightness ?? 1.0}
           oninput={(event) => updateSettings({ readerBrightness: Number(event.currentTarget.value) })}
-          aria-label="Adjust brightness"
+          aria-label={$_("ui_adjustBrightness")}
         />
         <span class="brightness-val-text">{Math.round((store.settings.readerBrightness ?? 1.0) * 100)}%</span>
       </div>
@@ -143,12 +144,12 @@
     <!-- Bottom Unified Capsule Bar -->
     <div class="reader-capsule-bar" role="presentation" onmouseenter={onHudMouseEnter} onmouseleave={onHudMouseLeave}>
       <!-- 1. Bookmark Toggle -->
-      <button class="capsule-btn" class:active={isBookmarked} onclick={onbookmark} title="Bookmark">
+      <button class="capsule-btn" class:active={isBookmarked} onclick={onbookmark} title={$_("bookDetail_filter_bookmark")}>
         <BookmarkSimple size={17} weight={isBookmarked ? "fill" : "regular"} />
       </button>
 
       <!-- 2. Prev Navigation -->
-      <button class="capsule-btn" onclick={onprev} disabled={prevDisabled} title="Previous">
+      <button class="capsule-btn" onclick={onprev} disabled={prevDisabled} title={$_("ui_previous")}>
         <CaretLeft size={16} weight="regular" />
       </button>
 
@@ -172,12 +173,12 @@
           value={sliderValue}
           dir={rtl ? "rtl" : "ltr"}
           oninput={(event) => onjump(Number(event.currentTarget.value))}
-          aria-label="Seek page/chapter"
+          aria-label={$_("ui_seekPageChapter")}
         />
       </div>
 
       <!-- 5. Next Navigation -->
-      <button class="capsule-btn" onclick={onnext} disabled={nextDisabled} title="Next">
+      <button class="capsule-btn" onclick={onnext} disabled={nextDisabled} title={$_("library_pagination_next")}>
         <CaretRight size={16} weight="regular" />
       </button>
 
@@ -186,13 +187,13 @@
         class="capsule-btn"
         class:active={brightnessOpen}
         onclick={() => { brightnessOpen = !brightnessOpen; toolsOpen = false; }}
-        title="Brightness"
+        title={$_("ui_brightness")}
       >
         <Sun size={17} weight="regular" />
       </button>
 
       <!-- 7. Settings Cog -->
-      <button class="capsule-btn" class:active={toolsOpen} onclick={() => { toolsOpen = !toolsOpen; brightnessOpen = false; }} title="Settings">
+      <button class="capsule-btn" class:active={toolsOpen} onclick={() => { toolsOpen = !toolsOpen; brightnessOpen = false; }} title={$_("shell_navigation_settings")}>
         <SlidersHorizontal size={17} weight="regular" />
       </button>
     </div>

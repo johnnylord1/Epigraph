@@ -81,6 +81,7 @@ export const COMICS_SORT_OPTIONS: LibrarySortOptionVM[] = [
 
 export const COMICS_STATUS_OPTIONS: LibraryFilterOptionVM[] = [
   { id: "ALL", label: "All statuses" },
+  { id: "UNOPENED", label: "Not started" },
   { id: "ONGOING", label: "Ongoing" },
   { id: "COMPLETED", label: "Completed" },
   { id: "CANCELLED", label: "Cancelled" },
@@ -175,6 +176,12 @@ export function buildFilteredComics(input: BuildComicsSectionInput, categoryMang
 
   if (input.statusFilter !== "ALL") {
     items = items.filter((manga) => {
+      if (input.statusFilter === "UNOPENED") {
+        const chapterCount = Math.max(0, manga.chapterCount ?? 0);
+        const unreadCount = Math.max(0, manga.unreadCount ?? 0);
+        return chapterCount > 0 && unreadCount >= chapterCount;
+      }
+
       if (input.statusFilter === "COMPLETED") {
         return isMangaPublicationCompleted(manga, input.trackedCompletedIds);
       }
