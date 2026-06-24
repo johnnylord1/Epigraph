@@ -232,6 +232,16 @@ Treat the current working tree as the source of truth. Several features were imp
     - Real release executable smoke from `src-tauri/target/release/aethon.exe --main` confirmed Library Comics renders real cards, covers, badges, and `633 TITLES` instead of skeleton placeholders.
     - Silent install of the regenerated NSIS installer succeeded.
     - Installed-app smoke from `C:\Users\jhow-\AppData\Local\Aethon\aethon.exe --main` confirmed Library Comics also renders real cards, covers, badges, and `633 TITLES` instead of skeleton placeholders.
+  - Follow-up Library navigation freeze audit:
+    - The installed app rendered Library cards and menus, but a live `Library update` run was observed while navigating pages; Java and WebView CPU were elevated during that run.
+    - Automatic Library updates now only start when the app is idle or hidden, so they do not compete with active navigation, Library menus, or layout/filter changes.
+    - Automatic Comics updates now use a conservative single-source worker and longer per-title timeout; manual Library updates still use the user's selected update intensity.
+    - Validation passed:
+      - `npm run test:unit -- src/lib/library/updateRuntime.test.ts`
+      - `npm run build`
+    - Signed installer was regenerated and reinstalled silently.
+    - Updated installer SHA-256: `AAE4DCFFAD33514B164810BEB0EB026366C24D03634D034BCE2A14888816F19C`.
+    - Updated signature SHA-256: `299621DB2BDF2A4B2B5584549F572EB6FD6F0EAD2C4C3C9D47205007EAE83FDF`.
 
 
 ### Remaining Work

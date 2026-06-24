@@ -138,14 +138,16 @@ export function formatLibraryUpdateWaiting() {
   return "Waiting for Suwayomi progress.";
 }
 
-function sourceParallelism() {
+function sourceParallelism(reason: SharedLibraryUpdateRunOptions["reason"]) {
+  if (reason === "auto-library-update") return 1;
   const intensity = store.settings.libraryUpdateIntensity ?? "fast";
   if (intensity === "eco") return 1;
   if (intensity === "balanced") return 2;
   return 4;
 }
 
-function perTitleTimeoutMs() {
+function perTitleTimeoutMs(reason: SharedLibraryUpdateRunOptions["reason"]) {
+  if (reason === "auto-library-update") return 75_000;
   const intensity = store.settings.libraryUpdateIntensity ?? "fast";
   if (intensity === "eco") return 75_000;
   if (intensity === "balanced") return 60_000;
@@ -338,8 +340,8 @@ async function runComicsSourceQueueUpdate(
   publishProgress(undefined, undefined, true);
 
   let cursor = 0;
-  const workerCount = Math.max(1, Math.min(sourceParallelism(), sourceEntries.length || 1));
-  const timeoutMs = perTitleTimeoutMs();
+  const workerCount = Math.max(1, Math.min(sourceParallelism(options.reason), sourceEntries.length || 1));
+  const timeoutMs = perTitleTimeoutMs(options.reason);
   const breakerLimit = sourceCircuitBreakerLimit(options.reason);
 
   await Promise.all(Array.from({ length: workerCount }, async () => {

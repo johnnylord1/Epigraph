@@ -605,10 +605,13 @@
   }
 
   function canRunAutomaticLibraryUpdateNow(reason: "startup" | "focus" | "interval") {
+    // Automatic updates should never compete with active navigation or Library menus.
+    // Manual updates still use the user's selected intensity and can be started on demand.
+    if (!pageHidden && !idle) return false;
     if (Date.now() - bootStartedAt < AUTOMATIC_LIBRARY_UPDATE_SETTLE_MS) {
       return false;
     }
-    if (!pageHidden && !idle && Date.now() - lastInteractionAt < AUTOMATIC_LIBRARY_UPDATE_SETTLE_MS) {
+    if (!pageHidden && Date.now() - lastInteractionAt < AUTOMATIC_LIBRARY_UPDATE_SETTLE_MS) {
       return false;
     }
     return true;
