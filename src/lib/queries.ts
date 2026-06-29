@@ -41,6 +41,31 @@ export const GET_LIBRARY_CHAPTER_COUNTS = `
   }
 `;
 
+export const GET_LIBRARY_SEARCH_SNAPSHOT = `
+  query GetLibrarySearchSnapshot {
+    mangas(condition: { inLibrary: true }) {
+      nodes {
+        id
+        title
+        thumbnailUrl
+        realUrl
+        inLibrary
+        downloadCount
+        unreadCount
+        status
+        genre
+        sourceId
+        source {
+          id
+          name
+          lang
+          displayName
+        }
+      }
+    }
+  }
+`;
+
 export const GET_ALL_MANGA = `
   query GetAllManga {
     mangas {
@@ -636,6 +661,26 @@ export const GET_SOURCES = `
   }
 `;
 
+export const GET_SOURCES_WITH_EXTENSIONS = `
+  query GetSourcesWithExtensions {
+    sources {
+      nodes {
+        id
+        name
+        lang
+        displayName
+        iconUrl
+        isNsfw
+        extension {
+          pkgName
+          name
+          lang
+        }
+      }
+    }
+  }
+`;
+
 export const FETCH_SOURCE_MANGA = `
   mutation FetchSourceManga($source: LongString!, $type: FetchSourceMangaType!, $page: Int!, $query: String) {
     fetchSourceManga(input: { source: $source, type: $type, page: $page, query: $query }) {
@@ -693,10 +738,12 @@ export const GET_EXTENSIONS = `
         name
         lang
         versionName
+        versionCode
         isInstalled
         isObsolete
         hasUpdate
         iconUrl
+        repo
       }
     }
   }
@@ -711,10 +758,12 @@ export const FETCH_EXTENSIONS = `
         name
         lang
         versionName
+        versionCode
         isInstalled
         isObsolete
         hasUpdate
         iconUrl
+        repo
       }
     }
   }
@@ -727,21 +776,34 @@ export const UPDATE_EXTENSION = `
         apkName
         pkgName
         name
+        lang
+        versionName
+        versionCode
         isInstalled
+        isObsolete
         hasUpdate
+        iconUrl
+        repo
       }
     }
   }
 `;
 
 export const INSTALL_EXTERNAL_EXTENSION = `
-  mutation InstallExternalExtension($url: String!) {
-    installExternalExtension(input: { extensionUrl: $url }) {
+  mutation InstallExternalExtension($extensionFile: Upload!) {
+    installExternalExtension(input: { extensionFile: $extensionFile }) {
       extension {
         apkName
         pkgName
         name
+        lang
+        versionName
+        versionCode
         isInstalled
+        isObsolete
+        hasUpdate
+        iconUrl
+        repo
       }
     }
   }

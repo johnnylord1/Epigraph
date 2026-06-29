@@ -32,9 +32,10 @@ export interface ApplyMangaMigrationInput {
   currentChapters: Chapter[];
   targetSourceId: string;
   match: MangaMigrationMatch;
+  mode?: "migrate" | "copy";
 }
 
-export type MassMangaMigrationStatus = "ready" | "needs-review" | "blocked";
+export type MassMangaMigrationStatus = "matched" | "needs_review" | "no_match" | "search_failed";
 
 export interface MassMangaMigrationPreviewItem {
   currentManga: Manga;
@@ -63,11 +64,33 @@ export interface PreviewMassMangaMigrationInput {
     chapters: Chapter[];
   }>;
   readyThreshold?: number;
+  concurrency?: number;
+  itemTimeoutMs?: number;
+  onItemDone?: (completedCount: number, totalCount: number, item: MassMangaMigrationPreviewItem) => void;
 }
 
 export interface ApplyMassMangaMigrationInput {
   preview: MassMangaMigrationPreview;
   selectedMangaIds?: number[];
+  mode?: "migrate" | "copy";
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  run: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await run(items[currentIndex]!);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 function titleSimilarity(a: string, b: string): number {
@@ -179,10 +202,14 @@ async function restoreMangaSnapshot(snapshot: MangaMigrationStateSlice) {
 async function fetchBestMangaMatch(
   currentManga: Manga,
   targetSourceId: string,
+  signal?: AbortSignal,
+  timeoutMs = 18000,
 ): Promise<MangaMigrationMatch | null> {
   const mangas = await fetchSourceMangaSearchWithFallback({
     sourceId: targetSourceId,
     query: currentManga.title.trim(),
+    signal,
+    timeoutMs,
   });
 
   const scored = mangas
@@ -197,7 +224,7 @@ async function fetchBestMangaMatch(
 
   const chaptersResult = await gql<{ fetchChapters: { chapters: Chapter[] } }>(FETCH_CHAPTERS, {
     mangaId: best.manga.id,
-  });
+  }, signal);
 
   return {
     manga: best.manga,
@@ -207,11 +234,62 @@ async function fetchBestMangaMatch(
 }
 
 function summarizeMatchedReadCount(oldChapters: Chapter[], newChapters: Chapter[]): number {
-  const oldByNum = new Map(oldChapters.map((chapter) => [Math.round(chapter.chapterNumber * 100), chapter]));
-  return newChapters.filter((chapter) => {
-    const oldChapter = oldByNum.get(Math.round(chapter.chapterNumber * 100));
-    return Boolean(oldChapter?.isRead);
-  }).length;
+  const highestReadChapterNumber = oldChapters.reduce((highest, chapter) => (
+    chapter.isRead && chapter.chapterNumber > highest ? chapter.chapterNumber : highest
+  ), Number.NEGATIVE_INFINITY);
+  if (!Number.isFinite(highestReadChapterNumber)) return 0;
+  return newChapters.filter((chapter) => chapter.chapterNumber <= highestReadChapterNumber).length;
+}
+
+export async function buildMangaMigrationMatch(
+  currentManga: Manga,
+  matchManga: Manga,
+  similarity = titleSimilarity(currentManga.title, matchManga.title),
+): Promise<MangaMigrationMatch> {
+  const chaptersResult = await gql<{ fetchChapters: { chapters: Chapter[] } }>(FETCH_CHAPTERS, {
+    mangaId: matchManga.id,
+  });
+
+  return {
+    manga: matchManga,
+    chapters: chaptersResult.fetchChapters.chapters ?? [],
+    similarity,
+  };
+}
+
+export function updateMassMangaMigrationPreviewItem(
+  preview: MassMangaMigrationPreview,
+  currentMangaId: number,
+  match: MangaMigrationMatch | null,
+): MassMangaMigrationPreview {
+  const items = preview.items.map((item) => {
+    if (item.currentManga.id !== currentMangaId) return item;
+    if (!match) {
+      return {
+        ...item,
+        status: "no_match" as const,
+        reasonCode: "manual_match_cleared",
+        match: null,
+        matchedReadCount: 0,
+        chapterDiff: 0,
+      };
+    }
+    return {
+      ...item,
+      status: "matched" as const,
+      reasonCode: "manual_match",
+      match,
+      matchedReadCount: summarizeMatchedReadCount(item.currentChapters, match.chapters),
+      chapterDiff: match.chapters.length - item.currentChapters.length,
+    };
+  });
+  return {
+    ...preview,
+    items,
+    readyCount: items.filter((item) => item.status === "matched").length,
+    needsReviewCount: items.filter((item) => item.status === "needs_review").length,
+    blockedCount: items.filter((item) => item.status === "no_match" || item.status === "search_failed").length,
+  };
 }
 
 async function prepareMangaMigrationOperation(
@@ -242,31 +320,48 @@ async function prepareMangaMigrationOperation(
   const toMarkBookmarked: number[] = [];
   const progressUpdates: Array<{ id: number; lastPageRead: number }> = [];
 
+  const highestReadChapterNumber = input.currentChapters.reduce((highest, chapter) => (
+    chapter.isRead && chapter.chapterNumber > highest ? chapter.chapterNumber : highest
+  ), Number.NEGATIVE_INFINITY);
+
   for (const newChapter of input.match.chapters) {
     const key = Math.round(newChapter.chapterNumber * 100);
     const oldChapter = oldByNum.get(key);
-    if (!oldChapter) continue;
-    if (oldChapter.isRead) toMarkRead.push(newChapter.id);
-    if (oldChapter.isBookmarked) toMarkBookmarked.push(newChapter.id);
-    if ((oldChapter.lastPageRead ?? 0) > 0 && !oldChapter.isRead) {
+    if (Number.isFinite(highestReadChapterNumber) && newChapter.chapterNumber <= highestReadChapterNumber) {
+      toMarkRead.push(newChapter.id);
+    }
+    if (oldChapter?.isBookmarked) toMarkBookmarked.push(newChapter.id);
+    if (oldChapter && (oldChapter.lastPageRead ?? 0) > 0 && !oldChapter.isRead) {
       progressUpdates.push({ id: newChapter.id, lastPageRead: oldChapter.lastPageRead ?? 0 });
     }
   }
 
-  if (toMarkRead.length) {
-    await gql(UPDATE_CHAPTERS_PROGRESS, { ids: toMarkRead, isRead: true });
-  }
-  if (toMarkBookmarked.length) {
-    await gql(UPDATE_CHAPTERS_PROGRESS, { ids: toMarkBookmarked, isBookmarked: true });
-  }
-  for (const update of progressUpdates) {
-    await gql(UPDATE_CHAPTERS_PROGRESS, { ids: [update.id], lastPageRead: update.lastPageRead });
-  }
+  const mode = input.mode ?? "migrate";
 
-  await gql(UPDATE_MANGA, { id: input.match.manga.id, inLibrary: true });
-  await setCategoryIdsForManga(input.match.manga.id, oldCategoryIds);
-  await gql(UPDATE_MANGA, { id: input.currentManga.id, inLibrary: false });
-  await setCategoryIdsForManga(input.currentManga.id, []);
+  try {
+    if (toMarkRead.length) {
+      await gql(UPDATE_CHAPTERS_PROGRESS, { ids: toMarkRead, isRead: true });
+    }
+    if (toMarkBookmarked.length) {
+      await gql(UPDATE_CHAPTERS_PROGRESS, { ids: toMarkBookmarked, isBookmarked: true });
+    }
+    for (const update of progressUpdates) {
+      await gql(UPDATE_CHAPTERS_PROGRESS, { ids: [update.id], lastPageRead: update.lastPageRead });
+    }
+
+    await gql(UPDATE_MANGA, { id: input.match.manga.id, inLibrary: true });
+    await setCategoryIdsForManga(input.match.manga.id, oldCategoryIds);
+    if (mode === "migrate") {
+      await gql(UPDATE_MANGA, { id: input.currentManga.id, inLibrary: false });
+      await setCategoryIdsForManga(input.currentManga.id, []);
+    }
+  } catch (error) {
+    await Promise.allSettled([
+      restoreMangaSnapshot(oldState),
+      restoreMangaSnapshot(newState),
+    ]);
+    throw error;
+  }
 
   return {
     oldState,
@@ -315,62 +410,80 @@ export async function previewMassMangaMigration(
   input: PreviewMassMangaMigrationInput,
 ): Promise<MassMangaMigrationPreview> {
   const readyThreshold = input.readyThreshold ?? 0.7;
-  const items: MassMangaMigrationPreviewItem[] = [];
-
-  for (const item of input.items) {
+  const itemTimeoutMs = input.itemTimeoutMs ?? 22000;
+  let completedCount = 0;
+  const items = await mapWithConcurrency(input.items, input.concurrency ?? 2, async (item): Promise<MassMangaMigrationPreviewItem> => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), itemTimeoutMs);
+    let result: MassMangaMigrationPreviewItem;
     try {
-      const match = await fetchBestMangaMatch(item.manga, input.sourceTo);
+      const match = await fetchBestMangaMatch(item.manga, input.sourceTo, controller.signal, itemTimeoutMs);
       if (!match) {
-        items.push({
+        result = {
           currentManga: item.manga,
           currentChapters: item.chapters,
-          status: "blocked",
+          status: "no_match",
           reasonCode: "no_match_found",
           match: null,
           matchedReadCount: 0,
           chapterDiff: 0,
-        });
-        continue;
+        };
+        return result;
       }
 
-      items.push({
+      result = {
         currentManga: item.manga,
         currentChapters: item.chapters,
-        status: match.similarity >= readyThreshold ? "ready" : "needs-review",
+        status: match.similarity >= readyThreshold ? "matched" : "needs_review",
         reasonCode: match.similarity >= readyThreshold ? "auto_match" : "low_confidence_match",
         match,
         matchedReadCount: summarizeMatchedReadCount(item.chapters, match.chapters),
         chapterDiff: match.chapters.length - item.chapters.length,
-      });
+      };
+      return result;
     } catch (error) {
-      items.push({
+      const isTimeout = controller.signal.aborted;
+      result = {
         currentManga: item.manga,
         currentChapters: item.chapters,
-        status: "blocked",
-        reasonCode: error instanceof Error ? error.message : "runtime_gap",
+        status: "search_failed",
+        reasonCode: isTimeout ? `Timed out while searching ${item.manga.title}` : error instanceof Error ? error.message : "runtime_gap",
         match: null,
         matchedReadCount: 0,
         chapterDiff: 0,
-      });
+      };
+      return result;
+    } finally {
+      clearTimeout(timeoutId);
+      completedCount += 1;
+      if (result!) input.onItemDone?.(completedCount, input.items.length, result);
     }
-  }
+  });
 
   return {
     sourceFrom: input.sourceFrom,
     sourceTo: input.sourceTo,
     items,
-    readyCount: items.filter((item) => item.status === "ready").length,
-    needsReviewCount: items.filter((item) => item.status === "needs-review").length,
-    blockedCount: items.filter((item) => item.status === "blocked").length,
+    readyCount: items.filter((item) => item.status === "matched").length,
+    needsReviewCount: items.filter((item) => item.status === "needs_review").length,
+    blockedCount: items.filter((item) => item.status === "no_match" || item.status === "search_failed").length,
   };
 }
 
 export async function applyMassMangaMigrationWithJournal(
   input: ApplyMassMangaMigrationInput,
-): Promise<{ journalEntryId: string; migratedCount: number; skippedCount: number; migratedMangaIds: number[] }> {
+): Promise<{
+  journalEntryId: string | null;
+  migratedCount: number;
+  skippedCount: number;
+  migratedMangaIds: number[];
+  migratedSourceMangaIds: number[];
+  failedItems: Array<{ mangaId: number; message: string }>;
+}> {
   const selectedIds = new Set(input.selectedMangaIds ?? input.preview.items.map((item) => item.currentManga.id));
   const readyItems = input.preview.items.filter((item) => (
-    item.status === "ready"
+    item.status !== "no_match"
+    && item.status !== "search_failed"
     && item.match
     && selectedIds.has(item.currentManga.id)
   ));
@@ -379,50 +492,69 @@ export async function applyMassMangaMigrationWithJournal(
   let transferredChapterCount = 0;
   let transferredReadCount = 0;
   let transferredBookmarkCount = 0;
+  const migratedMangaIds: number[] = [];
+  const migratedSourceMangaIds: number[] = [];
+  const failedItems: Array<{ mangaId: number; message: string }> = [];
 
   for (const item of readyItems) {
-    const prepared = await prepareMangaMigrationOperation({
-      currentManga: item.currentManga,
-      currentChapters: item.currentChapters,
-      targetSourceId: input.preview.sourceTo,
-      match: item.match!,
-    });
+    try {
+      const prepared = await prepareMangaMigrationOperation({
+        currentManga: item.currentManga,
+        currentChapters: item.currentChapters,
+        targetSourceId: input.preview.sourceTo,
+        match: item.match!,
+        mode: input.mode ?? "migrate",
+      });
 
-    payloadItems.push({
-      oldState: prepared.oldState,
-      newState: prepared.newState,
-    });
-    transferredChapterCount += prepared.transferSummary.transferredChapterCount;
-    transferredReadCount += prepared.transferSummary.transferredReadCount;
-    transferredBookmarkCount += prepared.transferSummary.transferredBookmarkCount;
+      payloadItems.push({
+        oldState: prepared.oldState,
+        newState: prepared.newState,
+      });
+      migratedMangaIds.push(item.match!.manga.id);
+      migratedSourceMangaIds.push(item.currentManga.id);
+      transferredChapterCount += prepared.transferSummary.transferredChapterCount;
+      transferredReadCount += prepared.transferSummary.transferredReadCount;
+      transferredBookmarkCount += prepared.transferSummary.transferredBookmarkCount;
+    } catch (error) {
+      failedItems.push({
+        mangaId: item.currentManga.id,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
-  const journalEntry = buildMigrationJournalEntry({
-    contentKind: "manga",
-    mode: "mass",
-    sourceFrom: input.preview.sourceFrom,
-    sourceTo: input.preview.sourceTo,
-    transferSummary: {
-      oldItemTitle: `${readyItems.length} manga`,
-      newItemTitle: `${readyItems.length} migrated`,
-      oldSourceId: input.preview.sourceFrom,
-      newSourceId: input.preview.sourceTo,
-      transferredChapterCount,
-      transferredReadCount,
-      transferredBookmarkCount,
-    },
-    payload: {
-      items: payloadItems,
-    } satisfies MangaMassMigrationUndoPayload,
-  });
+  let journalEntryId: string | null = null;
+  if (payloadItems.length) {
+    const journalEntry = buildMigrationJournalEntry({
+      contentKind: "manga",
+      mode: "mass",
+      sourceFrom: input.preview.sourceFrom,
+      sourceTo: input.preview.sourceTo,
+      transferSummary: {
+        oldItemTitle: `${payloadItems.length} manga`,
+        newItemTitle: `${payloadItems.length} migrated`,
+        oldSourceId: input.preview.sourceFrom,
+        newSourceId: input.preview.sourceTo,
+        transferredChapterCount,
+        transferredReadCount,
+        transferredBookmarkCount,
+      },
+      payload: {
+        items: payloadItems,
+      } satisfies MangaMassMigrationUndoPayload,
+    });
 
-  await appendMigrationJournalEntry(journalEntry);
+    await appendMigrationJournalEntry(journalEntry);
+    journalEntryId = journalEntry.id;
+  }
 
   return {
-    journalEntryId: journalEntry.id,
-    migratedCount: readyItems.length,
+    journalEntryId,
+    migratedCount: payloadItems.length,
     skippedCount: input.preview.items.length - readyItems.length,
-    migratedMangaIds: readyItems.map((item) => item.match!.manga.id),
+    migratedMangaIds,
+    migratedSourceMangaIds,
+    failedItems,
   };
 }
 

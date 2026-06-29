@@ -67,6 +67,11 @@ export interface Source {
   displayName: string;
   iconUrl: string;
   isNsfw: boolean;
+  extension?: {
+    pkgName: string;
+    name: string;
+    lang: string;
+  } | null;
 }
 
 export interface Extension {
@@ -75,10 +80,12 @@ export interface Extension {
   name: string;
   lang: string;
   versionName: string;
+  versionCode?: number;
   isInstalled: boolean;
   isObsolete: boolean;
   hasUpdate: boolean;
   iconUrl: string;
+  repo?: string | null;
 }
 
 export interface DownloadQueueItem {

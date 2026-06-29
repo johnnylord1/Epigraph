@@ -1,8 +1,9 @@
 <script lang="ts">
   import { _ } from "../../lib/i18n/runtime";
-  import type { Snippet } from "svelte";
+  import { onMount, type Snippet } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { ArrowLeft, BookOpen, Info } from "phosphor-svelte";
+  import { SERVER_READY_EVENT } from "../../lib/serverLifecycle";
 
   type SeriesDetailMetric = {
     label: string;
@@ -86,6 +87,10 @@
   }
 
   const clampedProgress = $derived(Math.max(0, Math.min(100, progressPercent)));
+  let failedCoverUrl: string | null = $state(null);
+  let lastResolvedCoverUrl: string | null = $state(null);
+  const resolvedCoverUrl = $derived(coverUrl?.trim() || null);
+  const canShowCover = $derived(Boolean(resolvedCoverUrl && failedCoverUrl !== resolvedCoverUrl));
   const visibleTags = $derived.by(() => {
     const values = [statusLabel, ...tags].filter((value): value is string => hasRealText(value));
     return [...new Set(values.map((value) => value.trim()))].slice(0, 12);
@@ -94,6 +99,21 @@
   const subtitleText = $derived(hasRealText(subtitle) ? subtitle!.trim() : null);
   const sourceNameText = $derived(hasRealText(sourceLabel) ? sourceLabel!.trim() : hasRealText(languageLabel) ? languageLabel!.trim() : null);
   const sourceLineText = $derived(hasRealText(sourceLine) ? sourceLine!.trim() : sourceNameText ? `${mediaKind === "novel" ? "Novel" : "Manga"} - ${sourceNameText}` : null);
+
+  $effect(() => {
+    const current = resolvedCoverUrl;
+    if (current === lastResolvedCoverUrl) return;
+    lastResolvedCoverUrl = current;
+    failedCoverUrl = null;
+  });
+
+  onMount(() => {
+    const retryCover = () => {
+      if (resolvedCoverUrl && failedCoverUrl === resolvedCoverUrl) failedCoverUrl = null;
+    };
+    window.addEventListener(SERVER_READY_EVENT, retryCover);
+    return () => window.removeEventListener(SERVER_READY_EVENT, retryCover);
+  });
 </script>
 
 <div class="series-v3-root" data-media-kind={mediaKind}>
@@ -116,16 +136,23 @@
 
   <div class="scroll-surface">
     <section class="hero">
-      {#if coverUrl}
-        <div class="hero-backdrop" style={`background-image: url("${coverUrl}")`}></div>
+      {#if canShowCover}
+        <div class="hero-backdrop" style={`background-image: url("${resolvedCoverUrl}")`}></div>
       {:else}
         <div class="hero-backdrop hero-backdrop--empty"></div>
       {/if}
 
       <div class="hero-content">
         <div class="cover-frame">
-          {#if coverUrl}
-            <img class="cover" src={coverUrl} alt={titleText} loading="eager" decoding="async" />
+          {#if canShowCover}
+            <img
+              class="cover"
+              src={resolvedCoverUrl}
+              alt={titleText}
+              loading="eager"
+              decoding="async"
+              onerror={() => { failedCoverUrl = resolvedCoverUrl; }}
+            />
           {:else}
             <div class="cover-fallback">
               <BookOpen size={38} weight="duotone" />

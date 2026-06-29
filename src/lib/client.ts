@@ -103,7 +103,10 @@ export async function gql<T>(
     const json: GQLResponse<T> = await res.json();
 
     if (effectiveSignal?.aborted) throw new DOMException("Aborted", "AbortError");
-    if (json.errors?.length) throw new Error(json.errors[0].message);
+    if (json.errors?.length) {
+      const message = json.errors.map((error) => error.message?.trim()).filter(Boolean).join("; ");
+      throw new Error(message || "Suwayomi returned an empty GraphQL error.");
+    }
 
     return json.data;
   } finally {
@@ -147,7 +150,10 @@ export async function gqlUpload<T>(
   const json: GQLResponse<T> = await res.json();
 
   if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-  if (json.errors?.length) throw new Error(json.errors[0].message);
+  if (json.errors?.length) {
+    const message = json.errors.map((error) => error.message?.trim()).filter(Boolean).join("; ");
+    throw new Error(message || "Suwayomi returned an empty GraphQL error.");
+  }
 
   return json.data;
 }

@@ -3,7 +3,7 @@
   import { _ } from "../../lib/i18n/runtime";
   import { onMount, untrack } from "svelte";
   import { MagnifyingGlass, ArrowsClockwise, Plus, CircleNotch, CaretRight, CaretDown, X, Check, GitBranch } from "phosphor-svelte";
-  import { gql } from "../../lib/client";
+  import { gql, gqlUpload } from "../../lib/client";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import { GET_EXTENSIONS, FETCH_EXTENSIONS, UPDATE_EXTENSION, INSTALL_EXTERNAL_EXTENSION, GET_SETTINGS, SET_EXTENSION_REPOS } from "../../lib/queries";
   import { store, addToast, bumpContentSetupVersion, setExtensionsPanelHint } from "../../store/state.svelte";
@@ -13,6 +13,7 @@
   import { detectSetupState, type SetupState } from "../../lib/setupState";
   import { ensureExtensionRepo, RECOMMENDED_EXTENSION_REPO } from "../../lib/defaultRepos";
   import { SERVER_READY_EVENT } from "../../lib/serverLifecycle";
+  import { waitForSuwayomiGraphqlReady } from "../../lib/suwayomiReadiness";
 
   type Filter = "installed" | "available" | "updates" | "all";
   type Panel  = null | "apk" | "repos";
@@ -27,7 +28,8 @@
   let working = $state(new Set<string>());
   let expanded = $state(new Set<string>());
   let panel: Panel            = $state(null);
-  let externalUrl = $state("");
+  let externalFile: File | null = $state(null);
+  let externalFileInput: HTMLInputElement | null = $state(null);
   let installing = $state(false);
   let installError: string|null = $state(null);
   let installSuccess = $state(false);
@@ -39,6 +41,8 @@
   let setupState: SetupState | null = $state(null);
   let setupActionBusy = $state(false);
   let renderVisible = $state(0);
+  let loadError: string | null = $state(null);
+  let lastExtensions: Extension[] = $state([]);
   const renderLimit = 48;
 
   function browseAvailableExtensions() {
@@ -51,16 +55,39 @@
   }
 
   async function load() {
-    return gql<{ extensions: { nodes: Extension[] } }>(GET_EXTENSIONS)
-      .then((d) => extensions = d.extensions.nodes).catch(console.error)
-      .finally(refreshSetupState);
+    try {
+      const ready = await waitForSuwayomiGraphqlReady("extensions", { attempts: 6, delayMs: 800, timeoutMs: 5000 });
+      if (!ready) throw new Error("Suwayomi is still starting. Try refreshing extensions again in a moment.");
+      const d = await gql<{ extensions: { nodes: Extension[] } }>(GET_EXTENSIONS);
+      extensions = d.extensions.nodes;
+      lastExtensions = d.extensions.nodes;
+      loadError = null;
+    } catch (error) {
+      console.error(error);
+      loadError = error instanceof Error ? error.message : String(error);
+      if (lastExtensions.length > 0) extensions = lastExtensions;
+    } finally {
+      await refreshSetupState();
+    }
   }
 
   async function fetchFromRepo() {
     refreshing = true;
-    return gql<{ fetchExtensions: { extensions: Extension[] } }>(FETCH_EXTENSIONS)
-      .then((d) => extensions = d.fetchExtensions.extensions).catch(console.error)
-      .finally(() => { refreshing = false; refreshSetupState(); });
+    try {
+      const ready = await waitForSuwayomiGraphqlReady("extensions", { attempts: 6, delayMs: 800, timeoutMs: 5000 });
+      if (!ready) throw new Error("Suwayomi is still starting. Try refreshing extensions again in a moment.");
+      const d = await gql<{ fetchExtensions: { extensions: Extension[] } }>(FETCH_EXTENSIONS);
+      extensions = d.fetchExtensions.extensions;
+      lastExtensions = d.fetchExtensions.extensions;
+      loadError = null;
+    } catch (error) {
+      console.error(error);
+      loadError = error instanceof Error ? error.message : String(error);
+      if (lastExtensions.length > 0) extensions = lastExtensions;
+    } finally {
+      refreshing = false;
+      await refreshSetupState();
+    }
   }
 
   async function loadRepos() {
@@ -117,7 +144,7 @@
 
   function removeRepo(url: string) { saveRepos(repos.filter((r) => r !== url)); }
 
-  async function mutate(fn: () => Promise<unknown>, pkgName: string) {
+  async function mutate(fn: () => Promise<unknown>, pkgName: string, actionLabel = "Extension action") {
     working = new Set(working).add(pkgName);
     let ok = true;
     try {
@@ -126,6 +153,11 @@
     } catch (error) {
       ok = false;
       console.error(error);
+      addToast({
+        kind: "error",
+        title: `${actionLabel} failed`,
+        body: error instanceof Error ? error.message : String(error),
+      });
     }
     await load();
     working.delete(pkgName); working = new Set(working);
@@ -134,7 +166,7 @@
 
   async function installExtension(extension: Extension) {
     const firstInstallFlow = setupState?.kind === "no_installed_extensions";
-    const didInstall = await mutate(() => gql(UPDATE_EXTENSION, { id: extension.pkgName, install: true }), extension.pkgName);
+    const didInstall = await mutate(() => gql(UPDATE_EXTENSION, { id: extension.pkgName, install: true }), extension.pkgName, `Install ${extension.name}`);
     if (!didInstall || !firstInstallFlow) return;
 
     filter = "installed";
@@ -148,14 +180,17 @@
   }
 
   async function installExternal() {
-    const url = externalUrl.trim();
-    if (!url) return;
-    if (!url.startsWith("http://") && !url.startsWith("https://")) { installError = "URL must start with http:// or https://"; return; }
-    if (!url.endsWith(".apk")) { installError = "URL must point to an .apk file"; return; }
+    const file = externalFile;
+    if (!file) { installError = "Choose an .apk extension file first."; return; }
+    if (!file.name.toLowerCase().endsWith(".apk")) { installError = "File must be an .apk extension package."; return; }
     installing = true; installError = null; installSuccess = false;
     try {
-      await gql(INSTALL_EXTERNAL_EXTENSION, { url });
-      installSuccess = true; externalUrl = "";
+      await gqlUpload(
+        INSTALL_EXTERNAL_EXTENSION,
+        { extensionFile: null },
+        { "variables.extensionFile": file },
+      );
+      installSuccess = true; clearExternalFile();
       bumpContentSetupVersion();
       await load();
       setTimeout(() => { panel = null; installSuccess = false; }, 1500);
@@ -165,9 +200,32 @@
 
   function openPanel(p: Panel) {
     panel = panel === p ? null : p;
-    installError = null; installSuccess = false; externalUrl = "";
+    installError = null; installSuccess = false; clearExternalFile();
     repoError = null; newRepoUrl = "";
     if (p === "repos") loadRepos();
+  }
+
+  async function updateExtension(extension: Extension) {
+    return mutate(
+      async () => {
+        await gql(FETCH_EXTENSIONS, undefined, undefined, 60000);
+        await gql(UPDATE_EXTENSION, { id: extension.pkgName, update: true }, undefined, 60000);
+      },
+      extension.pkgName,
+      `Update ${extension.name}`,
+    );
+  }
+
+  function selectExternalFile(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    externalFile = input.files?.[0] ?? null;
+    installError = null;
+    installSuccess = false;
+  }
+
+  function clearExternalFile() {
+    externalFile = null;
+    if (externalFileInput) externalFileInput.value = "";
   }
 
   $effect(() => {
@@ -176,13 +234,13 @@
     setExtensionsPanelHint(null);
   });
 
-  $effect(() => { untrack(() => Promise.all([fetchFromRepo(), refreshSetupState()]).finally(() => { loading = false; })); });
+  $effect(() => { untrack(() => Promise.all([load(), refreshSetupState()]).finally(() => { loading = false; })); });
 
   onMount(() => {
     const handleServerReady = () => {
       void Promise.all([
         loadRepos(),
-        fetchFromRepo(),
+        load(),
         refreshSetupState(),
       ]).finally(() => {
         loading = false;
@@ -269,7 +327,7 @@
       <button class="icon-btn" class:active={panel === "repos"} onclick={() => openPanel("repos")} title={$_("sources_repositories_manageManga")}>
         <GitBranch size={14} weight="light" />
       </button>
-      <button class="icon-btn" class:active={panel === "apk"} onclick={() => openPanel("apk")} title={$_("ui_installFromUrl")}>
+      <button class="icon-btn" class:active={panel === "apk"} onclick={() => openPanel("apk")} title={$_("ui_installFromApkUrl")}>
         <Plus size={14} weight="light" />
       </button>
       <button class="icon-btn" onclick={fetchFromRepo} disabled={refreshing} title={$_("ui_refreshRepo")}>
@@ -297,14 +355,15 @@
     <div class="ext-panel">
       <div class="panel-header">
         <span class="panel-title">{$_("ui_installFromApkUrl")}</span>
-        <button class="icon-btn" onclick={() => panel = null}><X size={14} weight="light" /></button>
+        <button class="icon-btn" onclick={() => openPanel("apk")}><X size={14} weight="light" /></button>
       </div>
       <div class="ext-row">
-        <input class="ext-input" class:error={installError} placeholder={$_("ui_httpsExampleComExtensionApk")}
-          bind:value={externalUrl} disabled={installing}
-          oninput={() => installError = null}
-          onkeydown={(e) => e.key === "Enter" && !installing && installExternal()} use:focusOnMount />
-        <button class="install-btn" class:success={installSuccess} onclick={installExternal} disabled={installing || !externalUrl.trim()}>
+        <input class="ext-input" class:error={installError} type="file" accept=".apk,application/vnd.android.package-archive"
+          bind:this={externalFileInput}
+          disabled={installing}
+          onchange={selectExternalFile}
+          use:focusOnMount />
+        <button class="install-btn" class:success={installSuccess} onclick={installExternal} disabled={installing}>
           {#if installing}<CircleNotch size={13} weight="light" class="anim-spin" />
           {:else if installSuccess}<Check size={13} weight="bold" /> {$_("sources_actions_done")}{:else}{$_("sources_actions_install")}{/if}
         </button>
@@ -374,6 +433,26 @@
     <div class="empty">
       <NocturneState layout="center" tone="info" icon="retry" eyebrow="Extensions" title={$_("ui_loadingExtensions")} />
     </div>
+  {:else if loadError && groups.length === 0}
+    <div class="empty">
+      <NocturneState
+        layout="center"
+        tone="warning"
+        icon="retry"
+        eyebrow="Suwayomi"
+        title="Suwayomi is still reconnecting"
+        body={loadError}
+        actions={[{
+          label: $_("sources_actions_refresh"),
+          kind: "primary",
+          icon: "retry",
+          onClick: () => {
+            loading = true;
+            void load().finally(() => { loading = false; });
+          },
+        }]}
+      />
+    </div>
   {:else if groups.length === 0}
     <div class="empty">
       <NocturneState
@@ -417,11 +496,11 @@
               <CircleNotch size={14} weight="light" class="anim-spin" style="color:var(--text-faint)" />
             {:else if primary.hasUpdate}
               <div class="row-actions">
-                <button class="action-btn" onclick={() => mutate(() => gql(UPDATE_EXTENSION, { id: primary.pkgName, update: true }), primary.pkgName)}>{$_("sources_actions_update")}</button>
-                <button class="action-btn-dim" onclick={() => mutate(() => gql(UPDATE_EXTENSION, { id: primary.pkgName, uninstall: true }), primary.pkgName)}>{$_("sources_actions_remove")}</button>
+                <button class="action-btn" onclick={() => updateExtension(primary)}>{$_("sources_actions_update")}</button>
+                <button class="action-btn-dim" onclick={() => mutate(() => gql(UPDATE_EXTENSION, { id: primary.pkgName, uninstall: true }), primary.pkgName, `Remove ${primary.name}`)}>{$_("sources_actions_remove")}</button>
               </div>
             {:else if primary.isInstalled}
-              <button class="action-btn-dim" onclick={() => mutate(() => gql(UPDATE_EXTENSION, { id: primary.pkgName, uninstall: true }), primary.pkgName)}>{$_("sources_actions_remove")}</button>
+              <button class="action-btn-dim" onclick={() => mutate(() => gql(UPDATE_EXTENSION, { id: primary.pkgName, uninstall: true }), primary.pkgName, `Remove ${primary.name}`)}>{$_("sources_actions_remove")}</button>
             {:else}
               <button class="action-btn" onclick={() => installExtension(primary)}>{$_("sources_actions_install")}</button>
             {/if}
@@ -444,9 +523,9 @@
                     {#if working.has(v.pkgName)}
                       <CircleNotch size={14} weight="light" class="anim-spin" style="color:var(--text-faint)" />
                     {:else if v.hasUpdate}
-                      <button class="action-btn" onclick={() => mutate(() => gql(UPDATE_EXTENSION, { id: v.pkgName, update: true }), v.pkgName)}>{$_("sources_actions_update")}</button>
+                      <button class="action-btn" onclick={() => updateExtension(v)}>{$_("sources_actions_update")}</button>
                     {:else if v.isInstalled}
-                      <button class="action-btn-dim" onclick={() => mutate(() => gql(UPDATE_EXTENSION, { id: v.pkgName, uninstall: true }), v.pkgName)}>{$_("sources_actions_remove")}</button>
+                      <button class="action-btn-dim" onclick={() => mutate(() => gql(UPDATE_EXTENSION, { id: v.pkgName, uninstall: true }), v.pkgName, `Remove ${v.name}`)}>{$_("sources_actions_remove")}</button>
                     {:else}
                       <button class="action-btn" onclick={() => installExtension(v)}>{$_("sources_actions_install")}</button>
                     {/if}

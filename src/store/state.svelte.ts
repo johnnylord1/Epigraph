@@ -2243,7 +2243,7 @@ class Store {
     this.libraryTrackingSummarySnapshot = next;
     cache.set(CACHE_KEYS.LIBRARY_TRACKING_SUMMARY, next, CACHE_GROUPS.LIBRARY);
   }
-  setActiveDownloads(next: ActiveDownload[])     { this.activeDownloads  = next; bumpContentSetupVersion(); }
+  setActiveDownloads(next: ActiveDownload[])     { this.activeDownloads = next; }
   setPausedDownloads(next: PausedDownloadItem[]) { this.pausedDownloads = next; }
   clearActiveDetailState() {
     this.activeManga = null;

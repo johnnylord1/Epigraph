@@ -3,6 +3,10 @@ import type { LibraryUpdateIntensity } from "../store/state.svelte";
 
 export const SERVER_READY_EVENT = "aethon:server-ready";
 
+const SERVER_READY_NOTIFY_DEBOUNCE_MS = 10_000;
+
+let lastReadyNotification: { serverUrl: string; at: number } | null = null;
+
 export type ServerWakeReason =
   | "startup"
   | "manual-library-update"
@@ -24,10 +28,18 @@ export interface ServerLifecycleInput {
 
 export function notifyServerReady(serverUrl: string | null | undefined) {
   if (!serverUrl || typeof window === "undefined") return;
+  const now = Date.now();
+  if (
+    lastReadyNotification?.serverUrl === serverUrl
+    && now - lastReadyNotification.at < SERVER_READY_NOTIFY_DEBOUNCE_MS
+  ) {
+    return;
+  }
+  lastReadyNotification = { serverUrl, at: now };
   window.dispatchEvent(new CustomEvent(SERVER_READY_EVENT, {
     detail: {
       serverUrl,
-      at: Date.now(),
+      at: now,
     },
   }));
 }

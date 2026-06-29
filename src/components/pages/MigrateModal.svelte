@@ -1,20 +1,19 @@
 <script lang="ts">
   import { translate } from "../../lib/i18n/runtime";
   import { _ } from "../../lib/i18n/runtime";
-  import { X, MagnifyingGlass, CircleNotch, ArrowRight, Check, Warning, Sparkle, StackSimple } from "phosphor-svelte";
+  import { X, MagnifyingGlass, CircleNotch, ArrowRight, Check, Warning, Sparkle, ArrowsClockwise } from "phosphor-svelte";
   import { untrack } from "svelte";
   import { gql } from "../../lib/client";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
-  import { GET_SOURCES, FETCH_CHAPTERS, GET_LIBRARY } from "../../lib/queries";
+  import { GET_SOURCES, FETCH_CHAPTERS } from "../../lib/queries";
   import { fetchSourceMangaSearchWithFallback } from "../../lib/manga/sourceSearch";
+  import { ensureServerAwakeFor } from "../../lib/serverLifecycle";
+  import { waitForSuwayomiGraphqlReady } from "../../lib/suwayomiReadiness";
   import { addToast, store } from "../../store/state.svelte";
   import type { Manga, Source, Chapter } from "../../lib/types";
   import {
     applyMangaMigrationWithJournal,
-    applyMassMangaMigrationWithJournal,
-    previewMassMangaMigration,
-    type MassMangaMigrationPreview,
     undoMangaMigration,
   } from "../../lib/migration/manga";
 
@@ -26,8 +25,7 @@
   }
   let { manga, currentChapters, onClose, onMigrated }: Props = $props();
 
-  type MigrationMode = "single" | "mass";
-  type Step = "source" | "search" | "confirm" | "mass-preview";
+  type Step = "source" | "search" | "confirm";
 
   interface Match {
     manga: Manga;
@@ -48,9 +46,9 @@
   }
 
   let step: Step            = $state("source");
-  let mode: MigrationMode   = $state("single");
   let sources: Source[]     = $state([]);
   let loadingSources        = $state(true);
+  let sourceLoadError: string | null = $state(null);
   let selectedSource: Source | null = $state(null);
 
   // Lang filter: "en" first, then alphabetical
@@ -98,46 +96,56 @@
   let selectedMatch: Match | null = $state(null);
   let loadingMatchId: number | null = $state(null);
   let migrating             = $state(false);
-  let massPreviewLoading    = $state(false);
-  let massPreview           = $state<MassMangaMigrationPreview | null>(null);
-  let massSelectedIds       = $state<Set<number>>(new Set());
   let error: string | null  = $state(null);
   const readCount   = $derived(currentChapters.filter((c) => c.isRead).length);
   const totalCount  = $derived(currentChapters.length);
   const chapterDiff = $derived(selectedMatch ? selectedMatch.chapters.length - totalCount : 0);
-  const SINGLE_STEPS = ["source", "search", "confirm"] as const satisfies Step[];
-  const MASS_STEPS = ["source", "mass-preview"] as const satisfies Step[];
-  const currentSteps = $derived(mode === "mass" ? MASS_STEPS : SINGLE_STEPS);
+  const currentSteps = ["source", "search", "confirm"] as const satisfies Step[];
   const stepIdx = $derived(currentSteps.indexOf(step));
 
+  async function attemptWakeWithDeadline(timeoutMs = 3500) {
+    const wake = ensureServerAwakeFor("series-detail", {
+      serverUrl: store.runtimeServerUrl ?? store.settings.serverUrl,
+      binary: store.settings.serverBinary,
+      updateIntensity: store.settings.libraryUpdateIntensity,
+      profileId: store.runtimeResolvedLocalProfileId,
+      profileLabel: store.runtimeResolvedLocalProfileMeta?.label ?? store.runtimeServerLabel,
+    }).catch(() => false);
+    const deadline = new Promise<boolean>((resolve) => {
+      window.setTimeout(() => resolve(false), timeoutMs);
+    });
+    await Promise.race([wake, deadline]);
+  }
+
+  async function loadSources() {
+    loadingSources = true;
+    sourceLoadError = null;
+    try {
+      await attemptWakeWithDeadline();
+      const ready = await waitForSuwayomiGraphqlReady("sources", { attempts: 8, delayMs: 800, timeoutMs: 5000 });
+      if (!ready) throw new Error("Suwayomi is still starting. Try loading migration sources again in a moment.");
+      const d = await gql<{ sources: { nodes: Source[] } }>(GET_SOURCES);
+      const filtered = d.sources.nodes.filter((s) => s.id !== "0" && s.id !== manga.source?.id);
+      sources = filtered;
+      const prefLang = store?.settings?.preferredExtensionLang ?? "";
+      const langs = new Set(filtered.map(s => s.lang));
+      if (prefLang && langs.has(prefLang) && langs.size > 1) selectedLang = prefLang;
+    } catch (loadError) {
+      console.error(loadError);
+      sourceLoadError = loadError instanceof Error ? loadError.message : String(loadError);
+    } finally {
+      loadingSources = false;
+    }
+  }
+
   $effect(() => {
-    gql<{ sources: { nodes: Source[] } }>(GET_SOURCES)
-      .then((d) => {
-        const filtered = d.sources.nodes.filter((s) => s.id !== "0" && s.id !== manga.source?.id);
-        sources = filtered;
-        // Pre-select preferred lang if available and there are multiple
-        const prefLang = store?.settings?.preferredExtensionLang ?? "";
-        const langs = new Set(filtered.map(s => s.lang));
-        if (prefLang && langs.has(prefLang) && langs.size > 1) selectedLang = prefLang;
-      })
-      .catch(console.error)
-      .finally(() => { loadingSources = false; });
+    untrack(() => { void loadSources(); });
 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   });
 
   function onKey(e: KeyboardEvent) { if (e.key === "Escape") onClose(); }
-
-  function setMode(nextMode: MigrationMode) {
-    mode = nextMode;
-    step = "source";
-    error = null;
-    results = [];
-    selectedMatch = null;
-    massPreview = null;
-    massSelectedIds = new Set();
-  }
 
   async function searchSource(src: Source, q: string) {
     if (!src || !q.trim()) return;
@@ -163,70 +171,8 @@
   function pickSource(src: Source) {
     selectedSource = src;
     error = null;
-    if (mode === "mass") {
-      step = "source";
-      return;
-    }
     step = "search";
     searchSource(src, query);
-  }
-
-  async function loadMassMigrationItems() {
-    if (!manga.source?.id) {
-      throw new Error("This manga does not have a source id for mass migration.");
-    }
-
-    const library = await gql<{ mangas: { nodes: Manga[] } }>(GET_LIBRARY);
-    const sourceManga = (library.mangas.nodes ?? []).filter((entry) => (
-      entry.inLibrary
-      && entry.source?.id === manga.source?.id
-    ));
-
-    const chapterPairs = await Promise.all(sourceManga.map(async (entry) => {
-      const chaptersResult = await gql<{ chapters: { nodes: Chapter[] } }>(GET_CHAPTERS, {
-        mangaId: entry.id,
-      });
-      return {
-        manga: entry,
-        chapters: chaptersResult.chapters.nodes ?? [],
-      };
-    }));
-
-    return chapterPairs;
-  }
-
-  async function buildMassPreview() {
-    if (!selectedSource || !manga.source?.id) return;
-    massPreviewLoading = true;
-    error = null;
-    massPreview = null;
-    massSelectedIds = new Set();
-    try {
-      const items = await loadMassMigrationItems();
-      const nextPreview = await previewMassMangaMigration({
-        sourceFrom: manga.source.id,
-        sourceTo: selectedSource.id,
-        items,
-      });
-      massPreview = nextPreview;
-      massSelectedIds = new Set(
-        nextPreview.items
-          .filter((item) => item.status === "ready")
-          .map((item) => item.currentManga.id),
-      );
-      step = "mass-preview";
-    } catch (previewError: any) {
-      error = previewError.message;
-    } finally {
-      massPreviewLoading = false;
-    }
-  }
-
-  function toggleMassSelection(mangaId: number) {
-    const next = new Set(massSelectedIds);
-    if (next.has(mangaId)) next.delete(mangaId);
-    else next.add(mangaId);
-    massSelectedIds = next;
   }
 
   async function selectMatch(m: Manga, similarity: number) {
@@ -291,53 +237,6 @@
     }
   }
 
-  async function applyMassMigration() {
-    if (!massPreview) return;
-    migrating = true;
-    error = null;
-    try {
-      const result = await applyMassMangaMigrationWithJournal({
-        preview: massPreview,
-        selectedMangaIds: [...massSelectedIds],
-      });
-
-      addToast({
-        kind: "success",
-        title: translate("ui_massMigrationApplied"),
-        body: `${result.migratedCount} title${result.migratedCount !== 1 ? "s" : ""} moved to ${selectedSource?.displayName ?? translate("ui_theNewSource")}.`,
-        duration: 9000,
-        action: {
-          label: translate("ui_undo"),
-          run: () => {
-            void undoMangaMigration(result.journalEntryId).then(() => {
-              addToast({
-                kind: "info",
-                title: translate("ui_massMigrationUndone"),
-                body: `${result.migratedCount} title${result.migratedCount !== 1 ? "s" : ""}`,
-              });
-              onMigrated({ ...manga, inLibrary: true });
-            }).catch((undoError) => {
-              addToast({
-                kind: "error",
-                title: translate("ui_couldNotUndoMassMigration"),
-                body: undoError instanceof Error ? undoError.message : String(undoError),
-              });
-            });
-          },
-        },
-      });
-
-      const currentItem = massPreview.items.find((item) => item.currentManga.id === manga.id && item.match);
-      if (currentItem?.match) {
-        onMigrated({ ...currentItem.match.manga, inLibrary: true });
-      } else {
-        onClose();
-      }
-    } catch (massError: any) {
-      error = massError.message;
-      migrating = false;
-    }
-  }
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -366,9 +265,7 @@
               ? $_("ui_pickSource")
               : st === "search"
                 ? (selectedSource ? selectedSource.displayName : "Search")
-                : mode === "mass"
-                  ? $_("ui_previewBatch")
-                  : "Confirm"}
+                : "Confirm"}
           </span>
         </div>
       {/each}
@@ -376,20 +273,18 @@
 
     <!-- Body -->
     <div class="body">
-      <div class="mode-tabs">
-        <button class="mode-tab" class:mode-tab-active={mode === "single"} onclick={() => setMode("single")}>
-          {$_("ui_single")}
-        </button>
-        <button class="mode-tab" class:mode-tab-active={mode === "mass"} onclick={() => setMode("mass")}>
-          <StackSimple size={12} weight="bold" /> {$_("ui_mass")}
-        </button>
-      </div>
-
       <!-- Step 1: Pick source -->
       {#if step === "source"}
         {#if loadingSources}
           <div class="centered">
             <CircleNotch size={16} weight="light" class="anim-spin" style="color:var(--text-faint)" />
+          </div>
+        {:else if sourceLoadError}
+          <div class="centered source-load-error">
+            <span class="hint">{sourceLoadError}</span>
+            <button class="search-btn" onclick={loadSources}>
+              <ArrowsClockwise size={12} weight="bold" /> {$_("sources.actions.refresh")}
+            </button>
           </div>
         {:else if sources.length === 0}
           <div class="centered"><span class="hint">{$_("ui_noOtherSourcesInstalled")}</span></div>
@@ -408,12 +303,6 @@
               <button class="src-lang-nav" onclick={() => scrollLangStrip(1)}>›</button>
             </div>
           {/if}
-          {#if mode === "mass"}
-            <div class="notice inline">
-              <StackSimple size={14} weight="light" />
-              <span>{$_("ui_thisPreviewsAllLibraryMangaFrom")} {manga.source?.displayName ?? $_("ui_theCurrentSource")} {$_("ui_intoOneTargetSourceThenAppliesOnlyThe")}</span>
-            </div>
-          {/if}
           <div class="source-list">
             {#each visibleSources as src}
               <button
@@ -430,18 +319,6 @@
               </button>
             {/each}
           </div>
-          {#if mode === "mass" && selectedSource}
-            <div class="confirm-actions" style="padding: var(--sp-2) var(--sp-3) 0;">
-              <button class="migrate-btn" onclick={buildMassPreview} disabled={massPreviewLoading}>
-                {#if massPreviewLoading}
-                  <CircleNotch size={13} weight="light" class="anim-spin" />
-                {:else}
-                  <StackSimple size={13} weight="bold" />
-                {/if}
-                {$_("ui_previewMassMigration")}
-              </button>
-            </div>
-          {/if}
         {/if}
 
       <!-- Step 2: Search & pick match -->
@@ -519,73 +396,6 @@
                 </div>
               {/if}
             {/if}
-          </div>
-        </div>
-
-      <!-- Step 3: Confirm -->
-      {:else if step === "mass-preview" && massPreview}
-        <div class="confirm-step">
-          <div class="confirm-actions" style="justify-content: space-between;">
-            <button class="back-btn" onclick={() => step = "source"} disabled={migrating}>{$_("ui_back")}</button>
-            <span class="source-meta">
-              {massPreview.readyCount} {$_("ui_ready_8a670e1b")} {massPreview.needsReviewCount} {$_("ui_needsReview")} {massPreview.blockedCount} {$_("ui_blocked")}
-            </span>
-          </div>
-
-          <div class="confirm-stats">
-            <div class="stat-row"><span class="stat-label">{$_("ui_sourceFrom")}</span><strong>{manga.source?.displayName ?? "Unknown"}</strong></div>
-            <div class="stat-row"><span class="stat-label">{$_("ui_sourceTo")}</span><strong>{selectedSource?.displayName ?? "Unknown"}</strong></div>
-            <div class="stat-row"><span class="stat-label">{$_("ui_selectedReadyItems")}</span><strong>{massSelectedIds.size}</strong></div>
-          </div>
-
-          <div class="results">
-            {#each massPreview.items as item (item.currentManga.id)}
-              <div class="result-row" class:result-row-ready={item.status === "ready"} class:result-row-blocked={item.status === "blocked"}>
-                <button
-                  class="mass-check"
-                  type="button"
-                  disabled={item.status !== "ready"}
-                  onclick={() => toggleMassSelection(item.currentManga.id)}
-                >
-                  {#if massSelectedIds.has(item.currentManga.id)}
-                    <Check size={12} weight="bold" />
-                  {/if}
-                </button>
-                <div class="result-info">
-                  <span class="result-title">{item.currentManga.title}</span>
-                  <div class="result-meta">
-                    <span class="sim-label">{item.status}</span>
-                    <span class="sim-label">{item.reasonCode}</span>
-                    {#if item.match}
-                      <span class="sim-label">{Math.round(item.match.similarity * 100)}{$_("ui_match")}</span>
-                    {/if}
-                    <span class="sim-label">{item.matchedReadCount} {$_("ui_readMatched")}</span>
-                  </div>
-                  {#if item.match}
-                    <span class="source-meta">{item.match.manga.title}</span>
-                  {/if}
-                </div>
-              </div>
-            {/each}
-          </div>
-
-          <div class="notice">
-            <Check size={14} weight="light" />
-            <span>{$_("ui_theOriginalLibraryItemsStayProtectedByThe")}</span>
-          </div>
-
-          {#if error}<p class="error"><Warning size={13} weight="light" /> {error}</p>{/if}
-
-          <div class="confirm-actions">
-            <button class="back-btn" onclick={() => step = "source"} disabled={migrating}>{$_("ui_back")}</button>
-            <button class="migrate-btn" onclick={applyMassMigration} disabled={migrating || massSelectedIds.size === 0}>
-              {#if migrating}
-                <CircleNotch size={13} weight="light" class="anim-spin" />
-              {:else}
-                <StackSimple size={13} weight="bold" />
-              {/if}
-              {$_("ui_applyReadyItems")}
-            </button>
           </div>
         </div>
 
@@ -690,24 +500,8 @@
 
   /* Body */
   .body { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
-  .mode-tabs { display: flex; gap: 4px; padding: var(--sp-3) var(--sp-4) 0; }
-  .mode-tab {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    min-height: 30px;
-    padding: 0 var(--sp-3);
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border-dim);
-    background: none;
-    color: var(--text-muted);
-    font-family: var(--font-ui);
-    font-size: var(--text-xs);
-    letter-spacing: var(--tracking-wide);
-    cursor: pointer;
-  }
-  .mode-tab-active { background: var(--accent-muted); border-color: var(--accent-dim); color: var(--accent-fg); }
   .centered { flex: 1; display: flex; align-items: center; justify-content: center; padding: var(--sp-8); }
+  .source-load-error { flex-direction: column; gap: var(--sp-3); text-align: center; }
   .hint { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); }
 
   /* Source list */
@@ -754,8 +548,6 @@
   .result-row { display: flex; align-items: center; gap: var(--sp-3); padding: 7px var(--sp-2); border-radius: var(--radius-md); border: none; background: none; text-align: left; width: 100%; cursor: pointer; transition: background var(--t-fast); }
   .result-row:hover:not(:disabled) { background: var(--bg-raised); }
   .result-row:disabled { opacity: 0.5; cursor: default; }
-  .result-row-ready { border: 1px solid color-mix(in srgb, var(--color-success) 18%, var(--border-dim)); }
-  .result-row-blocked { border: 1px solid color-mix(in srgb, var(--color-error) 18%, var(--border-dim)); }
   .result-cover-wrap { width: 36px; height: 54px; border-radius: var(--radius-sm); overflow: hidden; background: var(--bg-raised); border: 1px solid var(--border-dim); flex-shrink: 0; }
   .result-cover { width: 100%; height: 100%; object-fit: cover; }
   .result-info { flex: 1; display: flex; flex-direction: column; gap: 4px; overflow: hidden; min-width: 0; }
@@ -765,21 +557,6 @@
   .sim-bar { width: 48px; height: 3px; background: var(--bg-overlay); border-radius: var(--radius-full); overflow: hidden; flex-shrink: 0; display: inline-block; }
   .sim-fill { display: block; height: 100%; background: var(--accent); border-radius: var(--radius-full); transition: width 0.2s ease; }
   .sim-label { font-family: var(--font-ui); font-size: var(--text-2xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); white-space: nowrap; }
-  .mass-check {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 22px;
-    height: 22px;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border-dim);
-    background: var(--bg-raised);
-    color: var(--accent-fg);
-    flex-shrink: 0;
-    cursor: pointer;
-  }
-  .mass-check:disabled { opacity: 0.35; cursor: default; }
-
   /* Skeletons */
   .sk-result { display: flex; align-items: center; gap: var(--sp-3); padding: 7px var(--sp-2); }
   .sk-cover { width: 36px; height: 54px; border-radius: var(--radius-sm); flex-shrink: 0; }
@@ -817,7 +594,6 @@
   .migrate-btn:disabled { opacity: 0.5; cursor: default; }
 
   /* Error */
-  .notice.inline { margin: 0 var(--sp-2); border-radius: var(--radius-md); border: 1px solid var(--border-dim); }
   .error { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--text-xs); color: var(--color-error); padding: var(--sp-2) var(--sp-3); background: rgba(180,60,60,0.08); border-radius: var(--radius-md); border: 1px solid rgba(180,60,60,0.2); }
 
   @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }

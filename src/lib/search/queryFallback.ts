@@ -82,6 +82,7 @@ export async function resolveSearchResultsWithFallback<TResult>(
         return results;
       }
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
       lastError = error;
     }
   }

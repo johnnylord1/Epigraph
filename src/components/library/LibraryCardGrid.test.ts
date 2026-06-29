@@ -332,6 +332,34 @@ describe("LibraryCardGrid", () => {
       });
 
       const card = await screen.findByRole("button", { name: "Visible Card" });
+      Object.defineProperty(scroller, "getBoundingClientRect", {
+        value: () => ({
+          top: 0,
+          right: 600,
+          bottom: 600,
+          left: 0,
+          width: 600,
+          height: 600,
+          x: 0,
+          y: 0,
+          toJSON: () => ({}),
+        }),
+        configurable: true,
+      });
+      Object.defineProperty(card, "getBoundingClientRect", {
+        value: () => ({
+          top: 20,
+          right: 180,
+          bottom: 260,
+          left: 20,
+          width: 160,
+          height: 240,
+          x: 20,
+          y: 20,
+          toJSON: () => ({}),
+        }),
+        configurable: true,
+      });
       expect(card.classList.contains("library-motion-running")).toBe(false);
       MockIntersectionObserver.instances[0]?.trigger(true);
       await waitFor(() => expect(card.classList.contains("library-motion-running")).toBe(true));

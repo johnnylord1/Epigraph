@@ -12,7 +12,7 @@
     Plus,
     X,
   } from "phosphor-svelte";
-  import { gql } from "../../lib/client";
+  import { gql, gqlUpload } from "../../lib/client";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import {
     FETCH_EXTENSIONS,
@@ -45,11 +45,13 @@
   import { _ } from "../../lib/i18n/runtime";
   import { ensureExtensionRepo, RECOMMENDED_EXTENSION_REPO } from "../../lib/defaultRepos";
   import { ensureServerAwakeFor, maybeStandbyLocalServer, SERVER_READY_EVENT } from "../../lib/serverLifecycle";
+  import { waitForSuwayomiGraphqlReady } from "../../lib/suwayomiReadiness";
   import { detectSetupState, type SetupState } from "../../lib/setupState";
   import { mockSettingsStore, type MockExtensionSettingsPatch } from "../../store/mockSettingsStore";
   import NocturneState from "../shared/NocturneState.svelte";
   import SetupStatusCard from "../shared/SetupStatusCard.svelte";
   import ExtensionSettingsPanel from "./ExtensionSettingsPanel.svelte";
+  import MassMigrateModal from "./MassMigrateModal.svelte";
 
   type Filter = "installed" | "available" | "updates" | "all";
   type UtilityPanel = null | "apk" | "repos" | "novelRepos";
@@ -88,7 +90,8 @@
   let expanded = $state(new Set<string>());
   let selectedPkgName = $state<string | null>(null);
   let utilityPanel: UtilityPanel = $state(null);
-  let externalUrl = $state("");
+  let externalFile: File | null = $state(null);
+  let externalFileInput: HTMLInputElement | null = $state(null);
   let installingExternal = $state(false);
   let installError = $state<string | null>(null);
   let installSuccess = $state(false);
@@ -103,6 +106,11 @@
   let novelRepositoryState: PersistedNovelRepositoryState | null = $state(null);
   let updatingAll = $state(false);
   let refreshingNovelRepositoryId = $state<string | null>(null);
+  let extensionLoadError = $state<string | null>(null);
+  let lastMangaExtensions: ManagedExtension[] = $state([]);
+  let lastNovelExtensions: ManagedExtension[] = $state([]);
+  let massMigrationExtension: ManagedExtension | null = $state(null);
+  let mangaExtensionCatalogLoaded = $state(false);
   let extensionLoadRun = 0;
 
   const isNovelMode = $derived(contentType === "novels");
@@ -188,6 +196,14 @@
   const visibleGroups = $derived(groups.slice(0, renderVisible));
   const hasMore = $derived(groups.length > renderVisible);
   const remainingCount = $derived(Math.max(0, groups.length - renderVisible));
+  const showLoadError = $derived(Boolean(extensionLoadError && !loading && groups.length === 0));
+  const awaitingFirstMangaCatalog = $derived(
+    !isNovelMode
+    && !loading
+    && !extensionLoadError
+    && !mangaExtensionCatalogLoaded
+    && extensions.length === 0,
+  );
 
   async function refreshSetupState() {
     setupState = await detectSetupState(store.settings);
@@ -206,6 +222,10 @@
 
   function extensionErrorMessage(error: unknown) {
     return error instanceof Error ? error.message : String(error || "Extension operation failed");
+  }
+
+  function extensionOperationLabel(operation: ExtensionOperation) {
+    return operation === "install" ? "Install" : operation === "update" ? "Update" : "Remove";
   }
 
   function startExtensionOperation(pkgName: string, operation: ExtensionOperation) {
@@ -280,6 +300,9 @@
       return data.extensions.nodes;
     } catch (firstError) {
       if (!(await ensureMangaServerAwake())) throw firstError;
+      if (!(await waitForSuwayomiGraphqlReady("extensions", { attempts: 8, delayMs: 800, timeoutMs: 5000 }))) {
+        throw firstError;
+      }
       const data = await gql<{ extensions: { nodes: Extension[] } }>(GET_EXTENSIONS, undefined, undefined, 15000);
       return data.extensions.nodes;
     }
@@ -289,12 +312,20 @@
     try {
       const nodes = await fetchMangaExtensionNodes();
       if (isCurrentExtensionLoad(run, "manga")) {
-        extensions = nodes.map(toManagedMangaExtension);
+        const next = nodes.map(toManagedMangaExtension);
+        mangaExtensionCatalogLoaded = true;
+        lastMangaExtensions = next;
+        extensions = next;
+        extensionLoadError = null;
       }
     } catch (error) {
       console.error(error);
+      if (isCurrentExtensionLoad(run, "manga")) {
+        extensionLoadError = extensionErrorMessage(error);
+        if (lastMangaExtensions.length > 0) extensions = lastMangaExtensions;
+      }
     } finally {
-      if (isCurrentExtensionLoad(run, "manga")) await refreshSetupState();
+      if (isCurrentExtensionLoad(run, "manga")) void refreshSetupState();
     }
   }
 
@@ -306,7 +337,7 @@
       });
       if (!isCurrentExtensionLoad(run, "novels")) return;
       novelRepositoryState = state;
-      extensions = state.catalogEntries
+      const next = state.catalogEntries
         .slice()
         .sort((left, right) => {
           const byName = left.name.localeCompare(right.name);
@@ -316,10 +347,14 @@
           entry,
           getNovelCatalogEntryInstallState(state, entry).status,
         ));
+      lastNovelExtensions = next;
+      extensions = next;
+      extensionLoadError = null;
     } catch (error) {
       console.error(error);
       if (isCurrentExtensionLoad(run, "novels")) {
-        extensions = [];
+        extensionLoadError = extensionErrorMessage(error);
+        if (lastNovelExtensions.length > 0) extensions = lastNovelExtensions;
         novelRepositoryState = null;
       }
     } finally {
@@ -354,12 +389,20 @@
         return;
       }
       if (!(await ensureMangaServerAwake())) return;
+      if (!(await waitForSuwayomiGraphqlReady("extensions", { attempts: 8, delayMs: 800, timeoutMs: 5000 }))) {
+        throw new Error("Suwayomi is still starting. Try refreshing extensions again in a moment.");
+      }
       const data = await gql<{ fetchExtensions: { extensions: Extension[] } }>(FETCH_EXTENSIONS);
       if (isCurrentExtensionLoad(run, "manga")) {
-        extensions = data.fetchExtensions.extensions.map(toManagedMangaExtension);
+        const next = data.fetchExtensions.extensions.map(toManagedMangaExtension);
+        mangaExtensionCatalogLoaded = true;
+        lastMangaExtensions = next;
+        extensions = next;
+        extensionLoadError = null;
       }
     } catch (error) {
       console.error(error);
+      if (isCurrentExtensionLoad(run, mode)) extensionLoadError = extensionErrorMessage(error);
     } finally {
       if (isCurrentExtensionLoad(run, mode)) {
         refreshing = false;
@@ -557,6 +600,19 @@
       await refreshSetupState();
       return false;
     }
+    if (!(await waitForSuwayomiGraphqlReady("extensions", { attempts: 8, delayMs: 800, timeoutMs: 5000 }))) {
+      const message = "Suwayomi is still starting. Try the extension action again in a moment.";
+      setExtensionOperationError(pkgName, message);
+      addToast({
+        kind: "error",
+        title: translate("ui_extensionActionUnavailable"),
+        body: message,
+        duration: 6000,
+      });
+      finishExtensionOperation(pkgName);
+      await refreshSetupState();
+      return false;
+    }
     let ok = true;
     try {
       await fn();
@@ -566,10 +622,11 @@
       ok = false;
       console.error(error);
       const message = extensionErrorMessage(error);
+      const extensionName = extensions.find((extension) => extension.pkgName === pkgName)?.name ?? "extension";
       setExtensionOperationError(pkgName, message);
       addToast({
         kind: "error",
-        title: translate("ui_extensionActionFailed"),
+        title: `${extensionOperationLabel(operation)} ${extensionName} failed`,
         body: message,
         duration: 6000,
       });
@@ -636,6 +693,9 @@
       if (!(await ensureMangaServerAwake())) {
         throw new Error("Suwayomi is not available right now.");
       }
+      if (!(await waitForSuwayomiGraphqlReady("extensions", { attempts: 8, delayMs: 800, timeoutMs: 5000 }))) {
+        throw new Error("Suwayomi is still starting. Try installing the extension again in a moment.");
+      }
       await gql(UPDATE_EXTENSION, { id: extension.pkgName, install: true }, undefined, 60000);
       bumpContentSetupVersion();
       await loadExtensions();
@@ -699,14 +759,13 @@
   }
 
   async function installExternal() {
-    const url = externalUrl.trim();
-    if (!url) return;
-    if (!url.startsWith("http://") && !url.startsWith("https://")) {
-      installError = "URL must start with http:// or https://";
+    const file = externalFile;
+    if (!file) {
+      installError = "Choose an .apk extension file first.";
       return;
     }
-    if (!url.endsWith(".apk")) {
-      installError = "URL must point to an .apk file";
+    if (!file.name.toLowerCase().endsWith(".apk")) {
+      installError = "File must be an .apk extension package.";
       return;
     }
 
@@ -718,9 +777,17 @@
         installError = "Suwayomi is not available right now.";
         return;
       }
-      await gql(INSTALL_EXTERNAL_EXTENSION, { url });
+      if (!(await waitForSuwayomiGraphqlReady("extensions", { attempts: 8, delayMs: 800, timeoutMs: 5000 }))) {
+        installError = "Suwayomi is still starting. Try installing the APK again in a moment.";
+        return;
+      }
+      await gqlUpload(
+        INSTALL_EXTERNAL_EXTENSION,
+        { extensionFile: null },
+        { "variables.extensionFile": file },
+      );
       installSuccess = true;
-      externalUrl = "";
+      clearExternalFile();
       bumpContentSetupVersion();
       await loadExtensions();
       window.setTimeout(() => {
@@ -738,10 +805,22 @@
     utilityPanel = utilityPanel === next ? null : next;
     installError = null;
     installSuccess = false;
-    externalUrl = "";
+    clearExternalFile();
     repoError = null;
     newRepoUrl = "";
     if (next === "repos") void loadRepos();
+  }
+
+  function selectExternalFile(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    externalFile = input.files?.[0] ?? null;
+    installError = null;
+    installSuccess = false;
+  }
+
+  function clearExternalFile() {
+    externalFile = null;
+    if (externalFileInput) externalFileInput.value = "";
   }
 
   function openExtensionSettings(extension: ManagedExtension) {
@@ -749,6 +828,11 @@
     selectedPkgName = extension.pkgName;
     utilityPanel = null;
     mockSettingsStore.getConfig(extension.pkgName, extension);
+  }
+
+  function openMassMigration(extension: ManagedExtension) {
+    if (extension.kind !== "manga" || !extension.isInstalled) return;
+    massMigrationExtension = extension;
   }
 
   function updateConfig(pkgName: string, patch: MockExtensionSettingsPatch) {
@@ -805,6 +889,7 @@
           ? { ...item, isInstalled: false, hasUpdate: false }
           : item
       ));
+      lastMangaExtensions = extensions.filter((item) => item.kind === "manga");
       addToast({
         kind: "success",
         title: translate("ui_extensionRemoved"),
@@ -820,7 +905,10 @@
       return;
     }
     const didUpdate = await mutate(
-      () => gql(UPDATE_EXTENSION, { id: extension.pkgName, update: true }),
+      async () => {
+        await gql(FETCH_EXTENSIONS, undefined, undefined, 60000);
+        await gql(UPDATE_EXTENSION, { id: extension.pkgName, update: true }, undefined, 60000);
+      },
       extension.pkgName,
       "update",
       false,
@@ -834,6 +922,7 @@
     extensions = extensions.map((item) => (
       item.pkgName === extension.pkgName ? refreshed : item
     ));
+    lastMangaExtensions = extensions.filter((item) => item.kind === "manga");
     mockSettingsStore.refreshConfig(extension.pkgName, refreshed);
     addToast({
       kind: "success",
@@ -892,10 +981,14 @@
         if (!(await ensureMangaServerAwake())) {
           throw new Error("Suwayomi is not available right now.");
         }
+        if (!(await waitForSuwayomiGraphqlReady("extensions", { attempts: 8, delayMs: 800, timeoutMs: 5000 }))) {
+          throw new Error("Suwayomi is still starting. Try updating extensions again in a moment.");
+        }
+        await gql(FETCH_EXTENSIONS, undefined, undefined, 60000);
         const updatedPkgNames = new Set<string>();
         for (const extension of candidates) {
           try {
-            await gql(UPDATE_EXTENSION, { id: extension.pkgName, update: true });
+            await gql(UPDATE_EXTENSION, { id: extension.pkgName, update: true }, undefined, 60000);
             updatedPkgNames.add(extension.pkgName);
             mockSettingsStore.refreshConfig(extension.pkgName, {
               ...extension,
@@ -912,6 +1005,7 @@
             ? { ...extension, hasUpdate: false }
             : extension
         ));
+        lastMangaExtensions = extensions.filter((extension) => extension.kind === "manga");
         bumpContentSetupVersion();
       }
       const succeededCount = candidates.length - failedUpdateCount;
@@ -991,29 +1085,32 @@
     const run = ++extensionLoadRun;
     selectedPkgName = null;
     utilityPanel = null;
+    massMigrationExtension = null;
     search = "";
     loading = true;
     refreshing = false;
-    extensions = [];
+    extensionLoadError = null;
+    const snapshot = untrack(() => mode === "manga" ? lastMangaExtensions : lastNovelExtensions);
+    mangaExtensionCatalogLoaded = mode === "manga" && snapshot.length > 0;
+    extensions = snapshot.length > 0 ? snapshot : [];
     if (mode === "manga") novelRepositoryState = null;
-    untrack(() => Promise.all([
-      loadExtensions(run),
-      mode === "novels" ? Promise.resolve() : refreshSetupState(),
-    ]).finally(() => {
-      if (isCurrentExtensionLoad(run, mode)) loading = false;
-    }));
+    untrack(() => {
+      void loadExtensions(run).finally(() => {
+        if (isCurrentExtensionLoad(run, mode)) loading = false;
+      });
+      if (mode !== "novels") void refreshSetupState();
+    });
   });
 
   onMount(() => {
     const handleServerReady = () => {
       if (isNovelMode) return;
-      void Promise.all([
-        loadExtensions(),
-        loadRepos(),
-        refreshSetupState(),
-      ]).finally(() => {
-        loading = false;
+      const run = ++extensionLoadRun;
+      void loadExtensions(run).finally(() => {
+        if (isCurrentExtensionLoad(run, "manga")) loading = false;
       });
+      void loadRepos();
+      void refreshSetupState();
     };
     window.addEventListener(SERVER_READY_EVENT, handleServerReady);
     return () => window.removeEventListener(SERVER_READY_EVENT, handleServerReady);
@@ -1187,14 +1284,14 @@
 
     {#if !isNovelMode && utilityPanel === "apk"}
       <div class="repoOverlay" role="presentation">
-        <button class="repoOverlayBackdrop" type="button" aria-label={$_("sources.apk.closePanel")} onclick={() => (utilityPanel = null)}></button>
+        <button class="repoOverlayBackdrop" type="button" aria-label={$_("sources.apk.closePanel")} onclick={() => openUtilityPanel("apk")}></button>
         <section class="utilityPanel repoWindow repoWindowNarrow">
           <div class="utilityHeader">
             <div class="utilityHeaderCopy">
               <strong>{$_("sources.apk.title")}</strong>
               <span>{$_("sources.apk.subtitle")}</span>
             </div>
-            <button class="closeUtility" type="button" onclick={() => (utilityPanel = null)}><X size={14} weight="bold" /></button>
+            <button class="closeUtility" type="button" onclick={() => openUtilityPanel("apk")}><X size={14} weight="bold" /></button>
           </div>
           <div class="repoHint">
             {$_("sources.apk.hint")}
@@ -1202,13 +1299,13 @@
           <div class="inlineForm">
             <input
               class:error={installError}
-              placeholder={$_("ui_httpsExampleComExtensionApk")}
-              bind:value={externalUrl}
+              type="file"
+              accept=".apk,application/vnd.android.package-archive"
+              bind:this={externalFileInput}
               disabled={installingExternal}
-              oninput={() => (installError = null)}
-              onkeydown={(event) => event.key === "Enter" && !installingExternal && installExternal()}
+              onchange={selectExternalFile}
             />
-            <button type="button" class:success={installSuccess} disabled={installingExternal || !externalUrl.trim()} onclick={installExternal}>
+            <button type="button" class:success={installSuccess} disabled={installingExternal} onclick={installExternal}>
               {#if installingExternal}
                 <CircleNotch size={13} weight="bold" class="anim-spin" />
               {:else if installSuccess}
@@ -1286,9 +1383,32 @@
       </div>
     {/if}
 
-    {#if loading}
+    {#if loading || awaitingFirstMangaCatalog}
       <div class="emptyState">
         <CircleNotch size={18} weight="bold" class="anim-spin" />
+      </div>
+    {:else if showLoadError}
+      <div class="emptyState emptyState--panel">
+        <NocturneState
+          layout="center"
+          tone="warning"
+          icon="retry"
+          eyebrow="Suwayomi"
+          title="Suwayomi is still reconnecting"
+          body={extensionLoadError ?? "Aethon could not read sources yet. Your last installed extensions were kept."}
+          actions={[{
+            label: $_("sources.actions.refresh"),
+            kind: "primary",
+            icon: "retry",
+            onClick: () => {
+              loading = true;
+              const run = ++extensionLoadRun;
+              void loadExtensions(run).finally(() => {
+                if (isCurrentExtensionLoad(run, isNovelMode ? "novels" : "manga")) loading = false;
+              });
+            },
+          }]}
+        />
       </div>
     {:else if groups.length === 0}
       <div class="emptyState emptyState--panel">
@@ -1441,7 +1561,20 @@
       busy={isExtensionWorking(selectedExtension.pkgName)}
       onClose={() => (selectedPkgName = null)}
       onInstall={installExtension}
+      onMassMigration={openMassMigration}
       onUpdateConfig={updateConfig}
+    />
+  {/if}
+
+  {#if massMigrationExtension}
+    <MassMigrateModal
+      extension={massMigrationExtension}
+      installedExtensionPkgNames={extensions.filter((extension) => extension.kind === "manga" && extension.isInstalled).map((extension) => extension.pkgName)}
+      onClose={() => (massMigrationExtension = null)}
+      onCompleted={() => {
+        massMigrationExtension = null;
+        void loadExtensions();
+      }}
     />
   {/if}
 </div>

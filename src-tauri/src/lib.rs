@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use std::borrow::Cow;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{Shutdown, TcpStream, ToSocketAddrs};
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
@@ -2700,16 +2700,21 @@ fn probe_local_server(server_url: &str, timeout: Duration) -> bool {
         return false;
     }
 
-    let mut buffer = [0u8; 256];
-    let Ok(read) = stream.read(&mut buffer) else {
+    let _ = stream.shutdown(Shutdown::Write);
+
+    let mut response = String::new();
+    let Ok(read) = stream.read_to_string(&mut response) else {
         return false;
     };
     if read == 0 {
         return false;
     }
 
-    let response_head = String::from_utf8_lossy(&buffer[..read]);
-    response_head.starts_with("HTTP/1.1 ") || response_head.starts_with("HTTP/1.0 ")
+    let status_ok = response.starts_with("HTTP/1.1 200") || response.starts_with("HTTP/1.0 200");
+    status_ok
+        && response.contains("\"data\"")
+        && response.contains("\"__typename\"")
+        && response.contains("\"Query\"")
 }
 
 const LOCAL_SERVER_HEALTH_PROBE_TIMEOUT: Duration = Duration::from_millis(2500);
@@ -4108,13 +4113,6 @@ fn spawn_server(
     update_intensity: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<(), SpawnError> {
-    {
-        let state = app.state::<ServerState>();
-        if state.0.lock().unwrap().is_some() {
-            return Ok(());
-        }
-    }
-
     let launch_target = app.state::<LaunchTarget>().0.clone();
     let mut target = resolve_local_server_target(
         &launch_target,
@@ -4193,6 +4191,52 @@ fn spawn_server(
         &mut log,
         &format!("[spawn_server] current_dir = {:?}", std::env::current_dir()),
     );
+
+    {
+        let state = app.state::<ServerState>();
+        let mut guard = state.0.lock().unwrap();
+        let mut stale_tracked_server: Option<RunningServer> = None;
+        if let Some(running) = guard.as_mut() {
+            if running.owner_path == owner_path {
+                let reusable = read_server_owner(&running.owner_path)
+                    .map(|owner| {
+                        validate_server_owner(&target, &owner) == OwnerReuseDecision::Reusable
+                    })
+                    .unwrap_or(false);
+                if reusable {
+                    do_log(
+                        &mut log,
+                        "[spawn_server] tracked server valid, reusing existing server",
+                    );
+                    return Ok(());
+                }
+
+                do_log(
+                    &mut log,
+                    "[spawn_server] tracked server is stale or unhealthy; clearing in-memory owner",
+                );
+                stale_tracked_server = guard.take();
+            } else {
+                do_log(
+                    &mut log,
+                    &format!(
+                        "[spawn_server] tracked server belongs to a different root {:?}; continuing target validation",
+                        running.owner_path.parent()
+                    ),
+                );
+            }
+        }
+        drop(guard);
+        if let Some(running) = stale_tracked_server {
+            let _ = running.child.kill();
+            let _ = std::fs::remove_file(&running.spawn_lock_path);
+            let _ = std::fs::remove_file(&running.owner_path);
+            if let Some(parent) = running.owner_path.parent() {
+                let _ = std::fs::remove_file(parent.join("server.owner.json.tmp"));
+            }
+        }
+    }
+
     if let Some(diagnostic_log_path) = &main_startup_diagnostic_path {
         append_timestamped_line(diagnostic_log_path, "");
         append_timestamped_line(

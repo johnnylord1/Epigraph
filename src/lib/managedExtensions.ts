@@ -11,11 +11,13 @@ export interface ManagedExtension {
   name: string;
   lang: string;
   versionName: string;
+  versionCode?: number;
   isInstalled: boolean;
   isObsolete: boolean;
   hasUpdate: boolean;
   iconUrl: string | null;
   kind: ManagedExtensionKind;
+  repo?: string | null;
   repositoryUrl?: string;
   site?: string;
   novelPluginId?: string;

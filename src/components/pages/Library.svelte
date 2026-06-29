@@ -165,6 +165,7 @@
   let libraryLoadRetryCount = 0;
   let categoryLoadRetryTimer: ReturnType<typeof setTimeout> | null = null;
   let categoryLoadRetryCount = 0;
+  let recoveredEmptyStartupCategory = false;
   const categoryMemberRefreshAttempts = new Set<number>();
   let lastLoadedScopeKey: string | null = null;
   const libraryLoadRetryLimit = 30;
@@ -957,6 +958,23 @@
       hardcoverRecords: hardcoverTrackingRecords,
     }),
   );
+
+  $effect(() => {
+    if (recoveredEmptyStartupCategory) return;
+    if (store.librarySection !== "comics") return;
+    if (loading || comicsSearch.trim() || activeLibraryGenre) return;
+    const filter = store.libraryFilter;
+    if (filter === "library" || filter === "downloaded") return;
+    if (allManga.length === 0) return;
+
+    const category = comicsSectionState.visibleCategories.find((entry) => String(entry.id) === filter);
+    if (!category) return;
+    const count = comicsSectionState.counts[filter] ?? 0;
+    if (count > 0) return;
+
+    recoveredEmptyStartupCategory = true;
+    untrack(() => setLibraryFilter("library"));
+  });
   const visibleNovelEntries = $derived(
     (bookTypeFilter === "all" || bookTypeFilter === "sources")
       ? novelsShelf.entries

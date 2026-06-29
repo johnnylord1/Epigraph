@@ -1,6 +1,6 @@
 <script lang="ts">
   import { _ } from "../../lib/i18n/runtime";
-  import { X } from "phosphor-svelte";
+  import { StackSimple, X } from "phosphor-svelte";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import type { ManagedExtension } from "../../lib/managedExtensions";
   import type { MockExtensionSettings, MockExtensionSettingsPatch } from "../../store/mockSettingsStore";
@@ -11,6 +11,7 @@
     busy = false,
     onClose,
     onInstall,
+    onMassMigration,
     onUpdateConfig,
   }: {
     extension: ManagedExtension;
@@ -18,6 +19,7 @@
     busy?: boolean;
     onClose: () => void;
     onInstall: (extension: ManagedExtension) => void;
+    onMassMigration?: (extension: ManagedExtension) => void;
     onUpdateConfig: (pkgName: string, patch: MockExtensionSettingsPatch) => void;
   } = $props();
 
@@ -48,6 +50,8 @@
   function update(patch: MockExtensionSettingsPatch) {
     onUpdateConfig(extension.pkgName, patch);
   }
+
+  const canMassMigrate = $derived(extension.kind === "manga" && extension.isInstalled);
 </script>
 
 <div class="settingsBackdrop" onclick={onClose} aria-hidden="true"></div>
@@ -129,6 +133,15 @@
       </button>
     </section>
   {:else}
+    {#if canMassMigrate && onMassMigration}
+      <section class="availablePanel">
+        <button class="primaryCta massMigrationCta" type="button" disabled={busy} onclick={() => onMassMigration?.(extension)}>
+          <StackSimple size={14} weight="bold" />
+          Mass migration
+        </button>
+      </section>
+    {/if}
+
     <section class="settingsSection">
       <div class="sectionTitle">
         <span>{$_("ui_runtime")}</span>

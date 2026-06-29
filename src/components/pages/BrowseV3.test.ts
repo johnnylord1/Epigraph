@@ -1,9 +1,10 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { tick } from "svelte";
 
 const {
   gqlMock,
+  gqlUploadMock,
   addToastMock,
   browseInstalledNovelSourceMock,
   detectSetupStateMock,
@@ -55,15 +56,50 @@ const {
         hasUpdate: false,
         iconUrl: null,
       },
+      {
+        apkName: "comick.apk",
+        pkgName: "ext.comick",
+        name: "Comick",
+        lang: "en",
+        versionName: "1.0",
+        isInstalled: true,
+        isObsolete: false,
+        hasUpdate: false,
+        iconUrl: null,
+      },
     );
   });
 
   return {
     addToastMock: vi.fn(),
+    gqlUploadMock: vi.fn(async () => ({
+      installExternalExtension: {
+        extension: {
+          apkName: "external.apk",
+          pkgName: "ext.external",
+          name: "External Source",
+          isInstalled: true,
+        },
+      },
+    })),
     resetMangaExtensionsMock,
     failMangaUpdateIdsMock,
     sourceMangaFailureMock,
     gqlMock: vi.fn(async (query: string, variables?: Record<string, unknown>) => {
+    if (query.includes("AethonGraphqlReady")) return { __typename: "Query" };
+    if (query.includes("AethonExtensionsReady")) return {
+      extensions: {
+        nodes: mangaExtensionsMock.map((extension) => ({
+          pkgName: extension.pkgName,
+          isInstalled: extension.isInstalled,
+        })),
+      },
+    };
+    if (query.includes("AethonSourcesReady")) return {
+      sources: {
+        nodes: [{ id: "manga-src", displayName: "Manga Source" }],
+      },
+    };
     if (query === "GET_SOURCES") return {
       sources: {
         nodes: [
@@ -95,7 +131,7 @@ const {
         ],
       },
     };
-    if (query === "GET_LIBRARY") return {
+    if (query === "GET_LIBRARY_SEARCH_SNAPSHOT") return {
       mangas: {
         nodes: [],
       },
@@ -115,6 +151,110 @@ const {
             trackRecords: {
               nodes: [],
             },
+          },
+        ],
+      },
+    };
+    if (query === "GET_SOURCES_WITH_EXTENSIONS") return {
+      sources: {
+        nodes: [
+          {
+            id: "mangadex-src",
+            name: "mangadex",
+            displayName: "MangaDex",
+            lang: "en",
+            iconUrl: null,
+            isNsfw: false,
+            extension: { pkgName: "ext.mangadex", name: "MangaDex", lang: "en" },
+          },
+          {
+            id: "mangadex-pt-src",
+            name: "mangadex",
+            displayName: "MangaDex",
+            lang: "pt-BR",
+            iconUrl: null,
+            isNsfw: false,
+            extension: { pkgName: "ext.mangadex", name: "MangaDex", lang: "all" },
+          },
+          {
+            id: "mangadex-ja-src",
+            name: "mangadex",
+            displayName: "MangaDex",
+            lang: "ja",
+            iconUrl: null,
+            isNsfw: false,
+            extension: { pkgName: "ext.mangadex", name: "MangaDex", lang: "all" },
+          },
+          {
+            id: "asura-src",
+            name: "asura",
+            displayName: "Asura Scans",
+            lang: "en",
+            iconUrl: null,
+            isNsfw: false,
+            extension: { pkgName: "ext.asura", name: "Asura Scans", lang: "en" },
+          },
+          {
+            id: "asura-pt-src",
+            name: "asura",
+            displayName: "Asura Scans",
+            lang: "pt-BR",
+            iconUrl: null,
+            isNsfw: false,
+            extension: { pkgName: "ext.asura", name: "Asura Scans", lang: "all" },
+          },
+          {
+            id: "comick-src",
+            name: "comick",
+            displayName: "Comick",
+            lang: "en",
+            iconUrl: null,
+            isNsfw: false,
+            extension: { pkgName: "ext.comick", name: "Comick", lang: "en" },
+          },
+          {
+            id: "comick-ja-src",
+            name: "comick",
+            displayName: "Comick",
+            lang: "ja",
+            iconUrl: null,
+            isNsfw: false,
+            extension: { pkgName: "ext.comick", name: "Comick", lang: "all" },
+          },
+        ],
+      },
+    };
+    if (query === "GET_LIBRARY") return {
+      mangas: {
+        nodes: [
+          {
+            id: 101,
+            title: "Library Manga",
+            thumbnailUrl: "",
+            inLibrary: true,
+            sourceId: "mangadex-src",
+            source: { id: "mangadex-src", name: "mangadex", displayName: "MangaDex", lang: "en" },
+          },
+        ],
+      },
+    };
+    if (query === "GET_CHAPTERS") return {
+      chapters: {
+        nodes: [
+          {
+            id: 1001,
+            name: "Chapter 1",
+            chapterNumber: 1,
+            sourceOrder: 1,
+            isRead: true,
+            isDownloaded: false,
+            isBookmarked: false,
+            pageCount: 10,
+            mangaId: variables?.mangaId ?? 101,
+            uploadDate: null,
+            realUrl: null,
+            lastPageRead: 0,
+            scanlator: null,
           },
         ],
       },
@@ -223,16 +363,20 @@ const {
 
 vi.mock("../../lib/client", () => ({
   gql: gqlMock,
+  gqlUpload: gqlUploadMock,
   thumbUrl: vi.fn((url: string | null) => url ?? ""),
 }));
 
 vi.mock("../../lib/queries", () => ({
   GET_SOURCES: "GET_SOURCES",
+  GET_SOURCES_WITH_EXTENSIONS: "GET_SOURCES_WITH_EXTENSIONS",
+  GET_LIBRARY: "GET_LIBRARY",
+  GET_CHAPTERS: "GET_CHAPTERS",
   EXPLORE_ALL_MANGA: "EXPLORE_ALL_MANGA",
   FETCH_SOURCE_MANGA: "FETCH_SOURCE_MANGA",
   GET_TRACKERS: "GET_TRACKERS",
   SEARCH_TRACKER: "SEARCH_TRACKER",
-  GET_LIBRARY: "GET_LIBRARY",
+  GET_LIBRARY_SEARCH_SNAPSHOT: "GET_LIBRARY_SEARCH_SNAPSHOT",
   GET_ALL_TRACKER_RECORDS: "GET_ALL_TRACKER_RECORDS",
   GET_EXTENSIONS: "GET_EXTENSIONS",
   FETCH_EXTENSIONS: "FETCH_EXTENSIONS",
@@ -352,6 +496,7 @@ import BrowseV3 from "./BrowseV3.svelte";
 describe("BrowseV3", () => {
   beforeEach(() => {
     gqlMock.mockClear();
+    gqlUploadMock.mockClear();
     addToastMock.mockClear();
     resetMangaExtensionsMock();
     sourceMangaFailureMock.value = null;
@@ -433,6 +578,8 @@ describe("BrowseV3", () => {
       expect(gqlMock).toHaveBeenCalledWith(
         "UPDATE_EXTENSION",
         expect.objectContaining({ id: "ext.mangadex", update: true }),
+        undefined,
+        60000,
       );
     });
     await waitFor(() => {
@@ -454,6 +601,32 @@ describe("BrowseV3", () => {
     await waitFor(() => {
       expect(addToastMock).toHaveBeenCalledWith(expect.objectContaining({ title: "Extension removed" }));
     });
+  });
+
+  test("opens mass migration from an installed manga extension settings panel", async () => {
+    render(BrowseV3);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Sources" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("MangaDex")).toBeTruthy();
+    });
+
+    await fireEvent.click(screen.getByText("MangaDex"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Mass migration" })).toBeTruthy();
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Mass migration" }));
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Mass migration").length).toBeGreaterThan(1);
+      expect(screen.getAllByText("Comick").length).toBeGreaterThan(0);
+    });
+    expect(screen.getAllByText("Comick").length).toBeGreaterThan(0);
+    expect(screen.queryByText("PT-BR")).toBeNull();
+    expect(screen.queryByText("JA")).toBeNull();
   });
 
   test("reports partial failures when updating all manga extensions", async () => {
@@ -479,6 +652,54 @@ describe("BrowseV3", () => {
     });
   });
 
+  test("installs external manga extensions from a local apk file", async () => {
+    const { container } = render(BrowseV3);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Sources" }));
+    await waitFor(() => {
+      expect(screen.getByText("MangaDex")).toBeTruthy();
+    });
+
+    await fireEvent.click(screen.getByTitle("Install APK file"));
+    await waitFor(() => {
+      expect(screen.getByText("Choose a local `.apk` extension package. Aethon will install it through the same extension manager used by repository installs.")).toBeTruthy();
+    });
+
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement | null;
+    expect(fileInput).toBeTruthy();
+    const panel = screen.getByText("Install APK file").closest("section");
+    expect(panel).toBeTruthy();
+    const installButton = within(panel as HTMLElement).getByRole("button", { name: "Install" });
+
+    await fireEvent.click(installButton);
+    await waitFor(() => {
+      expect(screen.getByText("Choose an .apk extension file first.")).toBeTruthy();
+    });
+    expect(gqlUploadMock).not.toHaveBeenCalled();
+
+    await fireEvent.change(fileInput!, {
+      target: { files: [new File(["not an apk"], "source.txt", { type: "text/plain" })] },
+    });
+    await fireEvent.click(installButton);
+    await waitFor(() => {
+      expect(screen.getByText("File must be an .apk extension package.")).toBeTruthy();
+    });
+    expect(gqlUploadMock).not.toHaveBeenCalled();
+
+    await fireEvent.change(fileInput!, {
+      target: { files: [new File(["apk"], "source.apk", { type: "application/vnd.android.package-archive" })] },
+    });
+    await fireEvent.click(installButton);
+
+    await waitFor(() => {
+      expect(gqlUploadMock).toHaveBeenCalledWith(
+        "INSTALL_EXTERNAL_EXTENSION",
+        { extensionFile: null },
+        { "variables.extensionFile": expect.any(File) },
+      );
+    });
+  });
+
   test("shows installed manga extensions when the wake probe is stale but GraphQL responds", async () => {
     ensureServerAwakeForMock.mockResolvedValue(false);
     render(BrowseV3);
@@ -488,7 +709,29 @@ describe("BrowseV3", () => {
     await waitFor(() => {
       expect(screen.getByText("MangaDex")).toBeTruthy();
     });
-    expect(screen.getByText("1 extension")).toBeTruthy();
+    expect(screen.getByText("2 extensions")).toBeTruthy();
+  });
+
+  test("keeps the last manga extension list during a transient reload failure", async () => {
+    render(BrowseV3);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Sources" }));
+    await waitFor(() => {
+      expect(screen.getByText("MangaDex")).toBeTruthy();
+    });
+
+    const baseImplementation = gqlMock.getMockImplementation();
+    gqlMock.mockImplementationOnce(async (query: string, variables?: Record<string, unknown>) => {
+      if (query === "GET_EXTENSIONS") throw new Error("Suwayomi returned an empty GraphQL error.");
+      return baseImplementation?.(query, variables);
+    });
+
+    window.dispatchEvent(new CustomEvent("aethon:server-ready"));
+
+    await waitFor(() => {
+      expect(screen.getByText("MangaDex")).toBeTruthy();
+      expect(screen.queryByText("No extensions found")).toBeNull();
+    });
   });
 
   test("clears stale Sources search when switching between manga and novels", async () => {

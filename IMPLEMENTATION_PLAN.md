@@ -9,6 +9,90 @@ Treat the current working tree as the source of truth. Several features were imp
 
 ### Launch Stabilization Snapshot
 
+- Latest Suwayomi/migration audit -- 2026-06-29:
+  - Re-audited the migration and Suwayomi reachability changes end-to-end after the mass migration UI pass.
+  - Root cause for intermittent `Suwayomi unreachable` after standby/restart was found in the desktop launcher: `spawn_server` trusted an in-memory `ServerState` entry and returned early without validating the Java process or GraphQL readiness. The launcher now validates the tracked owner, Java PID/rootDir, and real GraphQL health before reuse; stale/unhealthy tracked servers are cleared so Suwayomi can be spawned again.
+  - The native health probe now requires a real GraphQL `data.__typename = Query` response instead of treating any HTTP response as healthy.
+  - The startup splash has a bounded failsafe and no longer blocks indefinitely while the local profile reconnects; users can retry or enter the app while the server recovers.
+  - Sources and migration screens continue to wait for Suwayomi GraphQL readiness before rendering empty states or performing extension/migration actions.
+  - Single manga migration and mass manga migration share the same canonical migration engine. Both transfer library membership, categories, read state, bookmarks, and partial `lastPageRead` progress. Mass migration applies that engine item-by-item and journals only successful items so partial failures remain retryable.
+  - Mass migration review state was hardened:
+    - destination source list only includes installed manga extension sources;
+    - the origin extension/source is excluded from target choices;
+    - source language preference is honored when an extension exposes multiple sources;
+    - temporary `excluded` state is not persisted across modal sessions;
+    - the modal only closes automatically on full success, leaving partial failures visible for retry/manual search.
+  - Focused validation passed:
+    - `npm run test:unit -- src/lib/client.test.ts src/lib/serverLifecycle.test.ts src/lib/suwayomiReadiness.test.ts src/lib/migration/manga.test.ts src/lib/migration/journalState.test.ts src/components/pages/MigrateModal.test.ts src/components/shared/SeriesDetailV3Shell.test.ts src/components/library/LibraryCardGrid.test.ts --pool=forks --poolOptions.forks.singleFork=true`
+    - `npx vitest run --project shell-jsdom src/components/pages/BrowseV3.test.ts --pool=threads --poolOptions.threads.singleThread=true`
+    - `cargo check`
+    - `cargo test validate_server_owner_rejects_dead_java_pid --lib`
+    - `npm run build`
+    - `git diff --check`
+  - `npm run build` is green; the only build warning remains the known large chunk warning.
+  - `git diff --check` is clean apart from the repository's existing LF/CRLF warnings.
+  - Release note: `MassMigrateModal.svelte`, `suwayomiReadiness.ts`, and their focused tests are new source files and must be included in the commit/review.
+- Latest release gate follow-up -- 2026-06-26:
+  - Re-ran the real-app release smoke after the mass-migration/readiness fixes.
+  - Dev launcher briefly left a stale `tauri:dev:gate`/Vite process that did not bind `127.0.0.1:1420`; those managed dev processes were stopped before packaging. This did not affect the release binary smoke.
+  - `npm exec pnpm -- tauri build` completed the frontend production build, Rust release compilation, and NSIS bundling.
+  - Generated release artifacts:
+    - `src-tauri/target/release/aethon.exe`
+    - `src-tauri/target/release/bundle/nsis/Aethon_0.0.1_x64-setup.exe`
+  - A first local Tauri build exited non-zero at updater signing because `TAURI_SIGNING_PRIVATE_KEY` was not present in that shell. The signed build was then rerun with the private key injected only for the process via `TAURI_SIGNING_PRIVATE_KEY` and an empty `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; it completed successfully.
+  - Generated updater signature:
+    - `src-tauri/target/release/bundle/nsis/Aethon_0.0.1_x64-setup.exe.sig`
+  - Current artifact hashes:
+    - Installer SHA-256: `8385D37CD48CB5BF8ED8B392723F092A8DD64DCF27FC855CBDC3B46024B7BA81`
+    - Signature SHA-256: `FDDE0F8C66B9EE2B7A72CED9BD00EFD6069AF4C94A662A51384D99FE06F431DD`
+  - The release binary was launched from `src-tauri/target/release/aethon.exe`; it started one `aethon.exe` and one bundled Suwayomi `java.exe` using `C:\Users\jhow-\AppData\Roaming\aethon-main`.
+  - Release binary backend smoke passed through GraphQL on `127.0.0.1:4567`: `Query` readiness, 633 library manga, 10 installed extensions, 111 sources, and 0 pending extension updates.
+  - The generated NSIS installer was installed silently for the current Windows user. The installed executable at `C:\Users\jhow-\AppData\Local\Aethon\Aethon.exe` launched successfully, started exactly one bundled Suwayomi `java.exe` from the installed app directory, and passed the same GraphQL smoke: `Query` readiness, 633 library manga, 10 installed extensions, 111 sources, and 0 pending extension updates.
+  - `Dangerous Dungeon Escape` final release-smoke state was restored correctly after the destructive mass-migration test: Comick (EN) manga `13567` is `inLibrary=true`, has 67 chapters, 30 read chapters, and category `Dropado`; Asura Scans candidates remain `inLibrary=false`.
+  - Release WebView CDP is intentionally unavailable because the `9223` debug port is gated behind `debug_assertions`; automated UI inspection is therefore available in dev builds only. Release smoke used process/backend verification plus visible app launch.
+  - `aethon:server-ready` notifications are now debounced in `src/lib/serverLifecycle.ts` so repeated healthy probes cannot make Browse/Sources recursively reload `GET_SETTINGS`, `GET_EXTENSIONS`, `GET_SOURCES`, trackers, and library snapshots. The regression was reproduced in the real app, fixed, covered by `src/lib/serverLifecycle.test.ts`, and retested with 0 GraphQL requests over 8 seconds while `Sources > Comick > Mass migration` was idle.
+  - Final validation after the debounce fix passed:
+    - `npm run test:unit` with 94 files and 490 tests.
+    - `npm run build`.
+    - `git diff --check`.
+  - Remaining publish gate: run the same installer install/uninstall smoke on a clean Windows profile or VM before uploading the signed artifact.
+- Latest Suwayomi readiness stabilization -- 2026-06-24:
+  - Root cause for the reported Sources/Migration/Detail failures was confirmed from the real MAIN profile: Suwayomi could briefly answer HTTP while GraphQL/database boot was not ready, and logs showed H2 lock failures such as `Database may be already in use`, `The file is locked`, and `OverlappingFileLockException` on `database.mv.db`.
+  - After Suwayomi stabilized, direct GraphQL returned the expected live data: 111 manga sources, 10 installed extensions, Comix with `hasUpdate`, and `Dangerous Dungeon Escape` with chapters. The release blocker was therefore stale/transient frontend state plus weak readiness, not permanently missing extensions/sources.
+  - Added `src/lib/suwayomiReadiness.ts` for real GraphQL readiness probes:
+    - generic GraphQL readiness validates `__typename`;
+    - extension readiness validates `extensions.nodes`;
+    - migration/source readiness validates `sources.nodes`;
+    - transient boot/database/network/empty-GraphQL failures retry instead of being treated as final empty data.
+  - Strengthened the Rust local-server probe so the launcher only treats Suwayomi as healthy when the GraphQL response is HTTP 200 and contains `data.__typename = Query`, instead of accepting a generic HTTP response.
+  - Browse > Sources and the legacy Extensions page now keep the last valid extension list during transient Suwayomi/GraphQL/database failures. If there is no valid snapshot yet, the UI shows a reconnecting/retry state instead of `0 extensoes` / empty installed sources.
+  - Extension operations now wait for extension GraphQL readiness before install/update/remove/update-all and preserve state on failure. Backend failures such as the Comix update still surface as clear operation errors and no longer pretend success or clear the list.
+  - External extension install now uses the current Suwayomi upload contract: `InstallExternalExtension($extensionFile: Upload!)`, `installExternalExtension(input: { extensionFile })`, and `gqlUpload(..., { extensionFile: null }, { "variables.extensionFile": file })`. The visible UI now accepts local `.apk` files instead of URL input.
+  - Manga migration now wakes/waits for Suwayomi before `GET_SOURCES`. A failed source load shows the real error plus retry, and `Nenhuma outra fonte instalada` is shown only after GraphQL returns a real source list with no alternatives after filtering local/current source ids.
+  - SeriesDetail chapter loading now has its own request owner (`loadingChaptersFor`) and retries chapter fetch after GraphQL readiness when the initial read fails during boot. Cached/local detail data can remain visible while chapters refresh.
+  - The shared detail shell now tracks failed cover URLs, clears that failure when the URL/cache generation changes, and retries a failed local proxy cover when the server-ready event fires. SeriesDetail also prefers the detailed `manga` cover data over stale `store.activeManga` cover data.
+  - Real WebView smoke found an additional backend pressure source: Browse recommendations were refreshing the user's library with the full `GET_LIBRARY` query, including nested chapter counts for hundreds of titles, and Suwayomi returned `Java heap space`. Browse now uses a lighter `GET_LIBRARY_SEARCH_SNAPSHOT` query without `chapters`, preserving existing snapshot chapter counts instead of forcing Suwayomi to resolve every title's chapters during Browse startup.
+  - Library preload aborts caused by navigation are again treated as cancellation instead of console errors.
+  - Focused validation passed:
+    - `npm run test:unit -- src/lib/migration/manga.test.ts src/lib/migration/journalState.test.ts --pool=forks --poolOptions.forks.singleFork=true`
+    - `npx vitest run --project unit src/lib/suwayomiReadiness.test.ts src/lib/client.test.ts --pool=forks --poolOptions.forks.singleFork=true`
+    - `npx vitest run --project shell-jsdom src/components/pages/MigrateModal.test.ts src/components/shared/SeriesDetailV3Shell.test.ts --pool=forks --poolOptions.forks.singleFork=true`
+    - `npm run build`
+    - `cargo check` in `src-tauri`
+    - `git diff --check`
+  - `npm run build` is green in this session. The only build warning is the known large chunk warning.
+  - `BrowseV3.test.ts` received a regression test for preserving the last extension list during transient `GET_EXTENSIONS` failure, but the full BrowseV3 shell-jsdom harness did not complete in this environment even when filtered to that test; it stalled during collection/transform for more than five minutes and had to be killed. Treat this as test harness debt, not a product smoke pass.
+  - Real MAIN smoke after restart confirmed one Java/Suwayomi instance, GraphQL readiness, Sources rendering 10 installed extensions with Comix update and no spinner/empty state, `Dangerous Dungeon Escape` rendering chapters without `SEM CAPITULOS`, and Migration listing installed alternative sources instead of the false empty state.
+  - Mass migration was implemented at `Sources > installed manga extension > Mass migration`, using Suwayomi's existing single-title GraphQL operations in a UI-orchestrated queue instead of a custom backend mutation. Real MAIN smoke migrated `Dangerous Dungeon Escape` from Comick (EN) to Asura Scans (EN), verified the target became the Library item, then undid via the migration journal and confirmed Comick (EN) was restored with 67 chapters, 30 read chapters, and the `Dropado` category.
+  - Real mass-migration smoke also found and fixed two release risks:
+    - Browse's recommendation/library snapshot effect was refetching the library whenever `store.libraryMangaSnapshot` changed, then writing a new snapshot and creating a reactive loop. It now mirrors the snapshot locally only while the Search tab is active; explicit startup/readiness events still perform backend refreshes.
+    - Active download polling no longer bumps the global content setup version, so ordinary download progress cannot force Browse/Library/Sources to reload repeatedly.
+  - Completed mass-migration drafts are now discarded after full success, stale drafts use a new storage version, retry clears per-item `failed` state, failed matched items show their error message, and success toasts with an undo journal entry stay visible longer for real user recovery.
+  - Latest focused validation on 2026-06-25 passed:
+    - `npm run test:unit -- src/lib/client.test.ts src/lib/suwayomiReadiness.test.ts src/lib/migration/manga.test.ts src/lib/migration/journalState.test.ts --pool=forks --poolOptions.forks.singleFork=true`
+    - `npx vitest run --project shell-jsdom src/components/pages/BrowseV3.test.ts src/components/pages/MigrateModal.test.ts src/components/shared/SeriesDetailV3Shell.test.ts --pool=threads --poolOptions.threads.singleThread=true`
+    - `npm run build`
+    - `git diff --check`
 - App/package version is now `0.0.1` for the upcoming first public release pass.
 - Branding/name work has moved the desktop identity from Moku/Tauri defaults toward Aethon/Aethon Nocturne in the user-facing shell.
 - Local profiles are no longer limited to hardcoded visible built-ins:
@@ -242,6 +326,36 @@ Treat the current working tree as the source of truth. Several features were imp
     - Signed installer was regenerated and reinstalled silently.
     - Updated installer SHA-256: `AAE4DCFFAD33514B164810BEB0EB026366C24D03634D034BCE2A14888816F19C`.
     - Updated signature SHA-256: `299621DB2BDF2A4B2B5584549F572EB6FD6F0EAD2C4C3C9D47205007EAE83FDF`.
+- Latest SeriesDetail, migration, and Sources update audit:
+  - A real Suwayomi GraphQL audit for `+99 Reinforced Wooden Stick` confirmed the backend has the expected manga detail and `337` chapters for manga id `703`; the detail page was showing `NO CHAPTERS` because `SeriesDetail.svelte` reused the manga-loading guard for chapter-loading responses.
+  - `SeriesDetail.svelte` now tracks chapter request ownership separately from manga request ownership, so cached/fresh chapter responses are not discarded when the manga detail request resolves on a different timing path.
+  - The shared detail shell now falls back to the existing Nocturne cover placeholder when a cover URL fails, instead of leaving a broken image/alt-text block in SeriesDetail/BookDetail/NovelDetail shell usage.
+  - The detail-page `Migrate` button is treated as single-title migration only. The mass-migration tab was removed from the modal UI for now; mass migration remains a later dedicated feature.
+  - Migration code audit found that `MigrateModal.svelte` referenced `GET_CHAPTERS` in the mass-preview path without importing it. The import was fixed so the hidden/deferred path is not left syntactically broken.
+  - Targeted validation passed:
+    - Svelte compiler smoke for `SeriesDetailV3Shell.svelte`, `MigrateModal.svelte`, and `Extensions.svelte`.
+    - `npm run test:unit -- src/lib/migration/manga.test.ts src/lib/migration/journalState.test.ts --pool=forks --poolOptions.forks.singleFork=true` passed with 5 tests.
+  - Browse > Sources update audit against the live local server:
+    - Installed Comix is reported as `1.4.30` with `hasUpdate: true`.
+    - The configured Keiyoushi repo index contains `tachiyomi-en.comix-v1.4.31.apk`, so the update candidate exists.
+    - Both `updateExtension` and `updateExtensions` return `null` plus an empty GraphQL error from Suwayomi; this is a backend/runtime failure rather than a filter/rendering issue in the Sources page.
+    - `installExternalExtension` no longer accepts URL input in the current schema; it requires an uploaded `extensionFile`.
+  - Aethon now uses the current `installExternalExtension(input: { extensionFile })` upload contract for external `.apk` installs in both Sources surfaces.
+  - External manga extension install panels now accept a local `.apk` file instead of a URL, reject non-APK selections, clear the selected file after success/panel switch, and keep repository install/update/remove flows on `UPDATE_EXTENSION`.
+  - The APK install action now remains clickable without a selected file so the UI can show the required local validation message (`Choose an .apk extension file first.`) instead of silently disabling the button.
+  - `src/lib/client.ts` now normalizes empty GraphQL errors to `Suwayomi returned an empty GraphQL error.` instead of throwing `Error("")`, and Sources operations now include the extension/action name in failure toasts.
+  - Release validation update: the earlier `npm run build` hang did not reproduce in the latest session; `npm run build` completed successfully. Keep watching for stuck external Node/Playwright helper processes, but the build itself is currently green.
+  - Targeted validation after the release-blocker cleanup:
+    - `npm run test:unit -- src/lib/client.test.ts src/components/pages/BrowseV3.test.ts` passed with 12 tests. This command spends about 40 seconds in transform/collect on Windows, so short outer command timeouts can look like a hang before the reporter prints results.
+    - `npx vitest run --project unit src/lib/client.test.ts src/lib/migration/manga.test.ts src/lib/migration/journalState.test.ts --pool=forks --poolOptions.forks.singleFork=true --reporter verbose` passed with 7 tests.
+    - `npx vitest run --project shell-jsdom src/components/pages/BrowseV3.test.ts --pool=threads --poolOptions.threads.singleThread=true` passed with 10 tests.
+    - `npm run build` passed; only the existing large chunk warning remained.
+    - `git diff --check` passed.
+  - Non-destructive dev-app smoke via `npm run tauri:dev` reached `Aethon [MAIN :4567]` and opened Home, Library, Browse, Downloads, and Settings.
+  - Library search for `+99 Reinforced Wooden Stick` opened the detail page and showed `337` chapters instead of `NO CHAPTERS`; the migration modal opened as the single-title flow and no `.mode-tabs` / `.mode-tab` elements were present.
+  - Browse > Sources showed 10 installed extensions and 1 update candidate: Comix `eu.kanade.tachiyomi.extension.en.comix` at `1.4.30` with `hasUpdate: true`. Update/remove/install listed actions were not clicked during this non-destructive smoke.
+  - The external APK panel in the live dev app renders a file input accepting `.apk,application/vnd.android.package-archive`, has no URL/http copy, shows a clear error with no selected file, and rejects a `.txt` file with `File must be an .apk extension package.`.
+  - A direct Suwayomi GraphQL audit after the smoke returned HTTP 200 with no errors, `+99 Reinforced Wooden Stick` manga id `703`, `337` chapters, `10` installed extensions, and the Comix update candidate. The earlier `Java heap space` failure did not reproduce in this later pass, but Java memory was still around 830 MB working set and remains worth watching during long update/smoke sessions.
 
 
 ### Remaining Work
@@ -1140,6 +1254,32 @@ Keep desktop Library scrolling smooth with 600+ Comics/Books entries while avoid
 ### Suggested Commit
 
 `perf: keep library mounted with bounded virtual rows`
+
+---
+
+## Manga Mass Migration - Implemented 2026-06-24
+
+### Delivered
+
+- Added `Sources > installed manga extension > Mass migration`.
+- Sources are mapped to extensions through Suwayomi's official `source.extension.pkgName` relationship.
+- The flow supports origin selection, grouped target sources, automatic matching, queue filtering, selection/exclusion, retry, manual search, and manual match override.
+- Searches and migrations are serialized per destination source; chapter hydration is capped at five concurrent requests.
+- Each item uses copy-first migration with categories, read state, bookmarks, and partial progress transfer.
+- Read history follows the Suwayomi WebUI rule: destination chapters at or below the highest read source chapter are marked read.
+- Failed items are rolled back to their source and target snapshots, do not stop the remaining queue, and are reported individually.
+- The mass journal stores only successful items so undo remains valid after partial failure.
+- The single-title detail migration remains separate and no longer contains the old mass-mode branch.
+
+### Verification
+
+- `src/lib/migration/manga.test.ts` covers preview, manual override, transfer/undo, and partial failure without removing the failed source manga.
+- `src/components/pages/BrowseV3.test.ts` covers the Sources entry point and existing extension install/update/remove behavior.
+- Focused migration, readiness, client, Sources, and detail-shell suites passed.
+- Full unit/jsdom regression passed: 93 test files and 488 tests.
+- Rust validation passed: `cargo check` and 238 tests across the desktop and syncd targets.
+- Browser component regression passed for Library, Books, Comics, and Splash (22 tests); five Settings screenshot comparisons still use stale baselines for UI that is outside this change set.
+- Production build passed; only the existing large-chunk warning remains.
 
 ---
 

@@ -5,7 +5,7 @@
   import { _ } from "../../lib/i18n/runtime";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
-  import { GET_SOURCES, FETCH_SOURCE_MANGA, GET_TRACKERS, SEARCH_TRACKER, GET_LIBRARY, GET_ALL_TRACKER_RECORDS } from "../../lib/queries";
+  import { GET_SOURCES, FETCH_SOURCE_MANGA, GET_TRACKERS, SEARCH_TRACKER, GET_LIBRARY_SEARCH_SNAPSHOT, GET_ALL_TRACKER_RECORDS } from "../../lib/queries";
   import { fetchSourceMangaSearchWithFallback } from "../../lib/manga/sourceSearch";
   import { cache, CACHE_KEYS, getPageSet } from "../../lib/cache";
   import { loadLibrarySnapshot } from "../../lib/library/snapshot";
@@ -1082,7 +1082,7 @@
     }
 
     try {
-      const data = await gql<{ mangas?: { nodes?: Manga[] } }>(GET_LIBRARY);
+      const data = await gql<{ mangas?: { nodes?: Manga[] } }>(GET_LIBRARY_SEARCH_SNAPSHOT);
       const previousChapterCountById = new Map(snapshot.map((manga) => [manga.id, manga.chapterCount]));
       searchLibraryManga = (data.mangas?.nodes ?? []).map((manga: any) => ({
         ...manga,
@@ -1091,7 +1091,7 @@
       store.setLibraryMangaSnapshot(searchLibraryManga);
     } catch (error) {
       if (!isSuwayomiSchemaInitializingError(error)) console.error(error);
-      searchLibraryManga = [];
+      searchLibraryManga = snapshot;
     }
   }
 
@@ -1627,9 +1627,10 @@
   });
 
   $effect(() => {
-    store.libraryMangaSnapshot;
+    const librarySnapshot = store.libraryMangaSnapshot;
+    if (activeBrowseTab !== "keyword") return;
     untrack(() => {
-      void refreshSearchProfileLibrary();
+      searchLibraryManga = Array.isArray(librarySnapshot) ? librarySnapshot : [];
     });
   });
 

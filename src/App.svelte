@@ -5,7 +5,7 @@
   import { getVersion } from "@tauri-apps/api/app";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-  import { gql, gqlUpload } from "./lib/client";
+  import { getServerAuthHeader, gql, gqlUpload } from "./lib/client";
   import { getServerTargetInfo } from "./lib/serverTarget";
   import {
     shouldAutoStartManagedServer,
@@ -197,6 +197,7 @@
   }
 
   const MAX_ATTEMPTS = 10;
+  const STARTUP_FAILSAFE_MS = 18_000;
   let win: Window | null = null;
   let isNovelRuntimeHostWindow = $state(false);
 
@@ -211,6 +212,7 @@
   let startupFailureDetail = $state("Aethon couldn't reach the selected local profile.");
   let startupStatusText = $state("Initializing profile");
   let startupHealthWatchInFlight = false;
+  let startupFailsafeTimer: ReturnType<typeof window.setTimeout> | null = null;
   let idle          = $state(false);
   let uiMotionActive = $state(true);
   let prefersReducedMotion = $state(false);
@@ -534,6 +536,8 @@
       );
     })()
       .catch((error) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        if (error instanceof Error && /abort/i.test(error.message)) return;
         console.error("Library preload failed:", error);
         setLibraryBootstrap("error", scopeKey);
       })
@@ -2344,6 +2348,7 @@
   }
 
   async function finishStartupAfterProbe() {
+    clearStartupFailsafe();
     failed = false;
     serverProbeOk = true;
     shellReady = true;
@@ -2386,6 +2391,54 @@
     }
   }
 
+  function clearStartupFailsafe() {
+    if (startupFailsafeTimer === null) return;
+    window.clearTimeout(startupFailsafeTimer);
+    startupFailsafeTimer = null;
+  }
+
+  function armStartupFailsafe() {
+    clearStartupFailsafe();
+    startupFailsafeTimer = window.setTimeout(() => {
+      startupFailsafeTimer = null;
+      if (shellReady || failed || notConfigured || !startupSplashVisible || isNovelRuntimeHostWindow) return;
+      failed = true;
+      startupFailureTitle = runtimeAttachOnly
+        ? `Could not attach to ${activeProfileLabel()} profile`
+        : `Could not start ${activeProfileLabel()} profile`;
+      startupFailureDetail = runtimeAttachOnly
+        ? `This session is attach-only, and the ${activeProfileLabel()} profile was not reachable on ${store.runtimeServerUrl ?? "its expected local server"}.`
+        : `Aethon is still waiting for the ${activeProfileLabel()} profile on ${store.runtimeServerUrl ?? "its expected local server"}. You can retry, or enter the app while the profile reconnects.`;
+    }, STARTUP_FAILSAFE_MS);
+  }
+
+  async function probeServerReady(base: string) {
+    const healthy = await invoke<boolean>("probe_server_health", { serverUrl: base }).catch(() => false);
+    if (healthy) return true;
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 2500);
+    try {
+      const authHeader = getServerAuthHeader();
+      const response = await fetch(`${base.replace(/\/$/, "")}/api/graphql`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(authHeader ? { Authorization: authHeader } : {}),
+        },
+        body: JSON.stringify({ query: "query AethonStartupReady { __typename }" }),
+        signal: controller.signal,
+      });
+      if (!response.ok) return false;
+      const json = await response.json();
+      return json?.data?.__typename === "Query";
+    } catch {
+      return false;
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+
   async function reconcileStartupSplashWithHealthyServer() {
     if (startupHealthWatchInFlight || shellReady || failed || notConfigured || !startupSplashVisible) return;
     const bases = getProbeBases();
@@ -2393,7 +2446,7 @@
     startupHealthWatchInFlight = true;
     try {
       for (const base of bases) {
-        const healthy = await invoke<boolean>("probe_server_health", { serverUrl: base }).catch(() => false);
+        const healthy = await probeServerReady(base);
         if (healthy && !shellReady && !failed && !notConfigured && startupSplashVisible) {
           await finishStartupAfterProbe();
           return;
@@ -2423,6 +2476,7 @@
     shellReadyAt = null;
     bootStartedAt = Date.now();
     setStartupStatusCopy();
+    armStartupFailsafe();
     let tries   = 0;
 
     async function probe() {
@@ -2436,13 +2490,11 @@
       tries++;
 
       for (const base of getProbeBases()) {
-        try {
-          const healthy = await invoke<boolean>("probe_server_health", { serverUrl: base });
-          if (healthy && !cancelProbe) {
-            await finishStartupAfterProbe();
-            return;
-          }
-        } catch {}
+        const healthy = await probeServerReady(base);
+        if (healthy && !cancelProbe) {
+          await finishStartupAfterProbe();
+          return;
+        }
       }
 
       if (tries >= MAX_ATTEMPTS && !cancelProbe) {
@@ -2728,6 +2780,7 @@
     return () => {
       cancelled = true;
       cancelProbe = true;
+      clearStartupFailsafe();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("focus", handleWindowFocusStateChange);
       window.removeEventListener("blur", handleWindowFocusStateChange);
@@ -2992,6 +3045,7 @@
   });
 
   function handleRetry() {
+    clearStartupFailsafe();
     failed        = false;
     notConfigured = false;
     serverProbeOk = false;
@@ -3003,6 +3057,7 @@
   }
 
   function handleBypass() {
+    clearStartupFailsafe();
     cancelProbe   = true;
     serverProbeOk = true;
     shellReady    = true;

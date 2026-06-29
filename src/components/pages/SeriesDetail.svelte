@@ -18,6 +18,7 @@
   import TrackingPanel from "../shared/TrackingPanel.svelte";
   import SeriesDetailV3Shell from "../shared/SeriesDetailV3Shell.svelte";
   import { isSourceChallengeMessage, sourceAccessErrorMessage } from "../../lib/sourceAccess";
+  import { waitForSuwayomiGraphqlReady } from "../../lib/suwayomiReadiness";
 
   type MenuEntry = any;
 
@@ -108,6 +109,7 @@
   let mangaAbort:  AbortController | null = null;
   let chapterAbort: AbortController | null = null;
   let loadingFor:  number | null = null;
+  let loadingChaptersFor: number | null = null;
   let loadedMangaId: number | null = $state(null);
 
   function formatDate(ts: string | null | undefined): string {
@@ -470,6 +472,7 @@
     chapterAbort?.abort();
     const ctrl = new AbortController();
     chapterAbort = ctrl;
+    loadingChaptersFor = id;
     const cached = chapterStore.get(id);
     if (cached) {
       applyChapters(cached.data); loadingChapters = false;
@@ -477,24 +480,46 @@
       gql(FETCH_CHAPTERS, { mangaId: id }, ctrl.signal)
         .then(() => gql<{ chapters: { nodes: Chapter[] } }>(GET_CHAPTERS, { mangaId: id }, ctrl.signal))
         .then(d => {
-          if (ctrl.signal.aborted || loadingFor !== id) return;
+          if (ctrl.signal.aborted || loadingChaptersFor !== id) return;
           chapterStore.set(id, { data: d.chapters.nodes, fetchedAt: Date.now() });
           applyChapters(d.chapters.nodes);
         }).catch(() => {});
       return;
     }
     chapters = []; loadingChapters = true;
-    gql<{ chapters: { nodes: Chapter[] } }>(GET_CHAPTERS, { mangaId: id }, ctrl.signal).then(d => {
-      if (ctrl.signal.aborted || loadingFor !== id) return;
+    const loadCachedChapters = () => gql<{ chapters: { nodes: Chapter[] } }>(GET_CHAPTERS, { mangaId: id }, ctrl.signal);
+    loadCachedChapters().then(d => {
+      if (ctrl.signal.aborted || loadingChaptersFor !== id) return;
       applyChapters(d.chapters.nodes); loadingChapters = false;
       return gql(FETCH_CHAPTERS, { mangaId: id }, ctrl.signal)
         .then(() => gql<{ chapters: { nodes: Chapter[] } }>(GET_CHAPTERS, { mangaId: id }, ctrl.signal))
         .then(fresh => {
-          if (ctrl.signal.aborted || loadingFor !== id) return;
+          if (ctrl.signal.aborted || loadingChaptersFor !== id) return;
           chapterStore.set(id, { data: fresh.chapters.nodes, fetchedAt: Date.now() });
           applyChapters(fresh.chapters.nodes);
         });
-    }).catch(() => { if (!ctrl.signal.aborted) loadingChapters = false; });
+    }).catch(async () => {
+      if (ctrl.signal.aborted || loadingChaptersFor !== id) return;
+      const ready = await waitForSuwayomiGraphqlReady("graphql", {
+        attempts: 6,
+        delayMs: 800,
+        timeoutMs: 5000,
+        signal: ctrl.signal,
+      }).catch(() => false);
+      if (!ready || ctrl.signal.aborted || loadingChaptersFor !== id) {
+        if (!ctrl.signal.aborted && loadingChaptersFor === id) loadingChapters = false;
+        return;
+      }
+      try {
+        const retry = await loadCachedChapters();
+        if (ctrl.signal.aborted || loadingChaptersFor !== id) return;
+        applyChapters(retry.chapters.nodes);
+      } catch {
+        // Summary counts remain visible if Suwayomi still cannot read chapters.
+      } finally {
+        if (!ctrl.signal.aborted && loadingChaptersFor === id) loadingChapters = false;
+      }
+    });
   }
 
   const activeMangaId = $derived(store.activeManga?.id ?? null);
@@ -739,7 +764,7 @@
     mediaKind="manga"
     title={manga?.title ?? store.activeManga.title}
     subtitle={[manga?.author, manga?.artist].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(" / ") || null}
-    coverUrl={resolveMangaCoverUrl(store.activeManga, {
+    coverUrl={resolveMangaCoverUrl(manga ?? store.activeManga, {
       context: "detail",
       persistence: store.activeManga.inLibrary ? "persistent" : "memory",
       cacheGeneration: store.libraryCoverCacheGeneration,
