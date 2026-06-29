@@ -43,11 +43,11 @@ packaging/frontend-dist.tar.gz
 .flatpak-builder/
 
 # --- Local generated artifacts ---
-.codex-run/
-.codex-smoke/
-.codex-*.png
+.local-run/
+.local-smoke/
+local-*.png
 tmp/
-src-tauri/target-codex/
+src-tauri/target-local/
 *.actual.png
 
 # --- Staged sidecar binaries (platform-specific, never commit) ---
