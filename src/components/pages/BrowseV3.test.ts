@@ -624,9 +624,17 @@ describe("BrowseV3", () => {
       expect(screen.getAllByText("Mass migration").length).toBeGreaterThan(1);
       expect(screen.getAllByText("Comick").length).toBeGreaterThan(0);
     });
+    expect(screen.getByRole("dialog", { name: "MangaDex" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Close mass migration" })).toBeTruthy();
     expect(screen.getAllByText("Comick").length).toBeGreaterThan(0);
     expect(screen.queryByText("PT-BR")).toBeNull();
     expect(screen.queryByText("JA")).toBeNull();
+
+    await fireEvent.keyDown(window, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "MangaDex" })).toBeNull();
+    });
   });
 
   test("reports partial failures when updating all manga extensions", async () => {

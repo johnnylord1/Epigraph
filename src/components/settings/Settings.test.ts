@@ -25,6 +25,32 @@ const {
     }
     if (command === "get_default_downloads_path") return "C:/Aethon/Downloads";
     if (command === "restart_app") return null;
+    if (command === "get_suwayomi_runtime_status") {
+      return {
+        mode: "managed-bundled",
+        version: "v2.1.1867",
+        jarVersion: null,
+        jarPath: "C:/Aethon/Suwayomi-Server.jar",
+        profileId: "main",
+        rootDir: "C:/Aethon/aethon-main",
+        serverUrl: "http://127.0.0.1:4567",
+        updateAllowed: true,
+        blockReason: null,
+      };
+    }
+    if (command === "check_suwayomi_runtime_update") {
+      return {
+        status: "updateAvailable",
+        currentVersion: "v2.1.1867",
+        latestCompatibleVersion: "v2.2.2100",
+        releaseTag: "v2.2.2100",
+        releaseUrl: "https://github.com/Suwayomi/Suwayomi-Server/releases/tag/v2.2.2100",
+        updateAllowed: true,
+        blockReason: null,
+        notes: "Tested by Aethon.",
+        releaseNotes: "Release notes.",
+      };
+    }
     if (command === "get_flaresolverr_local_status") {
       return { installed: false, running: false, path: null, message: null };
     }
