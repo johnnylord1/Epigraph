@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "repository": "Suwayomi/Suwayomi-Server",
+  "minSupportedVersion": "v2.1.1867",
+  "maxTestedVersion": "v2.2.2100",
+  "checksumAsset": "Checksums.sha256",
+  "signatureAsset": null,
+  "allowedVersions": [
+    {
+      "version": "v2.1.1867",
+      "asset": "Suwayomi-Server-v2.1.1867.jar",
+      "notes": "Aethon baseline Suwayomi 2.1 release."
+    },
+    {
+      "version": "v2.2.2100",
+      "asset": "Suwayomi-Server-v2.2.2100.jar",
+      "notes": "Aethon-tested Suwayomi 2.2 release candidate for managed runtime updates."
+    }
+  ],
+  "blockedVersions": [
+    {
+      "version": "v2.0.1727",
+      "reason": "Below Aethon's tested managed-update baseline."
+    }
+  ]
+}

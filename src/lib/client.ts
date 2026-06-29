@@ -1,4 +1,5 @@
 import { store } from "../store/state.svelte";
+import { assertSuwayomiWritesAllowed } from "./suwayomiUpdateLock.svelte";
 
 const DEFAULT_URL = "http://127.0.0.1:4567";
 
@@ -17,6 +18,25 @@ function getAuthHeader(): Record<string, string> {
 }
 
 function gqlUrl(): string { return `${getServerUrl()}/api/graphql`; }
+
+export function isGraphqlMutation(query: string): boolean {
+  let index = 0;
+  while (index < query.length) {
+    const char = query[index];
+    if (char === "#") {
+      const nextLine = query.indexOf("\n", index + 1);
+      index = nextLine === -1 ? query.length : nextLine + 1;
+      continue;
+    }
+    if (char === "," || /\s/.test(char)) {
+      index += 1;
+      continue;
+    }
+    break;
+  }
+  return query.slice(index, index + 8).toLowerCase() === "mutation"
+    && !/[A-Za-z0-9_]/.test(query[index + 8] ?? "");
+}
 
 export function getServerAuthHeader(): string | null {
   return getAuthHeader().Authorization ?? null;
@@ -82,6 +102,10 @@ export async function gql<T>(
   signal?: AbortSignal,
   timeoutMs = 12000,
 ): Promise<T> {
+  if (isGraphqlMutation(query)) {
+    await assertSuwayomiWritesAllowed();
+  }
+
   const controller = signal ? null : new AbortController();
   const effectiveSignal = signal ?? controller?.signal;
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -120,6 +144,10 @@ export async function gqlUpload<T>(
   uploads: Record<string, File>,
   signal?: AbortSignal,
 ): Promise<T> {
+  if (isGraphqlMutation(query)) {
+    await assertSuwayomiWritesAllowed();
+  }
+
   const form = new FormData();
   const map: Record<string, string[]> = {};
   let index = 0;

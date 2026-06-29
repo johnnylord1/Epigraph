@@ -1,4 +1,5 @@
 mod suwayomi_lan;
+mod suwayomi_update;
 pub mod syncd;
 mod syncd_desktop;
 mod syncd_replication;
@@ -1802,7 +1803,10 @@ server.maxSourcesInParallel = 6
             test,
             local_server_custom_profile_root("test").join("downloads")
         );
-        assert_eq!(custom, local_server_custom_profile_root("sandbox").join("downloads"));
+        assert_eq!(
+            custom,
+            local_server_custom_profile_root("sandbox").join("downloads")
+        );
         assert_ne!(main, test);
         assert_ne!(main, custom);
     }
@@ -2240,8 +2244,8 @@ fn resolve_downloads_path_for_profile(downloads_path: &str, profile_id: Option<&
     if !downloads_path.trim().is_empty() {
         return PathBuf::from(downloads_path);
     }
-    let profile_key = local_server_profile_key_from_id(profile_id)
-        .unwrap_or_else(|| "main".to_string());
+    let profile_key =
+        local_server_profile_key_from_id(profile_id).unwrap_or_else(|| "main".to_string());
     let root = if profile_key == "main" {
         local_server_profile_root(LocalServerProfile::Main)
     } else {
@@ -2388,7 +2392,7 @@ fn create_directory(path: String) -> Result<(), String> {
     std::fs::create_dir_all(path.trim()).map_err(|e| e.to_string())
 }
 
-fn process_is_alive(pid: u32) -> bool {
+pub(crate) fn process_is_alive(pid: u32) -> bool {
     let system = System::new_all();
     system.process(Pid::from_u32(pid)).is_some()
 }
@@ -2418,7 +2422,7 @@ fn java_process_uses_rootdir(process: &sysinfo::Process, rootdir_flag: &str) -> 
         .any(|arg| rootdir_flag_matches_arg(&arg.to_string_lossy(), rootdir_flag))
 }
 
-fn find_java_pid_for_rootdir(data_dir: &Path) -> Option<u32> {
+pub(crate) fn find_java_pid_for_rootdir(data_dir: &Path) -> Option<u32> {
     let rootdir_flag = format!(
         "-Dsuwayomi.tachidesk.config.server.rootDir={}",
         data_dir.to_string_lossy()
@@ -3418,7 +3422,7 @@ fn kill_tachidesk(app: &tauri::AppHandle, server_url: Option<&str>) {
     kill_tachidesk_target(app, &target);
 }
 
-fn kill_tachidesk_target(app: &tauri::AppHandle, target: &LocalServerTarget) {
+pub(crate) fn kill_tachidesk_target(app: &tauri::AppHandle, target: &LocalServerTarget) {
     let running = {
         let state = app.state::<ServerState>();
         let mut guard = state.0.lock().unwrap();
@@ -4661,6 +4665,14 @@ fn spawn_server(
     }
 }
 
+pub(crate) fn spawn_managed_server_for_update(
+    server_url: String,
+    profile_id: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<(), SpawnError> {
+    spawn_server(String::new(), server_url, profile_id, None, None, app)
+}
+
 #[tauri::command]
 fn configure_local_server_runtime(
     server_url: String,
@@ -5303,6 +5315,13 @@ pub fn run() {
             start_flaresolverr_docker,
             stop_flaresolverr_docker,
             list_releases,
+            suwayomi_update::get_suwayomi_runtime_status,
+            suwayomi_update::check_suwayomi_runtime_update,
+            suwayomi_update::get_suwayomi_update_lock_status,
+            suwayomi_update::create_suwayomi_update_snapshot,
+            suwayomi_update::stage_suwayomi_runtime_update,
+            suwayomi_update::promote_suwayomi_runtime_update,
+            suwayomi_update::install_suwayomi_runtime_update,
             download_and_install_update,
             probe_server_health,
             get_runtime_diagnostics,

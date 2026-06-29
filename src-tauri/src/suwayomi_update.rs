@@ -1,0 +1,3854 @@
+use futures_util::StreamExt;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::fs::{self, File};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use sysinfo::{Disks, Pid, System};
+use tauri::{AppHandle, Manager};
+use url::Url;
+use uuid::Uuid;
+
+use crate::{
+    find_java_pid_for_rootdir, is_loopback_http_url, kill_tachidesk_target, process_is_alive,
+    read_server_owner, resolve_local_server_target, server_owner_path, server_spawn_lock_path,
+    spawn_managed_server_for_update, strip_unc, suwayomi_data_dir, validate_server_owner,
+    LaunchTarget, LocalServerTarget, OwnerReuseDecision,
+};
+
+const SUWAYOMI_SERVER_JAR: &str = "Suwayomi-Server.jar";
+const SUWAYOMI_COMPATIBILITY_MANIFEST: &str =
+    include_str!("../resources/suwayomi-compatibility.json");
+const SUWAYOMI_RELEASES_API_URL: &str =
+    "https://api.github.com/repos/Suwayomi/Suwayomi-Server/releases?per_page=50";
+const SUWAYOMI_RELEASES_USER_AGENT: &str = "Aethon-Suwayomi-Updater";
+const SUWAYOMI_RELEASES_CACHE_TTL: Duration = Duration::from_secs(60);
+const SUWAYOMI_SNAPSHOT_DIR: &str = "aethon-update-snapshots";
+const SUWAYOMI_SNAPSHOT_MANIFEST: &str = "snapshot-manifest.json";
+const SUWAYOMI_SNAPSHOT_VERSION: &str = "1";
+const SUWAYOMI_SNAPSHOT_SPACE_MARGIN_BYTES: u64 = 1024 * 1024;
+const SUWAYOMI_RUNTIME_DIR: &str = "suwayomi-runtime";
+const SUWAYOMI_STAGING_DIR: &str = "staging";
+const SUWAYOMI_CURRENT_DIR: &str = "current";
+const SUWAYOMI_PREVIOUS_DIR: &str = "previous";
+const SUWAYOMI_STAGING_MANIFEST: &str = "staging-manifest.json";
+const MIN_STAGED_JAR_BYTES: u64 = 1024 * 1024;
+const PROMOTED_RUNTIME_MIN_ALIVE_MS: u64 = 2_000;
+const SUWAYOMI_HEALTH_ATTEMPTS: usize = 24;
+const SUWAYOMI_HEALTH_DELAY_MS: u64 = 500;
+const SUWAYOMI_HEALTH_TIMEOUT_SECS: u64 = 5;
+const SUWAYOMI_SNAPSHOT_ALLOWLIST: &[&str] = &[
+    "server.conf",
+    "database.mv.db",
+    "database.trace.db",
+    "server.owner.json",
+];
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum SuwayomiRuntimeMode {
+    ManagedBundled,
+    ManagedRuntime,
+    ManagedUserBinary,
+    External,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Serialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SuwayomiJarVersion {
+    pub version: Option<String>,
+    pub revision: Option<String>,
+    pub build_type: Option<String>,
+    pub webui_tag: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SuwayomiRuntimeStatus {
+    pub mode: SuwayomiRuntimeMode,
+    pub version: Option<String>,
+    pub jar_version: Option<SuwayomiJarVersion>,
+    pub jar_path: Option<String>,
+    pub profile_id: Option<String>,
+    pub root_dir: Option<String>,
+    pub server_url: String,
+    pub update_allowed: bool,
+    pub block_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum UpdateCheckStatus {
+    UpToDate,
+    UpdateAvailable,
+    Blocked,
+    CheckFailed,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SuwayomiUpdateCheckResult {
+    pub status: UpdateCheckStatus,
+    pub current_version: Option<String>,
+    pub latest_compatible_version: Option<String>,
+    pub release_tag: Option<String>,
+    pub release_url: Option<String>,
+    pub update_allowed: bool,
+    pub block_reason: Option<String>,
+    pub notes: Option<String>,
+    pub release_notes: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SuwayomiUpdateSnapshotResult {
+    pub snapshot_path: String,
+    pub manifest_path: String,
+    pub copied_files: Vec<String>,
+    pub stopped_runtime: bool,
+    pub restarted_runtime: bool,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SuwayomiUpdateStageResult {
+    pub staging_path: String,
+    pub jar_path: String,
+    pub version: String,
+    pub sha256: String,
+    pub asset_name: String,
+    pub checksum_asset: String,
+    pub release_tag: String,
+    pub release_url: String,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SuwayomiUpdatePromotionResult {
+    pub current_path: String,
+    pub previous_path: Option<String>,
+    pub version: String,
+    pub rolled_back: bool,
+    pub restarted_runtime: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct SuwayomiSnapshotManifest {
+    schema_version: u32,
+    snapshot_version: String,
+    created_at: u128,
+    profile_id: Option<String>,
+    runtime_mode: SuwayomiRuntimeMode,
+    suwayomi_version: Option<String>,
+    source_root: String,
+    files: Vec<SuwayomiSnapshotFile>,
+    rollback_ready: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct SuwayomiSnapshotFile {
+    name: String,
+    size_bytes: u64,
+    sha256: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct SuwayomiStagingManifest {
+    schema_version: u32,
+    created_at: u128,
+    version: String,
+    sha256: String,
+    asset_name: String,
+    checksum_asset: String,
+    release_tag: String,
+    release_url: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SnapshotPlanFile {
+    name: String,
+    source_path: PathBuf,
+    size_bytes: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct SuwayomiCompatibilityManifest {
+    schema_version: u32,
+    repository: String,
+    min_supported_version: String,
+    max_tested_version: String,
+    checksum_asset: String,
+    signature_asset: Option<String>,
+    allowed_versions: Vec<SuwayomiAllowedVersion>,
+    blocked_versions: Vec<SuwayomiBlockedVersion>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct SuwayomiAllowedVersion {
+    version: String,
+    asset: String,
+    notes: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct SuwayomiBlockedVersion {
+    version: String,
+    reason: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+struct GithubRelease {
+    tag_name: String,
+    html_url: String,
+    draft: bool,
+    prerelease: bool,
+    body: Option<String>,
+    assets: Vec<GithubReleaseAsset>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+struct GithubReleaseAsset {
+    name: String,
+    browser_download_url: String,
+    size: Option<u64>,
+}
+
+#[derive(Clone, Debug)]
+struct CachedGithubReleases {
+    fetched_at: Instant,
+    releases: Vec<GithubRelease>,
+}
+
+static SUWAYOMI_RELEASES_CACHE: OnceLock<Mutex<Option<CachedGithubReleases>>> = OnceLock::new();
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SuwayomiUpdateErrorKind {
+    OwnershipError,
+    CompatibilityError,
+    DownloadError,
+    ChecksumError,
+    SnapshotError,
+    PromotionError,
+    RollbackError,
+    HealthCheckError,
+}
+
+impl SuwayomiUpdateErrorKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::OwnershipError => "OwnershipError",
+            Self::CompatibilityError => "CompatibilityError",
+            Self::DownloadError => "DownloadError",
+            Self::ChecksumError => "ChecksumError",
+            Self::SnapshotError => "SnapshotError",
+            Self::PromotionError => "PromotionError",
+            Self::RollbackError => "RollbackError",
+            Self::HealthCheckError => "HealthCheckError",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ActiveSuwayomiUpdateLock {
+    token: String,
+    owner: String,
+    started_at_ms: u128,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SuwayomiUpdateLockStatus {
+    pub in_progress: bool,
+    pub owner: Option<String>,
+    pub started_at_ms: Option<u128>,
+}
+
+pub(crate) struct SuwayomiUpdateLockGuard {
+    token: String,
+}
+
+static SUWAYOMI_UPDATE_LOCK: OnceLock<Mutex<Option<ActiveSuwayomiUpdateLock>>> = OnceLock::new();
+
+fn update_error(kind: SuwayomiUpdateErrorKind, message: impl Into<String>) -> String {
+    let message = message.into();
+    if message.starts_with(kind.as_str()) {
+        message
+    } else {
+        format!("{}: {}", kind.as_str(), message)
+    }
+}
+
+fn log_update_start(step: &str) -> Instant {
+    eprintln!("[aethon-suwayomi-update] start step={step}");
+    Instant::now()
+}
+
+fn log_update_success(step: &str, started: Instant) {
+    eprintln!(
+        "[aethon-suwayomi-update] success step={step} duration_ms={}",
+        started.elapsed().as_millis()
+    );
+}
+
+fn log_update_failure(step: &str, started: Instant, error: &str) {
+    let sanitized = error.replace('\n', " ");
+    eprintln!(
+        "[aethon-suwayomi-update] failure step={step} duration_ms={} reason={sanitized}",
+        started.elapsed().as_millis()
+    );
+}
+
+fn log_update_result<T>(
+    step: &str,
+    started: Instant,
+    result: Result<T, String>,
+) -> Result<T, String> {
+    match &result {
+        Ok(_) => log_update_success(step, started),
+        Err(error) => log_update_failure(step, started, error),
+    }
+    result
+}
+
+#[tauri::command]
+pub fn get_suwayomi_runtime_status(
+    server_url: Option<String>,
+    binary: Option<String>,
+    profile_id: Option<String>,
+    profile_label: Option<String>,
+    app: AppHandle,
+) -> SuwayomiRuntimeStatus {
+    let normalized_server_url = normalize_server_url(server_url.as_deref());
+    let binary = binary.unwrap_or_default();
+
+    if normalized_server_url.is_empty() {
+        return blocked_status(
+            SuwayomiRuntimeMode::Unknown,
+            normalized_server_url,
+            None,
+            None,
+            None,
+            None,
+            "Server URL is not configured.",
+        );
+    }
+
+    if Url::parse(&normalized_server_url).is_err() {
+        return blocked_status(
+            SuwayomiRuntimeMode::Unknown,
+            normalized_server_url,
+            None,
+            None,
+            None,
+            None,
+            "Server URL is invalid.",
+        );
+    }
+
+    if !is_loopback_http_url(&normalized_server_url) {
+        return blocked_status(
+            SuwayomiRuntimeMode::External,
+            normalized_server_url,
+            None,
+            None,
+            None,
+            None,
+            "External Suwayomi servers are not managed by Aethon.",
+        );
+    }
+
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    let target = match resolve_local_server_target(
+        &launch_target,
+        Some(normalized_server_url.as_str()),
+        profile_id.as_deref(),
+        profile_label.as_deref(),
+    ) {
+        Ok(target) => target,
+        Err(error) => {
+            return blocked_status(
+                SuwayomiRuntimeMode::Unknown,
+                normalized_server_url,
+                None,
+                None,
+                None,
+                None,
+                &format!("Could not resolve the local Suwayomi profile: {error:?}"),
+            );
+        }
+    };
+
+    let profile_id = Some(target.profile_key.clone());
+    let root_dir = Some(path_to_string(&target.root_dir));
+
+    if target.attach_only {
+        return blocked_status(
+            SuwayomiRuntimeMode::External,
+            target.server_url,
+            profile_id,
+            root_dir,
+            None,
+            None,
+            "This session is attach-only; Aethon will not update its Suwayomi server.",
+        );
+    }
+
+    if !binary.trim().is_empty() {
+        let user_binary = strip_unc(PathBuf::from(binary.trim()));
+        return blocked_status(
+            SuwayomiRuntimeMode::ManagedUserBinary,
+            target.server_url,
+            profile_id,
+            root_dir,
+            Some(user_binary),
+            None,
+            "A user-provided Suwayomi binary is not updated by Aethon.",
+        );
+    }
+
+    let java_pid = match prove_aethon_runtime_ownership(&target) {
+        Ok(java_pid) => java_pid,
+        Err(reason) => {
+            return blocked_status(
+                SuwayomiRuntimeMode::Unknown,
+                target.server_url,
+                profile_id,
+                root_dir,
+                None,
+                None,
+                &reason,
+            );
+        }
+    };
+
+    let runtime_jar = managed_runtime_jar_path();
+    let bundled_jar = bundled_jar_path(&app);
+    if let Some((mode, jar_path)) =
+        select_effective_managed_jar(&runtime_jar, &bundled_jar, |jar_path| {
+            java_pid_uses_jar(java_pid, jar_path)
+        })
+    {
+        return allowed_status(mode, target.server_url, profile_id, root_dir, jar_path);
+    }
+
+    let fallback_jar = if runtime_jar.exists() {
+        Some(runtime_jar)
+    } else if bundled_jar.exists() {
+        Some(bundled_jar)
+    } else {
+        None
+    };
+    let reason = if fallback_jar.is_some() {
+        "Aethon owns the local server, but the effective Suwayomi JAR is not a managed Aethon JAR."
+    } else {
+        "Aethon could not find a managed Suwayomi JAR."
+    };
+    blocked_status(
+        SuwayomiRuntimeMode::Unknown,
+        target.server_url,
+        profile_id,
+        root_dir,
+        fallback_jar,
+        None,
+        reason,
+    )
+}
+
+#[tauri::command]
+pub fn get_suwayomi_update_lock_status() -> SuwayomiUpdateLockStatus {
+    current_suwayomi_update_lock_status()
+}
+
+#[tauri::command]
+pub fn create_suwayomi_update_snapshot(
+    server_url: Option<String>,
+    binary: Option<String>,
+    profile_id: Option<String>,
+    profile_label: Option<String>,
+    app: AppHandle,
+) -> Result<SuwayomiUpdateSnapshotResult, String> {
+    let started = log_update_start("snapshot");
+    let result = (|| {
+        let _guard = try_acquire_suwayomi_update_lock("snapshot")?;
+        create_suwayomi_update_snapshot_unlocked(server_url, binary, profile_id, profile_label, app)
+    })()
+    .map_err(|error| update_error(SuwayomiUpdateErrorKind::SnapshotError, error));
+    log_update_result("snapshot", started, result)
+}
+
+fn create_suwayomi_update_snapshot_unlocked(
+    server_url: Option<String>,
+    binary: Option<String>,
+    profile_id: Option<String>,
+    profile_label: Option<String>,
+    app: AppHandle,
+) -> Result<SuwayomiUpdateSnapshotResult, String> {
+    let runtime = get_suwayomi_runtime_status(
+        server_url.clone(),
+        binary.clone(),
+        profile_id.clone(),
+        profile_label.clone(),
+        app.clone(),
+    );
+    if !runtime.update_allowed {
+        return Err(runtime
+            .block_reason
+            .unwrap_or_else(|| "This Suwayomi runtime is not managed by Aethon.".to_string()));
+    }
+
+    let target = resolve_update_target(server_url, profile_id, profile_label, &app)?;
+    let plan = plan_snapshot_files(&target.root_dir)?;
+    ensure_snapshot_disk_space(&target.root_dir, &plan)?;
+    let stopped_runtime = stop_managed_runtime_for_snapshot(&app, &target)?;
+    match create_snapshot_for_plan(
+        &target.root_dir,
+        plan,
+        Some(target.profile_key.clone()),
+        runtime.mode,
+        runtime.version,
+    ) {
+        Ok(mut result) => {
+            result.stopped_runtime = stopped_runtime;
+            result.restarted_runtime =
+                restart_runtime_after_snapshot_failure(stopped_runtime, || {
+                    restart_managed_runtime(&app, &target)
+                })?;
+            Ok(result)
+        }
+        Err(error) => {
+            let restart_result = restart_runtime_after_snapshot_failure(stopped_runtime, || {
+                restart_managed_runtime(&app, &target)
+            });
+            let restart_note = match restart_result {
+                Ok(true) => " The managed runtime was restarted.",
+                Ok(false) => "",
+                Err(restart_error) => {
+                    return Err(format!(
+                        "Snapshot failed: {error}. The managed runtime could not be restarted: {restart_error}"
+                    ));
+                }
+            };
+            Err(format!("Snapshot failed: {error}.{restart_note}"))
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn stage_suwayomi_runtime_update(
+    server_url: Option<String>,
+    binary: Option<String>,
+    profile_id: Option<String>,
+    profile_label: Option<String>,
+    target_version: Option<String>,
+    app: AppHandle,
+) -> Result<SuwayomiUpdateStageResult, String> {
+    let started = log_update_start("staging");
+    let result = async {
+        let _guard = try_acquire_suwayomi_update_lock("staging")?;
+        let runtime =
+            get_suwayomi_runtime_status(server_url, binary, profile_id, profile_label, app);
+        if let Some(blocked) = runtime_update_preflight_block(&runtime) {
+            return Err(blocked
+                .block_reason
+                .unwrap_or_else(|| "This Suwayomi runtime is not managed by Aethon.".to_string()));
+        }
+
+        let manifest = load_compatibility_manifest()?;
+        if let Some(blocked) = manifest_preflight_block(&runtime, &manifest) {
+            return Err(blocked.block_reason.unwrap_or_else(|| {
+                "This Suwayomi version is not eligible for update.".to_string()
+            }));
+        }
+        let releases = fetch_suwayomi_releases().await?;
+        let candidate =
+            select_staging_candidate(&runtime, &manifest, &releases, target_version.as_deref())?;
+
+        let checksum_text = download_release_text(&candidate.checksum_url).await?;
+        let expected_sha256 = checksum_for_asset(&checksum_text, &candidate.asset_name)?;
+
+        stage_release_jar(
+            &managed_runtime_staging_root(),
+            &candidate,
+            &manifest,
+            &expected_sha256,
+            MIN_STAGED_JAR_BYTES,
+        )
+        .await
+    }
+    .await
+    .map_err(|error| {
+        if error.contains("SHA-256") || error.contains("Checksum") {
+            update_error(SuwayomiUpdateErrorKind::ChecksumError, error)
+        } else if error.contains("allowlist")
+            || error.contains("blocked")
+            || error.contains("tested range")
+        {
+            update_error(SuwayomiUpdateErrorKind::CompatibilityError, error)
+        } else if error.contains("not managed") || error.contains("ownership") {
+            update_error(SuwayomiUpdateErrorKind::OwnershipError, error)
+        } else {
+            update_error(SuwayomiUpdateErrorKind::DownloadError, error)
+        }
+    });
+    log_update_result("staging", started, result)
+}
+
+#[tauri::command]
+pub async fn promote_suwayomi_runtime_update(
+    server_url: Option<String>,
+    binary: Option<String>,
+    profile_id: Option<String>,
+    profile_label: Option<String>,
+    staged_version: String,
+    snapshot_path: String,
+    auth_header: Option<String>,
+    app: AppHandle,
+) -> Result<SuwayomiUpdatePromotionResult, String> {
+    let started = log_update_start("promotion");
+    let result = async {
+        let _guard = try_acquire_suwayomi_update_lock("promotion")?;
+        promote_suwayomi_runtime_update_unlocked(
+            server_url,
+            binary,
+            profile_id,
+            profile_label,
+            staged_version,
+            snapshot_path,
+            auth_header,
+            app,
+        )
+        .await
+    }
+    .await
+    .map_err(|error| {
+        if error.contains("Automatic rollback also failed") {
+            update_error(SuwayomiUpdateErrorKind::RollbackError, error)
+        } else {
+            update_error(SuwayomiUpdateErrorKind::PromotionError, error)
+        }
+    });
+    log_update_result("promotion", started, result)
+}
+
+#[tauri::command]
+pub async fn install_suwayomi_runtime_update(
+    server_url: Option<String>,
+    binary: Option<String>,
+    profile_id: Option<String>,
+    profile_label: Option<String>,
+    staged_version: String,
+    auth_header: Option<String>,
+    app: AppHandle,
+) -> Result<SuwayomiUpdatePromotionResult, String> {
+    let started = log_update_start("install");
+    let result = async {
+        let _guard = try_acquire_suwayomi_update_lock("install")?;
+        let snapshot = create_suwayomi_update_snapshot_unlocked(
+            server_url.clone(),
+            binary.clone(),
+            profile_id.clone(),
+            profile_label.clone(),
+            app.clone(),
+        )?;
+        promote_suwayomi_runtime_update_unlocked(
+            server_url,
+            binary,
+            profile_id,
+            profile_label,
+            staged_version,
+            snapshot.snapshot_path,
+            auth_header,
+            app,
+        )
+        .await
+    }
+    .await
+    .map_err(|error| {
+        if error.contains("Automatic rollback also failed") {
+            update_error(SuwayomiUpdateErrorKind::RollbackError, error)
+        } else if error.contains("Snapshot failed") || error.contains("snapshot") {
+            update_error(SuwayomiUpdateErrorKind::SnapshotError, error)
+        } else {
+            update_error(SuwayomiUpdateErrorKind::PromotionError, error)
+        }
+    });
+    log_update_result("install", started, result)
+}
+
+async fn promote_suwayomi_runtime_update_unlocked(
+    server_url: Option<String>,
+    binary: Option<String>,
+    profile_id: Option<String>,
+    profile_label: Option<String>,
+    staged_version: String,
+    snapshot_path: String,
+    auth_header: Option<String>,
+    app: AppHandle,
+) -> Result<SuwayomiUpdatePromotionResult, String> {
+    let runtime = get_suwayomi_runtime_status(
+        server_url.clone(),
+        binary.clone(),
+        profile_id.clone(),
+        profile_label.clone(),
+        app.clone(),
+    );
+    if !runtime.update_allowed {
+        return Err(runtime
+            .block_reason
+            .unwrap_or_else(|| "This Suwayomi runtime is not managed by Aethon.".to_string()));
+    }
+
+    let manifest = load_compatibility_manifest()?;
+    let target = resolve_update_target(server_url, profile_id, profile_label, &app)?;
+    let snapshot_dir = PathBuf::from(snapshot_path);
+    validate_snapshot_for_restore(&snapshot_dir)?;
+    let staging_dir = managed_runtime_staging_root().join(normalize_version_tag(&staged_version));
+    let staging_manifest = validate_staging_dir(&staging_dir, &manifest)?;
+
+    let stopped_runtime = stop_managed_runtime_for_snapshot(&app, &target)?;
+    let runtime_root = managed_runtime_root();
+    let promotion = match promote_staging_directories(&runtime_root, &staging_manifest.version) {
+        Ok(promotion) => promotion,
+        Err(error) => {
+            let _ = restart_runtime_after_snapshot_failure(stopped_runtime, || {
+                restart_managed_runtime(&app, &target)
+            });
+            return Err(error);
+        }
+    };
+
+    let start_result = restart_managed_runtime(&app, &target).and_then(|_| {
+        wait_for_runtime_jar(
+            &target,
+            &promotion.current_dir.join(SUWAYOMI_SERVER_JAR),
+            runtime_stability_window(),
+        )
+    });
+    let health_result = match start_result {
+        Ok(()) => {
+            run_suwayomi_graphql_health_check(&target.server_url, auth_header.as_deref()).await
+        }
+        Err(error) => Err(error),
+    };
+    match health_result {
+        Ok(()) => {
+            cleanup_previous_backup(&promotion)?;
+            Ok(SuwayomiUpdatePromotionResult {
+                current_path: path_to_string(&promotion.current_dir),
+                previous_path: promotion
+                    .previous_dir
+                    .as_ref()
+                    .map(|path| path_to_string(path)),
+                version: staging_manifest.version,
+                rolled_back: false,
+                restarted_runtime: true,
+            })
+        }
+        Err(error) => {
+            let rollback_result =
+                rollback_promoted_runtime(&app, &target, &promotion, &snapshot_dir).map_err(
+                    |rollback_error| {
+                        format!(
+                    "Promotion failed: {error}. Automatic rollback also failed: {rollback_error}"
+                )
+                    },
+                );
+            match rollback_result {
+                Ok(()) => Err(format!(
+                    "Promotion failed: {error}. The previous Suwayomi runtime was restored."
+                )),
+                Err(rollback_error) => Err(rollback_error),
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn check_suwayomi_runtime_update(
+    server_url: Option<String>,
+    binary: Option<String>,
+    profile_id: Option<String>,
+    profile_label: Option<String>,
+    app: AppHandle,
+) -> SuwayomiUpdateCheckResult {
+    let started = log_update_start("check");
+    let runtime = get_suwayomi_runtime_status(server_url, binary, profile_id, profile_label, app);
+    if let Some(blocked) = runtime_update_preflight_block(&runtime) {
+        log_update_success("check", started);
+        return blocked;
+    }
+
+    let manifest = match load_compatibility_manifest() {
+        Ok(manifest) => manifest,
+        Err(reason) => {
+            log_update_failure("check", started, &reason);
+            return failed_update_check(runtime.version, reason);
+        }
+    };
+
+    if let Some(blocked) = manifest_preflight_block(&runtime, &manifest) {
+        log_update_success("check", started);
+        return blocked;
+    }
+
+    let releases = match fetch_suwayomi_releases().await {
+        Ok(releases) => releases,
+        Err(reason) => {
+            log_update_failure("check", started, &reason);
+            return failed_update_check(runtime.version, reason);
+        }
+    };
+
+    let result = calculate_update_check(&runtime, &manifest, &releases);
+    log_update_success("check", started);
+    result
+}
+
+fn load_compatibility_manifest() -> Result<SuwayomiCompatibilityManifest, String> {
+    let manifest =
+        serde_json::from_str::<SuwayomiCompatibilityManifest>(SUWAYOMI_COMPATIBILITY_MANIFEST)
+            .map_err(|err| format!("Could not parse Suwayomi compatibility manifest: {err}"))?;
+    validate_compatibility_manifest(manifest)
+}
+
+fn validate_compatibility_manifest(
+    manifest: SuwayomiCompatibilityManifest,
+) -> Result<SuwayomiCompatibilityManifest, String> {
+    if manifest.schema_version != 1 {
+        return Err(format!(
+            "Unsupported Suwayomi compatibility manifest schema {}.",
+            manifest.schema_version
+        ));
+    }
+    if manifest.repository != "Suwayomi/Suwayomi-Server" {
+        return Err(
+            "Suwayomi compatibility manifest points to an unexpected repository.".to_string(),
+        );
+    }
+    if manifest.checksum_asset.trim().is_empty() {
+        return Err("Suwayomi compatibility manifest is missing checksum asset.".to_string());
+    }
+    if manifest.allowed_versions.is_empty() {
+        return Err("Suwayomi compatibility manifest has no allowed versions.".to_string());
+    }
+    if compare_versions(
+        &manifest.min_supported_version,
+        &manifest.max_tested_version,
+    )
+    .map_or(true, |ordering| ordering == std::cmp::Ordering::Greater)
+    {
+        return Err(
+            "Suwayomi compatibility manifest has an invalid tested version range.".to_string(),
+        );
+    }
+    for allowed in &manifest.allowed_versions {
+        if allowed.version.trim().is_empty() || allowed.asset.trim().is_empty() {
+            return Err(
+                "Suwayomi compatibility manifest contains an incomplete allowed version."
+                    .to_string(),
+            );
+        }
+        if compare_versions(&allowed.version, &manifest.min_supported_version)
+            .map_or(true, |ordering| ordering == std::cmp::Ordering::Less)
+            || compare_versions(&allowed.version, &manifest.max_tested_version)
+                .map_or(true, |ordering| ordering == std::cmp::Ordering::Greater)
+        {
+            return Err(format!(
+                "Allowed Suwayomi version {} is outside Aethon's tested range.",
+                allowed.version
+            ));
+        }
+    }
+    Ok(manifest)
+}
+
+fn suwayomi_update_lock() -> &'static Mutex<Option<ActiveSuwayomiUpdateLock>> {
+    SUWAYOMI_UPDATE_LOCK.get_or_init(|| Mutex::new(None))
+}
+
+fn try_acquire_suwayomi_update_lock(owner: &str) -> Result<SuwayomiUpdateLockGuard, String> {
+    let mut lock = suwayomi_update_lock()
+        .lock()
+        .map_err(|_| "Suwayomi update lock is poisoned.".to_string())?;
+    if lock.is_some() {
+        return Err("A Suwayomi update is already in progress.".to_string());
+    }
+    let token = Uuid::new_v4().to_string();
+    *lock = Some(ActiveSuwayomiUpdateLock {
+        token: token.clone(),
+        owner: owner.trim().to_string(),
+        started_at_ms: unix_now_ms(),
+    });
+    Ok(SuwayomiUpdateLockGuard { token })
+}
+
+fn release_suwayomi_update_lock(token: &str) -> bool {
+    let Ok(mut lock) = suwayomi_update_lock().lock() else {
+        return false;
+    };
+    if lock.as_ref().is_some_and(|active| active.token == token) {
+        *lock = None;
+        true
+    } else {
+        false
+    }
+}
+
+fn current_suwayomi_update_lock_status() -> SuwayomiUpdateLockStatus {
+    let active = suwayomi_update_lock()
+        .lock()
+        .ok()
+        .and_then(|lock| lock.clone());
+    SuwayomiUpdateLockStatus {
+        in_progress: active.is_some(),
+        owner: active.as_ref().map(|active| active.owner.clone()),
+        started_at_ms: active.as_ref().map(|active| active.started_at_ms),
+    }
+}
+
+fn unix_now_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+}
+
+impl Drop for SuwayomiUpdateLockGuard {
+    fn drop(&mut self) {
+        let _ = release_suwayomi_update_lock(&self.token);
+    }
+}
+
+fn resolve_update_target(
+    server_url: Option<String>,
+    profile_id: Option<String>,
+    profile_label: Option<String>,
+    app: &AppHandle,
+) -> Result<LocalServerTarget, String> {
+    let normalized_server_url = normalize_server_url(server_url.as_deref());
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    resolve_local_server_target(
+        &launch_target,
+        Some(normalized_server_url.as_str()),
+        profile_id.as_deref(),
+        profile_label.as_deref(),
+    )
+    .map_err(|error| format!("Could not resolve managed Suwayomi runtime: {error:?}"))
+}
+
+fn stop_managed_runtime_for_snapshot(
+    app: &AppHandle,
+    target: &LocalServerTarget,
+) -> Result<bool, String> {
+    let java_pid = prove_aethon_runtime_ownership(target)?;
+    kill_tachidesk_target(app, target);
+    wait_for_managed_runtime_stop(&target.root_dir, java_pid)?;
+    Ok(true)
+}
+
+fn wait_for_managed_runtime_stop(root_dir: &Path, java_pid: u32) -> Result<(), String> {
+    for _ in 0..50 {
+        if !process_is_alive(java_pid) && find_java_pid_for_rootdir(root_dir).is_none() {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    Err("Managed Suwayomi did not release its database before snapshot.".to_string())
+}
+
+fn restart_managed_runtime(app: &AppHandle, target: &LocalServerTarget) -> Result<(), String> {
+    spawn_managed_server_for_update(
+        target.server_url.clone(),
+        Some(target.profile_key.clone()),
+        app.clone(),
+    )
+    .map_err(|error| format!("{error:?}"))
+}
+
+fn restart_runtime_after_snapshot_failure<F>(
+    stopped_runtime: bool,
+    restart: F,
+) -> Result<bool, String>
+where
+    F: FnOnce() -> Result<(), String>,
+{
+    if !stopped_runtime {
+        return Ok(false);
+    }
+    restart()?;
+    Ok(true)
+}
+
+#[cfg(test)]
+fn create_snapshot_for_root(root_dir: &Path) -> Result<SuwayomiUpdateSnapshotResult, String> {
+    let plan = plan_snapshot_files(root_dir)?;
+    ensure_snapshot_disk_space(root_dir, &plan)?;
+    create_snapshot_for_plan(root_dir, plan, None, SuwayomiRuntimeMode::Unknown, None)
+}
+
+fn create_snapshot_for_plan(
+    root_dir: &Path,
+    plan: Vec<SnapshotPlanFile>,
+    profile_id: Option<String>,
+    runtime_mode: SuwayomiRuntimeMode,
+    suwayomi_version: Option<String>,
+) -> Result<SuwayomiUpdateSnapshotResult, String> {
+    if !root_dir.is_dir() {
+        return Err("Suwayomi root directory does not exist.".to_string());
+    }
+    let snapshots_dir = root_dir.join(SUWAYOMI_SNAPSHOT_DIR);
+    fs::create_dir_all(&snapshots_dir)
+        .map_err(|error| format!("Could not create snapshot directory: {error}"))?;
+
+    let snapshot_id = format!("snapshot-{}-{}", unix_now_ms(), Uuid::new_v4());
+    let temp_dir = snapshots_dir.join(format!(".tmp-{snapshot_id}"));
+    let final_dir = snapshots_dir.join(snapshot_id);
+    fs::create_dir(&temp_dir)
+        .map_err(|error| format!("Could not create temporary snapshot: {error}"))?;
+
+    let result = (|| {
+        let files = copy_snapshot_plan(&plan, &temp_dir)?;
+        let manifest = SuwayomiSnapshotManifest {
+            schema_version: 1,
+            snapshot_version: SUWAYOMI_SNAPSHOT_VERSION.to_string(),
+            created_at: unix_now_ms(),
+            profile_id,
+            runtime_mode,
+            suwayomi_version,
+            source_root: path_to_string(root_dir),
+            files: files.clone(),
+            rollback_ready: true,
+        };
+        let manifest_path = temp_dir.join(SUWAYOMI_SNAPSHOT_MANIFEST);
+        write_snapshot_manifest(&manifest_path, &manifest)?;
+        validate_snapshot_files(&temp_dir, &files)?;
+        finalize_snapshot_directory(&temp_dir, &final_dir)?;
+        let final_manifest = final_dir.join(SUWAYOMI_SNAPSHOT_MANIFEST);
+        if !final_manifest.is_file() {
+            let _ = fs::remove_dir_all(&final_dir);
+            return Err("Finalized snapshot is missing its manifest.".to_string());
+        }
+        Ok(SuwayomiUpdateSnapshotResult {
+            snapshot_path: path_to_string(&final_dir),
+            manifest_path: path_to_string(&final_manifest),
+            copied_files: files.iter().map(|file| file.name.clone()).collect(),
+            stopped_runtime: false,
+            restarted_runtime: false,
+        })
+    })();
+
+    if result.is_err() && temp_dir.exists() {
+        if let Err(cleanup_error) = fs::remove_dir_all(&temp_dir) {
+            return Err(format!(
+                "{} Temporary snapshot cleanup also failed: {cleanup_error}",
+                result.unwrap_err()
+            ));
+        }
+    }
+    result
+}
+
+fn plan_snapshot_files(root_dir: &Path) -> Result<Vec<SnapshotPlanFile>, String> {
+    if !root_dir.is_dir() {
+        return Err("Suwayomi root directory does not exist.".to_string());
+    }
+    let mut files = Vec::new();
+    for name in SUWAYOMI_SNAPSHOT_ALLOWLIST {
+        let source = root_dir.join(name);
+        if !source.exists() {
+            continue;
+        }
+        if !source.is_file() {
+            return Err(format!("Snapshot allowlist entry is not a file: {name}"));
+        }
+        let size_bytes = fs::metadata(&source)
+            .map_err(|error| format!("Could not read metadata for {name}: {error}"))?
+            .len();
+        files.push(SnapshotPlanFile {
+            name: (*name).to_string(),
+            source_path: source,
+            size_bytes,
+        });
+    }
+    if files.is_empty() {
+        return Err("No allowlisted Suwayomi files were available for snapshot.".to_string());
+    }
+    Ok(files)
+}
+
+fn ensure_snapshot_disk_space(root_dir: &Path, files: &[SnapshotPlanFile]) -> Result<(), String> {
+    let required = files
+        .iter()
+        .try_fold(SUWAYOMI_SNAPSHOT_SPACE_MARGIN_BYTES, |total, file| {
+            total.checked_add(file.size_bytes)
+        })
+        .ok_or_else(|| "Snapshot size estimate overflowed.".to_string())?;
+    ensure_required_space(root_dir, required, available_space_for_path(root_dir))
+}
+
+fn ensure_required_space(
+    root_dir: &Path,
+    required_bytes: u64,
+    available_bytes: Option<u64>,
+) -> Result<(), String> {
+    let Some(available) = available_bytes else {
+        return Ok(());
+    };
+    if available < required_bytes {
+        return Err(format!(
+            "Not enough disk space to create Suwayomi snapshot at {}. Required at least {} bytes, available {} bytes.",
+            path_to_string(root_dir),
+            required_bytes,
+            available
+        ));
+    }
+    Ok(())
+}
+
+fn available_space_for_path(path: &Path) -> Option<u64> {
+    let target = existing_ancestor(path)?;
+    let disks = Disks::new_with_refreshed_list();
+    disks
+        .iter()
+        .filter(|disk| target.starts_with(disk.mount_point()))
+        .max_by_key(|disk| disk.mount_point().as_os_str().len())
+        .map(|disk| disk.available_space())
+}
+
+fn existing_ancestor(path: &Path) -> Option<PathBuf> {
+    let mut current = path;
+    loop {
+        if current.exists() {
+            return Some(current.to_path_buf());
+        }
+        current = current.parent()?;
+    }
+}
+
+fn copy_snapshot_plan(
+    plan: &[SnapshotPlanFile],
+    temp_dir: &Path,
+) -> Result<Vec<SuwayomiSnapshotFile>, String> {
+    let mut files = Vec::new();
+    for planned in plan {
+        let target = temp_dir.join(&planned.name);
+        fs::copy(&planned.source_path, &target)
+            .map_err(|error| format!("Could not copy {}: {error}", planned.name))?;
+        let metadata = fs::metadata(&target).map_err(|error| {
+            format!(
+                "Could not read copied metadata for {}: {error}",
+                planned.name
+            )
+        })?;
+        let sha256 = sha256_file(&target)?;
+        files.push(SuwayomiSnapshotFile {
+            name: planned.name.clone(),
+            size_bytes: metadata.len(),
+            sha256,
+        });
+    }
+    if files.is_empty() {
+        return Err("No allowlisted Suwayomi files were available for snapshot.".to_string());
+    }
+    Ok(files)
+}
+
+fn write_snapshot_manifest(
+    manifest_path: &Path,
+    manifest: &SuwayomiSnapshotManifest,
+) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(manifest)
+        .map_err(|error| format!("Could not serialize snapshot manifest: {error}"))?;
+    let mut file = File::create(manifest_path)
+        .map_err(|error| format!("Could not create snapshot manifest: {error}"))?;
+    file.write_all(&bytes)
+        .map_err(|error| format!("Could not write snapshot manifest: {error}"))?;
+    file.sync_all()
+        .map_err(|error| format!("Could not sync snapshot manifest: {error}"))
+}
+
+fn validate_snapshot_files(
+    snapshot_dir: &Path,
+    files: &[SuwayomiSnapshotFile],
+) -> Result<(), String> {
+    for file in files {
+        let path = snapshot_dir.join(&file.name);
+        let metadata = fs::metadata(&path)
+            .map_err(|error| format!("Could not validate snapshot file {}: {error}", file.name))?;
+        if !metadata.is_file() || metadata.len() != file.size_bytes {
+            return Err(format!(
+                "Snapshot file {} did not validate after copy.",
+                file.name
+            ));
+        }
+        let actual_sha256 = sha256_file(&path)?;
+        if !actual_sha256.eq_ignore_ascii_case(&file.sha256) {
+            return Err(format!(
+                "Snapshot file {} failed SHA-256 validation.",
+                file.name
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn finalize_snapshot_directory(temp_dir: &Path, final_dir: &Path) -> Result<(), String> {
+    if temp_dir.parent() != final_dir.parent() {
+        return Err(
+            "Atomic finalize requires temporary and final directories to share a parent."
+                .to_string(),
+        );
+    }
+    if final_dir.exists() {
+        return Err("Final snapshot directory already exists.".to_string());
+    }
+    fs::rename(temp_dir, final_dir)
+        .map_err(|error| format!("Could not finalize snapshot atomically: {error}"))
+}
+
+fn sha256_file(path: &Path) -> Result<String, String> {
+    let mut file = File::open(path).map_err(|error| {
+        format!(
+            "Could not open {} for SHA-256: {error}",
+            path_to_string(path)
+        )
+    })?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|error| format!("Could not hash {}: {error}", path_to_string(path)))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hex_lower(&hasher.finalize()))
+}
+
+#[cfg(test)]
+fn sha256_bytes(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hex_lower(&hasher.finalize())
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
+async fn fetch_suwayomi_releases() -> Result<Vec<GithubRelease>, String> {
+    let now = Instant::now();
+    if let Some(releases) = cached_suwayomi_releases(now) {
+        return Ok(releases);
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|err| format!("Could not create GitHub client: {err}"))?;
+    let response = client
+        .get(SUWAYOMI_RELEASES_API_URL)
+        .header(reqwest::header::USER_AGENT, SUWAYOMI_RELEASES_USER_AGENT)
+        .send()
+        .await
+        .map_err(|err| format!("Could not check Suwayomi releases: {err}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "GitHub release check returned HTTP {}.",
+            response.status()
+        ));
+    }
+    let body = response
+        .text()
+        .await
+        .map_err(|err| format!("Could not read Suwayomi releases: {err}"))?;
+    let releases = parse_github_releases(&body)?;
+    store_cached_suwayomi_releases(now, releases.clone());
+    Ok(releases)
+}
+
+fn parse_github_releases(body: &str) -> Result<Vec<GithubRelease>, String> {
+    serde_json::from_str::<Vec<GithubRelease>>(body)
+        .map_err(|err| format!("Could not parse Suwayomi releases: {err}"))
+}
+
+fn suwayomi_releases_cache() -> &'static Mutex<Option<CachedGithubReleases>> {
+    SUWAYOMI_RELEASES_CACHE.get_or_init(|| Mutex::new(None))
+}
+
+fn cached_suwayomi_releases(now: Instant) -> Option<Vec<GithubRelease>> {
+    let guard = suwayomi_releases_cache().lock().ok()?;
+    let cached = guard.as_ref()?;
+    if now.duration_since(cached.fetched_at) <= SUWAYOMI_RELEASES_CACHE_TTL {
+        Some(cached.releases.clone())
+    } else {
+        None
+    }
+}
+
+fn store_cached_suwayomi_releases(now: Instant, releases: Vec<GithubRelease>) {
+    if let Ok(mut guard) = suwayomi_releases_cache().lock() {
+        *guard = Some(CachedGithubReleases {
+            fetched_at: now,
+            releases,
+        });
+    }
+}
+
+fn runtime_update_preflight_block(
+    runtime: &SuwayomiRuntimeStatus,
+) -> Option<SuwayomiUpdateCheckResult> {
+    if runtime.update_allowed {
+        return None;
+    }
+    Some(blocked_update_check(
+        runtime.version.clone(),
+        runtime
+            .block_reason
+            .clone()
+            .unwrap_or_else(|| "This Suwayomi runtime is not managed by Aethon.".to_string()),
+    ))
+}
+
+fn manifest_preflight_block(
+    runtime: &SuwayomiRuntimeStatus,
+    manifest: &SuwayomiCompatibilityManifest,
+) -> Option<SuwayomiUpdateCheckResult> {
+    let Some(current) = runtime.version.as_deref() else {
+        return Some(blocked_update_check(
+            None,
+            "Current Suwayomi version could not be detected.".to_string(),
+        ));
+    };
+    if let Some(blocked) = manifest.blocked_reason(current) {
+        return Some(blocked_update_check(
+            runtime.version.clone(),
+            format!("Current Suwayomi version is blocked by Aethon: {blocked}"),
+        ));
+    }
+    if compare_versions(current, &manifest.min_supported_version)
+        .is_some_and(|ordering| ordering == std::cmp::Ordering::Less)
+    {
+        return Some(blocked_update_check(
+            runtime.version.clone(),
+            format!(
+                "Current Suwayomi version is below Aethon's minimum supported version {}.",
+                manifest.min_supported_version
+            ),
+        ));
+    }
+    if compare_versions(current, &manifest.max_tested_version)
+        .is_some_and(|ordering| ordering == std::cmp::Ordering::Greater)
+    {
+        return Some(blocked_update_check(
+            runtime.version.clone(),
+            format!(
+                "Current Suwayomi version is newer than Aethon's maximum tested version {}.",
+                manifest.max_tested_version
+            ),
+        ));
+    }
+    None
+}
+
+fn calculate_update_check(
+    runtime: &SuwayomiRuntimeStatus,
+    manifest: &SuwayomiCompatibilityManifest,
+    releases: &[GithubRelease],
+) -> SuwayomiUpdateCheckResult {
+    let Some(current_version) = runtime.version.clone() else {
+        return blocked_update_check(
+            None,
+            "Current Suwayomi version could not be detected.".to_string(),
+        );
+    };
+
+    let Some(latest) = latest_compatible_release(manifest, releases) else {
+        return blocked_update_check(
+            Some(current_version),
+            "No compatible Suwayomi release from Aethon's allowlist was found.".to_string(),
+        );
+    };
+
+    match compare_versions(&latest.allowed.version, &current_version) {
+        Some(std::cmp::Ordering::Greater) => SuwayomiUpdateCheckResult {
+            status: UpdateCheckStatus::UpdateAvailable,
+            current_version: Some(current_version),
+            latest_compatible_version: Some(latest.allowed.version.clone()),
+            release_tag: Some(latest.release.tag_name.clone()),
+            release_url: Some(latest.release.html_url.clone()),
+            update_allowed: true,
+            block_reason: None,
+            notes: latest.allowed.notes.clone(),
+            release_notes: latest.release.body.as_ref().and_then(non_empty_string),
+        },
+        Some(_) => SuwayomiUpdateCheckResult {
+            status: UpdateCheckStatus::UpToDate,
+            current_version: Some(current_version),
+            latest_compatible_version: Some(latest.allowed.version.clone()),
+            release_tag: Some(latest.release.tag_name.clone()),
+            release_url: Some(latest.release.html_url.clone()),
+            update_allowed: false,
+            block_reason: None,
+            notes: latest.allowed.notes.clone(),
+            release_notes: latest.release.body.as_ref().and_then(non_empty_string),
+        },
+        None => blocked_update_check(
+            Some(current_version),
+            "Could not compare Suwayomi versions safely.".to_string(),
+        ),
+    }
+}
+
+#[derive(Clone, Debug)]
+struct CompatibleRelease<'a> {
+    allowed: &'a SuwayomiAllowedVersion,
+    release: &'a GithubRelease,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct StagingCandidate {
+    version: String,
+    asset_name: String,
+    checksum_asset: String,
+    release_tag: String,
+    release_url: String,
+    jar_url: String,
+    checksum_url: String,
+}
+
+fn latest_compatible_release<'a>(
+    manifest: &'a SuwayomiCompatibilityManifest,
+    releases: &'a [GithubRelease],
+) -> Option<CompatibleRelease<'a>> {
+    releases
+        .iter()
+        .filter_map(|release| compatible_release(manifest, release))
+        .max_by(|left, right| {
+            compare_versions_for_sort(&left.allowed.version, &right.allowed.version)
+        })
+}
+
+fn compatible_release<'a>(
+    manifest: &'a SuwayomiCompatibilityManifest,
+    release: &'a GithubRelease,
+) -> Option<CompatibleRelease<'a>> {
+    if release.draft || release.prerelease {
+        return None;
+    }
+    if manifest.blocked_reason(&release.tag_name).is_some() {
+        return None;
+    }
+    if !manifest.version_within_tested_range(&release.tag_name) {
+        return None;
+    }
+    let allowed = manifest.allowed_version(&release.tag_name)?;
+    if !release_has_asset(release, &allowed.asset) {
+        return None;
+    }
+    if !release_has_asset(release, &manifest.checksum_asset) {
+        return None;
+    }
+    Some(CompatibleRelease { allowed, release })
+}
+
+fn release_has_asset(release: &GithubRelease, asset_name: &str) -> bool {
+    release.assets.iter().any(|asset| asset.name == asset_name)
+}
+
+fn release_asset<'a>(
+    release: &'a GithubRelease,
+    asset_name: &str,
+) -> Option<&'a GithubReleaseAsset> {
+    release.assets.iter().find(|asset| asset.name == asset_name)
+}
+
+fn select_staging_candidate(
+    runtime: &SuwayomiRuntimeStatus,
+    manifest: &SuwayomiCompatibilityManifest,
+    releases: &[GithubRelease],
+    target_version: Option<&str>,
+) -> Result<StagingCandidate, String> {
+    let current = runtime
+        .version
+        .as_deref()
+        .ok_or_else(|| "Current Suwayomi version could not be detected.".to_string())?;
+    let compatible = if let Some(target) = target_version {
+        releases
+            .iter()
+            .filter_map(|release| compatible_release(manifest, release))
+            .find(|candidate| {
+                normalize_version_tag(&candidate.allowed.version) == normalize_version_tag(target)
+            })
+    } else {
+        latest_compatible_release(manifest, releases)
+    }
+    .ok_or_else(|| {
+        "No compatible Suwayomi release from Aethon's allowlist was found.".to_string()
+    })?;
+
+    match compare_versions(&compatible.allowed.version, current) {
+        Some(std::cmp::Ordering::Greater) => {}
+        Some(_) => {
+            return Err("No newer compatible Suwayomi update is available.".to_string());
+        }
+        None => return Err("Could not compare Suwayomi versions safely.".to_string()),
+    }
+
+    let jar_asset = release_asset(compatible.release, &compatible.allowed.asset)
+        .ok_or_else(|| "Compatible release is missing the expected JAR asset.".to_string())?;
+    let checksum_asset = release_asset(compatible.release, &manifest.checksum_asset)
+        .ok_or_else(|| "Compatible release is missing its checksum asset.".to_string())?;
+
+    Ok(StagingCandidate {
+        version: compatible.allowed.version.clone(),
+        asset_name: compatible.allowed.asset.clone(),
+        checksum_asset: manifest.checksum_asset.clone(),
+        release_tag: compatible.release.tag_name.clone(),
+        release_url: compatible.release.html_url.clone(),
+        jar_url: jar_asset.browser_download_url.clone(),
+        checksum_url: checksum_asset.browser_download_url.clone(),
+    })
+}
+
+async fn download_release_text(url: &str) -> Result<String, String> {
+    let bytes = download_release_bytes(url).await?;
+    String::from_utf8(bytes).map_err(|error| format!("Downloaded checksum is not UTF-8: {error}"))
+}
+
+async fn download_release_bytes(url: &str) -> Result<Vec<u8>, String> {
+    let parsed =
+        Url::parse(url).map_err(|error| format!("Release asset URL is invalid: {error}"))?;
+    if parsed.scheme() != "https" || parsed.host_str() != Some("github.com") {
+        return Err("Release asset URL is not an official GitHub HTTPS URL.".to_string());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()
+        .map_err(|err| format!("Could not create GitHub download client: {err}"))?;
+    let response = client
+        .get(url)
+        .header(reqwest::header::USER_AGENT, SUWAYOMI_RELEASES_USER_AGENT)
+        .send()
+        .await
+        .map_err(|err| format!("Could not download Suwayomi release asset: {err}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Suwayomi release asset download returned HTTP {}.",
+            response.status()
+        ));
+    }
+    response
+        .bytes()
+        .await
+        .map(|bytes| bytes.to_vec())
+        .map_err(|err| format!("Could not read Suwayomi release asset: {err}"))
+}
+
+fn checksum_for_asset(checksums: &str, asset_name: &str) -> Result<String, String> {
+    for line in checksums.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let mut parts = trimmed.split_whitespace();
+        let Some(hash) = parts.next() else {
+            continue;
+        };
+        let Some(name) = parts.next() else {
+            continue;
+        };
+        if name.trim_start_matches('*') == asset_name {
+            if hash.len() == 64 && hash.chars().all(|ch| ch.is_ascii_hexdigit()) {
+                return Ok(hash.to_ascii_lowercase());
+            }
+            return Err(format!(
+                "Checksum for {asset_name} is not a valid SHA-256 hash."
+            ));
+        }
+    }
+    Err(format!("Checksum file does not contain {asset_name}."))
+}
+
+fn managed_runtime_staging_root() -> PathBuf {
+    managed_runtime_root().join(SUWAYOMI_STAGING_DIR)
+}
+
+fn managed_runtime_root() -> PathBuf {
+    suwayomi_data_dir().join(SUWAYOMI_RUNTIME_DIR)
+}
+
+async fn stage_release_jar(
+    staging_root: &Path,
+    candidate: &StagingCandidate,
+    manifest: &SuwayomiCompatibilityManifest,
+    expected_sha256: &str,
+    min_size_bytes: u64,
+) -> Result<SuwayomiUpdateStageResult, String> {
+    validate_staging_candidate(candidate, manifest)?;
+
+    fs::create_dir_all(staging_root)
+        .map_err(|error| format!("Could not create Suwayomi staging directory: {error}"))?;
+    let version_dir = normalize_version_tag(&candidate.version);
+    let temp_dir = staging_root.join(format!(".tmp-{version_dir}-{}", Uuid::new_v4()));
+    let final_dir = staging_root.join(&version_dir);
+    fs::create_dir(&temp_dir)
+        .map_err(|error| format!("Could not create temporary staging directory: {error}"))?;
+
+    let jar_path = temp_dir.join(SUWAYOMI_SERVER_JAR);
+    let part_path = temp_dir.join(format!("{SUWAYOMI_SERVER_JAR}.part"));
+    let result = async {
+        let actual_sha256 = download_release_to_part(&candidate.jar_url, &part_path).await?;
+        if actual_sha256 != expected_sha256.to_ascii_lowercase() {
+            return Err("Downloaded Suwayomi JAR failed SHA-256 validation.".to_string());
+        }
+        fs::rename(&part_path, &jar_path)
+            .map_err(|error| format!("Could not finalize staged JAR download: {error}"))?;
+        finalize_staging_directory(
+            &temp_dir,
+            &final_dir,
+            candidate,
+            manifest,
+            expected_sha256,
+            min_size_bytes,
+        )
+    }
+    .await;
+
+    if result.is_err() && temp_dir.exists() {
+        let original = result.unwrap_err();
+        if let Err(cleanup_error) = fs::remove_dir_all(&temp_dir) {
+            return Err(format!(
+                "{original} Temporary staging cleanup also failed: {cleanup_error}"
+            ));
+        }
+        return Err(original);
+    }
+    result
+}
+
+#[cfg(test)]
+fn stage_downloaded_jar(
+    staging_root: &Path,
+    candidate: &StagingCandidate,
+    manifest: &SuwayomiCompatibilityManifest,
+    jar_bytes: &[u8],
+    expected_sha256: &str,
+    min_size_bytes: u64,
+) -> Result<SuwayomiUpdateStageResult, String> {
+    stage_downloaded_jar_from_reader(
+        staging_root,
+        candidate,
+        manifest,
+        std::io::Cursor::new(jar_bytes),
+        expected_sha256,
+        min_size_bytes,
+    )
+}
+
+#[cfg(test)]
+fn stage_downloaded_jar_from_reader<R: Read>(
+    staging_root: &Path,
+    candidate: &StagingCandidate,
+    manifest: &SuwayomiCompatibilityManifest,
+    reader: R,
+    expected_sha256: &str,
+    min_size_bytes: u64,
+) -> Result<SuwayomiUpdateStageResult, String> {
+    validate_staging_candidate(candidate, manifest)?;
+    fs::create_dir_all(staging_root)
+        .map_err(|error| format!("Could not create Suwayomi staging directory: {error}"))?;
+    let version_dir = normalize_version_tag(&candidate.version);
+    let temp_dir = staging_root.join(format!(".tmp-{version_dir}-{}", Uuid::new_v4()));
+    let final_dir = staging_root.join(&version_dir);
+    fs::create_dir(&temp_dir)
+        .map_err(|error| format!("Could not create temporary staging directory: {error}"))?;
+
+    let jar_path = temp_dir.join(SUWAYOMI_SERVER_JAR);
+    let part_path = temp_dir.join(format!("{SUWAYOMI_SERVER_JAR}.part"));
+    let result = (|| {
+        let actual_sha256 = write_reader_to_part(reader, &part_path)?;
+        if actual_sha256 != expected_sha256.to_ascii_lowercase() {
+            return Err("Downloaded Suwayomi JAR failed SHA-256 validation.".to_string());
+        }
+        fs::rename(&part_path, &jar_path)
+            .map_err(|error| format!("Could not finalize staged JAR download: {error}"))?;
+        finalize_staging_directory(
+            &temp_dir,
+            &final_dir,
+            candidate,
+            manifest,
+            expected_sha256,
+            min_size_bytes,
+        )
+    })();
+
+    if result.is_err() && temp_dir.exists() {
+        let original = result.unwrap_err();
+        if let Err(cleanup_error) = fs::remove_dir_all(&temp_dir) {
+            return Err(format!(
+                "{original} Temporary staging cleanup also failed: {cleanup_error}"
+            ));
+        }
+        return Err(original);
+    }
+    result
+}
+
+async fn download_release_to_part(url: &str, part_path: &Path) -> Result<String, String> {
+    let parsed =
+        Url::parse(url).map_err(|error| format!("Release asset URL is invalid: {error}"))?;
+    if parsed.scheme() != "https" || parsed.host_str() != Some("github.com") {
+        return Err("Release asset URL is not an official GitHub HTTPS URL.".to_string());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()
+        .map_err(|err| format!("Could not create GitHub download client: {err}"))?;
+    let response = client
+        .get(url)
+        .header(reqwest::header::USER_AGENT, SUWAYOMI_RELEASES_USER_AGENT)
+        .send()
+        .await
+        .map_err(|err| format!("Could not download Suwayomi release asset: {err}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Suwayomi release asset download returned HTTP {}.",
+            response.status()
+        ));
+    }
+
+    let mut file =
+        File::create(part_path).map_err(|error| format!("Could not create JAR .part: {error}"))?;
+    let mut hasher = Sha256::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| format!("Suwayomi JAR download interrupted: {error}"))?;
+        file.write_all(&chunk)
+            .map_err(|error| format!("Could not write JAR .part: {error}"))?;
+        hasher.update(&chunk);
+    }
+    file.sync_all()
+        .map_err(|error| format!("Could not sync JAR .part: {error}"))?;
+    Ok(hex_lower(&hasher.finalize()))
+}
+
+#[cfg(test)]
+fn write_reader_to_part<R: Read>(mut reader: R, part_path: &Path) -> Result<String, String> {
+    let mut file =
+        File::create(part_path).map_err(|error| format!("Could not create JAR .part: {error}"))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .map_err(|error| format!("Suwayomi JAR stream interrupted: {error}"))?;
+        if read == 0 {
+            break;
+        }
+        file.write_all(&buffer[..read])
+            .map_err(|error| format!("Could not write JAR .part: {error}"))?;
+        hasher.update(&buffer[..read]);
+    }
+    file.sync_all()
+        .map_err(|error| format!("Could not sync JAR .part: {error}"))?;
+    Ok(hex_lower(&hasher.finalize()))
+}
+
+fn finalize_staging_directory(
+    temp_dir: &Path,
+    final_dir: &Path,
+    candidate: &StagingCandidate,
+    manifest: &SuwayomiCompatibilityManifest,
+    expected_sha256: &str,
+    min_size_bytes: u64,
+) -> Result<SuwayomiUpdateStageResult, String> {
+    let jar_path = temp_dir.join(SUWAYOMI_SERVER_JAR);
+    validate_staged_jar(
+        &jar_path,
+        expected_sha256,
+        &candidate.version,
+        manifest,
+        min_size_bytes,
+    )?;
+    let staging_manifest = SuwayomiStagingManifest {
+        schema_version: 1,
+        created_at: unix_now_ms(),
+        version: normalize_version_tag(&candidate.version),
+        sha256: expected_sha256.to_ascii_lowercase(),
+        asset_name: candidate.asset_name.clone(),
+        checksum_asset: candidate.checksum_asset.clone(),
+        release_tag: candidate.release_tag.clone(),
+        release_url: candidate.release_url.clone(),
+    };
+    write_staging_manifest(&temp_dir.join(SUWAYOMI_STAGING_MANIFEST), &staging_manifest)?;
+    finalize_snapshot_directory(temp_dir, final_dir)?;
+    let final_jar = final_dir.join(SUWAYOMI_SERVER_JAR);
+    if !final_jar.is_file() {
+        let _ = fs::remove_dir_all(final_dir);
+        return Err("Finalized staging directory is missing its JAR.".to_string());
+    }
+    Ok(SuwayomiUpdateStageResult {
+        staging_path: path_to_string(final_dir),
+        jar_path: path_to_string(&final_jar),
+        version: staging_manifest.version,
+        sha256: staging_manifest.sha256,
+        asset_name: staging_manifest.asset_name,
+        checksum_asset: staging_manifest.checksum_asset,
+        release_tag: staging_manifest.release_tag,
+        release_url: staging_manifest.release_url,
+    })
+}
+
+fn write_staging_manifest(
+    manifest_path: &Path,
+    manifest: &SuwayomiStagingManifest,
+) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(manifest)
+        .map_err(|error| format!("Could not serialize staging manifest: {error}"))?;
+    let mut file = File::create(manifest_path)
+        .map_err(|error| format!("Could not create staging manifest: {error}"))?;
+    file.write_all(&bytes)
+        .map_err(|error| format!("Could not write staging manifest: {error}"))?;
+    file.sync_all()
+        .map_err(|error| format!("Could not sync staging manifest: {error}"))
+}
+
+fn validate_staging_candidate(
+    candidate: &StagingCandidate,
+    manifest: &SuwayomiCompatibilityManifest,
+) -> Result<(), String> {
+    let allowed = manifest
+        .allowed_version(&candidate.version)
+        .ok_or_else(|| "Target Suwayomi version is not in Aethon's allowlist.".to_string())?;
+    if manifest.blocked_reason(&candidate.version).is_some() {
+        return Err("Target Suwayomi version is blocked by Aethon.".to_string());
+    }
+    if !manifest.version_within_tested_range(&candidate.version) {
+        return Err("Target Suwayomi version is outside Aethon's tested range.".to_string());
+    }
+    if allowed.asset != candidate.asset_name {
+        return Err("Target Suwayomi asset does not match Aethon's allowlist.".to_string());
+    }
+    Ok(())
+}
+
+fn validate_staged_jar(
+    jar_path: &Path,
+    expected_sha256: &str,
+    expected_version: &str,
+    manifest: &SuwayomiCompatibilityManifest,
+    min_size_bytes: u64,
+) -> Result<(), String> {
+    validate_staging_candidate(
+        &StagingCandidate {
+            version: expected_version.to_string(),
+            asset_name: manifest
+                .allowed_version(expected_version)
+                .map(|allowed| allowed.asset.clone())
+                .unwrap_or_default(),
+            checksum_asset: manifest.checksum_asset.clone(),
+            release_tag: expected_version.to_string(),
+            release_url: String::new(),
+            jar_url: String::new(),
+            checksum_url: String::new(),
+        },
+        manifest,
+    )?;
+    let metadata = fs::metadata(jar_path)
+        .map_err(|error| format!("Could not read staged JAR metadata: {error}"))?;
+    if !metadata.is_file() {
+        return Err("Staged Suwayomi JAR is not a file.".to_string());
+    }
+    if metadata.len() < min_size_bytes {
+        return Err("Staged Suwayomi JAR is smaller than expected.".to_string());
+    }
+    if sha256_file(jar_path)? != expected_sha256.to_ascii_lowercase() {
+        return Err("Staged Suwayomi JAR hash changed after write.".to_string());
+    }
+    let mut archive = zip::ZipArchive::new(
+        File::open(jar_path).map_err(|error| format!("Could not open staged JAR: {error}"))?,
+    )
+    .map_err(|error| format!("Staged Suwayomi JAR is not readable: {error}"))?;
+    archive
+        .by_name("META-INF/MANIFEST.MF")
+        .map_err(|error| format!("Staged Suwayomi JAR is missing its manifest: {error}"))?;
+    drop(archive);
+    let version = read_suwayomi_jar_version(jar_path)
+        .and_then(|jar_version| jar_version.version)
+        .ok_or_else(|| "Could not detect staged Suwayomi JAR version.".to_string())?;
+    if normalize_version_tag(&version) != normalize_version_tag(expected_version) {
+        return Err(format!(
+            "Staged Suwayomi JAR version {version} does not match expected {expected_version}."
+        ));
+    }
+    Ok(())
+}
+
+fn validate_staging_dir(
+    staging_dir: &Path,
+    manifest: &SuwayomiCompatibilityManifest,
+) -> Result<SuwayomiStagingManifest, String> {
+    if !staging_dir.is_dir() {
+        return Err("Requested Suwayomi staging directory does not exist.".to_string());
+    }
+    let staging_manifest_path = staging_dir.join(SUWAYOMI_STAGING_MANIFEST);
+    let staging_manifest = read_staging_manifest(&staging_manifest_path)?;
+    if staging_manifest.schema_version != 1 {
+        return Err("Staging manifest has an unsupported schema.".to_string());
+    }
+    validate_staging_candidate(
+        &StagingCandidate {
+            version: staging_manifest.version.clone(),
+            asset_name: staging_manifest.asset_name.clone(),
+            checksum_asset: staging_manifest.checksum_asset.clone(),
+            release_tag: staging_manifest.release_tag.clone(),
+            release_url: staging_manifest.release_url.clone(),
+            jar_url: String::new(),
+            checksum_url: String::new(),
+        },
+        manifest,
+    )?;
+    validate_staged_jar(
+        &staging_dir.join(SUWAYOMI_SERVER_JAR),
+        &staging_manifest.sha256,
+        &staging_manifest.version,
+        manifest,
+        MIN_STAGED_JAR_BYTES,
+    )?;
+    Ok(staging_manifest)
+}
+
+fn read_staging_manifest(path: &Path) -> Result<SuwayomiStagingManifest, String> {
+    let text = fs::read_to_string(path)
+        .map_err(|error| format!("Could not read staging manifest: {error}"))?;
+    serde_json::from_str(&text)
+        .map_err(|error| format!("Could not parse staging manifest: {error}"))
+}
+
+#[derive(Clone, Debug)]
+struct RuntimePromotionState {
+    current_dir: PathBuf,
+    previous_dir: Option<PathBuf>,
+    previous_backup_dir: Option<PathBuf>,
+    had_current: bool,
+}
+
+fn promote_staging_directories(
+    runtime_root: &Path,
+    version: &str,
+) -> Result<RuntimePromotionState, String> {
+    let current_dir = runtime_root.join(SUWAYOMI_CURRENT_DIR);
+    let previous_dir = runtime_root.join(SUWAYOMI_PREVIOUS_DIR);
+    let staging_dir = runtime_root
+        .join(SUWAYOMI_STAGING_DIR)
+        .join(normalize_version_tag(version));
+    if !staging_dir.is_dir() {
+        return Err("Validated staging directory disappeared before promotion.".to_string());
+    }
+    if current_dir.exists() && !current_dir.is_dir() {
+        return Err("Current Suwayomi runtime path is not a directory.".to_string());
+    }
+    if previous_dir.exists() && !previous_dir.is_dir() {
+        return Err("Previous Suwayomi runtime path is not a directory.".to_string());
+    }
+
+    fs::create_dir_all(runtime_root)
+        .map_err(|error| format!("Could not create Suwayomi runtime directory: {error}"))?;
+    let had_current = current_dir.exists();
+    let previous_backup_dir = if had_current && previous_dir.exists() {
+        let backup = runtime_root.join(format!(
+            ".previous-replaced-{}-{}",
+            unix_now_ms(),
+            Uuid::new_v4()
+        ));
+        rename_same_parent(&previous_dir, &backup)?;
+        Some(backup)
+    } else {
+        None
+    };
+
+    if had_current {
+        if let Err(error) = rename_same_parent(&current_dir, &previous_dir) {
+            restore_previous_backup(&previous_dir, previous_backup_dir.as_ref());
+            return Err(error);
+        }
+    }
+
+    if let Err(error) = rename_same_parent(&staging_dir, &current_dir) {
+        let _ = rollback_promoted_directories(&RuntimePromotionState {
+            current_dir: current_dir.clone(),
+            previous_dir: Some(previous_dir.clone()),
+            previous_backup_dir: previous_backup_dir.clone(),
+            had_current,
+        });
+        return Err(error);
+    }
+
+    Ok(RuntimePromotionState {
+        current_dir,
+        previous_dir: had_current.then_some(previous_dir),
+        previous_backup_dir,
+        had_current,
+    })
+}
+
+fn rename_same_parent(from: &Path, to: &Path) -> Result<(), String> {
+    if to.exists() {
+        return Err(format!(
+            "Cannot promote Suwayomi runtime because {} already exists.",
+            path_to_string(to)
+        ));
+    }
+    fs::rename(from, to).map_err(|error| {
+        format!(
+            "Could not atomically move {} to {}: {error}",
+            path_to_string(from),
+            path_to_string(to)
+        )
+    })
+}
+
+fn rollback_promoted_runtime(
+    app: &AppHandle,
+    target: &LocalServerTarget,
+    promotion: &RuntimePromotionState,
+    snapshot_dir: &Path,
+) -> Result<(), String> {
+    kill_tachidesk_target(app, target);
+    let _ = wait_for_managed_runtime_stop(&target.root_dir, 0);
+    rollback_promoted_directories(promotion)?;
+    restore_snapshot_to_root(snapshot_dir, &target.root_dir)?;
+    restart_managed_runtime(app, target)?;
+    let expected_jar = if promotion.had_current {
+        promotion.current_dir.join(SUWAYOMI_SERVER_JAR)
+    } else {
+        bundled_jar_path(app)
+    };
+    wait_for_runtime_jar(target, &expected_jar, runtime_stability_window())
+}
+
+fn rollback_promoted_directories(promotion: &RuntimePromotionState) -> Result<(), String> {
+    if promotion.current_dir.exists() {
+        fs::remove_dir_all(&promotion.current_dir)
+            .map_err(|error| format!("Could not remove failed current runtime: {error}"))?;
+    }
+    if promotion.had_current {
+        let previous_dir = promotion
+            .previous_dir
+            .as_ref()
+            .ok_or_else(|| "Rollback is missing previous runtime path.".to_string())?;
+        if previous_dir.exists() {
+            rename_same_parent(previous_dir, &promotion.current_dir)?;
+        } else {
+            return Err("Previous Suwayomi runtime is missing during rollback.".to_string());
+        }
+    }
+    restore_previous_backup(
+        promotion
+            .previous_dir
+            .as_ref()
+            .unwrap_or(&promotion.current_dir),
+        promotion.previous_backup_dir.as_ref(),
+    );
+    Ok(())
+}
+
+fn restore_previous_backup(previous_dir: &Path, backup: Option<&PathBuf>) {
+    let Some(backup) = backup else {
+        return;
+    };
+    if backup.exists() && !previous_dir.exists() {
+        let _ = fs::rename(backup, previous_dir);
+    }
+}
+
+fn cleanup_previous_backup(promotion: &RuntimePromotionState) -> Result<(), String> {
+    if let Some(backup) = &promotion.previous_backup_dir {
+        if backup.exists() {
+            fs::remove_dir_all(backup)
+                .map_err(|error| format!("Could not clean old previous runtime backup: {error}"))?;
+        }
+    }
+    Ok(())
+}
+
+fn runtime_stability_window() -> Duration {
+    Duration::from_millis(PROMOTED_RUNTIME_MIN_ALIVE_MS)
+}
+
+fn wait_for_runtime_jar(
+    target: &LocalServerTarget,
+    expected_jar: &Path,
+    min_alive: Duration,
+) -> Result<(), String> {
+    let java_pid = prove_aethon_runtime_ownership(target)?;
+    if !java_pid_uses_jar(java_pid, expected_jar) {
+        return Err("Suwayomi process is not using the expected managed JAR.".to_string());
+    }
+    thread::sleep(min_alive);
+    if !process_is_alive(java_pid) {
+        return Err("Suwayomi process exited during the stability window.".to_string());
+    }
+    Ok(())
+}
+
+async fn run_suwayomi_graphql_health_check(
+    server_url: &str,
+    auth_header: Option<&str>,
+) -> Result<(), String> {
+    let endpoint = graphql_endpoint(server_url)?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(SUWAYOMI_HEALTH_TIMEOUT_SECS))
+        .build()
+        .map_err(|error| format!("Could not create Suwayomi health client: {error}"))?;
+    let checks = [
+        (
+            "typename",
+            "query AethonHealthTypename { __typename }",
+            "GraphQL typename check failed.",
+        ),
+        (
+            "library",
+            "query AethonHealthLibrary { library: mangas(condition: { inLibrary: true }, first: 1) { nodes { id } } }",
+            "Library health check failed.",
+        ),
+        (
+            "sources",
+            "query AethonHealthSources { sources(first: 1) { nodes { id displayName } } }",
+            "Sources health check failed.",
+        ),
+        (
+            "extensions",
+            "query AethonHealthExtensions { extensions(first: 1) { nodes { pkgName isInstalled } } }",
+            "Extensions health check failed.",
+        ),
+    ];
+
+    let mut last_error = String::new();
+    for attempt in 0..SUWAYOMI_HEALTH_ATTEMPTS {
+        let mut failed = None;
+        for (key, query, message) in checks {
+            match run_graphql_health_query(&client, &endpoint, auth_header, key, query).await {
+                Ok(()) => {}
+                Err(error) => {
+                    failed = Some(format!("{message} {error}"));
+                    break;
+                }
+            }
+        }
+        if failed.is_none() {
+            return Ok(());
+        }
+        last_error = failed.unwrap_or_default();
+        if attempt + 1 < SUWAYOMI_HEALTH_ATTEMPTS {
+            tokio::time::sleep(Duration::from_millis(SUWAYOMI_HEALTH_DELAY_MS)).await;
+        }
+    }
+    Err(update_error(
+        SuwayomiUpdateErrorKind::HealthCheckError,
+        format!(
+            "Suwayomi GraphQL did not become ready within {} ms. Last error: {}",
+            (SUWAYOMI_HEALTH_ATTEMPTS as u64) * SUWAYOMI_HEALTH_DELAY_MS,
+            last_error
+        ),
+    ))
+}
+
+async fn run_graphql_health_query(
+    client: &reqwest::Client,
+    endpoint: &str,
+    auth_header: Option<&str>,
+    expected_key: &str,
+    query: &str,
+) -> Result<(), String> {
+    let mut request = client.post(endpoint).json(&json!({ "query": query }));
+    if let Some(auth) = auth_header.filter(|value| !value.trim().is_empty()) {
+        request = request.header(reqwest::header::AUTHORIZATION, auth);
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|error| format!("Suwayomi GraphQL request failed: {error}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Suwayomi GraphQL returned HTTP {}.",
+            response.status()
+        ));
+    }
+    let payload = response
+        .json::<Value>()
+        .await
+        .map_err(|error| format!("Suwayomi GraphQL returned invalid JSON: {error}"))?;
+    validate_graphql_health_payload(&payload, expected_key)
+}
+
+fn graphql_endpoint(server_url: &str) -> Result<String, String> {
+    let mut parsed = Url::parse(server_url)
+        .map_err(|error| format!("Suwayomi server URL is invalid: {error}"))?;
+    parsed.set_path("/api/graphql");
+    parsed.set_query(None);
+    parsed.set_fragment(None);
+    Ok(parsed.to_string())
+}
+
+fn validate_graphql_health_payload(payload: &Value, expected_key: &str) -> Result<(), String> {
+    if let Some(errors) = payload.get("errors").and_then(Value::as_array) {
+        if !errors.is_empty() {
+            let message = errors
+                .iter()
+                .filter_map(|error| error.get("message").and_then(Value::as_str))
+                .filter(|message| !message.trim().is_empty())
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(if message.is_empty() {
+                "Suwayomi returned a GraphQL error.".to_string()
+            } else {
+                message
+            });
+        }
+    }
+    let data = payload
+        .get("data")
+        .ok_or_else(|| "Suwayomi GraphQL payload is missing data.".to_string())?;
+    if expected_key == "typename" {
+        return data
+            .get("__typename")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(|_| ())
+            .ok_or_else(|| "Suwayomi GraphQL typename is missing.".to_string());
+    }
+    let connection = data
+        .get(expected_key)
+        .ok_or_else(|| format!("Suwayomi GraphQL payload is missing {expected_key}."))?;
+    if !connection.get("nodes").is_some_and(Value::is_array) {
+        return Err(format!(
+            "Suwayomi GraphQL {expected_key} response has no nodes array."
+        ));
+    }
+    Ok(())
+}
+
+fn validate_snapshot_for_restore(snapshot_dir: &Path) -> Result<SuwayomiSnapshotManifest, String> {
+    if !snapshot_dir.is_dir() {
+        return Err("Rollback snapshot directory does not exist.".to_string());
+    }
+    let manifest_path = snapshot_dir.join(SUWAYOMI_SNAPSHOT_MANIFEST);
+    let text = fs::read_to_string(&manifest_path)
+        .map_err(|error| format!("Could not read rollback snapshot manifest: {error}"))?;
+    let manifest: SuwayomiSnapshotManifest = serde_json::from_str(&text)
+        .map_err(|error| format!("Could not parse rollback snapshot manifest: {error}"))?;
+    if manifest.schema_version != 1 || manifest.snapshot_version != SUWAYOMI_SNAPSHOT_VERSION {
+        return Err("Rollback snapshot manifest has an unsupported schema.".to_string());
+    }
+    validate_snapshot_files(snapshot_dir, &manifest.files)?;
+    Ok(manifest)
+}
+
+fn restore_snapshot_to_root(snapshot_dir: &Path, root_dir: &Path) -> Result<(), String> {
+    let manifest = validate_snapshot_for_restore(snapshot_dir)?;
+    if comparable_path(Path::new(&manifest.source_root)) != comparable_path(root_dir) {
+        return Err("Rollback snapshot belongs to a different Suwayomi root.".to_string());
+    }
+    for name in SUWAYOMI_SNAPSHOT_ALLOWLIST {
+        let target = root_dir.join(name);
+        if !manifest.files.iter().any(|file| file.name == *name) && target.exists() {
+            fs::remove_file(&target)
+                .map_err(|error| format!("Could not remove restored-absent {name}: {error}"))?;
+        }
+    }
+    for file in &manifest.files {
+        let source = snapshot_dir.join(&file.name);
+        let target = root_dir.join(&file.name);
+        fs::copy(&source, &target)
+            .map_err(|error| format!("Could not restore {} from snapshot: {error}", file.name))?;
+        let restored_sha256 = sha256_file(&target)?;
+        if restored_sha256 != file.sha256 {
+            return Err(format!(
+                "Restored snapshot file {} failed SHA-256 validation.",
+                file.name
+            ));
+        }
+    }
+    Ok(())
+}
+
+impl SuwayomiCompatibilityManifest {
+    fn allowed_version(&self, version: &str) -> Option<&SuwayomiAllowedVersion> {
+        let normalized = normalize_version_tag(version);
+        self.allowed_versions
+            .iter()
+            .find(|allowed| normalize_version_tag(&allowed.version) == normalized)
+    }
+
+    fn blocked_reason(&self, version: &str) -> Option<&str> {
+        let normalized = normalize_version_tag(version);
+        self.blocked_versions
+            .iter()
+            .find(|blocked| normalize_version_tag(&blocked.version) == normalized)
+            .map(|blocked| blocked.reason.as_str())
+    }
+
+    fn version_within_tested_range(&self, version: &str) -> bool {
+        compare_versions(version, &self.min_supported_version)
+            .is_some_and(|ordering| ordering != std::cmp::Ordering::Less)
+            && compare_versions(version, &self.max_tested_version)
+                .is_some_and(|ordering| ordering != std::cmp::Ordering::Greater)
+    }
+}
+
+fn blocked_update_check(
+    current_version: Option<String>,
+    block_reason: String,
+) -> SuwayomiUpdateCheckResult {
+    SuwayomiUpdateCheckResult {
+        status: UpdateCheckStatus::Blocked,
+        current_version,
+        latest_compatible_version: None,
+        release_tag: None,
+        release_url: None,
+        update_allowed: false,
+        block_reason: Some(block_reason),
+        notes: None,
+        release_notes: None,
+    }
+}
+
+fn failed_update_check(
+    current_version: Option<String>,
+    block_reason: String,
+) -> SuwayomiUpdateCheckResult {
+    SuwayomiUpdateCheckResult {
+        status: UpdateCheckStatus::CheckFailed,
+        current_version,
+        latest_compatible_version: None,
+        release_tag: None,
+        release_url: None,
+        update_allowed: false,
+        block_reason: Some(block_reason),
+        notes: None,
+        release_notes: None,
+    }
+}
+
+fn non_empty_string(value: &String) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn normalize_version_tag(value: &str) -> String {
+    let trimmed = value.trim();
+    let without_prefix = trimmed.strip_prefix('v').unwrap_or(trimmed);
+    format!("v{}", without_prefix)
+}
+
+fn version_parts(value: &str) -> Option<Vec<u64>> {
+    let trimmed = value.trim().trim_start_matches('v');
+    let parts: Vec<u64> = trimmed
+        .split('.')
+        .map(|part| part.parse::<u64>())
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts)
+    }
+}
+
+fn compare_versions(left: &str, right: &str) -> Option<std::cmp::Ordering> {
+    let mut left_parts = version_parts(left)?;
+    let mut right_parts = version_parts(right)?;
+    let width = left_parts.len().max(right_parts.len());
+    left_parts.resize(width, 0);
+    right_parts.resize(width, 0);
+    Some(left_parts.cmp(&right_parts))
+}
+
+fn compare_versions_for_sort(left: &str, right: &str) -> std::cmp::Ordering {
+    compare_versions(left, right)
+        .unwrap_or_else(|| normalize_version_tag(left).cmp(&normalize_version_tag(right)))
+}
+
+fn normalize_server_url(raw: Option<&str>) -> String {
+    raw.unwrap_or("http://127.0.0.1:4567")
+        .trim()
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn managed_runtime_jar_path() -> PathBuf {
+    suwayomi_data_dir()
+        .join(SUWAYOMI_RUNTIME_DIR)
+        .join(SUWAYOMI_CURRENT_DIR)
+        .join(SUWAYOMI_SERVER_JAR)
+}
+
+fn bundled_jar_path(app: &AppHandle) -> PathBuf {
+    let candidates = bundled_jar_candidates(app);
+    candidates
+        .iter()
+        .find(|path| path.exists())
+        .cloned()
+        .unwrap_or_else(|| candidates[0].clone())
+}
+
+fn bundled_jar_candidates(app: &AppHandle) -> Vec<PathBuf> {
+    #[cfg(not(target_os = "macos"))]
+    {
+        let resource_dir = strip_unc(app.path().resource_dir().unwrap_or_default());
+        vec![resource_dir
+            .join("binaries")
+            .join("suwayomi-bundle")
+            .join("bin")
+            .join(SUWAYOMI_SERVER_JAR)]
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let resource_dir = app.path().resource_dir().unwrap_or_default();
+        vec![
+            resource_dir
+                .join("binaries")
+                .join("suwayomi-bundle")
+                .join("bin")
+                .join(SUWAYOMI_SERVER_JAR),
+            resource_dir
+                .join("suwayomi-bundle")
+                .join("bin")
+                .join(SUWAYOMI_SERVER_JAR),
+        ]
+    }
+}
+
+fn prove_aethon_runtime_ownership(target: &LocalServerTarget) -> Result<u32, String> {
+    let spawn_lock = server_spawn_lock_path(&target.root_dir);
+    if spawn_lock.exists() {
+        return Err(
+            "Aethon is still starting or reconciling this Suwayomi runtime; update is blocked."
+                .to_string(),
+        );
+    }
+
+    let owner_path = server_owner_path(&target.root_dir);
+    let Some(owner) = read_server_owner(&owner_path) else {
+        return Err(
+            "Aethon has not published ownership for this local Suwayomi runtime.".to_string(),
+        );
+    };
+
+    match validate_server_owner(target, &owner) {
+        OwnerReuseDecision::Reusable => Ok(owner.java_pid),
+        OwnerReuseDecision::Stale => {
+            Err("The local Suwayomi ownership record is stale; update is blocked.".to_string())
+        }
+        OwnerReuseDecision::ConflictingLiveProcess => Err(
+            "A local Suwayomi process is alive but failed Aethon ownership health checks."
+                .to_string(),
+        ),
+    }
+}
+
+fn select_effective_managed_jar<F>(
+    runtime_jar: &Path,
+    bundled_jar: &Path,
+    mut process_uses_jar: F,
+) -> Option<(SuwayomiRuntimeMode, PathBuf)>
+where
+    F: FnMut(&Path) -> bool,
+{
+    if runtime_jar.exists() && process_uses_jar(runtime_jar) {
+        return Some((
+            SuwayomiRuntimeMode::ManagedRuntime,
+            runtime_jar.to_path_buf(),
+        ));
+    }
+    if bundled_jar.exists() && process_uses_jar(bundled_jar) {
+        return Some((
+            SuwayomiRuntimeMode::ManagedBundled,
+            bundled_jar.to_path_buf(),
+        ));
+    }
+    None
+}
+
+fn java_pid_uses_jar(pid: u32, jar_path: &Path) -> bool {
+    let system = System::new_all();
+    let Some(process) = system.process(Pid::from_u32(pid)) else {
+        return false;
+    };
+    process
+        .cmd()
+        .iter()
+        .any(|arg| jar_arg_matches_path(&arg.to_string_lossy(), jar_path))
+}
+
+fn jar_arg_matches_path(raw_arg: &str, jar_path: &Path) -> bool {
+    let arg = raw_arg.trim().trim_matches('"');
+    if arg.is_empty() {
+        return false;
+    }
+
+    let expected = comparable_path(jar_path);
+    let arg_path = strip_unc(PathBuf::from(arg));
+    comparable_path(&arg_path) == expected
+}
+
+fn comparable_path(path: &Path) -> String {
+    let normalized = std::fs::canonicalize(path).unwrap_or_else(|_| strip_unc(path.to_path_buf()));
+    let value = normalized.to_string_lossy().replace('\\', "/");
+    #[cfg(windows)]
+    {
+        value.to_ascii_lowercase()
+    }
+    #[cfg(not(windows))]
+    {
+        value
+    }
+}
+
+fn allowed_status(
+    mode: SuwayomiRuntimeMode,
+    server_url: String,
+    profile_id: Option<String>,
+    root_dir: Option<String>,
+    jar_path: PathBuf,
+) -> SuwayomiRuntimeStatus {
+    let jar_version = read_suwayomi_jar_version(&jar_path);
+    SuwayomiRuntimeStatus {
+        mode,
+        version: jar_version
+            .as_ref()
+            .and_then(|version| version.version.clone()),
+        jar_version,
+        jar_path: Some(path_to_string(&jar_path)),
+        profile_id,
+        root_dir,
+        server_url,
+        update_allowed: true,
+        block_reason: None,
+    }
+}
+
+fn blocked_status(
+    mode: SuwayomiRuntimeMode,
+    server_url: String,
+    profile_id: Option<String>,
+    root_dir: Option<String>,
+    jar_path: Option<PathBuf>,
+    jar_version: Option<SuwayomiJarVersion>,
+    block_reason: &str,
+) -> SuwayomiRuntimeStatus {
+    let jar_version = jar_version.or_else(|| {
+        jar_path
+            .as_ref()
+            .and_then(|path| read_suwayomi_jar_version(path))
+    });
+    SuwayomiRuntimeStatus {
+        mode,
+        version: jar_version
+            .as_ref()
+            .and_then(|version| version.version.clone()),
+        jar_version,
+        jar_path: jar_path.as_ref().map(|path| path_to_string(path)),
+        profile_id,
+        root_dir,
+        server_url,
+        update_allowed: false,
+        block_reason: Some(block_reason.to_string()),
+    }
+}
+
+fn path_to_string(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
+}
+
+fn read_suwayomi_jar_version(path: &Path) -> Option<SuwayomiJarVersion> {
+    read_manifest_version(path).or_else(|| read_build_config_version(path))
+}
+
+fn read_manifest_version(path: &Path) -> Option<SuwayomiJarVersion> {
+    let mut archive = zip::ZipArchive::new(File::open(path).ok()?).ok()?;
+    let mut manifest = String::new();
+    archive
+        .by_name("META-INF/MANIFEST.MF")
+        .ok()?
+        .read_to_string(&mut manifest)
+        .ok()?;
+    parse_manifest_version(&manifest)
+}
+
+fn read_build_config_version(path: &Path) -> Option<SuwayomiJarVersion> {
+    let mut archive = zip::ZipArchive::new(File::open(path).ok()?).ok()?;
+    let mut bytes = Vec::new();
+    archive
+        .by_name("suwayomi/tachidesk/server/generated/BuildConfig.class")
+        .ok()?
+        .read_to_end(&mut bytes)
+        .ok()?;
+    parse_build_config_constants(&bytes)
+}
+
+fn parse_manifest_version(manifest: &str) -> Option<SuwayomiJarVersion> {
+    let version = manifest_value(manifest, "Specification-Version")
+        .or_else(|| manifest_value(manifest, "Implementation-Version"));
+    let revision = manifest_value(manifest, "Implementation-Version");
+    if version.is_none() && revision.is_none() {
+        return None;
+    }
+    Some(SuwayomiJarVersion {
+        version,
+        revision,
+        build_type: manifest_value(manifest, "Build-Type"),
+        webui_tag: manifest_value(manifest, "WebUI-Tag"),
+    })
+}
+
+fn manifest_value(manifest: &str, key: &str) -> Option<String> {
+    let prefix = format!("{key}:");
+    manifest.lines().find_map(|line| {
+        let (line_key, value) = line.split_once(':')?;
+        if line_key.trim() != key || !line.trim_start().starts_with(&prefix) {
+            return None;
+        }
+        let value = value.trim();
+        if value.is_empty() {
+            None
+        } else {
+            Some(value.to_string())
+        }
+    })
+}
+
+fn parse_build_config_constants(bytes: &[u8]) -> Option<SuwayomiJarVersion> {
+    let constants = class_utf8_constants(bytes);
+    let version = constants
+        .iter()
+        .find(|value| looks_like_suwayomi_version(value))
+        .cloned();
+    let revision = constants
+        .iter()
+        .find(|value| looks_like_suwayomi_revision(value))
+        .cloned();
+    if version.is_none() && revision.is_none() {
+        return None;
+    }
+    Some(SuwayomiJarVersion {
+        version,
+        revision,
+        build_type: constants
+            .iter()
+            .find(|value| matches!(value.as_str(), "Stable" | "Preview" | "Debug"))
+            .cloned(),
+        webui_tag: constants
+            .iter()
+            .filter(|value| looks_like_suwayomi_revision(value))
+            .nth(1)
+            .cloned(),
+    })
+}
+
+fn looks_like_suwayomi_version(value: &str) -> bool {
+    let trimmed = value.trim_start_matches('v');
+    let parts: Vec<&str> = trimmed.split('.').collect();
+    parts.len() >= 3
+        && parts
+            .iter()
+            .take(3)
+            .all(|part| !part.is_empty() && part.chars().all(|ch| ch.is_ascii_digit()))
+}
+
+fn looks_like_suwayomi_revision(value: &str) -> bool {
+    value
+        .strip_prefix('r')
+        .is_some_and(|rest| !rest.is_empty() && rest.chars().all(|ch| ch.is_ascii_digit()))
+}
+
+fn class_utf8_constants(bytes: &[u8]) -> Vec<String> {
+    if bytes.len() < 10 || &bytes[0..4] != b"\xCA\xFE\xBA\xBE" {
+        return Vec::new();
+    }
+    let constant_pool_count = read_u16(bytes, 8).unwrap_or(0) as usize;
+    let mut offset = 10usize;
+    let mut constants = Vec::new();
+    let mut index = 1usize;
+
+    while index < constant_pool_count && offset < bytes.len() {
+        let tag = bytes[offset];
+        offset += 1;
+        match tag {
+            1 => {
+                let Some(len) = read_u16(bytes, offset).map(usize::from) else {
+                    break;
+                };
+                offset += 2;
+                if offset + len > bytes.len() {
+                    break;
+                }
+                if let Ok(value) = std::str::from_utf8(&bytes[offset..offset + len]) {
+                    constants.push(value.to_string());
+                }
+                offset += len;
+            }
+            3 | 4 => offset += 4,
+            5 | 6 => {
+                offset += 8;
+                index += 1;
+            }
+            7 | 8 | 16 | 19 | 20 => offset += 2,
+            9 | 10 | 11 | 12 | 18 | 17 => offset += 4,
+            15 => offset += 3,
+            _ => break,
+        }
+        index += 1;
+    }
+
+    constants
+}
+
+fn read_u16(bytes: &[u8], offset: usize) -> Option<u16> {
+    let slice = bytes.get(offset..offset + 2)?;
+    Some(u16::from_be_bytes([slice[0], slice[1]]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Error as IoError, ErrorKind};
+    use std::sync::Mutex as StdMutex;
+    use zip::write::SimpleFileOptions;
+
+    static UPDATE_LOCK_TEST_MUTEX: StdMutex<()> = StdMutex::new(());
+
+    fn test_manifest() -> SuwayomiCompatibilityManifest {
+        serde_json::from_str(SUWAYOMI_COMPATIBILITY_MANIFEST).unwrap()
+    }
+
+    fn release(tag: &str, prerelease: bool, assets: &[&str]) -> GithubRelease {
+        release_with_draft(tag, false, prerelease, assets)
+    }
+
+    fn release_with_draft(
+        tag: &str,
+        draft: bool,
+        prerelease: bool,
+        assets: &[&str],
+    ) -> GithubRelease {
+        GithubRelease {
+            tag_name: tag.to_string(),
+            html_url: format!("https://github.com/Suwayomi/Suwayomi-Server/releases/tag/{tag}"),
+            draft,
+            prerelease,
+            body: Some(format!("Release notes for {tag}.")),
+            assets: assets
+                .iter()
+                .map(|name| GithubReleaseAsset {
+                    name: name.to_string(),
+                    browser_download_url: format!(
+                        "https://github.com/Suwayomi/Suwayomi-Server/releases/download/{tag}/{name}"
+                    ),
+                    size: Some(1024),
+                })
+                .collect(),
+        }
+    }
+
+    fn runtime(version: Option<&str>, update_allowed: bool) -> SuwayomiRuntimeStatus {
+        SuwayomiRuntimeStatus {
+            mode: if update_allowed {
+                SuwayomiRuntimeMode::ManagedBundled
+            } else {
+                SuwayomiRuntimeMode::External
+            },
+            version: version.map(str::to_string),
+            jar_version: None,
+            jar_path: None,
+            profile_id: Some("main".to_string()),
+            root_dir: Some("C:/aethon-main".to_string()),
+            server_url: "http://127.0.0.1:4567".to_string(),
+            update_allowed,
+            block_reason: None,
+        }
+    }
+
+    #[test]
+    fn parses_manifest_version_fields() {
+        let parsed = parse_manifest_version(
+            "Manifest-Version: 1.0\n\
+             Specification-Version: v2.1.1867\n\
+             Implementation-Version: r1867\n",
+        )
+        .unwrap();
+
+        assert_eq!(parsed.version.as_deref(), Some("v2.1.1867"));
+        assert_eq!(parsed.revision.as_deref(), Some("r1867"));
+    }
+
+    #[test]
+    fn rejects_manifest_without_version() {
+        assert_eq!(parse_manifest_version("Manifest-Version: 1.0\n"), None);
+    }
+
+    #[test]
+    fn detects_version_and_revision_shapes() {
+        assert!(looks_like_suwayomi_version("v2.2.2100"));
+        assert!(looks_like_suwayomi_version("2.2.2100"));
+        assert!(!looks_like_suwayomi_version("v2.2"));
+        assert!(looks_like_suwayomi_revision("r2100"));
+        assert!(!looks_like_suwayomi_revision("release-2100"));
+    }
+
+    #[test]
+    fn effective_managed_jar_requires_process_match() {
+        let runtime = PathBuf::from("C:/aethon/runtime/current/Suwayomi-Server.jar");
+        let bundled =
+            PathBuf::from("C:/aethon/resources/binaries/suwayomi-bundle/bin/Suwayomi-Server.jar");
+
+        assert_eq!(
+            select_effective_managed_jar(&runtime, &bundled, |_| true),
+            None
+        );
+    }
+
+    #[test]
+    fn effective_managed_jar_prefers_actual_process_jar() {
+        let temp = tempfile::tempdir().unwrap();
+        let runtime = temp.path().join("runtime").join(SUWAYOMI_SERVER_JAR);
+        let bundled = temp
+            .path()
+            .join("binaries")
+            .join("suwayomi-bundle")
+            .join("bin")
+            .join(SUWAYOMI_SERVER_JAR);
+        std::fs::create_dir_all(runtime.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(bundled.parent().unwrap()).unwrap();
+        std::fs::write(&runtime, b"runtime").unwrap();
+        std::fs::write(&bundled, b"bundled").unwrap();
+
+        let selected = select_effective_managed_jar(&runtime, &bundled, |path| path == bundled)
+            .expect("bundled jar should be selected");
+
+        assert_eq!(selected.0, SuwayomiRuntimeMode::ManagedBundled);
+        assert_eq!(selected.1, bundled);
+    }
+
+    #[test]
+    fn jar_path_comparison_normalizes_slashes() {
+        let path = PathBuf::from("C:/aethon/Suwayomi-Server.jar");
+        assert!(jar_arg_matches_path(
+            "C:\\aethon\\Suwayomi-Server.jar",
+            &path
+        ));
+    }
+
+    #[test]
+    fn compatibility_manifest_parses_allowed_and_blocked_versions() {
+        let manifest = test_manifest();
+
+        assert_eq!(manifest.repository, "Suwayomi/Suwayomi-Server");
+        assert!(manifest.allowed_version("v2.2.2100").is_some());
+        assert!(manifest.blocked_reason("v2.0.1727").is_some());
+    }
+
+    #[test]
+    fn manifest_validation_rejects_invalid_range_and_incomplete_allowlist() {
+        let mut invalid_range = test_manifest();
+        invalid_range.min_supported_version = "v2.3.0".to_string();
+        invalid_range.max_tested_version = "v2.2.0".to_string();
+        assert!(validate_compatibility_manifest(invalid_range).is_err());
+
+        let mut incomplete = test_manifest();
+        incomplete.allowed_versions[0].asset = String::new();
+        assert!(validate_compatibility_manifest(incomplete).is_err());
+    }
+
+    #[test]
+    fn compatible_release_requires_allowlist_asset_and_checksum() {
+        let manifest = test_manifest();
+        let allowed = release(
+            "v2.2.2100",
+            false,
+            &["Suwayomi-Server-v2.2.2100.jar", "Checksums.sha256"],
+        );
+        let missing_checksum = release("v2.2.2100", false, &["Suwayomi-Server-v2.2.2100.jar"]);
+        let outside_allowlist = release(
+            "v9.9.9999",
+            false,
+            &["Suwayomi-Server-v9.9.9999.jar", "Checksums.sha256"],
+        );
+
+        assert!(compatible_release(&manifest, &allowed).is_some());
+        assert!(compatible_release(&manifest, &missing_checksum).is_none());
+        assert!(compatible_release(&manifest, &outside_allowlist).is_none());
+    }
+
+    #[test]
+    fn compatible_release_ignores_draft() {
+        let manifest = test_manifest();
+        let draft = release_with_draft(
+            "v2.2.2100",
+            true,
+            false,
+            &["Suwayomi-Server-v2.2.2100.jar", "Checksums.sha256"],
+        );
+
+        assert!(compatible_release(&manifest, &draft).is_none());
+    }
+
+    #[test]
+    fn compatible_release_ignores_prerelease() {
+        let manifest = test_manifest();
+        let preview = release(
+            "v2.2.2100",
+            true,
+            &["Suwayomi-Server-v2.2.2100.jar", "Checksums.sha256"],
+        );
+
+        assert!(compatible_release(&manifest, &preview).is_none());
+    }
+
+    #[test]
+    fn compatible_release_respects_blocklist_before_allowlist() {
+        let mut manifest = test_manifest();
+        manifest.blocked_versions.push(SuwayomiBlockedVersion {
+            version: "v2.2.2100".to_string(),
+            reason: "test block".to_string(),
+        });
+        let blocked = release(
+            "v2.2.2100",
+            false,
+            &["Suwayomi-Server-v2.2.2100.jar", "Checksums.sha256"],
+        );
+
+        assert!(compatible_release(&manifest, &blocked).is_none());
+    }
+
+    #[test]
+    fn compatible_release_respects_manifest_tested_range() {
+        let mut manifest = test_manifest();
+        manifest.max_tested_version = "v2.1.1867".to_string();
+        let above_max = release(
+            "v2.2.2100",
+            false,
+            &["Suwayomi-Server-v2.2.2100.jar", "Checksums.sha256"],
+        );
+
+        assert!(compatible_release(&manifest, &above_max).is_none());
+    }
+
+    #[test]
+    fn update_check_reports_update_available_from_allowlist() {
+        let manifest = test_manifest();
+        let releases = vec![
+            release(
+                "v2.2.2100",
+                false,
+                &["Suwayomi-Server-v2.2.2100.jar", "Checksums.sha256"],
+            ),
+            release(
+                "v2.1.1867",
+                false,
+                &["Suwayomi-Server-v2.1.1867.jar", "Checksums.sha256"],
+            ),
+        ];
+
+        let result =
+            calculate_update_check(&runtime(Some("v2.1.1867"), true), &manifest, &releases);
+
+        assert_eq!(result.status, UpdateCheckStatus::UpdateAvailable);
+        assert_eq!(
+            result.latest_compatible_version.as_deref(),
+            Some("v2.2.2100")
+        );
+        assert!(result.update_allowed);
+    }
+
+    #[test]
+    fn update_check_reports_up_to_date_for_latest_allowed_release() {
+        let manifest = test_manifest();
+        let releases = vec![release(
+            "v2.2.2100",
+            false,
+            &["Suwayomi-Server-v2.2.2100.jar", "Checksums.sha256"],
+        )];
+
+        let result =
+            calculate_update_check(&runtime(Some("v2.2.2100"), true), &manifest, &releases);
+
+        assert_eq!(result.status, UpdateCheckStatus::UpToDate);
+        assert!(!result.update_allowed);
+    }
+
+    #[test]
+    fn update_check_blocks_when_current_version_is_unknown() {
+        let manifest = test_manifest();
+        let releases = vec![release(
+            "v2.2.2100",
+            false,
+            &["Suwayomi-Server-v2.2.2100.jar", "Checksums.sha256"],
+        )];
+
+        let result = calculate_update_check(&runtime(None, true), &manifest, &releases);
+
+        assert_eq!(result.status, UpdateCheckStatus::Blocked);
+        assert!(!result.update_allowed);
+    }
+
+    #[test]
+    fn manifest_preflight_blocks_below_minimum() {
+        let manifest = test_manifest();
+        let result = manifest_preflight_block(&runtime(Some("v2.0.1727"), true), &manifest)
+            .expect("blocked version should be rejected");
+
+        assert_eq!(result.status, UpdateCheckStatus::Blocked);
+        assert!(!result.update_allowed);
+    }
+
+    #[test]
+    fn manifest_preflight_blocks_above_maximum() {
+        let manifest = test_manifest();
+        let result = manifest_preflight_block(&runtime(Some("v2.3.0"), true), &manifest)
+            .expect("above max tested version should be rejected");
+
+        assert_eq!(result.status, UpdateCheckStatus::Blocked);
+        assert!(!result.update_allowed);
+    }
+
+    #[test]
+    fn non_managed_runtime_preflight_blocks_without_release_lookup() {
+        for mode in [
+            SuwayomiRuntimeMode::External,
+            SuwayomiRuntimeMode::ManagedUserBinary,
+            SuwayomiRuntimeMode::Unknown,
+        ] {
+            let mut runtime = runtime(Some("v2.1.1867"), false);
+            runtime.mode = mode;
+            runtime.block_reason = Some("not managed".to_string());
+
+            let result = runtime_update_preflight_block(&runtime)
+                .expect("non-managed runtime should block before GitHub");
+
+            assert_eq!(result.status, UpdateCheckStatus::Blocked);
+            assert!(!result.update_allowed);
+        }
+    }
+
+    #[test]
+    fn github_release_json_errors_are_check_failures() {
+        let error = parse_github_releases("{not-json").unwrap_err();
+        let result = failed_update_check(Some("v2.1.1867".to_string()), error);
+
+        assert_eq!(result.status, UpdateCheckStatus::CheckFailed);
+        assert!(!result.update_allowed);
+    }
+
+    #[test]
+    fn update_errors_are_categorized_once() {
+        assert_eq!(
+            update_error(SuwayomiUpdateErrorKind::DownloadError, "network failed"),
+            "DownloadError: network failed"
+        );
+        assert_eq!(
+            update_error(
+                SuwayomiUpdateErrorKind::DownloadError,
+                "DownloadError: network failed"
+            ),
+            "DownloadError: network failed"
+        );
+    }
+
+    #[test]
+    fn version_comparison_is_numeric() {
+        assert_eq!(
+            compare_versions("v2.9.0", "v2.10.0"),
+            Some(std::cmp::Ordering::Less)
+        );
+        assert_eq!(
+            compare_versions("v2.10.9", "v2.10.10"),
+            Some(std::cmp::Ordering::Less)
+        );
+        assert_eq!(
+            compare_versions("v2.1.1867", "v2.2.2100"),
+            Some(std::cmp::Ordering::Less)
+        );
+    }
+
+    #[test]
+    fn graphql_health_payload_accepts_expected_shapes() {
+        assert!(validate_graphql_health_payload(
+            &serde_json::json!({ "data": { "__typename": "Query" } }),
+            "typename"
+        )
+        .is_ok());
+        assert!(validate_graphql_health_payload(
+            &serde_json::json!({ "data": { "library": { "nodes": [] } } }),
+            "library"
+        )
+        .is_ok());
+        assert!(validate_graphql_health_payload(
+            &serde_json::json!({ "data": { "sources": { "nodes": [{ "id": "1", "displayName": "MangaDex" }] } } }),
+            "sources"
+        )
+        .is_ok());
+        assert!(validate_graphql_health_payload(
+            &serde_json::json!({ "data": { "extensions": { "nodes": [{ "pkgName": "pkg", "isInstalled": true }] } } }),
+            "extensions"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn graphql_health_payload_rejects_errors_and_missing_connections() {
+        let error = validate_graphql_health_payload(
+            &serde_json::json!({ "errors": [{ "message": "database unavailable" }], "data": null }),
+            "sources",
+        )
+        .unwrap_err();
+        assert!(error.contains("database unavailable"));
+
+        let missing_sources = validate_graphql_health_payload(
+            &serde_json::json!({ "data": { "sources": null } }),
+            "sources",
+        )
+        .unwrap_err();
+        assert!(missing_sources.contains("nodes array"));
+
+        let missing_library = validate_graphql_health_payload(
+            &serde_json::json!({ "data": { "library": { "totalCount": 1 } } }),
+            "library",
+        )
+        .unwrap_err();
+        assert!(missing_library.contains("nodes array"));
+    }
+
+    #[test]
+    fn cached_releases_expire_after_ttl() {
+        let now = Instant::now();
+        store_cached_suwayomi_releases(
+            now,
+            vec![release(
+                "v2.2.2100",
+                false,
+                &["Suwayomi-Server-v2.2.2100.jar", "Checksums.sha256"],
+            )],
+        );
+
+        assert!(cached_suwayomi_releases(now + Duration::from_secs(30)).is_some());
+        assert!(cached_suwayomi_releases(now + Duration::from_secs(61)).is_none());
+    }
+
+    fn write_root_file(root: &Path, name: &str, content: &[u8]) {
+        std::fs::write(root.join(name), content).unwrap();
+    }
+
+    fn read_snapshot_manifest(snapshot: &SuwayomiUpdateSnapshotResult) -> SuwayomiSnapshotManifest {
+        let text = std::fs::read_to_string(&snapshot.manifest_path).unwrap();
+        serde_json::from_str(&text).unwrap()
+    }
+
+    fn create_test_jar_bytes(version: &str) -> Vec<u8> {
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        {
+            let file = File::create(temp.path()).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let options = SimpleFileOptions::default();
+            zip.start_file("META-INF/MANIFEST.MF", options).unwrap();
+            zip.write_all(
+                format!(
+                    "Manifest-Version: 1.0\nSpecification-Version: {version}\nImplementation-Version: r2100\n"
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+            zip.finish().unwrap();
+        }
+        std::fs::read(temp.path()).unwrap()
+    }
+
+    fn staging_candidate(version: &str) -> StagingCandidate {
+        StagingCandidate {
+            version: version.to_string(),
+            asset_name: format!("Suwayomi-Server-{version}.jar"),
+            checksum_asset: "Checksums.sha256".to_string(),
+            release_tag: version.to_string(),
+            release_url: format!(
+                "https://github.com/Suwayomi/Suwayomi-Server/releases/tag/{version}"
+            ),
+            jar_url: format!(
+                "https://github.com/Suwayomi/Suwayomi-Server/releases/download/{version}/Suwayomi-Server-{version}.jar"
+            ),
+            checksum_url: format!(
+                "https://github.com/Suwayomi/Suwayomi-Server/releases/download/{version}/Checksums.sha256"
+            ),
+        }
+    }
+
+    struct FailingReader {
+        emitted: bool,
+    }
+
+    impl Read for FailingReader {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            if self.emitted {
+                Err(IoError::new(ErrorKind::Interrupted, "stream interrupted"))
+            } else {
+                self.emitted = true;
+                buffer[..4].copy_from_slice(b"part");
+                Ok(4)
+            }
+        }
+    }
+
+    #[test]
+    fn snapshot_is_created_with_allowlisted_files() {
+        let temp = tempfile::tempdir().unwrap();
+        write_root_file(temp.path(), "server.conf", b"server");
+        write_root_file(temp.path(), "database.mv.db", b"db");
+
+        let snapshot = create_snapshot_for_root(temp.path()).unwrap();
+
+        assert!(Path::new(&snapshot.snapshot_path).is_dir());
+        assert!(Path::new(&snapshot.manifest_path).is_file());
+        assert_eq!(snapshot.copied_files, vec!["server.conf", "database.mv.db"]);
+        assert!(Path::new(&snapshot.snapshot_path)
+            .join("server.conf")
+            .is_file());
+        assert!(Path::new(&snapshot.snapshot_path)
+            .join("database.mv.db")
+            .is_file());
+        let manifest = read_snapshot_manifest(&snapshot);
+        assert_eq!(manifest.schema_version, 1);
+        assert_eq!(manifest.snapshot_version, SUWAYOMI_SNAPSHOT_VERSION);
+        assert_eq!(manifest.runtime_mode, SuwayomiRuntimeMode::Unknown);
+        assert_eq!(manifest.files.len(), 2);
+        assert!(manifest.files.iter().all(|file| file.sha256.len() == 64));
+    }
+
+    #[test]
+    fn snapshot_rejects_missing_root_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let missing = temp.path().join("missing");
+
+        let error = create_snapshot_for_root(&missing).unwrap_err();
+
+        assert!(error.contains("root directory does not exist"));
+    }
+
+    #[test]
+    fn snapshot_rejects_incomplete_allowlist_entry_and_removes_temp() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp.path().join("database.mv.db")).unwrap();
+
+        let error = create_snapshot_for_root(temp.path()).unwrap_err();
+
+        assert!(error.contains("not a file"));
+        let snapshots_dir = temp.path().join(SUWAYOMI_SNAPSHOT_DIR);
+        if snapshots_dir.exists() {
+            let tmp_leftovers = std::fs::read_dir(snapshots_dir)
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_name().to_string_lossy().starts_with(".tmp-"))
+                .count();
+            assert_eq!(tmp_leftovers, 0);
+        }
+    }
+
+    #[test]
+    fn snapshot_fails_when_no_allowlisted_files_exist() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp.path().join("downloads")).unwrap();
+
+        let error = create_snapshot_for_root(temp.path()).unwrap_err();
+
+        assert!(error.contains("No allowlisted"));
+    }
+
+    #[test]
+    fn snapshot_never_copies_downloads_or_cache() {
+        let temp = tempfile::tempdir().unwrap();
+        write_root_file(temp.path(), "server.conf", b"server");
+        std::fs::create_dir(temp.path().join("downloads")).unwrap();
+        std::fs::write(
+            temp.path().join("downloads").join("chapter.cbz"),
+            b"chapter",
+        )
+        .unwrap();
+        std::fs::create_dir(temp.path().join("library-cover-cache")).unwrap();
+        std::fs::write(
+            temp.path().join("library-cover-cache").join("cover.jpg"),
+            b"cover",
+        )
+        .unwrap();
+
+        let snapshot = create_snapshot_for_root(temp.path()).unwrap();
+        let snapshot_path = Path::new(&snapshot.snapshot_path);
+
+        assert!(snapshot_path.join("server.conf").is_file());
+        assert!(!snapshot_path.join("downloads").exists());
+        assert!(!snapshot_path.join("library-cover-cache").exists());
+    }
+
+    #[test]
+    fn snapshot_supports_multiple_consecutive_snapshots() {
+        let temp = tempfile::tempdir().unwrap();
+        write_root_file(temp.path(), "server.conf", b"server");
+
+        let first = create_snapshot_for_root(temp.path()).unwrap();
+        let second = create_snapshot_for_root(temp.path()).unwrap();
+
+        assert_ne!(first.snapshot_path, second.snapshot_path);
+        assert!(Path::new(&first.manifest_path).is_file());
+        assert!(Path::new(&second.manifest_path).is_file());
+    }
+
+    #[test]
+    fn snapshot_disk_space_check_fails_before_copy() {
+        let temp = tempfile::tempdir().unwrap();
+        write_root_file(temp.path(), "server.conf", b"server");
+        let plan = plan_snapshot_files(temp.path()).unwrap();
+
+        let error = ensure_required_space(temp.path(), 1024 * 1024, Some(10)).unwrap_err();
+
+        assert!(error.contains("Not enough disk space"));
+        assert_eq!(plan.len(), 1);
+        assert!(!temp.path().join(SUWAYOMI_SNAPSHOT_DIR).exists());
+    }
+
+    #[test]
+    fn snapshot_validation_rejects_hash_mismatch() {
+        let temp = tempfile::tempdir().unwrap();
+        write_root_file(temp.path(), "server.conf", b"server");
+        let plan = plan_snapshot_files(temp.path()).unwrap();
+        let snapshot_dir = temp.path().join("snapshot");
+        std::fs::create_dir(&snapshot_dir).unwrap();
+        let mut files = copy_snapshot_plan(&plan, &snapshot_dir).unwrap();
+        std::fs::write(snapshot_dir.join("server.conf"), b"SERVER").unwrap();
+
+        let error = validate_snapshot_files(&snapshot_dir, &files).unwrap_err();
+
+        assert!(error.contains("SHA-256"));
+        files[0].sha256 = sha256_file(&snapshot_dir.join("server.conf")).unwrap();
+        assert!(validate_snapshot_files(&snapshot_dir, &files).is_ok());
+    }
+
+    #[test]
+    fn snapshot_finalize_rejects_existing_final_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let tmp = temp.path().join(".tmp");
+        let final_dir = temp.path().join("final");
+        std::fs::create_dir(&tmp).unwrap();
+        std::fs::create_dir(&final_dir).unwrap();
+
+        let error = finalize_snapshot_directory(&tmp, &final_dir).unwrap_err();
+
+        assert!(error.contains("already exists"));
+        assert!(tmp.exists());
+    }
+
+    #[test]
+    fn snapshot_failure_releases_update_lock() {
+        let _serial = UPDATE_LOCK_TEST_MUTEX.lock().unwrap();
+        clear_update_lock_for_tests();
+        let temp = tempfile::tempdir().unwrap();
+
+        let result: Result<(), String> = (|| {
+            let _guard = try_acquire_suwayomi_update_lock("snapshot-test")?;
+            create_snapshot_for_root(temp.path().join("missing").as_path()).map(|_| ())
+        })();
+
+        assert!(result.is_err());
+        assert!(!current_suwayomi_update_lock_status().in_progress);
+    }
+
+    #[test]
+    fn restart_hook_runs_after_snapshot_failure_when_runtime_was_stopped() {
+        let mut restarted = false;
+
+        let result = restart_runtime_after_snapshot_failure(true, || {
+            restarted = true;
+            Ok(())
+        });
+
+        assert_eq!(result, Ok(true));
+        assert!(restarted);
+    }
+
+    #[test]
+    fn restart_hook_is_skipped_when_runtime_was_not_stopped() {
+        let mut restarted = false;
+
+        let result = restart_runtime_after_snapshot_failure(false, || {
+            restarted = true;
+            Ok(())
+        });
+
+        assert_eq!(result, Ok(false));
+        assert!(!restarted);
+    }
+
+    #[test]
+    fn restart_hook_reports_restart_failure() {
+        let result =
+            restart_runtime_after_snapshot_failure(true, || Err("restart failed".to_string()));
+
+        assert_eq!(result, Err("restart failed".to_string()));
+    }
+
+    #[test]
+    fn checksum_parser_finds_expected_asset() {
+        let hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let checksums = format!("{hash}  Suwayomi-Server-v2.2.2100.jar\n");
+
+        let parsed = checksum_for_asset(&checksums, "Suwayomi-Server-v2.2.2100.jar").unwrap();
+
+        assert_eq!(parsed, hash);
+    }
+
+    #[test]
+    fn checksum_parser_rejects_missing_asset() {
+        let hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let checksums = format!("{hash}  Other.jar\n");
+
+        let error = checksum_for_asset(&checksums, "Suwayomi-Server-v2.2.2100.jar").unwrap_err();
+
+        assert!(error.contains("does not contain"));
+    }
+
+    #[test]
+    fn staging_rejects_version_outside_allowlist() {
+        let manifest = test_manifest();
+        let candidate = staging_candidate("v9.9.9999");
+
+        let error = validate_staging_candidate(&candidate, &manifest).unwrap_err();
+
+        assert!(error.contains("allowlist"));
+    }
+
+    #[test]
+    fn staging_rejects_unexpected_asset() {
+        let manifest = test_manifest();
+        let mut candidate = staging_candidate("v2.2.2100");
+        candidate.asset_name = "Unexpected.jar".to_string();
+
+        let error = validate_staging_candidate(&candidate, &manifest).unwrap_err();
+
+        assert!(error.contains("asset"));
+    }
+
+    #[test]
+    fn staging_rejects_invalid_checksum_and_cleans_temp() {
+        let temp = tempfile::tempdir().unwrap();
+        let manifest = test_manifest();
+        let candidate = staging_candidate("v2.2.2100");
+        let jar = create_test_jar_bytes("v2.2.2100");
+        let bad_hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+        let error = stage_downloaded_jar(temp.path(), &candidate, &manifest, &jar, bad_hash, 1)
+            .unwrap_err();
+
+        assert!(error.contains("SHA-256"));
+        let tmp_leftovers = std::fs::read_dir(temp.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with(".tmp-"))
+            .count();
+        assert_eq!(tmp_leftovers, 0);
+    }
+
+    #[test]
+    fn staging_cleans_part_after_interrupted_stream() {
+        let temp = tempfile::tempdir().unwrap();
+        let manifest = test_manifest();
+        let candidate = staging_candidate("v2.2.2100");
+        let hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+        let error = stage_downloaded_jar_from_reader(
+            temp.path(),
+            &candidate,
+            &manifest,
+            FailingReader { emitted: false },
+            hash,
+            1,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("interrupted"));
+        let leftovers = std::fs::read_dir(temp.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().to_string_lossy().contains(".part"))
+            .count();
+        assert_eq!(leftovers, 0);
+    }
+
+    #[test]
+    fn staging_rejects_unreadable_jar_and_cleans_temp() {
+        let temp = tempfile::tempdir().unwrap();
+        let manifest = test_manifest();
+        let candidate = staging_candidate("v2.2.2100");
+        let jar = b"not a jar".to_vec();
+        let hash = sha256_bytes(&jar);
+
+        let error =
+            stage_downloaded_jar(temp.path(), &candidate, &manifest, &jar, &hash, 1).unwrap_err();
+
+        assert!(error.contains("not readable") || error.contains("missing its manifest"));
+        let tmp_leftovers = std::fs::read_dir(temp.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with(".tmp-"))
+            .count();
+        assert_eq!(tmp_leftovers, 0);
+    }
+
+    #[test]
+    fn staging_accepts_valid_jar_without_touching_current_or_previous() {
+        let temp = tempfile::tempdir().unwrap();
+        let manifest = test_manifest();
+        let candidate = staging_candidate("v2.2.2100");
+        let jar = create_test_jar_bytes("v2.2.2100");
+        let hash = sha256_bytes(&jar);
+
+        let result =
+            stage_downloaded_jar(temp.path(), &candidate, &manifest, &jar, &hash, 1).unwrap();
+
+        assert!(Path::new(&result.jar_path).is_file());
+        assert_eq!(result.version, "v2.2.2100");
+        assert_eq!(result.sha256, hash);
+        assert!(!temp.path().join("current").exists());
+        assert!(!temp.path().join("previous").exists());
+        assert!(Path::new(&result.staging_path)
+            .join(SUWAYOMI_STAGING_MANIFEST)
+            .is_file());
+    }
+
+    #[test]
+    fn staging_rejects_jar_version_mismatch() {
+        let temp = tempfile::tempdir().unwrap();
+        let manifest = test_manifest();
+        let candidate = staging_candidate("v2.2.2100");
+        let jar = create_test_jar_bytes("v2.1.1867");
+        let hash = sha256_bytes(&jar);
+
+        let error =
+            stage_downloaded_jar(temp.path(), &candidate, &manifest, &jar, &hash, 1).unwrap_err();
+
+        assert!(error.contains("does not match expected"));
+        assert!(!temp.path().join("v2.2.2100").exists());
+    }
+
+    #[test]
+    fn staging_lock_releases_after_error() {
+        let _serial = UPDATE_LOCK_TEST_MUTEX.lock().unwrap();
+        clear_update_lock_for_tests();
+        let temp = tempfile::tempdir().unwrap();
+        let manifest = test_manifest();
+        let candidate = staging_candidate("v2.2.2100");
+        let jar = create_test_jar_bytes("v2.2.2100");
+
+        let result: Result<(), String> = (|| {
+            let _guard = try_acquire_suwayomi_update_lock("staging-test")?;
+            stage_downloaded_jar(temp.path(), &candidate, &manifest, &jar, "bad", 1).map(|_| ())
+        })();
+
+        assert!(result.is_err());
+        assert!(!current_suwayomi_update_lock_status().in_progress);
+    }
+
+    fn write_runtime_marker(path: &Path, marker: &str) {
+        std::fs::create_dir_all(path).unwrap();
+        std::fs::write(path.join("marker.txt"), marker).unwrap();
+    }
+
+    fn read_runtime_marker(path: &Path) -> String {
+        std::fs::read_to_string(path.join("marker.txt")).unwrap()
+    }
+
+    #[test]
+    fn promotion_moves_current_to_previous_and_staging_to_current() {
+        let temp = tempfile::tempdir().unwrap();
+        let current = temp.path().join(SUWAYOMI_CURRENT_DIR);
+        let staging = temp.path().join(SUWAYOMI_STAGING_DIR).join("v2.2.2100");
+        write_runtime_marker(&current, "old");
+        write_runtime_marker(&staging, "new");
+
+        let state = promote_staging_directories(temp.path(), "v2.2.2100").unwrap();
+
+        assert_eq!(read_runtime_marker(&state.current_dir), "new");
+        assert_eq!(
+            read_runtime_marker(state.previous_dir.as_ref().unwrap()),
+            "old"
+        );
+        assert!(!staging.exists());
+    }
+
+    #[test]
+    fn promotion_without_existing_current_installs_staging_without_previous() {
+        let temp = tempfile::tempdir().unwrap();
+        let staging = temp.path().join(SUWAYOMI_STAGING_DIR).join("v2.2.2100");
+        write_runtime_marker(&staging, "new");
+
+        let state = promote_staging_directories(temp.path(), "v2.2.2100").unwrap();
+
+        assert_eq!(read_runtime_marker(&state.current_dir), "new");
+        assert!(!state.had_current);
+        assert!(state.previous_dir.is_none());
+        assert!(!temp.path().join(SUWAYOMI_PREVIOUS_DIR).exists());
+    }
+
+    #[test]
+    fn promotion_preserves_previous_until_success() {
+        let temp = tempfile::tempdir().unwrap();
+        let current = temp.path().join(SUWAYOMI_CURRENT_DIR);
+        let previous = temp.path().join(SUWAYOMI_PREVIOUS_DIR);
+        let staging = temp.path().join(SUWAYOMI_STAGING_DIR).join("v2.2.2100");
+        write_runtime_marker(&current, "old-current");
+        write_runtime_marker(&previous, "older-previous");
+        write_runtime_marker(&staging, "new");
+
+        let state = promote_staging_directories(temp.path(), "v2.2.2100").unwrap();
+
+        assert_eq!(
+            read_runtime_marker(state.previous_dir.as_ref().unwrap()),
+            "old-current"
+        );
+        assert!(state.previous_backup_dir.as_ref().unwrap().exists());
+        restore_previous_backup(
+            state.previous_dir.as_ref().unwrap(),
+            state.previous_backup_dir.as_ref(),
+        );
+        assert_eq!(
+            read_runtime_marker(state.previous_backup_dir.as_ref().unwrap()),
+            "older-previous"
+        );
+    }
+
+    #[test]
+    fn promotion_fails_when_current_is_not_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join(SUWAYOMI_CURRENT_DIR), b"file").unwrap();
+        let staging = temp.path().join(SUWAYOMI_STAGING_DIR).join("v2.2.2100");
+        write_runtime_marker(&staging, "new");
+
+        let error = promote_staging_directories(temp.path(), "v2.2.2100").unwrap_err();
+
+        assert!(error.contains("not a directory"));
+        assert!(staging.exists());
+    }
+
+    #[test]
+    fn promotion_fails_when_staging_missing() {
+        let temp = tempfile::tempdir().unwrap();
+
+        let error = promote_staging_directories(temp.path(), "v2.2.2100").unwrap_err();
+
+        assert!(error.contains("staging"));
+    }
+
+    #[test]
+    fn rollback_restores_previous_as_current() {
+        let temp = tempfile::tempdir().unwrap();
+        let current = temp.path().join(SUWAYOMI_CURRENT_DIR);
+        let previous = temp.path().join(SUWAYOMI_PREVIOUS_DIR);
+        write_runtime_marker(&current, "new");
+        write_runtime_marker(&previous, "old");
+        let state = RuntimePromotionState {
+            current_dir: current.clone(),
+            previous_dir: Some(previous.clone()),
+            previous_backup_dir: None,
+            had_current: true,
+        };
+
+        rollback_promoted_directories(&state).unwrap();
+
+        assert_eq!(read_runtime_marker(&current), "old");
+        assert!(!previous.exists());
+    }
+
+    #[test]
+    fn rollback_fails_when_previous_is_missing_for_existing_current() {
+        let temp = tempfile::tempdir().unwrap();
+        let current = temp.path().join(SUWAYOMI_CURRENT_DIR);
+        write_runtime_marker(&current, "new");
+        let state = RuntimePromotionState {
+            current_dir: current,
+            previous_dir: Some(temp.path().join(SUWAYOMI_PREVIOUS_DIR)),
+            previous_backup_dir: None,
+            had_current: true,
+        };
+
+        let error = rollback_promoted_directories(&state).unwrap_err();
+
+        assert!(error.contains("Previous Suwayomi runtime is missing"));
+    }
+
+    #[test]
+    fn rollback_without_existing_current_removes_failed_current() {
+        let temp = tempfile::tempdir().unwrap();
+        let current = temp.path().join(SUWAYOMI_CURRENT_DIR);
+        write_runtime_marker(&current, "new");
+        let state = RuntimePromotionState {
+            current_dir: current.clone(),
+            previous_dir: None,
+            previous_backup_dir: None,
+            had_current: false,
+        };
+
+        rollback_promoted_directories(&state).unwrap();
+
+        assert!(!current.exists());
+    }
+
+    #[test]
+    fn snapshot_restore_replaces_allowlisted_files_only() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        write_root_file(&root, "server.conf", b"old-server");
+        write_root_file(&root, "database.mv.db", b"old-db");
+        let snapshot = create_snapshot_for_root(&root).unwrap();
+        write_root_file(&root, "server.conf", b"new-server");
+        write_root_file(&root, "database.trace.db", b"new-trace");
+        std::fs::create_dir(root.join("downloads")).unwrap();
+        std::fs::write(root.join("downloads").join("chapter.cbz"), b"keep").unwrap();
+
+        restore_snapshot_to_root(Path::new(&snapshot.snapshot_path), &root).unwrap();
+
+        assert_eq!(
+            std::fs::read(root.join("server.conf")).unwrap(),
+            b"old-server"
+        );
+        assert_eq!(
+            std::fs::read(root.join("database.mv.db")).unwrap(),
+            b"old-db"
+        );
+        assert!(!root.join("database.trace.db").exists());
+        assert!(root.join("downloads").join("chapter.cbz").is_file());
+    }
+
+    #[test]
+    fn snapshot_restore_rejects_incompatible_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        let other_root = temp.path().join("other-root");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&other_root).unwrap();
+        write_root_file(&root, "server.conf", b"old-server");
+        let snapshot = create_snapshot_for_root(&root).unwrap();
+
+        let error =
+            restore_snapshot_to_root(Path::new(&snapshot.snapshot_path), &other_root).unwrap_err();
+
+        assert!(error.contains("different Suwayomi root"));
+    }
+
+    #[test]
+    fn promotion_lock_releases_after_failure() {
+        let _serial = UPDATE_LOCK_TEST_MUTEX.lock().unwrap();
+        clear_update_lock_for_tests();
+        let temp = tempfile::tempdir().unwrap();
+
+        let result: Result<(), String> = (|| {
+            let _guard = try_acquire_suwayomi_update_lock("promotion-test")?;
+            promote_staging_directories(temp.path(), "v2.2.2100").map(|_| ())
+        })();
+
+        assert!(result.is_err());
+        assert!(!current_suwayomi_update_lock_status().in_progress);
+    }
+
+    #[test]
+    fn repeated_promotion_failures_keep_state_clean() {
+        let temp = tempfile::tempdir().unwrap();
+
+        assert!(promote_staging_directories(temp.path(), "v2.2.2100").is_err());
+        assert!(promote_staging_directories(temp.path(), "v2.2.2100").is_err());
+        assert!(!temp.path().join(SUWAYOMI_CURRENT_DIR).exists());
+        assert!(!temp.path().join(SUWAYOMI_PREVIOUS_DIR).exists());
+    }
+
+    fn clear_update_lock_for_tests() {
+        if let Ok(mut lock) = suwayomi_update_lock().lock() {
+            *lock = None;
+        }
+    }
+
+    #[test]
+    fn update_lock_acquires_and_releases_on_drop() {
+        let _serial = UPDATE_LOCK_TEST_MUTEX.lock().unwrap();
+        clear_update_lock_for_tests();
+
+        {
+            let _guard = try_acquire_suwayomi_update_lock("test").unwrap();
+            let status = current_suwayomi_update_lock_status();
+            assert!(status.in_progress);
+            assert_eq!(status.owner.as_deref(), Some("test"));
+        }
+
+        assert!(!current_suwayomi_update_lock_status().in_progress);
+    }
+
+    #[test]
+    fn update_lock_rejects_concurrent_acquire() {
+        let _serial = UPDATE_LOCK_TEST_MUTEX.lock().unwrap();
+        clear_update_lock_for_tests();
+
+        let _guard = try_acquire_suwayomi_update_lock("first").unwrap();
+        let second = try_acquire_suwayomi_update_lock("second");
+
+        assert!(second.is_err());
+        assert!(current_suwayomi_update_lock_status().in_progress);
+    }
+
+    #[test]
+    fn update_lock_recovers_after_error_scope() {
+        let _serial = UPDATE_LOCK_TEST_MUTEX.lock().unwrap();
+        clear_update_lock_for_tests();
+
+        let result: Result<(), String> = (|| {
+            let _guard = try_acquire_suwayomi_update_lock("failing-update")?;
+            Err("simulated update failure".to_string())
+        })();
+
+        assert!(result.is_err());
+        assert!(!current_suwayomi_update_lock_status().in_progress);
+        assert!(try_acquire_suwayomi_update_lock("after-error").is_ok());
+    }
+
+    #[test]
+    fn update_lock_manual_release_requires_matching_token() {
+        let _serial = UPDATE_LOCK_TEST_MUTEX.lock().unwrap();
+        clear_update_lock_for_tests();
+
+        let guard = try_acquire_suwayomi_update_lock("manual").unwrap();
+        assert!(!release_suwayomi_update_lock("wrong-token"));
+        assert!(current_suwayomi_update_lock_status().in_progress);
+        assert!(release_suwayomi_update_lock(&guard.token));
+        std::mem::forget(guard);
+        assert!(!current_suwayomi_update_lock_status().in_progress);
+    }
+}
