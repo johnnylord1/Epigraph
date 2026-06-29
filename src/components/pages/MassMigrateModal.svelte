@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import {
+    ArrowLeft,
     ArrowRight,
     Check,
     CircleNotch,
@@ -9,10 +10,16 @@
     Warning,
     X,
   } from "phosphor-svelte";
+  import { _, translate } from "../../lib/i18n/runtime";
   import { gql } from "../../lib/client";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
-  import { fetchSourceMangaSearchWithFallback } from "../../lib/manga/sourceSearch";
+  import {
+    fetchSourceMangaSearchWithFallback,
+    isSourceMangaSearchUnavailableError,
+    probeSourceMangaSearchCapability,
+    type SourceMangaSearchCapability,
+  } from "../../lib/manga/sourceSearch";
   import {
     GET_CHAPTERS,
     GET_LIBRARY,
@@ -46,7 +53,13 @@
   type RuntimeStatus = "excluded" | "migrating" | "migrated" | "copied" | "failed";
 
   const storagePrefix = "aethon-manga-mass-migration";
-  const storageVersion = 3;
+  const storageVersion = 4;
+
+  interface MassMigrationDraft {
+    version: number;
+    selectedIds: number[];
+    runtimeStatuses: Array<[number, RuntimeStatus]>;
+  }
 
   let step: Step = $state("origin");
   let loading = $state(true);
@@ -63,11 +76,18 @@
   let manualQuery = $state(new Map<number, string>());
   let manualSearching = $state(new Set<number>());
   let manualResults = $state(new Map<number, Manga[]>());
+  let manualSearchItemId: number | null = $state(null);
   let buildingPreview = $state(false);
   let applying = $state(false);
   let previewProgress = $state<{ stage: string; done: number; total: number } | null>(null);
   let activeActionsMenuId: number | null = $state(null);
-  let manualSearchOpen = $state(new Set<number>());
+  let pointerStartedOnOverlay = false;
+  let restoredDraft: MassMigrationDraft | null = null;
+  let targetSearchCapability = $state<SourceMangaSearchCapability | null>(null);
+  let closeButtonEl: HTMLButtonElement | undefined = $state();
+
+  const dialogTitleId = "mass-migration-title";
+  const dialogDescriptionId = "mass-migration-description";
 
   const preferredSourceLang = $derived(normalizeLang(store.settings.preferredExtensionLang || "en"));
   const installedExtensionPackages = $derived(new Set(installedExtensionPkgNames));
@@ -120,17 +140,64 @@
   const allVisibleSelectableSelected = $derived(
     visibleSelectableIds.length > 0 && visibleSelectableIds.every((id) => selectedIds.has(id)),
   );
+  const manualSearchItem = $derived.by(() => (
+    manualSearchItemId === null ? null : preview?.items.find((item) => item.currentManga.id === manualSearchItemId) ?? null
+  ));
 
   function onKey(event: KeyboardEvent) {
     if (event.key === "Escape" && activeActionsMenuId !== null) {
       activeActionsMenuId = null;
       return;
     }
+    if (event.key === "Escape" && manualSearchItemId !== null) {
+      closeManualSearch();
+      return;
+    }
     if (event.key === "Escape") onClose();
+  }
+
+  function handleOverlayPointerDown(event: PointerEvent) {
+    pointerStartedOnOverlay = event.target === event.currentTarget;
+  }
+
+  function handleOverlayClick(event: MouseEvent) {
+    if (pointerStartedOnOverlay && event.target === event.currentTarget) {
+      onClose();
+    }
+    pointerStartedOnOverlay = false;
+  }
+
+  function stopModalPointerEvent(event: Event) {
+    event.stopPropagation();
   }
 
   function storageKey(sourceFrom: string, sourceTo: string) {
     return `${storagePrefix}:${sourceFrom}:${sourceTo}`;
+  }
+
+  function safeLocalStorage(): Storage | null {
+    try {
+      return typeof window === "undefined" ? null : window.localStorage;
+    } catch {
+      return null;
+    }
+  }
+
+  function cleanupLegacyDrafts() {
+    const storage = safeLocalStorage();
+    if (!storage) return;
+    for (let index = storage.length - 1; index >= 0; index -= 1) {
+      const key = storage.key(index);
+      if (!key?.startsWith(`${storagePrefix}:`)) continue;
+      try {
+        const parsed = JSON.parse(storage.getItem(key) ?? "{}") as { version?: number; preview?: unknown };
+        if (parsed.version !== storageVersion || "preview" in parsed) {
+          storage.removeItem(key);
+        }
+      } catch {
+        storage.removeItem(key);
+      }
+    }
   }
 
   function normalizeLang(lang?: string | null) {
@@ -220,37 +287,50 @@
     return results;
   }
 
-  function saveDraft(nextPreview = preview, _nextSelectedIds = selectedIds, nextStatuses = runtimeStatuses) {
-    if (!originSource || !targetSource || !nextPreview || typeof localStorage === "undefined") return;
+  function saveDraft(_nextPreview = preview, nextSelectedIds = selectedIds, nextStatuses = runtimeStatuses) {
+    const storage = safeLocalStorage();
+    if (!originSource || !targetSource || !storage) return;
     const persistentStatuses = [...nextStatuses.entries()].filter(([, status]) => (
       status === "migrated" || status === "copied" || status === "failed"
     ));
-    localStorage.setItem(storageKey(originSource.id, targetSource.id), JSON.stringify({
+    const draft: MassMigrationDraft = {
       version: storageVersion,
-      preview: nextPreview,
+      selectedIds: [...nextSelectedIds],
       runtimeStatuses: persistentStatuses,
-    }));
+    };
+    try {
+      storage.setItem(storageKey(originSource.id, targetSource.id), JSON.stringify(draft));
+    } catch {
+      // The migration itself is in-memory safe; draft persistence must never block the workflow.
+    }
   }
 
-  function restoreDraft(sourceFrom: string, sourceTo: string) {
-    if (typeof localStorage === "undefined") return false;
-    const raw = localStorage.getItem(storageKey(sourceFrom, sourceTo));
-    if (!raw) return false;
+  function loadDraft(sourceFrom: string, sourceTo: string): MassMigrationDraft | null {
+    const storage = safeLocalStorage();
+    if (!storage) return null;
+    const key = storageKey(sourceFrom, sourceTo);
+    const raw = storage.getItem(key);
+    if (!raw) return null;
     try {
-      const parsed = JSON.parse(raw) as {
-        version?: number;
-        preview?: MassMangaMigrationPreview;
-        selectedIds?: number[];
-        runtimeStatuses?: Array<[number, RuntimeStatus]>;
+      const parsed = JSON.parse(raw) as Partial<MassMigrationDraft> & { preview?: unknown };
+      if (parsed.version !== storageVersion) {
+        storage.removeItem(key);
+        return null;
+      }
+      return {
+        version: storageVersion,
+        selectedIds: Array.isArray(parsed.selectedIds) ? parsed.selectedIds.filter((id) => Number.isFinite(id)) : [],
+        runtimeStatuses: Array.isArray(parsed.runtimeStatuses)
+          ? parsed.runtimeStatuses.filter((entry): entry is [number, RuntimeStatus] => (
+            Array.isArray(entry)
+            && Number.isFinite(entry[0])
+            && (entry[1] === "migrated" || entry[1] === "copied" || entry[1] === "failed")
+          ))
+          : [],
       };
-      if (parsed.version !== storageVersion || !parsed.preview) return false;
-      preview = parsed.preview;
-      runtimeStatuses = new Map((parsed.runtimeStatuses ?? []).filter(([, status]) => status === "migrated" || status === "copied" || status === "failed"));
-      selectedIds = new Set(parsed.preview.items.filter((item) => canSelectWithRuntime(item, runtimeStatuses)).map((item) => item.currentManga.id));
-      step = "review";
-      return true;
     } catch {
-      return false;
+      storage.removeItem(key);
+      return null;
     }
   }
 
@@ -260,7 +340,7 @@
     try {
       await attemptWakeWithDeadline();
       const ready = await waitForSuwayomiGraphqlReady("sources", { attempts: 8, delayMs: 800, timeoutMs: 5000 });
-      if (!ready) throw new Error("Suwayomi is still starting. Try mass migration again in a moment.");
+      if (!ready) throw new Error(translate("massMigration.suwayomiStarting"));
 
       const data = await gql<{ sources: { nodes: Source[] } }>(GET_SOURCES_WITH_EXTENSIONS, undefined, undefined, 15000);
       const nextSources = data.sources.nodes ?? [];
@@ -292,7 +372,7 @@
 
   async function hydrateSourceItemChapters(items: Array<{ manga: Manga; chapters: Chapter[] }>) {
     let done = 0;
-    previewProgress = { stage: "Loading chapters", done, total: items.length };
+    previewProgress = { stage: translate("massMigration.loadingChapters"), done, total: items.length };
     return mapLimited(items, 5, async (item) => {
       try {
         if (item.chapters.length > 0) return item;
@@ -300,7 +380,7 @@
         return { manga: item.manga, chapters: chapters.chapters.nodes ?? [] };
       } finally {
         done += 1;
-        previewProgress = { stage: "Loading chapters", done, total: items.length };
+        previewProgress = { stage: translate("massMigration.loadingChapters"), done, total: items.length };
       }
     });
   }
@@ -308,6 +388,8 @@
   async function pickOrigin(source: Source) {
     originSource = source;
     targetSource = null;
+    restoredDraft = null;
+    targetSearchCapability = null;
     preview = null;
     selectedIds = new Set();
     runtimeStatuses = new Map();
@@ -327,41 +409,76 @@
   function pickTarget(source: Source) {
     if (!originSource) return;
     targetSource = source;
+    restoredDraft = loadDraft(originSource.id, source.id);
+    targetSearchCapability = null;
     error = null;
     preview = null;
-    selectedIds = new Set();
-    runtimeStatuses = new Map();
+    selectedIds = new Set(restoredDraft?.selectedIds ?? []);
+    runtimeStatuses = new Map(restoredDraft?.runtimeStatuses ?? []);
     runtimeErrors = new Map();
-    restoreDraft(originSource.id, source.id);
+  }
+
+  function sourceSearchCapabilityMessage(capability: SourceMangaSearchCapability, source = targetSource) {
+    const name = source?.displayName ?? translate("massMigration.targetSource");
+    if (capability.status === "unavailable") {
+      return translate("massMigration.targetCannotSearch", { name });
+    }
+    if (isSourceMangaSearchUnavailableError(capability.message)) {
+      return translate("massMigration.targetCannotSearch", { name });
+    }
+    return translate("massMigration.targetSearchFailed", { name, message: capability.message });
+  }
+
+  async function ensureTargetSearchCapability(items: Array<{ manga: Manga; chapters: Chapter[] }>) {
+    if (!targetSource || items.length === 0) return true;
+    if (targetSearchCapability?.status === "ok") return true;
+    previewProgress = { stage: translate("massMigration.checkingTargetSource"), done: 0, total: 1 };
+    const capability = await probeSourceMangaSearchCapability({
+      sourceId: targetSource.id,
+      query: items[0]?.manga.title ?? "test",
+      timeoutMs: 9000,
+    });
+    targetSearchCapability = capability;
+    if (capability.status === "ok") {
+      return true;
+    }
+    error = sourceSearchCapabilityMessage(capability);
+    return false;
   }
 
   async function buildPreview() {
     if (!originSource || !targetSource) return;
     buildingPreview = true;
-    previewProgress = { stage: "Preparing", done: 0, total: sourceItems.length };
+    previewProgress = { stage: translate("massMigration.preparing"), done: 0, total: sourceItems.length };
     error = null;
     preview = null;
     selectedIds = new Set();
-    runtimeStatuses = new Map();
+    const draft = restoredDraft ?? loadDraft(originSource.id, targetSource.id);
+    runtimeStatuses = new Map(draft?.runtimeStatuses ?? []);
     runtimeErrors = new Map();
     try {
       const hydratedItems = await hydrateSourceItemChapters(sourceItems);
       sourceItems = hydratedItems;
-      previewProgress = { stage: "Searching matches", done: 0, total: hydratedItems.length };
+      const canSearchTarget = await ensureTargetSearchCapability(hydratedItems);
+      if (!canSearchTarget) return;
+      previewProgress = { stage: translate("massMigration.searchingMatches"), done: 0, total: hydratedItems.length };
       const nextPreview = await previewMassMangaMigration({
         sourceFrom: originSource.id,
         sourceTo: targetSource.id,
         items: hydratedItems,
         onItemDone: (done, total) => {
-          previewProgress = { stage: "Searching matches", done, total };
+          previewProgress = { stage: translate("massMigration.searchingMatches"), done, total };
         },
       });
       preview = nextPreview;
-      selectedIds = new Set(
-        nextPreview.items
-          .filter((item) => item.status === "matched")
-          .map((item) => item.currentManga.id),
-      );
+      const draftSelectedIds = new Set(draft?.selectedIds ?? []);
+      selectedIds = new Set(nextPreview.items
+        .filter((item) => (
+          draftSelectedIds.size > 0
+            ? draftSelectedIds.has(item.currentManga.id) && canSelectWithRuntime(item, runtimeStatuses)
+            : item.status === "matched"
+        ))
+        .map((item) => item.currentManga.id));
       step = "review";
       saveDraft(nextPreview, selectedIds, runtimeStatuses);
     } catch (previewError) {
@@ -374,24 +491,24 @@
 
   function statusLabel(item: MassMangaMigrationPreviewItem) {
     const runtime = runtimeStatuses.get(item.currentManga.id);
-    if (runtime === "excluded") return "Excluded";
-    if (runtime === "migrating") return "Migrating";
-    if (runtime === "migrated") return "Migrated";
-    if (runtime === "copied") return "Copied";
-    if (runtime === "failed") return "Failed";
-    if (item.status === "matched") return item.reasonCode === "manual_match" ? "Manual match" : "Ready";
-    if (item.status === "needs_review") return "Needs review";
-    if (item.status === "no_match") return "No match";
-    if (item.reasonCode === "Stub!") return "Search unavailable";
-    return "Search failed";
+    if (runtime === "excluded") return translate("massMigration.statusExcluded");
+    if (runtime === "migrating") return translate("massMigration.statusMigrating");
+    if (runtime === "migrated") return translate("massMigration.statusMigrated");
+    if (runtime === "copied") return translate("massMigration.statusCopied");
+    if (runtime === "failed") return translate("massMigration.statusFailed");
+    if (item.status === "matched") return item.reasonCode === "manual_match" ? translate("massMigration.statusManualMatch") : translate("massMigration.statusReady");
+    if (item.status === "needs_review") return translate("massMigration.statusNeedsReview");
+    if (item.status === "no_match") return translate("massMigration.statusNoMatch");
+    if (isSourceMangaSearchUnavailableError(item.reasonCode)) return translate("massMigration.statusSearchUnavailable");
+    return translate("massMigration.statusSearchFailed");
   }
 
   function issueReasonLabel(item: MassMangaMigrationPreviewItem) {
     if (item.status !== "no_match" && item.status !== "search_failed") return "";
-    if (item.reasonCode === "no_match_found") return "No matching title found on this source.";
-    if (item.reasonCode === "Stub!") return `${targetSource?.displayName ?? "Target source"} cannot search titles through Suwayomi right now.`;
+    if (item.reasonCode === "no_match_found") return translate("massMigration.noMatchingTitle");
+    if (isSourceMangaSearchUnavailableError(item.reasonCode)) return translate("massMigration.targetCannotSearchNow", { name: targetSource?.displayName ?? translate("massMigration.targetSource") });
     if (item.reasonCode.startsWith("Timed out while searching")) return item.reasonCode;
-    return item.reasonCode || "This item could not be searched automatically.";
+    return item.reasonCode || translate("massMigration.itemSearchFailed");
   }
 
   function isItemSelected(item: MassMangaMigrationPreviewItem) {
@@ -447,12 +564,21 @@
 
   async function retryItem(item: MassMangaMigrationPreviewItem) {
     if (!originSource || !targetSource || !preview) return;
+      const canSearchTarget = await ensureTargetSearchCapability([{ manga: item.currentManga, chapters: item.currentChapters }]);
+      if (!canSearchTarget) {
+        const nextErrors = new Map(runtimeErrors);
+        nextErrors.set(item.currentManga.id, error ?? translate("massMigration.targetSearchUnavailable", { name: targetSource.displayName }));
+      runtimeErrors = nextErrors;
+      activeActionsMenuId = null;
+      return;
+    }
     const nextErrors = new Map(runtimeErrors);
     nextErrors.delete(item.currentManga.id);
     runtimeErrors = nextErrors;
     const nextStatuses = new Map(runtimeStatuses);
     nextStatuses.delete(item.currentManga.id);
     runtimeStatuses = nextStatuses;
+    if (manualSearchItemId === item.currentManga.id) manualSearchItemId = null;
     const singlePreview = await previewMassMangaMigration({
       sourceFrom: originSource.id,
       sourceTo: targetSource.id,
@@ -479,10 +605,18 @@
   }
 
   function openManualSearch(item: MassMangaMigrationPreviewItem) {
-    const next = new Set(manualSearchOpen);
-    next.add(item.currentManga.id);
-    manualSearchOpen = next;
     activeActionsMenuId = null;
+    manualSearchItemId = item.currentManga.id;
+    if (!manualQuery.has(item.currentManga.id)) {
+      const next = new Map(manualQuery);
+      next.set(item.currentManga.id, item.currentManga.title);
+      manualQuery = next;
+    }
+    void searchManual(item);
+  }
+
+  function closeManualSearch() {
+    manualSearchItemId = null;
   }
 
   function setManualQuery(mangaId: number, value: string) {
@@ -503,9 +637,15 @@
       const next = new Map(manualResults);
       next.set(item.currentManga.id, results);
       manualResults = next;
-    } catch (searchError) {
       const nextErrors = new Map(runtimeErrors);
-      nextErrors.set(item.currentManga.id, searchError instanceof Error ? searchError.message : String(searchError));
+      nextErrors.delete(item.currentManga.id);
+      runtimeErrors = nextErrors;
+    } catch (searchError) {
+      if (isSourceMangaSearchUnavailableError(searchError)) {
+        targetSearchCapability = { status: "unavailable", message: searchError instanceof Error ? searchError.message : String(searchError) };
+      }
+      const nextErrors = new Map(runtimeErrors);
+      nextErrors.set(item.currentManga.id, targetSearchCapability?.status === "unavailable" ? sourceSearchCapabilityMessage(targetSearchCapability) : searchError instanceof Error ? searchError.message : String(searchError));
       runtimeErrors = nextErrors;
     } finally {
       const nextSearching = new Set(manualSearching);
@@ -523,9 +663,7 @@
     const nextStatuses = new Map(runtimeStatuses);
     nextStatuses.delete(item.currentManga.id);
     runtimeStatuses = nextStatuses;
-    const nextManualOpen = new Set(manualSearchOpen);
-    nextManualOpen.delete(item.currentManga.id);
-    manualSearchOpen = nextManualOpen;
+    manualSearchItemId = null;
     saveDraft(nextPreview, selectedIds, nextStatuses);
   }
 
@@ -559,24 +697,36 @@
       runtimeErrors = nextErrors;
       saveDraft(preview, selectedIds, runtimeStatuses);
       if (result.migratedCount > 0 && result.failedItems.length === 0) {
-        localStorage.removeItem(completedDraftKey);
+        safeLocalStorage()?.removeItem(completedDraftKey);
       }
       addToast({
         kind: result.failedItems.length ? "error" : "success",
-        title: result.failedItems.length ? "Mass migration partially complete" : mode === "copy" ? "Mass copy complete" : "Mass migration complete",
-        body: `${result.migratedCount} ${mode === "copy" ? "copied" : "moved"} to ${targetSource.displayName}; ${result.failedItems.length} failed.`,
+        title: result.failedItems.length
+          ? translate("massMigration.toastPartiallyComplete")
+          : mode === "copy"
+            ? translate("massMigration.toastCopyComplete")
+            : translate("massMigration.toastMigrationComplete"),
+        body: translate(mode === "copy" ? "massMigration.toastCopyBody" : "massMigration.toastMigrationBody", {
+          count: result.migratedCount,
+          target: targetSource.displayName,
+          failed: result.failedItems.length,
+        }),
         duration: result.journalEntryId ? 30000 : 9000,
         action: result.journalEntryId ? {
-          label: "Undo",
+          label: translate("ui_undo"),
           run: () => {
             void undoMangaMigration(result.journalEntryId!).then(() => {
-              localStorage.removeItem(completedDraftKey);
-              addToast({ kind: "info", title: mode === "copy" ? "Mass copy undone" : "Mass migration undone", body: `${result.migratedCount} title${result.migratedCount === 1 ? "" : "s"}` });
+              safeLocalStorage()?.removeItem(completedDraftKey);
+              addToast({
+                kind: "info",
+                title: mode === "copy" ? translate("massMigration.toastCopyUndone") : translate("ui_massMigrationUndone"),
+                body: translate("massMigration.toastUndoBody", { count: result.migratedCount }),
+              });
               onCompleted();
             }).catch((undoError) => {
               addToast({
                 kind: "error",
-                title: "Could not undo mass migration",
+                title: translate("ui_couldNotUndoMassMigration"),
                 body: undoError instanceof Error ? undoError.message : String(undoError),
               });
             });
@@ -599,50 +749,69 @@
   }
 
   $effect(() => {
-    untrack(() => { void loadInitialState(); });
+    untrack(() => {
+      cleanupLegacyDrafts();
+      void loadInitialState();
+    });
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  });
+
+  onMount(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    void tick().then(() => closeButtonEl?.focus());
+    return () => previousFocus?.focus();
   });
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="overlay" onclick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-  <div class="modal">
+<div class="overlay" onpointerdown={handleOverlayPointerDown} onclick={handleOverlayClick}>
+  <div
+    class="modal"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby={dialogTitleId}
+    aria-describedby={dialogDescriptionId}
+    tabindex="-1"
+    onpointerdown={stopModalPointerEvent}
+    onclick={stopModalPointerEvent}
+  >
     <header class="modalHeader">
       <div>
-        <p>Mass migration</p>
-        <h2>{extension.name}</h2>
+        <p>{$_("massMigration.title")}</p>
+        <h2 id={dialogTitleId}>{extension.name}</h2>
+        <span id={dialogDescriptionId} class="srOnly">{$_("massMigration.description")}</span>
       </div>
-      <button class="iconButton" type="button" onclick={onClose} aria-label="Close mass migration">
+      <button bind:this={closeButtonEl} class="iconButton" type="button" onclick={onClose} aria-label={$_("massMigration.close")}>
         <X size={15} weight="bold" />
       </button>
     </header>
 
-    <div class="steps" aria-label="Migration steps">
-      <span class:active={step === "origin"}>Origin</span>
-      <span class:active={step === "target"}>Target</span>
-      <span class:active={step === "review"}>Review</span>
-      <span class:active={step === "migrating"}>Migrate</span>
+    <div class="steps" aria-label={$_("massMigration.steps")}>
+      <span class:active={step === "origin"}>{$_("massMigration.stepOrigin")}</span>
+      <span class:active={step === "target"}>{$_("massMigration.stepTarget")}</span>
+      <span class:active={step === "review"}>{$_("massMigration.stepReview")}</span>
+      <span class:active={step === "migrating"}>{$_("massMigration.stepMigrate")}</span>
     </div>
 
     {#if loading}
       <div class="center"><CircleNotch size={18} weight="bold" class="anim-spin" /></div>
-    {:else if error && !preview}
+    {:else if error && !preview && step !== "target"}
       <div class="center errorPanel">
         <Warning size={18} weight="bold" />
         <strong>{error}</strong>
-        <button class="primaryButton" type="button" onclick={loadInitialState}>Retry</button>
+        <button class="primaryButton" type="button" onclick={loadInitialState}>{$_("massMigration.retry")}</button>
       </div>
     {:else if step === "origin"}
       <section class="pane">
         <div class="paneIntro">
-          <strong>Choose source from {extension.name}</strong>
-          <span>{originSources.length} source{originSources.length === 1 ? "" : "s"} installed for this extension.</span>
+          <strong>{$_("massMigration.chooseSourceFrom", { values: { name: extension.name } })}</strong>
+          <span>{$_("massMigration.installedSourcesForExtension", { values: { count: originSources.length } })}</span>
         </div>
         <div class="sourceList">
           {#if originSources.length === 0}
-            <p class="emptyLine">No installed source is linked to this extension.</p>
+            <p class="emptyLine">{$_("massMigration.noLinkedInstalledSource")}</p>
           {:else}
             {#each originSources as source}
               <button class="sourceRow" type="button" onclick={() => pickOrigin(source)}>
@@ -659,11 +828,11 @@
       <section class="pane">
         <div class="paneIntro">
           <strong>{originSource?.displayName ?? extension.name}</strong>
-          <span>{sourceItems.length} library title{sourceItems.length === 1 ? "" : "s"} will be compared with the target source.</span>
+          <span>{$_("massMigration.libraryTitlesCompared", { values: { count: sourceItems.length } })}</span>
         </div>
         <div class="sourceList">
           {#if targetSourceGroups.length === 0}
-            <p class="emptyLine">No alternative installed source is available.</p>
+            <p class="emptyLine">{$_("massMigration.noAlternativeSource")}</p>
           {:else}
             {#each targetSourceGroups as group}
               <div class="sourceGroup">
@@ -680,29 +849,92 @@
             {/each}
           {/if}
         </div>
+        {#if error}
+          <p class="targetError"><Warning size={13} weight="bold" /> {error}</p>
+        {/if}
         <footer class="modalFooter">
-          <button class="secondaryButton" type="button" onclick={() => step = "origin"}>Back</button>
+          <button class="secondaryButton" type="button" onclick={() => step = "origin"}>{$_("ui_back")}</button>
           <button class="primaryButton" type="button" disabled={!targetSource || sourceItems.length === 0 || buildingPreview} onclick={buildPreview}>
             {#if buildingPreview}<CircleNotch size={13} weight="bold" class="anim-spin" />{:else}<MagnifyingGlass size={13} weight="bold" />{/if}
             {#if buildingPreview && previewProgress}
               {previewProgress.stage} {previewProgress.done}/{previewProgress.total}
             {:else}
-              Search matches
+              {$_("massMigration.searchMatches")}
             {/if}
           </button>
         </footer>
       </section>
     {:else if preview}
       <section class="reviewPane">
+        {#if manualSearchItem}
+          <div class="manualSearchHeader">
+            <button class="iconButton" type="button" onclick={closeManualSearch} aria-label={$_("massMigration.backToReview")}>
+              <ArrowLeft size={15} weight="bold" />
+            </button>
+            <div>
+              <span>{$_("massMigration.manualSearch")}</span>
+              <strong>{manualSearchItem.currentManga.title}</strong>
+            </div>
+          </div>
+
+          <div class="manualSearchTop">
+            <input
+              value={manualQuery.get(manualSearchItem.currentManga.id) ?? manualSearchItem.currentManga.title}
+              oninput={(event) => setManualQuery(manualSearchItem.currentManga.id, (event.currentTarget as HTMLInputElement).value)}
+              onkeydown={(event) => event.key === "Enter" && searchManual(manualSearchItem)}
+              placeholder={$_("massMigration.searchTitleOnTarget")}
+              aria-label={$_("massMigration.searchTitleOnTarget")}
+            />
+            <button class="primaryButton" type="button" disabled={manualSearching.has(manualSearchItem.currentManga.id)} onclick={() => searchManual(manualSearchItem)}>
+              {#if manualSearching.has(manualSearchItem.currentManga.id)}
+                <CircleNotch size={13} weight="bold" class="anim-spin" />
+                {$_("ui_searching")}
+              {:else}
+                <MagnifyingGlass size={13} weight="bold" />
+                {$_("novelSources_actions_search")}
+              {/if}
+            </button>
+          </div>
+
+          {#if runtimeErrors.get(manualSearchItem.currentManga.id)}
+            <p class="errorLine"><Warning size={13} weight="bold" /> {runtimeErrors.get(manualSearchItem.currentManga.id)}</p>
+          {/if}
+
+          <div class="manualResultGrid">
+            {#if manualSearching.has(manualSearchItem.currentManga.id)}
+              <div class="manualEmpty">
+                <CircleNotch size={18} weight="bold" class="anim-spin" />
+                <span>{$_("massMigration.searchingTarget", { values: { name: targetSource?.displayName ?? $_("massMigration.targetSource") } })}</span>
+              </div>
+            {:else if manualResults.get(manualSearchItem.currentManga.id)?.length}
+              {#each manualResults.get(manualSearchItem.currentManga.id) ?? [] as result}
+                <button class="manualResultCard" type="button" onclick={() => chooseManualMatch(manualSearchItem, result)}>
+                  <img class="cover" src={resolveMangaCoverUrl(result, { context: "migration", persistence: "memory" })} alt="" />
+                  <span>{result.title}</span>
+                  <small>{result.source?.displayName ?? targetSource?.displayName ?? $_("massMigration.targetSource")}</small>
+                </button>
+              {/each}
+            {:else}
+              <div class="manualEmpty">
+                <MagnifyingGlass size={18} weight="bold" />
+                <span>{$_("massMigration.noManualResults")}</span>
+              </div>
+            {/if}
+          </div>
+
+          <footer class="modalFooter">
+            <button class="secondaryButton" type="button" onclick={closeManualSearch}>{$_("massMigration.backToReview")}</button>
+          </footer>
+        {:else}
         <div class="reviewToolbar">
           <div>
-            <strong>{originSource?.displayName} to {targetSource?.displayName}</strong>
-            <span>{preview.readyCount} ready, {preview.needsReviewCount} needs review, {preview.blockedCount} need attention</span>
+            <strong>{$_("massMigration.sourceToTarget", { values: { origin: originSource?.displayName, target: targetSource?.displayName } })}</strong>
+            <span>{$_("massMigration.reviewCounts", { values: { ready: preview.readyCount, review: preview.needsReviewCount, attention: preview.blockedCount } })}</span>
           </div>
           <div class="toolbarActions">
-            <input bind:value={searchFilter} placeholder="Filter queue..." />
+            <input bind:value={searchFilter} placeholder={$_("massMigration.filterQueue")} aria-label={$_("massMigration.filterQueue")} />
             <button class="secondaryButton bulkSelectButton" type="button" onclick={toggleAllVisibleMatches} disabled={visibleSelectableIds.length === 0}>
-              {allVisibleSelectableSelected ? "Deselect all" : "Select all matches"}
+              {allVisibleSelectableSelected ? $_("massMigration.deselectAll") : $_("massMigration.selectAllMatches")}
             </button>
           </div>
         </div>
@@ -712,11 +944,14 @@
         {/if}
 
         <div class="queueList">
+          {#if visiblePreviewItems.length === 0}
+            <p class="emptyLine">{$_("massMigration.noQueueMatches")}</p>
+          {:else}
           {#each visiblePreviewItems as item}
             {@const runtime = runtimeStatuses.get(item.currentManga.id)}
             {@const match = item.match}
-            {@const sourceLabel = item.currentManga.source?.displayName ?? originSource?.displayName ?? "Source"}
-            {@const targetLabel = match?.manga.source?.displayName ?? targetSource?.displayName ?? "Target"}
+            {@const sourceLabel = item.currentManga.source?.displayName ?? originSource?.displayName ?? $_("massMigration.source")}
+            {@const targetLabel = match?.manga.source?.displayName ?? targetSource?.displayName ?? $_("massMigration.targetSource")}
             {@const sourceStatus = item.currentManga.status ?? "UNKNOWN"}
             {@const targetStatus = match?.manga.status ?? "UNKNOWN"}
             {@const selected = selectedIds.has(item.currentManga.id)}
@@ -724,7 +959,15 @@
               <div class="queueMain">
                 <div class="migrationPair">
                   <div class="miniManga libraryLikeCard">
-                    <button class="checkButton" class:checkButtonSelected={selected || runtime === "migrated" || runtime === "copied"} type="button" disabled={!canSelect(item)} onclick={(event) => toggleItem(item, event)} aria-label={`Select ${item.currentManga.title}`}>
+                    <button
+                      class="checkButton"
+                      class:checkButtonSelected={selected || runtime === "migrated" || runtime === "copied"}
+                      type="button"
+                      disabled={!canSelect(item)}
+                      onclick={(event) => toggleItem(item, event)}
+                      aria-pressed={selected}
+                      aria-label={$_("massMigration.selectTitle", { values: { title: item.currentManga.title } })}
+                    >
                       {#if runtime === "migrated" || runtime === "copied"}<Check size={15} weight="bold" />{:else if selected}<Check size={15} weight="bold" />{/if}
                     </button>
                     <img class="cover" src={resolveMangaCoverUrl(item.currentManga, { context: "migration", persistence: "memory" })} alt="" />
@@ -745,18 +988,25 @@
                       <span><b>{targetLabel}</b><em>{targetStatus}</em></span>
                     </div>
                     <div class="itemActions">
-                      <button class="iconButton actionTrigger" type="button" onclick={() => toggleActionsMenu(item)} aria-label={`Actions for ${item.currentManga.title}`}>
+                      <button
+                        class="iconButton actionTrigger"
+                        type="button"
+                        onclick={() => toggleActionsMenu(item)}
+                        aria-haspopup="menu"
+                        aria-expanded={activeActionsMenuId === item.currentManga.id}
+                        aria-label={$_("massMigration.actionsForTitle", { values: { title: item.currentManga.title } })}
+                      >
                         <DotsThreeVertical size={19} weight="bold" />
                       </button>
                       {#if activeActionsMenuId === item.currentManga.id}
-                        <div class="actionMenu">
+                        <div class="actionMenu" role="menu">
                           {#if canSelect(item)}
-                            <button type="button" onclick={() => applySelected("migrate", [item.currentManga.id])}>Migrate now</button>
-                            <button type="button" onclick={() => applySelected("copy", [item.currentManga.id])}>Copy now</button>
+                            <button type="button" role="menuitem" onclick={() => applySelected("migrate", [item.currentManga.id])}>{$_("massMigration.migrateNow")}</button>
+                            <button type="button" role="menuitem" onclick={() => applySelected("copy", [item.currentManga.id])}>{$_("massMigration.copyNow")}</button>
                           {/if}
-                          <button type="button" onclick={() => retryItem(item)}>Retry</button>
-                          <button type="button" onclick={() => openManualSearch(item)}>Search</button>
-                          <button type="button" onclick={() => excludeItem(item)}>Exclude</button>
+                          <button type="button" role="menuitem" onclick={() => retryItem(item)}>{$_("massMigration.retry")}</button>
+                          <button type="button" role="menuitem" onclick={() => openManualSearch(item)}>{$_("novelSources_actions_search")}</button>
+                          <button type="button" role="menuitem" onclick={() => excludeItem(item)}>{$_("massMigration.exclude")}</button>
                         </div>
                       {/if}
                     </div>
@@ -768,55 +1018,38 @@
                 {#if runtimeErrors.get(item.currentManga.id)}
                   <small class="itemError">{runtimeErrors.get(item.currentManga.id)}</small>
                 {/if}
-                {#if manualSearchOpen.has(item.currentManga.id)}
-                  <div class="manualSearch">
-                    <input
-                      value={manualQuery.get(item.currentManga.id) ?? item.currentManga.title}
-                      oninput={(event) => setManualQuery(item.currentManga.id, (event.currentTarget as HTMLInputElement).value)}
-                      onkeydown={(event) => event.key === "Enter" && searchManual(item)}
-                      placeholder="Search manually..."
-                    />
-                    <button class="secondaryButton" type="button" disabled={manualSearching.has(item.currentManga.id)} onclick={() => searchManual(item)}>
-                      {manualSearching.has(item.currentManga.id) ? "Searching..." : "Search"}
-                    </button>
-                  </div>
-                  {#if manualResults.get(item.currentManga.id)?.length}
-                    <div class="manualResults">
-                      {#each manualResults.get(item.currentManga.id) ?? [] as result}
-                        <button type="button" onclick={() => chooseManualMatch(item, result)}>
-                          {result.title}
-                        </button>
-                      {/each}
-                    </div>
-                  {/if}
-                {/if}
               </div>
             </article>
           {/each}
+          {/if}
         </div>
 
         <footer class="modalFooter">
-          <button class="secondaryButton" type="button" onclick={() => step = applying ? "review" : "target"}>{applying ? "Back to review" : "Back"}</button>
+          <button class="secondaryButton" type="button" onclick={() => step = applying ? "review" : "target"}>{applying ? $_("massMigration.backToReview") : $_("ui_back")}</button>
           <button class="primaryButton" type="button" onclick={() => applySelected("migrate")} disabled={applying || selectedMigratableCount === 0}>
             {#if applying}<CircleNotch size={13} weight="bold" class="anim-spin" />{:else}<Check size={13} weight="bold" />{/if}
-            Migrate selected ({selectedMigratableCount})
+            {$_("massMigration.migrateSelected", { values: { count: selectedMigratableCount } })}
           </button>
         </footer>
+        {/if}
       </section>
     {/if}
   </div>
 </div>
 
 <style>
-  .overlay { position: fixed; inset: 0; z-index: 230; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.68); backdrop-filter: blur(14px); }
-  .modal { width: min(800px, calc(100vw - 48px)); height: min(690px, calc(100vh - 64px)); display: flex; flex-direction: column; overflow: hidden; border-radius: 16px; border: 1px solid rgba(255,255,255,0.08); background: rgba(18, 17, 22, 0.98); box-shadow: 0 24px 80px rgba(0,0,0,0.48); }
-  .modalHeader, .reviewToolbar, .modalFooter, .sourceRow, .queueItem, .toolbarActions, .manualSearch, .manualResults, .itemActions, .steps, .migrationPair { display: flex; align-items: center; }
-  .modalHeader { justify-content: space-between; gap: 14px; padding: 14px 18px; border-bottom: 1px solid rgba(255,255,255,0.06); }
-  .modalHeader p { margin: 0 0 2px; font-family: var(--font-ui); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(202,196,208,0.54); }
-  .modalHeader h2 { margin: 0; font-size: 17px; color: rgba(244,241,243,0.94); }
-  .iconButton { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; color: rgba(229,226,225,0.68); border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.03); }
-  .steps { gap: 8px; padding: 9px 18px; border-bottom: 1px solid rgba(255,255,255,0.05); }
-  .steps span { font-family: var(--font-ui); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(202,196,208,0.38); }
+  .overlay { position: fixed; inset: 0; z-index: 220; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.68); backdrop-filter: blur(14px) saturate(118%); animation: fadeIn 0.14s ease both; }
+  .modal { width: min(800px, calc(100vw - 48px)); height: min(690px, calc(100vh - 64px)); display: flex; flex-direction: column; overflow: hidden; border-radius: 18px; border: 1px solid rgba(92, 88, 103, 0.42); background: rgba(21, 20, 25, 0.98); box-shadow: inset 0 1px 0 rgba(255,255,255,0.025), 0 28px 80px rgba(0,0,0,0.54); animation: scaleIn 0.16s ease both; }
+  .srOnly { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  .modalHeader, .reviewToolbar, .manualSearchHeader, .manualSearchTop, .modalFooter, .sourceRow, .queueItem, .toolbarActions, .itemActions, .steps, .migrationPair { display: flex; align-items: center; }
+  .modalHeader { justify-content: space-between; gap: 14px; padding: 15px 18px; border-bottom: 1px solid rgba(92, 88, 103, 0.34); }
+  .modalHeader p { margin: 0 0 2px; font-family: var(--font-ui); font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(202,196,208,0.48); }
+  .modalHeader h2 { margin: 0; font-size: 13px; font-weight: 800; letter-spacing: 0.02em; color: #e8e4eb; }
+  .iconButton { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; color: rgba(202,196,208,0.74); border: 1px solid rgba(92, 88, 103, 0.42); background: rgba(255,255,255,0.018); transition: color 140ms ease, background 140ms ease, transform 140ms ease; }
+  .iconButton:hover { color: #e8e4eb; background: rgba(201,181,255,0.1); }
+  .iconButton:active { transform: scale(0.96); }
+  .steps { gap: var(--sp-2); padding: 10px 18px; border-bottom: 1px solid rgba(92, 88, 103, 0.34); }
+  .steps span { font-family: var(--font-ui); font-size: var(--text-2xs); letter-spacing: var(--tracking-wide); text-transform: uppercase; color: rgba(202,196,208,0.38); }
   .steps span.active { color: var(--accent-fg); }
   .center { flex: 1; display: grid; place-items: center; gap: 12px; color: rgba(229,226,225,0.72); text-align: center; }
   .errorPanel { padding: 40px; }
@@ -828,7 +1061,7 @@
   .sourceGroup { display: grid; gap: 6px; }
   .sourceGroup > span { padding: 7px 4px 2px; font-size: 10px; font-weight: 800; text-transform: uppercase; color: rgba(202,196,208,0.46); }
   .emptyLine { margin: 20px 4px; color: rgba(202,196,208,0.58); text-align: center; }
-  .sourceRow { width: 100%; gap: 10px; text-align: left; padding: 10px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.06); background: rgba(255,255,255,0.025); color: rgba(229,226,225,0.82); }
+  .sourceRow { width: 100%; gap: 10px; text-align: left; padding: 10px; border-radius: var(--radius-md); border: 1px solid rgba(255,255,255,0.06); background: rgba(255,255,255,0.025); color: rgba(229,226,225,0.82); }
   .sourceRow:hover, .sourceRow.selected { border-color: rgba(184,167,234,0.26); background: rgba(184,167,234,0.08); }
   .sourceRow img { width: 28px; height: 28px; border-radius: 8px; object-fit: cover; }
   .sourceRow span { flex: 1; min-width: 0; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -838,7 +1071,7 @@
   .toolbarActions { gap: 8px; }
   input { min-height: 32px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.08); background: rgba(7,7,11,0.44); color: rgba(244,241,243,0.9); padding: 0 10px; outline: none; }
   input:focus { border-color: rgba(184,167,234,0.34); }
-  .queueItem { position: relative; display: block; padding: 12px; border-radius: 11px; border: 1px solid rgba(255,255,255,0.06); background: rgba(255,255,255,0.022); }
+  .queueItem { position: relative; display: block; padding: 12px; border-radius: var(--radius-md); border: 1px solid rgba(255,255,255,0.06); background: rgba(255,255,255,0.022); }
   .queueItemMuted { opacity: 0.48; }
   .queueItemDone { border-color: color-mix(in srgb, var(--color-success) 24%, rgba(255,255,255,0.06)); }
   .checkButton { position: absolute; left: 10px; top: 10px; z-index: 2; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 11px; border: 1px solid rgba(199,181,255,0.54); color: rgba(235,229,255,0.96); background: linear-gradient(135deg, rgba(25,20,37,0.86), rgba(70,55,105,0.58)); box-shadow: 0 0 0 1px rgba(0,0,0,0.36), 0 0 22px rgba(151,126,225,0.3), inset 0 1px 0 rgba(255,255,255,0.12); backdrop-filter: blur(14px) saturate(1.12); }
@@ -874,10 +1107,20 @@
   .noCover { display: grid; place-items: center; color: rgba(202,196,208,0.52); }
   .itemNote { color: rgba(202,196,208,0.56); font-size: 11px; }
   .itemError { color: var(--color-error); font-size: 11px; }
-  .manualSearch { gap: 8px; margin-top: 1px; }
-  .manualSearch input { flex: 1; }
-  .manualResults { gap: 6px; flex-wrap: wrap; }
-  .manualResults button { border-radius: 999px; border: 1px solid rgba(184,167,234,0.2); background: rgba(184,167,234,0.08); color: var(--accent-fg); padding: 4px 9px; font-size: 11px; }
+  .targetError { margin: 0 18px 10px; display: flex; align-items: center; gap: 7px; padding: 10px 11px; border-radius: 10px; border: 1px solid rgba(255,124,171,0.2); background: rgba(255,124,171,0.06); color: color-mix(in srgb, var(--color-error) 84%, white); font-size: 12px; line-height: 1.35; }
+  .manualSearchHeader { gap: 10px; padding: 12px 18px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+  .manualSearchHeader > div { min-width: 0; display: grid; gap: 2px; }
+  .manualSearchHeader span { font-family: var(--font-ui); font-size: 10px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(202,196,208,0.5); }
+  .manualSearchHeader strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: rgba(244,241,243,0.94); font-size: 15px; }
+  .manualSearchTop { gap: 8px; padding: 12px 18px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+  .manualSearchTop input { flex: 1; min-width: 0; }
+  .manualResultGrid { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 18px 18px; display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); align-content: start; gap: 14px; }
+  .manualResultCard { min-width: 0; display: grid; gap: 8px; text-align: left; padding: 0; border: 0; background: transparent; color: rgba(244,241,243,0.9); }
+  .manualResultCard .cover { transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease; }
+  .manualResultCard:hover .cover { transform: translateY(-1px); border-color: rgba(184,167,234,0.5); box-shadow: 0 16px 32px rgba(0,0,0,0.34), 0 0 24px rgba(184,167,234,0.18); }
+  .manualResultCard span { min-width: 0; color: rgba(244,241,243,0.94); font-size: 12px; font-weight: 850; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .manualResultCard small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-ui); font-size: 10px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: rgba(202,196,208,0.56); }
+  .manualEmpty { grid-column: 1 / -1; min-height: 220px; display: grid; place-items: center; align-content: center; gap: 10px; color: rgba(202,196,208,0.62); text-align: center; }
   .itemActions { position: absolute; right: 10px; top: 10px; z-index: 2; }
   .actionTrigger { width: 34px; height: 34px; border-radius: 11px; color: rgba(235,229,255,0.96); border-color: rgba(199,181,255,0.54); background: linear-gradient(135deg, rgba(25,20,37,0.86), rgba(70,55,105,0.58)); box-shadow: 0 0 0 1px rgba(0,0,0,0.36), 0 0 22px rgba(151,126,225,0.3), inset 0 1px 0 rgba(255,255,255,0.12); backdrop-filter: blur(14px) saturate(1.12); }
   .actionTrigger:hover { border-color: rgba(222,211,255,0.78); background: linear-gradient(135deg, rgba(33,26,49,0.92), rgba(91,72,135,0.68)); box-shadow: 0 0 0 1px rgba(0,0,0,0.42), 0 0 28px rgba(171,148,238,0.42), inset 0 1px 0 rgba(255,255,255,0.16); }
@@ -885,10 +1128,12 @@
   .actionMenu button { width: 100%; text-align: left; border: 0; border-radius: 8px; padding: 7px 9px; color: rgba(229,226,225,0.78); background: transparent; font-size: 12px; font-weight: 800; }
   .actionMenu button:hover { background: rgba(184,167,234,0.1); color: var(--accent-fg); }
   .modalFooter { justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid rgba(255,255,255,0.06); }
-  .primaryButton, .secondaryButton { min-height: 32px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: 10px; font-family: var(--font-ui); font-size: 12px; font-weight: 800; }
+  .primaryButton, .secondaryButton { min-height: 32px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: var(--radius-md); font-family: var(--font-ui); font-size: var(--text-xs); font-weight: 800; letter-spacing: var(--tracking-wide); }
   .primaryButton { color: #211933; background: var(--n-primary); border: 1px solid rgba(255,255,255,0.14); padding: 0 14px; }
   .secondaryButton { color: rgba(229,226,225,0.7); background: rgba(255,255,255,0.025); border: 1px solid rgba(255,255,255,0.075); padding: 0 10px; }
-  .bulkSelectButton { font-family: "Manrope", "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 12px; font-weight: 800; letter-spacing: 0.01em; text-transform: none; -webkit-font-smoothing: antialiased; text-rendering: geometricPrecision; }
+  .bulkSelectButton { font-family: var(--font-ui); font-size: var(--text-xs); font-weight: 800; letter-spacing: var(--tracking-wide); text-transform: none; -webkit-font-smoothing: antialiased; }
   .primaryButton:disabled, .secondaryButton:disabled { opacity: 0.45; }
   .errorLine { display: flex; align-items: center; gap: 8px; margin: 10px 18px 0; color: var(--color-error); font-size: 12px; }
+  @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes scaleIn { from { opacity: 0; transform: translateY(8px) scale(0.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
 </style>
