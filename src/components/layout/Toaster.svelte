@@ -120,6 +120,7 @@
       <div
         class="toast toast-{t.kind}"
         class:toast-persistent={t.duration === 0}
+        class:toast-has-actions={Boolean(t.actions?.length)}
         role="alert"
         style={`--toast-duration: ${t.duration ?? 3500}ms`}
       >
@@ -146,6 +147,23 @@
             {t.action.label}
           </button>
         {/if}
+        {#if t.actions?.length}
+          <div class="toast-actions">
+            {#each t.actions as action}
+              <button
+                class="toast-action"
+                type="button"
+                onclick={(event) => {
+                  event.stopPropagation();
+                  action.run();
+                  dismissToast(t.id);
+                }}
+              >
+                {action.label}
+              </button>
+            {/each}
+          </div>
+        {/if}
         <button class="toast-close" aria-label={$_("ui_dismissNotification")} onclick={() => dismissToast(t.id)}>
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
             <path d="M18 6 6 18M6 6l12 12" />
@@ -166,7 +184,7 @@
     flex-direction: column;
     gap: 8px;
     pointer-events: none;
-    width: min(360px, calc(100vw - 32px));
+    width: min(420px, calc(100vw - 32px));
   }
 
   .toast {
@@ -311,6 +329,57 @@
 
   .toast-action:hover {
     background: rgba(201, 181, 255, 0.18);
+  }
+
+  .toast-actions {
+    display: flex;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: flex-start;
+  }
+
+  .toast-has-actions {
+    display: grid;
+    grid-template-columns: 3px 18px minmax(0, 1fr) 24px;
+    grid-template-areas:
+      "accent icon body close"
+      "accent icon actions close";
+    align-items: start;
+    column-gap: 10px;
+    row-gap: 8px;
+    padding: 12px 12px 12px 0;
+  }
+
+  .toast-has-actions .accent-bar {
+    grid-area: accent;
+    margin-right: 0;
+  }
+
+  .toast-has-actions .icon {
+    grid-area: icon;
+    margin-top: 2px;
+  }
+
+  .toast-has-actions .body {
+    grid-area: body;
+    gap: 4px;
+  }
+
+  .toast-has-actions .toast-actions {
+    grid-area: actions;
+  }
+
+  .toast-has-actions .toast-close {
+    grid-area: close;
+  }
+
+  .toast-has-actions .sub {
+    white-space: pre-line;
+    overflow: visible;
+    text-overflow: initial;
+    line-height: 1.45;
+    letter-spacing: 0.04em;
   }
 
   .toast-close {

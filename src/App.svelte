@@ -98,6 +98,7 @@
   import type { ActiveDownload } from "./store/state.svelte";
   import { traceMediaAudit } from "./lib/mediaAudit";
   import { getImageCacheStats, trimImageCache } from "./lib/imageCache";
+  import { refreshSuwayomiUpdateUx } from "./lib/suwayomiUpdateUx.svelte";
   import { _, applyAppLanguage } from "./lib/i18n/runtime";
   import Toaster      from "./components/layout/Toaster.svelte";
   import SplashScreen from "./components/layout/SplashScreen.svelte";
@@ -2913,6 +2914,14 @@
   $effect(() => {
     if (!shellReady) return;
     const timer = setTimeout(checkForUpdateSilently, 5_000);
+    return () => clearTimeout(timer);
+  });
+
+  $effect(() => {
+    if (!shellReady || isNovelRuntimeHostWindow) return;
+    const timer = setTimeout(() => {
+      void refreshSuwayomiUpdateUx({ notify: true }).catch(() => {});
+    }, 7_000);
     return () => clearTimeout(timer);
   });
 

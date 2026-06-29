@@ -500,6 +500,7 @@ export interface Toast {
   body?:     string;
   duration?: number;
   action?:   { label: string; run: () => void };
+  actions?:  { label: string; run: () => void }[];
   updatedAt?: number;
 }
 

@@ -80,6 +80,7 @@
   import WindowControlsInline from "../layout/WindowControlsInline.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
   import SyncdConnectionPanel from "./SyncdConnectionPanel.svelte";
+  import SuwayomiUpdatePanel from "./SuwayomiUpdatePanel.svelte";
   import { store, updateSettings, resetSettings, resetKeybinds, clearHistory, wipeAllData, setSettingsOpen, setRuntimeSettingsTab, deleteCustomTheme, toggleHiddenCategory, setCategories, setLibraryMangaSnapshot, setLibraryTrackingSummarySnapshot, addToast, openSearchSources, replaceAppReadingState, replaceBooksState, DEFAULT_READING_STATS } from "../../store/state.svelte";
   import { cache } from "../../lib/cache";
   import { KEYBIND_LABELS, DEFAULT_KEYBINDS, eventToKeybind } from "../../lib/keybinds";
@@ -6148,6 +6149,7 @@
               </div>
               {/if}
             </div>
+            <SuwayomiUpdatePanel />
           </div>
         </section>
         <section
