@@ -24,6 +24,13 @@ Aethon is a native desktop app for comics, manga, novels, and local books. It co
   <img src="docs/assets/aethon-preview-grid.png" alt="Aethon screen preview grid" />
 </p>
 
+### Readers
+
+<p align="center">
+  <img src="docs/screenshots/aethon-ComicReader.png" alt="Aethon comic reader with HUD" width="49%" />
+  <img src="docs/screenshots/aethon-BookReader.png" alt="Aethon book reader with HUD" width="49%" />
+</p>
+
 More real screenshots are available in [docs/screenshots](docs/screenshots).
 
 ## Current Features
