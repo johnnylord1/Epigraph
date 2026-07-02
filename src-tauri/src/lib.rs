@@ -183,6 +183,7 @@ const LIBRARY_COVER_MAX_DOWNLOAD_BYTES: u64 = 5 * 1024 * 1024;
 const LIBRARY_COVER_THUMB_MAX_EDGE: u32 = 420;
 const LIBRARY_COVER_THUMB_JPEG_QUALITY: u8 = 82;
 const NOVEL_RUNTIME_HOST_LABEL: &str = "novel-runtime-host";
+const DEFAULT_AETHON_GITHUB_REPO: &str = "johnnylord1/Aethon";
 const AETHON_GITHUB_REPO: Option<&str> = option_env!("AETHON_GITHUB_REPO");
 const VITE_AETHON_GITHUB_REPO: Option<&str> = option_env!("VITE_AETHON_GITHUB_REPO");
 
@@ -4790,9 +4791,7 @@ async fn list_releases() -> Result<Vec<ReleaseInfo>, String> {
         .or(VITE_AETHON_GITHUB_REPO)
         .map(str::trim)
         .filter(|repo| !repo.is_empty())
-        .ok_or_else(|| {
-            "GitHub repository is not configured yet. Set AETHON_GITHUB_REPO when publishing your fork.".to_string()
-        })?;
+        .unwrap_or(DEFAULT_AETHON_GITHUB_REPO);
 
     let client = reqwest::Client::builder()
         .user_agent("Aethon")

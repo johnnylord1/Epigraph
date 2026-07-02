@@ -30,7 +30,7 @@
 - Never expand scope, rewrite stable systems, or redesign flows unless explicitly requested.
 - Preserve upstream Apache-2.0 license files and attribution.
 - Preserve local user changes. If the worktree is dirty, touch only files required for the task.
-- Update `IMPLEMENTATION_PLAN.md`, `docs/STATUS.md`, or `docs/DECISIONS.md` only when the task materially changes release status, project decisions, or documented milestones.
+- Update `docs/roadmap.md` or focused docs only when the task materially changes release status, project decisions, or documented milestones.
 
 ## UI And Performance
 

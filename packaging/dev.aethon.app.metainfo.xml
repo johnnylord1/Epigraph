@@ -2,7 +2,7 @@
 <component type="desktop-application">
   <id>dev.aethon.app</id>
   <metadata_license>MIT</metadata_license>
-  <project_license>MIT</project_license>
+  <project_license>Apache-2.0</project_license>
 
   <name>Aethon</name>
   <summary>Aethon manga reader powered by Suwayomi</summary>
@@ -17,8 +17,8 @@
 
   <launchable type="desktop-id">dev.aethon.app.desktop</launchable>
 
-  <url type="homepage">https://github.com/Aethon-Project/Aethon</url>
-  <url type="bugtracker">https://github.com/Aethon-Project/Aethon/issues</url>
+  <url type="homepage">https://github.com/johnnylord1/Aethon</url>
+  <url type="bugtracker">https://github.com/johnnylord1/Aethon/issues</url>
 
   <provides>
     <binary>aethon</binary>

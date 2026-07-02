@@ -249,7 +249,7 @@ EOF
               PKGBUILD="$REPO/PKGBUILD"
               [[ -f "$PKGBUILD" ]] || { echo "PKGBUILD not found"; exit 1; }
 
-              TARBALL_URL="https://github.com/Aethon-Project/Aethon/archive/refs/tags/v$VERSION.tar.gz"
+              TARBALL_URL="https://github.com/johnnylord1/Aethon/archive/refs/tags/v$VERSION.tar.gz"
               echo "Fetching tarball sha256..."
               TARBALL_SHA=$(curl -fsSL "$TARBALL_URL" | sha256sum | awk '{print $1}')
 

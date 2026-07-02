@@ -96,8 +96,9 @@
     backupRestoreLaunchIntent?: BackupLaunchIntent | null;
   }
   let { onOpenThemeEditor, backupAuditPlan = null, backupRestoreLaunchIntent = null }: Props = $props();
-  const AETHON_GITHUB_REPO = (import.meta.env.VITE_AETHON_GITHUB_REPO ?? "").trim();
-  const AETHON_GITHUB_URL = AETHON_GITHUB_REPO ? `https://github.com/${AETHON_GITHUB_REPO}` : "";
+  const DEFAULT_AETHON_GITHUB_REPO = "johnnylord1/Aethon";
+  const AETHON_GITHUB_REPO = (import.meta.env.VITE_AETHON_GITHUB_REPO ?? "").trim() || DEFAULT_AETHON_GITHUB_REPO;
+  const AETHON_GITHUB_URL = `https://github.com/${AETHON_GITHUB_REPO}`;
   type Tab = "general" | "appearance" | "reader" | "library" | "performance" | "keybinds" | "storage" | "categories" | "tracking" | "security" | "content" | "about" | "devtools";
   type SettingsGroupId = "app" | "reader-library" | "content" | "system" | "advanced";
   type SettingsNavItem = { id: Tab; labelKey: string; descKey: string; icon: any };
@@ -3195,22 +3196,11 @@
     void loadReleases();
   }
   async function openProjectGithub() {
-    if (!AETHON_GITHUB_URL) {
-      addToast({
-        kind: "info",
-        title: "GitHub repo not configured",
-        body: "Set VITE_AETHON_GITHUB_REPO after publishing your repository.",
-      });
-      return;
-    }
     await openUrl(AETHON_GITHUB_URL);
   }
   async function loadReleases() {
     releasesLoading = true; releasesError = null;
     try {
-      if (!AETHON_GITHUB_REPO) {
-        throw new Error("GitHub repository is not configured yet. Set VITE_AETHON_GITHUB_REPO after publishing your fork.");
-      }
       const timeout = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error("Request timed out after 10s")), 10_000)
       );
@@ -6052,7 +6042,7 @@
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
                     <p class="settings-mini-row__label">GitHub</p>
-                    <p class="settings-mini-row__hint">{AETHON_GITHUB_REPO ? AETHON_GITHUB_REPO : "Repository not configured yet."}</p>
+                    <p class="settings-mini-row__hint">{AETHON_GITHUB_REPO}</p>
                   </div>
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={openProjectGithub}>{$_("settings_inline_open")}</button>
                 </div>
