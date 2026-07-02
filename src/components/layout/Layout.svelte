@@ -328,7 +328,7 @@
   .root {
     position: relative;
     height: 100%;
-    background: var(--n-gradient-bg), #131313;
+    background: var(--component-app-bg);
     overflow: hidden;
   }
 
@@ -342,12 +342,12 @@
     margin-left: var(--n-sidebar-width, 74px);
     overflow-x: hidden;
     overflow-y: auto;
-    background: var(--n-gradient-bg), #131313;
+    background: var(--component-app-bg);
     overscroll-behavior: contain;
   }
 
   .main--settings {
-    background: var(--n-gradient-bg), #131313;
+    background: var(--component-app-bg);
     isolation: isolate;
   }
 
@@ -374,7 +374,7 @@
     position: absolute;
     inset: 0;
     z-index: calc(var(--z-reader) + 10);
-    background: var(--bg-surface);
+    background: var(--component-detail-layer-bg);
   }
 
   .detail-layer--state {

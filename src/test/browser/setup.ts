@@ -69,6 +69,7 @@ beforeEach(async () => {
   document.documentElement.style.width = "100%";
   document.documentElement.style.height = "100%";
   document.documentElement.style.colorScheme = "dark";
+  document.documentElement.dataset.theme = "nocturne";
   document.documentElement.dataset.testReducedMotion = "true";
   document.body.style.margin = "0";
   document.body.style.width = "100%";
@@ -111,5 +112,6 @@ afterEach(() => {
   document.body.innerHTML = "";
   document.body.removeAttribute("style");
   document.documentElement.removeAttribute("style");
+  delete document.documentElement.dataset.theme;
   document.documentElement.removeAttribute("data-test-reduced-motion");
 });

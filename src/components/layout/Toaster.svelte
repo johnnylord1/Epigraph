@@ -177,14 +177,14 @@
 <style>
   .toaster {
     position: fixed;
-    bottom: 20px;
-    right: 20px;
-    z-index: 9999;
+    bottom: var(--component-toast-offset);
+    right: var(--component-toast-offset);
+    z-index: var(--z-toast);
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--space-sm);
     pointer-events: none;
-    width: min(420px, calc(100vw - 32px));
+    width: min(420px, calc(100vw - (var(--space-md) * 2)));
   }
 
   .toast {
@@ -193,14 +193,12 @@
     align-items: center;
     gap: 10px;
     padding: 11px 12px 12px 0;
-    border-radius: 12px;
-    background:
-      radial-gradient(circle at 0% 0%, rgba(201, 181, 255, 0.08), transparent 46%),
-      rgba(21, 20, 25, 0.96);
-    border: 1px solid rgba(92, 88, 103, 0.42);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.035), 0 16px 44px rgba(0,0,0,0.48);
-    backdrop-filter: blur(18px) saturate(118%);
-    -webkit-backdrop-filter: blur(18px) saturate(118%);
+    border-radius: var(--component-toast-radius);
+    background: var(--component-toast-bg);
+    border: 1px solid var(--component-toast-border);
+    box-shadow: var(--component-toast-shadow);
+    backdrop-filter: var(--component-toast-blur);
+    -webkit-backdrop-filter: var(--component-toast-blur);
     pointer-events: all;
     width: 100%;
     min-width: 0;
@@ -209,9 +207,9 @@
     transition: border-color 140ms ease, background 140ms ease, opacity 140ms ease, transform 140ms ease;
   }
 
-  .toast:hover  { border-color: rgba(201, 181, 255, 0.24); background-color: rgba(25, 24, 29, 0.98); transform: translateX(-2px); }
+  .toast:hover  { border-color: var(--component-toast-border-hover); background: var(--component-toast-bg-hover); transform: translateX(-2px); }
   .toast:active { transform: translateX(0) scale(0.98); }
-  .toast:focus-visible { outline: 2px solid rgba(201, 181, 255, 0.45); outline-offset: 2px; }
+  .toast:focus-visible { outline: 2px solid var(--component-toast-focus-ring); outline-offset: 2px; }
 
   .toast::after {
     position: absolute;
@@ -220,7 +218,7 @@
     left: 0;
     height: 2px;
     content: "";
-    background: linear-gradient(90deg, rgba(201, 181, 255, 0.75), rgba(143, 126, 224, 0.7));
+    background: var(--component-toast-life-bg);
     transform-origin: left;
     animation: toastLife var(--toast-duration) linear forwards;
   }
@@ -247,10 +245,10 @@
     margin-right: 2px;
   }
 
-  .toast-success  .accent-bar { background: #c9f0cf; }
-  .toast-error    .accent-bar { background: #f08f9b; }
-  .toast-info     .accent-bar { background: rgba(202, 196, 208, 0.52); }
-  .toast-download .accent-bar { background: #c9b5ff; }
+  .toast-success  .accent-bar { background: var(--component-toast-success-fg); }
+  .toast-error    .accent-bar { background: var(--component-toast-error-fg); }
+  .toast-info     .accent-bar { background: var(--component-toast-info-fg); }
+  .toast-download .accent-bar { background: var(--component-toast-download-fg); }
 
   .icon {
     flex-shrink: 0;
@@ -259,10 +257,10 @@
     justify-content: center;
   }
 
-  .toast-success  .icon { color: #c9f0cf; }
-  .toast-error    .icon { color: #f08f9b; }
-  .toast-info     .icon { color: rgba(202, 196, 208, 0.72); }
-  .toast-download .icon { color: #d8cbff; }
+  .toast-success  .icon { color: var(--component-toast-success-fg); }
+  .toast-error    .icon { color: var(--component-toast-error-fg); }
+  .toast-info     .icon { color: var(--component-toast-info-fg); }
+  .toast-download .icon { color: var(--component-toast-download-fg); }
 
   .body {
     flex: 1;
@@ -275,18 +273,18 @@
   .title {
     margin: 0;
     font-size: 12px;
-    font-family: "Manrope", "Inter", system-ui, sans-serif;
-    color: #e8e4eb;
-    font-weight: 800;
+    font-family: "Manrope", var(--font-sans);
+    color: var(--component-toast-title-fg);
+    font-weight: var(--weight-extrabold);
     letter-spacing: 0.02em;
     line-height: 1.3;
   }
 
   .sub {
     margin: 0;
-    font-family: "Manrope", "Inter", system-ui, sans-serif;
+    font-family: "Manrope", var(--font-sans);
     font-size: 10px;
-    color: rgba(202, 196, 208, 0.5);
+    color: var(--component-toast-body-fg);
     letter-spacing: 0.08em;
     white-space: nowrap;
     overflow: hidden;
@@ -302,15 +300,15 @@
     height: 3px;
     border-radius: 999px;
     overflow: hidden;
-    background: rgba(201, 181, 255, 0.12);
-    box-shadow: inset 0 0 0 1px rgba(201, 181, 255, 0.04);
+    background: var(--component-toast-progress-track);
+    box-shadow: inset 0 0 0 1px var(--component-toast-border);
   }
 
   .library-progress-fill {
     height: 100%;
     border-radius: inherit;
-    background: linear-gradient(90deg, rgba(201, 181, 255, 0.92), rgba(164, 134, 255, 0.8));
-    box-shadow: 0 0 14px rgba(201, 181, 255, 0.28);
+    background: var(--component-toast-progress-fill);
+    box-shadow: var(--component-toast-progress-shadow);
     transition: width 220ms ease;
   }
 
@@ -319,16 +317,16 @@
     font-family: var(--font-ui);
     font-size: var(--text-2xs);
     letter-spacing: var(--tracking-wide);
-    color: #d8cbff;
-    background: rgba(201, 181, 255, 0.12);
-    border: 1px solid rgba(201, 181, 255, 0.28);
+    color: var(--component-toast-action-fg);
+    background: var(--component-toast-action-bg);
+    border: 1px solid var(--component-toast-action-border);
     border-radius: 9px;
     padding: 5px 8px;
     cursor: pointer;
   }
 
   .toast-action:hover {
-    background: rgba(201, 181, 255, 0.18);
+    background: var(--component-toast-action-bg-hover);
   }
 
   .toast-actions {
@@ -389,18 +387,18 @@
     justify-content: center;
     width: 24px;
     height: 24px;
-    border: 1px solid rgba(92, 88, 103, 0.34);
+    border: 1px solid var(--component-toast-close-border);
     border-radius: 8px;
-    color: rgba(202, 196, 208, 0.54);
-    background: rgba(255, 255, 255, 0.018);
+    color: var(--component-toast-close-fg);
+    background: var(--component-toast-close-bg);
     cursor: pointer;
     transition: color 140ms ease, border-color 140ms ease, background 140ms ease, transform 140ms ease;
   }
 
   .toast-close:hover {
-    color: #e8e4eb;
-    border-color: rgba(201, 181, 255, 0.24);
-    background: rgba(201, 181, 255, 0.08);
+    color: var(--component-toast-close-fg-hover);
+    border-color: var(--component-toast-close-border-hover);
+    background: var(--component-toast-close-bg-hover);
   }
 
   .toast-close:active {

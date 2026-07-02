@@ -6800,19 +6800,19 @@
 </script>
 <style>
   .step-controls { display: flex; align-items: center; gap: var(--sp-1); flex-shrink: 0; }
-  .step-btn { font-family: var(--font-ui); font-size: 12px; font-weight: 700; width: 30px; height: 30px; border-radius: 12px; border: 1px solid rgba(72, 69, 79, 0.16); background: rgba(255, 255, 255, 0.02); color: rgba(229, 226, 225, 0.82); cursor: pointer; transition: color var(--t-base), border-color var(--t-base), background var(--t-base), transform 100ms ease; display: flex; align-items: center; justify-content: center; }
-  .step-btn:hover:not(:disabled) { color: var(--n-on-surface); border-color: rgba(184, 167, 234, 0.18); background: rgba(184, 167, 234, 0.06); }
+  .step-btn { font-family: var(--font-ui); font-size: 12px; font-weight: 700; width: 30px; height: 30px; border-radius: 12px; border: 1px solid var(--component-settings-input-border); background: var(--component-settings-button-bg); color: var(--component-settings-text-secondary); cursor: pointer; transition: color var(--t-base), border-color var(--t-base), background var(--t-base), transform 100ms ease; display: flex; align-items: center; justify-content: center; }
+  .step-btn:hover:not(:disabled) { color: var(--component-settings-text-primary); border-color: var(--component-settings-border-strong); background: var(--component-settings-button-bg-hover); }
   .step-btn:active:not(:disabled) { transform: scale(0.97); }
   .step-btn:disabled { opacity: 0.3; cursor: default; }
-  .step-val { font-family: var(--font-ui); font-size: 11px; color: rgba(202, 196, 208, 0.58); letter-spacing: 0.08em; min-width: 40px; text-align: center; text-transform: uppercase; }
+  .step-val { font-family: var(--font-ui); font-size: 11px; color: var(--component-settings-text-muted); letter-spacing: 0.08em; min-width: 40px; text-align: center; text-transform: uppercase; }
   .select-wrap { position: relative; flex-shrink: 0; }
-  .select-btn { display: flex; align-items: center; gap: var(--sp-2); min-height: 32px; font-size: 12px; font-weight: 600; color: var(--n-on-surface); background: rgba(21, 21, 25, 0.72); border: 1px solid rgba(72, 69, 79, 0.16); border-radius: 14px; padding: 0 12px; cursor: pointer; min-width: 130px; transition: border-color 140ms ease, background 140ms ease; }
-  .select-btn:hover { border-color: rgba(184, 167, 234, 0.18); background: rgba(28, 27, 27, 0.82); }
+  .select-btn { display: flex; align-items: center; gap: var(--sp-2); min-height: 32px; font-size: 12px; font-weight: 600; color: var(--component-settings-text-primary); background: var(--component-settings-surface-raised); border: 1px solid var(--component-settings-input-border); border-radius: 14px; padding: 0 12px; cursor: pointer; min-width: 130px; transition: border-color 140ms ease, background 140ms ease; }
+  .select-btn:hover { border-color: var(--component-settings-border-strong); background: var(--component-settings-surface-overlay); }
   .select-btn--wide { min-width: 190px; }
   .select-menu--scroll { max-height: min(320px, calc(var(--visual-vh, 100vh) - 160px)); overflow-y: auto; overscroll-behavior: contain; }
   .select-caret { color: var(--text-faint); transition: transform var(--t-base); flex-shrink: 0; margin-left: auto; }
   .select-caret.open { transform: rotate(180deg); }
-  .select-menu { position: absolute; top: calc(100% + 4px); right: 0; min-width: 100%; background: linear-gradient(180deg, rgb(24, 22, 31), rgb(18, 17, 24)); border: 1px solid rgba(72, 69, 79, 0.72); border-radius: var(--radius-md); padding: var(--sp-1); z-index: 1200; box-shadow: 0 18px 44px rgba(0,0,0,0.64), inset 0 1px 0 rgba(255,255,255,0.035); animation: scaleIn 0.1s ease both; transform-origin: top right; }
+  .select-menu { position: absolute; top: calc(100% + 4px); right: 0; min-width: 100%; background: var(--component-settings-select-menu-bg); border: 1px solid var(--component-settings-select-menu-border); border-radius: var(--radius-md); padding: var(--sp-1); z-index: 1200; box-shadow: var(--component-settings-select-menu-shadow); animation: scaleIn 0.1s ease both; transform-origin: top right; }
   .select-option { display: block; width: 100%; padding: 6px var(--sp-3); border-radius: var(--radius-sm); font-size: var(--text-sm); color: var(--text-secondary); background: none; border: none; cursor: pointer; text-align: left; transition: background var(--t-fast), color var(--t-fast); }
   .select-option:hover { background: var(--bg-overlay); color: var(--text-primary); }
   .select-option.active { color: var(--accent-fg); background: var(--accent-muted); }
@@ -6892,20 +6892,20 @@
     margin-top: 14px;
     overflow: hidden;
     border-radius: var(--radius-full);
-    background: rgba(255, 255, 255, 0.055);
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.025);
+    background: var(--component-settings-meter-track-bg);
+    box-shadow: var(--component-settings-meter-track-shadow);
   }
   .storage-bar-fill {
     height: 100%;
     border-radius: inherit;
-    background: linear-gradient(90deg, rgba(190, 167, 255, 0.86), rgba(213, 198, 255, 0.94));
+    background: var(--component-settings-meter-fill-bg);
     transition: width 220ms ease;
   }
   .storage-bar-fill.warn {
-    background: linear-gradient(90deg, rgba(234, 203, 138, 0.86), rgba(255, 225, 157, 0.94));
+    background: var(--component-settings-meter-warn-bg);
   }
   .storage-bar-fill.critical {
-    background: linear-gradient(90deg, rgba(255, 135, 135, 0.82), rgba(255, 177, 177, 0.94));
+    background: var(--component-settings-meter-critical-bg);
   }
   .settings-storage-footer {
     margin-top: 18px;
@@ -6925,8 +6925,8 @@
     margin-left: auto;
   }
   .path-input-error {
-    border-color: rgba(216, 180, 255, 0.32) !important;
-    box-shadow: 0 0 0 1px rgba(216, 180, 255, 0.08);
+    border-color: var(--component-settings-border-focus) !important;
+    box-shadow: var(--component-focus-ring);
   }
   .release-list-scroll { max-height: 336px; overflow-y: auto; padding: 0 var(--sp-1); scrollbar-width: thin; scrollbar-color: var(--border-base) transparent; }
   .release-list-scroll::-webkit-scrollbar { width: 4px; }
@@ -6936,8 +6936,8 @@
   .folder-hidden { opacity: 0.35; }
   .folder-default-active { color: var(--accent-fg) !important; }
   .folder-update-excluded {
-    color: var(--color-warning, #eacb8a) !important;
-    border-color: rgba(234, 203, 138, 0.24) !important;
+    color: var(--color-warning) !important;
+    border-color: var(--color-warning-bg) !important;
   }
   .release-list { display: flex; flex-direction: column; gap: 1px; padding: 0 var(--sp-1); }
   .release-row {
@@ -7037,8 +7037,8 @@
     left: 0;
     width: 100vw;
     height: 100vh;
-    background: rgba(0, 0, 0, 0.72);
-    backdrop-filter: blur(4px);
+    background: var(--component-settings-overlay-bg);
+    backdrop-filter: var(--component-settings-overlay-blur);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -7046,15 +7046,15 @@
     animation: fadeIn 0.15s ease both;
   }
   .storage-backup-panel {
-    background: linear-gradient(180deg, rgb(24, 22, 31), rgb(18, 17, 24));
-    border: 1px solid rgba(72, 69, 79, 0.72);
+    background: var(--component-settings-select-menu-bg);
+    border: 1px solid var(--component-settings-select-menu-border);
     border-radius: var(--radius-lg);
     padding: 24px;
     max-width: 680px;
     width: 90%;
     max-height: 90vh;
     overflow-y: auto;
-    box-shadow: 0 20px 48px rgba(0, 0, 0, 0.6);
+    box-shadow: var(--component-settings-select-menu-shadow);
     position: relative;
     animation: scaleIn 0.15s ease both;
   }
@@ -7063,7 +7063,7 @@
     justify-content: space-between;
     align-items: center;
     margin-bottom: 20px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    border-bottom: 1px solid var(--component-settings-border-dim);
     padding-bottom: 12px;
   }
   .storage-backup-panel-header .settings-card__title {

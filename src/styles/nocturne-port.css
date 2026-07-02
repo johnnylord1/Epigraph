@@ -504,9 +504,9 @@
 }
 
 .aethon-app-shell {
-  background: var(--n-gradient-bg), #131313;
-  color: var(--n-on-surface);
-  font-family: "Manrope", var(--font-sans);
+  background: var(--component-app-bg);
+  color: var(--component-app-fg);
+  font-family: var(--component-app-font);
 }
 
 .aethon-app-shell::after {
@@ -516,9 +516,7 @@
   opacity: 0;
   pointer-events: none;
   z-index: 61;
-  background:
-    radial-gradient(circle at 50% 12%, rgba(28, 22, 43, 0.16), rgba(0, 0, 0, 0) 28%),
-    rgba(0, 0, 0, 0.56);
+  background: var(--component-search-dim-bg);
   transition: opacity 250ms ease;
 }
 
@@ -528,9 +526,7 @@
   opacity: 0;
   pointer-events: none;
   z-index: 500;
-  background:
-    radial-gradient(circle at 50% 10%, rgba(34, 26, 52, 0.18), rgba(0, 0, 0, 0) 30%),
-    rgba(0, 0, 0, 0.54);
+  background: var(--component-search-dim-bg);
   transition: opacity 250ms ease;
 }
 
@@ -564,19 +560,17 @@ body.aethon-downloads-search-engaged .aethon-search-dim-layer {
   top: var(--n-sidebar-edge-y);
   bottom: var(--n-sidebar-edge-y);
   width: var(--n-sidebar-rail-width);
-  background: rgba(30, 28, 40, 0.55);
-  backdrop-filter: blur(32px) saturate(180%);
+  background: var(--component-sidebar-bg);
+  backdrop-filter: var(--component-sidebar-blur);
   border-radius: var(--n-sidebar-radius);
   display: flex;
   flex-direction: column;
   align-items: center;
   padding: var(--n-sidebar-padding-y) 0;
   gap: var(--n-sidebar-gap);
-  z-index: 80;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow:
-    0 12px 40px rgba(0, 0, 0, 0.4),
-    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  z-index: var(--component-sidebar-z-index);
+  border: 1px solid var(--component-sidebar-border);
+  box-shadow: var(--component-sidebar-shadow);
   isolation: isolate;
 }
 
@@ -585,7 +579,7 @@ body.aethon-downloads-search-engaged .aethon-search-dim-layer {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: rgba(0, 0, 0, 0.56);
+  background: var(--component-sidebar-scrim-bg);
   opacity: 0;
   pointer-events: none;
   z-index: 0;
@@ -597,9 +591,7 @@ body.aethon-downloads-search-engaged .aethon-search-dim-layer {
   position: absolute;
   inset: -1px;
   border-radius: inherit;
-  background:
-    radial-gradient(circle at 50% 8%, rgba(184, 167, 234, 0.08), transparent 44%),
-    rgba(2, 2, 5, 0.6);
+  background: var(--component-sidebar-highlight-bg);
   opacity: 0;
   pointer-events: none;
   z-index: 3;
@@ -632,7 +624,7 @@ body.aethon-home-search-engaged .n-sidebar,
 body.aethon-library-search-engaged .n-sidebar,
 body.aethon-browse-search-engaged .n-sidebar,
 body.aethon-downloads-search-engaged .n-sidebar {
-  z-index: 40 !important;
+  z-index: var(--component-sidebar-search-z-index) !important;
 }
 
 body.aethon-settings-search-engaged .n-topbar,
@@ -640,7 +632,7 @@ body.aethon-home-search-engaged .n-topbar,
 body.aethon-library-search-engaged .n-topbar,
 body.aethon-browse-search-engaged .n-topbar,
 body.aethon-downloads-search-engaged .n-topbar {
-  z-index: 520 !important;
+  z-index: var(--component-topbar-search-z-index) !important;
 }
 
 body.aethon-settings-search-engaged .n-topbar::after,
@@ -662,7 +654,7 @@ body.aethon-browse-search-engaged .n-search,
 body.aethon-downloads-search-engaged .n-topbar__center,
 body.aethon-downloads-search-engaged .n-search {
   position: relative !important;
-  z-index: 540 !important;
+  z-index: var(--component-topbar-search-content-z-index) !important;
 }
 
 body.aethon-settings-search-engaged .n-topbar .n-search,
@@ -768,7 +760,7 @@ html[data-aethon-motion="idle"] .aethon-port--splash .brand-mark {
   border-radius: var(--n-sidebar-btn-radius);
   border: none;
   background: transparent;
-  color: rgba(229, 226, 225, 0.38);
+  color: var(--component-nav-item-fg);
   cursor: pointer;
   transition:
     background var(--n-duration-fast) ease,
@@ -786,8 +778,8 @@ html[data-aethon-motion="idle"] .aethon-port--splash .brand-mark {
 }
 
 .n-sidebar-btn:hover {
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(229, 226, 225, 0.7);
+  background: var(--component-nav-item-hover-bg);
+  color: var(--component-nav-item-hover-fg);
   transform: scale(1.06);
 }
 
@@ -797,8 +789,8 @@ html[data-aethon-motion="idle"] .aethon-port--splash .brand-mark {
 }
 
 .n-sidebar-btn.is-active {
-  color: var(--n-primary);
-  background: rgba(184, 167, 234, 0.08);
+  color: var(--component-nav-item-active-fg);
+  background: var(--component-nav-item-active-bg);
 }
 
 .n-sidebar-btn.is-active::before {
@@ -806,10 +798,7 @@ html[data-aethon-motion="idle"] .aethon-port--splash .brand-mark {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: radial-gradient(circle at center,
-    rgba(184, 167, 234, 0.24) 0%,
-    rgba(184, 167, 234, 0.12) 42%,
-    rgba(184, 167, 234, 0) 74%);
+  background: var(--component-nav-item-active-glow);
   opacity: 0.72;
   transform: scale(0.92);
   pointer-events: none;
@@ -829,15 +818,15 @@ html[data-aethon-motion="idle"] .aethon-port--splash .brand-mark {
 .n-sidebar-btn.is-active .n-icon {
   animation: n-icon-morph 450ms var(--n-ease-spring) forwards;
   font-variation-settings: "FILL" 1, "wght" 400, "GRAD" 0, "opsz" 24;
-  text-shadow: 0 0 6px rgba(184, 167, 234, 0.45);
+  text-shadow: var(--component-nav-item-active-text-shadow);
 }
 
 .n-sidebar-btn.download-active {
-  color: var(--n-primary);
+  color: var(--component-nav-item-active-fg);
 }
 
 .n-sidebar-btn.download-error {
-  color: #ffb4ab;
+  color: var(--component-nav-item-error-fg);
 }
 
 .n-sidebar-btn::after {
@@ -848,8 +837,8 @@ html[data-aethon-motion="idle"] .aethon-port--splash .brand-mark {
   transform: translateY(-50%) translateX(calc(-4px * var(--n-hud-scale)));
   padding: calc(4px * var(--n-hud-scale)) calc(10px * var(--n-hud-scale));
   border-radius: calc(8px * var(--n-hud-scale));
-  background: var(--n-surface-container-highest);
-  color: var(--n-on-surface);
+  background: var(--component-nav-tooltip-bg);
+  color: var(--component-nav-tooltip-fg);
   font-size: calc(11px * var(--n-hud-scale));
   font-weight: 600;
   white-space: nowrap;
@@ -877,16 +866,16 @@ html[data-aethon-motion="idle"] .aethon-port--splash .brand-mark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--n-primary);
-  color: var(--n-on-primary);
+  background: var(--component-nav-badge-bg);
+  color: var(--component-nav-badge-fg);
   font-weight: 700;
-  border: 1px solid rgba(0, 0, 0, 0.6);
+  border: 1px solid var(--component-nav-badge-border);
   line-height: 1;
 }
 
 .n-sidebar-badge--error {
-  background: #ffb4ab;
-  color: #690005;
+  background: var(--component-nav-badge-error-bg);
+  color: var(--component-nav-badge-error-fg);
 }
 
 .n-topbar {
@@ -899,32 +888,25 @@ html[data-aethon-motion="idle"] .aethon-port--splash .brand-mark {
   align-items: center;
   justify-content: space-between;
   padding: 0 var(--n-topbar-pad-x) 0 calc(var(--n-sidebar-width) + var(--n-topbar-pad-x));
-  background: rgba(19, 19, 26, 0.78);
-  backdrop-filter: blur(32px) saturate(140%);
-  border-bottom: 1px solid transparent;
-  border-image: linear-gradient(90deg, transparent 5%, rgba(184, 167, 234, 0.08) 50%, transparent 95%) 1;
-  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.02), 0 2px 12px rgba(0, 0, 0, 0.15);
-  z-index: 50;
+  background: var(--component-topbar-bg);
+  backdrop-filter: var(--component-topbar-blur);
+  border-bottom: 1px solid var(--component-topbar-border);
+  border-image: var(--component-topbar-border-image);
+  box-shadow: var(--component-topbar-shadow);
+  z-index: var(--component-topbar-z-index);
   -webkit-app-region: drag;
 }
 
 html[data-aethon-motion="idle"] .n-topbar {
-  backdrop-filter: blur(8px) saturate(110%);
-  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.015);
+  backdrop-filter: var(--component-topbar-idle-blur);
+  box-shadow: var(--component-topbar-idle-shadow);
 }
 
 .n-topbar::before {
   content: "";
   position: absolute;
   inset: 0;
-  background:
-    repeating-linear-gradient(
-      90deg,
-      transparent,
-      transparent 3px,
-      rgba(255, 255, 255, 0.004) 3px,
-      rgba(255, 255, 255, 0.004) 6px
-  );
+  background: var(--component-topbar-noise-bg);
   pointer-events: none;
 }
 
@@ -935,7 +917,7 @@ html[data-aethon-motion="idle"] .n-topbar {
   z-index: 2;
   opacity: 0;
   pointer-events: none;
-  background: rgba(2, 2, 5, 0.54);
+  background: var(--component-topbar-scrim-bg);
   transition: opacity 250ms ease;
 }
 
@@ -982,7 +964,7 @@ html[data-aethon-motion="idle"] .n-topbar {
 .n-search:focus-within {
   width: var(--n-search-width-focus);
   transform: translateY(calc(12px * var(--n-hud-scale))) scale(1.03);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7);
+  box-shadow: var(--component-search-shadow-focus);
 }
 
 .n-search__icon {
@@ -995,7 +977,7 @@ html[data-aethon-motion="idle"] .n-topbar {
   width: var(--n-search-icon-size);
   height: var(--n-search-icon-size);
   transform: translateY(-50%);
-  color: rgba(202, 196, 208, 0.35);
+  color: var(--component-search-icon-fg);
   font-size: var(--n-search-icon-size);
   pointer-events: none;
   z-index: 1;
@@ -1009,11 +991,11 @@ html[data-aethon-motion="idle"] .n-topbar {
 }
 
 .n-search:focus-within .n-search__icon {
-  color: var(--n-primary-container);
+  color: var(--component-search-icon-focus-fg);
 }
 
 .n-search:focus-within .n-search__input {
-  border-color: rgba(184, 167, 234, 0.18) !important;
+  border-color: var(--component-search-border-focus) !important;
   box-shadow: none !important;
 }
 
@@ -1023,16 +1005,16 @@ html[data-aethon-motion="idle"] .n-topbar {
   height: 100%;
   padding: 0 var(--n-search-padding-right) 0 var(--n-search-padding-left);
   border-radius: 9999px !important;
-  border: 1px solid rgba(202, 196, 208, 0.08) !important;
-  background: rgba(36, 33, 43, 0.8) !important;
-  color: var(--n-on-surface) !important;
+  border: 1px solid var(--component-search-border) !important;
+  background: var(--component-search-bg) !important;
+  color: var(--component-search-fg) !important;
   font-family: inherit;
   font-size: calc(13px * var(--n-hud-scale));
   font-weight: 500;
   letter-spacing: 0.01em;
   outline: none;
   backdrop-filter: blur(8px);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+  box-shadow: var(--component-search-inset-shadow);
   transition:
     border-color 300ms ease,
     background 300ms ease,
@@ -1053,7 +1035,7 @@ html[data-aethon-motion="idle"] .n-topbar {
 }
 
 .n-search__input::placeholder {
-  color: rgba(202, 196, 208, 0.4);
+  color: var(--component-search-placeholder-fg);
   font-weight: 400;
 }
 
@@ -1064,9 +1046,9 @@ html[data-aethon-motion="idle"] .n-topbar {
   align-items: center;
   justify-content: center;
   border-radius: var(--n-icon-btn-radius);
-  border: 1px solid rgba(202, 196, 208, 0.06);
-  background: rgba(255, 255, 255, 0.02);
-  color: rgba(179, 172, 191, 0.85);
+  border: 1px solid var(--component-toolbar-icon-border);
+  background: var(--component-toolbar-icon-bg);
+  color: var(--component-toolbar-icon-fg);
   cursor: pointer;
   transition:
     background var(--n-duration-fast) ease,
@@ -1080,11 +1062,11 @@ html[data-aethon-motion="idle"] .n-topbar {
 }
 
 .n-icon-btn:hover {
-  color: var(--n-on-surface);
-  background: rgba(184, 167, 234, 0.06);
-  border-color: rgba(184, 167, 234, 0.12);
+  color: var(--component-toolbar-icon-fg-hover);
+  background: var(--component-toolbar-icon-bg-hover);
+  border-color: var(--component-toolbar-icon-border-hover);
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--component-toolbar-icon-shadow-hover);
 }
 
 .n-icon-btn:active {
@@ -1093,18 +1075,18 @@ html[data-aethon-motion="idle"] .n-topbar {
 }
 
 .n-icon-btn.is-active {
-  color: var(--n-primary);
-  background: rgba(184, 167, 234, 0.1);
-  border-color: rgba(184, 167, 234, 0.16);
+  color: var(--component-toolbar-icon-fg-active);
+  background: var(--component-toolbar-icon-bg-active);
+  border-color: var(--component-toolbar-icon-border-active);
 }
 
 .n-icon-btn.is-active .material-symbols-outlined {
-  text-shadow: 0 0 5px rgba(184, 167, 234, 0.4);
+  text-shadow: var(--component-toolbar-icon-active-text-shadow);
 }
 
 .n-icon-btn.is-active svg {
   filter: none;
-  text-shadow: 0 0 5px rgba(184, 167, 234, 0.4);
+  text-shadow: var(--component-toolbar-icon-active-text-shadow);
 }
 
 .n-btn {
@@ -1612,26 +1594,26 @@ html[data-aethon-motion="idle"] .n-topbar {
   --settings-grid-gap: calc(18px * var(--n-hud-scale));
   --settings-card-radius: calc(18px * var(--n-hud-scale));
   --settings-card-padding: calc(18px * var(--n-hud-scale));
-  --font-ui: "Manrope", var(--font-sans);
-  --accent-fg: var(--n-primary);
-  --accent-bright: #ece4ff;
-  --accent-muted: rgba(184, 167, 234, 0.1);
-  --accent-dim: rgba(184, 167, 234, 0.2);
-  --bg-raised: rgba(21, 21, 25, 0.72);
-  --bg-overlay: rgba(28, 27, 27, 0.82);
-  --border-dim: rgba(72, 69, 79, 0.16);
-  --border-base: rgba(72, 69, 79, 0.18);
-  --border-strong: rgba(184, 167, 234, 0.18);
-  --border-focus: rgba(184, 167, 234, 0.26);
-  --text-primary: var(--n-on-surface);
-  --text-secondary: rgba(229, 226, 225, 0.92);
-  --text-muted: rgba(202, 196, 208, 0.72);
-  --text-faint: rgba(202, 196, 208, 0.42);
+  --font-ui: var(--component-settings-font);
+  --accent-fg: var(--component-settings-accent-fg);
+  --accent-bright: var(--component-settings-accent-bright);
+  --accent-muted: var(--component-settings-accent-muted);
+  --accent-dim: var(--component-settings-accent-dim);
+  --bg-raised: var(--component-settings-surface-raised);
+  --bg-overlay: var(--component-settings-surface-overlay);
+  --border-dim: var(--component-settings-border-dim);
+  --border-base: var(--component-settings-border-base);
+  --border-strong: var(--component-settings-border-strong);
+  --border-focus: var(--component-settings-border-focus);
+  --text-primary: var(--component-settings-text-primary);
+  --text-secondary: var(--component-settings-text-secondary);
+  --text-muted: var(--component-settings-text-muted);
+  --text-faint: var(--component-settings-text-faint);
   --color-info: var(--n-primary-container);
-  --color-info-bg: rgba(184, 167, 234, 0.1);
+  --color-info-bg: var(--component-settings-info-bg);
   background: transparent;
-  font-family: "Manrope", var(--font-sans);
-  color: var(--n-on-surface);
+  font-family: var(--component-settings-font);
+  color: var(--component-settings-fg);
 }
 
 .aethon-port--settings .material-symbols-outlined {
@@ -1656,11 +1638,9 @@ html[data-aethon-motion="idle"] .n-topbar {
   display: block;
   overflow: hidden;
   border-radius: 26px;
-  border: 1px solid rgba(202, 196, 208, 0.08);
-  background: var(--n-gradient-bg), #131313;
-  box-shadow:
-    0 24px 64px rgba(0, 0, 0, 0.62),
-    inset 0 1px 0 rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--component-settings-modal-border);
+  background: var(--component-settings-modal-bg);
+  box-shadow: var(--component-settings-modal-shadow);
 }
 
 .aethon-port--settings .content.settings-content-shell {
@@ -1681,31 +1661,24 @@ html[data-aethon-motion="idle"] .n-topbar {
   align-items: center;
   justify-content: space-between;
   padding: 0 18px;
-  background: rgba(19, 19, 26, 0.82);
-  backdrop-filter: blur(32px) saturate(140%);
+  background: var(--component-settings-topbar-bg);
+  backdrop-filter: var(--component-settings-topbar-blur);
   border-bottom: 1px solid transparent;
-  border-image: linear-gradient(90deg, transparent 5%, rgba(184, 167, 234, 0.08) 50%, transparent 95%) 1;
-  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.02), 0 2px 12px rgba(0, 0, 0, 0.15);
+  border-image: var(--component-settings-topbar-border-image);
+  box-shadow: var(--component-settings-topbar-shadow);
   z-index: 20;
 }
 
 html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.settings-modal-topbar {
-  backdrop-filter: blur(8px) saturate(110%);
-  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.015);
+  backdrop-filter: var(--component-settings-topbar-idle-blur);
+  box-shadow: var(--component-settings-topbar-idle-shadow);
 }
 
 .aethon-port--settings .content-header.n-topbar.settings-modal-topbar::before {
   content: "";
   position: absolute;
   inset: 0;
-  background:
-    repeating-linear-gradient(
-      90deg,
-      transparent,
-      transparent 3px,
-      rgba(255, 255, 255, 0.004) 3px,
-      rgba(255, 255, 255, 0.004) 6px
-    );
+  background: var(--component-settings-topbar-noise-bg);
   pointer-events: none;
 }
 
@@ -1772,9 +1745,9 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   width: var(--n-icon-btn-size);
   height: var(--n-icon-btn-size);
   border-radius: var(--n-icon-btn-radius);
-  border: 1px solid rgba(202, 196, 208, 0.06);
-  background: rgba(255, 255, 255, 0.02);
-  color: rgba(179, 172, 191, 0.85);
+  border: 1px solid var(--component-toolbar-icon-border);
+  background: var(--component-toolbar-icon-bg);
+  color: var(--component-toolbar-icon-fg);
   transition:
     background var(--n-duration-fast) ease,
     color var(--n-duration-fast) ease,
@@ -1785,11 +1758,11 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings .n-icon-btn:hover {
-  color: var(--n-on-surface);
-  background: rgba(184, 167, 234, 0.06);
-  border-color: rgba(184, 167, 234, 0.12);
+  color: var(--component-toolbar-icon-fg-hover);
+  background: var(--component-toolbar-icon-bg-hover);
+  border-color: var(--component-toolbar-icon-border-hover);
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--component-toolbar-icon-shadow-hover);
 }
 
 .aethon-port--settings .settings-stage {
@@ -1807,8 +1780,8 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   display: flex;
   flex-direction: column;
   gap: var(--settings-shell-gap);
-  background: rgba(28, 27, 27, 0.3);
-  border-right: 1px solid rgba(72, 69, 79, 0.05);
+  background: var(--component-settings-rail-bg);
+  border-right: 1px solid var(--component-settings-rail-border);
   overflow-y: auto;
   scrollbar-width: none;
 }
@@ -1841,7 +1814,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   border: 1px solid transparent;
   border-radius: calc(14px * var(--n-hud-scale));
   background: transparent;
-  color: rgba(202, 196, 208, 0.76);
+  color: var(--component-settings-nav-fg);
   font-size: calc(13px * var(--n-hud-scale));
   font-weight: 600;
   letter-spacing: 0.01em;
@@ -1856,8 +1829,8 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 
 .aethon-port--settings .nav-item.cat-btn:hover,
 .aethon-port--settings .cat-btn:hover {
-  background: rgba(255, 255, 255, 0.025);
-  color: rgba(229, 226, 225, 0.92);
+  background: var(--component-settings-nav-hover-bg);
+  color: var(--component-settings-nav-hover-fg);
 }
 
 .aethon-port--settings .nav-item.cat-btn:active,
@@ -1868,9 +1841,9 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 
 .aethon-port--settings .nav-item.cat-btn.active,
 .aethon-port--settings .cat-btn.is-active {
-  background: rgba(184, 167, 234, 0.08);
-  border-color: rgba(184, 167, 234, 0.14);
-  color: #f0edf8;
+  background: var(--component-settings-nav-active-bg);
+  border-color: var(--component-settings-nav-active-border);
+  color: var(--component-settings-nav-active-fg);
 }
 
 .aethon-port--settings .nav-item.cat-btn .material-symbols-outlined,
@@ -1918,8 +1891,8 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 .aethon-port--settings .settings-rail-card {
   padding: calc(12px * var(--n-hud-scale));
   border-radius: calc(16px * var(--n-hud-scale));
-  border: 1px solid rgba(72, 69, 79, 0.12);
-  background: rgba(28, 27, 27, 0.42);
+  border: 1px solid var(--component-settings-border-dim);
+  background: var(--component-settings-rail-bg);
 }
 
 .aethon-port--settings .settings-rail-card__head {
@@ -1944,12 +1917,12 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   font-size: 10px;
   font-weight: 700;
   line-height: 1.15;
-  color: var(--n-on-surface);
+  color: var(--component-settings-text-primary);
 }
 
 .aethon-port--settings .settings-rail-card__meta {
   font-size: 8px;
-  color: rgba(202, 196, 208, 0.3);
+  color: var(--component-settings-text-faint);
   font-family: var(--font-ui);
   letter-spacing: 0.04em;
 }
@@ -1965,10 +1938,10 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   height: calc(28px * var(--n-hud-scale));
   padding: 0 calc(10px * var(--n-hud-scale));
   border-radius: calc(8px * var(--n-hud-scale));
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--text-secondary, rgba(202, 196, 208, 0.72));
-  font-family: "Manrope", var(--font-sans);
+  border: 1px solid var(--component-settings-button-border);
+  background: var(--component-settings-button-bg);
+  color: var(--component-settings-button-fg);
+  font-family: var(--component-settings-font);
   font-size: calc(10px * var(--n-hud-scale));
   font-weight: 600;
   letter-spacing: 0.06em;
@@ -1981,10 +1954,10 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings .n-btn.n-btn-ghost.settings-rail-action:hover {
-  color: #ffffff;
-  border-color: rgba(184, 167, 234, 0.25);
-  background: rgba(184, 167, 234, 0.08);
-  box-shadow: 0 0 calc(12px * var(--n-hud-scale)) rgba(184, 167, 234, 0.04);
+  color: var(--component-settings-button-fg-hover);
+  border-color: var(--component-settings-button-border-hover);
+  background: var(--component-settings-button-bg-hover);
+  box-shadow: var(--component-settings-button-shadow-hover);
 }
 
 .aethon-port--settings .settings-panel-root {
@@ -2005,8 +1978,8 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   display: flex;
   flex-direction: column;
   gap: var(--settings-subnav-gap);
-  border-right: 1px solid rgba(72, 69, 79, 0.12);
-  background: rgba(20, 19, 23, 0.56);
+  border-right: 1px solid var(--component-settings-border-dim);
+  background: var(--component-settings-surface-raised);
 }
 
 .aethon-port--settings .subnav-label.settings-subnav__eyebrow,
@@ -2016,7 +1989,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   font-weight: 800;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: rgba(202, 196, 208, 0.38);
+  color: var(--component-settings-text-faint);
 }
 
 .aethon-port--settings .subnav-list.settings-subnav__list,
@@ -2037,7 +2010,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   border-radius: calc(12px * var(--n-hud-scale));
   border: 1px solid transparent;
   background: transparent;
-  color: rgba(202, 196, 208, 0.72);
+  color: var(--component-settings-text-muted);
   font-size: calc(12.5px * var(--n-hud-scale));
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -2051,8 +2024,8 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 
 .aethon-port--settings .subnav-item.settings-subnav-btn:hover,
 .aethon-port--settings .settings-subnav-btn:hover {
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--n-on-surface);
+  background: var(--component-settings-nav-hover-bg);
+  color: var(--component-settings-text-primary);
 }
 
 .aethon-port--settings .subnav-item.settings-subnav-btn:active,
@@ -2063,9 +2036,9 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 
 .aethon-port--settings .subnav-item.settings-subnav-btn.active,
 .aethon-port--settings .settings-subnav-btn.is-active {
-  background: rgba(184, 167, 234, 0.08);
-  border-color: rgba(184, 167, 234, 0.12);
-  color: #f0edf8;
+  background: var(--component-settings-nav-active-bg);
+  border-color: var(--component-settings-nav-active-border);
+  color: var(--component-settings-nav-active-fg);
 }
 
 .aethon-port--settings .subnav-item.settings-subnav-btn .material-symbols-outlined,
@@ -2166,7 +2139,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   justify-content: space-between;
   gap: var(--settings-pane-header-gap);
   padding: var(--settings-pane-header-pad-top) var(--settings-pane-header-pad-x) var(--settings-pane-header-pad-bottom);
-  border-bottom: 1px solid rgba(72, 69, 79, 0.12);
+  border-bottom: 1px solid var(--component-settings-border-dim);
 }
 
 .aethon-port--settings .settings-pane-header__eyebrow {
@@ -2175,14 +2148,14 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   font-weight: 800;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: rgba(202, 196, 208, 0.38);
+  color: var(--component-settings-text-faint);
 }
 
 .aethon-port--settings .settings-pane-header__title {
   font-size: calc(33px * var(--n-hud-scale));
   font-weight: 800;
   line-height: 1;
-  color: var(--n-on-surface);
+  color: var(--component-settings-text-primary);
 }
 
 .aethon-port--settings .settings-pane-header__desc {
@@ -2190,7 +2163,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   max-width: 660px;
   font-size: calc(13.5px * var(--n-hud-scale));
   line-height: 1.45;
-  color: rgba(202, 196, 208, 0.52);
+  color: var(--component-settings-text-faint);
 }
 
 .aethon-port--settings .n-btn.n-btn--sm.n-btn-ghost:not(.settings-rail-action),
@@ -2205,8 +2178,8 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   border: 1px solid transparent;
   background: transparent;
   box-shadow: none;
-  color: rgba(202, 196, 208, 0.74);
-  font-family: "Manrope", var(--font-sans);
+  color: var(--component-settings-button-fg);
+  font-family: var(--component-settings-font);
   font-size: calc(10.5px * var(--n-hud-scale));
   font-weight: 700;
   letter-spacing: 0.045em;
@@ -2222,10 +2195,10 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 
 .aethon-port--settings .n-btn.n-btn--sm.n-btn-ghost:not(.settings-rail-action):hover:not(:disabled):not([aria-disabled="true"]),
 .aethon-port--settings a.n-btn.n-btn--sm.n-btn-ghost:not(.settings-rail-action):hover {
-  color: rgba(239, 235, 245, 0.96);
-  border-color: rgba(72, 69, 79, 0.18);
-  background: rgba(255, 255, 255, 0.035);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  color: var(--component-settings-button-fg-hover);
+  border-color: var(--component-settings-button-border-hover);
+  background: var(--component-settings-button-bg-hover);
+  box-shadow: var(--component-settings-card-shadow);
 }
 
 .aethon-port--settings .n-btn.n-btn--sm.n-btn-ghost:not(.settings-rail-action):active:not(:disabled):not([aria-disabled="true"]),
@@ -2236,10 +2209,8 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 .aethon-port--settings .n-btn.n-btn--sm.n-btn-ghost:not(.settings-rail-action):focus-visible,
 .aethon-port--settings a.n-btn.n-btn--sm.n-btn-ghost:not(.settings-rail-action):focus-visible {
   outline: none;
-  border-color: rgba(184, 167, 234, 0.26);
-  box-shadow:
-    0 0 0 1px rgba(184, 167, 234, 0.12),
-    0 0 0 4px rgba(184, 167, 234, 0.06);
+  border-color: var(--component-settings-border-focus);
+  box-shadow: var(--component-focus-ring);
 }
 
 .aethon-port--settings .n-btn.n-btn--sm.n-btn-ghost:not(.settings-rail-action):disabled,
@@ -2251,20 +2222,20 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings .n-btn.n-btn--sm.n-btn-ghost.n-btn-danger {
-  color: rgba(233, 170, 170, 0.88);
+  color: var(--component-settings-danger-fg);
 }
 
 .aethon-port--settings .n-btn.n-btn--sm.n-btn-ghost.n-btn-danger:hover:not(:disabled):not([aria-disabled="true"]) {
-  border-color: rgba(201, 110, 110, 0.24);
-  color: #ffdada;
-  background: rgba(79, 39, 46, 0.18);
+  border-color: var(--component-settings-danger-border-hover);
+  color: var(--component-settings-danger-fg-hover);
+  background: var(--component-settings-danger-bg-hover);
 }
 
 .aethon-port--settings .n-inline-segmented {
   gap: calc(3px * var(--n-hud-scale));
   padding: calc(3px * var(--n-hud-scale));
-  border-color: rgba(255, 255, 255, 0.04);
-  background: rgba(36, 33, 43, 0.6);
+  border-color: var(--component-settings-border-dim);
+  background: var(--component-settings-surface-raised);
   backdrop-filter: blur(12px);
   box-shadow: none;
 }
@@ -2290,15 +2261,15 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings .n-inline-segment:hover:not(.is-selected) {
-  background: rgba(255, 255, 255, 0.05);
-  color: #fff;
+  background: var(--component-settings-nav-hover-bg);
+  color: var(--component-settings-button-fg-hover);
 }
 
 .aethon-port--settings .n-inline-segment.is-selected {
   color: var(--n-on-primary);
   background: var(--n-gradient-primary);
   box-shadow:
-    0 calc(4px * var(--n-hud-scale)) calc(14px * var(--n-hud-scale)) rgba(184, 167, 234, 0.25);
+    0 calc(4px * var(--n-hud-scale)) calc(14px * var(--n-hud-scale)) var(--component-settings-accent-dim);
   transform: none;
 }
 
@@ -2307,10 +2278,10 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   min-height: calc(28px * var(--n-hud-scale));
   padding: 0 calc(10px * var(--n-hud-scale));
   border-radius: calc(8px * var(--n-hud-scale));
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--text-secondary, rgba(202, 196, 208, 0.72));
-  font-family: "Manrope", var(--font-sans);
+  border: 1px solid var(--component-settings-button-border);
+  background: var(--component-settings-button-bg);
+  color: var(--component-settings-button-fg);
+  font-family: var(--component-settings-font);
   font-size: calc(10px * var(--n-hud-scale));
   font-weight: 600;
   letter-spacing: 0.06em;
@@ -2324,10 +2295,10 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings .settings-rail-action:hover {
-  color: #ffffff;
-  border-color: rgba(184, 167, 234, 0.25);
-  background: rgba(184, 167, 234, 0.08);
-  box-shadow: 0 0 calc(12px * var(--n-hud-scale)) rgba(184, 167, 234, 0.04);
+  color: var(--component-settings-button-fg-hover);
+  border-color: var(--component-settings-button-border-hover);
+  background: var(--component-settings-button-bg-hover);
+  box-shadow: var(--component-settings-button-shadow-hover);
 }
 
 .aethon-port--settings .settings-pane-body.content-body {
@@ -2356,8 +2327,8 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 
 .aethon-port--settings .settings-pane .is-search-hit {
   border-radius: 14px;
-  box-shadow: 0 0 0 1px rgba(184, 167, 234, 0.22);
-  background: rgba(184, 167, 234, 0.08);
+  box-shadow: 0 0 0 1px var(--component-settings-nav-active-border);
+  background: var(--component-settings-nav-active-bg);
 }
 
 .aethon-port--settings .settings-grid {
@@ -2373,10 +2344,10 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   flex-direction: column;
   gap: var(--settings-shell-gap);
   padding: var(--settings-card-padding);
-  border: 1px solid rgba(72, 69, 79, 0.14);
+  border: 1px solid var(--component-settings-card-border);
   border-radius: var(--settings-card-radius);
-  background: rgba(28, 27, 27, 0.6);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+  background: var(--component-settings-card-bg);
+  box-shadow: var(--component-settings-card-shadow);
 }
 
 .aethon-port--settings .settings-card--wide {
@@ -2393,27 +2364,27 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 .aethon-port--settings .settings-card__title {
   margin: 0;
   padding: 0;
-  font-family: "Manrope", var(--font-sans);
+  font-family: var(--component-settings-font);
   font-size: calc(11px * var(--n-hud-scale));
   font-weight: 800;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: rgba(202, 196, 208, 0.42);
+  color: var(--component-settings-text-faint);
 }
 
 .aethon-port--settings .settings-card__intro {
   margin: 0;
-  font-family: "Manrope", var(--font-sans);
+  font-family: var(--component-settings-font);
   font-size: calc(11px * var(--n-hud-scale));
   font-weight: 600;
   line-height: 1.5;
-  color: rgba(202, 196, 208, 0.42);
+  color: var(--component-settings-text-faint);
 }
 
 .aethon-port--settings .settings-card__intro--body {
   font-size: calc(13px * var(--n-hud-scale));
   line-height: 1.6;
-  color: rgba(229, 226, 225, 0.88);
+  color: var(--component-settings-text-secondary);
 }
 
 .aethon-port--settings .settings-card__stack {
@@ -2478,31 +2449,31 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   min-width: 0;
   padding: calc(14px * var(--n-hud-scale)) calc(16px * var(--n-hud-scale));
   border-radius: calc(14px * var(--n-hud-scale));
-  border: 1px solid rgba(72, 69, 79, 0.12);
-  background: rgba(21, 21, 25, 0.68);
+  border: 1px solid var(--component-settings-border-dim);
+  background: var(--component-settings-surface-raised);
 }
 
 .aethon-port--settings .settings-meta-card__label {
-  font-family: "Manrope", var(--font-sans);
+  font-family: var(--component-settings-font);
   font-size: calc(9px * var(--n-hud-scale));
   font-weight: 800;
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: rgba(202, 196, 208, 0.32);
+  color: var(--component-settings-text-faint);
 }
 
 .aethon-port--settings .settings-meta-card__value {
-  font-family: "Manrope", var(--font-sans);
+  font-family: var(--component-settings-font);
   font-size: calc(15px * var(--n-hud-scale));
   font-weight: 700;
-  color: rgba(229, 226, 225, 0.9);
+  color: var(--component-settings-text-secondary);
 }
 
 .aethon-port--settings .settings-meta-card__hint {
   font-family: var(--font-mono);
   font-size: calc(10px * var(--n-hud-scale));
   line-height: 1.45;
-  color: rgba(202, 196, 208, 0.34);
+  color: var(--component-settings-text-faint);
   word-break: break-all;
 }
 
@@ -2515,14 +2486,14 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   min-height: calc(56px * var(--n-hud-scale));
   padding: calc(10px * var(--n-hud-scale)) calc(12px * var(--n-hud-scale));
   margin: 0 calc(-12px * var(--n-hud-scale));
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  border-top: 1px solid var(--component-settings-row-border);
   border-radius: calc(14px * var(--n-hud-scale));
   transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
 }
 
 .aethon-port--settings .settings-row:hover,
 .aethon-port--settings .settings-mini-row:hover {
-  background: rgba(184, 167, 234, 0.035);
+  background: var(--component-settings-row-hover-bg);
   border-top-color: transparent;
 }
 
@@ -2574,19 +2545,19 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 
 .aethon-port--settings .settings-mini-row__label {
   margin: 0;
-  font-family: "Manrope", var(--font-sans);
+  font-family: var(--component-settings-font);
   font-size: calc(12.5px * var(--n-hud-scale));
   font-weight: 600;
-  color: var(--n-on-surface);
+  color: var(--component-settings-text-primary);
 }
 
 .aethon-port--settings .settings-mini-row__hint {
   margin: 0;
-  font-family: "Manrope", var(--font-sans);
+  font-family: var(--component-settings-font);
   font-size: calc(11px * var(--n-hud-scale));
   font-weight: 600;
   line-height: 1.45;
-  color: rgba(202, 196, 208, 0.42);
+  color: var(--component-settings-text-faint);
   max-width: 100%;
   overflow-wrap: anywhere;
 }
@@ -2605,11 +2576,11 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   height: calc(22px * var(--n-hud-scale));
   border: none;
   border-radius: 999px;
-  background: rgba(148, 143, 154, 0.2);
+  background: var(--component-settings-toggle-bg);
   cursor: pointer;
   flex: 0 0 auto;
   transition: background 180ms ease, opacity 140ms ease, transform 90ms ease, box-shadow 180ms ease;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+  box-shadow: var(--component-settings-toggle-shadow);
 }
 
 .aethon-port--settings .settings-toggle::after {
@@ -2620,18 +2591,16 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   width: calc(18px * var(--n-hud-scale));
   height: calc(18px * var(--n-hud-scale));
   border-radius: 999px;
-  background: rgba(202, 196, 208, 0.56);
+  background: var(--component-settings-toggle-knob-bg);
   transition: transform 180ms ease, background 180ms ease;
 }
 
 .aethon-port--settings .settings-toggle.is-on {
-  background: var(--n-primary-container);
+  background: var(--component-settings-toggle-on-bg);
 }
 
 .aethon-port--settings .settings-toggle:hover:not(:disabled):not([aria-disabled="true"]) {
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.04),
-    0 0 0 1px rgba(184, 167, 234, 0.08);
+  box-shadow: var(--component-settings-toggle-hover-shadow);
 }
 
 .aethon-port--settings .settings-toggle:active:not(:disabled):not([aria-disabled="true"]) {
@@ -2640,7 +2609,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 
 .aethon-port--settings .settings-toggle.is-on::after {
   transform: translateX(calc(18px * var(--n-hud-scale)));
-  background: var(--n-on-primary-container);
+  background: var(--component-settings-toggle-on-knob-bg);
 }
 
 .aethon-port--settings .settings-toggle:disabled,
@@ -2662,9 +2631,9 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   min-height: calc(32px * var(--n-hud-scale));
   padding: 0 calc(12px * var(--n-hud-scale));
   border-radius: 999px;
-  border: 1px solid rgba(72, 69, 79, 0.18);
-  background: rgba(255, 255, 255, 0.02);
-  color: rgba(229, 226, 225, 0.86);
+  border: 1px solid var(--component-settings-chip-border);
+  background: var(--component-settings-chip-bg);
+  color: var(--component-settings-chip-fg);
   font-size: calc(11.5px * var(--n-hud-scale));
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -2676,9 +2645,9 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings .settings-chip.is-active {
-  border-color: rgba(184, 167, 234, 0.28);
-  background: rgba(184, 167, 234, 0.1);
-  color: var(--n-on-surface);
+  border-color: var(--component-settings-chip-active-border);
+  background: var(--component-settings-chip-active-bg);
+  color: var(--component-settings-text-primary);
 }
 
 .aethon-port--settings .settings-chip--empty {
@@ -2891,11 +2860,11 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   min-height: calc(54px * var(--n-hud-scale));
   padding: 0;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.04);
-  background: rgba(36, 33, 43, 0.6);
+  border: 1px solid var(--component-settings-border-dim);
+  background: var(--component-settings-surface-raised);
   backdrop-filter: blur(12px);
   color: var(--n-on-surface-variant);
-  font-family: "Manrope", var(--font-sans);
+  font-family: var(--component-settings-font);
   font-size: calc(12px * var(--n-hud-scale));
   font-weight: 800;
   letter-spacing: 0.05em;
@@ -2912,8 +2881,8 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings .settings-switch-pill:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.05);
-  color: #fff;
+  background: var(--component-settings-nav-hover-bg);
+  color: var(--component-settings-button-fg-hover);
 }
 
 .aethon-port--settings .settings-switch-pill:active:not(:disabled) {
@@ -2922,9 +2891,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 
 .aethon-port--settings .settings-switch-pill:focus-visible {
   outline: none;
-  box-shadow:
-    0 0 0 1px rgba(184, 167, 234, 0.38),
-    0 0 0 4px rgba(184, 167, 234, 0.12);
+  box-shadow: var(--component-focus-ring);
 }
 
 .aethon-port--settings .settings-switch-pill.is-selected {
@@ -2932,7 +2899,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   border-color: transparent;
   background: var(--n-gradient-primary);
   box-shadow:
-    0 calc(4px * var(--n-hud-scale)) calc(14px * var(--n-hud-scale)) rgba(184, 167, 234, 0.25);
+    0 calc(4px * var(--n-hud-scale)) calc(14px * var(--n-hud-scale)) var(--component-settings-accent-dim);
 }
 
 .aethon-port--settings .settings-switch-pill:disabled {
@@ -2952,9 +2919,9 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   min-height: 32px;
   padding: 0 10px;
   border-radius: 14px;
-  border: 1px solid rgba(72, 69, 79, 0.16);
-  background: rgba(21, 21, 25, 0.72);
-  color: rgba(229, 226, 225, 0.86);
+  border: 1px solid var(--component-settings-border-dim);
+  background: var(--component-settings-surface-raised);
+  color: var(--component-settings-text-secondary);
   font-size: 11px;
   font-weight: 700;
 }
@@ -2964,11 +2931,11 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   padding-inline: calc(14px * var(--n-hud-scale));
   justify-content: center;
   border-radius: calc(999px * var(--n-hud-scale));
-  border-color: rgba(255, 255, 255, 0.05);
-  background: rgba(36, 33, 43, 0.6);
+  border-color: var(--component-settings-button-border);
+  background: var(--component-settings-surface-raised);
   backdrop-filter: blur(12px);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
-  color: rgba(230, 225, 236, 0.9);
+  box-shadow: var(--component-settings-card-shadow);
+  color: var(--component-settings-text-secondary);
   font-weight: 800;
   letter-spacing: 0.015em;
   text-transform: none;
@@ -2995,10 +2962,10 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   min-height: calc(36px * var(--n-hud-scale));
   padding-inline: calc(16px * var(--n-hud-scale));
   border-radius: calc(16px * var(--n-hud-scale));
-  border: 1px solid rgba(160, 136, 212, 0.3);
-  background: rgba(58, 49, 80, 0.64);
-  color: #efe8ff;
-  font-family: "Manrope", var(--font-sans);
+  border: 1px solid var(--component-settings-chip-active-border);
+  background: var(--component-settings-chip-active-bg);
+  color: var(--component-settings-nav-active-fg);
+  font-family: var(--component-settings-font);
   font-size: calc(11px * var(--n-hud-scale));
   font-weight: 800;
   letter-spacing: 0.04em;
@@ -3010,11 +2977,9 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings .settings-reset-all-btn:hover:not(:disabled) {
-  border-color: rgba(184, 167, 234, 0.42);
-  background: rgba(76, 63, 108, 0.78);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.05),
-    0 12px 24px rgba(18, 15, 28, 0.18);
+  border-color: var(--component-settings-button-border-hover);
+  background: var(--component-settings-button-bg-hover);
+  box-shadow: var(--component-settings-button-shadow-hover);
 }
 
 .aethon-port--settings .settings-reset-all-btn:active:not(:disabled) {
@@ -3023,9 +2988,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 
 .aethon-port--settings .settings-reset-all-btn:focus-visible {
   outline: none;
-  box-shadow:
-    0 0 0 1px rgba(184, 167, 234, 0.18),
-    0 0 0 4px rgba(184, 167, 234, 0.08);
+  box-shadow: var(--component-focus-ring);
 }
 
 .aethon-port--settings .settings-inline-field {
@@ -3065,10 +3028,10 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings .settings-input-line__error {
-  font-family: "Manrope", var(--font-sans);
+  font-family: var(--component-settings-font);
   font-size: 11px;
   font-weight: 600;
-  color: #f0b2a8;
+  color: var(--component-settings-danger-fg-hover);
 }
 
 .aethon-port--settings .settings-range {
@@ -3083,7 +3046,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 .aethon-port--settings .settings-range::-webkit-slider-runnable-track {
   height: 6px;
   border-radius: 999px;
-  background: rgba(148, 143, 154, 0.12);
+  background: var(--component-settings-toggle-bg);
 }
 
 .aethon-port--settings .settings-range::-webkit-slider-thumb {
@@ -3094,13 +3057,13 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   border: none;
   border-radius: 50%;
   background: var(--n-primary-container);
-  box-shadow: 0 0 0 3px rgba(184, 167, 234, 0.12);
+  box-shadow: var(--component-focus-ring);
 }
 
 .aethon-port--settings .settings-range::-moz-range-track {
   height: 6px;
   border-radius: 999px;
-  background: rgba(148, 143, 154, 0.12);
+  background: var(--component-settings-toggle-bg);
 }
 
 .aethon-port--settings .settings-range::-moz-range-thumb {
@@ -3109,40 +3072,40 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   border: none;
   border-radius: 50%;
   background: var(--n-primary-container);
-  box-shadow: 0 0 0 3px rgba(184, 167, 234, 0.12);
+  box-shadow: var(--component-focus-ring);
 }
 
 .aethon-port--settings .settings-card__surface {
   padding: 16px 18px;
   border-radius: 16px;
-  border: 1px solid rgba(72, 69, 79, 0.12);
-  background: rgb(17, 16, 21);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--component-settings-border-dim);
+  background: var(--component-settings-surface-raised);
+  box-shadow: var(--component-settings-card-shadow);
 }
 
 .aethon-port--settings .settings-card__notice {
   margin: 0;
   padding: 12px 14px;
   border-radius: 14px;
-  border: 1px solid rgba(72, 69, 79, 0.18);
-  background: rgba(255, 255, 255, 0.025);
-  font-family: "Manrope", var(--font-sans);
+  border: 1px solid var(--component-settings-border-base);
+  background: var(--component-settings-button-bg);
+  font-family: var(--component-settings-font);
   font-size: 11px;
   font-weight: 600;
   line-height: 1.55;
-  color: rgba(202, 196, 208, 0.68);
+  color: var(--component-settings-text-muted);
 }
 
 .aethon-port--settings .settings-card__notice--error {
-  border-color: rgba(240, 178, 168, 0.22);
-  background: rgba(240, 178, 168, 0.055);
-  color: #f0b2a8;
+  border-color: var(--component-settings-danger-border-hover);
+  background: var(--component-settings-danger-bg-hover);
+  color: var(--component-settings-danger-fg-hover);
 }
 
 .aethon-port--settings .settings-card__notice--info {
-  border-color: rgba(184, 167, 234, 0.18);
-  background: rgba(184, 167, 234, 0.055);
-  color: rgba(229, 226, 225, 0.8);
+  border-color: var(--component-settings-border-strong);
+  background: var(--component-settings-info-bg);
+  color: var(--component-settings-text-secondary);
 }
 
 .aethon-port--settings .settings-theme-preview {
@@ -3806,9 +3769,9 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   min-height: calc(34px * var(--n-hud-scale));
   padding: 0 calc(12px * var(--n-hud-scale));
   border-radius: calc(10px * var(--n-hud-scale));
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(20, 19, 24, 0.72);
-  color: var(--n-on-surface, rgba(229, 226, 225, 0.92));
+  border: 1px solid var(--component-settings-input-border);
+  background: var(--component-settings-input-bg);
+  color: var(--component-settings-input-fg);
   font-family: var(--font-ui);
   font-size: calc(12px * var(--n-hud-scale));
   box-sizing: border-box;
@@ -3820,17 +3783,17 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings .settings-text-input:hover {
-  border-color: rgba(184, 167, 234, 0.25);
-  background: rgba(28, 27, 27, 0.82);
+  border-color: var(--component-settings-border-strong);
+  background: var(--component-settings-surface-overlay);
 }
 
 .aethon-port--settings .settings-text-input:focus {
   outline: none;
-  border-color: var(--accent-bright, #b8a7ea);
-  background: rgba(16, 15, 19, 0.9);
-  box-shadow: 0 0 calc(8px * var(--n-hud-scale)) rgba(184, 167, 234, 0.12);
+  border-color: var(--component-settings-input-border-focus);
+  background: var(--component-settings-input-bg-focus);
+  box-shadow: var(--component-focus-ring);
 }
 
 .aethon-port--settings .settings-text-input::placeholder {
-  color: rgba(202, 196, 208, 0.28);
+  color: var(--component-settings-input-placeholder);
 }

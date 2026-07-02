@@ -35,6 +35,306 @@
   --color-info:     #91a7e8;
   --color-info-bg:  #12172c;
 
+  --color-background: #131313;
+  --color-background-void: #08080b;
+  --color-surface: #1c1b1b;
+  --color-surface-secondary: #353534;
+  --color-elevated: #201f1f;
+  --color-card: #201f1f;
+  --color-modal: #2a2a2a;
+  --color-popover: #2a2a2a;
+  --color-menu: #2a2a2a;
+  --color-overlay: rgba(0, 0, 0, 0.68);
+  --color-border: #2a2733;
+  --color-outline: #8173d6;
+  --color-divider: #1b1a20;
+  --color-accent: #d3c4ff;
+  --color-accent-muted: rgba(184, 167, 234, 0.12);
+  --color-success-bg: rgba(138, 207, 166, 0.12);
+  --color-warning: #d6c09a;
+  --color-warning-bg: rgba(214, 192, 154, 0.12);
+  --color-danger: #cf8aa0;
+  --color-danger-bg: #24121b;
+  --text-tertiary: rgba(202, 196, 208, 0.62);
+  --text-inverse: #08080b;
+
+  --shadow-sm: 0 8px 22px rgba(0, 0, 0, 0.22);
+  --shadow-md: 0 16px 42px rgba(0, 0, 0, 0.32);
+  --shadow-lg: 0 28px 80px rgba(0, 0, 0, 0.48);
+  --shadow-focus: 0 0 0 3px rgba(184, 167, 234, 0.18);
+  --blur-backdrop: blur(22px);
+  --blur-glass: blur(32px) saturate(180%);
+
+  --component-card-bg: var(--color-card);
+  --component-card-border: rgba(72, 69, 79, 0.18);
+  --component-card-radius: var(--radius-lg);
+  --component-card-shadow: var(--shadow-sm);
+  --component-modal-bg: var(--color-modal);
+  --component-modal-border: rgba(72, 69, 79, 0.42);
+  --component-modal-radius: var(--radius-xl);
+  --component-modal-shadow: var(--shadow-lg);
+  --component-popover-bg: var(--n-popover-bg);
+  --component-popover-border: var(--n-popover-border);
+  --component-popover-radius: var(--hud-popover-radius);
+  --component-popover-shadow: var(--n-popover-shadow);
+  --component-menu-bg: var(--n-popover-bg);
+  --component-menu-border: var(--n-popover-border);
+  --component-menu-radius: 14px;
+  --component-menu-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.035),
+    0 18px 48px rgba(0, 0, 0, 0.48);
+  --component-menu-z-index: 200;
+  --component-menu-item-fg: rgba(202, 196, 208, 0.76);
+  --component-menu-item-hover-bg: rgba(201, 181, 255, 0.12);
+  --component-menu-item-hover-fg: #e8e4eb;
+  --component-menu-item-danger-fg: #ff9f9f;
+  --component-menu-item-danger-hover-bg: rgba(255, 159, 159, 0.12);
+  --component-menu-icon-fg: rgba(202, 196, 208, 0.48);
+  --component-menu-divider: rgba(202, 196, 208, 0.075);
+  --component-overlay-bg: var(--color-overlay);
+  --component-button-bg: rgba(255, 255, 255, 0.035);
+  --component-button-bg-hover: rgba(184, 167, 234, 0.08);
+  --component-button-fg: var(--text-primary);
+  --component-button-border: rgba(72, 69, 79, 0.18);
+  --component-input-bg: rgba(20, 19, 24, 0.72);
+  --component-input-fg: var(--text-primary);
+  --component-input-border: rgba(255, 255, 255, 0.08);
+  --component-input-placeholder: rgba(202, 196, 208, 0.28);
+  --component-tab-bg-active: rgba(184, 167, 234, 0.08);
+  --component-tab-fg-active: #f0edf8;
+  --component-toast-bg:
+    radial-gradient(circle at 0% 0%, rgba(201, 181, 255, 0.08), transparent 46%),
+    rgba(21, 20, 25, 0.96);
+  --component-toast-bg-hover: rgba(25, 24, 29, 0.98);
+  --component-toast-border: rgba(92, 88, 103, 0.42);
+  --component-toast-border-hover: rgba(201, 181, 255, 0.24);
+  --component-toast-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.035),
+    0 16px 44px rgba(0, 0, 0, 0.48);
+  --component-toast-radius: 12px;
+  --component-toast-offset: 20px;
+  --component-toast-blur: blur(18px) saturate(118%);
+  --component-toast-focus-ring: rgba(201, 181, 255, 0.45);
+  --component-toast-life-bg: linear-gradient(90deg, rgba(201, 181, 255, 0.75), rgba(143, 126, 224, 0.7));
+  --component-toast-title-fg: #e8e4eb;
+  --component-toast-body-fg: rgba(202, 196, 208, 0.62);
+  --component-toast-success-fg: #c9f0cf;
+  --component-toast-error-fg: #f08f9b;
+  --component-toast-info-fg: rgba(202, 196, 208, 0.72);
+  --component-toast-download-fg: #d8cbff;
+  --component-toast-progress-track: rgba(201, 181, 255, 0.12);
+  --component-toast-progress-fill: linear-gradient(90deg, rgba(201, 181, 255, 0.92), rgba(164, 134, 255, 0.8));
+  --component-toast-progress-shadow: 0 0 14px rgba(201, 181, 255, 0.28);
+  --component-toast-action-bg: rgba(201, 181, 255, 0.12);
+  --component-toast-action-bg-hover: rgba(201, 181, 255, 0.18);
+  --component-toast-action-fg: #d8cbff;
+  --component-toast-action-border: rgba(201, 181, 255, 0.28);
+  --component-toast-close-bg: rgba(255, 255, 255, 0.018);
+  --component-toast-close-bg-hover: rgba(201, 181, 255, 0.08);
+  --component-toast-close-fg: rgba(202, 196, 208, 0.54);
+  --component-toast-close-fg-hover: #e8e4eb;
+  --component-toast-close-border: rgba(92, 88, 103, 0.34);
+  --component-toast-close-border-hover: rgba(201, 181, 255, 0.24);
+  --component-sidebar-bg: rgba(30, 28, 40, 0.55);
+  --component-topbar-bg: rgba(19, 19, 26, 0.82);
+  --component-app-bg: var(--n-gradient-bg), #131313;
+  --component-app-fg: var(--n-on-surface);
+  --component-app-font: "Manrope", var(--font-sans);
+  --component-detail-layer-bg: var(--bg-surface);
+  --component-search-dim-bg:
+    radial-gradient(circle at 50% 10%, rgba(34, 26, 52, 0.18), rgba(0, 0, 0, 0) 30%),
+    rgba(0, 0, 0, 0.54);
+  --component-sidebar-border: rgba(255, 255, 255, 0.12);
+  --component-sidebar-shadow:
+    0 12px 40px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  --component-sidebar-blur: blur(32px) saturate(180%);
+  --component-sidebar-scrim-bg: rgba(0, 0, 0, 0.56);
+  --component-sidebar-highlight-bg:
+    radial-gradient(circle at 50% 8%, rgba(184, 167, 234, 0.08), transparent 44%),
+    rgba(2, 2, 5, 0.6);
+  --component-sidebar-z-index: 80;
+  --component-sidebar-search-z-index: 40;
+  --component-nav-item-fg: rgba(229, 226, 225, 0.38);
+  --component-nav-item-hover-bg: rgba(255, 255, 255, 0.04);
+  --component-nav-item-hover-fg: rgba(229, 226, 225, 0.7);
+  --component-nav-item-active-bg: rgba(184, 167, 234, 0.08);
+  --component-nav-item-active-fg: var(--n-primary);
+  --component-nav-item-active-glow:
+    radial-gradient(circle at center,
+      rgba(184, 167, 234, 0.24) 0%,
+      rgba(184, 167, 234, 0.12) 42%,
+      rgba(184, 167, 234, 0) 74%);
+  --component-nav-item-active-text-shadow: 0 0 6px rgba(184, 167, 234, 0.45);
+  --component-nav-item-error-fg: #ffb4ab;
+  --component-nav-tooltip-bg: var(--n-surface-container-highest);
+  --component-nav-tooltip-fg: var(--n-on-surface);
+  --component-nav-badge-bg: var(--n-primary);
+  --component-nav-badge-fg: var(--n-on-primary);
+  --component-nav-badge-border: rgba(0, 0, 0, 0.6);
+  --component-nav-badge-error-bg: #ffb4ab;
+  --component-nav-badge-error-fg: #690005;
+  --component-topbar-border: transparent;
+  --component-topbar-border-image: linear-gradient(90deg, transparent 5%, rgba(184, 167, 234, 0.08) 50%, transparent 95%) 1;
+  --component-topbar-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.02), 0 2px 12px rgba(0, 0, 0, 0.15);
+  --component-topbar-blur: blur(32px) saturate(140%);
+  --component-topbar-idle-blur: blur(8px) saturate(110%);
+  --component-topbar-idle-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.015);
+  --component-topbar-noise-bg:
+    repeating-linear-gradient(
+      90deg,
+      transparent,
+      transparent 3px,
+      rgba(255, 255, 255, 0.004) 3px,
+      rgba(255, 255, 255, 0.004) 6px
+    );
+  --component-topbar-scrim-bg: rgba(2, 2, 5, 0.54);
+  --component-topbar-z-index: 50;
+  --component-topbar-search-z-index: 520;
+  --component-topbar-search-content-z-index: 540;
+  --component-search-shadow-focus: 0 24px 60px rgba(0, 0, 0, 0.7);
+  --component-search-icon-fg: rgba(202, 196, 208, 0.35);
+  --component-search-icon-focus-fg: var(--n-primary-container);
+  --component-search-bg: rgba(36, 33, 43, 0.8);
+  --component-search-border: rgba(202, 196, 208, 0.08);
+  --component-search-border-focus: rgba(184, 167, 234, 0.18);
+  --component-search-fg: var(--n-on-surface);
+  --component-search-placeholder-fg: rgba(202, 196, 208, 0.4);
+  --component-search-inset-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+  --component-toolbar-icon-bg: rgba(255, 255, 255, 0.02);
+  --component-toolbar-icon-bg-hover: rgba(184, 167, 234, 0.06);
+  --component-toolbar-icon-bg-active: rgba(184, 167, 234, 0.1);
+  --component-toolbar-icon-border: rgba(202, 196, 208, 0.06);
+  --component-toolbar-icon-border-hover: rgba(184, 167, 234, 0.12);
+  --component-toolbar-icon-border-active: rgba(184, 167, 234, 0.16);
+  --component-toolbar-icon-fg: rgba(179, 172, 191, 0.85);
+  --component-toolbar-icon-fg-hover: var(--n-on-surface);
+  --component-toolbar-icon-fg-active: var(--n-primary);
+  --component-toolbar-icon-shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.12);
+  --component-toolbar-icon-active-text-shadow: 0 0 5px rgba(184, 167, 234, 0.4);
+  --component-window-controls-z-index: 3000;
+  --component-window-control-bg: rgba(26, 24, 34, 0.88);
+  --component-window-control-bg-hover: rgba(34, 31, 44, 0.94);
+  --component-window-control-bg-active: rgba(20, 18, 28, 0.96);
+  --component-window-control-border: rgba(184, 167, 234, 0.12);
+  --component-window-control-border-hover: rgba(184, 167, 234, 0.24);
+  --component-window-control-fg: rgba(239, 234, 255, 0.68);
+  --component-window-control-fg-hover: rgba(248, 244, 255, 0.92);
+  --component-window-control-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 6px 16px rgba(0, 0, 0, 0.24);
+  --component-window-control-shadow-hover:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 10px 24px rgba(0, 0, 0, 0.3);
+  --component-window-control-blur: blur(22px) saturate(140%);
+  --component-window-control-close-bg-hover: rgba(184, 48, 74, 0.92);
+  --component-window-control-close-border-hover: rgba(229, 70, 99, 0.5);
+  --component-window-control-close-fg-hover: #fff;
+  --component-activity-badge-bg: rgba(16, 14, 22, 0.88);
+  --component-activity-badge-fg: #eadfff;
+  --component-activity-badge-text-shadow:
+    0 0 calc(2px * var(--n-hud-scale)) rgba(218, 201, 255, 0.98),
+    0 0 calc(7px * var(--n-hud-scale)) rgba(155, 117, 255, 0.72);
+  --component-activity-overlay-bg:
+    radial-gradient(circle at 20% 0%, rgba(155, 117, 255, 0.12), transparent 34%),
+    rgba(13, 12, 15, 0.96);
+  --component-activity-overlay-blur: blur(18px);
+  --component-activity-overlay-z-index: 42;
+  --component-activity-overlay-back-bg: rgba(28, 27, 27, 0.45);
+  --component-activity-overlay-back-border: rgba(72, 69, 79, 0.14);
+  --component-activity-overlay-back-fg: rgba(202, 196, 208, 0.68);
+  --component-activity-overlay-back-hover-fg: var(--n-on-surface);
+  --component-focus-ring: var(--shadow-focus);
+  --component-settings-font: "Manrope", var(--font-sans);
+  --component-settings-fg: var(--n-on-surface);
+  --component-settings-accent-fg: var(--n-primary);
+  --component-settings-accent-bright: #ece4ff;
+  --component-settings-accent-muted: rgba(184, 167, 234, 0.1);
+  --component-settings-accent-dim: rgba(184, 167, 234, 0.2);
+  --component-settings-surface-raised: rgba(21, 21, 25, 0.72);
+  --component-settings-surface-overlay: rgba(28, 27, 27, 0.82);
+  --component-settings-border-dim: rgba(72, 69, 79, 0.16);
+  --component-settings-border-base: rgba(72, 69, 79, 0.18);
+  --component-settings-border-strong: rgba(184, 167, 234, 0.18);
+  --component-settings-border-focus: rgba(184, 167, 234, 0.26);
+  --component-settings-text-primary: var(--n-on-surface);
+  --component-settings-text-secondary: rgba(229, 226, 225, 0.92);
+  --component-settings-text-muted: rgba(202, 196, 208, 0.72);
+  --component-settings-text-faint: rgba(202, 196, 208, 0.42);
+  --component-settings-info-bg: rgba(184, 167, 234, 0.1);
+  --component-settings-modal-bg: var(--n-gradient-bg), #131313;
+  --component-settings-modal-border: rgba(202, 196, 208, 0.08);
+  --component-settings-modal-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.62),
+    inset 0 1px 0 rgba(255, 255, 255, 0.02);
+  --component-settings-topbar-bg: rgba(19, 19, 26, 0.82);
+  --component-settings-topbar-blur: blur(32px) saturate(140%);
+  --component-settings-topbar-border-image: linear-gradient(90deg, transparent 5%, rgba(184, 167, 234, 0.08) 50%, transparent 95%) 1;
+  --component-settings-topbar-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.02), 0 2px 12px rgba(0, 0, 0, 0.15);
+  --component-settings-topbar-idle-blur: blur(8px) saturate(110%);
+  --component-settings-topbar-idle-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.015);
+  --component-settings-topbar-noise-bg:
+    repeating-linear-gradient(
+      90deg,
+      transparent,
+      transparent 3px,
+      rgba(255, 255, 255, 0.004) 3px,
+      rgba(255, 255, 255, 0.004) 6px
+    );
+  --component-settings-rail-bg: rgba(28, 27, 27, 0.3);
+  --component-settings-rail-border: rgba(72, 69, 79, 0.05);
+  --component-settings-nav-fg: rgba(202, 196, 208, 0.76);
+  --component-settings-nav-hover-bg: rgba(255, 255, 255, 0.025);
+  --component-settings-nav-hover-fg: rgba(229, 226, 225, 0.92);
+  --component-settings-nav-active-bg: rgba(184, 167, 234, 0.08);
+  --component-settings-nav-active-border: rgba(184, 167, 234, 0.14);
+  --component-settings-nav-active-fg: #f0edf8;
+  --component-settings-card-bg: rgba(28, 27, 27, 0.6);
+  --component-settings-card-border: rgba(72, 69, 79, 0.14);
+  --component-settings-card-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+  --component-settings-row-border: rgba(255, 255, 255, 0.04);
+  --component-settings-row-hover-bg: rgba(184, 167, 234, 0.035);
+  --component-settings-button-bg: rgba(255, 255, 255, 0.03);
+  --component-settings-button-bg-hover: rgba(184, 167, 234, 0.08);
+  --component-settings-button-fg: rgba(202, 196, 208, 0.74);
+  --component-settings-button-fg-hover: rgba(239, 235, 245, 0.96);
+  --component-settings-button-border: rgba(255, 255, 255, 0.05);
+  --component-settings-button-border-hover: rgba(184, 167, 234, 0.25);
+  --component-settings-button-shadow-hover: 0 0 calc(12px * var(--n-hud-scale)) rgba(184, 167, 234, 0.04);
+  --component-settings-danger-fg: rgba(233, 170, 170, 0.88);
+  --component-settings-danger-fg-hover: #ffdada;
+  --component-settings-danger-bg-hover: rgba(79, 39, 46, 0.18);
+  --component-settings-danger-border-hover: rgba(201, 110, 110, 0.24);
+  --component-settings-toggle-bg: rgba(148, 143, 154, 0.2);
+  --component-settings-toggle-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+  --component-settings-toggle-knob-bg: rgba(202, 196, 208, 0.56);
+  --component-settings-toggle-on-bg: var(--n-primary-container);
+  --component-settings-toggle-on-knob-bg: var(--n-on-primary-container);
+  --component-settings-toggle-hover-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+    0 0 0 1px rgba(184, 167, 234, 0.08);
+  --component-settings-chip-bg: rgba(255, 255, 255, 0.02);
+  --component-settings-chip-border: rgba(72, 69, 79, 0.18);
+  --component-settings-chip-fg: rgba(229, 226, 225, 0.86);
+  --component-settings-chip-active-bg: rgba(184, 167, 234, 0.1);
+  --component-settings-chip-active-border: rgba(184, 167, 234, 0.28);
+  --component-settings-input-bg: rgba(17, 17, 22, 0.82);
+  --component-settings-input-bg-focus: rgba(25, 23, 31, 0.94);
+  --component-settings-input-border: rgba(72, 69, 79, 0.16);
+  --component-settings-input-border-focus: rgba(184, 167, 234, 0.24);
+  --component-settings-input-fg: var(--n-on-surface);
+  --component-settings-input-placeholder: rgba(202, 196, 208, 0.34);
+  --component-settings-select-menu-bg: linear-gradient(180deg, rgb(24, 22, 31), rgb(18, 17, 24));
+  --component-settings-select-menu-border: rgba(72, 69, 79, 0.72);
+  --component-settings-select-menu-shadow: 0 18px 44px rgba(0,0,0,0.64), inset 0 1px 0 rgba(255,255,255,0.035);
+  --component-settings-meter-track-bg: rgba(255, 255, 255, 0.055);
+  --component-settings-meter-track-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.025);
+  --component-settings-meter-fill-bg: linear-gradient(90deg, rgba(190, 167, 255, 0.86), rgba(213, 198, 255, 0.94));
+  --component-settings-meter-warn-bg: linear-gradient(90deg, rgba(234, 203, 138, 0.86), rgba(255, 225, 157, 0.94));
+  --component-settings-meter-critical-bg: linear-gradient(90deg, rgba(255, 135, 135, 0.82), rgba(255, 177, 177, 0.94));
+  --component-settings-overlay-bg: rgba(0, 0, 0, 0.72);
+  --component-settings-overlay-blur: blur(4px);
+
   --hud-control-height:        28px;
   --hud-icon-button-size:      28px;
   --hud-control-radius:        8px;

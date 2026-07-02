@@ -1,0 +1,469 @@
+# Aethon Theme System Audit
+
+Status: Marco 1 - infraestrutura.
+
+Este relatório acompanha a migração incremental do sistema de temas. O contrato deste marco é preparar a base sem criar temas novos, sem remover tokens e sem migrar componentes visuais em massa.
+
+## Arquitetura Atual
+
+- `src/styles/global.css` importa, nesta ordem, `tokens.css`, `nocturne-theme.css`, `animations.css` e `nocturne-port.css`.
+- `src/styles/tokens.css` define os tokens base e temas antigos por `data-theme`.
+- `src/styles/nocturne-theme.css` define a identidade Nocturne e tokens `--n-*` usados pela UI portada.
+- `src/styles/nocturne-port.css` concentra grande parte do CSS visual da shell Nocturne e ainda contém muitos valores diretos.
+- `src/App.svelte` aplica `data-theme` no elemento raiz e injeta CSS para temas customizados.
+- `src/store/state.svelte.ts` mantém `ThemeTokens`, `HudThemeTokens`, defaults e presets.
+- `src/components/settings/ThemeEditor.svelte` edita tokens de temas customizados e presets HUD.
+
+## Arquitetura Nova
+
+Marco 1 adiciona uma camada explícita em `tokens.css`:
+
+- Primitive tokens: aliases de base para backgrounds, bordas e accent.
+- Semantic tokens: background, surface, elevated, card, modal, popover, menu, overlay, border, outline, divider, accent, success, warning, danger, info e texto.
+- Component tokens: card, modal, popover, menu, overlay, button, input, tab, toast, sidebar, topbar e focus.
+
+Nocturne passa a declarar valores canônicos para os novos tokens em `nocturne-theme.css`.
+
+Temas customizados antigos agora são aplicados em `App.svelte` por merge com `NOCTURNE_THEME_TOKENS` e `NOCTURNE_HUD_THEME_TOKENS`, evitando tokens novos ausentes no runtime.
+
+## Auditoria Automatizada Inicial
+
+Comandos usados:
+
+```powershell
+rg -n "#[0-9A-Fa-f]{3,8}\b|rgba?\(|hsla?\(|oklch\(|color-mix\(" src --glob '!src/test/browser/__screenshots__/**' --glob '!src/components/**/__screenshots__/**'
+rg -n "#[0-9A-Fa-f]{3,8}\b|rgba?\(|hsla?\(|oklch\(|color-mix\(" src --glob '!src/styles/tokens.css' --glob '!src/styles/nocturne-theme.css' --glob '!src/test/browser/__screenshots__/**' --glob '!src/components/**/__screenshots__/**' --count-matches
+rg -n "style\.setProperty|custom\.tokens|ThemeEditor|NOCTURNE_THEME_TOKENS|DEFAULT_THEME_TOKENS|HudThemeTokens|ThemeTokens|THEME_MOTION_VARS|data-theme" src\App.svelte src\store src\components src\styles
+```
+
+Resultados do Marco 1:
+
+- Ocorrencias diretas em `src`, antes de allowlist: 2179.
+- Ocorrencias diretas fora de `tokens.css` e `nocturne-theme.css`: 1924.
+- Variaveis CSS declaradas em `tokens.css` e `nocturne-theme.css`: 461.
+
+Principais concentradores de valores diretos fora dos arquivos de tema:
+
+| Arquivo | Ocorrencias |
+| --- | ---: |
+| `src/styles/nocturne-port.css` | 398 |
+| `src/components/pages/BrowseV3.svelte` | 180 |
+| `src/components/pages/MassMigrateModal.svelte` | 113 |
+| `src/components/shared/SeriesDetailV3Shell.svelte` | 111 |
+| `src/components/pages/SourcesView.svelte` | 107 |
+| `src/store/state.svelte.ts` | 100 |
+| `src/components/shared/TrackingPanel.svelte` | 80 |
+| `src/components/reader/BookReader.svelte` | 75 |
+| `src/components/reader/ReaderHud.svelte` | 75 |
+| `src/components/settings/Settings.svelte` | 73 |
+| `src/components/reader/NovelReader.svelte` | 55 |
+| `src/components/library/LibraryCard.svelte` | 46 |
+
+## Mapa De Tokens
+
+### Ativos
+
+Tokens usados por componentes reais, store, CSS final ou `style.setProperty`:
+
+- Base color: `bg-void`, `bg-base`, `bg-surface`, `bg-raised`, `bg-overlay`, `bg-subtle`.
+- Border: `border-dim`, `border-base`, `border-strong`, `border-focus`.
+- Text: `text-primary`, `text-secondary`, `text-muted`, `text-faint`, `text-disabled`.
+- Accent/status atuais: `accent`, `accent-dim`, `accent-muted`, `accent-fg`, `accent-bright`, `color-error`, `color-error-bg`, `color-success`, `color-info`, `color-info-bg`, `color-read`.
+- Typography/scale: `font-ui`, `font-sans`, `text-2xs`, `text-xs`, `text-sm`, `text-base`, `text-md`, `text-lg`, `text-xl`, `text-2xl`, `text-3xl`, `weight-*`, `leading-*`, `tracking-*`.
+- Spacing/radius/motion/z-index atuais: `sp-*`, `radius-*`, `t-*`, `z-reader`, `z-modal`, `z-settings`.
+- HUD atuais: `hud-control-height`, `hud-icon-button-size`, `hud-control-radius`, `hud-chip-radius`, `hud-popover-radius`, `hud-status-radius`, `hud-toast-radius`, `hud-chapter-row-radius`, `hud-surface-opacity`, `hud-sidebar-width`, `hud-toolbar-gap`, `hud-reader-chrome-opacity`, `hud-selection-bg`, `hud-selection-border`, `hud-progress-height`.
+- Nocturne port ativos: `n-*` e `activity-*`, ainda mantidos como camada de compatibilidade ativa.
+
+### Legacy
+
+Tokens adicionados neste marco para a migração incremental. Eles existem no CSS final, ThemeEditor/store/presets, ou servem como ponte para componentes futuros, mas ainda nao devem ser considerados totalmente migrados:
+
+- Primitive aliases: `primitive-bg-*`, `primitive-border-*`, `primitive-accent`.
+- Semantic colors: `color-background`, `color-background-void`, `color-surface`, `color-surface-secondary`, `color-elevated`, `color-card`, `color-modal`, `color-popover`, `color-menu`, `color-overlay`, `color-border`, `color-outline`, `color-divider`, `color-accent`, `color-accent-muted`, `color-success-bg`, `color-warning`, `color-warning-bg`, `color-danger`, `color-danger-bg`, `text-tertiary`, `text-inverse`.
+- Typography aliases: `font-family-ui`, `font-family-sans`, `font-family-reader`.
+- Spacing aliases: `space-xs`, `space-sm`, `space-md`, `space-lg`, `space-xl`.
+- Radius aliases: `radius-control`, `radius-card`, `radius-modal`, `radius-popover`.
+- Effects: `shadow-sm`, `shadow-md`, `shadow-lg`, `shadow-focus`, `blur-backdrop`, `blur-glass`.
+- Motion aliases: `duration-fast`, `duration-normal`, `duration-slow`, `easing-standard`, `easing-emphasized`.
+- Z-index aliases: `z-dropdown`, `z-popover`, `z-tooltip`, `z-toast`.
+- Component aliases: `component-card-*`, `component-modal-*`, `component-popover-*`, `component-menu-*`, `component-overlay-bg`, `component-button-*`, `component-input-*`, `component-tab-*`, `component-toast-*`, `component-sidebar-bg`, `component-topbar-bg`, `component-focus-ring`.
+
+### Mortos
+
+Nenhum token foi classificado como Morto neste marco.
+
+Regra aplicada: se ha duvida, uso dinamico, ThemeEditor, custom theme, store, preset ou falta de validacao visual completa, o token fica como Legacy. Nenhum token foi removido.
+
+## Cores Diretas
+
+Classificacao inicial:
+
+- Permitidas por enquanto: arquivos de tema/token, assets SVG de marca, canvas/splash, fixtures e swatches.
+- Migrar para token: componentes Svelte, `nocturne-port.css`, readers, settings, sources, migration, toasts, menus, cards, inputs e overlays.
+
+Lista por arquivo com contagem atual esta na secao "Auditoria Automatizada Inicial". A lista linha a linha deve ser regenerada pelo comando `rg` acima no inicio de cada marco visual, para evitar drift.
+
+## Componentes Fora Do Design System
+
+Componentes e areas com valores diretos que devem ser migrados em marcos futuros:
+
+- Componentes base: `Toaster`, `ContextMenu`, `MangaPreview`, `TrackingPanel`, `NocturneState`.
+- Layout: `Layout`, `Sidebar` via `nocturne-port.css`, `TitleBar`, `ActivityButton`, `ActivityOverlay`, `RecentActivity`, `WindowControlsInline`.
+- Reader: `Reader`, `ReaderHud`, `TtsControls`, `BookReader`, `NovelReader`.
+- Library: `LibraryCard`, `LibraryDisplayPopover`, `LibraryDensityRail`, `BooksLibraryBody`, `ComicsLibraryBody`.
+- Settings: `Settings`, `ThemeEditor`, `NovelRepositoriesPanel`, `SyncdConnectionPanel`, `SuwayomiUpdatePanel`.
+- Sources/search: `BrowseV3`, `SourcesView`, `Extensions`, `ExtensionSettingsPanel`.
+- Migration/detail modals: `MigrateModal`, `MassMigrateModal`, `NovelMigrateModal`, `TasteInsightsModal`, `SeriesDetailV3Shell`.
+
+## Acessibilidade
+
+Marco 1 nao alterou componentes visuais, entao nao foram aplicadas correcoes de contraste neste marco.
+
+Pendencias para Marco 2+:
+
+- Validar WCAG AA em componentes base antes e depois da migracao.
+- Corrigir apenas contraste, surfaces, borders, blur, shadows, fontes, hover, focus e disabled.
+
+## Checklist Visual
+
+Marco 1 nao capturou screenshots antes/depois porque nao houve migracao de componente visual.
+
+Screenshots obrigatorios a partir do Marco 2 quando houver alteracao visual:
+
+- Library
+- Reader
+- Settings
+- Sources
+- Downloads
+- Modal
+- Popover
+- Dropdown
+- Toast
+- Cards
+- Buttons
+- Inputs
+- Sidebar
+- Toolbar
+- Mass Migration
+- Updater
+
+## Plano Para Proximos Temas
+
+Antes de criar qualquer tema novo:
+
+1. Completar Marco 2 com componentes base usando somente `component-*` e semantic tokens.
+2. Migrar Layout, Settings, Reader HUD, Library, Sources, Mass Migration e Updater em marcos separados.
+3. Manter `--n-*` como compatibilidade ativa ate os consumidores reais serem movidos para tokens semanticos/componentes.
+4. So depois criar novos temas alterando `nocturne-theme.css` como referencia de formato.
+
+## Resultado Do Marco 1
+
+- Tokens removidos: nenhum.
+- Tokens classificados como Morto: nenhum.
+- Componentes visuais migrados: nenhum.
+- Infraestrutura preparada: sim, parcialmente.
+- Proximo passo recomendado: revisar este marco e iniciar Marco 2 com screenshots reais antes/depois dos componentes base.
+
+## Validacao Do Marco 1
+
+Executado:
+
+- `pnpm exec vitest run --project unit src/store/themeTokens.test.ts` - passou, 3 testes.
+- `pnpm build` - passou.
+- `git diff --check` - passou; apenas avisos de normalizacao LF/CRLF do Git.
+
+Observacoes:
+
+- Uma tentativa anterior com `pnpm test:unit -- src/store/themeTokens.test.ts` executou tambem a suite ampla configurada pelo workspace; o teste novo falhou uma vez porque classificava uso no ThemeEditor como Ativo. A classificacao foi corrigida para tratar ThemeEditor/store/preset como Legacy e o teste focado passou depois disso.
+- O worktree ja continha mudancas fora deste marco em assets e screenshots de `docs/`; elas nao foram tocadas pela migracao de temas.
+- `src/components/settings/Settings.svelte` aparece no status por normalizacao de linha, mas nao possui diff de conteudo em `git diff`.
+
+---
+
+## Marco 2 - Componentes Base
+
+Status: implementado de forma incremental e limitado ao escopo permitido.
+
+### Escopo Migrado
+
+Componentes alterados neste marco:
+
+- `src/components/layout/Toaster.svelte`
+- `src/components/shared/ContextMenu.svelte`
+
+O `ContextMenu` foi tratado como a implementacao compartilhada de menu/dropdown contextual. Nenhuma tela de Library, Settings, Reader, Sources, Downloads, Mass Migration ou Updater foi migrada neste marco.
+
+### Tokens Criados Neste Marco
+
+Tokens adicionados em `src/styles/tokens.css` e implementados para Nocturne em `src/styles/nocturne-theme.css`:
+
+- Pesos tipograficos: `--weight-semibold`, `--weight-bold`, `--weight-extrabold`.
+- Menu/dropdown: `--component-menu-radius`, `--component-menu-shadow`, `--component-menu-z-index`, `--component-menu-item-fg`, `--component-menu-item-hover-bg`, `--component-menu-item-hover-fg`, `--component-menu-item-danger-fg`, `--component-menu-item-danger-hover-bg`, `--component-menu-icon-fg`, `--component-menu-divider`.
+- Toast: `--component-toast-bg-hover`, `--component-toast-border-hover`, `--component-toast-radius`, `--component-toast-offset`, `--component-toast-blur`, `--component-toast-focus-ring`, `--component-toast-life-bg`, `--component-toast-title-fg`, `--component-toast-body-fg`, `--component-toast-success-fg`, `--component-toast-error-fg`, `--component-toast-info-fg`, `--component-toast-download-fg`, `--component-toast-progress-track`, `--component-toast-progress-fill`, `--component-toast-progress-shadow`, `--component-toast-action-bg`, `--component-toast-action-bg-hover`, `--component-toast-action-fg`, `--component-toast-action-border`, `--component-toast-close-bg`, `--component-toast-close-bg-hover`, `--component-toast-close-fg`, `--component-toast-close-fg-hover`, `--component-toast-close-border`, `--component-toast-close-border-hover`.
+
+Classificacao: Legacy/Ativo incremental. Eles existem no CSS final; `Toaster` e `ContextMenu` ja consomem estes tokens ativamente. Como os tokens novos tambem servem de contrato para temas futuros e custom themes ainda nao os editam diretamente, nao devem ser removidos.
+
+### Cores Diretas Removidas
+
+Comando:
+
+```powershell
+rg -n "#[0-9A-Fa-f]{3,8}\b|rgba?\(|hsla?\(|oklch\(|color-mix\(" src\components\layout\Toaster.svelte src\components\shared\ContextMenu.svelte
+```
+
+Resultado apos a migracao: nenhuma ocorrencia.
+
+Ocorrencias migradas para tokens:
+
+- `Toaster.svelte`: background radial/rgba, border, shadow, hover, focus ring, progress bar, status accents, action button, close button, title/body colors.
+- `ContextMenu.svelte`: background, border, shadow, item foreground, hover, danger state, icon color, divider.
+
+Excecoes mantidas nesses componentes: nenhuma para cores diretas. Valores de dimensao pequenos que preservam layout local, como `11px`, `12px`, `24px`, `34px` e paddings internos, foram mantidos porque este marco nao deve alterar layout nem reescrever o componente.
+
+### Acessibilidade
+
+Problema encontrado:
+
+- `--component-toast-body-fg` herdava a cor antiga `rgba(202, 196, 208, 0.5)`, que ficava abaixo de 4.5:1 para texto pequeno no fundo do toast Nocturne.
+
+Correcao:
+
+- `--component-toast-body-fg` foi elevado para `rgba(202, 196, 208, 0.62)`.
+
+Validacao automatica adicionada:
+
+- `src/components/shared/baseThemeComponents.test.ts` calcula contraste dos pares Nocturne usados por Toast e ContextMenu e exige WCAG AA para texto normal (`>= 4.5:1`).
+
+### Testes Adicionados
+
+Arquivo novo:
+
+- `src/components/shared/baseThemeComponents.test.ts`
+
+Cobertura:
+
+- render minimo do `Toaster`;
+- render minimo do `ContextMenu`;
+- ausencia de cores diretas nos componentes migrados;
+- contraste AA dos tokens Nocturne usados pelos componentes migrados.
+
+`vitest.workspace.ts` passou a incluir este teste no projeto `shell-jsdom`.
+
+### Screenshots Reais
+
+Tentativa realizada:
+
+- Servidor local encontrado em `127.0.0.1:1420`.
+- A automacao do navegador embutido tentou abrir a superficie local para capturar estados reais.
+- A navegacao nao estabilizou dentro de 90s e reiniciou a sessao do navegador.
+
+Resultado:
+
+- Screenshots reais antes/depois nao foram gerados neste marco.
+- Nao foram criados mockups nem screenshots artificiais para substituir essa evidencia.
+
+Risco registrado:
+
+- Antes do Marco 3, e recomendavel expor um caminho de auditoria visual controlado para estados reais de base components, por exemplo um metodo de audit bridge somente em runtime de automacao que dispare toast e menu/dropdown reais sem alterar fluxos de usuario.
+
+### Componentes Base Nao Migrados
+
+Nao existem componentes genericos centralizados para `Modal`, `Dialog`, `Card`, `Button`, `Input` e `Tabs` equivalentes ao `Toaster`/`ContextMenu` neste marco. As implementacoes atuais aparecem espalhadas em componentes de feature e telas (`MangaPreview`, `TrackingPanel`, `Settings`, `MassMigrateModal`, `MigrateModal`, `LibraryCard`, `LibraryToolbar`, `LibraryDisplayPopover`, entre outros).
+
+Por restricao de escopo, estes nao foram migrados no Marco 2 para evitar alterar telas ou iniciar Marco 3/4/6 por acidente.
+
+### Resultado Do Marco 2
+
+- Tokens removidos: nenhum.
+- Tokens classificados como Morto: nenhum.
+- Componentes migrados: `Toaster`, `ContextMenu`.
+- Componentes fora do Design System deixados para marcos futuros: `NocturneState`, `MangaPreview`, `TrackingPanel`, modais de migracao, cards de biblioteca, settings controls, popovers de Library/Downloads/Sources e tabs/inputs definidos dentro de telas.
+- `pnpm exec vitest run --project shell-jsdom src/components/shared/baseThemeComponents.test.ts`: passou, 4 testes.
+- `pnpm exec vitest run --project unit src/store/themeTokens.test.ts`: passou, 3 testes.
+- `pnpm build`: passou; Vite manteve apenas o aviso de chunks acima de 500 kB.
+- `git diff --check`: passou; apenas avisos de normalizacao LF/CRLF do Git.
+
+---
+
+## Marco 3 - Layout
+
+Status: implementado de forma incremental e limitado ao layout.
+
+### Escopo Migrado
+
+Componentes/seletores alterados neste marco:
+
+- `src/components/layout/Layout.svelte`
+- `src/components/layout/ActivityButton.svelte`
+- `src/components/layout/ActivityOverlay.svelte`
+- `src/components/layout/TitleBar.svelte`
+- `src/components/layout/WindowControlsInline.svelte`
+- Bloco global de shell/layout em `src/styles/nocturne-port.css`, de `.aethon-app-shell` ate antes de `.n-btn`.
+
+Areas cobertas:
+
+- app shell background/text/font;
+- sidebar/navigation rail;
+- itens de navegacao e badges;
+- topbar/header;
+- search dim layer;
+- toolbar icon buttons;
+- window controls;
+- activity overlay/back action.
+
+Nao foram migrados neste marco:
+
+- Settings e seus seletores `.aethon-port--settings`;
+- Reader/Reader HUD;
+- Library cards/toolbars internos;
+- Downloads/Sources/Mass Migration/Updater;
+- `.n-btn` base buttons;
+- `RecentActivity.svelte` conteudo interno do painel;
+- `SplashScreen`/branding visual.
+
+### Tokens Criados Neste Marco
+
+Tokens adicionados em `src/styles/tokens.css` e implementados para Nocturne em `src/styles/nocturne-theme.css`:
+
+- App/layout: `--component-app-bg`, `--component-app-fg`, `--component-app-font`, `--component-detail-layer-bg`, `--component-search-dim-bg`.
+- Sidebar/nav: `--component-sidebar-bg`, `--component-sidebar-border`, `--component-sidebar-shadow`, `--component-sidebar-blur`, `--component-sidebar-scrim-bg`, `--component-sidebar-highlight-bg`, `--component-sidebar-z-index`, `--component-sidebar-search-z-index`, `--component-nav-item-*`, `--component-nav-tooltip-*`, `--component-nav-badge-*`.
+- Topbar/search/toolbar: `--component-topbar-*`, `--component-search-*`, `--component-toolbar-icon-*`.
+- Window controls: `--component-window-controls-z-index`, `--component-window-control-*`.
+- Activity overlay/badge: `--component-activity-badge-*`, `--component-activity-overlay-*`.
+
+Classificacao: Ativo no layout migrado ou Legacy incremental quando tambem serve como contrato para temas futuros. Nenhum token foi removido.
+
+### Cores Diretas Removidas
+
+Comandos:
+
+```powershell
+rg -n "#[0-9A-Fa-f]{3,8}\b|rgba?\(|hsla?\(|oklch\(|color-mix\(" src\components\layout\Layout.svelte src\components\layout\ActivityButton.svelte src\components\layout\ActivityOverlay.svelte src\components\layout\TitleBar.svelte src\components\layout\WindowControlsInline.svelte src\components\layout\Sidebar.svelte src\components\layout\AppTopbar.svelte
+```
+
+Resultado apos a migracao: nenhuma ocorrencia nos componentes de layout migrados.
+
+Ocorrencias migradas para tokens:
+
+- background/surface do shell;
+- sidebar background, blur, border, shadow, scrim, highlight;
+- nav item idle/hover/active/error;
+- nav tooltip e badges;
+- topbar background, border image, blur, shadow, scrim/noise;
+- search input/icon/focus/placeholder;
+- toolbar icon idle/hover/active;
+- window controls idle/hover/active/close;
+- activity badge e activity overlay.
+
+### Excecoes Mantidas
+
+- `src/styles/nocturne-port.css` antes de `.aethon-app-shell`: splash/branding visual. Mantido por ser branding e fora do layout app-shell.
+- `src/styles/nocturne-port.css` depois de `.n-btn`: base buttons, settings, cards, readers, fixtures e componentes de telas futuras. Mantido por escopo.
+- `src/components/layout/RecentActivity.svelte`: conteudo do painel de atividade, nao toolbar/sidebar/topbar. Mantido para evitar expandir o marco.
+- Variaveis `--n-*` de dimensao/motion ainda aparecem como camada ativa de compatibilidade no CSS portado. As cores/surfaces/blur/shadow/z-index migrados neste marco passam por component/semantic tokens; a remocao completa de metricas `--n-*` deve ser feita em marco proprio para nao alterar densidade visual.
+
+### Acessibilidade
+
+Validado automaticamente:
+
+- render de sidebar/nav ativa;
+- render de window controls;
+- render de activity toolbar badge;
+- ausencia de cores diretas nos componentes de layout migrados;
+- ausencia de cores diretas no bloco global do shell/layout.
+
+Nao houve alteracao de contraste visual pretendida neste marco. A migracao preserva os valores Nocturne existentes via tokens.
+
+### Screenshots Reais
+
+Screenshots capturados da janela real do Aethon:
+
+- Antes: `docs/screenshots/theme-marco3-before-layout.png`
+- Depois: `docs/screenshots/theme-marco3-after-layout.png`
+
+Observacao: o conteudo das recomendacoes mudou entre capturas por dados runtime, mas a comparacao visual do shell mostra sidebar, topbar, search, toolbar e window controls equivalentes.
+
+### Testes Adicionados
+
+Arquivo novo:
+
+- `src/components/layout/layoutThemeComponents.test.ts`
+
+Cobertura:
+
+- render minimo de Sidebar;
+- render minimo de TitleBar e WindowControlsInline;
+- render minimo de ActivityButton com badge;
+- regra estatica contra cores diretas nos componentes migrados;
+- regra estatica contra cores diretas no bloco global de shell/layout em `nocturne-port.css`.
+
+`vitest.workspace.ts` passou a incluir este teste no projeto `shell-jsdom`.
+
+### Resultado Do Marco 3
+
+- Tokens removidos: nenhum.
+- Tokens classificados como Morto: nenhum.
+- Componentes migrados: `Layout`, `ActivityButton`, `ActivityOverlay`, `TitleBar`, `WindowControlsInline`, shell CSS de Sidebar/Topbar/Search/Toolbar.
+- Componentes fora do Design System deixados para marcos futuros: Settings, Reader HUD, Library, Downloads, Sources, Mass Migration, Updater, base buttons, cards, inputs, tabs e conteudo interno de RecentActivity.
+- `pnpm exec vitest run --project shell-jsdom src/components/layout/layoutThemeComponents.test.ts src/components/shared/baseThemeComponents.test.ts`: passou, 9 testes.
+- `pnpm exec vitest run --project unit src/store/themeTokens.test.ts`: passou, 3 testes.
+- `pnpm build`: passou; Vite manteve apenas o aviso de chunks acima de 500 kB.
+- `git diff --check`: passou; apenas avisos de normalizacao LF/CRLF do Git.
+
+## Marco 4 - Settings
+
+### Escopo executado
+- Migrado exclusivamente o visual central de Settings: shell, topbar local, rails, subnav, cards, rows, toggles, chips, botoes pequenos, selects/dropdowns locais, meters, overlays/painel de backup e estados de foco/hover relacionados.
+- Nao foram alteradas regras de negocio, i18n, updater, Reader, Library, Sources, Mass Migration ou Updater.
+- Nao removi tokens.
+
+### Tokens utilizados/criados
+Foram adicionados tokens `--component-settings-*` em `src/styles/tokens.css`, com implementacao canonica Nocturne em `src/styles/nocturne-theme.css`:
+- base: `--component-settings-font`, `--component-settings-fg`;
+- surfaces/text/borders: `--component-settings-surface-*`, `--component-settings-border-*`, `--component-settings-text-*`;
+- shell/topbar/rail/nav/card/row: `--component-settings-modal-*`, `--component-settings-topbar-*`, `--component-settings-rail-*`, `--component-settings-nav-*`, `--component-settings-card-*`, `--component-settings-row-*`;
+- controls: `--component-settings-button-*`, `--component-settings-toggle-*`, `--component-settings-chip-*`, `--component-settings-input-*`, `--component-settings-select-menu-*`;
+- feedback/effects: `--component-settings-meter-*`, `--component-settings-overlay-*`.
+
+### Cores diretas removidas
+- `Settings.svelte`: controles `step-btn`, `select-btn`, `select-menu`, storage meter, `path-input-error`, `folder-update-excluded`, overlay/painel de backup.
+- `nocturne-port.css`: bloco principal `.aethon-port--settings` e regras centrais de modal, topbar, rail, nav, subnav, cards, rows, toggles, chips, botoes e notices.
+
+### Excecoes mantidas
+- `Settings.svelte`: swatches dos temas e `input[type=color]` do leitor prose continuam com cores diretas por serem valores editaveis/fixtures visuais, nao tokens do shell.
+- `Settings.svelte`: regras de Content/source status usam `color-mix()` com tokens semanticos para estados success/error; mantido como legado ativo ate o Marco de Content/Sources.
+- `nocturne-port.css`: preview de tema, brand card e ilustracoes internas de Settings ainda possuem gradientes/cores diretas; mantidos como legado ativo para evitar diff visual amplo.
+- `ThemeEditor.svelte`, `SyncdConnectionPanel.svelte`, `SuwayomiUpdatePanel.svelte` e `NovelRepositoriesPanel.svelte` ainda possuem estilos locais e devem ser migrados em lotes especificos. O updater nao foi alterado por restricao do Marco 4.
+
+### Screenshots reais
+- Antes: `docs/screenshots/theme-marco4-before-settings.png`
+- Depois: `docs/screenshots/theme-marco4-after-settings.png`
+Ambos capturados do app real rodando via WebView2/CDP na tela Settings/General com Nocturne.
+
+Validacao final CDP/WebView2:
+
+- `docs/screenshots/marco4-validation/settings-general-final-real.png`
+- `docs/screenshots/marco4-validation/settings-appearance-real.png`
+- `docs/screenshots/marco4-validation/settings-themeeditor-real.png`
+- `docs/screenshots/marco4-validation/settings-system-security-real.png`
+- `docs/screenshots/marco4-validation/settings-syncd-real.png`
+- `docs/screenshots/marco4-validation/settings-content-integrations-real.png`
+- `docs/screenshots/marco4-validation/settings-novel-repositories-or-source-rules-real.png`
+- `docs/screenshots/marco4-validation/settings-advanced-about-real.png`
+- `docs/screenshots/marco4-validation/settings-suwayomi-updater-real.png`
+
+Foram removidos os screenshots diagnosticos temporarios (`current-*`, `try-*`, `settings-after-wait.png` e capturas intermediarias duplicadas). Em `src/test/browser/__screenshots__`, os baselines validos de Settings foram mantidos apenas em `src/test/browser/__screenshots__/custom/*.png`; as imagens automaticas de falha do provider em `src/test/browser/__screenshots__/src/components/settings/Settings.browser.test.ts/` foram removidas.
+
+### Validacao
+- `npm test -- --project shell-jsdom src/components/settings/Settings.test.ts`: passou, 8 testes.
+- `npm test -- --project shell-jsdom src/components/settings/Settings.test.ts src/components/settings/SuwayomiUpdatePanel.test.ts src/components/settings/NovelRepositoriesPanel.test.ts src/components/settings/SyncdSessionDetails.test.ts`: passou, 4 arquivos, 21 testes.
+- `npm test -- --project browser-components src/components/settings/Settings.browser.test.ts`: passou, 1 arquivo, 6 testes. O harness foi alinhado ao app real aplicando `data-theme="nocturne"` no `html` durante testes browser.
+- `pnpm build`: passou. Apenas aviso conhecido de chunks maiores que 500 kB.
+- `git diff --check`: passou; apenas avisos de normalizacao LF/CRLF do Git.
+
+Observacao: `NovelRepositoriesPanel.svelte` existe e possui teste focado, mas nao esta montado diretamente em Settings nesta build. A validacao visual real cobriu a area alcancavel de `Content & Integrations > Source rules`, que e o ponto de repositories/source rules disponivel em Settings. A migracao visual completa de `NovelRepositoriesPanel.svelte` fica documentada como risco/pendencia futura.
+
+### Riscos antes do Marco 5
+- Settings ainda tem legado ativo em previews, swatches, ThemeEditor e paineis especializados. Nao remover/migrar sem lote dedicado.
+- Algumas variaveis `--n-*` seguem usadas para dimensoes/motion herdadas; classificar como Legacy ativo ate uma etapa especifica de compatibilidade.
+- Updater foi mantido fora deste marco conforme restricao, entao seus estilos diretos permanecem documentados para etapa propria.

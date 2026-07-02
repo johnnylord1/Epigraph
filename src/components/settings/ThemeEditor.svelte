@@ -35,7 +35,7 @@
     },
     {
       label: $_("ui_text"),
-      tokens: ["text-primary", "text-secondary", "text-muted", "text-faint", "text-disabled"],
+      tokens: ["text-primary", "text-secondary", "text-tertiary", "text-muted", "text-faint", "text-disabled", "text-inverse"],
     },
     {
       label: $_("ui_accent"),
@@ -43,7 +43,33 @@
     },
     {
       label: $_("ui_semantic"),
-      tokens: ["color-error", "color-error-bg", "color-success", "color-info", "color-info-bg"],
+      tokens: [
+        "color-background",
+        "color-background-void",
+        "color-surface",
+        "color-surface-secondary",
+        "color-elevated",
+        "color-card",
+        "color-modal",
+        "color-popover",
+        "color-menu",
+        "color-overlay",
+        "color-border",
+        "color-outline",
+        "color-divider",
+        "color-accent",
+        "color-accent-muted",
+        "color-error",
+        "color-error-bg",
+        "color-danger",
+        "color-danger-bg",
+        "color-success",
+        "color-success-bg",
+        "color-warning",
+        "color-warning-bg",
+        "color-info",
+        "color-info-bg",
+      ],
     },
   ]);
 
@@ -63,6 +89,8 @@
     "text-muted":     "Muted text",
     "text-faint":     "Faint text",
     "text-disabled":  "Disabled text",
+    "text-tertiary":  "Tertiary text",
+    "text-inverse":   "Inverse text",
     "accent":        "Accent",
     "accent-dim":    "Accent dim",
     "accent-muted":  "Accent muted",
@@ -70,9 +98,29 @@
     "accent-bright": "Accent bright",
     "color-error":    "Error",
     "color-error-bg": "Error background",
+    "color-danger":   "Danger",
+    "color-danger-bg": "Danger background",
     "color-success":  "Success",
+    "color-success-bg": "Success background",
+    "color-warning": "Warning",
+    "color-warning-bg": "Warning background",
     "color-info":     "Info",
     "color-info-bg":  "Info background",
+    "color-background": "Background",
+    "color-background-void": "Void background",
+    "color-surface": "Surface",
+    "color-surface-secondary": "Secondary surface",
+    "color-elevated": "Elevated surface",
+    "color-card": "Card surface",
+    "color-modal": "Modal surface",
+    "color-popover": "Popover surface",
+    "color-menu": "Menu surface",
+    "color-overlay": "Overlay",
+    "color-border": "Border",
+    "color-outline": "Outline",
+    "color-divider": "Divider",
+    "color-accent": "Semantic accent",
+    "color-accent-muted": "Muted semantic accent",
   };
 
   const HUD_TOKEN_LABELS: Record<keyof HudThemeTokens, string> = {
@@ -182,6 +230,17 @@
     return "#000000";
   }
 
+  function isValidThemeTokenValue(v: string): boolean {
+    return (
+      /^#[0-9a-fA-F]{3,8}$/.test(v) ||
+      /^rgba?\([^)]+\)$/.test(v) ||
+      /^hsla?\([^)]+\)$/.test(v) ||
+      /^oklch\([^)]+\)$/.test(v) ||
+      /^color-mix\(.+\)$/.test(v) ||
+      /^var\(--[a-zA-Z0-9_-]+\)$/.test(v)
+    );
+  }
+
   // ── CSS vars helper ───────────────────────────────────────────────────────
   function toCssVars(t: ThemeTokens, h: HudThemeTokens = hud, m: ThemeMotionPreset = motion): string {
     return [
@@ -213,7 +272,7 @@
   function handleSave() {
     const name = themeName.trim() || "Untitled Theme";
     const id   = editingId ?? `custom:${Math.random().toString(36).slice(2, 10)}`;
-    const theme: CustomTheme = { id, name, tokens: { ...tokens }, hud: { ...hud }, motion, version: 2 };
+    const theme: CustomTheme = { id, name, tokens: { ...tokens }, hud: { ...hud }, motion, version: 3 };
     saveCustomTheme(theme);
     updateSettings({ theme: id });
     editingId = id;
@@ -235,7 +294,7 @@
       tokens: { ...tokens },
       hud:    { ...hud },
       motion,
-      version: 2,
+      version: 3,
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url  = URL.createObjectURL(blob);
@@ -460,11 +519,11 @@
                       spellcheck={false}
                       oninput={(e) => {
                         const v = (e.target as HTMLInputElement).value.trim();
-                        if (/^#[0-9a-fA-F]{3,8}$/.test(v)) tokens = { ...tokens, [token]: v };
+                        if (isValidThemeTokenValue(v)) tokens = { ...tokens, [token]: v };
                       }}
                       onblur={(e) => {
                         const v = (e.target as HTMLInputElement).value.trim();
-                        if (!/^#[0-9a-fA-F]{3,8}$/.test(v)) {
+                        if (!isValidThemeTokenValue(v)) {
                           (e.target as HTMLInputElement).value = tokens[token];
                         }
                       }}

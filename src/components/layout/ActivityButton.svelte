@@ -116,11 +116,9 @@
     padding: 0 calc(2px * var(--n-hud-scale));
     border: 0;
     border-radius: 999px;
-    background: rgba(16, 14, 22, 0.88);
-    color: #eadfff;
-    text-shadow:
-      0 0 calc(2px * var(--n-hud-scale)) rgba(218, 201, 255, 0.98),
-      0 0 calc(7px * var(--n-hud-scale)) rgba(155, 117, 255, 0.72);
+    background: var(--component-activity-badge-bg);
+    color: var(--component-activity-badge-fg);
+    text-shadow: var(--component-activity-badge-text-shadow);
     font-family: var(--font-sans);
     font-size: calc(11px * var(--n-hud-scale));
     font-weight: 900;

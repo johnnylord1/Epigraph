@@ -28,17 +28,15 @@
   .activity-overlay {
     position: absolute;
     inset: 0;
-    z-index: 42;
+    z-index: var(--component-activity-overlay-z-index);
     display: flex;
     min-width: 0;
     min-height: 0;
     flex-direction: column;
     gap: calc(20px * var(--n-hud-scale));
     padding: calc((var(--n-topbar-height) + 24px) * var(--n-hud-scale)) calc(28px * var(--n-hud-scale)) calc(24px * var(--n-hud-scale));
-    background:
-      radial-gradient(circle at 20% 0%, rgba(155, 117, 255, 0.12), transparent 34%),
-      rgba(13, 12, 15, 0.96);
-    backdrop-filter: blur(18px);
+    background: var(--component-activity-overlay-bg);
+    backdrop-filter: var(--component-activity-overlay-blur);
     -webkit-app-region: no-drag;
   }
 
@@ -52,10 +50,10 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    border: 1px solid rgba(72, 69, 79, 0.14);
+    border: 1px solid var(--component-activity-overlay-back-border);
     border-radius: 999px;
-    background: rgba(28, 27, 27, 0.45);
-    color: rgba(202, 196, 208, 0.68);
+    background: var(--component-activity-overlay-back-bg);
+    color: var(--component-activity-overlay-back-fg);
     font-size: calc(11px * var(--n-hud-scale));
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -64,7 +62,7 @@
   }
 
   .activity-overlay__back:hover {
-    color: var(--n-on-surface);
+    color: var(--component-activity-overlay-back-hover-fg);
   }
 
   .activity-overlay__content {

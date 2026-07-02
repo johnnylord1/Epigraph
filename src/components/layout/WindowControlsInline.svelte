@@ -66,7 +66,7 @@
     border: none;
     border-radius: 8px;
     background: transparent;
-    color: rgba(202, 196, 208, 0.66);
+    color: var(--component-window-control-fg);
     cursor: pointer;
     -webkit-app-region: no-drag;
     transition:
@@ -76,8 +76,8 @@
   }
 
   .window-controls-inline__btn:hover {
-    color: var(--n-on-surface);
-    background: rgba(255, 255, 255, 0.035);
+    color: var(--component-window-control-fg-hover);
+    background: var(--component-window-control-bg-hover);
   }
 
   .window-controls-inline__btn:active {
@@ -90,7 +90,7 @@
   }
 
   .window-controls-inline__btn--close:hover {
-    color: var(--n-on-surface);
-    background: rgba(196, 122, 122, 0.1);
+    color: var(--component-window-control-close-fg-hover);
+    background: var(--component-window-control-close-bg-hover);
   }
 </style>

@@ -55,7 +55,8 @@
     refreshAppReadingStateFromPersistence,
     setRuntimeSettingsTab,
     setSettingsOpen,
-    DEFAULT_HUD_THEME_TOKENS,
+    NOCTURNE_HUD_THEME_TOKENS,
+    NOCTURNE_THEME_TOKENS,
     THEME_MOTION_VARS,
   } from "./store/state.svelte";
   import { readFileAsArrayBuffer } from "./lib/books/storage";
@@ -126,10 +127,11 @@
       return;
     }
 
-    const hudTokens = { ...DEFAULT_HUD_THEME_TOKENS, ...(custom.hud ?? {}) };
+    const tokens = { ...NOCTURNE_THEME_TOKENS, ...(custom.tokens ?? {}) };
+    const hudTokens = { ...NOCTURNE_HUD_THEME_TOKENS, ...(custom.hud ?? {}) };
     const motionVars = custom.motion ? (THEME_MOTION_VARS[custom.motion] ?? {}) : {};
     const vars = [
-      ...Object.entries(custom.tokens).map(([k, v]) => `  --${k}: ${v};`),
+      ...Object.entries(tokens).map(([k, v]) => `  --${k}: ${v};`),
       ...Object.entries(hudTokens).map(([k, v]) => `  --${k}: ${v};`),
       ...Object.entries(motionVars).map(([k, v]) => `  ${k}: ${v};`),
       "  --sidebar-width: var(--hud-sidebar-width);",

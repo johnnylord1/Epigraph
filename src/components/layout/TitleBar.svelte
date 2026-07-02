@@ -56,7 +56,7 @@
     position: fixed;
     top: 8px;
     right: 12px;
-    z-index: 3000;
+    z-index: var(--component-window-controls-z-index);
     display: flex;
     align-items: center;
     gap: 6px;
@@ -71,40 +71,36 @@
     width: 30px;
     height: 28px;
     border-radius: 10px;
-    border: 1px solid rgba(184, 167, 234, 0.12);
-    background: rgba(26, 24, 34, 0.88);
-    color: rgba(239, 234, 255, 0.68);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.04),
-      0 6px 16px rgba(0, 0, 0, 0.24);
+    border: 1px solid var(--component-window-control-border);
+    background: var(--component-window-control-bg);
+    color: var(--component-window-control-fg);
+    box-shadow: var(--component-window-control-shadow);
     transition:
       transform 140ms ease,
       background 160ms ease,
       border-color 160ms ease,
       color 160ms ease,
       box-shadow 160ms ease;
-    backdrop-filter: blur(22px) saturate(140%);
+    backdrop-filter: var(--component-window-control-blur);
     -webkit-app-region: no-drag;
   }
 
   .window-btn:hover {
     transform: translateY(-1px);
-    color: rgba(248, 244, 255, 0.92);
-    border-color: rgba(184, 167, 234, 0.24);
-    background: rgba(34, 31, 44, 0.94);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.06),
-      0 10px 24px rgba(0, 0, 0, 0.3);
+    color: var(--component-window-control-fg-hover);
+    border-color: var(--component-window-control-border-hover);
+    background: var(--component-window-control-bg-hover);
+    box-shadow: var(--component-window-control-shadow-hover);
   }
 
   .window-btn:active {
     transform: translateY(0) scale(0.96);
-    background: rgba(20, 18, 28, 0.96);
+    background: var(--component-window-control-bg-active);
   }
 
   .window-btn--close:hover {
-    color: #fff;
-    border-color: rgba(229, 70, 99, 0.5);
-    background: rgba(184, 48, 74, 0.92);
+    color: var(--component-window-control-close-fg-hover);
+    border-color: var(--component-window-control-close-border-hover);
+    background: var(--component-window-control-close-bg-hover);
   }
 </style>
