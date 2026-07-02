@@ -1,48 +1,116 @@
 # Aethon
 
-Aethon is a desktop reader and library manager for comics, manga, novels, and local books. It is built as a native Tauri application with a Svelte interface and integrates with Suwayomi-Server for manga and comic sources.
-
-The project focuses on a quiet desktop workflow: fast library browsing, stable reading progress, source management, downloads, migration tools, and a bundled Suwayomi runtime for users who do not want to manage a separate server.
-
-## Screenshots
-
 <p align="center">
-  <img src="docs/screenshots/aethon-Home.png" width="49%" alt="Aethon home screen" />
-  <img src="docs/screenshots/aethon-Settings.png" width="49%" alt="Aethon settings screen" />
-  <img src="docs/screenshots/aethon-Reader.png" width="49%" alt="Aethon reader screen" />
-  <img src="docs/screenshots/aethon-Preview.png" width="49%" alt="Aethon series detail screen" />
+  <img src="docs/assets/aethon-splash-banner.svg" alt="Aethon animated splash banner" />
 </p>
 
-More screenshots are available in [docs/screenshots](docs/screenshots).
+<p align="center">
+  <strong>A desktop reader, library manager, source manager, and safe Suwayomi runtime shell.</strong>
+</p>
 
-## Features
+Aethon is a native desktop app for comics, manga, novels, and local books. It combines a Svelte 5 interface, Tauri v2 desktop integration, Suwayomi GraphQL for manga/comics, local book support, migration tools, downloads, TTS controls, backup/restore utilities, and a guarded runtime updater.
 
-- Comics and manga library backed by Suwayomi GraphQL.
-- Installed and available source extension management.
-- Single title migration and source-based mass migration.
-- Secure assisted Suwayomi runtime updater with ownership checks, compatibility allowlist, snapshot, staging, rollback, and health checks.
-- Chapter downloads and local downloaded manga fallback.
-- Reader with keyboard controls, fullscreen support, layout modes, progress tracking, bookmarks, and TTS controls.
-- Local books and prose reading flows for EPUB/PDF/imported books.
-- Desktop settings for sources, storage, reader behavior, security, backup, and app appearance.
-- Paraglide-based localization.
+<p align="center">
+  <img src="docs/assets/aethon-hero-banner.png" alt="Aethon desktop app banner" />
+</p>
 
-## Tech Stack
+## Preview
 
-- Tauri v2 desktop shell.
-- Svelte 5, TypeScript, and Vite frontend.
-- Rust backend commands under `src-tauri`.
-- Suwayomi-Server GraphQL for manga/comics.
-- Vitest projects for unit, jsdom shell, and browser component coverage.
-- Paraglide for i18n messages.
+<p align="center">
+  <img src="docs/assets/aethon-app-tour.gif" alt="Aethon app tour using real app screenshots" width="78%" />
+</p>
 
-## Installation
+<p align="center">
+  <img src="docs/assets/aethon-preview-grid.png" alt="Aethon screen preview grid" />
+</p>
 
-Release packaging is Windows-first at the moment. Download the latest installer from the official Aethon repository releases once published:
+More real screenshots are available in [docs/screenshots](docs/screenshots).
+
+## Current Features
+
+### Core
+
+- Unified desktop Library for comics/manga, LNReader-style source novels, EPUB books, and PDFs while keeping those domains separate internally.
+- Home dashboard with continue reading, recent updates, this-week activity, recently finished titles, archive search, quick actions, source status, download status, reading metrics, and tracker status.
+- Browse page with profile-based recommendations for manga and novels, source/tracker scoring, taste signals, recommendation categories, keyword search, Discover, source catalogs, and extension management.
+- Suwayomi GraphQL integration for manga/comics metadata, chapters, sources, extensions, downloads, and library state.
+- Local book support for imported EPUB/PDF/prose-style reading flows.
+- Download queue management and downloaded manga fallback.
+
+### Reader
+
+- Manga reader with keyboard controls, fullscreen handling, progress tracking, bookmarks, scanlator ordering, and offline fallback.
+- Novel reader for source-backed prose from LNReader-compatible extensions, with local state and chapter progress.
+- EPUB reader for imported books.
+- PDF reader with native page mode and reflow mode for prose-oriented reading.
+- Book and novel presentation controls for local files and source-backed prose.
+- Browser `speechSynthesis` TTS controls with persisted voice/rate/progress preferences.
+- Stable placeholders and retry behavior for covers, thumbnails, and backdrops.
+
+### Sources And Migration
+
+- Installed/available manga extension management through Suwayomi.
+- External `.apk` extension upload flow.
+- Source search, discover, latest/catalog browsing, source filters, language-aware source handling, and repository management.
+- LNReader-compatible novel repository and plugin flows are kept separate from Suwayomi manga extensions.
+- Single-title manga migration.
+- Source-based manga mass migration with review, matching, manual search, selection, retry/exclude actions, and journal-backed execution.
+- Novel migration flow kept separate from manga migration.
+
+### Safety And Reliability
+
+- Suwayomi readiness checks that avoid destructive empty states while the backend is starting or reconnecting.
+- Normalized empty GraphQL errors for clearer backend failure messages.
+- Secure assisted Suwayomi runtime updater with ownership checks, compatibility allowlist, snapshot, staging, checksum validation, atomic promotion, rollback, and GraphQL health checks.
+- Global write lock during Suwayomi update operations.
+- Backup, restore, reconciliation, and snapshot utilities for app/library state.
+- Toast notifications for update state and important user-visible operations.
+
+### UI And UX
+
+- Nocturne desktop visual system with dense, desktop-first layouts.
+- Settings surfaces for appearance, reader behavior, library behavior, content/security, storage, tracking, backups, repositories, updater, and developer diagnostics.
+- Theme editor and live theme preview.
+- Paraglide localization with English, Portuguese, Spanish, Japanese, and Chinese catalogs.
+- Keyboard-oriented controls and accessible modal/toast patterns in the main surfaces.
+
+## Aethon-Specific Work
+
+- Managed bundled Suwayomi runtime with local profile ownership checks.
+- Safe Suwayomi runtime updater built for Aethon's desktop distribution model.
+- Home is treated as an operational desktop hub, not a static landing page: it summarizes reading continuity, update pressure, downloads, source health, archive activity, and tracking state.
+- Browse combines installed manga sources, LNReader novel sources, trackers, Hardcover data, and the user's Library profile to rank recommendations instead of only showing raw source catalogs.
+- Recommendations expose why they were selected through provider signals, score breakdowns, profile tags, tracker/Hardcover signals, and source availability.
+- Book reading is first-class: source novels, EPUB imports, PDF native mode, and PDF reflow mode live alongside manga/comics without sharing unsafe data paths.
+- Single and mass migration flows designed around Aethon's Library and journal safety rules.
+- Library split between comics/manga, source novels, and imported books without collapsing user data domains.
+- Restore/reconciliation tooling for imported state, manga backups, novels, books, categories, and progress.
+- Syncd groundwork for future device/session synchronization.
+- Nocturne visual identity, Settings architecture, source management UI, and desktop runtime policy.
+
+## Planned
+
+These items are planned work, not completed functionality:
+
+- Aethon Syncd productization and cross-device synchronization.
+- Mobile version.
+- Design System consolidation.
+- Reader improvements.
+- TTS improvements.
+- Performance improvements and startup profiling.
+- Plugin workflow expansion.
+- Updater UX and release automation improvements.
+- Expanded source/extension support and diagnostics.
+
+See [docs/roadmap.md](docs/roadmap.md) for the current roadmap.
+
+## Install
+
+Release packaging is Windows-first. Download releases from the official Aethon repository when published:
 
 [https://github.com/johnnylord1/Aethon/releases](https://github.com/johnnylord1/Aethon/releases)
 
-The app can run with its managed bundled Suwayomi runtime or point to an external Suwayomi server from Settings.
+Aethon can run with its managed bundled Suwayomi runtime or connect to an external Suwayomi server from Settings.
 
 ## Development
 
@@ -131,33 +199,22 @@ git diff --check
 
 ## Architecture
 
-- `src/components/pages` contains primary app views such as Home, Library, Browse, Downloads, Settings, and detail screens.
-- `src/components/reader` contains reader UI.
-- `src/components/settings` contains settings panels and the Suwayomi updater panel.
+- `src/components/pages` contains Home, Library, Browse, Downloads, Settings, detail, migration, source, and tracking screens.
+- `src/components/library` contains shared Library shell/card/tooling UI.
+- `src/components/reader` contains manga, novel, book, HUD, and TTS reader UI.
+- `src/components/settings` contains settings panels, theme editing, repository panels, sync panels, and the Suwayomi updater panel.
 - `src/lib/client.ts` contains the Suwayomi GraphQL client.
 - `src/lib/manga` contains manga/source helpers.
-- `src/lib/migration` contains migration and journal logic.
-- `src/lib/books` and `src/lib/novels` keep local book and novel logic separate from manga.
-- `src-tauri/src` contains native Tauri commands, managed runtime lifecycle, syncd, and updater backend logic.
+- `src/lib/migration` contains single and mass migration logic plus journal handling.
+- `src/lib/books` and `src/lib/novels` keep local books and novels separate from manga/comics.
+- `src-tauri/src` contains native Tauri commands, managed runtime lifecycle, syncd, backup/restore, and updater backend logic.
 - `messages` contains localized Paraglide messages.
-
-## Roadmap
-
-- Harden the release packaging flow.
-- Continue improving Suwayomi readiness and source failure handling.
-- Expand safe migration review tools.
-- Improve release smoke coverage for Windows desktop builds.
-- Keep Library, Reader, downloads, and updater behavior stable before broad feature expansion.
-
-## Contributing
-
-Keep changes small and focused. Preserve existing behavior unless the issue requires a behavior change. Run the focused checks for the touched area and include manual smoke notes for UI or desktop runtime work.
 
 ## Credits
 
-Aethon is an independent project built on open-source reader ideas and the Suwayomi ecosystem. It began as a fork of Moku; that origin is credited here for licensing and attribution purposes only. Aethon branding, release identity, repository metadata, and product direction are independent.
+Aethon is an independent app with its own identity, release infrastructure, UI direction, and runtime policy. It began as a fork of Moku; that origin is credited here only for legal attribution and license continuity.
 
-Suwayomi-Server is developed by the Suwayomi project:
+Aethon integrates with Suwayomi-Server:
 
 [https://github.com/Suwayomi/Suwayomi-Server](https://github.com/Suwayomi/Suwayomi-Server)
 
