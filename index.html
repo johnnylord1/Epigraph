@@ -36,10 +36,30 @@
         opacity: 1;
         transition: opacity 180ms ease;
         pointer-events: none;
+        font-family: Manrope, Outfit, Inter, system-ui, sans-serif;
       }
 
       #boot-splash.boot-splash--gone {
         opacity: 0;
+      }
+
+      #boot-splash::before,
+      #boot-splash::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+      }
+
+      #boot-splash::before {
+        background:
+          radial-gradient(circle at 50% 28%, rgba(153, 129, 226, 0.08), transparent 24%),
+          radial-gradient(circle at 50% 56%, rgba(255, 255, 255, 0.025), transparent 48%);
+        opacity: 0.9;
+      }
+
+      #boot-splash::after {
+        background: linear-gradient(180deg, rgba(0, 0, 0, 0.02), rgba(0, 0, 0, 0.34));
       }
 
       .boot-splash__stage {
@@ -51,8 +71,90 @@
         overflow: hidden;
       }
 
+      .boot-splash__starfield,
+      .boot-splash__orbit-layer {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+      }
+
+      .boot-splash__starfield,
+      .boot-splash__orbit-layer--back {
+        z-index: 2;
+      }
+
+      .boot-splash__orbit-layer--front {
+        z-index: 6;
+      }
+
+      .boot-splash__star {
+        position: absolute;
+        left: var(--x, 50%);
+        top: var(--y, 50%);
+        width: var(--size, 5px);
+        height: var(--size, 5px);
+        opacity: 0;
+        transform-origin: center;
+        will-change: transform, opacity;
+      }
+
+      .boot-splash__orbit-layer .boot-splash__star {
+        left: 50%;
+        top: 50%;
+      }
+
+      .boot-splash__star-core,
+      .boot-splash__star-ray-x,
+      .boot-splash__star-ray-y,
+      .boot-splash__star-dust {
+        position: absolute;
+        pointer-events: none;
+      }
+
+      .boot-splash__star-core {
+        inset: 35%;
+        border-radius: 999px;
+        opacity: var(--core, 0.9);
+        background:
+          radial-gradient(circle at 37% 32%, rgba(255, 255, 255, 0.98) 0 16%, transparent 28%),
+          radial-gradient(circle, rgba(246, 242, 255, 0.94), rgba(211, 200, 255, 0.5) 54%, transparent 76%);
+      }
+
+      .boot-splash__star-ray-x,
+      .boot-splash__star-ray-y {
+        opacity: var(--ray, 0.38);
+      }
+
+      .boot-splash__star-ray-x {
+        left: 0;
+        right: 0;
+        top: 50%;
+        height: 1px;
+        transform: translateY(-50%) scaleX(var(--ray-x, 1));
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.76) 48%, rgba(205, 192, 255, 0.5) 55%, transparent);
+      }
+
+      .boot-splash__star-ray-y {
+        left: 50%;
+        top: 0;
+        bottom: 0;
+        width: 1px;
+        transform: translateX(-50%) scaleY(var(--ray-y, 1));
+        background: linear-gradient(180deg, transparent, rgba(255, 255, 255, 0.78) 48%, rgba(205, 192, 255, 0.5) 55%, transparent);
+      }
+
+      .boot-splash__star-dust {
+        inset: 22%;
+        opacity: var(--dust, 0.08);
+        background:
+          radial-gradient(circle at 26% 31%, rgba(255, 255, 255, 0.55) 0 0.7px, transparent 1.1px),
+          radial-gradient(circle at 73% 61%, rgba(190, 174, 245, 0.36) 0 0.7px, transparent 1.1px);
+        background-size: 6px 6px, 9px 9px;
+      }
+
       .boot-splash__identity {
         position: relative;
+        z-index: 4;
         width: min(470px, 54vw);
         height: min(470px, 54vw);
         display: grid;
@@ -61,6 +163,8 @@
       }
 
       .boot-splash__mark {
+        position: relative;
+        z-index: 5;
         width: 68%;
         height: 68%;
         object-fit: contain;
@@ -72,6 +176,7 @@
 
       .boot-splash__dock {
         position: absolute;
+        z-index: 8;
         left: 50%;
         top: calc(50% + 88px);
         transform: translateX(-50%);
@@ -110,6 +215,7 @@
 
       .boot-splash__corner {
         position: absolute;
+        z-index: 8;
         width: 7px;
         height: 7px;
         opacity: 0.18;
@@ -150,6 +256,9 @@
   <body>
     <div id="boot-splash" aria-hidden="true">
       <div class="boot-splash__stage">
+        <div class="boot-splash__starfield" aria-hidden="true"></div>
+        <div class="boot-splash__orbit-layer boot-splash__orbit-layer--back" aria-hidden="true"></div>
+        <div class="boot-splash__orbit-layer boot-splash__orbit-layer--front" aria-hidden="true"></div>
         <i class="boot-splash__corner boot-splash__corner--tl"></i>
         <i class="boot-splash__corner boot-splash__corner--tr"></i>
         <i class="boot-splash__corner boot-splash__corner--br"></i>
@@ -172,10 +281,167 @@
         let dismissed = false;
         let fallbackTimer = null;
         let observer = null;
+        let starsAnimationFrame = 0;
+
+        const starfield = bootSplash.querySelector(".boot-splash__starfield");
+        const orbitBack = bootSplash.querySelector(".boot-splash__orbit-layer--back");
+        const orbitFront = bootSplash.querySelector(".boot-splash__orbit-layer--front");
+
+        const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+        const easeOutCubic = (value) => 1 - Math.pow(1 - clamp(value, 0, 1), 3);
+        const randomBetween = (next, min, max) => min + next() * (max - min);
+
+        const mulberry32 = (seed) => {
+          return () => {
+            let t = seed += 0x6d2b79f5;
+            t = Math.imul(t ^ (t >>> 15), t | 1);
+            t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+          };
+        };
+
+        const sparkleLife = (timestamp, duration, offset, attack, hold, decay) => {
+          const phase = ((timestamp + offset) % duration) / duration;
+          const start = 0.48;
+          const local = phase >= start ? phase - start : phase + 1 - start;
+          if (local > attack + hold + decay) return 0;
+          if (local < attack) return easeOutCubic(local / attack);
+          if (local < attack + hold) return 1;
+          return Math.pow(1 - ((local - attack - hold) / decay), 1.85);
+        };
+
+        const createStarElement = (size) => {
+          const element = document.createElement("span");
+          element.className = "boot-splash__star";
+          element.style.setProperty("--size", `${size.toFixed(2)}px`);
+          element.innerHTML = `
+            <span class="boot-splash__star-ray-x"></span>
+            <span class="boot-splash__star-ray-y"></span>
+            <span class="boot-splash__star-core"></span>
+            <span class="boot-splash__star-dust"></span>
+          `;
+          return element;
+        };
+
+        const createAmbientBand = (count, options, next) => {
+          return Array.from({ length: count }, () => {
+            const drift = randomBetween(next, options.drift[0], options.drift[1]);
+            const direction = randomBetween(next, 0, Math.PI * 2);
+            return {
+              size: randomBetween(next, options.size[0], options.size[1]),
+              x: randomBetween(next, 4, 96),
+              y: randomBetween(next, 6, 93),
+              dx: Math.cos(direction) * drift,
+              dy: Math.sin(direction) * drift,
+              moveDuration: randomBetween(next, 90000, 240000),
+              moveOffset: randomBetween(next, 0, 240000),
+              life: randomBetween(next, options.life[0], options.life[1]),
+              offset: randomBetween(next, 0, options.life[1]),
+              peak: randomBetween(next, options.peak[0], options.peak[1]),
+              base: randomBetween(next, options.base[0], options.base[1]),
+              ray: randomBetween(next, options.ray[0], options.ray[1]),
+              spin: randomBetween(next, -0.00018, 0.00018),
+              rotation: randomBetween(next, -Math.PI, Math.PI),
+            };
+          });
+        };
+
+        const orbitConfigs = [
+          { size: 8.6, rx: 150, ry: 44, tilt: -24, phase: 0.2, speed: 0.00009, depthPhase: 0.6, driftX: 8, driftY: -4, life: 7800, offset: 500, peak: 0.54, minScale: 0.2, maxScale: 1.02, ray: 0.62 },
+          { size: 6.2, rx: 76, ry: 158, tilt: 13, phase: 2.5, speed: -0.000069, depthPhase: -0.3, driftX: -7, driftY: 9, life: 12500, offset: 4200, peak: 0.36, minScale: 0.16, maxScale: 0.72, ray: 0.42 },
+          { size: 10.8, rx: 174, ry: 52, tilt: -55, phase: 1.15, speed: 0.000058, depthPhase: 1.5, driftX: 12, driftY: 6, life: 9300, offset: 2100, peak: 0.48, minScale: 0.22, maxScale: 1.12, ray: 0.72 },
+          { size: 7.4, rx: 92, ry: 136, tilt: 38, phase: 4.35, speed: -0.000082, depthPhase: 2.2, driftX: -9, driftY: 5, life: 14200, offset: 8200, peak: 0.4, minScale: 0.18, maxScale: 0.82, ray: 0.5 },
+          { size: 4.8, rx: 198, ry: 34, tilt: 17, phase: 5.7, speed: 0.000046, depthPhase: -1.15, driftX: 5, driftY: -9, life: 16000, offset: 9900, peak: 0.28, minScale: 0.13, maxScale: 0.55, ray: 0.32 },
+          { size: 6.8, rx: 61, ry: 176, tilt: -20, phase: 3.25, speed: 0.000078, depthPhase: 2.75, driftX: 12, driftY: 8, life: 10400, offset: 6600, peak: 0.35, minScale: 0.16, maxScale: 0.74, ray: 0.46 },
+        ];
+
+        const mountedAmbientStars = [];
+        const mountedOrbitStars = [];
+
+        const mountBootStars = () => {
+          if (!starfield || !orbitBack || !orbitFront) return;
+          const random = mulberry32(0xa37a0e);
+          const ambientConfigs = [
+            ...createAmbientBand(56, { size: [1.2, 3.2], peak: [0.08, 0.3], base: [0, 0.035], life: [10000, 32000], drift: [3, 16], ray: [0.18, 0.42] }, random),
+            ...createAmbientBand(22, { size: [3.4, 6.2], peak: [0.14, 0.46], base: [0, 0.025], life: [18000, 44000], drift: [5, 24], ray: [0.28, 0.62] }, random),
+            ...createAmbientBand(7, { size: [6.4, 9.4], peak: [0.16, 0.36], base: [0, 0.018], life: [30000, 62000], drift: [4, 18], ray: [0.34, 0.72] }, random),
+          ];
+
+          for (const config of ambientConfigs) {
+            const element = createStarElement(config.size);
+            element.style.setProperty("--x", `${config.x.toFixed(2)}%`);
+            element.style.setProperty("--y", `${config.y.toFixed(2)}%`);
+            starfield.append(element);
+            mountedAmbientStars.push({ element, config });
+          }
+
+          for (const config of orbitConfigs) {
+            const element = createStarElement(config.size);
+            orbitBack.append(element);
+            mountedOrbitStars.push({ element, config });
+          }
+        };
+
+        const updateAmbientStars = (timestamp) => {
+          for (const { element, config } of mountedAmbientStars) {
+            const move = ((timestamp + config.moveOffset) % config.moveDuration) / config.moveDuration;
+            const driftEase = move < 0.82 ? move / 0.82 : 1 - (move - 0.82) / 0.18;
+            const life = sparkleLife(timestamp, config.life, config.offset, 0.06, 0.16, 0.42);
+            const opacity = config.base + life * config.peak;
+            const scale = 0.62 + life * 0.55;
+            const rotate = config.rotation + timestamp * config.spin;
+            element.style.opacity = opacity.toFixed(3);
+            element.style.transform = `translate3d(${(config.dx * driftEase).toFixed(2)}px, ${(config.dy * driftEase).toFixed(2)}px, 0) rotate(${rotate.toFixed(3)}rad) scale3d(${scale.toFixed(3)}, ${scale.toFixed(3)}, 1)`;
+            element.style.setProperty("--core", (0.42 + life * 0.58).toFixed(3));
+            element.style.setProperty("--ray", (life * config.ray).toFixed(3));
+            element.style.setProperty("--dust", (life * 0.1).toFixed(3));
+            element.style.setProperty("--ray-x", (0.55 + life * 0.8).toFixed(3));
+            element.style.setProperty("--ray-y", (0.65 + life * 1.05).toFixed(3));
+          }
+        };
+
+        const updateOrbitStars = (timestamp) => {
+          for (const { element, config } of mountedOrbitStars) {
+            const angle = config.phase + timestamp * config.speed;
+            const tilt = (config.tilt * Math.PI) / 180;
+            const localX = Math.cos(angle) * config.rx + Math.sin(angle * 0.37 + config.phase) * config.driftX;
+            const localY = Math.sin(angle) * config.ry + Math.cos(angle * 0.61 - config.phase) * config.driftY;
+            const x = localX * Math.cos(tilt) - localY * Math.sin(tilt);
+            const y = localX * Math.sin(tilt) + localY * Math.cos(tilt);
+            const depth = clamp(Math.sin(angle + config.depthPhase) * 0.74 + Math.cos(angle * 1.8 + config.phase) * 0.16, -1, 1);
+            const depth01 = (depth + 1) / 2;
+            const front = depth > -0.06;
+            const life = sparkleLife(timestamp, config.life, config.offset, 0.08, 0.12, 0.46);
+            const material = life * (front ? 1 : 0.44);
+            const parent = front ? orbitFront : orbitBack;
+            if (element.parentElement !== parent) parent.append(element);
+            const scale = (config.minScale + depth01 * (config.maxScale - config.minScale)) * (front ? 1 : 0.68);
+            element.style.opacity = (life * config.peak * (front ? 0.34 + depth01 * 0.66 : 0.04 + depth01 * 0.24)).toFixed(3);
+            element.style.transform = `translate3d(calc(-50% + ${x.toFixed(2)}px), calc(-50% + ${y.toFixed(2)}px), 0) rotate(${(angle * 0.62 + tilt).toFixed(3)}rad) scale3d(${scale.toFixed(3)}, ${scale.toFixed(3)}, 1)`;
+            element.style.setProperty("--core", (0.34 + material * (front ? 0.58 : 0.26)).toFixed(3));
+            element.style.setProperty("--ray", (material * config.ray * (front ? 0.78 : 0.28)).toFixed(3));
+            element.style.setProperty("--dust", (material * 0.12).toFixed(3));
+            element.style.setProperty("--ray-x", (0.62 + material * 0.7).toFixed(3));
+            element.style.setProperty("--ray-y", (0.72 + material * 1.05).toFixed(3));
+          }
+        };
+
+        const animateBootStars = (timestamp) => {
+          updateAmbientStars(timestamp);
+          updateOrbitStars(timestamp);
+          starsAnimationFrame = window.requestAnimationFrame(animateBootStars);
+        };
+
+        mountBootStars();
+        starsAnimationFrame = window.requestAnimationFrame(animateBootStars);
 
         const dismiss = () => {
           if (dismissed) return;
           dismissed = true;
+          if (starsAnimationFrame) {
+            window.cancelAnimationFrame(starsAnimationFrame);
+            starsAnimationFrame = 0;
+          }
           if (fallbackTimer !== null) {
             window.clearTimeout(fallbackTimer);
             fallbackTimer = null;
