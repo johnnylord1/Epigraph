@@ -1,7 +1,7 @@
 # Aethon
 
 <p align="center">
-  <img src="docs/assets/aethon-splash-banner.svg" alt="Aethon animated splash banner" />
+  <img src="docs/assets/aethon-splash.gif" alt="Aethon splash animation captured from the app" />
 </p>
 
 <p align="center">
