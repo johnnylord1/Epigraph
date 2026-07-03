@@ -694,3 +694,96 @@ Notas de captura:
 - `BrowseV3.svelte` segue com estilos compartilhados fora deste lote; migrar agora tocaria Search/Discover e violaria o escopo.
 - `NovelSources.svelte`, `Extensions.svelte`, `SourceBrowse.svelte` e `SourceList.svelte` continuam Legacy/Fora do lote e devem ser reavaliados quando o escopo incluir Sources legadas ou novels/source status.
 - A camada `--n-*` segue existindo em temas e CSS legado; no Marco 7 ela deixou de ser consumida diretamente pelos componentes ativos de Sources migrados, mas nao foi removida.
+## Marco 8 - Mass Migration
+
+### Escopo executado
+- Migrada exclusivamente a camada visual ativa de Mass Migration:
+  - `src/components/pages/MassMigrateModal.svelte`.
+- O modal foi validado pelo fluxo real `Browse > Sources > Extension Settings > Mass migration`.
+- Nao foram alteradas regras de preview, selecao, busca manual, aplicacao/undo de migracao, journal, GraphQL, Sources, Library, Reader, Settings, Updater, Discord/Rich Presence ou Tauri.
+- `MigrateModal.svelte` e `NovelMigrateModal.svelte` permaneceram fora do lote por serem migracoes individuais/novel migration, nao Mass Migration ativa deste marco.
+- Nao foram removidos tokens Legacy nem a camada `--n-*`.
+
+### Mapa de componentes
+
+| Componente | Status no Marco 8 | Evidencia |
+| --- | --- | --- |
+| `MassMigrateModal.svelte` | Ativo/migrado | Aberto a partir de `SourcesView.svelte` e `ExtensionSettingsPanel.svelte`; screenshots reais mostram loading, lista de destinos e foco. |
+| `MigrateModal.svelte` | Ativo/fora do lote | Modal de migracao individual de manga, nao alterado neste marco. |
+| `NovelMigrateModal.svelte` | Ativo/fora do lote | Modal de migracao de novels, nao alterado neste marco. |
+
+### Tokens utilizados/criados
+Foram adicionados tokens `--component-migration-*` em `src/styles/tokens.css`, com implementacao canonica Nocturne em `src/styles/nocturne-theme.css`.
+
+Categorias cobertas:
+
+- overlay/modal: `--component-migration-overlay-*`, `--component-migration-modal-*`;
+- texto/divisores: `--component-migration-eyebrow-*`, `--component-migration-title-*`, `--component-migration-muted-*`, `--component-migration-divider-*`;
+- controles: `--component-migration-icon-*`, `--component-migration-primary-*`, `--component-migration-secondary-*`, `--component-migration-input-*`;
+- rows/cards/listas: `--component-migration-row-*`, `--component-migration-item-*`, `--component-migration-cover-*`, `--component-migration-source-icon-*`;
+- selecao/acoes: `--component-migration-select-*`, `--component-migration-menu-*`;
+- estados: `--component-migration-error-*`, `--component-migration-done-*`, `--component-migration-disabled-*`, `--component-migration-focus-*`;
+- motion/efeitos: `--component-migration-transition-*`, `--component-migration-animation-*`, `--component-migration-pair-arrow-*`.
+
+Classificacao: todos os 88 tokens `--component-migration-*` definidos estao Ativos e consumidos pelo componente real migrado. Validacao automatica: 88 definidos, 0 sem consumo.
+
+### Cores diretas removidas
+Comando de verificacao:
+
+```powershell
+rg -n -- '#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(|oklch\(|color-mix\(|linear-gradient\(|radial-gradient\(|backdrop-filter:\s*blur|box-shadow:\s*[^;]*rgba|--n-' src/components/pages/MassMigrateModal.svelte
+```
+
+Resultado apos a migracao: nenhuma ocorrencia no componente ativo migrado.
+
+Ocorrencias migradas para tokens:
+
+- `MassMigrateModal.svelte`: overlay, blur, z-index, modal surface, border, shadow, header, steps, lista de fontes, rows hover/selected, inputs/focus, queue items, selection buttons, disabled states, covers, pair arrow, manual search results, action menu, footer, primary/secondary buttons, error states e focus-visible.
+
+### Excecoes mantidas
+- `MassMigrateModal.svelte`: as 3 linhas antigas de Discord Presence permanecem no worktree, mas sao mudancas preexistentes fora do tema e nao pertencem ao Marco 8.
+- `MigrateModal.svelte` e `NovelMigrateModal.svelte`: mantidos fora do lote, apesar de terem mudancas antigas no working tree.
+- `src/styles/nocturne-theme.css`: valores diretos permanecem permitidos por serem implementacao do tema Nocturne.
+- `src/styles/tokens.css`: valores diretos permanecem permitidos por serem definicao de tokens primitivos/semanticos/de componente.
+
+### Acessibilidade
+Validado automaticamente:
+
+- ausencia de cores diretas, funcoes de cor, blur/shadow diretos e consumo direto de `--n-*` em `MassMigrateModal.svelte`;
+- consumo obrigatorio de todos os tokens `--component-migration-*`;
+- render/fluxo de abertura por `BrowseV3.test.ts`;
+- contraste computado no app real: menor razao observada na superficie ativa do modal foi aproximadamente 10.48:1, acima de WCAG AA para texto normal.
+
+Corrigido neste marco:
+
+- adicionada regra `:focus-visible` tokenizada para controles do modal.
+
+Risco registrado sem alterar comportamento:
+
+- com o modal aberto, a ordem de tabulacao ainda pode alcancar elementos atras do overlay. Corrigir exige focus trap/inert e alteraria comportamento de modal, entao deve ser tratado em marco especifico de acessibilidade/modal behavior.
+
+### Screenshots reais
+Screenshots capturados da janela real do Aethon em Nocturne via WebView2/CDP:
+
+- Antes:
+  - `docs/screenshots/marco8-mass-migration/mass-migration-before-sources.png`
+- Depois:
+  - `docs/screenshots/marco8-mass-migration/mass-migration-after-sources.png`
+  - `docs/screenshots/marco8-mass-migration/mass-migration-after-target-list.png`
+  - `docs/screenshots/marco8-mass-migration/mass-migration-after-focus.png`
+
+Notas de captura:
+
+- O baseline antes capturou o estado de loading do modal. A comparacao direta before/after cobre esse estado equivalente; a captura adicional `mass-migration-after-target-list.png` documenta a lista carregada apos a migracao.
+- A captura de foco mostra a pendencia de focus trap: o foco pode sair do modal para elementos do shell atras do overlay. Essa pendencia foi mantida como risco comportamental, nao corrigida neste marco visual.
+
+### Validacao
+- `npm exec vitest run -- --project shell-jsdom src/components/pages/MassMigrationThemeTokens.test.ts src/components/pages/BrowseV3.test.ts`: passou, 2 arquivos e 14 testes. O stderr `Repository timeout` e esperado pelo teste que simula falha parcial de update.
+- `C:\Users\jhow-\AppData\Roaming\npm\pnpm.cmd build`: passou; Vite manteve apenas o aviso conhecido de chunks maiores que 500 kB.
+- `git diff --check`: passou; apenas avisos de normalizacao LF/CRLF do Git, incluindo arquivos antigos fora deste marco.
+
+### Riscos antes do Marco 9
+- Ha alteracoes antigas e nao relacionadas no working tree em Discord/Rich Presence, Tauri/Cargo, mensagens i18n, Reader core, Settings e migracoes individuais. Nao misturar essas alteracoes no commit do Marco 8.
+- `MigrateModal.svelte` e `NovelMigrateModal.svelte` ainda possuem estilos diretos e devem ser migrados em lote proprio se o escopo futuro incluir migracoes individuais/novel migration.
+- O focus trap/inert de `MassMigrateModal.svelte` permanece pendente como acessibilidade comportamental.
+- A camada `--n-*` segue existindo em temas e CSS legado; no Marco 8 ela deixou de ser consumida diretamente pelo componente ativo migrado, mas nao foi removida.
