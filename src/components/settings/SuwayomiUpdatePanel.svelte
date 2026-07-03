@@ -371,15 +371,15 @@
 
 <style>
   .suwayomi-update-panel {
-    gap: 16px;
+    gap: var(--component-updater-panel-gap);
   }
 
   .suwayomi-update-panel--compact {
-    gap: 0;
+    gap: var(--component-updater-panel-compact-gap);
   }
 
   .suwayomi-update-summary {
-    margin: 0;
+    margin: var(--component-updater-summary-margin);
   }
 
   .suwayomi-update-summary .suwayomi-update-pill {
@@ -388,14 +388,14 @@
 
   .suwayomi-update-pill {
     align-self: flex-start;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--accent) 14%, transparent);
-    color: var(--text);
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0;
-    padding: 6px 10px;
+    border: 1px solid var(--component-updater-pill-border);
+    border-radius: var(--component-updater-pill-radius);
+    background: var(--component-updater-pill-bg);
+    color: var(--component-updater-pill-fg);
+    font-size: var(--component-updater-pill-font-size);
+    font-weight: var(--component-updater-pill-font-weight);
+    letter-spacing: var(--component-updater-pill-letter-spacing);
+    padding: var(--component-updater-pill-padding);
     white-space: nowrap;
   }
 
@@ -403,80 +403,78 @@
   .suwayomi-update-pill[data-state="blocked"],
   .suwayomi-update-pill[data-state="external"],
   .suwayomi-update-pill[data-state="userManagedBinary"] {
-    background: rgba(255, 116, 148, 0.12);
-    border-color: rgba(255, 116, 148, 0.34);
-    color: #ffb4c6;
+    background: var(--component-updater-pill-danger-bg);
+    border-color: var(--component-updater-pill-danger-border);
+    color: var(--component-updater-pill-danger-fg);
   }
 
   .suwayomi-update-pill[data-state="readyToInstall"],
   .suwayomi-update-pill[data-state="updateAvailable"] {
-    background: rgba(199, 180, 255, 0.16);
-    border-color: rgba(199, 180, 255, 0.38);
+    background: var(--component-updater-pill-available-bg);
+    border-color: var(--component-updater-pill-available-border);
   }
 
   .suwayomi-update-changelog-backdrop {
     position: fixed;
     inset: 0;
-    z-index: 9800;
+    z-index: var(--component-updater-backdrop-z-index);
     display: grid;
     place-items: center;
-    padding: 24px;
-    background: rgba(4, 4, 8, 0.64);
-    backdrop-filter: blur(12px);
+    padding: var(--component-updater-backdrop-padding);
+    background: var(--component-updater-backdrop-bg);
+    backdrop-filter: var(--component-updater-backdrop-blur);
   }
 
   .suwayomi-update-modal,
   .suwayomi-update-changelog {
     position: fixed;
     inset: 0;
-    width: min(680px, calc(100vw - 48px));
-    max-height: min(680px, calc(100vh - 48px));
+    width: min(var(--component-updater-modal-width), calc(100vw - var(--component-updater-modal-viewport-inset)));
+    max-height: min(var(--component-updater-modal-max-height), calc(100vh - var(--component-updater-modal-viewport-inset)));
     margin: auto;
     display: flex;
     flex-direction: column;
-    gap: 14px;
-    padding: 18px;
-    border: 1px solid rgba(72, 69, 79, 0.38);
-    border-radius: 14px;
+    gap: var(--component-updater-modal-gap);
+    padding: var(--component-updater-modal-padding);
+    border: 1px solid var(--component-updater-modal-border);
+    border-radius: var(--component-updater-modal-radius);
     box-sizing: border-box;
-    background:
-      radial-gradient(circle at 0% 0%, rgba(201, 181, 255, 0.08), transparent 42%),
-      rgba(18, 17, 23, 0.96);
-    color: var(--text);
-    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.56), inset 0 1px 0 rgba(255, 255, 255, 0.035);
+    background: var(--component-updater-modal-bg);
+    color: var(--component-updater-modal-fg);
+    box-shadow: var(--component-updater-modal-shadow);
   }
 
   .suwayomi-update-modal::backdrop {
-    background: rgba(4, 4, 8, 0.64);
-    backdrop-filter: blur(12px);
+    background: var(--component-updater-modal-backdrop-bg);
+    backdrop-filter: var(--component-updater-modal-backdrop-blur);
   }
 
   .suwayomi-update-modal__status {
     display: flex;
     align-items: center;
-    gap: 10px;
-    min-height: 38px;
-    padding: 10px 12px;
-    border: 1px solid rgba(72, 69, 79, 0.2);
-    border-radius: 12px;
-    background: rgba(8, 8, 13, 0.42);
-    color: rgba(229, 226, 225, 0.76);
-    font-size: 12px;
-    line-height: 1.4;
+    gap: var(--component-updater-status-gap);
+    min-height: var(--component-updater-status-min-height);
+    padding: var(--component-updater-status-padding);
+    border: 1px solid var(--component-updater-status-border);
+    border-radius: var(--component-updater-status-radius);
+    background: var(--component-updater-status-bg);
+    color: var(--component-updater-status-fg);
+    font-size: var(--component-updater-status-font-size);
+    line-height: var(--component-updater-status-line-height);
   }
 
   .suwayomi-update-changelog__body {
     min-height: 0;
     overflow: auto;
     margin: 0;
-    padding: 14px;
-    border: 1px solid rgba(72, 69, 79, 0.2);
-    border-radius: 12px;
-    background: rgba(8, 8, 13, 0.64);
-    color: rgba(229, 226, 225, 0.88);
-    font-family: "Manrope", "Inter", system-ui, sans-serif;
-    font-size: 12px;
-    line-height: 1.6;
+    padding: var(--component-updater-changelog-padding);
+    border: 1px solid var(--component-updater-changelog-border);
+    border-radius: var(--component-updater-changelog-radius);
+    background: var(--component-updater-changelog-bg);
+    color: var(--component-updater-changelog-fg);
+    font-family: var(--component-updater-changelog-font);
+    font-size: var(--component-updater-changelog-font-size);
+    line-height: var(--component-updater-changelog-line-height);
     white-space: pre-wrap;
   }
 </style>

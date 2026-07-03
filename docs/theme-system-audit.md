@@ -787,3 +787,99 @@ Notas de captura:
 - `MigrateModal.svelte` e `NovelMigrateModal.svelte` ainda possuem estilos diretos e devem ser migrados em lote proprio se o escopo futuro incluir migracoes individuais/novel migration.
 - O focus trap/inert de `MassMigrateModal.svelte` permanece pendente como acessibilidade comportamental.
 - A camada `--n-*` segue existindo em temas e CSS legado; no Marco 8 ela deixou de ser consumida diretamente pelo componente ativo migrado, mas nao foi removida.
+
+## Marco 9 - Updater
+
+### Escopo executado
+- Migrada exclusivamente a camada visual do updater de Suwayomi:
+  - `src/components/settings/SuwayomiUpdatePanel.svelte`.
+- Nao foram alteradas regras de update, runtime, staging, install, rollback, Tauri, i18n, Settings shell, Reader, Library, Sources, Mass Migration ou Downloads.
+- A rota real validada foi `Settings > Updates`, que abre a pane `Advanced > About` com o painel `data-testid="suwayomi-update-panel"`.
+- Nao foram removidos tokens Legacy nem a camada `--n-*`.
+
+### Mapa de componentes
+
+| Componente | Status no Marco 9 | Evidencia |
+| --- | --- | --- |
+| `SuwayomiUpdatePanel.svelte` | Ativo/migrado | Importado por `Settings.svelte` e renderizado na pane About; screenshots reais mostram summary e dialog de detalhes. |
+| `Settings.svelte` | Host/fora do lote | Usado apenas como shell de navegacao para validar o painel; nao recebeu migracao visual neste marco. |
+
+### Tokens utilizados/criados
+Foram adicionados tokens `--component-updater-*` em `src/styles/tokens.css`, com implementacao canonica Nocturne em `src/styles/nocturne-theme.css`.
+
+Categorias cobertas:
+
+- painel/summary: `--component-updater-panel-*`, `--component-updater-summary-*`;
+- status pills: `--component-updater-pill-*`, incluindo estados danger e update available;
+- overlay/backdrop: `--component-updater-backdrop-*`;
+- modal/dialog: `--component-updater-modal-*`;
+- status row: `--component-updater-status-*`;
+- changelog body: `--component-updater-changelog-*`.
+
+Classificacao: todos os 49 tokens `--component-updater-*` definidos estao Ativos e consumidos pelo componente real migrado. Validacao automatica: 49 definidos, 0 sem consumo.
+
+### Cores diretas removidas
+Comando de verificacao:
+
+```powershell
+rg -n -- '#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(|oklch\(|color-mix\(|linear-gradient\(|radial-gradient\(|backdrop-filter:\s*blur|box-shadow:\s*[^;]*rgba|--n-' src/components/settings/SuwayomiUpdatePanel.svelte
+```
+
+Resultado apos a migracao: nenhuma ocorrencia no componente ativo migrado.
+
+Ocorrencias migradas para tokens:
+
+- `SuwayomiUpdatePanel.svelte`: pill base, pill danger, pill update available, backdrop, blur, z-index, modal surface, radial background, border, radius, shadow, dialog backdrop, status row, changelog body, fonte, spacing e tamanhos do modal.
+
+### Excecoes mantidas
+- `src/styles/nocturne-theme.css`: valores diretos permanecem permitidos por serem implementacao do tema Nocturne.
+- `src/styles/tokens.css`: valores diretos permanecem permitidos por serem definicao de tokens primitivos/semanticos/de componente.
+- O estado real do updater mudou entre capturas antes/depois (`Update available` para `Up to date`) apos reload/check de runtime; isso foi registrado como diferenca de dados, nao regressao visual.
+
+### Acessibilidade
+Validado automaticamente:
+
+- ausencia de cores diretas, funcoes de cor, blur/shadow diretos, z-index numerico direto e consumo direto de `--n-*` em `SuwayomiUpdatePanel.svelte`;
+- consumo obrigatorio de todos os tokens `--component-updater-*`;
+- render e fluxos principais por `SuwayomiUpdatePanel.test.ts`.
+
+Validado no app real:
+
+- summary do updater em Nocturne;
+- dialog de detalhes;
+- overlay/backdrop;
+- estado de pill;
+- rows e botoes disabled dentro do dialog.
+
+Contraste computado no app real:
+
+- `.suwayomi-update-modal`: aproximadamente 14.57:1;
+- `.suwayomi-update-modal__status`: aproximadamente 15.51:1.
+
+Nao houve correcao funcional de focus trap/inert neste marco. O `dialog.showModal()` existente permanece responsavel pelo comportamento modal.
+
+### Screenshots reais
+Screenshots capturados da janela real do Aethon em Nocturne via WebView2/CDP:
+
+- Antes:
+  - `docs/screenshots/marco9-updater/updater-before-summary.png`
+  - `docs/screenshots/marco9-updater/updater-before-details.png`
+- Depois:
+  - `docs/screenshots/marco9-updater/updater-after-summary.png`
+  - `docs/screenshots/marco9-updater/updater-after-details.png`
+
+Notas de captura:
+
+- As capturas foram feitas em `Settings > Updates`.
+- O baseline antes tinha update disponivel/toast real; depois do reload a sessao reportou runtime atualizado. A geometria, superficies, blur, radius, shadows e hierarquia visual do painel/modal permaneceram equivalentes.
+
+### Validacao
+- `npm exec vitest run -- --project shell-jsdom src/components/settings/SuwayomiUpdateThemeTokens.test.ts src/components/settings/SuwayomiUpdatePanel.test.ts`: passou, 2 arquivos e 11 testes.
+- `C:\Users\jhow-\AppData\Roaming\npm\pnpm.cmd build`: a primeira execucao falhou por arquivo gerado transitorio do Paraglide (`src/paraglide/messages/es.js`) ausente; a segunda execucao passou sem alteracao de codigo. Vite manteve apenas o aviso conhecido de chunks maiores que 500 kB.
+- `git diff --check`: passou; apenas avisos de normalizacao LF/CRLF do Git, incluindo arquivos antigos fora deste marco.
+
+### Riscos antes do proximo marco
+- Ha alteracoes antigas e nao relacionadas no working tree em Discord/Rich Presence, Tauri/Cargo, mensagens i18n, Reader core, Settings e migracoes individuais. Nao misturar essas alteracoes no commit do Marco 9.
+- `Settings.svelte` continua como host visual amplo e possui mudancas antigas fora deste lote; este marco migrou apenas `SuwayomiUpdatePanel.svelte`.
+- O estado do updater depende de chamadas reais ao runtime/GitHub; para futuras comparacoes visuais, preferir perfil controlado ou fixture de runtime para evitar diferenca de dados entre before/after.
+- `MigrateModal.svelte`, `NovelMigrateModal.svelte` e demais telas fora do updater seguem pendentes para marcos futuros conforme escopo.

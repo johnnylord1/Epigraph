@@ -50,6 +50,7 @@ export default defineWorkspace([
         "src/components/settings/SyncdSessionDetails.test.ts",
         "src/components/settings/NovelRepositoriesPanel.test.ts",
         "src/components/settings/SuwayomiUpdatePanel.test.ts",
+        "src/components/settings/SuwayomiUpdateThemeTokens.test.ts",
         "src/components/settings/Settings.test.ts",
         "src/components/reader/ReaderHud.test.ts",
         "src/components/reader/TtsControls.test.ts",
