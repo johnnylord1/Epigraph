@@ -34,6 +34,7 @@ export default defineWorkspace([
         "src/components/library/LibraryCollectionsBar.test.ts",
         "src/components/library/LibraryToolbar.test.ts",
         "src/components/library/LibraryCardGrid.test.ts",
+        "src/components/library/LibraryThemeTokens.test.ts",
         "src/components/library/ComicsLibraryBody.test.ts",
         "src/components/layout/layoutThemeComponents.test.ts",
         "src/components/layout/SplashScreen.test.ts",

@@ -467,3 +467,129 @@ Observacao: `NovelRepositoriesPanel.svelte` existe e possui teste focado, mas na
 - Settings ainda tem legado ativo em previews, swatches, ThemeEditor e paineis especializados. Nao remover/migrar sem lote dedicado.
 - Algumas variaveis `--n-*` seguem usadas para dimensoes/motion herdadas; classificar como Legacy ativo ate uma etapa especifica de compatibilidade.
 - Updater foi mantido fora deste marco conforme restricao, entao seus estilos diretos permanecem documentados para etapa propria.
+
+## Marco 6 - Library
+
+### Escopo executado
+- Migrada exclusivamente a camada visual ativa da Library:
+  - `src/components/pages/Library.svelte`;
+  - `src/components/library/LibraryShell.svelte`;
+  - `src/components/library/LibraryHeader.svelte`;
+  - `src/components/library/LibraryToolbar.svelte`;
+  - `src/components/library/LibraryCollectionsBar.svelte`;
+  - `src/components/library/LibraryDisplayPopover.svelte`;
+  - `src/components/library/LibraryDensityRail.svelte`;
+  - `src/components/library/BooksLibraryBody.svelte`;
+  - `src/components/library/ComicsLibraryBody.svelte`;
+  - `src/components/library/LibraryCard.svelte`;
+  - `src/components/library/LibraryCardGrid.svelte`;
+  - `src/components/library/VirtualLibraryCardGrid.svelte`.
+- Nao foram alteradas regras de Library, GraphQL, queries, filtros, ordenacao, selecao, navegacao, persistencia, Sources, Downloads, Reader, Settings, Mass Migration, Updater ou Discord/Rich Presence.
+- Nao foram removidos tokens Legacy nem a camada `--n-*`.
+
+### Mapa de componentes
+
+| Arquivo | Status | Evidencia | Acao |
+| --- | --- | --- | --- |
+| `src/components/pages/Library.svelte` | Ativo | Renderizado pelo `Layout` quando `store.navPage === "library"`; importa `LibraryShell`, `LibraryToolbar`, `BooksLibraryBody`, `ComicsLibraryBody`. | Migrado visualmente. |
+| `LibraryShell.svelte` | Ativo | Renderizado por `Library.svelte`; compoe header, toolbar, collections e body. | Migrado visualmente. |
+| `LibraryHeader.svelte` | Ativo | Importado por `LibraryShell.svelte`; monta tabs Comics/Books e topbar. | Migrado visualmente. |
+| `LibraryToolbar.svelte` | Ativo | Importado por `LibraryShell.svelte` e `Library.svelte`; monta busca, sort, filter, display e refresh. | Migrado visualmente. |
+| `LibraryCollectionsBar.svelte` | Ativo | Importado por `LibraryShell.svelte`; renderiza collections/categorias quando presentes. | Migrado visualmente. |
+| `LibraryDisplayPopover.svelte` | Ativo | Importado por `LibraryToolbar.svelte`; popover de display/density/layout. | Migrado visualmente. |
+| `LibraryDensityRail.svelte` | Ativo | Importado por `LibraryDisplayPopover.svelte`; slider de densidade. | Migrado visualmente. |
+| `BooksLibraryBody.svelte` | Ativo | Renderizado por `Library.svelte` quando secao Books esta ativa. | Migrado apenas visual local/drop overlay. |
+| `ComicsLibraryBody.svelte` | Ativo | Renderizado por `Library.svelte` quando secao Comics esta ativa. | Migrado apenas visual local/select bar/menu. |
+| `LibraryCard.svelte` | Ativo | Renderizado por `LibraryCardGrid` e `VirtualLibraryCardGrid`; usado por Books/Comics ativos. | Migrado visualmente. |
+| `LibraryCardGrid.svelte` | Ativo | Usado por grids compartilhados e tests; cadeia ativa via cards/grid. | Migrado z-index visual. |
+| `VirtualLibraryCardGrid.svelte` | Ativo | Usado por Books/Comics ativos para renderizacao virtualizada. | Migrado z-index visual. |
+| `BooksTypeSelector.svelte` | Ativo | Importado por `LibraryToolbar.svelte` quando ha opcoes de tipo Books. | Sem CSS direto de cor/efeito a migrar; validado no contrato. |
+| `NovelsLibraryBody.svelte` | Legacy/Fora do lote | Arquivo existe em `src/components/library`, mas nao e importado por `Library.svelte` na cadeia ativa atual. | Nao migrado para evitar diff por nome. |
+
+### Tokens utilizados/criados
+Foram adicionados tokens `--component-library-*` em `src/styles/tokens.css`, com implementacao canonica Nocturne em `src/styles/nocturne-theme.css`:
+
+- base/escala: `--component-library-font`, `--component-library-scale`, `--component-library-topbar-height`;
+- surfaces/text/borders/status: `--component-library-surface`, `--component-library-surface-raised`, `--component-library-border-dim`, `--component-library-border-strong`, `--component-library-fg`, `--component-library-muted-fg`, `--component-library-faint-fg`, `--component-library-disabled-opacity`, `--component-library-accent-fg`, `--component-library-accent-muted-bg`, `--component-library-accent-border`, `--component-library-danger-*`;
+- cards: `--component-library-card-*`, `--component-library-cover-fallback-bg`;
+- navigation/toolbar/popover: `--component-library-chip-divider-bg`, `--component-library-overflow-indicator-*`, `--component-library-toolbar-divider`, `--component-library-dropdown-z-index`, `--component-library-header-z-index`, `--component-library-panel-*`, `--component-library-control-z-index`, `--component-library-insert-shadow`, `--component-library-popover-*`;
+- density: `--component-library-density-*`;
+- Books/Comics local states: `--component-library-drop-*`, `--component-library-select-*`;
+- refresh dialog: `--component-library-refresh-*`.
+
+Classificacao: todos os 94 tokens `--component-library-*` definidos estao Ativos e consumidos por componentes reais da Library. Validacao automatica: 94 definidos, 0 sem consumo.
+
+### Cores diretas removidas
+Comando de verificacao:
+
+```powershell
+rg -n -- '#[0-9A-Fa-f]{3,8}\b|rgba?\(|hsla?\(|oklch\(|color-mix\(' src/components/library src/components/pages/Library.svelte
+```
+
+Resultado apos a migracao: nenhuma ocorrencia nos componentes ativos migrados.
+
+Ocorrencias migradas para tokens:
+
+- `Library.svelte`: backdrop/modal de refresh, opcoes de refresh, chip divider, indicador de overflow, z-indexes de paineis e toolbar hero, icone inline de Books.
+- `LibraryToolbar.svelte`: divisores dos menus, color do toggle de direcao, z-indexes de search/cluster/dropdown.
+- `LibraryDisplayPopover.svelte`: labels/meta, toggles, mini-switch, thumb, blur, sombras, hover, selected.
+- `LibraryDensityRail.svelte`: track/fill/thumb/labels, sombras e z-indexes.
+- `BooksLibraryBody.svelte`: drop overlay, blur, panel surface, border, shadow e z-index.
+- `ComicsLibraryBody.svelte`: select bar, botoes de selecao, danger state, bulk move menu, disabled opacity, sombras e z-indexes.
+- `LibraryCard.svelte`: list card surfaces, hover filters, cover surface/border/shadow, fallback, badges, selection overlay, progress track/fill/liquid/shine, title/meta text, chips e progress.
+- `LibraryShell`, `LibraryHeader`, `LibraryCardGrid`, `VirtualLibraryCardGrid`, `LibraryCollectionsBar`: z-index/escala/sombra locais migrados para tokens.
+
+### Excecoes mantidas
+- `NovelsLibraryBody.svelte`: mantido como Legacy/Fora do lote porque nao esta na cadeia ativa renderizada por `Library.svelte`.
+- `src/styles/nocturne-theme.css`: valores diretos permanecem permitidos por serem implementacao do tema Nocturne, nao consumo direto por componentes.
+- `src/styles/tokens.css`: valores diretos permanecem permitidos por serem definicao de tokens primitivos/semanticos/de componente.
+- Geometria local que nao representa tema visual global foi preservada quando ja dependia de tokens de layout (`--library-*`, `--sp-*`, `--radius-*`) e nao de cor/efeito direto.
+
+### Acessibilidade
+Validado automaticamente:
+
+- ausencia de cores diretas em arquivos ativos da Library;
+- ausencia de consumo direto de `--n-*` nos componentes ativos migrados;
+- consumo obrigatorio de todos os tokens `--component-library-*`;
+- render ativo de Library Cards, toolbar, header, collections e corpos Books/Comics pelos testes existentes.
+
+Validado visualmente no app real:
+
+- grid Comics;
+- grid Books;
+- foco por teclado em Library;
+- popover de display/density/layout;
+- cards, badges/chips, botao ativo e controles de toolbar.
+
+Nao houve alteracao pretendida de contraste ou layout. Os valores Nocturne existentes foram preservados por tokens de tema.
+
+### Screenshots reais
+Screenshots capturados da janela real do Aethon em Nocturne via WebView2/CDP:
+
+- Antes:
+  - `docs/screenshots/marco6-library/library-before-comics-grid.png`
+  - `docs/screenshots/marco6-library/library-before-books-grid.png`
+  - `docs/screenshots/marco6-library/library-before-focus.png`
+  - `docs/screenshots/marco6-library/library-before-display-popover.png`
+- Depois:
+  - `docs/screenshots/marco6-library/library-after-comics-grid.png`
+  - `docs/screenshots/marco6-library/library-after-books-grid.png`
+  - `docs/screenshots/marco6-library/library-after-focus.png`
+  - `docs/screenshots/marco6-library/library-after-display-popover.png`
+
+Notas de captura:
+
+- A primeira tentativa de captura "depois" atingiu timeout porque o CDP listou primeiro a pagina auxiliar `novelRuntimeHost`, que nao possui `window.__aethonAudit`. A captura final selecionou explicitamente a pagina principal com a ponte de auditoria.
+- A comparacao Comics antes/depois ficou visualmente equivalente. O badge de notificacao da topbar variou por estado runtime real do app, nao por mudanca de tema.
+
+### Validacao
+- `C:\Users\jhow-\AppData\Roaming\npm\pnpm.cmd test:unit -- src/components/library/LibraryThemeTokens.test.ts src/components/library/LibraryCardGrid.test.ts src/components/library/LibraryToolbar.test.ts src/components/library/BooksLibraryBody.test.ts src/components/library/ComicsLibraryBody.test.ts src/components/library/LibraryShell.test.ts src/components/library/LibraryCollectionsBar.test.ts src/components/library/LibraryHeader.test.ts`: passou; por configuracao do script, executou a suite unit/shell ampla, 100 arquivos e 537 testes.
+- `npm exec vitest run -- --project shell-jsdom src/components/library/LibraryThemeTokens.test.ts`: passou, 1 arquivo, 2 testes.
+- `C:\Users\jhow-\AppData\Roaming\npm\pnpm.cmd build`: passou; Vite manteve apenas o aviso conhecido de chunks maiores que 500 kB.
+- `git diff --check`: passou; apenas avisos de normalizacao LF/CRLF do Git, incluindo arquivos antigos fora deste marco.
+
+### Riscos antes do Marco 7
+- Ha alteracoes antigas e nao relacionadas no working tree em Discord/Rich Presence, Tauri/Cargo, mensagens i18n, paginas de migracao, Reader core e Settings. Nao misturar essas alteracoes no commit do Marco 6.
+- `NovelsLibraryBody.svelte` permanece Legacy/Fora do lote e deve ser reavaliado se a secao de novels voltar a ser renderizada pela Library ativa.
+- A camada `--n-*` segue existindo em temas e CSS legado; no Marco 6 ela deixou de ser consumida diretamente pelos componentes ativos da Library, mas nao foi removida.
+- Marco 7 nao deve iniciar antes de revisar/stagear somente o diff de tema da Library, porque o working tree continua com mudancas antigas fora do escopo.

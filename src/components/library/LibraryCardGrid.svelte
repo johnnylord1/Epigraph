@@ -68,7 +68,7 @@
 <style>
   .grid {
     position: relative;
-    z-index: 1;
+    z-index: var(--component-library-panel-z-index);
     isolation: isolate;
     display: grid;
     grid-template-columns: repeat(var(--library-columns, 1), minmax(0, 1fr));

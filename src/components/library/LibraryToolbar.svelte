@@ -276,7 +276,7 @@
     gap: var(--library-toolbar-gap, 12px);
     width: 100%;
     min-width: 0;
-    min-height: var(--library-toolbar-height, calc(44px * var(--n-hud-scale)));
+    min-height: var(--library-toolbar-height, calc(44px * var(--component-library-scale)));
   }
 
   .toolbar--actions-only {
@@ -290,7 +290,7 @@
     grid-column: 2;
     justify-self: center;
     flex-shrink: 0;
-    z-index: 62;
+    z-index: var(--component-topbar-search-z-index);
   }
 
   .toolbar-cluster {
@@ -299,7 +299,7 @@
     display: inline-flex;
     align-items: center;
     gap: var(--library-toolbar-cluster-gap, 8px);
-    z-index: 30;
+    z-index: var(--component-library-header-z-index);
   }
 
   .display-panel-wrap,
@@ -309,14 +309,14 @@
   }
 
   .library-toolbar-btn {
-    width: var(--library-icon-btn-size, var(--n-icon-btn-size));
-    height: var(--library-icon-btn-size, var(--n-icon-btn-size));
+    width: var(--library-icon-btn-size, var(--hud-icon-button-size));
+    height: var(--library-icon-btn-size, var(--hud-icon-button-size));
     flex-shrink: 0;
   }
 
   .library-toolbar-btn :global(svg) {
-    width: var(--library-toolbar-icon-size, calc(15px * var(--n-hud-scale)));
-    height: var(--library-toolbar-icon-size, calc(15px * var(--n-hud-scale)));
+    width: var(--library-toolbar-icon-size, calc(15px * var(--component-library-scale)));
+    height: var(--library-toolbar-icon-size, calc(15px * var(--component-library-scale)));
     -webkit-app-region: no-drag;
     pointer-events: none;
   }
@@ -329,7 +329,7 @@
     position: absolute;
     top: calc(100% + 6px);
     right: 0;
-    z-index: 10;
+    z-index: var(--component-library-dropdown-z-index);
     min-width: min(296px, calc(100vw - 32px));
   }
 
@@ -349,11 +349,11 @@
   }
 
   .dir-toggle {
-    color: var(--n-on-surface-variant);
+    color: var(--component-library-muted-fg);
     justify-content: flex-start;
     gap: 8px;
-    border-top: 1px solid rgba(202, 196, 208, 0.08);
-    border-radius: 0 0 10px 10px;
+    border-top: 1px solid var(--component-library-toolbar-divider);
+    border-radius: 0 0 var(--component-menu-radius) var(--component-menu-radius);
     margin-top: 2px;
     padding-top: 9px;
   }
@@ -364,7 +364,7 @@
     gap: 8px;
     padding: 10px 4px 2px;
     margin-top: 6px;
-    border-top: 1px solid rgba(202, 196, 208, 0.08);
+    border-top: 1px solid var(--component-library-toolbar-divider);
   }
 
   .dropdown-panel :global(.n-popover-panel) {

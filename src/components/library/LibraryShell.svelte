@@ -163,11 +163,11 @@
     --library-grid-compact-column-gap: clamp(10px, 1.7vw, 18px);
     --library-content-padding-top: clamp(14px, 2.4vw, 20px);
     --library-content-padding-bottom: clamp(18px, 2.9vw, 24px);
-    --library-toolbar-gap: calc(12px * var(--n-hud-scale));
-    --library-toolbar-cluster-gap: calc(8px * var(--n-hud-scale));
-    --library-toolbar-height: calc(44px * var(--n-hud-scale));
-    --library-icon-btn-size: calc(36px * var(--n-hud-scale));
-    --library-toolbar-icon-size: calc(15px * var(--n-hud-scale));
+    --library-toolbar-gap: calc(12px * var(--component-library-scale));
+    --library-toolbar-cluster-gap: calc(8px * var(--component-library-scale));
+    --library-toolbar-height: calc(44px * var(--component-library-scale));
+    --library-icon-btn-size: calc(36px * var(--component-library-scale));
+    --library-toolbar-icon-size: calc(15px * var(--component-library-scale));
     --library-card-min-grid: clamp(104px, 18vw, 140px);
     --library-card-max-grid: clamp(126px, 22vw, 180px);
     --library-card-min-compact: clamp(88px, 15vw, 116px);
@@ -195,7 +195,7 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    padding-top: calc(12px * var(--n-hud-scale));
+    padding-top: calc(12px * var(--component-library-scale));
   }
 
   .hero-slot {
@@ -209,7 +209,7 @@
     width: 400px;
     height: 600px;
     pointer-events: none;
-    z-index: 0;
+    z-index: var(--component-library-panel-hidden-z-index);
   }
 
   .branches :global(.anim-branch) {

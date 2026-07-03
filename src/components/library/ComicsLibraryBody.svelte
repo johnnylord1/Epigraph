@@ -1130,7 +1130,7 @@
 
   .center {
     position: relative;
-    z-index: 1;
+    z-index: var(--component-library-panel-z-index);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -1145,14 +1145,14 @@
 
   .select-bar {
     position: relative;
-    z-index: 4;
+    z-index: var(--component-library-header-z-index);
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: var(--sp-3);
     padding: var(--sp-2) var(--sp-6);
-    background: var(--bg-raised);
-    border-bottom: 1px solid var(--accent-dim);
+    background: var(--component-library-select-bar-bg);
+    border-bottom: 1px solid var(--component-library-accent-border);
     flex-shrink: 0;
     animation: fadeIn 0.1s ease both;
   }
@@ -1173,7 +1173,7 @@
   .sel-count {
     font-family: var(--font-ui);
     font-size: var(--text-xs);
-    color: var(--accent-fg);
+    color: var(--component-library-accent-fg);
     letter-spacing: var(--tracking-wide);
   }
 
@@ -1188,7 +1188,7 @@
     padding: 4px 10px;
     border-radius: var(--radius-sm);
     border: 1px solid var(--border-dim);
-    background: var(--bg-base);
+    background: var(--component-button-bg);
     color: var(--text-muted);
     cursor: pointer;
     transition: color var(--t-base), border-color var(--t-base), background var(--t-base);
@@ -1197,11 +1197,11 @@
 
   .sel-btn:hover:not(:disabled) {
     color: var(--text-primary);
-    border-color: var(--border-strong);
+    border-color: var(--component-library-border-strong);
   }
 
   .sel-btn:disabled {
-    opacity: 0.4;
+    opacity: var(--component-library-disabled-opacity);
     cursor: not-allowed;
   }
 
@@ -1211,27 +1211,27 @@
   }
 
   .sel-cancel:hover {
-    background: var(--bg-raised);
-    border-color: var(--border-dim);
+    background: var(--component-button-bg-hover);
+    border-color: var(--component-library-border-dim);
   }
 
   .sel-move {
-    color: var(--accent-fg);
-    border-color: var(--accent-dim);
-    background: var(--accent-muted);
+    color: var(--component-library-accent-fg);
+    border-color: var(--component-library-accent-border);
+    background: var(--component-library-accent-muted-bg);
   }
 
   .sel-move:hover:not(:disabled) {
-    background: var(--accent-dim);
+    background: var(--component-library-accent-border);
   }
 
   .sel-remove {
-    color: var(--color-error, #e05c5c);
-    border-color: color-mix(in srgb, var(--color-error, #e05c5c) 30%, transparent);
+    color: var(--component-library-danger-fg);
+    border-color: var(--component-library-danger-border);
   }
 
   .sel-remove:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--color-error, #e05c5c) 12%, transparent);
+    background: var(--component-library-danger-bg-hover);
   }
 
   .sel-all {
@@ -1247,13 +1247,13 @@
     position: absolute;
     top: calc(100% + 4px);
     right: 0;
-    z-index: 10;
-    background: var(--bg-raised);
+    z-index: var(--component-library-dropdown-z-index);
+    background: var(--component-library-select-menu-bg);
     border: 1px solid var(--border-dim);
     border-radius: var(--radius-md);
     padding: 4px;
     min-width: 160px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    box-shadow: var(--component-library-select-menu-shadow);
     animation: fadeIn 0.1s ease both;
   }
 

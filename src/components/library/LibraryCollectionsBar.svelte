@@ -71,7 +71,7 @@
     border-radius: var(--radius-md);
     padding: 2px;
     flex-wrap: wrap;
-    margin-bottom: calc(12px * var(--n-hud-scale));
+    margin-bottom: calc(12px * var(--component-library-scale));
   }
 
   .tab {
@@ -126,9 +126,9 @@
     width: 2px;
     height: 22px;
     background: var(--accent);
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     flex-shrink: 0;
-    box-shadow: 0 0 6px var(--accent);
+    box-shadow: var(--component-library-insert-shadow);
     pointer-events: none;
     align-self: center;
   }

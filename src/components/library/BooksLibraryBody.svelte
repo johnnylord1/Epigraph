@@ -778,7 +778,7 @@
 
   .center {
     position: relative;
-    z-index: 1;
+    z-index: var(--component-library-panel-z-index);
     min-height: 100%;
     display: flex;
     flex-direction: column;
@@ -797,12 +797,12 @@
   .book-drop-overlay {
     position: absolute;
     inset: 0;
-    background: rgba(5, 8, 6, 0.78);
-    backdrop-filter: blur(4px);
+    background: var(--component-library-drop-overlay-bg);
+    backdrop-filter: var(--component-library-drop-overlay-blur);
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 6;
+    z-index: var(--component-library-header-z-index);
   }
 
   .book-drop-panel {
@@ -810,11 +810,11 @@
     align-items: center;
     gap: var(--sp-3);
     padding: var(--sp-4) var(--sp-5);
-    border: 1px solid var(--accent-dim);
+    border: 1px solid var(--component-library-accent-border);
     border-radius: var(--radius-lg);
-    background: linear-gradient(180deg, var(--bg-overlay), color-mix(in srgb, var(--bg-overlay) 70%, var(--accent-muted)));
-    box-shadow: 0 16px 42px rgba(0, 0, 0, 0.42);
-    color: var(--accent-fg);
+    background: var(--component-library-drop-panel-bg);
+    box-shadow: var(--component-library-drop-panel-shadow);
+    color: var(--component-library-accent-fg);
   }
 
   .book-drop-copy {

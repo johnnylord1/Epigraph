@@ -521,7 +521,7 @@
   }
 
   .card.n-library-card {
-    gap: var(--library-card-info-gap, calc(7px * var(--n-hud-scale, 1)));
+    gap: var(--library-card-info-gap, calc(7px * var(--component-library-scale, 1)));
     border-radius: 0;
     transition: transform 160ms ease, filter 160ms ease;
     contain: layout style;
@@ -533,25 +533,25 @@
 
   .card-list {
     display: grid;
-    grid-template-columns: calc(76px * var(--n-hud-scale, 1)) minmax(0, 1fr);
-    gap: calc(16px * var(--n-hud-scale, 1));
+    grid-template-columns: calc(76px * var(--component-library-scale, 1)) minmax(0, 1fr);
+    gap: calc(16px * var(--component-library-scale, 1));
     align-items: center;
-    min-height: calc(122px * var(--n-hud-scale, 1));
-    padding: calc(10px * var(--n-hud-scale, 1));
+    min-height: calc(122px * var(--component-library-scale, 1));
+    padding: calc(10px * var(--component-library-scale, 1));
     border: 1px solid var(--border-dim);
-    background: color-mix(in srgb, var(--bg-raised) 76%, transparent);
+    background: var(--component-library-card-list-bg);
   }
 
   .card-compact {
-    gap: calc(6px * var(--n-hud-scale, 1));
+    gap: calc(6px * var(--component-library-scale, 1));
   }
 
   .card:hover .cover {
-    filter: brightness(1.07);
+    filter: var(--component-library-card-cover-hover-filter);
   }
 
   .card.n-library-card:hover .cover {
-    filter: brightness(1.06) saturate(1.04);
+    filter: var(--component-library-card-cover-grid-hover-filter);
   }
 
   :global(.library-scroll-active) .card.n-library-card,
@@ -569,8 +569,8 @@
   }
 
   .card-list:hover {
-    background: color-mix(in srgb, var(--bg-raised) 92%, transparent);
-    border-color: var(--border-strong);
+    background: var(--component-library-card-list-hover-bg);
+    border-color: var(--component-library-border-strong);
   }
 
   .card:hover .title {
@@ -593,8 +593,8 @@
   }
 
   .card.card-list.card-selected {
-    border-color: var(--accent-dim);
-    background: color-mix(in srgb, var(--accent-muted) 68%, transparent);
+    border-color: var(--component-library-accent-border);
+    background: var(--component-library-card-list-selected-bg);
   }
 
   .card.card-selected .title {
@@ -615,12 +615,10 @@
   }
 
   .cover-wrap.n-library-card__cover {
-    border-radius: var(--library-card-cover-radius, calc(16px * var(--n-hud-scale, 1)));
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(218, 207, 255, 0.16);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.08),
-      0 2px 8px rgba(0, 0, 0, 0.24);
+    border-radius: var(--library-card-cover-radius, calc(16px * var(--component-library-scale, 1)));
+    background: var(--component-library-card-cover-bg);
+    border: 1px solid var(--component-library-card-cover-border);
+    box-shadow: var(--component-library-card-cover-shadow);
   }
 
   .card-list .cover-wrap {
@@ -635,11 +633,11 @@
 
   .card-outline-off.card-list {
     border-color: transparent;
-    background: color-mix(in srgb, var(--bg-raised) 55%, transparent);
+    background: var(--component-library-surface-raised);
   }
 
   .card-outline-off.card-list:hover {
-    background: color-mix(in srgb, var(--bg-raised) 88%, transparent);
+    background: var(--component-library-card-list-hover-bg);
   }
 
   .cover {
@@ -657,14 +655,14 @@
     align-items: center;
     justify-content: center;
     color: var(--text-faint);
-    background: linear-gradient(180deg, color-mix(in srgb, var(--bg-raised) 88%, white 12%), var(--bg-base));
+    background: var(--component-library-cover-fallback-bg);
   }
 
   .badge-cluster {
     position: absolute;
     display: flex;
     gap: 4px;
-    z-index: 2;
+    z-index: var(--component-library-control-z-index);
     pointer-events: none;
   }
 
@@ -697,19 +695,19 @@
 
   .badge.n-library-card__badge {
     min-width: auto;
-    min-height: var(--library-card-badge-height, calc(20px * var(--n-hud-scale, 1)));
-    height: var(--library-card-badge-height, calc(20px * var(--n-hud-scale, 1)));
-    padding: 0 var(--library-card-badge-padding-x, calc(7px * var(--n-hud-scale, 1)));
-    border-radius: 9999px;
-    background: rgba(36, 33, 43, 0.9);
-    border: 1px solid rgba(184, 167, 234, 0.12);
-    color: var(--n-primary, var(--accent-fg));
+    min-height: var(--library-card-badge-height, calc(20px * var(--component-library-scale, 1)));
+    height: var(--library-card-badge-height, calc(20px * var(--component-library-scale, 1)));
+    padding: 0 var(--library-card-badge-padding-x, calc(7px * var(--component-library-scale, 1)));
+    border-radius: var(--radius-full);
+    background: var(--component-library-card-badge-bg);
+    border: 1px solid var(--component-library-card-badge-border);
+    color: var(--component-library-card-badge-fg);
     font-family: var(--font-ui);
     font-size: var(--library-card-badge-font-size, 9px);
     font-weight: 800;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.18);
+    box-shadow: var(--component-library-card-badge-shadow);
   }
 
   .n-library-card__cover > .n-library-card__badge {
@@ -718,32 +716,32 @@
     right: var(--library-card-badge-inset, var(--sp-2));
     display: inline-flex;
     align-items: center;
-    min-height: var(--library-card-badge-height, calc(20px * var(--n-hud-scale, 1)));
-    padding: 0 var(--library-card-badge-padding-x, calc(7px * var(--n-hud-scale, 1)));
-    border-radius: 9999px;
-    background: rgba(36, 33, 43, 0.9);
-    border: 1px solid rgba(184, 167, 234, 0.12);
-    color: var(--n-primary, var(--accent-fg));
+    min-height: var(--library-card-badge-height, calc(20px * var(--component-library-scale, 1)));
+    padding: 0 var(--library-card-badge-padding-x, calc(7px * var(--component-library-scale, 1)));
+    border-radius: var(--radius-full);
+    background: var(--component-library-card-badge-bg);
+    border: 1px solid var(--component-library-card-badge-border);
+    color: var(--component-library-card-badge-fg);
     font-family: var(--font-ui);
     font-size: var(--library-card-badge-font-size, 9px);
     font-weight: 800;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.18);
+    box-shadow: var(--component-library-card-badge-shadow);
   }
 
   .badge-unread {
-    background: color-mix(in srgb, var(--accent-muted) 32%, var(--bg-void));
-    color: color-mix(in srgb, var(--accent-fg) 78%, var(--text-primary));
-    border: 1px solid color-mix(in srgb, var(--accent-dim) 52%, var(--border-strong));
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent);
+    background: var(--component-library-accent-muted-bg);
+    color: var(--component-library-accent-fg);
+    border: 1px solid var(--component-library-accent-border);
+    box-shadow: none;
   }
 
   .badge-download {
-    background: color-mix(in srgb, var(--accent) 42%, var(--bg-void));
-    color: var(--accent-fg);
-    border: 1px solid var(--accent-dim);
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent);
+    background: var(--component-library-accent-muted-bg);
+    color: var(--component-library-accent-fg);
+    border: 1px solid var(--component-library-accent-border);
+    box-shadow: none;
   }
 
   .badge-subtype {
@@ -761,7 +759,7 @@
   .select-overlay {
     position: absolute;
     inset: 0;
-    background: rgba(0, 0, 0, 0.18);
+    background: var(--component-library-card-select-overlay-bg);
     display: flex;
     align-items: flex-start;
     justify-content: flex-end;
@@ -783,9 +781,9 @@
   .select-check-empty {
     width: 20px;
     height: 20px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     border: 2px solid var(--text-faint);
-    background: rgba(0, 0, 0, 0.3);
+    background: var(--component-library-card-select-empty-bg);
   }
 
   .cover-progress-track {
@@ -793,17 +791,15 @@
     left: 0;
     right: 0;
     bottom: 0;
-    z-index: 2;
+    z-index: var(--component-library-control-z-index);
     height: var(
       --library-card-progress-height,
-      clamp(calc(3.5px * var(--n-hud-scale, 1)), 3.2cqw, calc(6px * var(--n-hud-scale, 1)))
+      clamp(calc(3.5px * var(--component-library-scale, 1)), 3.2cqw, calc(6px * var(--component-library-scale, 1)))
     );
     border-radius: 0 0 inherit inherit;
-    background: rgba(36, 33, 43, 0.72);
+    background: var(--component-library-card-progress-track-bg);
     overflow: hidden;
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.08),
-      0 -1px 0 rgba(255, 255, 255, 0.16);
+    box-shadow: var(--component-library-card-progress-track-shadow);
     pointer-events: none;
   }
 
@@ -814,23 +810,21 @@
   .cover-progress-fill {
     display: block;
     position: relative;
-    z-index: 1;
+    z-index: var(--component-library-panel-z-index);
     width: var(--cover-progress-width, 0%);
     max-width: 100%;
     height: 100%;
     min-width: 0;
     overflow: hidden;
     border-radius: 0 999px 999px 0;
-    background: linear-gradient(90deg, #8f7bd5 0%, #a996e8 55%, #b9a8ef 100%);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.24),
-      0 0 0 1px rgba(184, 167, 234, 0.2);
+    background: var(--component-library-card-progress-fill-bg);
+    box-shadow: var(--component-library-card-progress-fill-shadow);
     clip-path: polygon(0 0, calc(100% - 3px) 0, 100% 20%, calc(100% - 1px) 48%, 100% 76%, calc(100% - 3px) 100%, 0 100%);
     transition: width 220ms cubic-bezier(0.2, 0.78, 0.24, 1);
   }
 
   .cover-progress-fill.has-visible-progress {
-    min-width: max(calc(5px * var(--n-hud-scale, 1)), 3.2cqw);
+    min-width: max(calc(5px * var(--component-library-scale, 1)), 3.2cqw);
   }
 
   .cover-progress-fill::before,
@@ -842,10 +836,7 @@
 
   .cover-progress-fill::before {
     inset: 0 -132px 0 0;
-    background-image:
-      radial-gradient(circle at 18px 70%, rgba(255, 255, 255, 0.56) 0 1px, transparent 1.35px),
-      radial-gradient(circle at 56px 38%, rgba(255, 255, 255, 0.36) 0 0.8px, transparent 1.2px),
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 132 12' preserveAspectRatio='none'%3E%3Cpath d='M0 5 C16 1 28 1 44 5 S72 9 88 5 S116 1 132 5 V12 H0 Z' fill='%23d8ccff'/%3E%3C/svg%3E");
+    background-image: var(--component-library-card-progress-liquid-bg);
     background-repeat: repeat-x;
     background-size: 74px 12px, 96px 12px, 132px 100%;
     background-position: 0 0, 0 0, 0 0;
@@ -860,9 +851,7 @@
 
   .cover-progress-fill::after {
     inset: 0;
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.22), transparent 52%),
-      linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.18) 58%, transparent 100%);
+    background: var(--component-library-card-progress-shine-bg);
     opacity: 0.72;
   }
 
@@ -920,11 +909,11 @@
 
   .title.n-library-card__title {
     min-height: calc(var(--leading-snug) * 2em);
-    color: rgba(255, 255, 255, 0.92);
+    color: var(--component-library-card-title-fg);
     font-size: var(--library-card-title-font-size, var(--text-xs));
     font-weight: var(--weight-medium);
     line-height: var(--leading-snug);
-    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+    text-shadow: var(--component-library-card-title-shadow);
   }
 
   .card-list .title {
@@ -951,7 +940,7 @@
     font-size: var(--library-card-meta-font-size, 9px);
     letter-spacing: var(--tracking-wide);
     text-transform: uppercase;
-    color: rgba(255, 255, 255, 0.45);
+    color: var(--component-library-card-meta-fg);
   }
 
   .n-library-card__meta {
@@ -968,14 +957,14 @@
     font-size: var(--library-card-meta-font-size, 9px);
     letter-spacing: var(--tracking-wide);
     text-transform: uppercase;
-    color: rgba(255, 255, 255, 0.45);
+    color: var(--component-library-card-meta-fg);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
   .n-library-card__vol {
-    color: rgba(255, 255, 255, 0.7);
+    color: var(--component-library-card-meta-strong-fg);
     flex-shrink: 0;
   }
 
@@ -1002,7 +991,7 @@
   }
 
   .meta-chip-badge {
-    background: color-mix(in srgb, var(--bg-base) 82%, transparent);
+    background: var(--component-library-surface);
   }
 
   .meta-chip-subtype {
@@ -1011,15 +1000,15 @@
 
   .meta-chip-status,
   .meta-chip-download {
-    color: var(--accent-fg);
-    border-color: var(--accent-dim);
-    background: color-mix(in srgb, var(--accent-muted) 80%, transparent);
+    color: var(--component-library-accent-fg);
+    border-color: var(--component-library-accent-border);
+    background: var(--component-library-accent-muted-bg);
   }
 
   .meta-chip-unread {
-    color: color-mix(in srgb, var(--accent-fg) 78%, var(--text-primary));
-    border-color: color-mix(in srgb, var(--accent-dim) 52%, var(--border-strong));
-    background: color-mix(in srgb, var(--accent-muted) 40%, var(--bg-raised));
+    color: var(--component-library-accent-fg);
+    border-color: var(--component-library-accent-border);
+    background: var(--component-library-accent-muted-bg);
   }
 
   .progress-block {
@@ -1044,7 +1033,7 @@
   .progress-track {
     width: 100%;
     height: 4px;
-    border-radius: 999px;
+    border-radius: var(--radius-full);
     background: var(--bg-raised);
     overflow: hidden;
     border: 1px solid var(--border-dim);

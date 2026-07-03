@@ -266,7 +266,7 @@
     font-weight: 620;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: var(--n-popover-label);
+    color: var(--component-library-faint-fg);
   }
 
   .n-popover-note {
@@ -276,7 +276,7 @@
     line-height: 1.45;
     font-weight: 500;
     letter-spacing: 0;
-    color: var(--n-popover-text);
+    color: var(--component-library-muted-fg);
   }
 
   .n-popover-meta {
@@ -286,7 +286,7 @@
     font-weight: 620;
     letter-spacing: 0.055em;
     text-transform: uppercase;
-    color: var(--n-popover-meta);
+    color: var(--component-library-accent-fg);
     white-space: nowrap;
   }
 
@@ -312,19 +312,19 @@
     font-weight: 600;
     letter-spacing: 0.045em;
     text-transform: uppercase;
-    color: rgba(207, 199, 226, 0.62);
+    color: var(--component-library-muted-fg);
   }
 
   .n-compact-toggle {
     position: relative;
     flex: 0 0 auto;
-    width: calc(40px * var(--n-hud-scale, 1));
-    height: calc(22px * var(--n-hud-scale, 1));
+    width: calc(40px * var(--component-library-scale, 1));
+    height: calc(22px * var(--component-library-scale, 1));
     padding: 0;
     border: none;
-    border-radius: 999px;
-    background: rgba(148, 143, 154, 0.2);
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+    border-radius: var(--radius-full);
+    background: var(--component-library-popover-toggle-bg);
+    box-shadow: var(--component-library-popover-toggle-shadow);
     cursor: pointer;
     transition:
       background 180ms ease,
@@ -335,28 +335,26 @@
   .n-compact-toggle::after {
     content: "";
     position: absolute;
-    top: calc(2px * var(--n-hud-scale, 1));
-    left: calc(2px * var(--n-hud-scale, 1));
-    width: calc(18px * var(--n-hud-scale, 1));
-    height: calc(18px * var(--n-hud-scale, 1));
-    border-radius: 999px;
-    background: rgba(202, 196, 208, 0.56);
+    top: calc(2px * var(--component-library-scale, 1));
+    left: calc(2px * var(--component-library-scale, 1));
+    width: calc(18px * var(--component-library-scale, 1));
+    height: calc(18px * var(--component-library-scale, 1));
+    border-radius: var(--radius-full);
+    background: var(--component-library-popover-toggle-knob-bg);
     transition: transform 180ms ease, background 180ms ease;
   }
 
   .n-compact-toggle.is-on {
-    background: var(--n-primary-container);
+    background: var(--component-library-popover-toggle-on-bg);
   }
 
   .n-compact-toggle.is-on::after {
-    transform: translateX(calc(18px * var(--n-hud-scale, 1)));
-    background: var(--n-on-primary-container);
+    transform: translateX(calc(18px * var(--component-library-scale, 1)));
+    background: var(--component-library-popover-toggle-on-knob-bg);
   }
 
   .n-compact-toggle:hover {
-    box-shadow:
-      inset 0 0 0 1px rgba(255, 255, 255, 0.04),
-      0 0 0 1px rgba(184, 167, 234, 0.08);
+    box-shadow: var(--component-library-popover-toggle-hover-shadow);
   }
 
   .n-compact-toggle:active {
@@ -371,10 +369,10 @@
     grid-template-columns: repeat(var(--switch-count, 2), minmax(0, 1fr));
     gap: 4px;
     padding: 4px;
-    border-radius: 9999px;
-    background: rgba(36, 33, 43, 0.6);
-    backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: var(--radius-full);
+    background: var(--component-library-popover-switch-bg);
+    backdrop-filter: var(--component-library-popover-switch-blur);
+    border: 1px solid var(--component-library-popover-switch-border);
     overflow: hidden;
   }
 
@@ -384,14 +382,14 @@
 
   .n-mini-switch-thumb {
     position: absolute;
-    z-index: 0;
+    z-index: var(--component-library-panel-hidden-z-index);
     top: 4px;
     bottom: 4px;
     left: 4px;
     width: calc((100% - 12px) / 2);
-    border-radius: 9999px;
-    background: var(--n-gradient-primary);
-    box-shadow: 0 4px 14px rgba(184, 167, 234, 0.4);
+    border-radius: var(--radius-full);
+    background: var(--component-library-popover-switch-thumb-bg);
+    box-shadow: var(--component-library-popover-switch-thumb-shadow);
     transform: translateX(0);
     transition: transform 620ms cubic-bezier(0.22, 1, 0.36, 1);
     pointer-events: none;
@@ -412,30 +410,30 @@
 
   .n-mini-switch > button:not(.n-mini-switch-hit) {
     position: relative;
-    z-index: 2;
+    z-index: var(--component-library-control-z-index);
     min-width: 28px;
     min-height: 22px;
     padding: 0 8px;
-    border-radius: 9999px;
+    border-radius: var(--radius-full);
     border: none;
     background: transparent;
-    color: var(--n-popover-text);
+    color: var(--component-library-muted-fg);
     font-family: var(--font-sans);
     font-size: 10px;
     font-weight: 800;
     letter-spacing: 0.05em;
     text-transform: uppercase;
     cursor: pointer;
-    transition: all 250ms var(--n-ease-spring);
+    transition: all 250ms var(--easing-emphasized);
   }
 
   .n-mini-switch > button:not(.n-mini-switch-hit):hover:not(.is-selected) {
-    color: var(--n-popover-text-strong);
-    background: var(--n-popover-item-hover);
+    color: var(--component-library-fg);
+    background: var(--component-button-bg-hover);
   }
 
   .n-mini-switch > button:not(.n-mini-switch-hit).is-selected {
-    color: var(--n-on-primary);
+    color: var(--component-library-popover-switch-selected-fg);
   }
 
   @media (prefers-reduced-motion: reduce) {

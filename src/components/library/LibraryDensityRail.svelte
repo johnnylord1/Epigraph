@@ -76,13 +76,13 @@
   .density-control {
     position: relative;
     width: 100%;
-    height: calc(18px * var(--n-hud-scale, 1));
+    height: calc(18px * var(--component-library-scale, 1));
     min-width: 0;
   }
 
   .density-range {
     position: absolute;
-    z-index: 2;
+    z-index: var(--component-library-control-z-index);
     inset: 0;
     appearance: none;
     width: 100%;
@@ -96,13 +96,13 @@
 
   .density-track {
     position: absolute;
-    z-index: 1;
+    z-index: var(--component-library-panel-z-index);
     top: 50%;
-    left: calc(7px * var(--n-hud-scale, 1));
-    right: calc(7px * var(--n-hud-scale, 1));
-    height: calc(5px * var(--n-hud-scale, 1));
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.09);
+    left: calc(7px * var(--component-library-scale, 1));
+    right: calc(7px * var(--component-library-scale, 1));
+    height: calc(5px * var(--component-library-scale, 1));
+    border-radius: var(--radius-full);
+    background: var(--component-library-density-track-bg);
     transform: translateY(-50%);
     overflow: visible;
   }
@@ -112,8 +112,8 @@
     inset: 0 auto 0 0;
     width: var(--density-progress, 0%);
     border-radius: inherit;
-    background: var(--n-gradient-primary);
-    box-shadow: 0 0 10px rgba(184, 167, 234, 0.18);
+    background: var(--component-library-density-fill-bg);
+    box-shadow: var(--component-library-density-fill-shadow);
     transition: width 260ms cubic-bezier(0.2, 0.9, 0.22, 1);
   }
 
@@ -121,14 +121,12 @@
     position: absolute;
     top: 50%;
     left: var(--density-progress, 0%);
-    width: calc(16px * var(--n-hud-scale, 1));
-    height: calc(16px * var(--n-hud-scale, 1));
-    border-radius: 999px;
-    background: rgba(218, 207, 255, 0.95);
-    border: 2px solid rgba(24, 22, 31, 0.95);
-    box-shadow:
-      0 0 0 1px rgba(184, 167, 234, 0.2),
-      0 4px 10px rgba(0, 0, 0, 0.24);
+    width: calc(16px * var(--component-library-scale, 1));
+    height: calc(16px * var(--component-library-scale, 1));
+    border-radius: var(--radius-full);
+    background: var(--component-library-density-thumb-bg);
+    border: 2px solid var(--component-library-density-thumb-border);
+    box-shadow: var(--component-library-density-thumb-shadow);
     transform: translate(-50%, -50%);
     transition:
       left 260ms cubic-bezier(0.2, 0.9, 0.22, 1),
@@ -137,20 +135,18 @@
 
   .density-control:hover .density-thumb,
   .density-control:focus-within .density-thumb {
-    box-shadow:
-      0 0 0 3px rgba(184, 167, 234, 0.12),
-      0 4px 10px rgba(0, 0, 0, 0.24);
+    box-shadow: var(--component-library-density-thumb-hover-shadow);
   }
 
   .density-labels {
     position: relative;
-    width: calc(100% - calc(14px * var(--n-hud-scale, 1)));
+    width: calc(100% - calc(14px * var(--component-library-scale, 1)));
     height: 12px;
-    margin: 0 calc(7px * var(--n-hud-scale, 1));
+    margin: 0 calc(7px * var(--component-library-scale, 1));
     padding: 0;
     font-family: var(--font-sans);
     font-size: 10px;
-    color: rgba(229, 226, 225, 0.32);
+    color: var(--component-library-density-label-fg);
     letter-spacing: 0.055em;
     font-weight: 600;
     text-transform: uppercase;
@@ -168,7 +164,7 @@
 
   .density-labels span.active {
     opacity: 1;
-    color: rgba(218, 207, 255, 0.76);
+    color: var(--component-library-density-label-active-fg);
   }
 
   @media (prefers-reduced-motion: reduce) {

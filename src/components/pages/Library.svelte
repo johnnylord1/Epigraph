@@ -2053,7 +2053,7 @@
               <h1 class="n-title-xl library-hero__title">{activeHeroTitle}</h1>
             </div>
             <div class="n-soft-pill library-count-pill">
-              <span class="material-symbols-outlined text-sm" style="color: var(--n-primary-container);">shelves</span>
+              <span class="material-symbols-outlined text-sm" style="color: var(--component-library-accent-fg);">shelves</span>
               <span>{activeHeroCountLabel}</span>
             </div>
           </div>
@@ -2257,8 +2257,8 @@
 <style>
   .library-section-panel {
     position: absolute;
-    inset: calc(12px * var(--n-hud-scale)) 0 0;
-    z-index: 0;
+    inset: calc(12px * var(--component-library-scale)) 0 0;
+    z-index: var(--component-library-panel-hidden-z-index);
     display: flex;
     flex: 1;
     min-height: 0;
@@ -2272,7 +2272,7 @@
   .library-section-panel.is-active {
     position: relative;
     inset: auto;
-    z-index: 1;
+    z-index: var(--component-library-panel-z-index);
     opacity: 1;
     visibility: visible;
     pointer-events: auto;
@@ -2282,12 +2282,12 @@
   .library-refresh-backdrop {
     position: fixed;
     inset: 0;
-    z-index: 80;
+    z-index: var(--component-library-refresh-z-index);
     display: grid;
     place-items: center;
     padding: 24px;
-    background: rgba(4, 4, 8, 0.58);
-    backdrop-filter: blur(10px) saturate(1.08);
+    background: var(--component-library-refresh-backdrop-bg);
+    backdrop-filter: var(--component-library-refresh-backdrop-blur);
   }
 
   .library-refresh-modal {
@@ -2296,16 +2296,12 @@
     flex-direction: column;
     gap: 16px;
     padding: 18px;
-    border: 1px solid rgba(184, 167, 234, 0.16);
-    border-radius: 8px;
-    background:
-      linear-gradient(180deg, rgba(22, 20, 31, 0.98), rgba(13, 12, 18, 0.98)),
-      var(--bg-surface);
-    box-shadow:
-      0 28px 76px rgba(0, 0, 0, 0.62),
-      inset 0 1px 0 rgba(255, 255, 255, 0.035);
-    color: var(--text-primary);
-    font-family: var(--font-sans);
+    border: 1px solid var(--component-library-refresh-modal-border);
+    border-radius: var(--component-library-refresh-modal-radius);
+    background: var(--component-library-refresh-modal-bg);
+    box-shadow: var(--component-library-refresh-modal-shadow);
+    color: var(--component-library-fg);
+    font-family: var(--component-library-font);
     animation: refreshModalIn 0.14s ease both;
   }
 
@@ -2329,8 +2325,8 @@
     width: 32px;
     height: 32px;
     flex: 0 0 auto;
-    border-color: rgba(184, 167, 234, 0.12);
-    background: rgba(255, 255, 255, 0.025);
+    border-color: var(--component-library-refresh-option-border);
+    background: var(--component-library-refresh-option-bg);
   }
 
   .library-refresh-modal__close span {
@@ -2355,10 +2351,10 @@
     width: 100%;
     min-height: 74px;
     padding: 13px 14px 13px 18px;
-    border: 1px solid rgba(184, 167, 234, 0.10);
-    border-radius: 7px;
-    background: rgba(255, 255, 255, 0.025);
-    color: var(--text-primary);
+    border: 1px solid var(--component-library-refresh-option-border);
+    border-radius: var(--radius-lg);
+    background: var(--component-library-refresh-option-bg);
+    color: var(--component-library-fg);
     text-align: left;
     cursor: pointer;
     transition: border-color var(--t-base), background var(--t-base), transform var(--t-fast), box-shadow var(--t-base);
@@ -2371,20 +2367,20 @@
     top: 14px;
     bottom: 14px;
     width: 2px;
-    border-radius: 999px;
-    background: rgba(184, 167, 234, 0.42);
+    border-radius: var(--radius-full);
+    background: var(--component-library-refresh-option-accent-bg);
     opacity: 0.72;
   }
 
   .library-refresh-option:hover:not(:disabled) {
-    border-color: rgba(184, 167, 234, 0.26);
-    background: rgba(184, 167, 234, 0.075);
-    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22);
+    border-color: var(--component-library-refresh-option-hover-border);
+    background: var(--component-library-refresh-option-hover-bg);
+    box-shadow: var(--component-library-refresh-option-hover-shadow);
     transform: translateY(-1px);
   }
 
   .library-refresh-option:disabled {
-    opacity: 0.58;
+    opacity: var(--component-library-disabled-opacity);
     cursor: default;
   }
 
@@ -2405,13 +2401,13 @@
   }
 
   .library-refresh-option--primary {
-    border-color: rgba(184, 167, 234, 0.24);
-    background: rgba(184, 167, 234, 0.085);
+    border-color: var(--component-library-accent-border);
+    background: var(--component-library-accent-muted-bg);
   }
 
   .library-refresh-option--primary::before {
     background: var(--accent-bright);
-    box-shadow: 0 0 12px rgba(184, 167, 234, 0.38);
+    box-shadow: var(--component-library-refresh-option-accent-shadow);
   }
 
   @keyframes refreshModalIn {
@@ -2421,7 +2417,7 @@
 
   .library-hero {
     position: relative;
-    z-index: 6;
+    z-index: var(--component-library-header-z-index);
     padding: var(--library-hero-padding-top, 14px) var(--library-shell-padding-x, 40px) 0;
   }
 
@@ -2470,7 +2466,7 @@
 
   .library-hero__toolbar {
     position: relative;
-    z-index: 7;
+    z-index: var(--component-library-dropdown-z-index);
     flex: 0 0 auto;
     display: flex;
     align-items: flex-start;
@@ -2502,8 +2498,8 @@
     width: 1px;
     height: var(--library-chip-divider-height, 16px);
     margin: 0 var(--library-chip-divider-margin, 2px);
-    border-radius: 999px;
-    background: rgba(202, 196, 208, 0.14);
+    border-radius: var(--radius-full);
+    background: var(--component-library-chip-divider-bg);
     flex: 0 0 auto;
   }
 
@@ -2545,7 +2541,7 @@
     top: 50%;
     right: -13px;
     transform: translateY(-50%);
-    color: rgba(202, 196, 208, 0.38);
+    color: var(--component-library-overflow-indicator-fg);
     font-family: var(--font-ui);
     font-size: 10px;
     font-weight: 800;
@@ -2556,7 +2552,7 @@
   }
 
   .library-genre-frame.has-overflow.is-dragging::after {
-    color: rgba(211, 196, 255, 0.72);
+    color: var(--component-library-overflow-indicator-active-fg);
     opacity: 1;
     transform: translate(1px, -50%);
   }
@@ -2613,7 +2609,7 @@
 
   .center {
     position: relative;
-    z-index: 1;
+    z-index: var(--component-library-panel-z-index);
     display: flex;
     flex-direction: column;
     align-items: center;

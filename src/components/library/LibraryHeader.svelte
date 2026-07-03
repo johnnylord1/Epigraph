@@ -70,19 +70,19 @@
 <style>
   .header {
     position: relative;
-    z-index: 4;
+    z-index: var(--component-library-header-z-index);
     display: flex;
     flex-direction: column;
     align-items: stretch;
     flex-shrink: 0;
-    padding-top: var(--n-topbar-height);
+    padding-top: var(--component-library-topbar-height);
   }
 
   .header :global(.library-header-topbar) {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     align-items: center;
-    gap: calc(16px * var(--n-hud-scale));
+    gap: calc(16px * var(--component-library-scale));
   }
 
   .header-left,
@@ -100,7 +100,7 @@
 
   .header-right {
     justify-content: flex-end;
-    z-index: 2;
+    z-index: var(--component-library-control-z-index);
   }
 
   .header-center {
@@ -110,8 +110,8 @@
 
   .header-bottom {
     min-height: 0;
-    padding: 0 28px calc(22px * var(--n-hud-scale));
-    margin-bottom: calc(2px * var(--n-hud-scale));
+    padding: 0 28px calc(22px * var(--component-library-scale));
+    margin-bottom: calc(2px * var(--component-library-scale));
     display: flex;
     align-items: center;
     width: 100%;

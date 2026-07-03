@@ -334,6 +334,112 @@
   --component-settings-meter-critical-bg: linear-gradient(90deg, rgba(255, 135, 135, 0.82), rgba(255, 177, 177, 0.94));
   --component-settings-overlay-bg: rgba(0, 0, 0, 0.72);
   --component-settings-overlay-blur: blur(4px);
+  --component-library-font: "Manrope", var(--font-sans);
+  --component-library-scale: var(--hud-scale, 1);
+  --component-library-topbar-height: var(--n-topbar-height);
+  --component-library-surface: rgba(28, 27, 27, 0.72);
+  --component-library-surface-raised: rgba(32, 31, 31, 0.76);
+  --component-library-border-dim: rgba(202, 196, 208, 0.08);
+  --component-library-border-strong: rgba(184, 167, 234, 0.26);
+  --component-library-fg: var(--n-on-surface);
+  --component-library-muted-fg: rgba(202, 196, 208, 0.72);
+  --component-library-faint-fg: rgba(202, 196, 208, 0.38);
+  --component-library-accent-fg: var(--n-primary);
+  --component-library-accent-muted-bg: rgba(184, 167, 234, 0.085);
+  --component-library-accent-border: rgba(184, 167, 234, 0.24);
+  --component-library-danger-fg: #cf8aa0;
+  --component-library-danger-bg-hover: rgba(207, 138, 160, 0.12);
+  --component-library-danger-border: rgba(207, 138, 160, 0.3);
+  --component-library-card-list-bg: color-mix(in srgb, var(--bg-raised) 76%, transparent);
+  --component-library-card-list-hover-bg: color-mix(in srgb, var(--bg-raised) 92%, transparent);
+  --component-library-card-list-selected-bg: color-mix(in srgb, var(--accent-muted) 68%, transparent);
+  --component-library-card-cover-bg: rgba(255, 255, 255, 0.03);
+  --component-library-card-cover-border: rgba(218, 207, 255, 0.16);
+  --component-library-card-cover-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 2px 8px rgba(0, 0, 0, 0.24);
+  --component-library-card-title-fg: rgba(255, 255, 255, 0.92);
+  --component-library-card-title-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+  --component-library-card-meta-fg: rgba(255, 255, 255, 0.45);
+  --component-library-card-meta-strong-fg: rgba(255, 255, 255, 0.7);
+  --component-library-card-badge-bg: rgba(36, 33, 43, 0.9);
+  --component-library-card-badge-border: rgba(184, 167, 234, 0.12);
+  --component-library-card-badge-fg: var(--n-primary);
+  --component-library-card-badge-shadow: 0 8px 16px rgba(0, 0, 0, 0.18);
+  --component-library-card-select-overlay-bg: rgba(0, 0, 0, 0.18);
+  --component-library-card-select-empty-bg: rgba(0, 0, 0, 0.3);
+  --component-library-card-progress-track-bg: rgba(36, 33, 43, 0.72);
+  --component-library-card-progress-track-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 -1px 0 rgba(255, 255, 255, 0.16);
+  --component-library-card-progress-fill-bg: linear-gradient(90deg, #8f7bd5 0%, #a996e8 55%, #b9a8ef 100%);
+  --component-library-card-progress-fill-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.24),
+    0 0 0 1px rgba(184, 167, 234, 0.2);
+  --component-library-card-progress-liquid-bg:
+    radial-gradient(circle at 18px 70%, rgba(255, 255, 255, 0.56) 0 1px, transparent 1.35px),
+    radial-gradient(circle at 56px 38%, rgba(255, 255, 255, 0.36) 0 0.8px, transparent 1.2px),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 132 12' preserveAspectRatio='none'%3E%3Cpath d='M0 5 C16 1 28 1 44 5 S72 9 88 5 S116 1 132 5 V12 H0 Z' fill='%23d8ccff'/%3E%3C/svg%3E");
+  --component-library-card-progress-shine-bg:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.22), transparent 52%),
+    linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.18) 58%, transparent 100%);
+  --component-library-cover-fallback-bg: linear-gradient(180deg, color-mix(in srgb, var(--bg-raised) 88%, white 12%), var(--bg-base));
+  --component-library-chip-divider-bg: rgba(202, 196, 208, 0.14);
+  --component-library-overflow-indicator-fg: rgba(202, 196, 208, 0.38);
+  --component-library-overflow-indicator-active-fg: rgba(211, 196, 255, 0.72);
+  --component-library-toolbar-divider: rgba(202, 196, 208, 0.08);
+  --component-library-popover-switch-bg: rgba(36, 33, 43, 0.6);
+  --component-library-popover-switch-border: rgba(255, 255, 255, 0.04);
+  --component-library-popover-switch-blur: blur(12px);
+  --component-library-popover-switch-thumb-bg: var(--n-gradient-primary);
+  --component-library-popover-switch-thumb-shadow: 0 4px 14px rgba(184, 167, 234, 0.4);
+  --component-library-popover-switch-selected-fg: var(--n-on-primary);
+  --component-library-popover-toggle-bg: rgba(148, 143, 154, 0.2);
+  --component-library-popover-toggle-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+  --component-library-popover-toggle-knob-bg: rgba(202, 196, 208, 0.56);
+  --component-library-popover-toggle-on-bg: var(--n-primary-container);
+  --component-library-popover-toggle-on-knob-bg: var(--n-on-primary-container);
+  --component-library-popover-toggle-hover-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+    0 0 0 1px rgba(184, 167, 234, 0.08);
+  --component-library-density-track-bg: rgba(255, 255, 255, 0.09);
+  --component-library-density-fill-bg: var(--n-gradient-primary);
+  --component-library-density-fill-shadow: 0 0 10px rgba(184, 167, 234, 0.18);
+  --component-library-density-thumb-bg: rgba(218, 207, 255, 0.95);
+  --component-library-density-thumb-border: rgba(24, 22, 31, 0.95);
+  --component-library-density-thumb-shadow:
+    0 0 0 1px rgba(184, 167, 234, 0.2),
+    0 4px 10px rgba(0, 0, 0, 0.24);
+  --component-library-density-thumb-hover-shadow:
+    0 0 0 3px rgba(184, 167, 234, 0.12),
+    0 4px 10px rgba(0, 0, 0, 0.24);
+  --component-library-density-label-fg: rgba(229, 226, 225, 0.32);
+  --component-library-density-label-active-fg: rgba(218, 207, 255, 0.76);
+  --component-library-drop-overlay-bg: rgba(5, 8, 6, 0.78);
+  --component-library-drop-overlay-blur: blur(4px);
+  --component-library-drop-panel-bg: linear-gradient(180deg, var(--bg-overlay), color-mix(in srgb, var(--bg-overlay) 70%, var(--accent-muted)));
+  --component-library-drop-panel-shadow: 0 16px 42px rgba(0, 0, 0, 0.42);
+  --component-library-select-bar-bg: var(--bg-raised);
+  --component-library-select-menu-bg: var(--bg-raised);
+  --component-library-select-menu-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --component-library-refresh-backdrop-bg: rgba(4, 4, 8, 0.58);
+  --component-library-refresh-backdrop-blur: blur(10px) saturate(1.08);
+  --component-library-refresh-z-index: 80;
+  --component-library-refresh-modal-bg:
+    linear-gradient(180deg, rgba(22, 20, 31, 0.98), rgba(13, 12, 18, 0.98)),
+    var(--bg-surface);
+  --component-library-refresh-modal-border: rgba(184, 167, 234, 0.16);
+  --component-library-refresh-modal-radius: 8px;
+  --component-library-refresh-modal-shadow:
+    0 28px 76px rgba(0, 0, 0, 0.62),
+    inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  --component-library-refresh-option-bg: rgba(255, 255, 255, 0.025);
+  --component-library-refresh-option-border: rgba(184, 167, 234, 0.10);
+  --component-library-refresh-option-hover-bg: rgba(184, 167, 234, 0.075);
+  --component-library-refresh-option-hover-border: rgba(184, 167, 234, 0.26);
+  --component-library-refresh-option-hover-shadow: 0 12px 28px rgba(0, 0, 0, 0.22);
+  --component-library-refresh-option-accent-bg: rgba(184, 167, 234, 0.42);
+  --component-library-refresh-option-accent-shadow: 0 0 12px rgba(184, 167, 234, 0.38);
 
   --hud-control-height:        28px;
   --hud-icon-button-size:      28px;
