@@ -44,6 +44,7 @@ export default defineWorkspace([
         "src/components/pages/BrowseV3.test.ts",
         "src/components/pages/MigrateModal.test.ts",
         "src/components/pages/NovelSources.test.ts",
+        "src/components/pages/SourcesThemeTokens.test.ts",
         "src/components/shared/SeriesDetailV3Shell.test.ts",
         "src/components/settings/SyncdSessionDetails.test.ts",
         "src/components/settings/NovelRepositoriesPanel.test.ts",

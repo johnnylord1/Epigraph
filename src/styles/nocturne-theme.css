@@ -440,6 +440,153 @@
   --component-library-refresh-option-hover-shadow: 0 12px 28px rgba(0, 0, 0, 0.22);
   --component-library-refresh-option-accent-bg: rgba(184, 167, 234, 0.42);
   --component-library-refresh-option-accent-shadow: 0 0 12px rgba(184, 167, 234, 0.38);
+  --component-sources-root-radius: clamp(18px, 1.6vw, 26px);
+  --component-sources-scale: var(--component-library-scale);
+  --component-sources-root-border: rgba(255, 255, 255, 0.055);
+  --component-sources-root-bg:
+    radial-gradient(circle at 20% 0%, rgba(184, 167, 234, 0.055), transparent 30%),
+    rgba(18, 18, 22, 0.7);
+  --component-sources-header-divider: rgba(255, 255, 255, 0.045);
+  --component-sources-title-fg: rgba(244, 241, 243, 0.92);
+  --component-sources-muted-fg: rgba(202, 196, 208, 0.42);
+  --component-sources-subtle-fg: rgba(202, 196, 208, 0.5);
+  --component-sources-body-fg: rgba(202, 196, 208, 0.62);
+  --component-sources-strong-fg: rgba(244, 241, 243, 0.94);
+  --component-sources-tabs-radius: 12px;
+  --component-sources-tabs-bg: rgba(10, 10, 14, 0.58);
+  --component-sources-tabs-border: rgba(255, 255, 255, 0.055);
+  --component-sources-tab-radius: 9px;
+  --component-sources-tab-fg: rgba(202, 196, 208, 0.58);
+  --component-sources-tab-active-bg: rgba(184, 167, 234, 0.76);
+  --component-sources-primary-ink: #221a33;
+  --component-sources-search-radius: 11px;
+  --component-sources-search-bg: rgba(12, 12, 17, 0.62);
+  --component-sources-search-border: rgba(255, 255, 255, 0.055);
+  --component-sources-search-icon-fg: rgba(202, 196, 208, 0.42);
+  --component-sources-search-fg: rgba(244, 241, 243, 0.84);
+  --component-sources-search-placeholder: rgba(202, 196, 208, 0.42);
+  --component-sources-control-radius: 10px;
+  --component-sources-control-bg: rgba(12, 12, 17, 0.55);
+  --component-sources-control-border: rgba(255, 255, 255, 0.052);
+  --component-sources-control-fg: rgba(202, 196, 208, 0.56);
+  --component-sources-control-hover-bg: rgba(184, 167, 234, 0.1);
+  --component-sources-control-hover-border: rgba(184, 167, 234, 0.16);
+  --component-sources-control-hover-fg: var(--n-primary);
+  --component-sources-disabled-opacity: 0.45;
+  --component-sources-setup-z-index: 9999;
+  --component-sources-overlay-z-index: 2147483000;
+  --component-sources-overlay-bg:
+    radial-gradient(circle at 50% -8%, rgba(184, 167, 234, 0.1), transparent 34%),
+    rgba(2, 2, 5, 0.7);
+  --component-sources-overlay-blur: blur(8px) saturate(0.82);
+  --component-sources-sidebar-width: var(--n-sidebar-width, 76px);
+  --component-sources-sidebar-scrim-z-index: 3;
+  --component-sources-sidebar-scrim-bg:
+    radial-gradient(circle at 50% 7%, rgba(184, 167, 234, 0.08), transparent 44%),
+    rgba(2, 2, 5, 0.58);
+  --component-sources-sidebar-scrim-blur: blur(5px) saturate(0.86);
+  --component-sources-window-z-index: 1;
+  --component-sources-window-bg:
+    linear-gradient(180deg, rgba(24, 22, 31, 0.98), rgba(13, 13, 18, 0.985)),
+    #111116;
+  --component-sources-window-border: rgba(184, 167, 234, 0.14);
+  --component-sources-window-shadow:
+    0 30px 90px rgba(0, 0, 0, 0.68),
+    0 0 0 1px rgba(255, 255, 255, 0.035),
+    inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  --component-sources-panel-radius: 16px;
+  --component-sources-panel-bg: rgba(255, 255, 255, 0.022);
+  --component-sources-panel-border: rgba(255, 255, 255, 0.06);
+  --component-sources-panel-divider: rgba(255, 255, 255, 0.055);
+  --component-sources-hint-radius: 12px;
+  --component-sources-hint-bg: rgba(255, 255, 255, 0.025);
+  --component-sources-hint-border: rgba(255, 255, 255, 0.055);
+  --component-sources-hint-fg: rgba(202, 196, 208, 0.62);
+  --component-sources-field-radius: 13px;
+  --component-sources-field-bg: rgba(7, 7, 11, 0.82);
+  --component-sources-field-border: rgba(255, 255, 255, 0.07);
+  --component-sources-field-fg: rgba(244, 241, 243, 0.86);
+  --component-sources-field-error-border: rgba(255, 112, 112, 0.45);
+  --component-sources-action-radius: 8px;
+  --component-sources-primary-bg: rgba(184, 167, 234, 0.78);
+  --component-sources-primary-bg-success: rgba(184, 167, 234, 0.9);
+  --component-sources-primary-border: rgba(255, 255, 255, 0.12);
+  --component-sources-primary-shadow: 0 14px 30px rgba(184, 167, 234, 0.16);
+  --component-sources-ghost-bg: rgba(255, 255, 255, 0.012);
+  --component-sources-ghost-border: rgba(255, 255, 255, 0.045);
+  --component-sources-ghost-fg: rgba(202, 196, 208, 0.58);
+  --component-sources-danger-fg: rgba(255, 148, 148, 0.82);
+  --component-sources-danger-border: rgba(255, 148, 148, 0.18);
+  --component-sources-error-fg: rgba(255, 148, 148, 0.72);
+  --component-sources-warning-fg: rgba(255, 214, 153, 0.8);
+  --component-sources-warning-bg: rgba(255, 214, 153, 0.08);
+  --component-sources-warning-border: rgba(255, 214, 153, 0.14);
+  --component-sources-scrollbar-thumb: rgba(184, 167, 234, 0.18);
+  --component-sources-repo-row-radius: 11px;
+  --component-sources-repo-row-bg: rgba(25, 24, 31, 0.92);
+  --component-sources-repo-row-border: rgba(255, 255, 255, 0.07);
+  --component-sources-repo-action-radius: 9px;
+  --component-sources-repo-action-bg: rgba(255, 255, 255, 0.04);
+  --component-sources-table-head-radius: 10px 10px 0 0;
+  --component-sources-table-head-bg: rgba(18, 18, 22, 0.58);
+  --component-sources-table-head-border: rgba(255, 255, 255, 0.045);
+  --component-sources-table-head-border-bottom: rgba(255, 255, 255, 0.035);
+  --component-sources-table-head-fg: rgba(202, 196, 208, 0.46);
+  --component-sources-card-radius: 0;
+  --component-sources-card-end-radius: 0 0 10px 10px;
+  --component-sources-card-bg: rgba(18, 18, 22, 0.42);
+  --component-sources-card-border: rgba(255, 255, 255, 0.038);
+  --component-sources-card-hover-bg: rgba(26, 24, 34, 0.72);
+  --component-sources-card-hover-border: rgba(184, 167, 234, 0.12);
+  --component-sources-card-focus-outline: rgba(184, 167, 234, 0.5);
+  --component-sources-icon-radius: 8px;
+  --component-sources-icon-bg: rgba(255, 255, 255, 0.035);
+  --component-sources-icon-border: rgba(255, 255, 255, 0.06);
+  --component-sources-cell-fg: rgba(229, 226, 225, 0.72);
+  --component-sources-cell-muted-fg: rgba(202, 196, 208, 0.36);
+  --component-sources-badge-radius: 5px;
+  --component-sources-badge-bg: rgba(255, 255, 255, 0.024);
+  --component-sources-badge-border: rgba(255, 255, 255, 0.052);
+  --component-sources-badge-fg: rgba(202, 196, 208, 0.62);
+  --component-sources-installed-bg: rgba(184, 167, 234, 0.07);
+  --component-sources-installed-border: rgba(184, 167, 234, 0.12);
+  --component-sources-installed-fg: rgba(211, 201, 245, 0.82);
+  --component-sources-update-bg: rgba(255, 214, 153, 0.08);
+  --component-sources-update-border: rgba(255, 214, 153, 0.14);
+  --component-sources-update-fg: rgba(255, 214, 153, 0.8);
+  --component-sources-available-bg: rgba(255, 255, 255, 0.014);
+  --component-sources-available-border: rgba(255, 255, 255, 0.04);
+  --component-sources-available-fg: rgba(202, 196, 208, 0.52);
+  --component-sources-variant-radius: 9px;
+  --component-sources-variant-bg: rgba(255, 255, 255, 0.018);
+  --component-sources-variant-border: rgba(255, 255, 255, 0.045);
+  --component-sources-variant-selected-bg: rgba(184, 167, 234, 0.065);
+  --component-sources-variant-selected-border: rgba(184, 167, 234, 0.18);
+  --component-sources-load-more-radius: 10px;
+  --component-sources-load-more-bg: rgba(255, 255, 255, 0.025);
+  --component-sources-load-more-border: rgba(255, 255, 255, 0.055);
+  --component-sources-load-more-fg: rgba(202, 196, 208, 0.64);
+  --component-sources-empty-fg: rgba(202, 196, 208, 0.5);
+  --component-sources-settings-panel-bg:
+    radial-gradient(circle at 20% 0%, rgba(184, 167, 234, 0.08), transparent 36%),
+    rgba(16, 15, 21, 0.92);
+  --component-sources-settings-panel-border: rgba(255, 255, 255, 0.055);
+  --component-sources-settings-icon-bg: rgba(255, 255, 255, 0.04);
+  --component-sources-settings-icon-border: rgba(255, 255, 255, 0.07);
+  --component-sources-settings-meta-radius: 999px;
+  --component-sources-settings-close-radius: 8px;
+  --component-sources-settings-section-radius: 12px;
+  --component-sources-settings-item-radius: 9px;
+  --component-sources-toggle-track-bg: rgba(255, 255, 255, 0.18);
+  --component-sources-toggle-knob-bg: rgba(244, 241, 243, 0.85);
+  --component-sources-toggle-on-bg: rgba(184, 167, 234, 0.78);
+  --component-sources-settings-mobile-backdrop-bg: rgba(0, 0, 0, 0.56);
+  --component-sources-settings-mobile-backdrop-z-index: 80;
+  --component-sources-settings-mobile-panel-z-index: 81;
+  --component-sources-settings-mobile-border: rgba(255, 255, 255, 0.08);
+  --component-sources-settings-mobile-radius: 24px 24px 0 0;
+  --component-sources-settings-mobile-shadow: 0 -24px 80px rgba(0, 0, 0, 0.44);
+
 
   --hud-control-height:        28px;
   --hud-icon-button-size:      28px;

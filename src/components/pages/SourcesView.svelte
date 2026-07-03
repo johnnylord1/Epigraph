@@ -1586,11 +1586,9 @@
     height: 100%;
     min-height: 0;
     overflow: hidden;
-    border-radius: clamp(18px, 1.6vw, 26px);
-    border: 1px solid rgba(255, 255, 255, 0.055);
-    background:
-      radial-gradient(circle at 20% 0%, rgba(184, 167, 234, 0.055), transparent 30%),
-      rgba(18, 18, 22, 0.7);
+    border-radius: var(--component-sources-root-radius);
+    border: 1px solid var(--component-sources-root-border);
+    background: var(--component-sources-root-bg);
   }
 
   .sourcesMain {
@@ -1606,9 +1604,9 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    min-height: calc(52px * var(--n-hud-scale));
-    padding: calc(8px * var(--n-hud-scale)) calc(16px * var(--n-hud-scale));
-    border-bottom: 1px solid rgba(255, 255, 255, 0.045);
+    min-height: calc(52px * var(--component-sources-scale));
+    padding: calc(8px * var(--component-sources-scale)) calc(16px * var(--component-sources-scale));
+    border-bottom: 1px solid var(--component-sources-header-divider);
     background: transparent;
   }
 
@@ -1628,7 +1626,7 @@
     font-size: 9px;
     font-weight: 900;
     letter-spacing: 0.18em;
-    color: var(--n-primary);
+    color: var(--component-sources-control-hover-fg);
     text-transform: uppercase;
   }
 
@@ -1639,13 +1637,13 @@
   }
 
   h2 {
-    color: rgba(244, 241, 243, 0.92);
+    color: var(--component-sources-title-fg);
     font-size: 16px;
     line-height: 1.1;
   }
 
   .sourcesTitle span {
-    color: rgba(202, 196, 208, 0.42);
+    color: var(--component-sources-muted-fg);
     font-family: var(--font-ui);
     font-size: 10px;
     font-weight: 800;
@@ -1665,24 +1663,24 @@
   .tabs {
     display: flex;
     padding: 2px;
-    border-radius: 12px;
-    border: 1px solid rgba(255, 255, 255, 0.055);
-    background: rgba(10, 10, 14, 0.58);
+    border-radius: var(--component-sources-tabs-radius);
+    border: 1px solid var(--component-sources-tabs-border);
+    background: var(--component-sources-tabs-bg);
   }
 
   .tab {
     min-height: 24px;
     padding: 0 11px;
-    border-radius: 9px;
-    color: rgba(202, 196, 208, 0.58);
+    border-radius: var(--component-sources-tab-radius);
+    color: var(--component-sources-tab-fg);
     font-size: 11px;
     font-weight: 900;
     transition: color 160ms ease, background 160ms ease;
   }
 
   .tab.active {
-    background: rgba(184, 167, 234, 0.76);
-    color: #221a33;
+    background: var(--component-sources-tab-active-bg);
+    color: var(--component-sources-primary-ink);
     box-shadow: none;
   }
 
@@ -1694,10 +1692,10 @@
     min-width: 170px;
     height: 29px;
     padding: 0 11px;
-    border-radius: 11px;
-    border: 1px solid rgba(255, 255, 255, 0.055);
-    background: rgba(12, 12, 17, 0.62);
-    color: rgba(202, 196, 208, 0.42);
+    border-radius: var(--component-sources-search-radius);
+    border: 1px solid var(--component-sources-search-border);
+    background: var(--component-sources-search-bg);
+    color: var(--component-sources-search-icon-fg);
   }
 
   .searchWrap input {
@@ -1705,13 +1703,13 @@
     min-width: 0;
     border: 0;
     outline: 0;
-    color: rgba(244, 241, 243, 0.84);
+    color: var(--component-sources-search-fg);
     background: transparent;
     font-size: 13px;
   }
 
   .searchWrap input::placeholder {
-    color: rgba(202, 196, 208, 0.42);
+    color: var(--component-sources-search-placeholder);
   }
 
   .iconBtn,
@@ -1721,10 +1719,10 @@
     place-items: center;
     width: 29px;
     height: 29px;
-    border-radius: 10px;
-    color: rgba(202, 196, 208, 0.56);
-    border: 1px solid rgba(255, 255, 255, 0.052);
-    background: rgba(12, 12, 17, 0.55);
+    border-radius: var(--component-sources-control-radius);
+    color: var(--component-sources-control-fg);
+    border: 1px solid var(--component-sources-control-border);
+    background: var(--component-sources-control-bg);
     transition: color 160ms ease, background 160ms ease, border-color 160ms ease;
   }
 
@@ -1732,13 +1730,13 @@
   .iconBtn.active,
   .closeUtility:hover,
   .repoRow button:hover:not(:disabled) {
-    color: var(--n-primary);
-    border-color: rgba(184, 167, 234, 0.16);
-    background: rgba(184, 167, 234, 0.1);
+    color: var(--component-sources-control-hover-fg);
+    border-color: var(--component-sources-control-hover-border);
+    background: var(--component-sources-control-hover-bg);
   }
 
   .iconBtn:disabled {
-    opacity: 0.45;
+    opacity: var(--component-sources-disabled-opacity);
   }
 
   .setupWrap {
@@ -1746,7 +1744,7 @@
     top: 68px;
     left: 50%;
     transform: translateX(-50%);
-    z-index: 9999;
+    z-index: var(--component-sources-setup-z-index);
     width: min(1000px, calc(100% - 48px));
     margin: 0;
     pointer-events: none;
@@ -1766,8 +1764,8 @@
     top: 0;
     right: 0;
     bottom: 0;
-    left: calc(-1 * var(--n-sidebar-width, 76px));
-    z-index: 2147483000;
+    left: calc(-1 * var(--component-sources-sidebar-width));
+    z-index: var(--component-sources-overlay-z-index);
     display: grid;
     place-items: center;
     padding: clamp(28px, 4vh, 54px) clamp(18px, 3vw, 44px);
@@ -1779,40 +1777,31 @@
     width: 100%;
     height: 100%;
     border: 0;
-    background:
-      radial-gradient(circle at 50% -8%, rgba(184, 167, 234, 0.1), transparent 34%),
-      rgba(2, 2, 5, 0.7);
-    backdrop-filter: blur(8px) saturate(0.82);
+    background: var(--component-sources-overlay-bg);
+    backdrop-filter: var(--component-sources-overlay-blur);
   }
 
   :global(body.aethon-sources-modal-open .n-sidebar::after) {
     content: "";
     position: absolute;
     inset: -1px;
-    z-index: 3;
+    z-index: var(--component-sources-sidebar-scrim-z-index);
     pointer-events: none;
     border-radius: inherit;
-    background:
-      radial-gradient(circle at 50% 7%, rgba(184, 167, 234, 0.08), transparent 44%),
-      rgba(2, 2, 5, 0.58);
-    backdrop-filter: blur(5px) saturate(0.86);
+    background: var(--component-sources-sidebar-scrim-bg);
+    backdrop-filter: var(--component-sources-sidebar-scrim-blur);
   }
 
   .repoWindow {
     position: relative;
-    z-index: 1;
+    z-index: var(--component-sources-window-z-index);
     width: min(720px, 100%);
     max-height: min(78vh, 620px);
     margin: 0;
     overflow: hidden;
-    border-color: rgba(184, 167, 234, 0.14);
-    background:
-      linear-gradient(180deg, rgba(24, 22, 31, 0.98), rgba(13, 13, 18, 0.985)),
-      #111116;
-    box-shadow:
-      0 30px 90px rgba(0, 0, 0, 0.68),
-      0 0 0 1px rgba(255, 255, 255, 0.035),
-      inset 0 1px 0 rgba(255, 255, 255, 0.045);
+    border-color: var(--component-sources-window-border);
+    background: var(--component-sources-window-bg);
+    box-shadow: var(--component-sources-window-shadow);
     animation: repoWindowIn 150ms ease both;
   }
 
@@ -1824,9 +1813,9 @@
     display: grid;
     gap: 12px;
     padding: 12px;
-    border-radius: 16px;
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    background: rgba(255, 255, 255, 0.022);
+    border-radius: var(--component-sources-panel-radius);
+    border: 1px solid var(--component-sources-panel-border);
+    background: var(--component-sources-panel-bg);
   }
 
   .utilityHeader,
@@ -1840,7 +1829,7 @@
     justify-content: space-between;
     gap: 12px;
     padding-bottom: 10px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+    border-bottom: 1px solid var(--component-sources-panel-divider);
   }
 
   .utilityHeaderCopy {
@@ -1850,21 +1839,21 @@
   }
 
   .utilityHeader strong {
-    color: rgba(244, 241, 243, 0.94);
+    color: var(--component-sources-strong-fg);
     font-size: 14px;
   }
 
   .utilityHeaderCopy span {
-    color: rgba(202, 196, 208, 0.5);
+    color: var(--component-sources-subtle-fg);
     font-size: 11px;
     font-weight: 700;
   }
 
   .repoHint {
-    border-radius: 12px;
-    border: 1px solid rgba(255, 255, 255, 0.055);
-    background: rgba(255, 255, 255, 0.025);
-    color: rgba(202, 196, 208, 0.62);
+    border-radius: var(--component-sources-hint-radius);
+    border: 1px solid var(--component-sources-hint-border);
+    background: var(--component-sources-hint-bg);
+    color: var(--component-sources-hint-fg);
     font-size: 12px;
     line-height: 1.45;
     padding: 10px 12px;
@@ -1879,15 +1868,15 @@
     min-width: 0;
     min-height: 33px;
     padding: 0 12px;
-    border-radius: 13px;
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    background: rgba(7, 7, 11, 0.82);
-    color: rgba(244, 241, 243, 0.86);
+    border-radius: var(--component-sources-field-radius);
+    border: 1px solid var(--component-sources-field-border);
+    background: var(--component-sources-field-bg);
+    color: var(--component-sources-field-fg);
     outline: 0;
   }
 
   .inlineForm input.error {
-    border-color: rgba(255, 112, 112, 0.45);
+    border-color: var(--component-sources-field-error-border);
   }
 
   .inlineForm button,
@@ -1896,7 +1885,7 @@
   .ghostBtn,
   .variantAction {
     min-height: 26px;
-    border-radius: 8px;
+    border-radius: var(--component-sources-action-radius);
     padding: 0 10px;
     font-size: 10px;
     font-weight: 900;
@@ -1910,8 +1899,8 @@
     align-items: center;
     justify-content: center;
     gap: 6px;
-    background: rgba(184, 167, 234, 0.78);
-    color: #221a33;
+    background: var(--component-sources-primary-bg);
+    color: var(--component-sources-primary-ink);
   }
 
   .inlineForm button:disabled,
@@ -1923,24 +1912,24 @@
 
   .toolbarActionBtn {
     min-height: 29px;
-    border-radius: 9px;
+    border-radius: var(--component-sources-tab-radius);
     padding: 0 12px;
     white-space: nowrap;
   }
 
   .inlineForm button.success {
-    background: rgba(184, 167, 234, 0.9);
+    background: var(--component-sources-primary-bg-success);
   }
 
   .ghostBtn {
-    color: rgba(202, 196, 208, 0.58);
-    border: 1px solid rgba(255, 255, 255, 0.045);
-    background: rgba(255, 255, 255, 0.012);
+    color: var(--component-sources-ghost-fg);
+    border: 1px solid var(--component-sources-ghost-border);
+    background: var(--component-sources-ghost-bg);
   }
 
   .ghostBtn:hover {
-    color: rgba(255, 148, 148, 0.82);
-    border-color: rgba(255, 148, 148, 0.18);
+    color: var(--component-sources-danger-fg);
+    border-color: var(--component-sources-danger-border);
   }
 
   .variantAction {
@@ -1952,7 +1941,7 @@
   .extensionOperationError {
     grid-column: 1 / -1;
     margin: -2px 0 0 46px;
-    color: rgba(255, 148, 148, 0.82);
+    color: var(--component-sources-danger-fg);
     font-size: 10px;
     font-weight: 650;
   }
@@ -1971,16 +1960,16 @@
     overflow-y: auto;
     padding-right: 2px;
     scrollbar-width: thin;
-    scrollbar-color: rgba(184, 167, 234, 0.18) transparent;
+    scrollbar-color: var(--component-sources-scrollbar-thumb) transparent;
   }
 
   .repoRow {
     gap: 10px;
     min-height: 36px;
     padding: 0 8px 0 12px;
-    border-radius: 11px;
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    background: rgba(25, 24, 31, 0.92);
+    border-radius: var(--component-sources-repo-row-radius);
+    border: 1px solid var(--component-sources-repo-row-border);
+    background: var(--component-sources-repo-row-bg);
   }
 
   .repoRow span {
@@ -1989,14 +1978,14 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: rgba(202, 196, 208, 0.66);
+    color: var(--component-sources-body-fg);
     font-size: 12px;
   }
 
   .repoRow button {
     width: 24px;
     height: 24px;
-    border-radius: 9px;
+    border-radius: var(--component-sources-repo-action-radius);
   }
 
   .novelRepoPanel {
@@ -2025,18 +2014,18 @@
   }
 
   .novelRepoCopy strong {
-    color: rgba(229, 226, 225, 0.82);
+    color: var(--component-sources-cell-fg);
     font-size: 11.5px;
     font-weight: 850;
   }
 
   .novelRepoCopy span {
-    color: rgba(202, 196, 208, 0.42);
+    color: var(--component-sources-muted-fg);
     font-size: 10px;
   }
 
   .novelRepoCopy small {
-    color: rgba(255, 148, 148, 0.72);
+    color: var(--component-sources-error-fg);
     font-size: 10px;
   }
 
@@ -2057,7 +2046,7 @@
     border-radius: 7px;
     font-size: 9.5px;
     font-weight: 900;
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--component-sources-repo-action-bg);
   }
 
   @keyframes repoWindowIn {
@@ -2075,7 +2064,7 @@
     display: grid;
     place-items: center;
     min-height: 46px;
-    color: rgba(202, 196, 208, 0.5);
+    color: var(--component-sources-subtle-fg);
   }
 
   .extensionList {
@@ -2088,7 +2077,7 @@
     gap: 0;
     padding: 8px 16px 14px;
     scrollbar-width: thin;
-    scrollbar-color: rgba(184, 167, 234, 0.18) transparent;
+    scrollbar-color: var(--component-sources-scrollbar-thumb) transparent;
   }
 
   .extensionTableHead {
@@ -2099,14 +2088,14 @@
     min-height: 28px;
     padding: 0 11px;
     margin-bottom: 0;
-    border-radius: 10px 10px 0 0;
-    border: 1px solid rgba(255, 255, 255, 0.045);
-    border-bottom-color: rgba(255, 255, 255, 0.035);
-    background: rgba(18, 18, 22, 0.58);
+    border-radius: var(--component-sources-table-head-radius);
+    border: 1px solid var(--component-sources-table-head-border);
+    border-bottom-color: var(--component-sources-table-head-border-bottom);
+    background: var(--component-sources-table-head-bg);
   }
 
   .extensionTableHead span {
-    color: rgba(202, 196, 208, 0.46);
+    color: var(--component-sources-table-head-fg);
     font-family: var(--font-ui);
     font-size: 9px;
     font-weight: 900;
@@ -2134,36 +2123,36 @@
     align-items: center;
     min-height: 50px;
     padding: 6px 11px;
-    border-radius: 0;
-    border: 1px solid rgba(255, 255, 255, 0.038);
+    border-radius: var(--component-sources-card-radius);
+    border: 1px solid var(--component-sources-card-border);
     border-top: 0;
-    background: rgba(18, 18, 22, 0.42);
+    background: var(--component-sources-card-bg);
     cursor: pointer;
     transition: background 160ms ease, border-color 160ms ease;
   }
 
   .extensionCard:hover,
   .extensionCard.selected {
-    background: rgba(26, 24, 34, 0.72);
-    border-color: rgba(184, 167, 234, 0.12);
+    background: var(--component-sources-card-hover-bg);
+    border-color: var(--component-sources-card-hover-border);
   }
 
   .extensionCard:last-of-type {
-    border-radius: 0 0 10px 10px;
+    border-radius: var(--component-sources-card-end-radius);
   }
 
   .extensionCard:focus-visible {
-    outline: 2px solid rgba(184, 167, 234, 0.5);
+    outline: 2px solid var(--component-sources-card-focus-outline);
     outline-offset: 2px;
   }
 
   .extensionCardIcon {
     width: 31px;
     height: 31px;
-    border-radius: 8px;
+    border-radius: var(--component-sources-icon-radius);
     object-fit: cover;
-    background: rgba(255, 255, 255, 0.035);
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: var(--component-sources-icon-bg);
+    border: 1px solid var(--component-sources-icon-border);
   }
 
   .extensionCardCopy {
@@ -2189,7 +2178,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: rgba(244, 241, 243, 0.94);
+    color: var(--component-sources-strong-fg);
     font-size: 13px;
     font-weight: 850;
     line-height: 1.2;
@@ -2199,7 +2188,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: rgba(202, 196, 208, 0.44);
+    color: var(--component-sources-cell-muted-fg);
     font-size: 10px;
   }
 
@@ -2208,7 +2197,7 @@
     display: grid;
     gap: 3px;
     align-content: center;
-    color: rgba(229, 226, 225, 0.72);
+    color: var(--component-sources-cell-fg);
     font-size: 10.5px;
     font-weight: 760;
   }
@@ -2222,7 +2211,7 @@
   }
 
   .tableCell small {
-    color: rgba(202, 196, 208, 0.36);
+    color: var(--component-sources-cell-muted-fg);
     font-size: 9px;
     font-weight: 700;
   }
@@ -2231,10 +2220,10 @@
     width: fit-content;
     min-width: 30px;
     padding: 2px 7px;
-    border-radius: 5px;
-    border: 1px solid rgba(255, 255, 255, 0.052);
-    background: rgba(255, 255, 255, 0.026);
-    color: rgba(225, 219, 239, 0.76);
+    border-radius: var(--component-sources-badge-radius);
+    border: 1px solid var(--component-sources-control-border);
+    background: var(--component-sources-badge-bg);
+    color: var(--component-sources-cell-fg);
     font-family: var(--font-ui);
     font-size: 9px;
     font-weight: 900;
@@ -2247,7 +2236,7 @@
   }
 
   .tableCellRepo span {
-    color: rgba(229, 226, 225, 0.68);
+    color: var(--component-sources-cell-fg);
     font-size: 10.5px;
   }
 
@@ -2257,11 +2246,11 @@
   .variantRow span,
   .variantRow small,
   .variantRow em {
-    border-radius: 5px;
+    border-radius: var(--component-sources-badge-radius);
     padding: 2px 6px 1px;
-    border: 1px solid rgba(255, 255, 255, 0.052);
-    background: rgba(255, 255, 255, 0.024);
-    color: rgba(202, 196, 208, 0.62);
+    border: 1px solid var(--component-sources-badge-border);
+    background: var(--component-sources-badge-bg);
+    color: var(--component-sources-badge-fg);
     font-family: var(--font-ui);
     font-size: 8.5px;
     font-weight: 800;
@@ -2271,29 +2260,29 @@
   }
 
   .installedBadge {
-    color: rgba(211, 201, 245, 0.82);
-    background: rgba(184, 167, 234, 0.07);
-    border-color: rgba(184, 167, 234, 0.12);
+    color: var(--component-sources-installed-fg);
+    background: var(--component-sources-installed-bg);
+    border-color: var(--component-sources-installed-border);
   }
 
   .updateBadge,
   .variantRow em {
-    color: rgba(255, 214, 153, 0.8);
-    background: rgba(255, 214, 153, 0.08);
-    border-color: rgba(255, 214, 153, 0.14);
+    color: var(--component-sources-update-fg);
+    background: var(--component-sources-update-bg);
+    border-color: var(--component-sources-update-border);
     font-style: normal;
   }
 
   .availableBadge {
-    color: rgba(202, 196, 208, 0.52);
-    background: rgba(255, 255, 255, 0.014);
-    border-color: rgba(255, 255, 255, 0.04);
+    color: var(--component-sources-available-fg);
+    background: var(--component-sources-available-bg);
+    border-color: var(--component-sources-available-border);
   }
 
   .cardActions {
     justify-content: flex-end;
     gap: 6px;
-    color: rgba(202, 196, 208, 0.52);
+    color: var(--component-sources-available-fg);
   }
 
   .variantBtn {
@@ -2301,10 +2290,10 @@
     place-items: center;
     width: 26px;
     height: 26px;
-    border-radius: 8px;
-    color: rgba(202, 196, 208, 0.5);
-    border: 1px solid rgba(255, 255, 255, 0.055);
-    background: rgba(255, 255, 255, 0.018);
+    border-radius: var(--component-sources-action-radius);
+    color: var(--component-sources-subtle-fg);
+    border: 1px solid var(--component-sources-root-border);
+    background: var(--component-sources-variant-bg);
   }
 
   .variantList {
@@ -2319,15 +2308,15 @@
     gap: 8px;
     min-height: 36px;
     padding: 0 9px;
-    border-radius: 9px;
-    background: rgba(255, 255, 255, 0.018);
-    border: 1px solid rgba(255, 255, 255, 0.045);
+    border-radius: var(--component-sources-variant-radius);
+    background: var(--component-sources-variant-bg);
+    border: 1px solid var(--component-sources-variant-border);
     text-align: left;
   }
 
   .variantRow.selected {
-    border-color: rgba(184, 167, 234, 0.18);
-    background: rgba(184, 167, 234, 0.065);
+    border-color: var(--component-sources-variant-selected-border);
+    background: var(--component-sources-variant-selected-bg);
   }
 
   .variantRow strong {
@@ -2336,7 +2325,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: rgba(229, 226, 225, 0.76);
+    color: var(--component-sources-cell-fg);
     font-size: 12px;
   }
 
@@ -2345,10 +2334,10 @@
     justify-self: center;
     min-height: 34px;
     padding: 0 16px;
-    border-radius: 10px;
-    color: rgba(202, 196, 208, 0.64);
-    background: rgba(255, 255, 255, 0.025);
-    border: 1px solid rgba(255, 255, 255, 0.055);
+    border-radius: var(--component-sources-load-more-radius);
+    color: var(--component-sources-load-more-fg);
+    background: var(--component-sources-load-more-bg);
+    border: 1px solid var(--component-sources-load-more-border);
     font-weight: 900;
   }
 
@@ -2358,7 +2347,7 @@
     place-items: center;
     align-content: center;
     gap: 8px;
-    color: rgba(202, 196, 208, 0.5);
+    color: var(--component-sources-empty-fg);
     text-align: center;
   }
 

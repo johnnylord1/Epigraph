@@ -238,11 +238,9 @@
     min-width: 292px;
     height: 100%;
     overflow-y: auto;
-    border-left: 1px solid rgba(255, 255, 255, 0.055);
-    background:
-      radial-gradient(circle at 20% 0%, rgba(184, 167, 234, 0.08), transparent 36%),
-      rgba(16, 15, 21, 0.92);
-    padding: calc(12px * var(--n-hud-scale));
+    border-left: 1px solid var(--component-sources-settings-panel-border);
+    background: var(--component-sources-settings-panel-bg);
+    padding: calc(12px * var(--component-library-scale));
     animation: panelIn 160ms ease both;
   }
 
@@ -268,10 +266,10 @@
   .extensionIcon {
     width: 32px;
     height: 32px;
-    border-radius: 9px;
+    border-radius: var(--component-sources-settings-item-radius);
     object-fit: cover;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.07);
+    background: var(--component-sources-settings-icon-bg);
+    border: 1px solid var(--component-sources-settings-icon-border);
   }
 
   .identityCopy {
@@ -288,14 +286,14 @@
     font-weight: 800;
     letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: rgba(202, 196, 208, 0.48);
+    color: var(--component-sources-subtle-fg);
   }
 
   h2 {
     margin: 2px 0;
     font-size: 14px;
     line-height: 1.15;
-    color: rgba(244, 241, 243, 0.92);
+    color: var(--component-sources-title-fg);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -307,13 +305,13 @@
   }
 
   .extensionMeta span {
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    border-radius: 999px;
+    border: 1px solid var(--component-sources-settings-icon-border);
+    border-radius: var(--component-sources-settings-meta-radius);
     padding: 1px 6px;
     font-family: var(--font-ui);
     font-size: 9px;
-    color: rgba(229, 226, 225, 0.58);
-    background: rgba(255, 255, 255, 0.028);
+    color: var(--component-sources-muted-fg);
+    background: var(--component-sources-badge-bg);
   }
 
   .closeBtn {
@@ -322,22 +320,22 @@
     width: 26px;
     height: 26px;
     flex: 0 0 auto;
-    border-radius: 8px;
-    color: rgba(229, 226, 225, 0.5);
-    border: 1px solid rgba(255, 255, 255, 0.055);
-    background: rgba(255, 255, 255, 0.025);
+    border-radius: var(--component-sources-settings-close-radius);
+    color: var(--component-sources-control-fg);
+    border: 1px solid var(--component-sources-settings-panel-border);
+    background: var(--component-sources-hint-bg);
     transition: color 160ms ease, background 160ms ease, border-color 160ms ease;
   }
 
   .closeBtn:hover {
-    color: rgba(244, 241, 243, 0.9);
-    border-color: rgba(184, 167, 234, 0.22);
-    background: rgba(184, 167, 234, 0.1);
+    color: var(--component-sources-strong-fg);
+    border-color: var(--component-sources-control-hover-border);
+    background: var(--component-sources-control-hover-bg);
   }
 
   .description {
     margin: 9px 0 10px;
-    color: rgba(202, 196, 208, 0.62);
+    color: var(--component-sources-body-fg);
     font-size: 12px;
     line-height: 1.45;
   }
@@ -345,9 +343,9 @@
   .availablePanel,
   .detailsSection,
   .settingsSection {
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 12px;
-    background: rgba(255, 255, 255, 0.022);
+    border: 1px solid var(--component-sources-panel-border);
+    border-radius: var(--component-sources-settings-section-radius);
+    background: var(--component-sources-panel-bg);
     padding: 10px;
   }
 
@@ -365,7 +363,7 @@
   }
 
   .detailTopline span {
-    color: rgba(244, 241, 243, 0.9);
+    color: var(--component-sources-strong-fg);
     font-size: 12px;
     font-weight: 900;
   }
@@ -386,9 +384,9 @@
     gap: 3px;
     min-width: 0;
     padding: 7px;
-    border-radius: 9px;
-    background: rgba(7, 7, 11, 0.24);
-    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: var(--component-sources-settings-item-radius);
+    background: var(--component-sources-variant-bg);
+    border: 1px solid var(--component-sources-available-border);
   }
 
   .detailItemWide,
@@ -398,17 +396,17 @@
 
   .detailWarning {
     padding: 8px;
-    border-radius: 10px;
-    color: rgba(255, 214, 153, 0.82);
-    background: rgba(255, 214, 153, 0.07);
-    border: 1px solid rgba(255, 214, 153, 0.12);
+    border-radius: var(--component-sources-control-radius);
+    color: var(--component-sources-warning-fg);
+    background: var(--component-sources-warning-bg);
+    border: 1px solid var(--component-sources-warning-border);
     font-size: 11px;
     line-height: 1.35;
   }
 
   .detailItem strong,
   .settingsFooter strong {
-    color: rgba(229, 226, 225, 0.74);
+    color: var(--component-sources-cell-fg);
     font-size: 11px;
     font-weight: 700;
     overflow-wrap: anywhere;
@@ -416,12 +414,12 @@
 
   .primaryCta {
     min-height: 34px;
-    border-radius: 11px;
-    background: var(--n-primary);
-    color: #211933;
+    border-radius: var(--component-sources-search-radius);
+    background: var(--component-sources-primary-bg);
+    color: var(--component-sources-primary-ink);
     font-weight: 900;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    box-shadow: 0 14px 30px rgba(184, 167, 234, 0.16);
+    border: 1px solid var(--component-sources-primary-border);
+    box-shadow: var(--component-sources-primary-shadow);
   }
 
   .primaryCta:disabled {
@@ -441,14 +439,14 @@
   .sectionTitle span {
     font-size: 12px;
     font-weight: 900;
-    color: rgba(244, 241, 243, 0.9);
+    color: var(--component-sources-strong-fg);
   }
 
   .toggleRow,
   .formRow {
     display: grid;
     gap: 6px;
-    color: rgba(229, 226, 225, 0.74);
+    color: var(--component-sources-cell-fg);
     font-size: 11px;
     font-weight: 800;
   }
@@ -461,7 +459,7 @@
   .toggleRow small {
     display: block;
     margin-top: 3px;
-    color: rgba(202, 196, 208, 0.46);
+    color: var(--component-sources-table-head-fg);
     font-weight: 600;
     line-height: 1.35;
   }
@@ -469,10 +467,10 @@
   input,
   select {
     min-height: 30px;
-    border-radius: 9px;
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    background: rgba(7, 7, 11, 0.42);
-    color: rgba(244, 241, 243, 0.86);
+    border-radius: var(--component-sources-settings-item-radius);
+    border: 1px solid var(--component-sources-settings-icon-border);
+    background: var(--component-sources-field-bg);
+    color: var(--component-sources-field-fg);
     padding: 0 12px;
     outline: none;
     font: inherit;
@@ -480,7 +478,7 @@
 
   input:focus,
   select:focus {
-    border-color: rgba(184, 167, 234, 0.36);
+    border-color: var(--component-sources-control-hover-border);
   }
 
   input[type="checkbox"] {
@@ -488,9 +486,9 @@
     width: 34px;
     height: 20px;
     min-height: 20px;
-    border-radius: 999px;
+    border-radius: var(--component-sources-settings-meta-radius);
     padding: 0;
-    background: rgba(255, 255, 255, 0.18);
+    background: var(--component-sources-toggle-track-bg);
     position: relative;
     transition: background 160ms ease;
   }
@@ -502,13 +500,13 @@
     left: 3px;
     width: 14px;
     height: 14px;
-    border-radius: 50%;
-    background: rgba(244, 241, 243, 0.85);
+    border-radius: var(--component-sources-settings-meta-radius);
+    background: var(--component-sources-toggle-knob-bg);
     transition: transform 160ms ease;
   }
 
   input[type="checkbox"]:checked {
-    background: rgba(184, 167, 234, 0.78);
+    background: var(--component-sources-toggle-on-bg);
   }
 
   input[type="checkbox"]:checked::after {
@@ -520,7 +518,7 @@
     gap: 12px;
     margin-top: 10px;
     padding-top: 9px;
-    border-top: 1px solid rgba(255, 255, 255, 0.055);
+    border-top: 1px solid var(--component-sources-settings-panel-border);
   }
 
   @media (max-width: 760px) {
@@ -528,23 +526,23 @@
       display: block;
       position: fixed;
       inset: 0;
-      z-index: 80;
-      background: rgba(0, 0, 0, 0.56);
+      z-index: var(--component-sources-settings-mobile-backdrop-z-index);
+      background: var(--component-sources-settings-mobile-backdrop-bg);
       animation: fadeIn 140ms ease both;
     }
 
     .settingsPanel {
       position: fixed;
       inset: auto 0 0;
-      z-index: 81;
+      z-index: var(--component-sources-settings-mobile-panel-z-index);
       width: 100%;
       min-width: 0;
       max-height: min(86vh, 760px);
       height: auto;
       border-left: 0;
-      border-top: 1px solid rgba(255, 255, 255, 0.08);
-      border-radius: 24px 24px 0 0;
-      box-shadow: 0 -24px 80px rgba(0, 0, 0, 0.44);
+      border-top: 1px solid var(--component-sources-settings-mobile-border);
+      border-radius: var(--component-sources-settings-mobile-radius);
+      box-shadow: var(--component-sources-settings-mobile-shadow);
       animation: sheetIn 180ms ease both;
     }
   }

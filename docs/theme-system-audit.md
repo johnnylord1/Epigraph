@@ -593,3 +593,104 @@ Notas de captura:
 - `NovelsLibraryBody.svelte` permanece Legacy/Fora do lote e deve ser reavaliado se a secao de novels voltar a ser renderizada pela Library ativa.
 - A camada `--n-*` segue existindo em temas e CSS legado; no Marco 6 ela deixou de ser consumida diretamente pelos componentes ativos da Library, mas nao foi removida.
 - Marco 7 nao deve iniciar antes de revisar/stagear somente o diff de tema da Library, porque o working tree continua com mudancas antigas fora do escopo.
+## Marco 7 - Sources
+
+### Escopo executado
+- Migrada exclusivamente a camada visual ativa de Sources:
+  - `src/components/pages/SourcesView.svelte`;
+  - `src/components/pages/ExtensionSettingsPanel.svelte`.
+- O host `src/components/pages/BrowseV3.svelte` foi mantido fora da migracao visual porque tambem serve Search/Discover e ja possui mudancas antigas fora deste marco. Ele foi usado apenas como rota/shell de validacao.
+- Nao foram alteradas regras de instalacao/remocao/update de extensoes, repositorios, busca, filtros, navegacao, i18n, Library, Downloads, Reader, Settings, Mass Migration, Updater, Discord/Rich Presence ou Tauri.
+- Nao foram removidos tokens Legacy nem a camada `--n-*`.
+
+### Mapa de componentes
+
+| Componente | Status no Marco 7 | Evidencia |
+| --- | --- | --- |
+| `SourcesView.svelte` | Ativo/migrado | Renderizado pela aba `Browse > Sources`; screenshots reais mostram lista, repositorios e estados de extensao. |
+| `ExtensionSettingsPanel.svelte` | Ativo/migrado | Renderizado ao abrir uma extensao instalada na aba Sources; screenshot `sources-after-settings-panel.png`. |
+| `BrowseV3.svelte` | Ativo/fora do lote | Shell compartilhado de Search/Discover/Sources; nao migrado para evitar tocar superficies fora do Marco 7. |
+| `NovelSources.svelte` | Legacy/fora do lote | Possui teste proprio, mas nao participa da superficie ativa validada neste marco. |
+| `Extensions.svelte`, `SourceBrowse.svelte`, `SourceList.svelte` | Legacy/fora do lote | Telas/implementacoes antigas de Sources/Discover; nao migradas sem marco dedicado. |
+
+### Tokens utilizados/criados
+Foram adicionados tokens `--component-sources-*` em `src/styles/tokens.css`, com implementacao canonica Nocturne em `src/styles/nocturne-theme.css`.
+
+Categorias cobertas:
+
+- escala e layout local: `--component-sources-scale`, `--component-sources-root-*`;
+- panels/cards/tabela/lista: `--component-sources-panel-*`, `--component-sources-row-*`, `--component-sources-card-*`, `--component-sources-cardlist-*`;
+- texto e metadata: `--component-sources-eyebrow-*`, `--component-sources-title-*`, `--component-sources-meta-*`, `--component-sources-subtle-*`;
+- filtros/botoes/inputs: `--component-sources-tabs-*`, `--component-sources-input-*`, `--component-sources-icon-*`, `--component-sources-button-*`, `--component-sources-ghost-*`;
+- status/chips/badges: `--component-sources-badge-*`, `--component-sources-status-*`, `--component-sources-lang-*`;
+- overlays/repos/APK: `--component-sources-overlay-*`, `--component-sources-repo-*`, `--component-sources-apk-*`;
+- settings panel: `--component-sources-settings-*`, `--component-sources-setting-*`, `--component-sources-toggle-*`, `--component-sources-select-*`;
+- empty/error/progress: `--component-sources-empty-*`, `--component-sources-error-*`, `--component-sources-progress-*`;
+- motion, blur, shadow, radius, spacing e z-index locais.
+
+Classificacao: todos os 133 tokens `--component-sources-*` definidos estao Ativos e consumidos pelos componentes reais migrados. Validacao automatica: 133 definidos, 0 sem consumo.
+
+### Cores diretas removidas
+Comando de verificacao:
+
+```powershell
+rg -n -- '#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(|oklch\(|color-mix\(|linear-gradient\(|radial-gradient\(|backdrop-filter:\s*blur|box-shadow:\s*[^;]*rgba|--n-' src/components/pages/SourcesView.svelte src/components/pages/ExtensionSettingsPanel.svelte
+```
+
+Resultado apos a migracao: nenhuma ocorrencia nos componentes ativos migrados.
+
+Ocorrencias migradas para tokens:
+
+- `SourcesView.svelte`: root e panel surfaces, bordas, divisores, tabs/filtros, search, icon buttons, tabela/lista, extension cards, badges, language pills, status pills, acoes install/update/remove, empty/error states, progress, overlays de repositorio/APK, blur, sombras, radius, spacing, opacity, z-index e estados hover/focus/active/disabled.
+- `ExtensionSettingsPanel.svelte`: drawer/surface, header, close button, icon shell, detail grid, action card de mass migration, cards de settings, toggles, selects, inputs, credential rows, sync rows, status pills, hint/help text, scrollbar, hover/focus/disabled, shadows, radius, spacing e z-index.
+
+### Excecoes mantidas
+- `BrowseV3.svelte`: mantido fora do Marco 7 por ser shell compartilhado de Search/Discover/Sources e por ja conter mudancas antigas nao relacionadas no working tree. Deve ser migrado somente quando Search/Discover estiverem no escopo.
+- `NovelSources.svelte`, `Extensions.svelte`, `SourceBrowse.svelte` e `SourceList.svelte`: classificados como Legacy/Fora do lote; nao foram removidos nem migrados.
+- `src/styles/nocturne-theme.css`: valores diretos permanecem permitidos por serem implementacao do tema Nocturne.
+- `src/styles/tokens.css`: valores diretos permanecem permitidos por serem definicao de tokens primitivos/semanticos/de componente.
+
+### Acessibilidade
+Validado automaticamente:
+
+- ausencia de cores diretas, funcoes de cor, blur/shadow diretos e consumo direto de `--n-*` em `SourcesView.svelte` e `ExtensionSettingsPanel.svelte`;
+- consumo obrigatorio de todos os tokens `--component-sources-*`;
+- render/fluxo de Sources por `BrowseV3.test.ts`;
+- contraste computado no app real: menor razao observada na superficie ativa de Sources foi aproximadamente 7.72:1, acima de WCAG AA para texto normal.
+
+Validado visualmente no app real:
+
+- lista principal de Sources;
+- overlay de Manga repositories;
+- painel lateral de Extension Settings;
+- cards/rows, tabs, inputs, botoes, badges, toggles, select, hover/focus/active/disabled alcancaveis.
+
+Nao houve alteracao pretendida de layout, comportamento ou identidade visual. Os valores Nocturne existentes foram preservados por tokens de componente.
+
+### Screenshots reais
+Screenshots capturados da janela real do Aethon em Nocturne via WebView2/CDP:
+
+- Antes:
+  - `docs/screenshots/marco7-sources/sources-before-main.png`
+  - `docs/screenshots/marco7-sources/sources-before-repos.png`
+- Depois:
+  - `docs/screenshots/marco7-sources/sources-after-main.png`
+  - `docs/screenshots/marco7-sources/sources-after-repos.png`
+  - `docs/screenshots/marco7-sources/sources-after-settings-panel.png`
+
+Notas de captura:
+
+- A captura diagnostica `sources-before-settings-panel.png` foi removida porque mostrou novamente o overlay de repositorios, nao o painel lateral. Para evitar registrar comparacao falsa, o baseline antes/depois valido deste marco cobre main e repositories; o painel lateral possui validacao real "depois" e deve ganhar baseline dedicado no proximo lote se houver nova alteracao nele.
+- A comparacao main/repositories antes/depois ficou visualmente equivalente. O painel lateral depois ficou integro, com tokens aplicados em cards, rows, toggles, inputs e superficies.
+
+### Validacao
+- `C:\Users\jhow-\AppData\Roaming\npm\pnpm.cmd test:unit -- src/components/pages/SourcesThemeTokens.test.ts`: passou; por configuracao do script, executou a suite unit/shell ampla, 102 arquivos e 544 testes.
+- `npm exec vitest run -- --project shell-jsdom src/components/pages/SourcesThemeTokens.test.ts src/components/pages/BrowseV3.test.ts`: passou, 2 arquivos e 14 testes. O stderr `Repository timeout` e esperado pelo teste que simula falha parcial de update.
+- `C:\Users\jhow-\AppData\Roaming\npm\pnpm.cmd build`: primeira execucao falhou por arquivo gerado transitorio do Paraglide (`src/paraglide/messages/ui_entries.js`) ausente; a segunda execucao passou sem alteracao de codigo. Vite manteve apenas o aviso conhecido de chunks maiores que 500 kB.
+- `git diff --check`: passou; apenas avisos de normalizacao LF/CRLF do Git, incluindo arquivos antigos fora deste marco.
+
+### Riscos antes do Marco 8
+- Ha alteracoes antigas e nao relacionadas no working tree em Discord/Rich Presence, Tauri/Cargo, mensagens i18n, paginas de migracao, Reader core e Settings. Nao misturar essas alteracoes no commit do Marco 7.
+- `BrowseV3.svelte` segue com estilos compartilhados fora deste lote; migrar agora tocaria Search/Discover e violaria o escopo.
+- `NovelSources.svelte`, `Extensions.svelte`, `SourceBrowse.svelte` e `SourceList.svelte` continuam Legacy/Fora do lote e devem ser reavaliados quando o escopo incluir Sources legadas ou novels/source status.
+- A camada `--n-*` segue existindo em temas e CSS legado; no Marco 7 ela deixou de ser consumida diretamente pelos componentes ativos de Sources migrados, mas nao foi removida.
