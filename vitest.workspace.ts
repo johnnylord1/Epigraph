@@ -41,6 +41,7 @@ export default defineWorkspace([
         "src/components/shared/baseThemeComponents.test.ts",
         "src/components/novels/NovelSourceStatusDetails.test.ts",
         "src/components/pages/Downloads.test.ts",
+        "src/components/pages/DownloadsThemeTokens.test.ts",
         "src/components/pages/BrowseV3.test.ts",
         "src/components/pages/MassMigrationThemeTokens.test.ts",
         "src/components/pages/MigrateModal.test.ts",

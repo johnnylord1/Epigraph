@@ -883,3 +883,93 @@ Notas de captura:
 - `Settings.svelte` continua como host visual amplo e possui mudancas antigas fora deste lote; este marco migrou apenas `SuwayomiUpdatePanel.svelte`.
 - O estado do updater depende de chamadas reais ao runtime/GitHub; para futuras comparacoes visuais, preferir perfil controlado ou fixture de runtime para evitar diferenca de dados entre before/after.
 - `MigrateModal.svelte`, `NovelMigrateModal.svelte` e demais telas fora do updater seguem pendentes para marcos futuros conforme escopo.
+
+## Marco 10 - Downloads
+
+### Escopo executado
+- Migrada exclusivamente a camada visual ativa de Downloads:
+  - `src/components/pages/Downloads.svelte`.
+- A superficie ativa foi confirmada no app real via WebView2/CDP em `http://tauri.localhost/`: sidebar `Downloads` abre `.aethon-port--downloads`, heading `Download Queue`, estado real `0 Items` e empty state `No downloads queued.`.
+- Nao foram alteradas regras de fila, pause/resume, remove, reorder, open folder, GraphQL, stores, persistencia, Layout, Sidebar, Topbar, Reader, Library, Sources, Settings, Updater, Mass Migration, Discord/Rich Presence, Tauri/Cargo ou i18n.
+- Nao foram removidos tokens Legacy nem a camada `--n-*`.
+
+### Estados reais mapeados
+- Disponiveis no app real: tela principal, estado vazio, filtros, acoes globais, foco por teclado em `Pause All`, botoes globais disabled via `aria-disabled`.
+- Nao disponiveis no app real durante a validacao: linhas ativas, pausadas, erro, finished e controles por item. Esses estados continuam cobertos por `Downloads.test.ts`, que usa fixture com `DOWNLOADING`, `QUEUED`, `ERROR` e `FINISHED`, sem modificar dados do usuario.
+
+### Tokens utilizados/criados
+Foram adicionados tokens `--component-downloads-*` em `src/styles/tokens.css`, com implementacao canonica Nocturne em `src/styles/nocturne-theme.css`.
+
+Categorias cobertas:
+
+- escala/topbar/menu: `--component-downloads-scale`, `--component-downloads-topbar-*`, `--component-downloads-menu-*`;
+- page/header/pill: `--component-downloads-page-*`, `--component-downloads-header-*`, `--component-downloads-pill-*`;
+- summary/actions: `--component-downloads-summary-*`, `--component-downloads-primary-button-*`;
+- empty/loading: `--component-downloads-empty-*`, `--component-downloads-load-note-*`;
+- rows/thumb/status/progress: `--component-downloads-row-*`, `--component-downloads-thumb-*`, `--component-downloads-progress-*`;
+- controls/focus/motion: `--component-downloads-row-action-*`, `--component-downloads-transition-*`, `--component-downloads-focus-ring`, opacity e transforms tokenizados.
+
+Classificacao: todos os 137 tokens `--component-downloads-*` definidos estao Ativos ou ativos via cadeia de tokens/computed style. Validacao automatica: 137 definidos, 137 consumidos, 0 sem consumo.
+
+### Cores e efeitos diretos removidos
+Comando de verificacao:
+
+```powershell
+rg -n -- "--n-|#[0-9A-Fa-f]{3,8}\b|rgba?\(|hsla?\(|oklch\(|color-mix\(|linear-gradient\(|radial-gradient\(|backdrop-filter:\s*blur|box-shadow:\s*[^;]*rgba|z-index:\s*[0-9]|opacity:\s*0\.[0-9]|border-radius:\s*[0-9]" src\components\pages\Downloads.svelte
+```
+
+Resultado apos a migracao: nenhuma ocorrencia em `Downloads.svelte`.
+
+Ocorrencias migradas para tokens:
+
+- pill, summary card, borders, dividers, text, empty state, load note, rows, thumbs, status labels, progress track/fill, hover/focus/disabled, shadows, radius, z-index, opacity, transitions, transforms e menu panel.
+- O inline style da barra de progresso deixou de usar `opacity: 0.15` direto e passou a usar `--component-downloads-progress-queued-opacity`.
+
+### Excecoes mantidas
+- `src/styles/nocturne-theme.css`: valores diretos permanecem permitidos por serem implementacao do tema Nocturne.
+- `src/styles/tokens.css`: valores diretos permanecem permitidos por serem definicao de tokens primitivos/semanticos/de componente.
+- `Downloads.svelte`: media query `520px`, percentuais de layout, grid/flex e valores de estado funcional como largura percentual de progresso permanecem como geometria/comportamento local, nao como cor/efeito visual direto.
+
+### Acessibilidade
+Validado automaticamente:
+
+- ausencia de cores diretas, funcoes de cor, blur/shadow diretos, z-index numerico direto e consumo direto de `--n-*` em `Downloads.svelte`;
+- consumo obrigatorio de todos os tokens `--component-downloads-*`;
+- render e fluxos principais por `Downloads.test.ts`.
+
+Corrigido neste marco:
+
+- `downloads-menu-panel` ficava presente no DOM com geometria correta, mas `opacity: 0` no WebView2 quando aberto. A opacidade foi fixada via `--component-downloads-menu-opacity`, sem alterar logica de abertura/fechamento nem tocar no popover compartilhado.
+- foco visivel local de botoes de summary e row actions passa por `--component-downloads-focus-ring`.
+
+### Screenshots reais
+Screenshots capturados da janela real do Aethon em Nocturne via WebView2/CDP:
+
+- Antes:
+  - `docs/screenshots/marco10-downloads/downloads-before-main.png`
+  - `docs/screenshots/marco10-downloads/downloads-before-filter.png`
+  - `docs/screenshots/marco10-downloads/downloads-before-actions.png`
+  - `docs/screenshots/marco10-downloads/downloads-before-disabled-focus.png`
+- Depois:
+  - `docs/screenshots/marco10-downloads/downloads-after-main.png`
+  - `docs/screenshots/marco10-downloads/downloads-after-filter.png`
+  - `docs/screenshots/marco10-downloads/downloads-after-actions.png`
+  - `docs/screenshots/marco10-downloads/downloads-after-disabled-focus.png`
+
+Notas de captura:
+
+- O estado real de Downloads estava vazio em todas as capturas (`0 Items`).
+- As capturas antes de filtro/acoes registram a tela real antes da correcao, mas o painel nao ficava visivel por `opacity: 0`. As capturas depois mostram os popovers visiveis e tokenizados.
+- Um toast real de update do Suwayomi aparece em algumas capturas; ele pertence ao runtime atual e nao foi editado neste marco.
+
+### Validacao
+- `npm exec vitest run -- --project shell-jsdom src/components/pages/DownloadsThemeTokens.test.ts src/components/pages/Downloads.test.ts`: passou, 2 arquivos e 11 testes.
+- Contagem de tokens: 137 definidos, 137 consumidos, 0 sem consumo.
+- Varredura final de `Downloads.svelte`: sem cores diretas, funcoes de cor, blur/shadow diretos, z-index numerico direto, opacity decimal direta, radius numerico direto ou consumo direto de `--n-*`.
+- `pnpm build`: a execucao pelo wrapper do runtime Codex falhou antes de compilar por `ERR_PNPM_IGNORED_BUILDS`; a execucao com `C:\Users\jhow-\AppData\Roaming\npm\pnpm.cmd build` passou. Vite manteve apenas o aviso conhecido de chunks maiores que 500 kB.
+- `git diff --check`: passou; apenas avisos de normalizacao LF/CRLF do Git, incluindo arquivos antigos fora deste marco.
+
+### Riscos antes do proximo marco
+- Ha alteracoes antigas e nao relacionadas no working tree em Discord/Rich Presence, Tauri/Cargo, mensagens i18n, Reader core, Settings e migracoes individuais. Nao misturar essas alteracoes com o Marco 10.
+- Estados reais com fila ativa/pausada/erro nao estavam disponiveis visualmente sem criar dados artificiais; a validacao desses estados ficou nos testes de fixture.
+- `BrowseV3.svelte`, `MigrateModal.svelte`, `NovelMigrateModal.svelte`, Reader core, Settings especializados e a camada `--n-*` seguem pendentes para marcos futuros.
