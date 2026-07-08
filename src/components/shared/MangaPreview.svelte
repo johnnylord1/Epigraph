@@ -346,7 +346,7 @@
         {/if}
 
         {#if loadingDetail}
-          <div class="sk-row"><div class="sk-badge"></div><div class="sk-badge" style="width:72px"></div></div>
+          <div class="sk-row"><div class="sk-badge"></div><div class="sk-badge sk-badge-wide"></div></div>
         {:else}
           <div class="badges">
             {#if statusLabel}<span class="badge" class:badge-green={displayManga?.status === "ONGOING"}>{statusLabel}</span>{/if}
@@ -360,7 +360,7 @@
         <div class="chapter-box">
           {#if loadingChapters}
             <div class="chapter-loading">
-              <CircleNotch size={13} weight="light" class="anim-spin" style="color:var(--text-faint)" />
+              <span class="chapter-loading-icon"><CircleNotch size={13} weight="light" class="anim-spin" /></span>
               <span class="chapter-loading-label">{$_("ui_loadingChapters")}</span>
             </div>
           {:else if totalCount > 0}
@@ -384,15 +384,15 @@
               </button>
             {/if}
           {:else if !loadingDetail}
-            <span class="chapter-label" style="color:var(--text-faint)">{$_("ui_noChaptersInLocalLibrary")}</span>
+            <span class="chapter-label chapter-label-faint">{$_("ui_noChaptersInLocalLibrary")}</span>
           {/if}
         </div>
 
         {#if loadingDetail}
           <div class="sk-desc">
-            <div class="sk-line" style="width:100%"></div>
-            <div class="sk-line" style="width:88%"></div>
-            <div class="sk-line" style="width:70%"></div>
+            <div class="sk-line sk-line-full"></div>
+            <div class="sk-line sk-line-long"></div>
+            <div class="sk-line sk-line-medium"></div>
           </div>
         {:else if displayManga?.description}
           <div class="desc-block">
@@ -400,7 +400,9 @@
             {#if displayManga.description.length > 220}
               <button class="desc-toggle" onclick={() => descExpanded = !descExpanded}>
                 {descExpanded ? $_("ui_showLess") : $_("ui_showMore")}
-                <CaretDown size={10} weight="light" style="transform:{descExpanded ? 'rotate(180deg)' : 'none'};transition:transform 0.15s ease" />
+                <span class="desc-caret" class:desc-caret-open={descExpanded}>
+                  <CaretDown size={10} weight="light" />
+                </span>
               </button>
             {/if}
           </div>
@@ -481,98 +483,106 @@
 </script>
 
 <style>
-  .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.72); z-index: var(--z-settings); display: flex; align-items: center; justify-content: center; animation: fadeIn 0.12s ease both; backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
-  .modal { width: min(800px, calc(100vw - 48px)); height: min(560px, calc(100vh - 80px)); display: flex; background: var(--bg-surface); border: 1px solid var(--border-base); border-radius: var(--radius-xl); overflow: hidden; animation: scaleIn 0.16s ease both; box-shadow: 0 0 0 1px var(--border-dim), 0 24px 64px rgba(0,0,0,0.6); }
-  .cover-col { width: 190px; flex-shrink: 0; background: var(--bg-raised); border-right: 1px solid var(--border-dim); display: flex; flex-direction: column; padding: var(--sp-5) var(--sp-4) var(--sp-4); gap: var(--sp-3); overflow: hidden; }
+  .backdrop { position: fixed; inset: 0; background: var(--component-manga-preview-backdrop-bg); z-index: var(--component-manga-preview-backdrop-z-index); display: flex; align-items: center; justify-content: center; animation: fadeIn var(--component-manga-preview-backdrop-animation) both; backdrop-filter: var(--component-manga-preview-backdrop-blur); -webkit-backdrop-filter: var(--component-manga-preview-backdrop-blur); }
+  .modal { width: var(--component-manga-preview-modal-width); height: var(--component-manga-preview-modal-height); display: flex; background: var(--component-manga-preview-modal-bg); border: 1px solid var(--component-manga-preview-modal-border); border-radius: var(--component-manga-preview-modal-radius); overflow: hidden; animation: scaleIn var(--component-manga-preview-modal-animation) both; box-shadow: var(--component-manga-preview-modal-shadow); }
+  .cover-col { width: var(--component-manga-preview-cover-column-width); flex-shrink: 0; background: var(--component-manga-preview-cover-column-bg); border-right: 1px solid var(--component-manga-preview-cover-column-border); display: flex; flex-direction: column; padding: var(--component-manga-preview-cover-column-padding); gap: var(--component-manga-preview-cover-column-gap); overflow: hidden; }
   .cover-wrap { position: relative; width: 100%; }
-  .cover { width: 100%; aspect-ratio: 2/3; object-fit: cover; border-radius: var(--radius-md); border: 1px solid var(--border-dim); display: block; }
-  .cover-spinner { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.35); border-radius: var(--radius-md); color: var(--text-faint); }
-  .cover-actions { display: flex; flex-direction: column; gap: var(--sp-2); }
-  .action-btn { display: flex; align-items: center; gap: var(--sp-2); width: 100%; padding: 7px var(--sp-3); border-radius: var(--radius-md); font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); border: 1px solid var(--border-strong); background: none; color: var(--text-muted); cursor: pointer; text-align: left; transition: color var(--t-base), border-color var(--t-base), background var(--t-base); }
-  .action-btn:hover:not(:disabled) { color: var(--accent-fg); border-color: var(--accent); background: var(--accent-muted); }
-  .action-btn:disabled { opacity: 0.4; cursor: default; }
-  .action-btn.active { background: var(--accent-muted); border-color: var(--accent-dim); color: var(--accent-fg); }
-  .action-icon { display: flex; align-items: center; justify-content: center; width: 16px; flex-shrink: 0; }
+  .cover { width: 100%; aspect-ratio: var(--component-manga-preview-cover-aspect-ratio); object-fit: cover; border-radius: var(--component-manga-preview-cover-radius); border: 1px solid var(--component-manga-preview-cover-border); display: block; }
+  .cover-spinner { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--component-manga-preview-cover-spinner-bg); border-radius: var(--component-manga-preview-cover-radius); color: var(--component-manga-preview-muted-fg); }
+  .cover-actions { display: flex; flex-direction: column; gap: var(--component-manga-preview-action-gap); }
+  .action-btn { display: flex; align-items: center; gap: var(--component-manga-preview-action-icon-gap); width: 100%; padding: var(--component-manga-preview-action-padding); border-radius: var(--component-manga-preview-action-radius); font-family: var(--component-manga-preview-font-ui); font-size: var(--component-manga-preview-action-font-size); letter-spacing: var(--component-manga-preview-action-letter-spacing); border: 1px solid var(--component-manga-preview-action-border); background: transparent; color: var(--component-manga-preview-action-fg); cursor: pointer; text-align: left; transition: color var(--component-manga-preview-transition-normal), border-color var(--component-manga-preview-transition-normal), background var(--component-manga-preview-transition-normal); }
+  .action-btn:hover:not(:disabled) { color: var(--component-manga-preview-action-hover-fg); border-color: var(--component-manga-preview-action-hover-border); background: var(--component-manga-preview-action-hover-bg); }
+  .action-btn:disabled { opacity: var(--component-manga-preview-disabled-opacity); cursor: default; }
+  .action-btn.active { background: var(--component-manga-preview-action-active-bg); border-color: var(--component-manga-preview-action-active-border); color: var(--component-manga-preview-action-active-fg); }
+  .action-icon { display: flex; align-items: center; justify-content: center; width: var(--component-manga-preview-action-icon-width); flex-shrink: 0; }
   .action-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .folder-wrap { position: relative; width: 100%; }
-  .folder-menu { position: absolute; bottom: calc(100% + 4px); left: 0; right: 0; background: var(--bg-raised); border: 1px solid var(--border-base); border-radius: var(--radius-md); padding: var(--sp-1); display: flex; flex-direction: column; gap: 1px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); z-index: 10; animation: scaleIn 0.1s ease both; transform-origin: bottom center; }
-  .folder-item { display: flex; align-items: center; gap: var(--sp-2); padding: 6px var(--sp-3); border-radius: var(--radius-sm); font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-muted); background: none; border: none; cursor: pointer; text-align: left; transition: background var(--t-fast), color var(--t-fast); }
-  .folder-item:hover { background: var(--bg-overlay); color: var(--text-primary); }
-  .folder-item.folder-item-on { color: var(--accent-fg); }
-  .folder-divider { height: 1px; background: var(--border-dim); margin: var(--sp-1) 0; }
-  .folder-create-row { display: flex; gap: var(--sp-1); padding: var(--sp-1); }
-  .folder-input { flex: 1; background: var(--bg-overlay); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 4px 8px; color: var(--text-secondary); font-family: var(--font-ui); font-size: var(--text-xs); outline: none; min-width: 0; }
-  .folder-input:focus { border-color: var(--border-focus); }
-  .folder-ok { font-family: var(--font-ui); font-size: var(--text-xs); padding: 4px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong); background: none; color: var(--text-muted); cursor: pointer; flex-shrink: 0; transition: color var(--t-base); }
-  .folder-ok:disabled { opacity: 0.4; cursor: default; }
-  .folder-ok:not(:disabled):hover { color: var(--accent-fg); border-color: var(--accent); }
-  .folder-new { padding: 6px var(--sp-3); border-radius: var(--radius-sm); font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-faint); background: none; border: none; cursor: pointer; text-align: left; width: 100%; transition: color var(--t-fast); }
-  .folder-new:hover { color: var(--accent-fg); }
+  .folder-menu { position: absolute; bottom: calc(100% + var(--component-manga-preview-folder-menu-offset)); left: 0; right: 0; background: var(--component-manga-preview-menu-bg); border: 1px solid var(--component-manga-preview-menu-border); border-radius: var(--component-manga-preview-menu-radius); padding: var(--component-manga-preview-menu-padding); display: flex; flex-direction: column; gap: var(--component-manga-preview-menu-gap); box-shadow: var(--component-manga-preview-menu-shadow); z-index: var(--component-manga-preview-menu-z-index); animation: scaleIn var(--component-manga-preview-menu-animation) both; transform-origin: bottom center; }
+  .folder-item { display: flex; align-items: center; gap: var(--component-manga-preview-folder-item-gap); padding: var(--component-manga-preview-folder-item-padding); border-radius: var(--component-manga-preview-folder-item-radius); font-family: var(--component-manga-preview-font-ui); font-size: var(--component-manga-preview-action-font-size); color: var(--component-manga-preview-action-fg); background: transparent; border: none; cursor: pointer; text-align: left; transition: background var(--component-manga-preview-transition-fast), color var(--component-manga-preview-transition-fast); }
+  .folder-item:hover { background: var(--component-manga-preview-menu-item-hover-bg); color: var(--component-manga-preview-menu-item-hover-fg); }
+  .folder-item.folder-item-on { color: var(--component-manga-preview-accent-fg); }
+  .folder-divider { height: var(--component-manga-preview-divider-size); background: var(--component-manga-preview-divider); margin: var(--component-manga-preview-divider-margin); }
+  .folder-create-row { display: flex; gap: var(--component-manga-preview-folder-create-gap); padding: var(--component-manga-preview-folder-create-padding); }
+  .folder-input { flex: 1; background: var(--component-manga-preview-input-bg); border: 1px solid var(--component-manga-preview-input-border); border-radius: var(--component-manga-preview-input-radius); padding: var(--component-manga-preview-input-padding); color: var(--component-manga-preview-input-fg); font-family: var(--component-manga-preview-font-ui); font-size: var(--component-manga-preview-action-font-size); outline: none; min-width: 0; }
+  .folder-input:focus { border-color: var(--component-manga-preview-input-focus-border); }
+  .folder-ok { font-family: var(--component-manga-preview-font-ui); font-size: var(--component-manga-preview-action-font-size); padding: var(--component-manga-preview-input-padding); border-radius: var(--component-manga-preview-input-radius); border: 1px solid var(--component-manga-preview-input-border); background: transparent; color: var(--component-manga-preview-action-fg); cursor: pointer; flex-shrink: 0; transition: color var(--component-manga-preview-transition-normal), border-color var(--component-manga-preview-transition-normal); }
+  .folder-ok:disabled { opacity: var(--component-manga-preview-disabled-opacity); cursor: default; }
+  .folder-ok:not(:disabled):hover { color: var(--component-manga-preview-action-hover-fg); border-color: var(--component-manga-preview-action-hover-border); }
+  .folder-new { padding: var(--component-manga-preview-folder-item-padding); border-radius: var(--component-manga-preview-folder-item-radius); font-family: var(--component-manga-preview-font-ui); font-size: var(--component-manga-preview-action-font-size); color: var(--component-manga-preview-muted-fg); background: transparent; border: none; cursor: pointer; text-align: left; width: 100%; transition: color var(--component-manga-preview-transition-fast); }
+  .folder-new:hover { color: var(--component-manga-preview-accent-fg); }
   .content { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
-  .content-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-4); padding: var(--sp-5) var(--sp-6) var(--sp-4); border-bottom: 1px solid var(--border-dim); flex-shrink: 0; }
-  .title-block { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
-  .title { font-size: var(--text-lg); font-weight: var(--weight-medium); color: var(--text-primary); letter-spacing: var(--tracking-tight); line-height: var(--leading-tight); }
-  .byline { font-size: var(--text-sm); color: var(--text-muted); line-height: var(--leading-snug); }
-  .sk-byline { height: 14px; width: 55%; background: var(--bg-overlay); border-radius: var(--radius-sm); animation: pulse 1.4s ease infinite; }
-  .close-btn { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: var(--radius-sm); color: var(--text-faint); background: none; border: none; cursor: pointer; flex-shrink: 0; transition: color var(--t-base), background var(--t-base); }
-  .close-btn:hover { color: var(--text-muted); background: var(--bg-raised); }
-  .content-body { flex: 1; overflow-y: auto; padding: var(--sp-5) var(--sp-6); display: flex; flex-direction: column; gap: var(--sp-4); scrollbar-width: none; }
+  .content-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--component-manga-preview-content-header-gap); padding: var(--component-manga-preview-content-header-padding); border-bottom: 1px solid var(--component-manga-preview-divider); flex-shrink: 0; }
+  .title-block { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--component-manga-preview-title-gap); }
+  .title { font-size: var(--component-manga-preview-title-font-size); font-weight: var(--component-manga-preview-title-font-weight); color: var(--component-manga-preview-title-fg); letter-spacing: var(--component-manga-preview-title-letter-spacing); line-height: var(--component-manga-preview-title-line-height); }
+  .byline { font-size: var(--component-manga-preview-body-font-size); color: var(--component-manga-preview-muted-fg); line-height: var(--component-manga-preview-body-line-height); }
+  .sk-byline { height: var(--component-manga-preview-skeleton-byline-height); width: var(--component-manga-preview-skeleton-byline-width); background: var(--component-manga-preview-skeleton-bg); border-radius: var(--component-manga-preview-skeleton-radius); animation: pulse var(--component-manga-preview-skeleton-animation) infinite; }
+  .close-btn { display: flex; align-items: center; justify-content: center; width: var(--component-manga-preview-close-size); height: var(--component-manga-preview-close-size); border-radius: var(--component-manga-preview-close-radius); color: var(--component-manga-preview-close-fg); background: transparent; border: none; cursor: pointer; flex-shrink: 0; transition: color var(--component-manga-preview-transition-normal), background var(--component-manga-preview-transition-normal); }
+  .close-btn:hover { color: var(--component-manga-preview-close-hover-fg); background: var(--component-manga-preview-close-hover-bg); }
+  .content-body { flex: 1; overflow-y: auto; padding: var(--component-manga-preview-content-body-padding); display: flex; flex-direction: column; gap: var(--component-manga-preview-content-body-gap); scrollbar-width: none; }
   .content-body::-webkit-scrollbar { display: none; }
-  .sk-row { display: flex; gap: var(--sp-2); align-items: center; }
-  .sk-badge { height: 20px; width: 54px; background: var(--bg-overlay); border-radius: var(--radius-sm); animation: pulse 1.4s ease infinite; }
-  .sk-desc { display: flex; flex-direction: column; gap: 8px; padding: var(--sp-2) 0; }
-  .sk-line { height: 13px; background: var(--bg-overlay); border-radius: var(--radius-sm); animation: pulse 1.4s ease infinite; }
-  .badges { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
-  .badge { font-family: var(--font-ui); font-size: var(--text-2xs); letter-spacing: var(--tracking-wide); text-transform: uppercase; padding: 3px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border-dim); background: var(--bg-raised); color: var(--text-faint); }
-  .badge-green { background: rgba(34,197,94,0.12); border-color: rgba(34,197,94,0.3); color: #22c55e; }
-  .badge-accent { background: var(--accent-muted); border-color: var(--accent-dim); color: var(--accent-fg); }
-  .badge-unread { background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.3); color: #f59e0b; }
-  .chapter-box { display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-4); background: var(--bg-raised); border: 1px solid var(--border-dim); border-radius: var(--radius-md); }
-  .chapter-loading { display: flex; align-items: center; gap: var(--sp-2); }
-  .chapter-loading-label { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); }
-  .chapter-meta { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
-  .chapter-label { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-muted); letter-spacing: var(--tracking-wide); }
-  .dl-all-btn { display: flex; align-items: center; gap: var(--sp-1); font-family: var(--font-ui); font-size: var(--text-2xs); letter-spacing: var(--tracking-wide); padding: 3px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-dim); background: none; color: var(--text-faint); cursor: pointer; flex-shrink: 0; transition: color var(--t-base), border-color var(--t-base); }
-  .dl-all-btn:hover:not(:disabled) { color: var(--text-muted); border-color: var(--border-strong); }
-  .dl-all-btn:disabled { opacity: 0.5; cursor: default; }
-  .progress-track { height: 3px; background: var(--bg-overlay); border-radius: var(--radius-full); overflow: hidden; }
-  .progress-fill { height: 100%; background: var(--accent); border-radius: var(--radius-full); transition: width 0.3s ease; }
-  .read-btn { display: flex; align-items: center; gap: var(--sp-2); padding: 8px var(--sp-4); border-radius: var(--radius-md); font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); background: var(--accent-muted); border: 1px solid var(--accent-dim); color: var(--accent-fg); cursor: pointer; align-self: flex-start; transition: filter var(--t-base); }
-  .read-btn:hover { filter: brightness(1.1); }
-  .desc-block { display: flex; flex-direction: column; gap: var(--sp-2); border-top: 1px solid var(--border-dim); padding-top: var(--sp-3); }
-  .desc { font-size: var(--text-sm); color: var(--text-muted); line-height: var(--leading-base); display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
+  .sk-row { display: flex; gap: var(--component-manga-preview-skeleton-row-gap); align-items: center; }
+  .sk-badge { height: var(--component-manga-preview-skeleton-badge-height); width: var(--component-manga-preview-skeleton-badge-width); background: var(--component-manga-preview-skeleton-bg); border-radius: var(--component-manga-preview-skeleton-radius); animation: pulse var(--component-manga-preview-skeleton-animation) infinite; }
+  .sk-badge-wide { width: var(--component-manga-preview-skeleton-badge-wide-width); }
+  .sk-desc { display: flex; flex-direction: column; gap: var(--component-manga-preview-skeleton-desc-gap); padding: var(--component-manga-preview-skeleton-desc-padding); }
+  .sk-line { height: var(--component-manga-preview-skeleton-line-height); background: var(--component-manga-preview-skeleton-bg); border-radius: var(--component-manga-preview-skeleton-radius); animation: pulse var(--component-manga-preview-skeleton-animation) infinite; }
+  .sk-line-full { width: var(--component-manga-preview-skeleton-line-full-width); }
+  .sk-line-long { width: var(--component-manga-preview-skeleton-line-long-width); }
+  .sk-line-medium { width: var(--component-manga-preview-skeleton-line-medium-width); }
+  .badges { display: flex; flex-wrap: wrap; gap: var(--component-manga-preview-badge-gap); }
+  .badge { font-family: var(--component-manga-preview-font-ui); font-size: var(--component-manga-preview-badge-font-size); letter-spacing: var(--component-manga-preview-badge-letter-spacing); text-transform: uppercase; padding: var(--component-manga-preview-badge-padding); border-radius: var(--component-manga-preview-badge-radius); border: 1px solid var(--component-manga-preview-badge-border); background: var(--component-manga-preview-badge-bg); color: var(--component-manga-preview-badge-fg); }
+  .badge-green { background: var(--component-manga-preview-status-success-bg); border-color: var(--component-manga-preview-status-success-border); color: var(--component-manga-preview-status-success-fg); }
+  .badge-accent { background: var(--component-manga-preview-accent-bg); border-color: var(--component-manga-preview-accent-border); color: var(--component-manga-preview-accent-fg); }
+  .badge-unread { background: var(--component-manga-preview-status-warning-bg); border-color: var(--component-manga-preview-status-warning-border); color: var(--component-manga-preview-status-warning-fg); }
+  .chapter-box { display: flex; flex-direction: column; gap: var(--component-manga-preview-chapter-gap); padding: var(--component-manga-preview-chapter-padding); background: var(--component-manga-preview-chapter-bg); border: 1px solid var(--component-manga-preview-chapter-border); border-radius: var(--component-manga-preview-chapter-radius); }
+  .chapter-loading { display: flex; align-items: center; gap: var(--component-manga-preview-chapter-loading-gap); }
+  .chapter-loading-icon { color: var(--component-manga-preview-muted-fg); }
+  .chapter-loading-label { font-family: var(--component-manga-preview-font-ui); font-size: var(--component-manga-preview-action-font-size); color: var(--component-manga-preview-muted-fg); letter-spacing: var(--component-manga-preview-action-letter-spacing); }
+  .chapter-meta { display: flex; align-items: center; justify-content: space-between; gap: var(--component-manga-preview-chapter-meta-gap); }
+  .chapter-label { font-family: var(--component-manga-preview-font-ui); font-size: var(--component-manga-preview-action-font-size); color: var(--component-manga-preview-action-fg); letter-spacing: var(--component-manga-preview-action-letter-spacing); }
+  .chapter-label-faint { color: var(--component-manga-preview-muted-fg); }
+  .dl-all-btn { display: flex; align-items: center; gap: var(--component-manga-preview-download-gap); font-family: var(--component-manga-preview-font-ui); font-size: var(--component-manga-preview-badge-font-size); letter-spacing: var(--component-manga-preview-action-letter-spacing); padding: var(--component-manga-preview-download-padding); border-radius: var(--component-manga-preview-download-radius); border: 1px solid var(--component-manga-preview-download-border); background: transparent; color: var(--component-manga-preview-download-fg); cursor: pointer; flex-shrink: 0; transition: color var(--component-manga-preview-transition-normal), border-color var(--component-manga-preview-transition-normal); }
+  .dl-all-btn:hover:not(:disabled) { color: var(--component-manga-preview-download-hover-fg); border-color: var(--component-manga-preview-download-hover-border); }
+  .dl-all-btn:disabled { opacity: var(--component-manga-preview-disabled-opacity-strong); cursor: default; }
+  .progress-track { height: var(--component-manga-preview-progress-height); background: var(--component-manga-preview-progress-track-bg); border-radius: var(--component-manga-preview-progress-radius); overflow: hidden; }
+  .progress-fill { height: 100%; background: var(--component-manga-preview-progress-fill-bg); border-radius: var(--component-manga-preview-progress-radius); transition: width var(--component-manga-preview-progress-transition); }
+  .read-btn { display: flex; align-items: center; gap: var(--component-manga-preview-read-gap); padding: var(--component-manga-preview-read-padding); border-radius: var(--component-manga-preview-read-radius); font-family: var(--component-manga-preview-font-ui); font-size: var(--component-manga-preview-action-font-size); letter-spacing: var(--component-manga-preview-action-letter-spacing); background: var(--component-manga-preview-read-bg); border: 1px solid var(--component-manga-preview-read-border); color: var(--component-manga-preview-read-fg); cursor: pointer; align-self: flex-start; transition: filter var(--component-manga-preview-transition-normal); }
+  .read-btn:hover { filter: var(--component-manga-preview-read-hover-filter); }
+  .desc-block { display: flex; flex-direction: column; gap: var(--component-manga-preview-desc-gap); border-top: 1px solid var(--component-manga-preview-divider); padding-top: var(--component-manga-preview-desc-padding-top); }
+  .desc { font-size: var(--component-manga-preview-body-font-size); color: var(--component-manga-preview-action-fg); line-height: var(--component-manga-preview-description-line-height); display: -webkit-box; -webkit-line-clamp: var(--component-manga-preview-description-line-clamp); -webkit-box-orient: vertical; overflow: hidden; }
   .desc.desc-open { display: block; -webkit-line-clamp: unset; overflow: visible; }
-  .desc-toggle { display: flex; align-items: center; gap: var(--sp-1); font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-faint); background: none; border: none; cursor: pointer; padding: 0; align-self: flex-start; transition: color var(--t-base); }
-  .desc-toggle:hover { color: var(--accent-fg); }
-  .genres { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
-  .genre-tag { font-family: var(--font-ui); font-size: var(--text-2xs); letter-spacing: var(--tracking-wide); padding: 3px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border-dim); background: var(--bg-raised); color: var(--text-faint); cursor: pointer; transition: color var(--t-base), border-color var(--t-base), background var(--t-base); }
-  .genre-tag:hover { color: var(--accent-fg); border-color: var(--accent-dim); background: var(--accent-muted); }
-  .meta-table { display: flex; flex-direction: column; gap: 1px; border-top: 1px solid var(--border-dim); padding-top: var(--sp-3); }
-  .meta-row { display: flex; align-items: baseline; gap: var(--sp-3); padding: 5px 0; }
-  .meta-key { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); text-transform: uppercase; min-width: 56px; flex-shrink: 0; }
-  .meta-val { font-size: var(--text-sm); color: var(--text-secondary); line-height: var(--leading-snug); }
-  .meta-link { display: inline-flex; align-items: center; gap: 4px; font-size: var(--text-sm); color: var(--accent-fg); text-decoration: none; transition: opacity var(--t-base); }
-  .meta-link:hover { opacity: 0.75; }
-  .link-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: calc(var(--z-settings) + 1); display: flex; align-items: center; justify-content: center; backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); animation: fadeIn 0.1s ease both; }
-  .link-modal { width: min(460px, calc(100vw - 48px)); max-height: 70vh; display: flex; flex-direction: column; background: var(--bg-surface); border: 1px solid var(--border-base); border-radius: var(--radius-xl); overflow: hidden; box-shadow: 0 24px 64px rgba(0,0,0,0.6); animation: scaleIn 0.14s ease both; }
-  .link-header { display: flex; align-items: center; justify-content: space-between; padding: var(--sp-4) var(--sp-5); border-bottom: 1px solid var(--border-dim); flex-shrink: 0; }
-  .link-title { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--text-secondary); }
-  .link-hint { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); line-height: var(--leading-snug); padding: var(--sp-3) var(--sp-5) 0; flex-shrink: 0; }
-  .link-search-wrap { padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--border-dim); flex-shrink: 0; }
-  .link-search { width: 100%; background: var(--bg-raised); border: 1px solid var(--border-dim); border-radius: var(--radius-md); padding: 6px 10px; color: var(--text-primary); font-size: var(--text-sm); outline: none; transition: border-color var(--t-base); }
-  .link-search:focus { border-color: var(--border-strong); }
-  .link-list { flex: 1; overflow-y: auto; padding: var(--sp-2); scrollbar-width: none; }
+  .desc-toggle { display: flex; align-items: center; gap: var(--component-manga-preview-desc-toggle-gap); font-family: var(--component-manga-preview-font-ui); font-size: var(--component-manga-preview-action-font-size); color: var(--component-manga-preview-muted-fg); background: transparent; border: none; cursor: pointer; padding: 0; align-self: flex-start; transition: color var(--component-manga-preview-transition-normal); }
+  .desc-toggle:hover { color: var(--component-manga-preview-accent-fg); }
+  .desc-caret { display: inline-flex; transition: transform var(--component-manga-preview-transition-normal); }
+  .desc-caret-open { transform: rotate(var(--component-manga-preview-caret-open-rotation)); }
+  .genres { display: flex; flex-wrap: wrap; gap: var(--component-manga-preview-genre-gap); }
+  .genre-tag { font-family: var(--component-manga-preview-font-ui); font-size: var(--component-manga-preview-badge-font-size); letter-spacing: var(--component-manga-preview-action-letter-spacing); padding: var(--component-manga-preview-badge-padding); border-radius: var(--component-manga-preview-badge-radius); border: 1px solid var(--component-manga-preview-badge-border); background: var(--component-manga-preview-badge-bg); color: var(--component-manga-preview-badge-fg); cursor: pointer; transition: color var(--component-manga-preview-transition-normal), border-color var(--component-manga-preview-transition-normal), background var(--component-manga-preview-transition-normal); }
+  .genre-tag:hover { color: var(--component-manga-preview-accent-fg); border-color: var(--component-manga-preview-accent-border); background: var(--component-manga-preview-accent-bg); }
+  .meta-table { display: flex; flex-direction: column; gap: var(--component-manga-preview-meta-gap); border-top: 1px solid var(--component-manga-preview-divider); padding-top: var(--component-manga-preview-meta-padding-top); }
+  .meta-row { display: flex; align-items: baseline; gap: var(--component-manga-preview-meta-row-gap); padding: var(--component-manga-preview-meta-row-padding); }
+  .meta-key { font-family: var(--component-manga-preview-font-ui); font-size: var(--component-manga-preview-action-font-size); color: var(--component-manga-preview-muted-fg); letter-spacing: var(--component-manga-preview-action-letter-spacing); text-transform: uppercase; min-width: var(--component-manga-preview-meta-key-width); flex-shrink: 0; }
+  .meta-val { font-size: var(--component-manga-preview-body-font-size); color: var(--component-manga-preview-body-fg); line-height: var(--component-manga-preview-body-line-height); }
+  .meta-link { display: inline-flex; align-items: center; gap: var(--component-manga-preview-meta-link-gap); font-size: var(--component-manga-preview-body-font-size); color: var(--component-manga-preview-accent-fg); text-decoration: none; transition: opacity var(--component-manga-preview-transition-normal); }
+  .meta-link:hover { opacity: var(--component-manga-preview-link-hover-opacity); }
+  .link-backdrop { position: fixed; inset: 0; background: var(--component-manga-preview-link-backdrop-bg); z-index: var(--component-manga-preview-link-backdrop-z-index); display: flex; align-items: center; justify-content: center; backdrop-filter: var(--component-manga-preview-link-backdrop-blur); -webkit-backdrop-filter: var(--component-manga-preview-link-backdrop-blur); animation: fadeIn var(--component-manga-preview-link-backdrop-animation) both; }
+  .link-modal { width: var(--component-manga-preview-link-modal-width); max-height: var(--component-manga-preview-link-modal-max-height); display: flex; flex-direction: column; background: var(--component-manga-preview-modal-bg); border: 1px solid var(--component-manga-preview-modal-border); border-radius: var(--component-manga-preview-modal-radius); overflow: hidden; box-shadow: var(--component-manga-preview-link-modal-shadow); animation: scaleIn var(--component-manga-preview-link-modal-animation) both; }
+  .link-header { display: flex; align-items: center; justify-content: space-between; padding: var(--component-manga-preview-link-header-padding); border-bottom: 1px solid var(--component-manga-preview-divider); flex-shrink: 0; }
+  .link-title { font-size: var(--component-manga-preview-body-font-size); font-weight: var(--component-manga-preview-title-font-weight); color: var(--component-manga-preview-body-fg); }
+  .link-hint { font-family: var(--component-manga-preview-font-ui); font-size: var(--component-manga-preview-action-font-size); color: var(--component-manga-preview-muted-fg); letter-spacing: var(--component-manga-preview-action-letter-spacing); line-height: var(--component-manga-preview-body-line-height); padding: var(--component-manga-preview-link-hint-padding); flex-shrink: 0; }
+  .link-search-wrap { padding: var(--component-manga-preview-link-search-wrap-padding); border-bottom: 1px solid var(--component-manga-preview-divider); flex-shrink: 0; }
+  .link-search { width: 100%; background: var(--component-manga-preview-link-search-bg); border: 1px solid var(--component-manga-preview-link-search-border); border-radius: var(--component-manga-preview-link-search-radius); padding: var(--component-manga-preview-link-search-padding); color: var(--component-manga-preview-title-fg); font-size: var(--component-manga-preview-body-font-size); outline: none; transition: border-color var(--component-manga-preview-transition-normal); }
+  .link-search:focus { border-color: var(--component-manga-preview-link-search-focus-border); }
+  .link-list { flex: 1; overflow-y: auto; padding: var(--component-manga-preview-link-list-padding); scrollbar-width: none; }
   .link-list::-webkit-scrollbar { display: none; }
-  .link-row { display: flex; align-items: center; gap: var(--sp-3); width: 100%; padding: 8px var(--sp-3); border-radius: var(--radius-md); border: none; background: none; text-align: left; cursor: pointer; transition: background var(--t-fast); }
-  .link-row:hover { background: var(--bg-raised); }
-  .link-row-linked { background: var(--accent-muted) !important; }
-  .link-thumb { width: 34px; height: 48px; border-radius: var(--radius-sm); object-fit: cover; flex-shrink: 0; border: 1px solid var(--border-dim); }
-  .link-info { flex: 1; display: flex; flex-direction: column; gap: 2px; overflow: hidden; min-width: 0; }
-  .link-manga-title { font-size: var(--text-sm); color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .link-source { font-family: var(--font-ui); font-size: var(--text-2xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); }
-  .link-status { font-family: var(--font-ui); font-size: var(--text-2xs); letter-spacing: var(--tracking-wide); color: var(--text-faint); flex-shrink: 0; padding: 2px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border-dim); }
-  .link-row-linked .link-status { color: var(--accent-fg); border-color: var(--accent-dim); background: var(--accent-muted); }
-  @keyframes pulse { 0%,100% { opacity: 0.4 } 50% { opacity: 0.8 } }
-  @keyframes fadeIn  { from { opacity: 0 } to { opacity: 1 } }
-  @keyframes scaleIn { from { opacity: 0; transform: scale(0.97) } to { opacity: 1; transform: scale(1) } }
+  .link-row { display: flex; align-items: center; gap: var(--component-manga-preview-link-row-gap); width: 100%; padding: var(--component-manga-preview-link-row-padding); border-radius: var(--component-manga-preview-link-row-radius); border: none; background: transparent; text-align: left; cursor: pointer; transition: background var(--component-manga-preview-transition-fast); }
+  .link-row:hover { background: var(--component-manga-preview-link-row-hover-bg); }
+  .link-row-linked { background: var(--component-manga-preview-accent-bg) !important; }
+  .link-thumb { width: var(--component-manga-preview-link-thumb-width); height: var(--component-manga-preview-link-thumb-height); border-radius: var(--component-manga-preview-link-thumb-radius); object-fit: cover; flex-shrink: 0; border: 1px solid var(--component-manga-preview-link-thumb-border); }
+  .link-info { flex: 1; display: flex; flex-direction: column; gap: var(--component-manga-preview-link-info-gap); overflow: hidden; min-width: 0; }
+  .link-manga-title { font-size: var(--component-manga-preview-body-font-size); color: var(--component-manga-preview-body-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .link-source { font-family: var(--component-manga-preview-font-ui); font-size: var(--component-manga-preview-badge-font-size); color: var(--component-manga-preview-muted-fg); letter-spacing: var(--component-manga-preview-action-letter-spacing); }
+  .link-status { font-family: var(--component-manga-preview-font-ui); font-size: var(--component-manga-preview-badge-font-size); letter-spacing: var(--component-manga-preview-action-letter-spacing); color: var(--component-manga-preview-muted-fg); flex-shrink: 0; padding: var(--component-manga-preview-link-status-padding); border-radius: var(--component-manga-preview-link-status-radius); border: 1px solid var(--component-manga-preview-link-status-border); }
+  .link-row-linked .link-status { color: var(--component-manga-preview-accent-fg); border-color: var(--component-manga-preview-accent-border); background: var(--component-manga-preview-accent-bg); }
+  @keyframes pulse { 0%,100% { opacity: var(--component-manga-preview-skeleton-opacity-low) } 50% { opacity: var(--component-manga-preview-skeleton-opacity-high) } }
+  @keyframes fadeIn  { from { opacity: var(--component-manga-preview-hidden-opacity) } to { opacity: var(--component-manga-preview-visible-opacity) } }
+  @keyframes scaleIn { from { opacity: var(--component-manga-preview-hidden-opacity); transform: scale(var(--component-manga-preview-scale-from)) } to { opacity: var(--component-manga-preview-visible-opacity); transform: scale(var(--component-manga-preview-scale-to)) } }
 </style>

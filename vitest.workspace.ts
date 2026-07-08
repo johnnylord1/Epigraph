@@ -39,6 +39,7 @@ export default defineWorkspace([
         "src/components/layout/layoutThemeComponents.test.ts",
         "src/components/layout/SplashScreen.test.ts",
         "src/components/shared/baseThemeComponents.test.ts",
+        "src/components/shared/MangaPreviewThemeTokens.test.ts",
         "src/components/novels/NovelSourceStatusDetails.test.ts",
         "src/components/pages/Downloads.test.ts",
         "src/components/pages/DownloadsThemeTokens.test.ts",

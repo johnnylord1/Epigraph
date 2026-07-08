@@ -1428,3 +1428,75 @@ Comparacao visual: geometria, surfaces, radius, bordas, tipografia e hierarquia 
 - `Settings.svelte` segue com mudancas antigas no worktree e nao foi alterado neste marco; qualquer commit seletivo do Marco 14 deve manter essas mudancas fora.
 - Ha alteracoes antigas e nao relacionadas no working tree em Discord/Rich Presence, Tauri/Cargo, mensagens i18n, Reader core, Settings, paginas de migracao e outras features. Nao misturar essas alteracoes com o Marco 14.
 - NovelRepositoriesPanel, Reader core, SeriesDetailV3Shell, MangaPreview, NocturneState e a reducao futura da camada `--n-*` seguem pendentes para marcos futuros.
+
+## Marco 15 - MangaPreview
+
+### Escopo executado
+- Migrada exclusivamente a camada visual de `src/components/shared/MangaPreview.svelte`.
+- Nao foram alteradas logica de preview, carregamento de detalhe, capitulos, pastas, series link, GraphQL, stores, navegacao, leitor, Library, Sources, Settings, Reader, Discord/Rich Presence, Tauri/Cargo, i18n ou migracoes antigas.
+- Nao foram removidos tokens Legacy nem a camada `--n-*`.
+
+### Superficie ativa
+- `MangaPreview.svelte` e ativo: `src/App.svelte` faz lazy import por `mangaPreview: () => import("./components/shared/MangaPreview.svelte")` e renderiza `<MangaPreviewView />`.
+- `src/store/state.svelte.ts` mantem `previewManga` e `setPreviewManga(next: Manga | null)`.
+- Superficies ativas como Home/Browse usam `setPreviewManga(...)` para abrir o preview.
+- Validacao real em Nocturne abriu o preview de `The Greatest Estate Developer` no app/WebView2/CDP usando apenas estado em memoria para acionar a superficie, sem criar ou modificar dados persistidos do usuario.
+
+### Tokens utilizados/criados
+Classificacao: todos os 191 tokens `--component-manga-preview-*` definidos estao Ativos por consumo direto em `MangaPreview.svelte`.
+
+Contagem validada automaticamente:
+- Definidos: 191
+- Consumidos: 191
+- Sem consumo: 0
+- Consumidos sem definicao: 0
+
+Categorias cobertas:
+- backdrop, z-index, modal, coluna de capa, imagem, spinner e estados de carregamento;
+- botoes de acao, folder picker, criacao de pasta, series link e estados disabled;
+- header, conteudo, skeletons, badges, status, capitulos, progresso e read button;
+- descricao, generos, meta table, link modal, busca, lista, thumbnails e estados linked;
+- blur, shadow, radius, spacing, opacity, motion e animacoes locais.
+
+### Cores e efeitos diretos removidos
+- Backdrop `rgba(...)`, `z-index`, blur e animacao migrados para tokens `--component-manga-preview-backdrop-*`.
+- Backgrounds, borders e shadows do modal/capa/conteudo migrados para `--component-manga-preview-modal-*`, `--component-manga-preview-cover-*` e tokens semanticos de superficie.
+- Gradientes e cores de progresso/read button/status badges migrados para tokens de componente.
+- `box-shadow`, `filter`, `border-radius`, `opacity`, `transition`, `animation`, dimensoes e spacing locais foram migrados para tokens.
+- Inline styles estaticos de skeletons, loading icon, caret e labels foram substituidos por classes tokenizadas.
+- O componente nao consome `--n-*` diretamente.
+
+### Excecoes mantidas
+- `style="width:{(readCount / totalCount) * 100}%"` permanece como largura dinamica funcional da barra de progresso; o track, fill, radius, cor e motion estao tokenizados.
+- Imagens de capa e thumbnails continuam sendo dados runtime (`src={coverSrc(...)}`), nao valores visuais hardcoded.
+- A captura visual abriu o preview por ponte de auditoria/CDP e store em memoria porque nao ha um botao de auditoria dedicado para MangaPreview; nenhum dado persistido foi criado.
+
+### Screenshots reais
+Screenshots capturados/registrados em Nocturne:
+
+- Before:
+  - `docs/screenshots/marco15-manga-preview/manga-preview-before-main.png`
+  - `docs/screenshots/marco15-manga-preview/manga-preview-before-folder-menu.png`
+  - `docs/screenshots/marco15-manga-preview/manga-preview-before-link-modal.png`
+- After:
+  - `docs/screenshots/marco15-manga-preview/manga-preview-after-main.png`
+  - `docs/screenshots/marco15-manga-preview/manga-preview-after-folder-menu.png`
+  - `docs/screenshots/marco15-manga-preview/manga-preview-after-link-modal.png`
+
+Comparacao visual: modal principal, folder picker e link modal mantiveram geometria, surfaces, bordas, blur, radius, sombras, tipografia, hierarquia visual e controles equivalentes. A tela por tras do backdrop mudou entre algumas capturas por estado runtime/navegacao do app durante a validacao, mas o componente auditado permaneceu visualmente equivalente.
+
+### Limitacoes de estado
+- Estados de erro de refresh, criacao de pasta com erro e resultados reais de series link nao foram forcados para evitar alteracao de dados do usuario; ficam cobertos por teste estatico de contrato visual.
+- Hover/focus/disabled foram revisados no runtime quando disponiveis e protegidos por tokens; estados nao disponiveis sem manipular dados persistidos foram documentados como limitacao.
+
+### Validacao
+- `npm exec vitest run -- --project shell-jsdom src/components/shared/MangaPreviewThemeTokens.test.ts`: passou, 4 testes.
+- `C:\Users\jhow-\AppData\Roaming\npm\pnpm.cmd build`: passou. A primeira tentativa com `pnpm build` pelo wrapper gerenciado do Codex falhou antes do build por `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`; o build foi reexecutado com o pnpm global do usuario e concluiu verde.
+- `git diff --check`: passou; apenas avisos de LF/CRLF em arquivos ja modificados no worktree.
+- Varredura final do bloco `<style>` de `MangaPreview.svelte`: 0 ocorrencias diretas de hex/rgb/rgba/hsl/hsla/oklch/color-mix/gradients ou `--n-*`.
+- Contagem final de tokens `--component-manga-preview-*`: 191 definidos, 191 consumidos, 0 sem consumo.
+
+### Riscos antes do proximo marco
+- `NocturneState.svelte`, `NovelRepositoriesPanel.svelte`, `SeriesDetailV3Shell.svelte`, `Reader` core, tracking panels e a reducao futura da camada `--n-*` seguem pendentes para marcos futuros.
+- `MangaPreview.svelte` ainda usa `NocturneState` para estado de erro; esse componente especializado permanece pendente e deve ser migrado em marco proprio.
+- Ha alteracoes antigas e nao relacionadas no working tree em Discord/Rich Presence, Tauri/Cargo, mensagens i18n, Reader core, Settings, paginas de migracao e outras features. Nao misturar essas alteracoes com o Marco 15.
