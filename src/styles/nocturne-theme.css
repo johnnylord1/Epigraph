@@ -135,6 +135,157 @@
   --component-toast-close-fg-hover: #e8e4eb;
   --component-toast-close-border: rgba(92, 88, 103, 0.34);
   --component-toast-close-border-hover: rgba(201, 181, 255, 0.24);
+  --component-nocturne-state-fg: var(--text-muted);
+  --component-nocturne-state-gap: 13px;
+  --component-nocturne-state-panel-padding: 18px 20px;
+  --component-nocturne-state-panel-border: 1px solid color-mix(in srgb, var(--border-dim) 58%, transparent);
+  --component-nocturne-state-panel-radius: 14px;
+  --component-nocturne-state-panel-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035), 0 18px 44px rgba(0, 0, 0, 0.16);
+  --component-nocturne-state-compact-padding: 15px 17px;
+  --component-nocturne-state-compact-border: 1px solid color-mix(in srgb, var(--border-dim) 52%, transparent);
+  --component-nocturne-state-compact-radius: 12px;
+  --component-nocturne-state-rail-inset: 12px auto 12px 0;
+  --component-nocturne-state-rail-width: 2px;
+  --component-nocturne-state-rail-radius: 99px;
+  --component-nocturne-state-rail-opacity: 0.72;
+  --component-nocturne-state-center-width: min(620px, calc(100% - 48px));
+  --component-nocturne-state-icon-size: 34px;
+  --component-nocturne-state-icon-radius: 11px;
+  --component-nocturne-state-icon-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --component-nocturne-state-icon-font-size: 18px;
+  --component-nocturne-state-compact-icon-size: 30px;
+  --component-nocturne-state-compact-icon-radius: 10px;
+  --component-nocturne-state-compact-icon-font-size: 15px;
+  --component-nocturne-state-content-gap: 5px;
+  --component-nocturne-state-font-ui: var(--font-ui);
+  --component-nocturne-state-eyebrow-font-size: var(--text-2xs);
+  --component-nocturne-state-eyebrow-line-height: 1;
+  --component-nocturne-state-eyebrow-letter-spacing: var(--tracking-wider);
+  --component-nocturne-state-title-font-size: var(--text-base);
+  --component-nocturne-state-title-line-height: var(--leading-tight);
+  --component-nocturne-state-title-font-weight: var(--weight-semibold);
+  --component-nocturne-state-title-fg: var(--text-secondary);
+  --component-nocturne-state-title-letter-spacing: 0;
+  --component-nocturne-state-compact-title-font-size: var(--text-sm);
+  --component-nocturne-state-body-max-width: 76ch;
+  --component-nocturne-state-body-fg: var(--text-muted);
+  --component-nocturne-state-body-font-size: var(--text-sm);
+  --component-nocturne-state-body-line-height: var(--leading-snug);
+  --component-nocturne-state-detail-max-width: 100%;
+  --component-nocturne-state-detail-fg: var(--text-faint);
+  --component-nocturne-state-detail-font-size: var(--text-2xs);
+  --component-nocturne-state-detail-letter-spacing: var(--tracking-wide);
+  --component-nocturne-state-actions-gap: 8px;
+  --component-nocturne-state-actions-margin-top: 5px;
+  --component-nocturne-state-action-gap: 7px;
+  --component-nocturne-state-action-min-height: 32px;
+  --component-nocturne-state-action-padding: 0 13px;
+  --component-nocturne-state-action-radius: 10px;
+  --component-nocturne-state-action-border: 1px solid color-mix(in srgb, var(--border-dim) 62%, transparent);
+  --component-nocturne-state-action-bg: rgba(20, 19, 25, 0.58);
+  --component-nocturne-state-action-fg: var(--text-muted);
+  --component-nocturne-state-action-font-size: var(--text-xs);
+  --component-nocturne-state-action-font-weight: var(--weight-semibold);
+  --component-nocturne-state-action-letter-spacing: var(--tracking-wide);
+  --component-nocturne-state-action-transition:
+    transform 140ms ease,
+    color 140ms ease,
+    border-color 140ms ease,
+    background 140ms ease,
+    box-shadow 140ms ease;
+  --component-nocturne-state-action-hover-transform: translateY(-1px);
+  --component-nocturne-state-action-hover-fg: var(--text-secondary);
+  --component-nocturne-state-action-focus-shadow: var(--shadow-focus);
+  --component-nocturne-state-action-active-transform: translateY(0) scale(0.98);
+  --component-nocturne-state-action-disabled-opacity: 0.5;
+  --component-nocturne-state-action-danger-fg: #ef9aa8;
+  --component-nocturne-state-action-danger-border: color-mix(in srgb, #ef9aa8 26%, transparent);
+  --component-nocturne-state-action-danger-bg: color-mix(in srgb, #ef9aa8 9%, var(--bg-overlay));
+  --component-nocturne-state-neutral-accent: var(--accent-fg);
+  --component-nocturne-state-neutral-glow: color-mix(in srgb, var(--component-nocturne-state-neutral-accent) 8%, transparent);
+  --component-nocturne-state-neutral-panel-bg:
+    linear-gradient(90deg, var(--component-nocturne-state-neutral-glow), transparent 38%),
+    linear-gradient(180deg, rgba(24, 23, 30, 0.62), rgba(13, 13, 17, 0.54));
+  --component-nocturne-state-neutral-compact-bg:
+    linear-gradient(90deg, var(--component-nocturne-state-neutral-glow), transparent 42%),
+    linear-gradient(180deg, rgba(18, 17, 22, 0.58), rgba(11, 11, 14, 0.5));
+  --component-nocturne-state-neutral-rail-bg: color-mix(in srgb, var(--component-nocturne-state-neutral-accent) 72%, transparent);
+  --component-nocturne-state-neutral-icon-bg: color-mix(in srgb, var(--component-nocturne-state-neutral-accent) 10%, rgba(18, 17, 24, 0.72));
+  --component-nocturne-state-neutral-icon-border: 1px solid color-mix(in srgb, var(--component-nocturne-state-neutral-accent) 22%, transparent);
+  --component-nocturne-state-neutral-eyebrow-fg: color-mix(in srgb, var(--component-nocturne-state-neutral-accent) 48%, var(--text-faint));
+  --component-nocturne-state-neutral-action-hover-border: color-mix(in srgb, var(--component-nocturne-state-neutral-accent) 28%, var(--border-dim));
+  --component-nocturne-state-neutral-action-hover-bg: color-mix(in srgb, var(--component-nocturne-state-neutral-accent) 9%, var(--bg-overlay));
+  --component-nocturne-state-neutral-action-primary-fg: color-mix(in srgb, var(--component-nocturne-state-neutral-accent) 78%, white);
+  --component-nocturne-state-neutral-action-primary-border: color-mix(in srgb, var(--component-nocturne-state-neutral-accent) 34%, transparent);
+  --component-nocturne-state-neutral-action-primary-bg: color-mix(in srgb, var(--component-nocturne-state-neutral-accent) 13%, var(--bg-overlay));
+  --component-nocturne-state-info-accent: #c9b5ff;
+  --component-nocturne-state-info-glow: color-mix(in srgb, var(--component-nocturne-state-info-accent) 8%, transparent);
+  --component-nocturne-state-info-panel-bg:
+    linear-gradient(90deg, var(--component-nocturne-state-info-glow), transparent 38%),
+    linear-gradient(180deg, rgba(24, 23, 30, 0.62), rgba(13, 13, 17, 0.54));
+  --component-nocturne-state-info-compact-bg:
+    linear-gradient(90deg, var(--component-nocturne-state-info-glow), transparent 42%),
+    linear-gradient(180deg, rgba(18, 17, 22, 0.58), rgba(11, 11, 14, 0.5));
+  --component-nocturne-state-info-rail-bg: color-mix(in srgb, var(--component-nocturne-state-info-accent) 72%, transparent);
+  --component-nocturne-state-info-icon-bg: color-mix(in srgb, var(--component-nocturne-state-info-accent) 10%, rgba(18, 17, 24, 0.72));
+  --component-nocturne-state-info-icon-border: 1px solid color-mix(in srgb, var(--component-nocturne-state-info-accent) 22%, transparent);
+  --component-nocturne-state-info-eyebrow-fg: color-mix(in srgb, var(--component-nocturne-state-info-accent) 48%, var(--text-faint));
+  --component-nocturne-state-info-action-hover-border: color-mix(in srgb, var(--component-nocturne-state-info-accent) 28%, var(--border-dim));
+  --component-nocturne-state-info-action-hover-bg: color-mix(in srgb, var(--component-nocturne-state-info-accent) 9%, var(--bg-overlay));
+  --component-nocturne-state-info-action-primary-fg: color-mix(in srgb, var(--component-nocturne-state-info-accent) 78%, white);
+  --component-nocturne-state-info-action-primary-border: color-mix(in srgb, var(--component-nocturne-state-info-accent) 34%, transparent);
+  --component-nocturne-state-info-action-primary-bg: color-mix(in srgb, var(--component-nocturne-state-info-accent) 13%, var(--bg-overlay));
+  --component-nocturne-state-warning-accent: #d6c09a;
+  --component-nocturne-state-warning-glow: color-mix(in srgb, var(--component-nocturne-state-warning-accent) 8%, transparent);
+  --component-nocturne-state-warning-panel-bg:
+    linear-gradient(90deg, var(--component-nocturne-state-warning-glow), transparent 38%),
+    linear-gradient(180deg, rgba(24, 23, 30, 0.62), rgba(13, 13, 17, 0.54));
+  --component-nocturne-state-warning-compact-bg:
+    linear-gradient(90deg, var(--component-nocturne-state-warning-glow), transparent 42%),
+    linear-gradient(180deg, rgba(18, 17, 22, 0.58), rgba(11, 11, 14, 0.5));
+  --component-nocturne-state-warning-rail-bg: color-mix(in srgb, var(--component-nocturne-state-warning-accent) 72%, transparent);
+  --component-nocturne-state-warning-icon-bg: color-mix(in srgb, var(--component-nocturne-state-warning-accent) 10%, rgba(18, 17, 24, 0.72));
+  --component-nocturne-state-warning-icon-border: 1px solid color-mix(in srgb, var(--component-nocturne-state-warning-accent) 22%, transparent);
+  --component-nocturne-state-warning-eyebrow-fg: color-mix(in srgb, var(--component-nocturne-state-warning-accent) 48%, var(--text-faint));
+  --component-nocturne-state-warning-action-hover-border: color-mix(in srgb, var(--component-nocturne-state-warning-accent) 28%, var(--border-dim));
+  --component-nocturne-state-warning-action-hover-bg: color-mix(in srgb, var(--component-nocturne-state-warning-accent) 9%, var(--bg-overlay));
+  --component-nocturne-state-warning-action-primary-fg: color-mix(in srgb, var(--component-nocturne-state-warning-accent) 78%, white);
+  --component-nocturne-state-warning-action-primary-border: color-mix(in srgb, var(--component-nocturne-state-warning-accent) 34%, transparent);
+  --component-nocturne-state-warning-action-primary-bg: color-mix(in srgb, var(--component-nocturne-state-warning-accent) 13%, var(--bg-overlay));
+  --component-nocturne-state-danger-accent: #d8b4ff;
+  --component-nocturne-state-danger-glow: color-mix(in srgb, var(--component-nocturne-state-danger-accent) 8%, transparent);
+  --component-nocturne-state-danger-panel-bg:
+    linear-gradient(90deg, var(--component-nocturne-state-danger-glow), transparent 38%),
+    linear-gradient(180deg, rgba(24, 23, 30, 0.62), rgba(13, 13, 17, 0.54));
+  --component-nocturne-state-danger-compact-bg:
+    linear-gradient(90deg, var(--component-nocturne-state-danger-glow), transparent 42%),
+    linear-gradient(180deg, rgba(18, 17, 22, 0.58), rgba(11, 11, 14, 0.5));
+  --component-nocturne-state-danger-rail-bg: color-mix(in srgb, var(--component-nocturne-state-danger-accent) 72%, transparent);
+  --component-nocturne-state-danger-icon-bg: color-mix(in srgb, var(--component-nocturne-state-danger-accent) 10%, rgba(18, 17, 24, 0.72));
+  --component-nocturne-state-danger-icon-border: 1px solid color-mix(in srgb, var(--component-nocturne-state-danger-accent) 22%, transparent);
+  --component-nocturne-state-danger-eyebrow-fg: color-mix(in srgb, var(--component-nocturne-state-danger-accent) 48%, var(--text-faint));
+  --component-nocturne-state-danger-action-hover-border: color-mix(in srgb, var(--component-nocturne-state-danger-accent) 28%, var(--border-dim));
+  --component-nocturne-state-danger-action-hover-bg: color-mix(in srgb, var(--component-nocturne-state-danger-accent) 9%, var(--bg-overlay));
+  --component-nocturne-state-danger-action-primary-fg: color-mix(in srgb, var(--component-nocturne-state-danger-accent) 78%, white);
+  --component-nocturne-state-danger-action-primary-border: color-mix(in srgb, var(--component-nocturne-state-danger-accent) 34%, transparent);
+  --component-nocturne-state-danger-action-primary-bg: color-mix(in srgb, var(--component-nocturne-state-danger-accent) 13%, var(--bg-overlay));
+  --component-nocturne-state-success-accent: #b8dfbe;
+  --component-nocturne-state-success-glow: color-mix(in srgb, var(--component-nocturne-state-success-accent) 8%, transparent);
+  --component-nocturne-state-success-panel-bg:
+    linear-gradient(90deg, var(--component-nocturne-state-success-glow), transparent 38%),
+    linear-gradient(180deg, rgba(24, 23, 30, 0.62), rgba(13, 13, 17, 0.54));
+  --component-nocturne-state-success-compact-bg:
+    linear-gradient(90deg, var(--component-nocturne-state-success-glow), transparent 42%),
+    linear-gradient(180deg, rgba(18, 17, 22, 0.58), rgba(11, 11, 14, 0.5));
+  --component-nocturne-state-success-rail-bg: color-mix(in srgb, var(--component-nocturne-state-success-accent) 72%, transparent);
+  --component-nocturne-state-success-icon-bg: color-mix(in srgb, var(--component-nocturne-state-success-accent) 10%, rgba(18, 17, 24, 0.72));
+  --component-nocturne-state-success-icon-border: 1px solid color-mix(in srgb, var(--component-nocturne-state-success-accent) 22%, transparent);
+  --component-nocturne-state-success-eyebrow-fg: color-mix(in srgb, var(--component-nocturne-state-success-accent) 48%, var(--text-faint));
+  --component-nocturne-state-success-action-hover-border: color-mix(in srgb, var(--component-nocturne-state-success-accent) 28%, var(--border-dim));
+  --component-nocturne-state-success-action-hover-bg: color-mix(in srgb, var(--component-nocturne-state-success-accent) 9%, var(--bg-overlay));
+  --component-nocturne-state-success-action-primary-fg: color-mix(in srgb, var(--component-nocturne-state-success-accent) 78%, white);
+  --component-nocturne-state-success-action-primary-border: color-mix(in srgb, var(--component-nocturne-state-success-accent) 34%, transparent);
+  --component-nocturne-state-success-action-primary-bg: color-mix(in srgb, var(--component-nocturne-state-success-accent) 13%, var(--bg-overlay));
   --component-sidebar-bg: rgba(30, 28, 40, 0.55);
   --component-topbar-bg: rgba(19, 19, 26, 0.82);
   --component-app-bg: var(--n-gradient-bg), #131313;

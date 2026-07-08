@@ -1500,3 +1500,68 @@ Comparacao visual: modal principal, folder picker e link modal mantiveram geomet
 - `NocturneState.svelte`, `NovelRepositoriesPanel.svelte`, `SeriesDetailV3Shell.svelte`, `Reader` core, tracking panels e a reducao futura da camada `--n-*` seguem pendentes para marcos futuros.
 - `MangaPreview.svelte` ainda usa `NocturneState` para estado de erro; esse componente especializado permanece pendente e deve ser migrado em marco proprio.
 - Ha alteracoes antigas e nao relacionadas no working tree em Discord/Rich Presence, Tauri/Cargo, mensagens i18n, Reader core, Settings, paginas de migracao e outras features. Nao misturar essas alteracoes com o Marco 15.
+
+## Marco 16 - NocturneState
+
+### Escopo executado
+- Migrada exclusivamente a camada visual de `src/components/shared/NocturneState.svelte`.
+- Nao foram alteradas APIs, props, textos, chamadas, fluxos de erro/empty/loading, consumidores, Library, Sources, Settings, Reader, tracking panels, SeriesDetailV3Shell, Discord/Rich Presence, Tauri/Cargo, i18n ou migracoes antigas.
+- Nao foram removidos tokens Legacy nem a camada `--n-*`.
+
+### Superficie ativa
+- `NocturneState.svelte` e componente compartilhado ativo, importado por Library, Sources, Browse, Settings, Syncd, Migration, MangaPreview, SeriesDetail, NovelDetail, Tracking e outras superficies.
+- Validacao real em Nocturne usou Books Library com busca sem resultados (`zzzz-nocturne-state-audit-empty`) para renderizar um estado vazio real sem criar ou alterar dados persistidos do usuario.
+
+### Tokens utilizados/criados
+Classificacao: todos os 126 tokens `--component-nocturne-state-*` definidos estao Ativos por consumo direto em `NocturneState.svelte`.
+
+Contagem validada automaticamente:
+- Definidos: 126
+- Consumidos: 126
+- Sem consumo: 0
+- Consumidos sem definicao: 0
+
+Categorias cobertas:
+- layout panel/compact/center, gap, padding, radius, border e shadow;
+- backgrounds por tom, rail, icon container, eyebrow, title, body e detail;
+- action buttons primary/secondary/danger, hover, focus, active e disabled;
+- tons neutral, info, warning, danger e success;
+- icon sizing por CSS tokenizado via `size="1em"`.
+
+### Cores e efeitos diretos removidos
+- Hex de tons (`#c9b5ff`, `#d6c09a`, `#d8b4ff`, `#b8dfbe`, `#ef9aa8`) migrados para tokens Nocturne.
+- `rgba(...)`, `color-mix(...)`, `linear-gradient(...)`, shadows, radius, opacity, transitions, padding, gaps e tamanhos locais migrados para tokens de componente.
+- Tamanhos diretos dos icones Phosphor foram removidos do markup e substituidos por `size="1em"` controlado por tokens CSS.
+- O componente nao consome `--n-*` diretamente.
+
+### Excecoes mantidas
+- Nao ha excecoes visuais hardcoded no componente.
+- `role={tone === "danger" ? "alert" : "status"}` permanece como semantica funcional/acessibilidade, fora do sistema visual.
+
+### Screenshots reais
+Screenshots capturados/registrados em Nocturne:
+
+- Before:
+  - `docs/screenshots/marco16-nocturne-state/nocturne-state-before-books-empty.png`
+  - `docs/screenshots/marco16-nocturne-state/nocturne-state-before-element.png`
+- After:
+  - `docs/screenshots/marco16-nocturne-state/nocturne-state-after-books-empty.png`
+  - `docs/screenshots/marco16-nocturne-state/nocturne-state-after-element.png`
+
+Comparacao visual: Books Library empty state manteve geometria, surfaces, rail, icon, borda, sombra, tipografia e hierarquia equivalentes. Um toast real do updater apareceu em algumas capturas como ruido runtime externo e nao pertence ao componente auditado. Uma captura intermediaria ficou escura por estado global de foco da busca (`aethon-library-search-engaged`) e foi sobrescrita apos blur do input, mantendo a busca e o estado vazio.
+
+### Limitacoes de estado
+- Tons warning/danger/success e acoes com foco/disabled nao foram forcados no app real para evitar alterar estados de erro ou dados do usuario; ficam cobertos pelo teste focado de render/contrato.
+- Como `NocturneState` e compartilhado, a migracao afeta consumidores existentes sem alterar suas chamadas. Validacao visual real cobriu um estado ativo da Library; os demais consumidores devem continuar em risco visual baixo ate serem vistos em seus fluxos naturais.
+
+### Validacao
+- `npm exec vitest run -- --project shell-jsdom src/components/shared/NocturneStateThemeTokens.test.ts`: passou, 3 testes.
+- `C:\Users\jhow-\AppData\Roaming\npm\pnpm.cmd build`: passou. Mantem apenas o aviso conhecido de chunks maiores que 500 kB.
+- `git diff --check`: passou; apenas avisos de LF/CRLF em arquivos ja modificados no worktree.
+- Varredura final do bloco `<style>` de `NocturneState.svelte`: 0 ocorrencias diretas de hex/rgb/rgba/hsl/hsla/oklch/color-mix/gradients ou `--n-*`.
+- Contagem final de tokens `--component-nocturne-state-*`: 126 definidos, 126 consumidos, 0 sem consumo.
+
+### Riscos antes do proximo marco
+- `NovelRepositoriesPanel.svelte`, `SeriesDetailV3Shell.svelte`, `Reader` core, tracking panels e a reducao futura da camada `--n-*` seguem pendentes para marcos futuros.
+- `NocturneState` e usado por muitos fluxos; embora o contrato de tokens esteja fechado, consumidores com estados raros de erro/empty ainda podem precisar de smoke visual quando aparecerem naturalmente.
+- Ha alteracoes antigas e nao relacionadas no working tree em Discord/Rich Presence, Tauri/Cargo, mensagens i18n, Reader core, Settings, paginas de migracao e outras features. Nao misturar essas alteracoes com o Marco 16.

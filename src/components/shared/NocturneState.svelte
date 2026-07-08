@@ -54,7 +54,7 @@
 
 <section class="n-state n-state--{layout} n-state--{tone}" role={tone === "danger" ? "alert" : "status"}>
   <div class="n-state__icon" aria-hidden="true">
-    <StateIcon size={layout === "compact" ? 15 : 18} weight="duotone" />
+    <StateIcon size="1em" weight="duotone" />
   </div>
 
   <div class="n-state__content">
@@ -79,7 +79,7 @@
             onclick={action.onClick}
           >
             {#if ActionIcon}
-              <ActionIcon size={13} weight="bold" />
+              <ActionIcon size="1em" weight="bold" />
             {/if}
             <span>{action.label}</span>
           </button>
@@ -91,78 +91,144 @@
 
 <style>
   .n-state {
-    --state-accent: var(--accent-fg);
-    --state-accent-soft: color-mix(in srgb, var(--accent-muted) 80%, transparent);
-    --state-accent-border: var(--accent-dim);
-    --state-glow: color-mix(in srgb, var(--state-accent) 8%, transparent);
+    --state-accent: var(--component-nocturne-state-neutral-accent);
+    --state-glow: var(--component-nocturne-state-neutral-glow);
+    --state-panel-bg: var(--component-nocturne-state-neutral-panel-bg);
+    --state-compact-bg: var(--component-nocturne-state-neutral-compact-bg);
+    --state-rail-bg: var(--component-nocturne-state-neutral-rail-bg);
+    --state-icon-bg: var(--component-nocturne-state-neutral-icon-bg);
+    --state-icon-border: var(--component-nocturne-state-neutral-icon-border);
+    --state-eyebrow-fg: var(--component-nocturne-state-neutral-eyebrow-fg);
+    --state-action-hover-border: var(--component-nocturne-state-neutral-action-hover-border);
+    --state-action-hover-bg: var(--component-nocturne-state-neutral-action-hover-bg);
+    --state-action-primary-fg: var(--component-nocturne-state-neutral-action-primary-fg);
+    --state-action-primary-border: var(--component-nocturne-state-neutral-action-primary-border);
+    --state-action-primary-bg: var(--component-nocturne-state-neutral-action-primary-bg);
 
     display: flex;
-    gap: 13px;
+    gap: var(--component-nocturne-state-gap);
     min-width: 0;
-    color: var(--text-muted);
+    color: var(--component-nocturne-state-fg);
     position: relative;
     overflow: hidden;
   }
 
   .n-state--panel,
   .n-state--center {
-    padding: 18px 20px;
-    border: 1px solid color-mix(in srgb, var(--border-dim) 58%, transparent);
-    border-radius: 14px;
-    background:
-      linear-gradient(90deg, var(--state-glow), transparent 38%),
-      linear-gradient(180deg, rgba(24, 23, 30, 0.62), rgba(13, 13, 17, 0.54));
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.035), 0 18px 44px rgba(0,0,0,0.16);
+    padding: var(--component-nocturne-state-panel-padding);
+    border: var(--component-nocturne-state-panel-border);
+    border-radius: var(--component-nocturne-state-panel-radius);
+    background: var(--state-panel-bg);
+    box-shadow: var(--component-nocturne-state-panel-shadow);
   }
 
   .n-state--compact {
     align-items: center;
-    padding: 15px 17px;
-    border: 1px solid color-mix(in srgb, var(--border-dim) 52%, transparent);
-    border-radius: 12px;
-    background:
-      linear-gradient(90deg, var(--state-glow), transparent 42%),
-      linear-gradient(180deg, rgba(18, 17, 22, 0.58), rgba(11, 11, 14, 0.5));
+    padding: var(--component-nocturne-state-compact-padding);
+    border: var(--component-nocturne-state-compact-border);
+    border-radius: var(--component-nocturne-state-compact-radius);
+    background: var(--state-compact-bg);
   }
 
   .n-state::before {
     content: "";
     position: absolute;
-    inset: 12px auto 12px 0;
-    width: 2px;
-    border-radius: 99px;
-    background: color-mix(in srgb, var(--state-accent) 72%, transparent);
-    opacity: 0.72;
+    inset: var(--component-nocturne-state-rail-inset);
+    width: var(--component-nocturne-state-rail-width);
+    border-radius: var(--component-nocturne-state-rail-radius);
+    background: var(--state-rail-bg);
+    opacity: var(--component-nocturne-state-rail-opacity);
   }
 
   .n-state--center {
-    width: min(620px, calc(100% - 48px));
+    width: var(--component-nocturne-state-center-width);
     margin: auto;
     align-items: flex-start;
   }
 
-  .n-state--info { --state-accent: #c9b5ff; }
-  .n-state--warning { --state-accent: #d6c09a; }
-  .n-state--danger { --state-accent: #d8b4ff; }
-  .n-state--success { --state-accent: #b8dfbe; }
+  .n-state--info {
+    --state-accent: var(--component-nocturne-state-info-accent);
+    --state-glow: var(--component-nocturne-state-info-glow);
+    --state-panel-bg: var(--component-nocturne-state-info-panel-bg);
+    --state-compact-bg: var(--component-nocturne-state-info-compact-bg);
+    --state-rail-bg: var(--component-nocturne-state-info-rail-bg);
+    --state-icon-bg: var(--component-nocturne-state-info-icon-bg);
+    --state-icon-border: var(--component-nocturne-state-info-icon-border);
+    --state-eyebrow-fg: var(--component-nocturne-state-info-eyebrow-fg);
+    --state-action-hover-border: var(--component-nocturne-state-info-action-hover-border);
+    --state-action-hover-bg: var(--component-nocturne-state-info-action-hover-bg);
+    --state-action-primary-fg: var(--component-nocturne-state-info-action-primary-fg);
+    --state-action-primary-border: var(--component-nocturne-state-info-action-primary-border);
+    --state-action-primary-bg: var(--component-nocturne-state-info-action-primary-bg);
+  }
+
+  .n-state--warning {
+    --state-accent: var(--component-nocturne-state-warning-accent);
+    --state-glow: var(--component-nocturne-state-warning-glow);
+    --state-panel-bg: var(--component-nocturne-state-warning-panel-bg);
+    --state-compact-bg: var(--component-nocturne-state-warning-compact-bg);
+    --state-rail-bg: var(--component-nocturne-state-warning-rail-bg);
+    --state-icon-bg: var(--component-nocturne-state-warning-icon-bg);
+    --state-icon-border: var(--component-nocturne-state-warning-icon-border);
+    --state-eyebrow-fg: var(--component-nocturne-state-warning-eyebrow-fg);
+    --state-action-hover-border: var(--component-nocturne-state-warning-action-hover-border);
+    --state-action-hover-bg: var(--component-nocturne-state-warning-action-hover-bg);
+    --state-action-primary-fg: var(--component-nocturne-state-warning-action-primary-fg);
+    --state-action-primary-border: var(--component-nocturne-state-warning-action-primary-border);
+    --state-action-primary-bg: var(--component-nocturne-state-warning-action-primary-bg);
+  }
+
+  .n-state--danger {
+    --state-accent: var(--component-nocturne-state-danger-accent);
+    --state-glow: var(--component-nocturne-state-danger-glow);
+    --state-panel-bg: var(--component-nocturne-state-danger-panel-bg);
+    --state-compact-bg: var(--component-nocturne-state-danger-compact-bg);
+    --state-rail-bg: var(--component-nocturne-state-danger-rail-bg);
+    --state-icon-bg: var(--component-nocturne-state-danger-icon-bg);
+    --state-icon-border: var(--component-nocturne-state-danger-icon-border);
+    --state-eyebrow-fg: var(--component-nocturne-state-danger-eyebrow-fg);
+    --state-action-hover-border: var(--component-nocturne-state-danger-action-hover-border);
+    --state-action-hover-bg: var(--component-nocturne-state-danger-action-hover-bg);
+    --state-action-primary-fg: var(--component-nocturne-state-danger-action-primary-fg);
+    --state-action-primary-border: var(--component-nocturne-state-danger-action-primary-border);
+    --state-action-primary-bg: var(--component-nocturne-state-danger-action-primary-bg);
+  }
+
+  .n-state--success {
+    --state-accent: var(--component-nocturne-state-success-accent);
+    --state-glow: var(--component-nocturne-state-success-glow);
+    --state-panel-bg: var(--component-nocturne-state-success-panel-bg);
+    --state-compact-bg: var(--component-nocturne-state-success-compact-bg);
+    --state-rail-bg: var(--component-nocturne-state-success-rail-bg);
+    --state-icon-bg: var(--component-nocturne-state-success-icon-bg);
+    --state-icon-border: var(--component-nocturne-state-success-icon-border);
+    --state-eyebrow-fg: var(--component-nocturne-state-success-eyebrow-fg);
+    --state-action-hover-border: var(--component-nocturne-state-success-action-hover-border);
+    --state-action-hover-bg: var(--component-nocturne-state-success-action-hover-bg);
+    --state-action-primary-fg: var(--component-nocturne-state-success-action-primary-fg);
+    --state-action-primary-border: var(--component-nocturne-state-success-action-primary-border);
+    --state-action-primary-bg: var(--component-nocturne-state-success-action-primary-bg);
+  }
 
   .n-state__icon {
     flex: 0 0 auto;
-    width: 34px;
-    height: 34px;
-    border-radius: 11px;
+    width: var(--component-nocturne-state-icon-size);
+    height: var(--component-nocturne-state-icon-size);
+    border-radius: var(--component-nocturne-state-icon-radius);
     display: grid;
     place-items: center;
     color: var(--state-accent);
-    background: color-mix(in srgb, var(--state-accent) 10%, rgba(18, 17, 24, 0.72));
-    border: 1px solid color-mix(in srgb, var(--state-accent) 22%, transparent);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+    background: var(--state-icon-bg);
+    border: var(--state-icon-border);
+    box-shadow: var(--component-nocturne-state-icon-shadow);
+    font-size: var(--component-nocturne-state-icon-font-size);
   }
 
   .n-state--compact .n-state__icon {
-    width: 30px;
-    height: 30px;
-    border-radius: 10px;
+    width: var(--component-nocturne-state-compact-icon-size);
+    height: var(--component-nocturne-state-compact-icon-size);
+    border-radius: var(--component-nocturne-state-compact-icon-radius);
+    font-size: var(--component-nocturne-state-compact-icon-font-size);
   }
 
   .n-state__content {
@@ -170,103 +236,108 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 5px;
+    gap: var(--component-nocturne-state-content-gap);
   }
 
   .n-state__eyebrow {
     margin: 0;
-    font-family: var(--font-ui);
-    font-size: var(--text-2xs);
-    line-height: 1;
-    letter-spacing: var(--tracking-wider);
+    font-family: var(--component-nocturne-state-font-ui);
+    font-size: var(--component-nocturne-state-eyebrow-font-size);
+    line-height: var(--component-nocturne-state-eyebrow-line-height);
+    letter-spacing: var(--component-nocturne-state-eyebrow-letter-spacing);
     text-transform: uppercase;
-    color: color-mix(in srgb, var(--state-accent) 48%, var(--text-faint));
+    color: var(--state-eyebrow-fg);
   }
 
   .n-state__title {
     margin: 0;
-    font-size: var(--text-base);
-    line-height: var(--leading-tight);
-    font-weight: var(--weight-semibold);
-    color: var(--text-secondary);
-    letter-spacing: 0;
+    font-size: var(--component-nocturne-state-title-font-size);
+    line-height: var(--component-nocturne-state-title-line-height);
+    font-weight: var(--component-nocturne-state-title-font-weight);
+    color: var(--component-nocturne-state-title-fg);
+    letter-spacing: var(--component-nocturne-state-title-letter-spacing);
   }
 
   .n-state--compact .n-state__title {
-    font-size: var(--text-sm);
+    font-size: var(--component-nocturne-state-compact-title-font-size);
   }
 
   .n-state__body,
   .n-state__detail {
     margin: 0;
-    max-width: 76ch;
-    color: var(--text-muted);
-    font-size: var(--text-sm);
-    line-height: var(--leading-snug);
+    max-width: var(--component-nocturne-state-body-max-width);
+    color: var(--component-nocturne-state-body-fg);
+    font-size: var(--component-nocturne-state-body-font-size);
+    line-height: var(--component-nocturne-state-body-line-height);
   }
 
   .n-state__detail {
-    max-width: 100%;
-    color: var(--text-faint);
-    font-family: var(--font-ui);
-    font-size: var(--text-2xs);
-    letter-spacing: var(--tracking-wide);
+    max-width: var(--component-nocturne-state-detail-max-width);
+    color: var(--component-nocturne-state-detail-fg);
+    font-family: var(--component-nocturne-state-font-ui);
+    font-size: var(--component-nocturne-state-detail-font-size);
+    letter-spacing: var(--component-nocturne-state-detail-letter-spacing);
     word-break: break-word;
     white-space: pre-wrap;
   }
 
   .n-state__actions {
     display: flex;
-    gap: 8px;
+    gap: var(--component-nocturne-state-actions-gap);
     flex-wrap: wrap;
-    margin-top: 5px;
+    margin-top: var(--component-nocturne-state-actions-margin-top);
   }
 
   .n-state__action {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 7px;
-    min-height: 32px;
-    padding: 0 13px;
-    border-radius: 10px;
-    border: 1px solid color-mix(in srgb, var(--border-dim) 62%, transparent);
-    background: rgba(20, 19, 25, 0.58);
-    color: var(--text-muted);
-    font-family: var(--font-ui);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-semibold);
-    letter-spacing: var(--tracking-wide);
+    gap: var(--component-nocturne-state-action-gap);
+    min-height: var(--component-nocturne-state-action-min-height);
+    padding: var(--component-nocturne-state-action-padding);
+    border-radius: var(--component-nocturne-state-action-radius);
+    border: var(--component-nocturne-state-action-border);
+    background: var(--component-nocturne-state-action-bg);
+    color: var(--component-nocturne-state-action-fg);
+    font-family: var(--component-nocturne-state-font-ui);
+    font-size: var(--component-nocturne-state-action-font-size);
+    font-weight: var(--component-nocturne-state-action-font-weight);
+    letter-spacing: var(--component-nocturne-state-action-letter-spacing);
     cursor: pointer;
-    transition: transform 140ms ease, color 140ms ease, border-color 140ms ease, background 140ms ease;
+    transition: var(--component-nocturne-state-action-transition);
   }
 
   .n-state__action:hover {
-    transform: translateY(-1px);
-    color: var(--text-secondary);
-    border-color: color-mix(in srgb, var(--state-accent) 28%, var(--border-dim));
-    background: color-mix(in srgb, var(--state-accent) 9%, var(--bg-overlay));
+    transform: var(--component-nocturne-state-action-hover-transform);
+    color: var(--component-nocturne-state-action-hover-fg);
+    border-color: var(--state-action-hover-border);
+    background: var(--state-action-hover-bg);
+  }
+
+  .n-state__action:focus-visible {
+    outline: none;
+    box-shadow: var(--component-nocturne-state-action-focus-shadow);
   }
 
   .n-state__action:active {
-    transform: translateY(0) scale(0.98);
+    transform: var(--component-nocturne-state-action-active-transform);
   }
 
   .n-state__action:disabled {
-    opacity: 0.5;
+    opacity: var(--component-nocturne-state-action-disabled-opacity);
     cursor: default;
     transform: none;
   }
 
   .n-state__action--primary {
-    color: color-mix(in srgb, var(--state-accent) 78%, white);
-    border-color: color-mix(in srgb, var(--state-accent) 34%, transparent);
-    background: color-mix(in srgb, var(--state-accent) 13%, var(--bg-overlay));
+    color: var(--state-action-primary-fg);
+    border-color: var(--state-action-primary-border);
+    background: var(--state-action-primary-bg);
   }
 
   .n-state__action--danger {
-    color: #ef9aa8;
-    border-color: color-mix(in srgb, #ef9aa8 26%, transparent);
-    background: color-mix(in srgb, #ef9aa8 9%, var(--bg-overlay));
+    color: var(--component-nocturne-state-action-danger-fg);
+    border-color: var(--component-nocturne-state-action-danger-border);
+    background: var(--component-nocturne-state-action-danger-bg);
   }
 </style>
