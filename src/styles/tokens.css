@@ -607,6 +607,486 @@
   --component-downloads-row-action-disabled-opacity: 0.7;
   --component-downloads-row-action-icon-size: calc(var(--text-xl) * var(--component-downloads-scale));
   --component-downloads-bottom-spacer-height: calc(48px * var(--component-downloads-scale));
+  /* Marco 11 BrowseV3 component tokens */
+  --component-browse-browsesubtab-hover-color: var(--text-secondary);
+  --component-browse-catalogsidebar-backdrop-filter: none;
+  --component-browse-catalogroot-radius-flat: 0;
+  --component-browse-searchcoverplaceholder-span-z-index: 1;
+  --component-browse-searchtastepills-radius-flat: 0;
+  --component-browse-searchpaneltoggle-radius-flat: 0;
+  --component-browse-searchdiversitytrack-radius-flat: 0;
+  --component-browse-searchdiversitytrack-thumb-radius: var(--radius-full);
+  --component-browse-searchdivergentnote-radius-flat: 0;
+  --component-browse-showmorebtn-disabled-opacity: 0.4;
+  --component-browse-nsfwbadge-background: var(--color-danger-bg);
+  --component-browse-browsefield-picker-z-index: var(--z-dropdown);
+  --component-browse-browseinlinepicker-z-index: var(--z-popover);
+  --component-browse-discoverpanelheader-radius-flat: 0;
+  --component-browse-root-padding-top:  var(--n-topbar-height);
+  --component-browse-root-browse-topbar-grid-template-columns:
+    minmax(0, 1fr)
+    minmax(0, min(calc(640px * var(--n-hud-scale)), 44vw))
+    minmax(0, 1fr);
+  --component-browse-root-browse-topbar-gap:  calc(16px * var(--n-hud-scale));
+  --component-browse-browse-topbar-right-gap:  calc(8px * var(--n-hud-scale));
+  --component-browse-root-browse-topbar-n-search-width:  min(100%, var(--n-search-width));
+  --component-browse-root-is-search-engaged-browse-topbar-width:  min(100%, var(--n-search-width-focus));
+  --component-browse-browsesubtabs-gap:  24px;
+  --component-browse-browsesubtabs-border-bottom:  1px solid rgba(255, 255, 255, 0.05);
+  --component-browse-browsesubtab-font-size:  10px;
+  --component-browse-browsesubtab-letter-spacing:  0.18em;
+  --component-browse-browsesubtab-color:  rgba(202, 196, 208, 0.4);
+  --component-browse-browsesubtab-transition:  color 180ms ease, opacity 180ms ease, border-color 180ms ease;
+  --component-browse-browsesubtabactive-color:  var(--n-primary);
+  --component-browse-browsesubtabactive-padding-bottom:  2px;
+  --component-browse-browsesubtabactive-border-bottom:  1px solid var(--n-primary);
+  --component-browse-setup-banner-padding:  12px clamp(28px, 3vw, 56px) 0;
+  --component-browse-setup-banner-n-state-max-width:  1120px;
+  --component-browse-catalogsidebar-width:  calc(230px * var(--n-hud-scale));
+  --component-browse-catalogsidebar-gap:  calc(12px * var(--n-hud-scale));
+  --component-browse-catalogsidebar-padding:  calc(16px * var(--n-hud-scale)) calc(12px * var(--n-hud-scale));
+  --component-browse-catalogsidebar-border-right:  1px solid rgba(255, 255, 255, 0.05);
+  --component-browse-catalogsidebar-background:
+    linear-gradient(180deg, rgba(24, 22, 31, 0.58), rgba(12, 12, 16, 0.18)),
+    rgba(13, 13, 18, 0.38);
+  --component-browse-browsefiltersection-gap:  calc(10px * var(--n-hud-scale));
+  --component-browse-catalogtaglist-gap:  4px;
+  --component-browse-searchbar-min-height:  40px;
+  --component-browse-searchbar-background:  rgba(23, 22, 30, 0.78);
+  --component-browse-searchbar-border:  1px solid rgba(255, 255, 255, 0.065);
+  --component-browse-searchbar-border-radius:  10px;
+  --component-browse-searchbar-padding:  0 12px;
+  --component-browse-searchbar-box-shadow:  inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  --component-browse-searchbar-border-color:  rgba(184, 167, 234, 0.36);
+  --component-browse-searchbar-background-2:  rgba(29, 27, 38, 0.92);
+  --component-browse-searchbar-box-shadow-2:  0 0 0 3px rgba(184, 167, 234, 0.08);
+  --component-browse-searchinput-padding:  7px 0;
+  --component-browse-clearbtn-font-size:  14px;
+  --component-browse-clearbtn-padding:  2px;
+  --component-browse-searchbtn-font-size:  10px;
+  --component-browse-searchbtn-letter-spacing:  0.14em;
+  --component-browse-searchbtn-min-height:  40px;
+  --component-browse-searchbtn-padding:  0 18px;
+  --component-browse-searchbtn-border-radius:  10px;
+  --component-browse-searchbtn-background:  linear-gradient(180deg, rgba(207, 187, 255, 0.96), rgba(152, 126, 219, 0.9));
+  --component-browse-searchbtn-color:  rgba(35, 25, 60, 0.96);
+  --component-browse-searchbtn-border:  1px solid rgba(229, 219, 255, 0.2);
+  --component-browse-searchbtn-box-shadow:  0 10px 24px rgba(150, 121, 228, 0.18);
+  --component-browse-searchbtn-transform:  translateY(-1px);
+  --component-browse-searchbtn-opacity:  0.38;
+  --component-browse-searchbtn-filter:  grayscale(0.35);
+  --component-browse-searchbtn-disabled-box-shadow:  none;
+  --component-browse-searchlanding-padding:  clamp(24px, 2.9vw, 52px) clamp(22px, 2.7vw, 46px) 48px;
+  --component-browse-searchlanding-background:
+    radial-gradient(circle at 18% 22%, rgba(184, 167, 234, 0.1), transparent 34%),
+    radial-gradient(circle at 72% 18%, rgba(100, 145, 255, 0.06), transparent 30%);
+  --component-browse-searchlanding-scrollbar-color:  rgba(184, 167, 234, 0.32) transparent;
+  --component-browse-searchcanvas-gap:  clamp(14px, 1.2vw, 22px);
+  --component-browse-searchmaincolumn-gap:  clamp(22px, 2vw, 30px);
+  --component-browse-searchherocopy-gap:  6px;
+  --component-browse-searchherocopy-max-width:  680px;
+  --component-browse-searchherocopy-margin-bottom:  2px;
+  --component-browse-searchherocopy-searchrecommendationheader-color:  rgba(238, 235, 242, 0.92);
+  --component-browse-searchherocopy-font-size:  26px;
+  --component-browse-searchherocopy-searchrecommendationheader-color-2:  rgba(229, 226, 225, 0.52);
+  --component-browse-searchherocopy-font-size-2:  13px;
+  --component-browse-searchherocopy-max-width-2:  660px;
+  --component-browse-searchrecommendationheader-gap:  12px;
+  --component-browse-searchrecommendationheader-margin-bottom:  14px;
+  --component-browse-searchrecommendationheader-grid-template-columns:  22px minmax(0, 1fr);
+  --component-browse-searchrecommendationheader-column-gap:  8px;
+  --component-browse-searchrecommendationheader-font-size:  16px;
+  --component-browse-searchrecommendationheader-margin-top:  3px;
+  --component-browse-searchrecommendationheader-font-size-2:  12px;
+  --component-browse-searchrailcontrols-gap:  2px;
+  --component-browse-searchrailcontrols-width:  28px;
+  --component-browse-searchrailcontrols-height:  28px;
+  --component-browse-searchrailcontrols-border-radius:  999px;
+  --component-browse-searchrailcontrols-color:  rgba(218, 207, 255, 0.68);
+  --component-browse-searchrailcontrols-color-2:  rgba(238, 235, 242, 0.94);
+  --component-browse-searchrailcontrols-background:  rgba(184, 167, 234, 0.08);
+  --component-browse-searchrailcontrols-transform:  translateY(-1px);
+  --component-browse-searchrailcontrols-material-symbols-outlined-font-size:  20px;
+  --component-browse-searchsectionicon-color:  rgba(188, 166, 255, 0.96);
+  --component-browse-searchsectionicon-font-size:  18px;
+  --component-browse-searchtastepills-min-height:  20px;
+  --component-browse-searchtastepills-padding:  0 8px;
+  --component-browse-searchtastepills-border:  1px solid rgba(184, 167, 234, 0.2);
+  --component-browse-searchtastepills-border-radius:  999px;
+  --component-browse-searchtastepills-background:  rgba(184, 167, 234, 0.1);
+  --component-browse-searchtastepills-color:  rgba(218, 207, 255, 0.88);
+  --component-browse-searchtastepills-font-size:  10px;
+  --component-browse-searchtastepills-letter-spacing:  0.08em;
+  --component-browse-searchrecommendationrow-scroll-padding-inline:  8px clamp(28px, 2vw, 44px);
+  --component-browse-searchrecommendationrow-padding:  12px clamp(26px, 1.7vw, 36px) 12px 8px;
+  --component-browse-searchrecommendationrow-scrollbar-color:  rgba(184, 167, 234, 0.24) transparent;
+  --component-browse-searchrecommendationrow-height:  7px;
+  --component-browse-searchrecommendationrow-border-radius:  999px;
+  --component-browse-searchrecommendationrow-background:  rgba(184, 167, 234, 0.2);
+  --component-browse-searchrecommendationrow-n-library-card-flex:  0 0 clamp(118px, 22cqw, 180px);
+  --component-browse-searchrecommendationrow-n-library-card-width:  clamp(118px, 22cqw, 180px);
+  --component-browse-searchrecommendationrow-n-library-card-height:  calc((clamp(118px, 22cqw, 180px) / 0.7) + 74px);
+  --component-browse-searchrecommendationrow-n-library-card-cover-aspect-ratio:  0.7;
+  --component-browse-searchrecommendationrow-n-library-card-info-flex:  0 0 58px;
+  --component-browse-searchrecommendationrow-n-library-card-title-min-height:  32px;
+  --component-browse-searchrecommendationrow-n-library-card-title-max-height:  36px;
+  --component-browse-searchcoverplaceholder-padding:  18px 14px;
+  --component-browse-searchcoverplaceholder-background:
+    radial-gradient(circle at 28% 18%, rgba(184, 167, 234, 0.2), transparent 32%),
+    linear-gradient(180deg, rgba(36, 33, 45, 0.92), rgba(21, 20, 27, 0.96));
+  --component-browse-searchcoverplaceholder-height:  8px;
+  --component-browse-searchcoverplaceholder-border-radius:  999px;
+  --component-browse-searchcoverplaceholder-background-2:  rgba(184, 167, 234, 0.14);
+  --component-browse-searchcoverplaceholder-box-shadow:
+    0 -18px 0 rgba(255, 255, 255, 0.045),
+    34px -36px 0 rgba(255, 255, 255, 0.035);
+  --component-browse-searchcoverplaceholder-color:  rgba(238, 235, 242, 0.9);
+  --component-browse-searchcoverplaceholder-font-size:  13px;
+  --component-browse-searchinsightpanel-top:  18px;
+  --component-browse-searchinsightpanel-gap:  14px;
+  --component-browse-searchinsightcard-padding:  22px 22px 20px;
+  --component-browse-searchinsightcard-border:  1px solid rgba(255, 255, 255, 0.055);
+  --component-browse-searchinsightcard-border-radius:  12px;
+  --component-browse-searchinsightcard-background:
+    linear-gradient(180deg, rgba(27, 25, 36, 0.9), rgba(16, 16, 22, 0.92));
+  --component-browse-searchinsightcard-box-shadow:
+    0 16px 42px rgba(0, 0, 0, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  --component-browse-searchpaneltitle-searchdiversityheader-searchdiversitylabels-gap:  10px;
+  --component-browse-searchpaneltitle-color:  rgba(207, 199, 226, 0.68);
+  --component-browse-searchpaneltitle-font-size:  11.5px;
+  --component-browse-searchpaneltitle-letter-spacing:  0.09em;
+  --component-browse-searchpaneltitle-material-symbols-outlined-font-size:  14px;
+  --component-browse-searchpaneltitle-material-symbols-outlined-color:  rgba(207, 199, 226, 0.42);
+  --component-browse-searchpanellabel-margin:  24px 0 0;
+  --component-browse-searchpanellabel-color:  rgba(229, 226, 225, 0.6);
+  --component-browse-searchpanellabel-font-size:  13px;
+  --component-browse-searchtastepills-gap:  7px 12px;
+  --component-browse-searchtastepills-margin-top:  12px;
+  --component-browse-searchtastepills-padding-bottom:  4px;
+  --component-browse-searchtastepills-padding-2:  0 0 0 10px;
+  --component-browse-searchtastepills-border-left:  2px solid rgba(184, 167, 234, 0.42);
+  --component-browse-searchtastepills-color-2:  rgba(218, 207, 255, 0.74);
+  --component-browse-searchtastepills-font-size-2:  11.5px;
+  --component-browse-searchtastepills-letter-spacing-2:  0.04em;
+  --component-browse-searchknowntoggle-gap:  7px;
+  --component-browse-searchknowntoggle-margin-top:  24px;
+  --component-browse-searchknowntoggle-padding-top:  18px;
+  --component-browse-searchknowntoggle-border-top:  1px solid rgba(255, 255, 255, 0.045);
+  --component-browse-searchpaneltoggle-min-height:  26px;
+  --component-browse-searchknowntoggle-color:  rgba(229, 226, 225, 0.42);
+  --component-browse-searchknowntoggle-font-size:  12.5px;
+  --component-browse-searchdiversity-searchinsights-gap:  11px;
+  --component-browse-searchdiversity-searchinsights-margin-top:  28px;
+  --component-browse-searchdiversity-searchinsights-padding-top:  20px;
+  --component-browse-searchdiversity-searchinsights-border-top:  1px solid rgba(255, 255, 255, 0.045);
+  --component-browse-searchdiversityheader-color:  rgba(229, 226, 225, 0.62);
+  --component-browse-searchdiversityheader-font-size:  13px;
+  --component-browse-searchdiversitytrack-height:  3px;
+  --component-browse-searchdiversitytrack-background:  rgba(255, 255, 255, 0.09);
+  --component-browse-searchdiversitytrack-background-2:  rgba(184, 167, 234, 0.82);
+  --component-browse-searchdiversitytrack-width:  10px;
+  --component-browse-searchdiversitytrack-height-2:  10px;
+  --component-browse-searchdiversitytrack-border:  2px solid rgba(24, 22, 31, 0.95);
+  --component-browse-searchdiversitytrack-background-3:  rgba(218, 207, 255, 0.95);
+  --component-browse-searchdiversitylabels-color:  rgba(229, 226, 225, 0.32);
+  --component-browse-searchdiversitylabels-font-size:  11px;
+  --component-browse-searchdivergentnote-grid-template-columns:  20px minmax(0, 1fr);
+  --component-browse-searchdivergentnote-gap:  9px;
+  --component-browse-searchdivergentnote-margin-top:  22px;
+  --component-browse-searchdivergentnote-material-symbols-outlined-color:  rgba(188, 166, 255, 0.68);
+  --component-browse-searchdivergentnote-material-symbols-outlined-font-size:  16px;
+  --component-browse-searchdivergentnote-searchinsights-color:  rgba(229, 226, 225, 0.48);
+  --component-browse-searchdivergentnote-searchinsights-font-size:  13px;
+  --component-browse-searchinsights-grid-template-columns:  14px minmax(0, 1fr);
+  --component-browse-searchinsights-gap:  8px;
+  --component-browse-searchinsights-padding-top:  10px;
+  --component-browse-searchinsights-border-top:  1px solid rgba(255, 255, 255, 0.04);
+  --component-browse-searchinsights-material-symbols-outlined-color:  rgba(188, 166, 255, 0.68);
+  --component-browse-searchinsights-material-symbols-outlined-font-size:  12px;
+  --component-browse-searchinsights-material-symbols-outlined-margin-top:  1px;
+  --component-browse-searchinsightsbutton-gap:  8px;
+  --component-browse-searchinsightsbutton-border:  1px solid rgba(184, 167, 234, 0.14);
+  --component-browse-searchinsightsbutton-color:  rgba(211, 192, 255, 0.78);
+  --component-browse-searchinsightsbutton-font-size:  11px;
+  --component-browse-searchinsightsbutton-letter-spacing:  0.08em;
+  --component-browse-searchinsightsbutton-min-height:  36px;
+  --component-browse-searchinsightsbutton-margin-top:  18px;
+  --component-browse-searchinsightsbutton-border-radius:  7px;
+  --component-browse-searchinsightsbutton-color-2:  rgba(238, 235, 242, 0.92);
+  --component-browse-searchinsightsbutton-border-color:  rgba(184, 167, 234, 0.2);
+  --component-browse-searchinsightsbutton-background:  rgba(184, 167, 234, 0.06);
+  --component-browse-sourcesection-border-bottom:  1px solid var(--border-dim);
+  --component-browse-sourceicon-width:  18px;
+  --component-browse-sourceicon-height:  18px;
+  --component-browse-sourcelang-border:  1px solid var(--border-dim);
+  --component-browse-sourcelang-padding:  1px 5px;
+  --component-browse-skcard-width:  110px;
+  --component-browse-splitsidebar-width:  180px;
+  --component-browse-splitsidebar-border-right:  1px solid var(--border-dim);
+  --component-browse-splitsearchwrap-border-bottom:  1px solid var(--border-dim);
+  --component-browse-splitsearchclear-font-size:  13px;
+  --component-browse-splitsearchclear-padding:  2px;
+  --component-browse-splitcontentheader-border-bottom:  1px solid var(--border-dim);
+  --component-browse-catalogcountbadge-min-height:  24px;
+  --component-browse-catalogcountbadge-padding:  0 9px;
+  --component-browse-catalogcountbadge-border:  1px solid rgba(255, 255, 255, 0.055);
+  --component-browse-catalogcountbadge-border-radius:  999px;
+  --component-browse-catalogcountbadge-background:  rgba(255, 255, 255, 0.018);
+  --component-browse-catalogcountbadge-color:  rgba(229, 226, 225, 0.44);
+  --component-browse-catalogcountbadge-font-size:  11px;
+  --component-browse-catalogcountbadge-letter-spacing:  0.02em;
+  --component-browse-splitsourceicon-width:  18px;
+  --component-browse-splitsourceicon-height:  18px;
+  --component-browse-tagcheckmark-font-size:  14px;
+  --component-browse-tagcheckmark-color:  rgba(218, 207, 255, 0.92);
+  --component-browse-catalogoptionactive-tagcheckmark-color:  rgba(218, 207, 255, 0.96);
+  --component-browse-taggrid-grid-template-columns:  repeat(auto-fill, minmax(110px, 1fr));
+  --component-browse-showmorebtn-min-height:  34px;
+  --component-browse-showmorebtn-padding:  0 14px;
+  --component-browse-showmorebtn-border-radius:  8px;
+  --component-browse-showmorebtn-border:  1px solid rgba(255, 255, 255, 0.07);
+  --component-browse-showmorebtn-background:  rgba(255, 255, 255, 0.026);
+  --component-browse-showmorebtn-font-size:  10px;
+  --component-browse-showmorebtn-letter-spacing:  0.12em;
+  --component-browse-showmorebtn-color:  rgba(211, 192, 255, 0.88);
+  --component-browse-showmorebtn-background-2:  rgba(184, 167, 234, 0.075);
+  --component-browse-showmorebtn-color-2:  rgba(238, 235, 242, 0.9);
+  --component-browse-showmorebtn-border-color:  rgba(184, 167, 234, 0.24);
+  --component-browse-loadmorerow-border-top:  1px solid var(--border-dim);
+  --component-browse-sourcebrowsebar-gap:  10px;
+  --component-browse-sourcebrowsebar-padding:  12px clamp(14px, 1.2vw, 20px);
+  --component-browse-sourcebrowsebar-border-bottom:  1px solid rgba(255, 255, 255, 0.045);
+  --component-browse-sourcebrowsebar-background:  rgba(8, 8, 12, 0.18);
+  --component-browse-nsfwbadge-border:  1px solid rgba(180, 60, 60, 0.25);
+  --component-browse-nsfwbadge-padding:  1px 5px;
+  --component-browse-browseshell-padding:
+    clamp(10px, 1.1vw, 18px)
+    clamp(14px, 1.8vw, 28px)
+    clamp(14px, 1.7vw, 26px);
+  --component-browse-catalogshell-border-radius:  calc(24px * var(--n-hud-scale));
+  --component-browse-catalogshell-border:  1px solid rgba(255, 255, 255, 0.055);
+  --component-browse-catalogshell-background:
+    radial-gradient(circle at 18% 8%, rgba(184, 167, 234, 0.065), transparent 34%),
+    rgba(18, 18, 22, 0.72);
+  --component-browse-catalogshell-box-shadow:  0 22px 60px rgba(0, 0, 0, 0.18);
+  --component-browse-discoverpanelheader-box-shadow:  none;
+  --component-browse-catalogroot-border-radius:  clamp(18px, 1.6vw, 26px);
+  --component-browse-catalogroot-border:  1px solid rgba(255, 255, 255, 0.055);
+  --component-browse-catalogroot-background:
+    radial-gradient(circle at 20% 0%, rgba(184, 167, 234, 0.055), transparent 30%),
+    rgba(18, 18, 22, 0.7);
+  --component-browse-catalogsidebar-flex:  0 0 clamp(226px, 13vw, 248px);
+  --component-browse-catalogsidebar-width-2:  clamp(226px, 13vw, 248px);
+  --component-browse-catalogsidebar-padding-2:  clamp(13px, 0.85vw, 16px) clamp(11px, 0.7vw, 14px);
+  --component-browse-catalogsidebar-border-right-2:  1px solid rgba(255, 255, 255, 0.055);
+  --component-browse-catalogsidebar-background-2:
+    linear-gradient(180deg, rgba(20, 19, 27, 0.72), rgba(10, 10, 14, 0.28)),
+    rgba(10, 10, 14, 0.48);
+  --component-browse-browsefiltersection-margin-bottom:  clamp(12px, 0.75vw, 15px);
+  --component-browse-browsefiltersection-padding:  clamp(13px, 0.8vw, 16px);
+  --component-browse-browsefiltersection-border:  1px solid rgba(255, 255, 255, 0.065);
+  --component-browse-browsefiltersection-border-radius:  clamp(14px, 1vw, 19px);
+  --component-browse-browsefiltersection-background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.022), rgba(255, 255, 255, 0.004)),
+    rgba(13, 13, 18, 0.58);
+  --component-browse-browsefiltersection-box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.025),
+    0 12px 28px rgba(0, 0, 0, 0.18);
+  --component-browse-browsecardheader-browsesectionheader-gap:  10px;
+  --component-browse-browsecardheader-browsesectionheader-margin:  0 0 14px;
+  --component-browse-browsecardtitle-color:  rgba(238, 235, 242, 0.9);
+  --component-browse-browsecardtitle-font-size:  14px;
+  --component-browse-browseresetbutton-gap:  4px;
+  --component-browse-browseresetbutton-color:  rgba(184, 167, 234, 0.68);
+  --component-browse-browseresetbutton-font-size:  12px;
+  --component-browse-browseresetbutton-material-symbols-outlined-font-size:  15px;
+  --component-browse-browsefield-gap:  7px;
+  --component-browse-browsefield-margin-bottom:  13px;
+  --component-browse-browsefieldlabel-color:  rgba(229, 226, 225, 0.78);
+  --component-browse-browsefieldlabel-font-size:  12px;
+  --component-browse-browsefieldhint-margin:  -2px 1px 0;
+  --component-browse-browsefieldhint-color:  rgba(229, 226, 225, 0.42);
+  --component-browse-browsefieldhint-font-size:  11px;
+  --component-browse-browsesegment-gap:  3px;
+  --component-browse-browsesegment-min-height:  38px;
+  --component-browse-browsesegment-padding:  4px;
+  --component-browse-browsesegment-border:  1px solid rgba(255, 255, 255, 0.06);
+  --component-browse-browsesegment-border-radius:  14px;
+  --component-browse-browsesegment-background:  rgba(8, 8, 12, 0.46);
+  --component-browse-browsesegment-box-shadow:  inset 0 1px 0 rgba(255, 255, 255, 0.018);
+  --component-browse-browsesegment-min-height-2:  30px;
+  --component-browse-browsesegment-border-2:  1px solid transparent;
+  --component-browse-browsesegment-border-radius-2:  10px;
+  --component-browse-browsesegment-color:  rgba(202, 196, 208, 0.66);
+  --component-browse-browsesegment-font-size:  12px;
+  --component-browse-browsesegment-transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    box-shadow 140ms ease,
+    transform 120ms ease;
+  --component-browse-browsesegment-is-active-color:  rgba(239, 235, 245, 0.9);
+  --component-browse-browsesegment-is-active-background:  rgba(255, 255, 255, 0.035);
+  --component-browse-browsesegment-is-active-border-color:  rgba(255, 255, 255, 0.055);
+  --component-browse-browsesegment-is-active-color-2:  var(--n-on-primary);
+  --component-browse-browsesegment-is-active-border-color-2:  rgba(211, 196, 255, 0.34);
+  --component-browse-browsesegment-is-active-background-2:  var(--n-gradient-primary);
+  --component-browse-browsesegment-is-active-box-shadow:
+    0 4px 14px rgba(184, 167, 234, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  --component-browse-browsesegment-transform:  scale(0.97);
+  --component-browse-browseselectrow-min-height:  36px;
+  --component-browse-browseselectrow-padding:  0 12px;
+  --component-browse-browseselectrow-border:  1px solid rgba(255, 255, 255, 0.06);
+  --component-browse-browseselectrow-border-radius:  11px;
+  --component-browse-browseselectrow-background:  rgba(8, 8, 12, 0.46);
+  --component-browse-browseselectrow-color:  rgba(229, 226, 225, 0.72);
+  --component-browse-browseselectrow-font-size:  12px;
+  --component-browse-browseselectrow-transition:  background 160ms ease, border-color 160ms ease, color 160ms ease;
+  --component-browse-browseselectrow-material-symbols-outlined-font-size:  18px;
+  --component-browse-browseselectrow-material-symbols-outlined-color:  rgba(229, 226, 225, 0.4);
+  --component-browse-browseselectrow-border-color:  rgba(184, 167, 234, 0.16);
+  --component-browse-browseselectrow-background-2:  rgba(184, 167, 234, 0.055);
+  --component-browse-browseselectrow-is-paused-color:  rgba(229, 226, 225, 0.34);
+  --component-browse-browseselectrow-is-paused-border-color:  rgba(255, 255, 255, 0.045);
+  --component-browse-browseselectrow-is-paused-background:  rgba(8, 8, 12, 0.32);
+  --component-browse-browseselectrow-is-paused-material-symbols-outlined-opacity:  0.22;
+  --component-browse-browsefield-browseselectrow-is-open-border-color:  rgba(184, 167, 234, 0.24);
+  --component-browse-browsefield-browseselectrow-is-open-border-bottom-color:  rgba(184, 167, 234, 0.1);
+  --component-browse-browsefield-browseselectrow-is-open-border-radius:  11px 11px 8px 8px;
+  --component-browse-browsefield-browseselectrow-is-open-background:  rgba(20, 18, 27, 0.72);
+  --component-browse-browseinlinepicker-top:  calc(100% + 4px);
+  --component-browse-browseinlinepicker-max-height:  min(204px, 38vh);
+  --component-browse-searchtastepills-is-muted-color:  rgba(229, 226, 225, 0.48);
+  --component-browse-browselanguagepicker-font-size:  11px;
+  --component-browse-browsetogglerow-min-height:  32px;
+  --component-browse-browsetogglerow-color:  rgba(229, 226, 225, 0.72);
+  --component-browse-browsetogglerow-font-size:  12px;
+  --component-browse-browseswitch-width:  28px;
+  --component-browse-browseswitch-height:  16px;
+  --component-browse-browseswitch-border-radius:  999px;
+  --component-browse-browseswitch-background:  rgba(255, 255, 255, 0.16);
+  --component-browse-browseswitch-box-shadow:  inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --component-browse-browseswitch-transition:  background 160ms ease;
+  --component-browse-browseswitch-top:  3px;
+  --component-browse-browseswitch-left:  3px;
+  --component-browse-browseswitch-width-2:  10px;
+  --component-browse-browseswitch-height-2:  10px;
+  --component-browse-browseswitch-background-2:  rgba(238, 235, 242, 0.86);
+  --component-browse-browseswitch-transition-2:  transform 160ms ease, background 160ms ease;
+  --component-browse-browsetogglerow-is-active-browseswitch-background:  rgba(184, 167, 234, 0.82);
+  --component-browse-browsetogglerow-is-active-browseswitch-transform:  translateX(12px);
+  --component-browse-browsetogglerow-is-active-browseswitch-background-2:  #ffffff;
+  --component-browse-browsesectionbody-transition:
+    max-height 220ms ease,
+    opacity 170ms ease;
+  --component-browse-splitsourceicon-sourceicon-width:  calc(18px * var(--n-hud-scale));
+  --component-browse-splitsourceicon-sourceicon-height:  calc(18px * var(--n-hud-scale));
+  --component-browse-splitsourceicon-sourceicon-border-radius:  calc(5px * var(--n-hud-scale));
+  --component-browse-browsegenressection-margin-bottom:  clamp(12px, 0.75vw, 15px);
+  --component-browse-browsegenressection-gap:  4px;
+  --component-browse-browsegenressection-browsesectionbody-margin-top:  -5px;
+  --component-browse-catalogtaglist-max-height:  clamp(122px, 21vh, 190px);
+  --component-browse-catalogtaglist-padding:  0 clamp(3px, 0.3vw, 5px) 0 0;
+  --component-browse-catalogtaglist-gap-2:  8px;
+  --component-browse-catalogtaglist-scrollbar-color:  rgba(184, 167, 234, 0.18) transparent;
+  --component-browse-catalogtaglist-width:  5px;
+  --component-browse-catalogtaglist-border-radius:  999px;
+  --component-browse-catalogtaglist-background:  rgba(184, 167, 234, 0.18);
+  --component-browse-catalogoption-gap:  6px;
+  --component-browse-catalogoption-min-height:  31px;
+  --component-browse-catalogoption-padding:  0 12px;
+  --component-browse-catalogoption-border:  1px solid rgba(255, 255, 255, 0.05);
+  --component-browse-catalogoption-border-radius:  999px;
+  --component-browse-catalogoption-background:  rgba(255, 255, 255, 0.026);
+  --component-browse-catalogoption-color:  rgba(229, 226, 225, 0.66) !important;
+  --component-browse-catalogoption-font-size:  12px;
+  --component-browse-catalogoption-color-2:  rgba(229, 226, 225, 0.78) !important;
+  --component-browse-catalogoption-border-color:  rgba(184, 167, 234, 0.14);
+  --component-browse-catalogoption-background-2:  rgba(184, 167, 234, 0.055);
+  --component-browse-catalogoptionactive-color:  #efe9ff !important;
+  --component-browse-catalogoptionactive-border-color:  rgba(184, 167, 234, 0.42);
+  --component-browse-catalogoptionactive-background:  linear-gradient(180deg, rgba(184, 167, 234, 0.28), rgba(145, 126, 204, 0.16));
+  --component-browse-catalogsearchwrap-margin:  0 0 calc(7px * var(--n-hud-scale));
+  --component-browse-catalogsearchwrap-min-height:  calc(29px * var(--n-hud-scale));
+  --component-browse-catalogsearchwrap-padding:  0 calc(10px * var(--n-hud-scale));
+  --component-browse-catalogsearchwrap-border:  1px solid rgba(255, 255, 255, 0.055);
+  --component-browse-catalogsearchwrap-border-radius:  calc(12px * var(--n-hud-scale));
+  --component-browse-catalogsearchwrap-background:  rgba(8, 8, 12, 0.42);
+  --component-browse-catalogsearchwrap-splitsearchinput-font-size:  calc(11px * var(--n-hud-scale));
+  --component-browse-catalogsearchwrap-splitsearchinput-color:  rgba(229, 226, 225, 0.64);
+  --component-browse-catalogsearchwrap-splitsearchinput-color-2:  rgba(229, 226, 225, 0.32);
+  --component-browse-catalogsearchwrap-splitsearchicon-color:  rgba(229, 226, 225, 0.28);
+  --component-browse-splitcontent-background:  rgba(10, 10, 13, 0.12);
+  --component-browse-splitcontentheader-sourcebrowsebar-border-bottom-color:  rgba(255, 255, 255, 0.045);
+  --component-browse-taggrid-grid-template-columns-2:  repeat(auto-fill, minmax(clamp(104px, 7.1vw, 138px), 1fr));
+  --component-browse-taggrid-gap:  clamp(14px, 1.05vw, 20px) clamp(12px, 0.9vw, 17px);
+  --component-browse-taggrid-padding:  clamp(8px, 0.75vw, 14px) clamp(10px, 0.8vw, 16px) clamp(14px, 1vw, 20px);
+  --component-browse-sourcerow-n-library-card-flex:  0 0 clamp(108px, 7.4vw, 136px);
+  --component-browse-sourcesection-margin:  0 calc(22px * var(--n-hud-scale)) calc(12px * var(--n-hud-scale));
+  --component-browse-sourcesection-padding:  calc(10px * var(--n-hud-scale)) calc(14px * var(--n-hud-scale)) calc(14px * var(--n-hud-scale));
+  --component-browse-sourcesection-border:  1px solid rgba(255, 255, 255, 0.05);
+  --component-browse-sourcesection-border-radius:  calc(18px * var(--n-hud-scale));
+  --component-browse-sourcesection-background:  rgba(18, 18, 22, 0.64);
+  --component-browse-results-padding-top:  calc(10px * var(--n-hud-scale));
+  --component-browse-sourcebrowsebar-searchbar-min-height:  calc(40px * var(--n-hud-scale));
+  --component-browse-sourcebrowsebar-searchbar-border-color:  rgba(255, 255, 255, 0.055);
+  --component-browse-sourcebrowsebar-searchbar-background:  rgba(27, 25, 34, 0.7);
+  --component-browse-discoverpanel-gap:  clamp(10px, 0.8vw, 14px);
+  --component-browse-discoverpanel-padding:  clamp(12px, 1vw, 18px) clamp(18px, 1.55vw, 28px) clamp(16px, 1.35vw, 24px);
+  --component-browse-discoverpanelheader-min-height:  36px;
+  --component-browse-discoverpanelheader-padding:  0 0 6px;
+  --component-browse-discoverpanelheader-border-bottom:  1px solid rgba(255, 255, 255, 0.045);
+  --component-browse-catalogheadercopy-gap:  4px;
+  --component-browse-catalogheadercopy-n-eyebrow-color:  rgba(238, 235, 242, 0.8);
+  --component-browse-catalogheadercopy-n-eyebrow-font-size:  12px;
+  --component-browse-catalogheadercopy-n-eyebrow-letter-spacing:  0.13em;
+  --component-browse-catalogsubtitle-color:  rgba(229, 226, 225, 0.48);
+  --component-browse-catalogsubtitle-font-size:  12px;
+  --component-browse-browseshell-padding-inline:  10px;
+  --component-browse-searchlanding-padding-2:  18px clamp(14px, 3vw, 22px) 36px;
+  --component-browse-searchinsightcard-padding-2:  18px;
+  --component-browse-searchpanellabel-margin-top:  18px;
+  --component-browse-searchtastepills-grid-template-columns:  repeat(auto-fit, minmax(108px, 1fr));
+  --component-browse-searchtastepills-gap-2:  8px 10px;
+  --component-browse-searchknowntoggle-margin-top-2:  18px;
+  --component-browse-searchknowntoggle-padding-top-2:  14px;
+  --component-browse-searchdiversity-padding-top:  14px;
+  --component-browse-catalogsidebar-flex-2:  0 0 clamp(204px, 28vw, 220px);
+  --component-browse-catalogsidebar-width-3:  clamp(204px, 28vw, 220px);
+  --component-browse-catalogsidebar-padding-3:  12px 10px;
+  --component-browse-browsefiltersection-padding-2:  12px;
+  --component-browse-browsesegment-gap-2:  5px;
+  --component-browse-browsesegment-font-size-2:  11.5px;
+  --component-browse-browseselectrow-min-height-2:  33px;
+  --component-browse-browseselectrow-font-size-2:  11px;
+  --component-browse-browsetogglerow-min-height-2:  30px;
+  --component-browse-browsetogglerow-font-size-2:  11px;
+  --component-browse-catalogtaglist-max-height-2:  132px;
+  --component-browse-catalogoption-min-height-2:  27px;
+  --component-browse-catalogoption-padding-inline:  10px;
+  --component-browse-catalogoption-font-size-2:  11px;
+  --component-browse-taggrid-grid-template-columns-3:  repeat(auto-fill, minmax(clamp(92px, 15vw, 116px), 1fr));
+  --component-browse-taggrid-gap-2:  12px 10px;
+  --component-browse-taggrid-padding-2:  12px;
+  --component-browse-root-browse-topbar-gap-2:  8px;
+  --component-browse-root-browse-topbar-n-segmented-max-width:  190px;
+  --component-browse-browsesubtabs-gap-2:  18px;
+  --component-browse-browsesubtabs-padding-inline:  14px;
+  --component-browse-searchlanding-padding-inline:  14px;
+  --component-browse-searchrecommendationheader-gap-2:  8px;
+  --component-browse-searchrailcontrols-width-2:  26px;
+  --component-browse-searchrailcontrols-height-2:  26px;
+  --component-browse-searchinsightcard-row-gap:  12px;
+  --component-browse-searchinsightcard-padding-3:  16px;
+  --component-browse-searchherocopy-font-size-3:  24px;
+  --component-browse-catalogsidebar-flex-basis:  188px;
+  --component-browse-catalogsidebar-width-4:  188px;
+  --component-browse-browsecardtitle-font-size-2:  13px;
+  --component-browse-browseresetbutton-browsefieldlabel-browsesegment-font-size:  11.5px;
+  --component-browse-taggrid-grid-template-columns-4:  repeat(auto-fill, minmax(86px, 1fr));
+  --component-browse-searchherocopy-font-size-4:  22px;
   --component-library-font: var(--font-sans);
   --component-library-scale: var(--hud-scale, var(--app-resolution-scale));
   --component-library-topbar-height: calc(56px * var(--component-library-scale));
@@ -706,162 +1186,6 @@
   --component-library-refresh-option-hover-shadow: var(--shadow-sm);
   --component-library-refresh-option-accent-bg: var(--color-accent);
   --component-library-refresh-option-accent-shadow: none;
-}
-
-/* ─────────────────────────────────────────────
-   Themes
-   Applied via data-theme on <html>.
-   "nocturne" is the app default. "dark" remains the base fallback theme.
-   ───────────────────────────────────────────── */
-
-/* ── High Contrast (dark base, sharper text) ── */
-[data-theme="high-contrast"] {
-  --bg-void:      #000000;
-  --bg-base:      #080808;
-  --bg-surface:   #0d0d0d;
-  --bg-raised:    #111111;
-  --bg-overlay:   #171717;
-  --bg-subtle:    #1e1e1e;
-
-  --border-dim:    #252525;
-  --border-base:   #303030;
-  --border-strong: #3e3e3e;
-  --border-focus:  #5a7a5a;
-
-  /* Text bumped up significantly for contrast */
-  --text-primary:   #ffffff;
-  --text-secondary: #e8e6e0;
-  --text-muted:     #b0aea8;
-  --text-faint:     #6e6c68;
-  --text-disabled:  #303030;
-
-  --accent:         #7aaa7a;
-  --accent-dim:     #2e4a2e;
-  --accent-muted:   #1e2e1e;
-  --accent-fg:      #bcd8bc;
-  --accent-bright:  #9fcf9f;
-}
-
-/* ── Light mode ── */
-[data-theme="light"] {
-  --bg-void:      #e8e6e2;
-  --bg-base:      #eeece8;
-  --bg-surface:   #f4f2ee;
-  --bg-raised:    #faf8f4;
-  --bg-overlay:   #ffffff;
-  --bg-subtle:    #f0ede8;
-
-  --border-dim:    #dedad4;
-  --border-base:   #d0ccc6;
-  --border-strong: #bbb6ae;
-  --border-focus:  #5a7a5a;
-
-  --text-primary:   #1a1916;
-  --text-secondary: #2e2c28;
-  --text-muted:     #5a5750;
-  --text-faint:     #9a9890;
-  --text-disabled:  #c8c4bc;
-
-  --accent:         #4a724a;
-  --accent-dim:     #c8dcc8;
-  --accent-muted:   #deeade;
-  --accent-fg:      #2a5a2a;
-  --accent-bright:  #3a6a3a;
-
-  --color-error:    #a03030;
-  --color-error-bg: #fce8e8;
-  --color-success:  #2a6a2a;
-  --color-info:     #2a4a7a;
-  --color-info-bg:  #e8eef8;
-  --color-read:     #e8e4dc;
-}
-
-/* ── Light High Contrast ── */
-[data-theme="light-contrast"] {
-  --bg-void:      #d8d4ce;
-  --bg-base:      #e2deda;
-  --bg-surface:   #ece8e2;
-  --bg-raised:    #f5f2ec;
-  --bg-overlay:   #ffffff;
-  --bg-subtle:    #e4e0d8;
-
-  --border-dim:    #c4c0b8;
-  --border-base:   #b0aca4;
-  --border-strong: #989490;
-  --border-focus:  #3a5a3a;
-
-  --text-primary:   #080806;
-  --text-secondary: #181612;
-  --text-muted:     #38342e;
-  --text-faint:     #706c64;
-  --text-disabled:  #b0ac a4;
-
-  --accent:         #2a5a2a;
-  --accent-dim:     #b0ccb0;
-  --accent-muted:   #c8dcc8;
-  --accent-fg:      #183818;
-  --accent-bright:  #1e4e1e;
-
-  --color-error:    #8a1a1a;
-  --color-error-bg: #f8e0e0;
-  --color-read:     #e0dcd4;
-}
-
-/* ── Midnight (deep blue-black tint) ── */
-[data-theme="midnight"] {
-  --bg-void:      #050810;
-  --bg-base:      #080c18;
-  --bg-surface:   #0c1020;
-  --bg-raised:    #101428;
-  --bg-overlay:   #151a30;
-  --bg-subtle:    #1a2038;
-
-  --border-dim:    #1a2035;
-  --border-base:   #222840;
-  --border-strong: #2c3450;
-  --border-focus:  #4a5c8a;
-
-  --text-primary:   #eeeef8;
-  --text-secondary: #c0c4d8;
-  --text-muted:     #808498;
-  --text-faint:     #404860;
-  --text-disabled:  #202840;
-
-  --accent:         #6a7ab8;
-  --accent-dim:     #252d50;
-  --accent-muted:   #181e38;
-  --accent-fg:      #a8b4e8;
-  --accent-bright:  #8896d0;
-}
-
-/* ── Nocturne (lunar graphite identity) ── */
-/* Nocturne lives in nocturne-theme.css so the current app identity has one editable source. */
-
-/* ── Warm (sepia / amber tinted) ── */
-[data-theme="warm"] {
-  --bg-void:      #0c0a06;
-  --bg-base:      #100e08;
-  --bg-surface:   #16130c;
-  --bg-raised:    #1c1810;
-  --bg-overlay:   #221e14;
-  --bg-subtle:    #28241a;
-
-  --border-dim:    #201c10;
-  --border-base:   #2c2818;
-  --border-strong: #3a3420;
-  --border-focus:  #6a5a30;
-
-  --text-primary:   #f5f0e0;
-  --text-secondary: #d8d0b0;
-  --text-muted:     #988c60;
-  --text-faint:     #584e30;
-  --text-disabled:  #302a18;
-
-  --accent:         #c0902a;
-  --accent-dim:     #3a2c10;
-  --accent-muted:   #261e0c;
-  --accent-fg:      #e0b860;
-  --accent-bright:  #d0a040;
   --component-sources-root-radius: clamp(18px, 1.6vw, 26px);
   --component-sources-scale: var(--component-library-scale);
   --component-sources-root-border: var(--component-card-border);
@@ -1083,5 +1407,212 @@
   --component-migration-secondary-border: var(--component-button-border);
   --component-migration-secondary-fg: var(--text-secondary);
   --component-migration-disabled-opacity: 0.45;
+  --component-reader-font: var(--font-sans);
+  --component-reader-bg: var(--color-background-void);
+  --component-reader-bg-layer:
+    radial-gradient(circle at top center, color-mix(in srgb, var(--text-primary) 2%, transparent), transparent 45%),
+    linear-gradient(180deg, var(--color-background) 0%, var(--color-background-void) 100%);
+  --component-reader-panel-bg: var(--color-popover);
+  --component-reader-panel-hover-bg: var(--color-surface-secondary);
+  --component-reader-panel-strong-bg: var(--color-elevated);
+  --component-reader-control-bg: var(--component-button-bg);
+  --component-reader-control-hover-bg: var(--component-button-bg-hover);
+  --component-reader-control-active-bg: var(--color-accent-muted);
+  --component-reader-control-track-bg: var(--color-surface-secondary);
+  --component-reader-control-track-hover-bg: var(--color-border);
+  --component-reader-border: var(--color-border);
+  --component-reader-border-hover: var(--color-outline);
+  --component-reader-border-active: var(--color-outline);
+  --component-reader-divider: var(--color-divider);
+  --component-reader-fg: var(--text-primary);
+  --component-reader-muted-fg: var(--text-secondary);
+  --component-reader-faint-fg: var(--text-tertiary);
+  --component-reader-accent-fg: var(--color-accent);
+  --component-reader-accent-muted-bg: var(--color-accent-muted);
+  --component-reader-accent-strong-fg: var(--accent-bright);
+  --component-reader-accent-gradient: linear-gradient(90deg, var(--color-accent), var(--accent-bright));
+  --component-reader-shadow: var(--shadow-md);
+  --component-reader-shadow-compact: var(--shadow-sm);
+  --component-reader-inset-highlight: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent);
+  --component-reader-control-shadow: 0 1px 3px var(--component-overlay-bg);
+  --component-reader-blur: var(--blur-backdrop) saturate(140%);
+  --component-reader-popover-blur: var(--blur-backdrop) saturate(120%);
+  --component-reader-focus-ring: var(--component-focus-ring);
+  --component-reader-disabled-opacity: 0.35;
+  --component-reader-hidden-opacity: 0;
+  --component-reader-chrome-z-index: 10;
+  --component-reader-popover-z-index: var(--z-popover);
+  --component-reader-control-radius: var(--radius-full);
+  --component-reader-popover-radius: var(--hud-popover-radius);
+  --component-reader-pill-radius: var(--radius-full);
+  --component-reader-toggle-radius: var(--radius-md);
+  --component-reader-overlay-padding-bottom: var(--space-lg);
+  --component-reader-capsule-width: 680px;
+  --component-reader-capsule-height: 52px;
+  --component-reader-capsule-gap: var(--space-sm);
+  --component-reader-capsule-padding-x: var(--space-sm);
+  --component-reader-button-size: 36px;
+  --component-reader-icon-button-size: 24px;
+  --component-reader-range-track-height: var(--hud-progress-height);
+  --component-reader-range-thumb-size: 10px;
+  --component-reader-checkpoint-width: 4px;
+  --component-reader-checkpoint-height: 12px;
+  --component-reader-transition-fast: var(--duration-normal) var(--easing-standard);
+  --component-reader-transition-popover: 180ms var(--easing-emphasized);
+}
 
+/* ─────────────────────────────────────────────
+   Themes
+   Applied via data-theme on <html>.
+   "nocturne" is the app default. "dark" remains the base fallback theme.
+   ───────────────────────────────────────────── */
+
+/* ── High Contrast (dark base, sharper text) ── */
+[data-theme="high-contrast"] {
+  --bg-void:      #000000;
+  --bg-base:      #080808;
+  --bg-surface:   #0d0d0d;
+  --bg-raised:    #111111;
+  --bg-overlay:   #171717;
+  --bg-subtle:    #1e1e1e;
+
+  --border-dim:    #252525;
+  --border-base:   #303030;
+  --border-strong: #3e3e3e;
+  --border-focus:  #5a7a5a;
+
+  /* Text bumped up significantly for contrast */
+  --text-primary:   #ffffff;
+  --text-secondary: #e8e6e0;
+  --text-muted:     #b0aea8;
+  --text-faint:     #6e6c68;
+  --text-disabled:  #303030;
+
+  --accent:         #7aaa7a;
+  --accent-dim:     #2e4a2e;
+  --accent-muted:   #1e2e1e;
+  --accent-fg:      #bcd8bc;
+  --accent-bright:  #9fcf9f;
+}
+
+/* ── Light mode ── */
+[data-theme="light"] {
+  --bg-void:      #e8e6e2;
+  --bg-base:      #eeece8;
+  --bg-surface:   #f4f2ee;
+  --bg-raised:    #faf8f4;
+  --bg-overlay:   #ffffff;
+  --bg-subtle:    #f0ede8;
+
+  --border-dim:    #dedad4;
+  --border-base:   #d0ccc6;
+  --border-strong: #bbb6ae;
+  --border-focus:  #5a7a5a;
+
+  --text-primary:   #1a1916;
+  --text-secondary: #2e2c28;
+  --text-muted:     #5a5750;
+  --text-faint:     #9a9890;
+  --text-disabled:  #c8c4bc;
+
+  --accent:         #4a724a;
+  --accent-dim:     #c8dcc8;
+  --accent-muted:   #deeade;
+  --accent-fg:      #2a5a2a;
+  --accent-bright:  #3a6a3a;
+
+  --color-error:    #a03030;
+  --color-error-bg: #fce8e8;
+  --color-success:  #2a6a2a;
+  --color-info:     #2a4a7a;
+  --color-info-bg:  #e8eef8;
+  --color-read:     #e8e4dc;
+}
+
+/* ── Light High Contrast ── */
+[data-theme="light-contrast"] {
+  --bg-void:      #d8d4ce;
+  --bg-base:      #e2deda;
+  --bg-surface:   #ece8e2;
+  --bg-raised:    #f5f2ec;
+  --bg-overlay:   #ffffff;
+  --bg-subtle:    #e4e0d8;
+
+  --border-dim:    #c4c0b8;
+  --border-base:   #b0aca4;
+  --border-strong: #989490;
+  --border-focus:  #3a5a3a;
+
+  --text-primary:   #080806;
+  --text-secondary: #181612;
+  --text-muted:     #38342e;
+  --text-faint:     #706c64;
+  --text-disabled:  #b0ac a4;
+
+  --accent:         #2a5a2a;
+  --accent-dim:     #b0ccb0;
+  --accent-muted:   #c8dcc8;
+  --accent-fg:      #183818;
+  --accent-bright:  #1e4e1e;
+
+  --color-error:    #8a1a1a;
+  --color-error-bg: #f8e0e0;
+  --color-read:     #e0dcd4;
+}
+
+/* ── Midnight (deep blue-black tint) ── */
+[data-theme="midnight"] {
+  --bg-void:      #050810;
+  --bg-base:      #080c18;
+  --bg-surface:   #0c1020;
+  --bg-raised:    #101428;
+  --bg-overlay:   #151a30;
+  --bg-subtle:    #1a2038;
+
+  --border-dim:    #1a2035;
+  --border-base:   #222840;
+  --border-strong: #2c3450;
+  --border-focus:  #4a5c8a;
+
+  --text-primary:   #eeeef8;
+  --text-secondary: #c0c4d8;
+  --text-muted:     #808498;
+  --text-faint:     #404860;
+  --text-disabled:  #202840;
+
+  --accent:         #6a7ab8;
+  --accent-dim:     #252d50;
+  --accent-muted:   #181e38;
+  --accent-fg:      #a8b4e8;
+  --accent-bright:  #8896d0;
+}
+
+/* ── Nocturne (lunar graphite identity) ── */
+/* Nocturne lives in nocturne-theme.css so the current app identity has one editable source. */
+
+/* ── Warm (sepia / amber tinted) ── */
+[data-theme="warm"] {
+  --bg-void:      #0c0a06;
+  --bg-base:      #100e08;
+  --bg-surface:   #16130c;
+  --bg-raised:    #1c1810;
+  --bg-overlay:   #221e14;
+  --bg-subtle:    #28241a;
+
+  --border-dim:    #201c10;
+  --border-base:   #2c2818;
+  --border-strong: #3a3420;
+  --border-focus:  #6a5a30;
+
+  --text-primary:   #f5f0e0;
+  --text-secondary: #d8d0b0;
+  --text-muted:     #988c60;
+  --text-faint:     #584e30;
+  --text-disabled:  #302a18;
+
+  --accent:         #c0902a;
+  --accent-dim:     #3a2c10;
+  --accent-muted:   #261e0c;
+  --accent-fg:      #e0b860;
+  --accent-bright:  #d0a040;
 }

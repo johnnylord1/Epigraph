@@ -468,6 +468,114 @@ Observacao: `NovelRepositoriesPanel.svelte` existe e possui teste focado, mas na
 - Algumas variaveis `--n-*` seguem usadas para dimensoes/motion herdadas; classificar como Legacy ativo ate uma etapa especifica de compatibilidade.
 - Updater foi mantido fora deste marco conforme restricao, entao seus estilos diretos permanecem documentados para etapa propria.
 
+## Marco 5 - Reader HUD
+
+### Escopo executado
+- Migrada exclusivamente a camada visual compartilhada do Reader HUD:
+  - `ReaderHud.svelte`;
+  - `TtsControls.svelte`;
+  - controles herdados por `ReaderBrightnessControl.svelte` via classes `popover-*`.
+- Foram preservados comportamento, atalhos, fluxo de leitura, renderizacao, paginacao, TTS e adaptadores de `Reader`, `BookReader` e `NovelReader`.
+- Nao foram alterados `Reader.svelte`, `BookReader.svelte`, `NovelReader.svelte`, Library, Downloads, Sources, Settings, Mass Migration ou Updater neste marco.
+- Nao removi tokens Legacy nem a camada `--n-*`.
+
+### Tokens utilizados/criados
+Foram adicionados tokens `--component-reader-*` em `src/styles/tokens.css`, com implementacao canonica Nocturne em `src/styles/nocturne-theme.css`:
+
+- base/surface: `--component-reader-font`, `--component-reader-bg`, `--component-reader-bg-layer`, `--component-reader-panel-bg`, `--component-reader-panel-hover-bg`, `--component-reader-panel-strong-bg`;
+- controles: `--component-reader-control-bg`, `--component-reader-control-hover-bg`, `--component-reader-control-active-bg`, `--component-reader-control-track-bg`, `--component-reader-control-track-hover-bg`;
+- bordas/texto/acento: `--component-reader-border`, `--component-reader-border-hover`, `--component-reader-border-active`, `--component-reader-divider`, `--component-reader-fg`, `--component-reader-muted-fg`, `--component-reader-faint-fg`, `--component-reader-accent-fg`, `--component-reader-accent-muted-bg`, `--component-reader-accent-strong-fg`, `--component-reader-accent-gradient`;
+- efeitos: `--component-reader-shadow`, `--component-reader-shadow-compact`, `--component-reader-inset-highlight`, `--component-reader-control-shadow`, `--component-reader-blur`, `--component-reader-popover-blur`, `--component-reader-focus-ring`;
+- estado/layout/motion: `--component-reader-disabled-opacity`, `--component-reader-hidden-opacity`, `--component-reader-chrome-z-index`, `--component-reader-popover-z-index`, `--component-reader-control-radius`, `--component-reader-popover-radius`, `--component-reader-pill-radius`, `--component-reader-toggle-radius`, `--component-reader-overlay-padding-bottom`, `--component-reader-capsule-width`, `--component-reader-capsule-height`, `--component-reader-capsule-gap`, `--component-reader-capsule-padding-x`, `--component-reader-button-size`, `--component-reader-icon-button-size`, `--component-reader-range-track-height`, `--component-reader-range-thumb-size`, `--component-reader-checkpoint-width`, `--component-reader-checkpoint-height`, `--component-reader-transition-fast`, `--component-reader-transition-popover`.
+
+Classificacao: Ativo nos componentes migrados. Nenhum token foi removido.
+
+### Cores diretas removidas
+Comando de verificacao:
+
+```powershell
+rg -n "#[0-9A-Fa-f]{3,8}\b|rgba?\(|hsla?\(|oklch\(|color-mix\(" src/components/reader/ReaderHud.svelte src/components/reader/TtsControls.svelte src/components/reader/ReaderBrightnessControl.svelte
+```
+
+Resultado apos a migracao: nenhuma ocorrencia nos componentes do Reader HUD migrados.
+
+Ocorrencias migradas para tokens:
+
+- background do viewport/HUD;
+- surfaces de capsule bar, back link, metadata title e popovers;
+- bordas idle/hover/active;
+- sombras, blur e inset highlights;
+- textos primary/muted/faint;
+- acentos do slider/checkpoint/TTS;
+- botoes idle/hover/active/disabled;
+- range tracks e thumbs;
+- toggles, segmented controls, steppers, selects, swatches e color picker dentro do popover;
+- foco visivel do back link, botoes, sliders, selects, inputs e linhas TTS;
+- z-index de overlay/popover e transicoes.
+
+### Excecoes mantidas
+- Nenhuma cor direta permaneceu em `ReaderHud.svelte`, `TtsControls.svelte` ou `ReaderBrightnessControl.svelte`.
+- Valores diretos de tamanho/posicao preservados dentro do componente quando representam geometria local do HUD e nao tema visual global. Os principais tamanhos reutilizaveis do HUD foram promovidos para `--component-reader-*`.
+- `Reader.svelte`, `BookReader.svelte` e `NovelReader.svelte` permanecem fora do escopo por conterem renderizacao/logica de leitura e ja existirem alteracoes nao relacionadas no working tree.
+
+### Acessibilidade
+Validado automaticamente:
+
+- ausencia de cores diretas nos componentes visuais do Reader HUD;
+- consumo obrigatorio de tokens `--component-reader-*`;
+- contraste Nocturne >= 4.5:1 para texto primary, muted, faint e acentos sobre o panel do HUD;
+- render e interacao basica do HUD sem desmontar conteudo do adapter;
+- render e preferencias do TTS.
+
+Correcoes feitas:
+
+- foco visivel tokenizado em back link, botoes do HUD, range de brilho, controles de popover, selects, inputs e TTS;
+- disabled opacity passou por token `--component-reader-disabled-opacity`;
+- hover/active/focus usam tokens de componente em vez de valores diretos.
+
+### Screenshots reais
+Screenshots capturados da janela real do Aethon em Nocturne via WebView2/CDP:
+
+- Antes:
+  - `docs/screenshots/marco5-reader-hud/reader-hud-before-main.png`
+  - `docs/screenshots/marco5-reader-hud/reader-hud-before-hover-settings.png`
+  - `docs/screenshots/marco5-reader-hud/reader-hud-before-focus-settings.png`
+  - `docs/screenshots/marco5-reader-hud/reader-hud-before-settings-popover.png`
+  - `docs/screenshots/marco5-reader-hud/reader-hud-before-brightness-popover.png`
+  - `docs/screenshots/marco5-reader-hud/reader-hud-before-slider-hover.png`
+- Depois:
+  - `docs/screenshots/marco5-reader-hud/reader-hud-after-main.png`
+  - `docs/screenshots/marco5-reader-hud/reader-hud-after-hover-settings.png`
+  - `docs/screenshots/marco5-reader-hud/reader-hud-after-focus-settings.png`
+  - `docs/screenshots/marco5-reader-hud/reader-hud-after-settings-popover.png`
+  - `docs/screenshots/marco5-reader-hud/reader-hud-after-brightness-popover.png`
+  - `docs/screenshots/marco5-reader-hud/reader-hud-after-slider-hover.png`
+
+Notas de captura:
+
+- O baseline "antes" foi capturado a partir do commit `394137e` em worktree temporaria.
+- Um toast real do updater interceptou o clique de brilho durante a captura; nas capturas finais de controles o toaster foi ocultado no DOM apenas para permitir interacao com o HUD. As imagens continuam sendo screenshots reais do app/WebView2, nao mockups.
+- A worktree temporaria foi removida do registro de worktrees apos a captura.
+
+### Validacao
+- `npm exec vitest run -- --project shell-jsdom src/components/reader/ReaderHud.test.ts src/components/reader/TtsControls.test.ts src/lib/reader/tts.test.ts --reporter=dot`: passou, 3 arquivos, 18 testes.
+- `C:\Users\jhow-\AppData\Roaming\npm\pnpm.cmd build`: passou; Vite manteve apenas o aviso conhecido de chunks maiores que 500 kB.
+- `git diff --check`: passou; apenas avisos de normalizacao LF/CRLF do Git.
+- Varredura final de cores diretas nos componentes do Reader HUD: sem ocorrencias.
+- `pnpm tauri:dev:gate` inicialmente falhou por `ERR_PNPM_IGNORED_BUILDS` no wrapper de pnpm do runtime Codex e depois por arquivo bloqueado pelo sidecar `javaw.exe` do Suwayomi. O sidecar orfao foi encerrado e o app atual abriu via `npm exec pnpm -- tauri:dev:gate`, com CDP em `127.0.0.1:9223`.
+
+### Riscos antes do Marco 6
+- Ha alteracoes nao relacionadas no working tree em Discord, Tauri, Reader core e paginas de migracao; elas nao pertencem ao Marco 5 e nao devem ser misturadas no proximo commit.
+- `Reader.svelte`, `BookReader.svelte` e `NovelReader.svelte` ainda possuem estilos/logica proprios fora da camada HUD. Migrar esses arquivos exigiria um marco proprio porque toca renderizacao/fluxo de leitura.
+- O app real pode exibir toasts do updater sobre o HUD durante auditorias visuais; para comparacoes futuras, usar um perfil/audit path que silencie toasts ou capture com toaster explicitamente oculto.
+- A camada `--n-*` segue ativa como compatibilidade e deve continuar classificada como Legacy/Ativo ate haver marco especifico para sua reducao.
+
+### Checklist de escopo pos-Marco 5
+- `Reader.svelte`, `BookReader.svelte` e `NovelReader.svelte` aparecem modificados no working tree, mas o diff atual e de Discord Rich Presence/TTS presence, nao de tema. Essas mudancas ja estavam fora do escopo do Marco 5 e devem ser mantidas fora do commit de tema.
+- Os arquivos efetivamente alterados pelo Marco 5 sao `ReaderHud.svelte`, `TtsControls.svelte`, `ReaderHud.test.ts`, `tokens.css`, `nocturne-theme.css`, `docs/theme-system-audit.md` e os screenshots em `docs/screenshots/marco5-reader-hud/`.
+- Validacao de consumo dos tokens `--component-reader-*`: 50 tokens definidos em `tokens.css`/`nocturne-theme.css`, 0 tokens sem consumo nos componentes/documentacao do Marco 5.
+- Mudancas antigas fora do tema a manter separadas: mensagens i18n, Tauri/Cargo, Discord, paginas de migracao, Reader core, Settings e assets/docs de Discord.
+
 ## Marco 6 - Library
 
 ### Escopo executado
@@ -593,6 +701,7 @@ Notas de captura:
 - `NovelsLibraryBody.svelte` permanece Legacy/Fora do lote e deve ser reavaliado se a secao de novels voltar a ser renderizada pela Library ativa.
 - A camada `--n-*` segue existindo em temas e CSS legado; no Marco 6 ela deixou de ser consumida diretamente pelos componentes ativos da Library, mas nao foi removida.
 - Marco 7 nao deve iniciar antes de revisar/stagear somente o diff de tema da Library, porque o working tree continua com mudancas antigas fora do escopo.
+
 ## Marco 7 - Sources
 
 ### Escopo executado
@@ -694,6 +803,7 @@ Notas de captura:
 - `BrowseV3.svelte` segue com estilos compartilhados fora deste lote; migrar agora tocaria Search/Discover e violaria o escopo.
 - `NovelSources.svelte`, `Extensions.svelte`, `SourceBrowse.svelte` e `SourceList.svelte` continuam Legacy/Fora do lote e devem ser reavaliados quando o escopo incluir Sources legadas ou novels/source status.
 - A camada `--n-*` segue existindo em temas e CSS legado; no Marco 7 ela deixou de ser consumida diretamente pelos componentes ativos de Sources migrados, mas nao foi removida.
+
 ## Marco 8 - Mass Migration
 
 ### Escopo executado
@@ -973,3 +1083,97 @@ Notas de captura:
 - Ha alteracoes antigas e nao relacionadas no working tree em Discord/Rich Presence, Tauri/Cargo, mensagens i18n, Reader core, Settings e migracoes individuais. Nao misturar essas alteracoes com o Marco 10.
 - Estados reais com fila ativa/pausada/erro nao estavam disponiveis visualmente sem criar dados artificiais; a validacao desses estados ficou nos testes de fixture.
 - `BrowseV3.svelte`, `MigrateModal.svelte`, `NovelMigrateModal.svelte`, Reader core, Settings especializados e a camada `--n-*` seguem pendentes para marcos futuros.
+
+## Marco 11 - BrowseV3
+
+### Escopo executado
+- Migrada exclusivamente a camada visual de `src/components/pages/BrowseV3.svelte`.
+- Nao foram alteradas APIs, stores, GraphQL, navegacao, logica de busca, Reader, Library, Downloads, Sources, Settings, Updater, Discord/Rich Presence, Tauri/Cargo ou i18n.
+- A alteracao funcional de Discord ja existente em `BrowseV3.svelte` antes deste marco foi preservada e nao faz parte desta migracao de tema.
+- Nao foram removidos tokens Legacy nem a camada `--n-*`.
+
+### Superficie ativa
+- `BrowseV3.svelte` continua sendo a superficie ativa de Browse/Search/Discover no app: a sidebar `Browse` navega para `navPage === "search"` e renderiza as tabs `Search`, `Discover` e `Sources`.
+- Este marco tokenizou apenas os estilos locais de BrowseV3. `SourcesView.svelte` ja havia sido tratado no Marco 7 e nao foi alterado aqui.
+
+### Tokens utilizados/criados
+Foram adicionados tokens `--component-browse-*` em `src/styles/tokens.css`, com implementacao Nocturne em `src/styles/nocturne-theme.css`.
+
+Categorias cobertas:
+
+- topbar/subtabs/search shell;
+- sidebar/filtros do Discover;
+- search landing, recommendation rows e insight panel;
+- cards auxiliares, skeletons, empty/loading states;
+- source rows, catalog shell, split view e filtros locais;
+- inputs, selects, segmented controls, toggles, chips, badges e scrollbars;
+- hover/focus/active/disabled, radius, shadows, z-index, opacity, motion e dimensoes herdadas do HUD.
+
+Classificacao: todos os 443 tokens `--component-browse-*` definidos estao Ativos por consumo direto em `BrowseV3.svelte`. Validacao automatica: 443 definidos, 443 consumidos, 0 sem consumo.
+
+### Cores e efeitos diretos removidos
+Comando de verificacao:
+
+```powershell
+rg -n -- "--n-|#[0-9A-Fa-f]{3,8}\b|rgba?\(|hsla?\(|oklch\(|color-mix\(|linear-gradient\(|radial-gradient\(" src\components\pages\BrowseV3.svelte
+```
+
+Resultado apos a migracao:
+
+- O bloco `<style>` de `BrowseV3.svelte` ficou com 0 ocorrencias de cores diretas, funcoes de cor, gradients, blur/shadow diretos ou consumo direto de `--n-*`.
+- As ocorrencias restantes em `BrowseV3.svelte` estao fora do CSS e foram classificadas como excecoes:
+  - cores de branding dos trackers em `trackerBrandColor()`;
+  - `fill` inline de SVGs/logotipos de trackers;
+  - estrela SVG de rating.
+
+### Excecoes mantidas
+- `trackerBrandColor()` mantem hex colors por branding de provedores externos.
+- SVGs inline mantem `fill` hardcoded por serem logotipos/assets embutidos, nao superficie tematica do app.
+- `src/styles/nocturne-theme.css` e `src/styles/tokens.css` continuam autorizados a conter valores diretos por serem arquivos de tema/tokens.
+- A camada `--n-*` permanece como compatibilidade de tema. `BrowseV3.svelte` nao a consome diretamente apos este marco.
+
+### Acessibilidade
+Validado automaticamente:
+
+- ausencia de cores diretas, funcoes de cor, blur/shadow diretos, z-index numerico direto, opacity decimal direta, radius numerico direto e consumo direto de `--n-*` no bloco `<style>` de `BrowseV3.svelte`;
+- consumo obrigatorio de todos os tokens `--component-browse-*`;
+- render e fluxos principais por `BrowseV3.test.ts`.
+
+Validado visualmente no app real em Nocturne via WebView2/CDP:
+
+- Search principal;
+- Discover com skeleton/loading real de resultados;
+- filtros/dropdown local de Discover.
+
+### Screenshots reais
+Screenshots capturados da janela real do Aethon em Nocturne via WebView2/CDP:
+
+- Antes, a partir do baseline `6918aa6e7a4ee5515486d616f2ff6ef14d038bf6`:
+  - `docs/screenshots/marco11-browsev3/browse-before-real-main.png`
+  - `docs/screenshots/marco11-browsev3/browse-before-real-discover-results.png`
+  - `docs/screenshots/marco11-browsev3/browse-before-real-filters.png`
+- Depois:
+  - `docs/screenshots/marco11-browsev3/browse-after-real-main.png`
+  - `docs/screenshots/marco11-browsev3/browse-after-real-discover-results.png`
+  - `docs/screenshots/marco11-browsev3/browse-after-real-filters.png`
+
+Comparacao visual:
+
+- Search principal: geometria, sidebar, topbar, tabs, painel lateral, tipografia e superficies permaneceram equivalentes. O before carregou cards de recomendacao e o after ficou em estado real de preparacao; essa diferenca e de dados/runtime.
+- Discover: estrutura de filtros, skeletons, scrollbars, bordas, surfaces e hierarquia visual permaneceram equivalentes.
+- Filtros/dropdown local: abertura, dimensoes, bordas, scroll interno e contraste permaneceram equivalentes. O before chegou a carregar resultados e o after ficou em skeleton; diferenca atribuida ao estado runtime/Suwayomi/fontes, nao a regressao visual.
+- Nao ha regressao visual aparente em layout, radius, sombras, blur, borders, surfaces, hover/focus visiveis nos estados capturados.
+
+### Validacao
+- `npm exec vitest run -- --project shell-jsdom src/components/pages/BrowseV3ThemeTokens.test.ts src/components/pages/BrowseV3.test.ts`: passou, 2 arquivos e 14 testes.
+- Contagem de tokens: 443 definidos, 443 consumidos, 0 sem consumo.
+- Varredura final do bloco `<style>` de `BrowseV3.svelte`: 0 ocorrencias diretas.
+- `C:\Users\jhow-\AppData\Roaming\npm\pnpm.cmd build`: passou; o Vite manteve apenas o aviso conhecido de chunks maiores que 500 kB.
+- `git diff --check`: passou; apenas avisos de normalizacao LF/CRLF do Git.
+
+### Riscos antes do proximo marco
+- O diff de BrowseV3 e grande porque a tela concentrava muitos estilos legados locais; ele ficou restrito ao arquivo permitido e aos tokens do marco.
+- Os screenshots before/after reais agora existem, mas os dados nao ficaram identicos entre execucoes: Search/Discover alternaram entre cards carregados e skeleton/loading real. A aprovacao visual deve ser lida com essa ressalva de estado runtime.
+- Resultados completos dependem do runtime/Suwayomi/fontes instaladas.
+- Ha alteracoes antigas e nao relacionadas no working tree em Discord/Rich Presence, Tauri/Cargo, mensagens i18n, Reader core, Settings e migracoes individuais. Nao misturar essas alteracoes com o Marco 11.
+- `MigrateModal.svelte`, `NovelMigrateModal.svelte`, Reader core, Settings especializados e a reducao futura da camada `--n-*` seguem pendentes.

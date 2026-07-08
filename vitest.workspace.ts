@@ -43,6 +43,7 @@ export default defineWorkspace([
         "src/components/pages/Downloads.test.ts",
         "src/components/pages/DownloadsThemeTokens.test.ts",
         "src/components/pages/BrowseV3.test.ts",
+        "src/components/pages/BrowseV3ThemeTokens.test.ts",
         "src/components/pages/MassMigrationThemeTokens.test.ts",
         "src/components/pages/MigrateModal.test.ts",
         "src/components/pages/NovelSources.test.ts",

@@ -6054,16 +6054,13 @@
     height: 100%;
     overflow: hidden;
     animation: fadeIn 0.14s ease both;
-    padding-top: var(--n-topbar-height);
+    padding-top: var(--component-browse-root-padding-top);
   }
   .root :global(.browse-topbar) {
     display: grid;
-    grid-template-columns:
-      minmax(0, 1fr)
-      minmax(0, min(calc(640px * var(--n-hud-scale)), 44vw))
-      minmax(0, 1fr);
+    grid-template-columns: var(--component-browse-root-browse-topbar-grid-template-columns);
     align-items: center;
-    gap: calc(16px * var(--n-hud-scale));
+    gap: var(--component-browse-root-browse-topbar-gap);
   }
   .browse-topbar__center {
     display: flex;
@@ -6076,64 +6073,62 @@
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    gap: calc(8px * var(--n-hud-scale));
+    gap: var(--component-browse-browse-topbar-right-gap);
     width: 100%;
     min-width: 0;
   }
   .root :global(.browse-topbar .n-search) {
-    width: min(100%, var(--n-search-width));
+    width: var(--component-browse-root-browse-topbar-n-search-width);
     margin: 0;
   }
   .root.is-search-engaged :global(.browse-topbar .n-search),
   .root :global(.browse-topbar .n-search:focus-within) {
-    width: min(100%, var(--n-search-width-focus));
+    width: var(--component-browse-root-is-search-engaged-browse-topbar-width);
   }
   .browseSubtabs {
     display: flex;
     align-items: center;
-    gap: 24px;
+    gap: var(--component-browse-browsesubtabs-gap);
     padding: var(--sp-3) var(--sp-5) var(--sp-2);
     flex-shrink: 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    border-bottom: var(--component-browse-browsesubtabs-border-bottom);
   }
   .browseSubtab {
     background: none;
     border: none;
     padding: 0;
     font-family: var(--font-ui);
-    font-size: 10px;
+    font-size: var(--component-browse-browsesubtab-font-size);
     font-weight: 800;
-    letter-spacing: 0.18em;
+    letter-spacing: var(--component-browse-browsesubtab-letter-spacing);
     text-transform: uppercase;
-    color: rgba(202, 196, 208, 0.4);
+    color: var(--component-browse-browsesubtab-color);
     cursor: pointer;
-    transition: color 180ms ease, opacity 180ms ease, border-color 180ms ease;
+    transition: var(--component-browse-browsesubtab-transition);
   }
-  .browseSubtab:hover { color: rgba(229, 226, 225, 0.72); }
+  .browseSubtab:hover { color: var(--component-browse-browsesubtab-hover-color); }
   .browseSubtabActive {
-    color: var(--n-primary);
-    padding-bottom: 2px;
-    border-bottom: 1px solid var(--n-primary);
+    color: var(--component-browse-browsesubtabactive-color);
+    padding-bottom: var(--component-browse-browsesubtabactive-padding-bottom);
+    border-bottom: var(--component-browse-browsesubtabactive-border-bottom);
   }
   .setup-banner {
-    padding: 12px clamp(28px, 3vw, 56px) 0;
+    padding: var(--component-browse-setup-banner-padding);
     flex-shrink: 0;
   }
   .setup-banner :global(.n-state) {
-    max-width: 1120px;
+    max-width: var(--component-browse-setup-banner-n-state-max-width);
     margin: 0 auto;
   }
   .catalogSidebar {
-    width: calc(230px * var(--n-hud-scale));
-    gap: calc(12px * var(--n-hud-scale));
-    padding: calc(16px * var(--n-hud-scale)) calc(12px * var(--n-hud-scale));
+    width: var(--component-browse-catalogsidebar-width);
+    gap: var(--component-browse-catalogsidebar-gap);
+    padding: var(--component-browse-catalogsidebar-padding);
     overflow-y: auto;
     overflow-x: hidden;
-    border-right: 1px solid rgba(255, 255, 255, 0.05);
-    background:
-      linear-gradient(180deg, rgba(24, 22, 31, 0.58), rgba(12, 12, 16, 0.18)),
-      rgba(13, 13, 18, 0.38);
-    backdrop-filter: none;
+    border-right: var(--component-browse-catalogsidebar-border-right);
+    background: var(--component-browse-catalogsidebar-background);
+    backdrop-filter: var(--component-browse-catalogsidebar-backdrop-filter);
   }
   .catalogSidebar.splitSidebar {
     overflow-y: auto;
@@ -6142,11 +6137,11 @@
   .browseFilterSection {
     display: flex;
     flex-direction: column;
-    gap: calc(10px * var(--n-hud-scale));
+    gap: var(--component-browse-browsefiltersection-gap);
   }
   .catalogTagList {
     padding: var(--sp-2);
-    gap: 4px;
+    gap: var(--component-browse-catalogtaglist-gap);
     min-height: 0;
     flex: none;
     overflow: visible;
@@ -6157,18 +6152,18 @@
     display: flex;
     align-items: center;
     gap: var(--sp-2);
-    min-height: 40px;
-    background: rgba(23, 22, 30, 0.78);
-    border: 1px solid rgba(255, 255, 255, 0.065);
-    border-radius: 10px;
-    padding: 0 12px;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+    min-height: var(--component-browse-searchbar-min-height);
+    background: var(--component-browse-searchbar-background);
+    border: var(--component-browse-searchbar-border);
+    border-radius: var(--component-browse-searchbar-border-radius);
+    padding: var(--component-browse-searchbar-padding);
+    box-shadow: var(--component-browse-searchbar-box-shadow);
     transition: border-color var(--t-base), background var(--t-base), box-shadow var(--t-base);
   }
   .searchBar:focus-within {
-    border-color: rgba(184, 167, 234, 0.36);
-    background: rgba(29, 27, 38, 0.92);
-    box-shadow: 0 0 0 3px rgba(184, 167, 234, 0.08);
+    border-color: var(--component-browse-searchbar-border-color);
+    background: var(--component-browse-searchbar-background-2);
+    box-shadow: var(--component-browse-searchbar-box-shadow-2);
   }
   .searchIcon { color: var(--text-faint); flex-shrink: 0; }
   .searchInput {
@@ -6178,60 +6173,58 @@
     outline: none;
     color: var(--text-primary);
     font-size: var(--text-sm);
-    padding: 7px 0;
+    padding: var(--component-browse-searchinput-padding);
   }
   .searchInput::placeholder { color: var(--text-faint); }
   .clearBtn {
     color: var(--text-faint);
-    font-size: 14px;
+    font-size: var(--component-browse-clearbtn-font-size);
     line-height: 1;
     background: none;
     border: none;
     cursor: pointer;
-    padding: 2px;
+    padding: var(--component-browse-clearbtn-padding);
     transition: color var(--t-base);
   }
   .clearBtn:hover { color: var(--text-muted); }
   .searchBtn {
     font-family: var(--font-ui);
-    font-size: 10px;
+    font-size: var(--component-browse-searchbtn-font-size);
     font-weight: 820;
-    letter-spacing: 0.14em;
+    letter-spacing: var(--component-browse-searchbtn-letter-spacing);
     text-transform: uppercase;
-    min-height: 40px;
-    padding: 0 18px;
-    border-radius: 10px;
-    background: linear-gradient(180deg, rgba(207, 187, 255, 0.96), rgba(152, 126, 219, 0.9));
-    color: rgba(35, 25, 60, 0.96);
-    border: 1px solid rgba(229, 219, 255, 0.2);
+    min-height: var(--component-browse-searchbtn-min-height);
+    padding: var(--component-browse-searchbtn-padding);
+    border-radius: var(--component-browse-searchbtn-border-radius);
+    background: var(--component-browse-searchbtn-background);
+    color: var(--component-browse-searchbtn-color);
+    border: var(--component-browse-searchbtn-border);
     cursor: pointer;
     flex-shrink: 0;
     display: flex;
     align-items: center;
     gap: var(--sp-1);
-    box-shadow: 0 10px 24px rgba(150, 121, 228, 0.18);
+    box-shadow: var(--component-browse-searchbtn-box-shadow);
     transition: transform var(--t-base), filter var(--t-base), opacity var(--t-base);
   }
   .searchBtn:hover:not(:disabled) {
     filter: brightness(1.06);
-    transform: translateY(-1px);
+    transform: var(--component-browse-searchbtn-transform);
   }
   .searchBtn:disabled {
-    opacity: 0.38;
+    opacity: var(--component-browse-searchbtn-opacity);
     cursor: default;
-    filter: grayscale(0.35);
-    box-shadow: none;
+    filter: var(--component-browse-searchbtn-filter);
+    box-shadow: var(--component-browse-searchbtn-disabled-box-shadow);
   }
   .searchLanding {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: clamp(24px, 2.9vw, 52px) clamp(22px, 2.7vw, 46px) 48px;
-    background:
-      radial-gradient(circle at 18% 22%, rgba(184, 167, 234, 0.1), transparent 34%),
-      radial-gradient(circle at 72% 18%, rgba(100, 145, 255, 0.06), transparent 30%);
+    padding: var(--component-browse-searchlanding-padding);
+    background: var(--component-browse-searchlanding-background);
     scrollbar-width: thin;
-    scrollbar-color: rgba(184, 167, 234, 0.32) transparent;
+    scrollbar-color: var(--component-browse-searchlanding-scrollbar-color);
   }
   .searchCanvas {
     --search-card-width: clamp(124px, 13.2vw, 180px);
@@ -6240,7 +6233,7 @@
     --search-panel-width: clamp(286px, 18vw, 328px);
     display: grid;
     grid-template-columns: minmax(0, var(--search-rail-width)) minmax(var(--search-panel-width), 1fr);
-    gap: clamp(14px, 1.2vw, 22px);
+    gap: var(--component-browse-searchcanvas-gap);
     align-items: start;
     justify-content: start;
   }
@@ -6250,36 +6243,36 @@
     max-width: 100%;
     display: flex;
     flex-direction: column;
-    gap: clamp(22px, 2vw, 30px);
+    gap: var(--component-browse-searchmaincolumn-gap);
   }
   .searchHeroCopy {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: var(--component-browse-searchherocopy-gap);
     min-width: 0;
-    max-width: 680px;
-    margin-bottom: 2px;
+    max-width: var(--component-browse-searchherocopy-max-width);
+    margin-bottom: var(--component-browse-searchherocopy-margin-bottom);
   }
   .searchHeroCopy h2,
   .searchRecommendationHeader h3 {
     margin: 0;
-    color: rgba(238, 235, 242, 0.92);
+    color: var(--component-browse-searchherocopy-searchrecommendationheader-color);
     font-weight: 760;
     letter-spacing: 0;
   }
   .searchHeroCopy h2 {
-    font-size: 26px;
+    font-size: var(--component-browse-searchherocopy-font-size);
     line-height: 1.08;
   }
   .searchHeroCopy p,
   .searchRecommendationHeader p {
     margin: 0;
-    color: rgba(229, 226, 225, 0.52);
+    color: var(--component-browse-searchherocopy-searchrecommendationheader-color-2);
     line-height: 1.45;
   }
   .searchHeroCopy p {
-    font-size: 13px;
-    max-width: 660px;
+    font-size: var(--component-browse-searchherocopy-font-size-2);
+    max-width: var(--component-browse-searchherocopy-max-width-2);
   }
   .searchRecommendationSection {
     min-width: 0;
@@ -6291,30 +6284,30 @@
   .searchRecommendationHeader {
     display: flex;
     justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 14px;
+    gap: var(--component-browse-searchrecommendationheader-gap);
+    margin-bottom: var(--component-browse-searchrecommendationheader-margin-bottom);
     width: min(100%, var(--search-rail-width));
     min-width: 0;
   }
   .searchRecommendationHeader > div {
     display: grid;
-    grid-template-columns: 22px minmax(0, 1fr);
-    column-gap: 8px;
+    grid-template-columns: var(--component-browse-searchrecommendationheader-grid-template-columns);
+    column-gap: var(--component-browse-searchrecommendationheader-column-gap);
     align-items: center;
   }
   .searchRecommendationHeader h3 {
-    font-size: 16px;
+    font-size: var(--component-browse-searchrecommendationheader-font-size);
     line-height: 1.1;
   }
   .searchRecommendationHeader p {
     grid-column: 2;
-    margin-top: 3px;
-    font-size: 12px;
+    margin-top: var(--component-browse-searchrecommendationheader-margin-top);
+    font-size: var(--component-browse-searchrecommendationheader-font-size-2);
   }
   .searchRailControls {
     display: inline-flex;
     align-items: center;
-    gap: 2px;
+    gap: var(--component-browse-searchrailcontrols-gap);
     align-self: center;
     flex-shrink: 0;
   }
@@ -6322,43 +6315,43 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
+    width: var(--component-browse-searchrailcontrols-width);
+    height: var(--component-browse-searchrailcontrols-height);
     border: 0;
-    border-radius: 999px;
+    border-radius: var(--component-browse-searchrailcontrols-border-radius);
     background: transparent;
-    color: rgba(218, 207, 255, 0.68);
+    color: var(--component-browse-searchrailcontrols-color);
     cursor: pointer;
     transition: background var(--t-base), color var(--t-base), transform var(--t-base);
   }
   .searchRailControls button:hover {
-    color: rgba(238, 235, 242, 0.94);
-    background: rgba(184, 167, 234, 0.08);
-    transform: translateY(-1px);
+    color: var(--component-browse-searchrailcontrols-color-2);
+    background: var(--component-browse-searchrailcontrols-background);
+    transform: var(--component-browse-searchrailcontrols-transform);
   }
   .searchRailControls button:active {
     transform: translateY(0);
   }
   .searchRailControls .material-symbols-outlined {
-    font-size: 20px;
+    font-size: var(--component-browse-searchrailcontrols-material-symbols-outlined-font-size);
   }
   .searchSectionIcon {
-    color: rgba(188, 166, 255, 0.96);
-    font-size: 18px;
+    color: var(--component-browse-searchsectionicon-color);
+    font-size: var(--component-browse-searchsectionicon-font-size);
   }
   .searchTastePills span {
     display: inline-flex;
     align-items: center;
-    min-height: 20px;
-    padding: 0 8px;
-    border: 1px solid rgba(184, 167, 234, 0.2);
-    border-radius: 999px;
-    background: rgba(184, 167, 234, 0.1);
-    color: rgba(218, 207, 255, 0.88);
+    min-height: var(--component-browse-searchtastepills-min-height);
+    padding: var(--component-browse-searchtastepills-padding);
+    border: var(--component-browse-searchtastepills-border);
+    border-radius: var(--component-browse-searchtastepills-border-radius);
+    background: var(--component-browse-searchtastepills-background);
+    color: var(--component-browse-searchtastepills-color);
     font-family: var(--font-ui);
-    font-size: 10px;
+    font-size: var(--component-browse-searchtastepills-font-size);
     font-weight: 780;
-    letter-spacing: 0.08em;
+    letter-spacing: var(--component-browse-searchtastepills-letter-spacing);
     text-transform: uppercase;
   }
   .searchRecommendationRow {
@@ -6370,39 +6363,39 @@
     overflow-x: auto;
     overscroll-behavior-x: contain;
     scroll-snap-type: x proximity;
-    scroll-padding-inline: 8px clamp(28px, 2vw, 44px);
-    padding: 12px clamp(26px, 1.7vw, 36px) 12px 8px;
+    scroll-padding-inline: var(--component-browse-searchrecommendationrow-scroll-padding-inline);
+    padding: var(--component-browse-searchrecommendationrow-padding);
     scrollbar-width: thin;
-    scrollbar-color: rgba(184, 167, 234, 0.24) transparent;
+    scrollbar-color: var(--component-browse-searchrecommendationrow-scrollbar-color);
   }
   .searchRecommendationRow::-webkit-scrollbar {
-    height: 7px;
+    height: var(--component-browse-searchrecommendationrow-height);
   }
   .searchRecommendationRow::-webkit-scrollbar-track {
     background: transparent;
   }
   .searchRecommendationRow::-webkit-scrollbar-thumb {
-    border-radius: 999px;
-    background: rgba(184, 167, 234, 0.2);
+    border-radius: var(--component-browse-searchrecommendationrow-border-radius);
+    background: var(--component-browse-searchrecommendationrow-background);
   }
   .searchRecommendationRow .n-library-card {
-    flex: 0 0 clamp(118px, 22cqw, 180px);
-    width: clamp(118px, 22cqw, 180px);
-    height: calc((clamp(118px, 22cqw, 180px) / 0.7) + 74px);
+    flex: var(--component-browse-searchrecommendationrow-n-library-card-flex);
+    width: var(--component-browse-searchrecommendationrow-n-library-card-width);
+    height: var(--component-browse-searchrecommendationrow-n-library-card-height);
     min-width: 0;
     scroll-snap-align: start;
   }
   .searchRecommendationRow .n-library-card__cover {
     flex: 0 0 auto;
-    aspect-ratio: 0.7;
+    aspect-ratio: var(--component-browse-searchrecommendationrow-n-library-card-cover-aspect-ratio);
   }
   .searchRecommendationRow .n-library-card__info {
-    flex: 0 0 58px;
+    flex: var(--component-browse-searchrecommendationrow-n-library-card-info-flex);
     overflow: hidden;
   }
   .searchRecommendationRow .n-library-card__title {
-    min-height: 32px;
-    max-height: 36px;
+    min-height: var(--component-browse-searchrecommendationrow-n-library-card-title-min-height);
+    max-height: var(--component-browse-searchrecommendationrow-n-library-card-title-max-height);
     line-height: 1.16;
     overflow-wrap: anywhere;
   }
@@ -6421,12 +6414,10 @@
     align-items: flex-end;
     width: 100%;
     height: 100%;
-    padding: 18px 14px;
+    padding: var(--component-browse-searchcoverplaceholder-padding);
     box-sizing: border-box;
     border-radius: inherit;
-    background:
-      radial-gradient(circle at 28% 18%, rgba(184, 167, 234, 0.2), transparent 32%),
-      linear-gradient(180deg, rgba(36, 33, 45, 0.92), rgba(21, 20, 27, 0.96));
+    background: var(--component-browse-searchcoverplaceholder-background);
     position: relative;
     overflow: hidden;
   }
@@ -6436,32 +6427,30 @@
     left: 13%;
     right: 18%;
     bottom: 16%;
-    height: 8px;
-    border-radius: 999px;
-    background: rgba(184, 167, 234, 0.14);
-    box-shadow:
-      0 -18px 0 rgba(255, 255, 255, 0.045),
-      34px -36px 0 rgba(255, 255, 255, 0.035);
+    height: var(--component-browse-searchcoverplaceholder-height);
+    border-radius: var(--component-browse-searchcoverplaceholder-border-radius);
+    background: var(--component-browse-searchcoverplaceholder-background-2);
+    box-shadow: var(--component-browse-searchcoverplaceholder-box-shadow);
   }
   .searchCoverPlaceholder span {
     position: relative;
-    z-index: 1;
+    z-index: var(--component-browse-searchcoverplaceholder-span-z-index);
     display: -webkit-box;
     -webkit-line-clamp: 4;
     -webkit-box-orient: vertical;
     overflow: hidden;
-    color: rgba(238, 235, 242, 0.9);
-    font-size: 13px;
+    color: var(--component-browse-searchcoverplaceholder-color);
+    font-size: var(--component-browse-searchcoverplaceholder-font-size);
     font-weight: 780;
     line-height: 1.15;
     text-align: left;
   }
   .searchInsightPanel {
     position: sticky;
-    top: 18px;
+    top: var(--component-browse-searchinsightpanel-top);
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: var(--component-browse-searchinsightpanel-gap);
     justify-self: center;
     width: var(--search-panel-width);
     min-width: 0;
@@ -6469,14 +6458,11 @@
   .searchInsightCard {
     min-width: 0;
     box-sizing: border-box;
-    padding: 22px 22px 20px;
-    border: 1px solid rgba(255, 255, 255, 0.055);
-    border-radius: 12px;
-    background:
-      linear-gradient(180deg, rgba(27, 25, 36, 0.9), rgba(16, 16, 22, 0.92));
-    box-shadow:
-      0 16px 42px rgba(0, 0, 0, 0.24),
-      inset 0 1px 0 rgba(255, 255, 255, 0.025);
+    padding: var(--component-browse-searchinsightcard-padding);
+    border: var(--component-browse-searchinsightcard-border);
+    border-radius: var(--component-browse-searchinsightcard-border-radius);
+    background: var(--component-browse-searchinsightcard-background);
+    box-shadow: var(--component-browse-searchinsightcard-box-shadow);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     text-rendering: geometricPrecision;
@@ -6487,47 +6473,47 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 10px;
+    gap: var(--component-browse-searchpaneltitle-searchdiversityheader-searchdiversitylabels-gap);
     font-family: var(--font-sans);
   }
   .searchPanelTitle {
-    color: rgba(207, 199, 226, 0.68);
-    font-size: 11.5px;
+    color: var(--component-browse-searchpaneltitle-color);
+    font-size: var(--component-browse-searchpaneltitle-font-size);
     font-weight: 700;
-    letter-spacing: 0.09em;
+    letter-spacing: var(--component-browse-searchpaneltitle-letter-spacing);
     text-transform: uppercase;
   }
   .searchPanelTitle .material-symbols-outlined {
-    font-size: 14px;
-    color: rgba(207, 199, 226, 0.42);
+    font-size: var(--component-browse-searchpaneltitle-material-symbols-outlined-font-size);
+    color: var(--component-browse-searchpaneltitle-material-symbols-outlined-color);
   }
   .searchPanelLabel {
-    margin: 24px 0 0;
-    color: rgba(229, 226, 225, 0.6);
-    font-size: 13px;
+    margin: var(--component-browse-searchpanellabel-margin);
+    color: var(--component-browse-searchpanellabel-color);
+    font-size: var(--component-browse-searchpanellabel-font-size);
     font-weight: 680;
   }
   .searchTastePills {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 7px 12px;
-    margin-top: 12px;
-    padding-bottom: 4px;
+    gap: var(--component-browse-searchtastepills-gap);
+    margin-top: var(--component-browse-searchtastepills-margin-top);
+    padding-bottom: var(--component-browse-searchtastepills-padding-bottom);
   }
   .searchTastePills span {
     min-width: 0;
     max-width: 100%;
     min-height: auto;
-    padding: 0 0 0 10px;
+    padding: var(--component-browse-searchtastepills-padding-2);
     border: 0;
-    border-left: 2px solid rgba(184, 167, 234, 0.42);
-    border-radius: 0;
+    border-left: var(--component-browse-searchtastepills-border-left);
+    border-radius: var(--component-browse-searchtastepills-radius-flat);
     background: transparent;
-    color: rgba(218, 207, 255, 0.74);
+    color: var(--component-browse-searchtastepills-color-2);
     font-family: var(--font-sans);
-    font-size: 11.5px;
+    font-size: var(--component-browse-searchtastepills-font-size-2);
     font-weight: 700;
-    letter-spacing: 0.04em;
+    letter-spacing: var(--component-browse-searchtastepills-letter-spacing-2);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -6535,16 +6521,16 @@
   .searchKnownToggle {
     display: flex;
     flex-direction: column;
-    gap: 7px;
-    margin-top: 24px;
-    padding-top: 18px;
-    border-top: 1px solid rgba(255, 255, 255, 0.045);
+    gap: var(--component-browse-searchknowntoggle-gap);
+    margin-top: var(--component-browse-searchknowntoggle-margin-top);
+    padding-top: var(--component-browse-searchknowntoggle-padding-top);
+    border-top: var(--component-browse-searchknowntoggle-border-top);
   }
   .searchPanelToggle {
-    min-height: 26px;
+    min-height: var(--component-browse-searchpaneltoggle-min-height);
     padding: 0;
     border: 0;
-    border-radius: 0;
+    border-radius: var(--component-browse-searchpaneltoggle-radius-flat);
     background: transparent;
     font-family: var(--font-sans);
   }
@@ -6556,116 +6542,116 @@
   }
   .searchKnownToggle p {
     margin: 0;
-    color: rgba(229, 226, 225, 0.42);
+    color: var(--component-browse-searchknowntoggle-color);
     font-family: var(--font-sans);
-    font-size: 12.5px;
+    font-size: var(--component-browse-searchknowntoggle-font-size);
     line-height: 1.4;
   }
   .searchDiversity,
   .searchInsights {
     display: flex;
     flex-direction: column;
-    gap: 11px;
-    margin-top: 28px;
-    padding-top: 20px;
-    border-top: 1px solid rgba(255, 255, 255, 0.045);
+    gap: var(--component-browse-searchdiversity-searchinsights-gap);
+    margin-top: var(--component-browse-searchdiversity-searchinsights-margin-top);
+    padding-top: var(--component-browse-searchdiversity-searchinsights-padding-top);
+    border-top: var(--component-browse-searchdiversity-searchinsights-border-top);
   }
   .searchDiversityHeader span {
-    color: rgba(229, 226, 225, 0.62);
-    font-size: 13px;
+    color: var(--component-browse-searchdiversityheader-color);
+    font-size: var(--component-browse-searchdiversityheader-font-size);
     font-weight: 700;
   }
   .searchDiversityTrack {
     position: relative;
-    height: 3px;
-    border-radius: 0;
-    background: rgba(255, 255, 255, 0.09);
+    height: var(--component-browse-searchdiversitytrack-height);
+    border-radius: var(--component-browse-searchdiversitytrack-radius-flat);
+    background: var(--component-browse-searchdiversitytrack-background);
   }
   .searchDiversityTrack span {
     display: block;
     height: 100%;
-    border-radius: 0;
-    background: rgba(184, 167, 234, 0.82);
+    border-radius: var(--component-browse-searchdiversitytrack-radius-flat);
+    background: var(--component-browse-searchdiversitytrack-background-2);
   }
   .searchDiversityTrack i {
     position: absolute;
     top: 50%;
-    width: 10px;
-    height: 10px;
-    border: 2px solid rgba(24, 22, 31, 0.95);
-    border-radius: 50%;
-    background: rgba(218, 207, 255, 0.95);
+    width: var(--component-browse-searchdiversitytrack-width);
+    height: var(--component-browse-searchdiversitytrack-height-2);
+    border: var(--component-browse-searchdiversitytrack-border);
+    border-radius: var(--component-browse-searchdiversitytrack-thumb-radius);
+    background: var(--component-browse-searchdiversitytrack-background-3);
     transform: translate(-50%, -50%);
   }
   .searchDiversityLabels {
-    color: rgba(229, 226, 225, 0.32);
+    color: var(--component-browse-searchdiversitylabels-color);
     font-family: var(--font-sans);
-    font-size: 11px;
+    font-size: var(--component-browse-searchdiversitylabels-font-size);
   }
   .searchDivergentNote {
     display: grid;
-    grid-template-columns: 20px minmax(0, 1fr);
-    gap: 9px;
-    margin-top: 22px;
+    grid-template-columns: var(--component-browse-searchdivergentnote-grid-template-columns);
+    gap: var(--component-browse-searchdivergentnote-gap);
+    margin-top: var(--component-browse-searchdivergentnote-margin-top);
     padding: 0;
     border: 0;
-    border-radius: 0;
+    border-radius: var(--component-browse-searchdivergentnote-radius-flat);
     background: transparent;
   }
   .searchDivergentNote .material-symbols-outlined {
-    color: rgba(188, 166, 255, 0.68);
-    font-size: 16px;
+    color: var(--component-browse-searchdivergentnote-material-symbols-outlined-color);
+    font-size: var(--component-browse-searchdivergentnote-material-symbols-outlined-font-size);
   }
   .searchDivergentNote p,
   .searchInsights p {
     margin: 0;
-    color: rgba(229, 226, 225, 0.48);
+    color: var(--component-browse-searchdivergentnote-searchinsights-color);
     font-family: var(--font-sans);
-    font-size: 13px;
+    font-size: var(--component-browse-searchdivergentnote-searchinsights-font-size);
     line-height: 1.45;
   }
   .searchInsights p {
     display: grid;
-    grid-template-columns: 14px minmax(0, 1fr);
-    gap: 8px;
-    padding-top: 10px;
-    border-top: 1px solid rgba(255, 255, 255, 0.04);
+    grid-template-columns: var(--component-browse-searchinsights-grid-template-columns);
+    gap: var(--component-browse-searchinsights-gap);
+    padding-top: var(--component-browse-searchinsights-padding-top);
+    border-top: var(--component-browse-searchinsights-border-top);
   }
   .searchInsights p:first-of-type {
     border-top: 0;
     padding-top: 0;
   }
   .searchInsights p .material-symbols-outlined {
-    color: rgba(188, 166, 255, 0.68);
-    font-size: 12px;
-    margin-top: 1px;
+    color: var(--component-browse-searchinsights-material-symbols-outlined-color);
+    font-size: var(--component-browse-searchinsights-material-symbols-outlined-font-size);
+    margin-top: var(--component-browse-searchinsights-material-symbols-outlined-margin-top);
   }
   .searchInsightsButton {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    border: 1px solid rgba(184, 167, 234, 0.14);
+    gap: var(--component-browse-searchinsightsbutton-gap);
+    border: var(--component-browse-searchinsightsbutton-border);
     background: transparent;
-    color: rgba(211, 192, 255, 0.78);
+    color: var(--component-browse-searchinsightsbutton-color);
     font-family: var(--font-sans);
-    font-size: 11px;
+    font-size: var(--component-browse-searchinsightsbutton-font-size);
     font-weight: 720;
-    letter-spacing: 0.08em;
+    letter-spacing: var(--component-browse-searchinsightsbutton-letter-spacing);
     text-transform: uppercase;
     cursor: pointer;
     transition: background var(--t-base), border-color var(--t-base), color var(--t-base);
   }
   .searchInsightsButton {
     width: 100%;
-    min-height: 36px;
-    margin-top: 18px;
-    border-radius: 7px;
+    min-height: var(--component-browse-searchinsightsbutton-min-height);
+    margin-top: var(--component-browse-searchinsightsbutton-margin-top);
+    border-radius: var(--component-browse-searchinsightsbutton-border-radius);
   }
   .searchInsightsButton:hover {
-    color: rgba(238, 235, 242, 0.92);
-    border-color: rgba(184, 167, 234, 0.2);
-    background: rgba(184, 167, 234, 0.06);
+    color: var(--component-browse-searchinsightsbutton-color-2);
+    border-color: var(--component-browse-searchinsightsbutton-border-color);
+    background: var(--component-browse-searchinsightsbutton-background);
   }
   .empty {
     flex: 1;
@@ -6683,7 +6669,7 @@
   }
   .sourceSection {
     padding: var(--sp-1) var(--sp-4) var(--sp-3);
-    border-bottom: 1px solid var(--border-dim);
+    border-bottom: var(--component-browse-sourcesection-border-bottom);
   }
   .sourceSection:last-child { border-bottom: none; }
   .sourceHeader {
@@ -6693,8 +6679,8 @@
     padding: var(--sp-2) 0;
   }
   .sourceIcon {
-    width: 18px;
-    height: 18px;
+    width: var(--component-browse-sourceicon-width);
+    height: var(--component-browse-sourceicon-height);
     border-radius: var(--radius-sm);
     object-fit: cover;
     flex-shrink: 0;
@@ -6711,9 +6697,9 @@
     color: var(--text-faint);
     letter-spacing: var(--tracking-wide);
     background: var(--bg-raised);
-    border: 1px solid var(--border-dim);
+    border: var(--component-browse-sourcelang-border);
     border-radius: var(--radius-sm);
-    padding: 1px 5px;
+    padding: var(--component-browse-sourcelang-padding);
   }
   .resultCount {
     margin-left: auto;
@@ -6735,7 +6721,7 @@
     flex-direction: column;
     gap: var(--sp-2);
     flex-shrink: 0;
-    width: 110px;
+    width: var(--component-browse-skcard-width);
   }
   .tagGrid .skCard { width: 100%; }
   .skeleton { border-radius: var(--radius-sm); }
@@ -6751,9 +6737,9 @@
     overflow: hidden;
   }
   .splitSidebar {
-    width: 180px;
+    width: var(--component-browse-splitsidebar-width);
     flex-shrink: 0;
-    border-right: 1px solid var(--border-dim);
+    border-right: var(--component-browse-splitsidebar-border-right);
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -6763,7 +6749,7 @@
     align-items: center;
     gap: var(--sp-1);
     padding: var(--sp-2) var(--sp-3);
-    border-bottom: 1px solid var(--border-dim);
+    border-bottom: var(--component-browse-splitsearchwrap-border-bottom);
     flex-shrink: 0;
   }
   .splitSearchIcon { color: var(--text-faint); flex-shrink: 0; }
@@ -6780,12 +6766,12 @@
   .splitSearchInput::placeholder { color: var(--text-faint); }
   .splitSearchClear {
     color: var(--text-faint);
-    font-size: 13px;
+    font-size: var(--component-browse-splitsearchclear-font-size);
     line-height: 1;
     background: none;
     border: none;
     cursor: pointer;
-    padding: 2px;
+    padding: var(--component-browse-splitsearchclear-padding);
     transition: color var(--t-base);
   }
   .splitSearchClear:hover { color: var(--text-muted); }
@@ -6807,7 +6793,7 @@
     align-items: center;
     justify-content: space-between;
     padding: var(--sp-3) var(--sp-4);
-    border-bottom: 1px solid var(--border-dim);
+    border-bottom: var(--component-browse-splitcontentheader-border-bottom);
     flex-shrink: 0;
     gap: var(--sp-2);
   }
@@ -6838,35 +6824,35 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-height: 24px;
-    padding: 0 9px;
-    border: 1px solid rgba(255, 255, 255, 0.055);
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.018);
-    color: rgba(229, 226, 225, 0.44);
-    font-size: 11px;
+    min-height: var(--component-browse-catalogcountbadge-min-height);
+    padding: var(--component-browse-catalogcountbadge-padding);
+    border: var(--component-browse-catalogcountbadge-border);
+    border-radius: var(--component-browse-catalogcountbadge-border-radius);
+    background: var(--component-browse-catalogcountbadge-background);
+    color: var(--component-browse-catalogcountbadge-color);
+    font-size: var(--component-browse-catalogcountbadge-font-size);
     font-weight: 650;
-    letter-spacing: 0.02em;
+    letter-spacing: var(--component-browse-catalogcountbadge-letter-spacing);
   }
   .splitSourceIcon {
-    width: 18px;
-    height: 18px;
+    width: var(--component-browse-splitsourceicon-width);
+    height: var(--component-browse-splitsourceicon-height);
     border-radius: var(--radius-sm);
     object-fit: cover;
     flex-shrink: 0;
     background: var(--bg-raised);
   }
   .tagCheckMark {
-    font-size: 14px;
-    color: rgba(218, 207, 255, 0.92);
+    font-size: var(--component-browse-tagcheckmark-font-size);
+    color: var(--component-browse-tagcheckmark-color);
     margin-left: auto;
   }
   .catalogOptionActive .tagCheckMark {
-    color: rgba(218, 207, 255, 0.96);
+    color: var(--component-browse-catalogoptionactive-tagcheckmark-color);
   }
   .tagGrid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+    grid-template-columns: var(--component-browse-taggrid-grid-template-columns);
     gap: var(--sp-4);
     padding: var(--sp-4);
     overflow-y: auto;
@@ -6889,40 +6875,40 @@
     display: inline-flex;
     align-items: center;
     gap: var(--sp-1);
-    min-height: 34px;
-    padding: 0 14px;
-    border-radius: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    background: rgba(255, 255, 255, 0.026);
+    min-height: var(--component-browse-showmorebtn-min-height);
+    padding: var(--component-browse-showmorebtn-padding);
+    border-radius: var(--component-browse-showmorebtn-border-radius);
+    border: var(--component-browse-showmorebtn-border);
+    background: var(--component-browse-showmorebtn-background);
     font-family: var(--font-ui);
-    font-size: 10px;
+    font-size: var(--component-browse-showmorebtn-font-size);
     font-weight: 780;
-    letter-spacing: 0.12em;
+    letter-spacing: var(--component-browse-showmorebtn-letter-spacing);
     text-transform: uppercase;
-    color: rgba(211, 192, 255, 0.88);
+    color: var(--component-browse-showmorebtn-color);
     cursor: pointer;
     transition: background var(--t-base), color var(--t-base), border-color var(--t-base);
   }
   .showMoreBtn:hover:not(:disabled) {
-    background: rgba(184, 167, 234, 0.075);
-    color: rgba(238, 235, 242, 0.9);
-    border-color: rgba(184, 167, 234, 0.24);
+    background: var(--component-browse-showmorebtn-background-2);
+    color: var(--component-browse-showmorebtn-color-2);
+    border-color: var(--component-browse-showmorebtn-border-color);
   }
-  .showMoreBtn:disabled { opacity: 0.4; cursor: default; }
+  .showMoreBtn:disabled { opacity: var(--component-browse-showmorebtn-disabled-opacity); cursor: default; }
   .loadMoreRow {
     display: none;
     justify-content: center;
     padding: var(--sp-3) var(--sp-4);
     flex-shrink: 0;
-    border-top: 1px solid var(--border-dim);
+    border-top: var(--component-browse-loadmorerow-border-top);
   }
   .sourceBrowseBar {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 12px clamp(14px, 1.2vw, 20px);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.045);
-    background: rgba(8, 8, 12, 0.18);
+    gap: var(--component-browse-sourcebrowsebar-gap);
+    padding: var(--component-browse-sourcebrowsebar-padding);
+    border-bottom: var(--component-browse-sourcebrowsebar-border-bottom);
+    background: var(--component-browse-sourcebrowsebar-background);
     flex-shrink: 0;
   }
   .nsfwBadge {
@@ -6930,10 +6916,10 @@
     font-size: var(--text-2xs);
     letter-spacing: var(--tracking-wide);
     color: var(--color-error);
-    background: var(--color-error-bg, rgba(180, 60, 60, 0.08));
-    border: 1px solid rgba(180, 60, 60, 0.25);
+    background: var(--component-browse-nsfwbadge-background);
+    border: var(--component-browse-nsfwbadge-border);
     border-radius: var(--radius-sm);
-    padding: 1px 5px;
+    padding: var(--component-browse-nsfwbadge-padding);
     margin-left: auto;
     flex-shrink: 0;
   }
@@ -6943,10 +6929,7 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    padding:
-      clamp(10px, 1.1vw, 18px)
-      clamp(14px, 1.8vw, 28px)
-      clamp(14px, 1.7vw, 26px);
+    padding: var(--component-browse-browseshell-padding);
     overflow: hidden;
   }
   .catalogShell {
@@ -6954,41 +6937,35 @@
     min-height: 0;
     display: flex;
     overflow: hidden;
-    border-radius: calc(24px * var(--n-hud-scale));
-    border: 1px solid rgba(255, 255, 255, 0.055);
-    background:
-      radial-gradient(circle at 18% 8%, rgba(184, 167, 234, 0.065), transparent 34%),
-      rgba(18, 18, 22, 0.72);
-    box-shadow: 0 22px 60px rgba(0, 0, 0, 0.18);
+    border-radius: var(--component-browse-catalogshell-border-radius);
+    border: var(--component-browse-catalogshell-border);
+    background: var(--component-browse-catalogshell-background);
+    box-shadow: var(--component-browse-catalogshell-box-shadow);
   }
   .catalogRoot {
     flex: 1;
     min-height: 0;
-    border-radius: clamp(18px, 1.6vw, 26px);
-    border: 1px solid rgba(255, 255, 255, 0.055);
-    background:
-      radial-gradient(circle at 20% 0%, rgba(184, 167, 234, 0.055), transparent 30%),
-      rgba(18, 18, 22, 0.7);
+    border-radius: var(--component-browse-catalogroot-border-radius);
+    border: var(--component-browse-catalogroot-border);
+    background: var(--component-browse-catalogroot-background);
     overflow: hidden;
   }
   .catalogRoot {
     flex-direction: row;
     border: 0;
-    border-radius: 0;
+    border-radius: var(--component-browse-catalogroot-radius-flat);
     background: transparent;
   }
   .catalogSidebar {
-    flex: 0 0 clamp(226px, 13vw, 248px);
-    width: clamp(226px, 13vw, 248px);
+    flex: var(--component-browse-catalogsidebar-flex);
+    width: var(--component-browse-catalogsidebar-width-2);
     min-width: 0;
-    padding: clamp(13px, 0.85vw, 16px) clamp(11px, 0.7vw, 14px);
-    border-right: 1px solid rgba(255, 255, 255, 0.055);
-    background:
-      linear-gradient(180deg, rgba(20, 19, 27, 0.72), rgba(10, 10, 14, 0.28)),
-      rgba(10, 10, 14, 0.48);
+    padding: var(--component-browse-catalogsidebar-padding-2);
+    border-right: var(--component-browse-catalogsidebar-border-right-2);
+    background: var(--component-browse-catalogsidebar-background-2);
     isolation: isolate;
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
+    backdrop-filter: var(--component-browse-catalogsidebar-backdrop-filter);
+    -webkit-backdrop-filter: var(--component-browse-catalogsidebar-backdrop-filter);
     -webkit-font-smoothing: auto;
     text-rendering: auto;
     font-family: var(--font-sans);
@@ -7001,29 +6978,25 @@
   .browseFilterSection {
     position: relative;
     overflow: visible;
-    margin-bottom: clamp(12px, 0.75vw, 15px);
-    padding: clamp(13px, 0.8vw, 16px);
-    border: 1px solid rgba(255, 255, 255, 0.065);
-    border-radius: clamp(14px, 1vw, 19px);
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.022), rgba(255, 255, 255, 0.004)),
-      rgba(13, 13, 18, 0.58);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.025),
-      0 12px 28px rgba(0, 0, 0, 0.18);
+    margin-bottom: var(--component-browse-browsefiltersection-margin-bottom);
+    padding: var(--component-browse-browsefiltersection-padding);
+    border: var(--component-browse-browsefiltersection-border);
+    border-radius: var(--component-browse-browsefiltersection-border-radius);
+    background: var(--component-browse-browsefiltersection-background);
+    box-shadow: var(--component-browse-browsefiltersection-box-shadow);
   }
   .browseCardHeader,
   .browseSectionHeader {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 10px;
-    margin: 0 0 14px;
+    gap: var(--component-browse-browsecardheader-browsesectionheader-gap);
+    margin: var(--component-browse-browsecardheader-browsesectionheader-margin);
   }
   .browseCardTitle {
     margin: 0;
-    color: rgba(238, 235, 242, 0.9);
-    font-size: 14px;
+    color: var(--component-browse-browsecardtitle-color);
+    font-size: var(--component-browse-browsecardtitle-font-size);
     font-weight: 700;
     letter-spacing: 0;
     text-transform: none;
@@ -7031,141 +7004,134 @@
   .browseResetButton {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--component-browse-browseresetbutton-gap);
     padding: 0;
     border: 0;
     background: transparent;
-    color: rgba(184, 167, 234, 0.68);
-    font-size: 12px;
+    color: var(--component-browse-browseresetbutton-color);
+    font-size: var(--component-browse-browseresetbutton-font-size);
     font-weight: 600;
     cursor: pointer;
   }
   .browseResetButton .material-symbols-outlined {
-    font-size: 15px;
+    font-size: var(--component-browse-browseresetbutton-material-symbols-outlined-font-size);
   }
   .browseField {
     position: relative;
     display: flex;
     flex-direction: column;
-    gap: 7px;
-    margin-bottom: 13px;
+    gap: var(--component-browse-browsefield-gap);
+    margin-bottom: var(--component-browse-browsefield-margin-bottom);
   }
   .browseField:has(.browseInlinePicker) {
-    z-index: 80;
+    z-index: var(--component-browse-browsefield-picker-z-index);
   }
   .browseFieldLabel {
     margin: 0;
-    color: rgba(229, 226, 225, 0.78);
-    font-size: 12px;
+    color: var(--component-browse-browsefieldlabel-color);
+    font-size: var(--component-browse-browsefieldlabel-font-size);
     font-weight: 700;
   }
   .browseFieldHint {
-    margin: -2px 1px 0;
-    color: rgba(229, 226, 225, 0.42);
-    font-size: 11px;
+    margin: var(--component-browse-browsefieldhint-margin);
+    color: var(--component-browse-browsefieldhint-color);
+    font-size: var(--component-browse-browsefieldhint-font-size);
     font-weight: 500;
     line-height: 1.35;
   }
   .browseSegment {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 3px;
-    min-height: 38px;
-    padding: 4px;
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 14px;
-    background: rgba(8, 8, 12, 0.46);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.018);
+    gap: var(--component-browse-browsesegment-gap);
+    min-height: var(--component-browse-browsesegment-min-height);
+    padding: var(--component-browse-browsesegment-padding);
+    border: var(--component-browse-browsesegment-border);
+    border-radius: var(--component-browse-browsesegment-border-radius);
+    background: var(--component-browse-browsesegment-background);
+    box-shadow: var(--component-browse-browsesegment-box-shadow);
   }
   .browseSegment button {
-    min-height: 30px;
-    border: 1px solid transparent;
-    border-radius: 10px;
+    min-height: var(--component-browse-browsesegment-min-height-2);
+    border: var(--component-browse-browsesegment-border-2);
+    border-radius: var(--component-browse-browsesegment-border-radius-2);
     background: transparent;
-    color: rgba(202, 196, 208, 0.66);
-    font-size: 12px;
+    color: var(--component-browse-browsesegment-color);
+    font-size: var(--component-browse-browsesegment-font-size);
     font-weight: 700;
     cursor: pointer;
-    transition:
-      background 140ms ease,
-      border-color 140ms ease,
-      color 140ms ease,
-      box-shadow 140ms ease,
-      transform 120ms ease;
+    transition: var(--component-browse-browsesegment-transition);
   }
   .browseSegment button:hover:not(.is-active) {
-    color: rgba(239, 235, 245, 0.9);
-    background: rgba(255, 255, 255, 0.035);
-    border-color: rgba(255, 255, 255, 0.055);
+    color: var(--component-browse-browsesegment-is-active-color);
+    background: var(--component-browse-browsesegment-is-active-background);
+    border-color: var(--component-browse-browsesegment-is-active-border-color);
   }
   .browseSegment button.is-active {
-    color: var(--n-on-primary);
-    border-color: rgba(211, 196, 255, 0.34);
-    background: var(--n-gradient-primary);
-    box-shadow:
-      0 4px 14px rgba(184, 167, 234, 0.18),
-      inset 0 1px 0 rgba(255, 255, 255, 0.18);
+    color: var(--component-browse-browsesegment-is-active-color-2);
+    border-color: var(--component-browse-browsesegment-is-active-border-color-2);
+    background: var(--component-browse-browsesegment-is-active-background-2);
+    box-shadow: var(--component-browse-browsesegment-is-active-box-shadow);
   }
   .browseSegment button:active {
-    transform: scale(0.97);
+    transform: var(--component-browse-browsesegment-transform);
   }
   .browseSelectRow {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    min-height: 36px;
-    padding: 0 12px;
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 11px;
-    background: rgba(8, 8, 12, 0.46);
-    color: rgba(229, 226, 225, 0.72);
-    font-size: 12px;
+    min-height: var(--component-browse-browseselectrow-min-height);
+    padding: var(--component-browse-browseselectrow-padding);
+    border: var(--component-browse-browseselectrow-border);
+    border-radius: var(--component-browse-browseselectrow-border-radius);
+    background: var(--component-browse-browseselectrow-background);
+    color: var(--component-browse-browseselectrow-color);
+    font-size: var(--component-browse-browseselectrow-font-size);
     font-weight: 600;
     cursor: pointer;
-    transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+    transition: var(--component-browse-browseselectrow-transition);
   }
   .browseSelectRow .material-symbols-outlined {
-    font-size: 18px;
-    color: rgba(229, 226, 225, 0.4);
+    font-size: var(--component-browse-browseselectrow-material-symbols-outlined-font-size);
+    color: var(--component-browse-browseselectrow-material-symbols-outlined-color);
   }
   .browseSelectRow:hover {
-    border-color: rgba(184, 167, 234, 0.16);
-    background: rgba(184, 167, 234, 0.055);
+    border-color: var(--component-browse-browseselectrow-border-color);
+    background: var(--component-browse-browseselectrow-background-2);
   }
   .browseSelectRow.is-paused {
     cursor: default;
-    color: rgba(229, 226, 225, 0.34);
-    border-color: rgba(255, 255, 255, 0.045);
-    background: rgba(8, 8, 12, 0.32);
+    color: var(--component-browse-browseselectrow-is-paused-color);
+    border-color: var(--component-browse-browseselectrow-is-paused-border-color);
+    background: var(--component-browse-browseselectrow-is-paused-background);
   }
   .browseSelectRow.is-paused:hover {
-    border-color: rgba(255, 255, 255, 0.045);
-    background: rgba(8, 8, 12, 0.32);
+    border-color: var(--component-browse-browseselectrow-is-paused-border-color);
+    background: var(--component-browse-browseselectrow-is-paused-background);
   }
   .browseSelectRow.is-paused .material-symbols-outlined {
-    opacity: 0.22;
+    opacity: var(--component-browse-browseselectrow-is-paused-material-symbols-outlined-opacity);
   }
   .browseSelectRow.is-open .material-symbols-outlined {
     transform: rotate(180deg);
   }
   .browseField:has(.browseSelectRow.is-open) .browseSelectRow {
-    border-color: rgba(184, 167, 234, 0.24);
-    border-bottom-color: rgba(184, 167, 234, 0.1);
-    border-radius: 11px 11px 8px 8px;
-    background: rgba(20, 18, 27, 0.72);
+    border-color: var(--component-browse-browsefield-browseselectrow-is-open-border-color);
+    border-bottom-color: var(--component-browse-browsefield-browseselectrow-is-open-border-bottom-color);
+    border-radius: var(--component-browse-browsefield-browseselectrow-is-open-border-radius);
+    background: var(--component-browse-browsefield-browseselectrow-is-open-background);
   }
   .browseInlinePicker {
     position: absolute;
-    top: calc(100% + 4px);
+    top: var(--component-browse-browseinlinepicker-top);
     left: 0;
     right: 0;
-    z-index: 90;
-    max-height: min(204px, 38vh);
+    z-index: var(--component-browse-browseinlinepicker-z-index);
+    max-height: var(--component-browse-browseinlinepicker-max-height);
     overflow-y: auto;
   }
   .searchTastePills span.is-muted {
     grid-column: 1 / -1;
-    color: rgba(229, 226, 225, 0.48);
+    color: var(--component-browse-searchtastepills-is-muted-color);
     font-weight: 620;
     text-transform: none;
   }
@@ -7176,153 +7142,151 @@
   .browseLanguagePicker button {
     justify-content: flex-start;
     text-align: left;
-    font-size: 11px;
+    font-size: var(--component-browse-browselanguagepicker-font-size);
   }
   .browseToggleRow {
     display: flex;
     align-items: center;
     justify-content: space-between;
     width: 100%;
-    min-height: 32px;
+    min-height: var(--component-browse-browsetogglerow-min-height);
     padding: 0;
     border: 0;
     background: transparent;
-    color: rgba(229, 226, 225, 0.72);
-    font-size: 12px;
+    color: var(--component-browse-browsetogglerow-color);
+    font-size: var(--component-browse-browsetogglerow-font-size);
     font-weight: 650;
     text-align: left;
     cursor: pointer;
   }
   .browseSwitch {
     position: relative;
-    width: 28px;
-    height: 16px;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.16);
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
-    transition: background 160ms ease;
+    width: var(--component-browse-browseswitch-width);
+    height: var(--component-browse-browseswitch-height);
+    border-radius: var(--component-browse-browseswitch-border-radius);
+    background: var(--component-browse-browseswitch-background);
+    box-shadow: var(--component-browse-browseswitch-box-shadow);
+    transition: var(--component-browse-browseswitch-transition);
   }
   .browseSwitch::after {
     content: "";
     position: absolute;
-    top: 3px;
-    left: 3px;
-    width: 10px;
-    height: 10px;
-    border-radius: 999px;
-    background: rgba(238, 235, 242, 0.86);
-    transition: transform 160ms ease, background 160ms ease;
+    top: var(--component-browse-browseswitch-top);
+    left: var(--component-browse-browseswitch-left);
+    width: var(--component-browse-browseswitch-width-2);
+    height: var(--component-browse-browseswitch-height-2);
+    border-radius: var(--component-browse-browseswitch-border-radius);
+    background: var(--component-browse-browseswitch-background-2);
+    transition: var(--component-browse-browseswitch-transition-2);
   }
   .browseToggleRow.is-active .browseSwitch {
-    background: rgba(184, 167, 234, 0.82);
+    background: var(--component-browse-browsetogglerow-is-active-browseswitch-background);
   }
   .browseToggleRow.is-active .browseSwitch::after {
-    transform: translateX(12px);
-    background: #ffffff;
+    transform: var(--component-browse-browsetogglerow-is-active-browseswitch-transform);
+    background: var(--component-browse-browsetogglerow-is-active-browseswitch-background-2);
   }
   .browseSectionBody {
     max-height: none;
     opacity: 1;
     overflow: visible;
-    transition:
-      max-height 220ms ease,
-      opacity 170ms ease;
+    transition: var(--component-browse-browsesectionbody-transition);
   }
   .splitSourceIcon,
   .sourceIcon {
-    width: calc(18px * var(--n-hud-scale));
-    height: calc(18px * var(--n-hud-scale));
-    border-radius: calc(5px * var(--n-hud-scale));
+    width: var(--component-browse-splitsourceicon-sourceicon-width);
+    height: var(--component-browse-splitsourceicon-sourceicon-height);
+    border-radius: var(--component-browse-splitsourceicon-sourceicon-border-radius);
   }
   .browseGenresSection {
     margin-top: 0;
-    margin-bottom: clamp(12px, 0.75vw, 15px);
-    gap: 4px;
+    margin-bottom: var(--component-browse-browsegenressection-margin-bottom);
+    gap: var(--component-browse-browsegenressection-gap);
   }
   .browseGenresSection .browseSectionHeader {
     margin-bottom: 0;
   }
   .browseGenresSection .browseSectionBody {
-    margin-top: -5px;
+    margin-top: var(--component-browse-browsegenressection-browsesectionbody-margin-top);
   }
   .catalogTagList {
-    max-height: clamp(122px, 21vh, 190px);
+    max-height: var(--component-browse-catalogtaglist-max-height);
     overflow-y: auto;
-    padding: 0 clamp(3px, 0.3vw, 5px) 0 0;
+    padding: var(--component-browse-catalogtaglist-padding);
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: var(--component-browse-catalogtaglist-gap-2);
     scrollbar-width: thin;
-    scrollbar-color: rgba(184, 167, 234, 0.18) transparent;
+    scrollbar-color: var(--component-browse-catalogtaglist-scrollbar-color);
   }
   .catalogTagList::-webkit-scrollbar {
-    width: 5px;
+    width: var(--component-browse-catalogtaglist-width);
   }
   .catalogTagList::-webkit-scrollbar-track {
     background: transparent;
   }
   .catalogTagList::-webkit-scrollbar-thumb {
-    border-radius: 999px;
-    background: rgba(184, 167, 234, 0.18);
+    border-radius: var(--component-browse-catalogtaglist-border-radius);
+    background: var(--component-browse-catalogtaglist-background);
   }
   .catalogOption {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--component-browse-catalogoption-gap);
     max-width: 100%;
-    min-height: 31px;
-    padding: 0 12px;
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.026);
-    color: rgba(229, 226, 225, 0.66) !important;
-    font-size: 12px;
+    min-height: var(--component-browse-catalogoption-min-height);
+    padding: var(--component-browse-catalogoption-padding);
+    border: var(--component-browse-catalogoption-border);
+    border-radius: var(--component-browse-catalogoption-border-radius);
+    background: var(--component-browse-catalogoption-background);
+    color: var(--component-browse-catalogoption-color);
+    font-size: var(--component-browse-catalogoption-font-size);
     font-weight: 650;
     letter-spacing: 0;
     cursor: pointer;
     transition: color var(--t-base), background var(--t-base), border-color var(--t-base), transform var(--t-fast);
   }
   .catalogOption:hover {
-    color: rgba(229, 226, 225, 0.78) !important;
-    border-color: rgba(184, 167, 234, 0.14);
-    background: rgba(184, 167, 234, 0.055);
+    color: var(--component-browse-catalogoption-color-2);
+    border-color: var(--component-browse-catalogoption-border-color);
+    background: var(--component-browse-catalogoption-background-2);
   }
   .catalogOptionActive {
-    color: #efe9ff !important;
-    border-color: rgba(184, 167, 234, 0.42);
-    background: linear-gradient(180deg, rgba(184, 167, 234, 0.28), rgba(145, 126, 204, 0.16));
+    color: var(--component-browse-catalogoptionactive-color);
+    border-color: var(--component-browse-catalogoptionactive-border-color);
+    background: var(--component-browse-catalogoptionactive-background);
   }
   .catalogSearchWrap {
     display: flex;
-    margin: 0 0 calc(7px * var(--n-hud-scale));
-    min-height: calc(29px * var(--n-hud-scale));
-    padding: 0 calc(10px * var(--n-hud-scale));
-    border: 1px solid rgba(255, 255, 255, 0.055);
-    border-radius: calc(12px * var(--n-hud-scale));
-    background: rgba(8, 8, 12, 0.42);
+    margin: var(--component-browse-catalogsearchwrap-margin);
+    min-height: var(--component-browse-catalogsearchwrap-min-height);
+    padding: var(--component-browse-catalogsearchwrap-padding);
+    border: var(--component-browse-catalogsearchwrap-border);
+    border-radius: var(--component-browse-catalogsearchwrap-border-radius);
+    background: var(--component-browse-catalogsearchwrap-background);
   }
   .catalogSearchWrap .splitSearchInput {
-    font-size: calc(11px * var(--n-hud-scale));
-    color: rgba(229, 226, 225, 0.64);
+    font-size: var(--component-browse-catalogsearchwrap-splitsearchinput-font-size);
+    color: var(--component-browse-catalogsearchwrap-splitsearchinput-color);
   }
   .catalogSearchWrap .splitSearchInput::placeholder {
-    color: rgba(229, 226, 225, 0.32);
+    color: var(--component-browse-catalogsearchwrap-splitsearchinput-color-2);
   }
   .catalogSearchWrap .splitSearchIcon {
-    color: rgba(229, 226, 225, 0.28);
+    color: var(--component-browse-catalogsearchwrap-splitsearchicon-color);
   }
   .splitContent {
     min-width: 0;
-    background: rgba(10, 10, 13, 0.12);
+    background: var(--component-browse-splitcontent-background);
   }
   .splitContentHeader,
   .sourceBrowseBar {
-    border-bottom-color: rgba(255, 255, 255, 0.045);
+    border-bottom-color: var(--component-browse-splitcontentheader-sourcebrowsebar-border-bottom-color);
   }
   .tagGrid {
-    grid-template-columns: repeat(auto-fill, minmax(clamp(104px, 7.1vw, 138px), 1fr));
-    gap: clamp(14px, 1.05vw, 20px) clamp(12px, 0.9vw, 17px);
-    padding: clamp(8px, 0.75vw, 14px) clamp(10px, 0.8vw, 16px) clamp(14px, 1vw, 20px);
+    grid-template-columns: var(--component-browse-taggrid-grid-template-columns-2);
+    gap: var(--component-browse-taggrid-gap);
+    padding: var(--component-browse-taggrid-padding);
   }
   .tagGrid :global(.n-library-card),
   .sourceRow :global(.n-library-card) {
@@ -7330,69 +7294,69 @@
     min-width: 0;
   }
   .sourceRow :global(.n-library-card) {
-    flex: 0 0 clamp(108px, 7.4vw, 136px);
+    flex: var(--component-browse-sourcerow-n-library-card-flex);
   }
   .sourceSection {
-    margin: 0 calc(22px * var(--n-hud-scale)) calc(12px * var(--n-hud-scale));
-    padding: calc(10px * var(--n-hud-scale)) calc(14px * var(--n-hud-scale)) calc(14px * var(--n-hud-scale));
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: calc(18px * var(--n-hud-scale));
-    background: rgba(18, 18, 22, 0.64);
+    margin: var(--component-browse-sourcesection-margin);
+    padding: var(--component-browse-sourcesection-padding);
+    border: var(--component-browse-sourcesection-border);
+    border-radius: var(--component-browse-sourcesection-border-radius);
+    background: var(--component-browse-sourcesection-background);
   }
   .results {
-    padding-top: calc(10px * var(--n-hud-scale));
+    padding-top: var(--component-browse-results-padding-top);
   }
   .sourceBrowseBar .searchBar {
-    min-height: calc(40px * var(--n-hud-scale));
-    border-color: rgba(255, 255, 255, 0.055);
-    background: rgba(27, 25, 34, 0.7);
+    min-height: var(--component-browse-sourcebrowsebar-searchbar-min-height);
+    border-color: var(--component-browse-sourcebrowsebar-searchbar-border-color);
+    background: var(--component-browse-sourcebrowsebar-searchbar-background);
   }
   .discoverPanel {
     flex: 1;
     min-height: 0;
     display: flex;
     flex-direction: column;
-    gap: clamp(10px, 0.8vw, 14px);
-    padding: clamp(12px, 1vw, 18px) clamp(18px, 1.55vw, 28px) clamp(16px, 1.35vw, 24px);
+    gap: var(--component-browse-discoverpanel-gap);
+    padding: var(--component-browse-discoverpanel-padding);
     overflow: auto;
   }
   .discoverPanelHeader {
-    min-height: 36px;
-    padding: 0 0 6px;
+    min-height: var(--component-browse-discoverpanelheader-min-height);
+    padding: var(--component-browse-discoverpanelheader-padding);
     border: 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.045);
-    border-radius: 0;
+    border-bottom: var(--component-browse-discoverpanelheader-border-bottom);
+    border-radius: var(--component-browse-discoverpanelheader-radius-flat);
     background: transparent;
-    box-shadow: none;
+    box-shadow: var(--component-browse-discoverpanelheader-box-shadow);
   }
   .catalogHeaderCopy {
     display: flex;
     min-width: 0;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--component-browse-catalogheadercopy-gap);
   }
   .catalogHeaderCopy .n-eyebrow {
-    color: rgba(238, 235, 242, 0.8);
-    font-size: 12px;
+    color: var(--component-browse-catalogheadercopy-n-eyebrow-color);
+    font-size: var(--component-browse-catalogheadercopy-n-eyebrow-font-size);
     font-weight: 760;
-    letter-spacing: 0.13em;
+    letter-spacing: var(--component-browse-catalogheadercopy-n-eyebrow-letter-spacing);
     line-height: 1;
     text-transform: uppercase;
   }
   .catalogSubtitle {
     margin: 0;
-    color: rgba(229, 226, 225, 0.48);
-    font-size: 12px;
+    color: var(--component-browse-catalogsubtitle-color);
+    font-size: var(--component-browse-catalogsubtitle-font-size);
     font-weight: 520;
     line-height: 1.25;
   }
 
   @media (max-width: 900px) {
     .browseShell {
-      padding-inline: 10px;
+      padding-inline: var(--component-browse-browseshell-padding-inline);
     }
     .searchLanding {
-      padding: 18px clamp(14px, 3vw, 22px) 36px;
+      padding: var(--component-browse-searchlanding-padding-2);
     }
     .searchCanvas {
       --search-card-width: clamp(118px, 21vw, 148px);
@@ -7419,29 +7383,29 @@
     }
     .searchInsightCard {
       display: block;
-      padding: 18px;
+      padding: var(--component-browse-searchinsightcard-padding-2);
     }
     .searchPanelTitle {
       grid-column: auto;
     }
     .searchPanelLabel {
-      margin-top: 18px;
+      margin-top: var(--component-browse-searchpanellabel-margin-top);
     }
     .searchTastePills {
-      grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
-      gap: 8px 10px;
+      grid-template-columns: var(--component-browse-searchtastepills-grid-template-columns);
+      gap: var(--component-browse-searchtastepills-gap-2);
     }
     .searchKnownToggle {
       grid-column: auto;
       grid-row: auto;
-      margin-top: 18px;
-      padding-top: 14px;
-      border-top: 1px solid rgba(255, 255, 255, 0.045);
+      margin-top: var(--component-browse-searchknowntoggle-margin-top-2);
+      padding-top: var(--component-browse-searchknowntoggle-padding-top-2);
+      border-top: var(--component-browse-searchknowntoggle-border-top);
     }
     .searchDiversity {
       grid-column: 1 / -1;
       margin-top: 0;
-      padding-top: 14px;
+      padding-top: var(--component-browse-searchdiversity-padding-top);
     }
     .searchDivergentNote,
     .searchInsights,
@@ -7452,43 +7416,43 @@
       flex-direction: row !important;
     }
     .catalogSidebar {
-      flex: 0 0 clamp(204px, 28vw, 220px);
-      width: clamp(204px, 28vw, 220px);
+      flex: var(--component-browse-catalogsidebar-flex-2);
+      width: var(--component-browse-catalogsidebar-width-3);
       max-height: none;
-      border-right: 1px solid rgba(255, 255, 255, 0.055);
+      border-right: var(--component-browse-catalogsidebar-border-right-2);
       border-bottom: 0;
-      padding: 12px 10px;
+      padding: var(--component-browse-catalogsidebar-padding-3);
     }
     .browseFilterSection {
-      padding: 12px;
+      padding: var(--component-browse-browsefiltersection-padding-2);
     }
     .browseSegment {
-      gap: 5px;
+      gap: var(--component-browse-browsesegment-gap-2);
     }
     .browseSegment button {
-      min-height: 30px;
-      font-size: 11.5px;
+      min-height: var(--component-browse-browsesegment-min-height-2);
+      font-size: var(--component-browse-browsesegment-font-size-2);
     }
     .browseSelectRow {
-      min-height: 33px;
-      font-size: 11px;
+      min-height: var(--component-browse-browseselectrow-min-height-2);
+      font-size: var(--component-browse-browseselectrow-font-size-2);
     }
     .browseToggleRow {
-      min-height: 30px;
-      font-size: 11px;
+      min-height: var(--component-browse-browsetogglerow-min-height-2);
+      font-size: var(--component-browse-browsetogglerow-font-size-2);
     }
     .catalogTagList {
-      max-height: 132px;
+      max-height: var(--component-browse-catalogtaglist-max-height-2);
     }
     .catalogOption {
-      min-height: 27px;
-      padding-inline: 10px;
-      font-size: 11px;
+      min-height: var(--component-browse-catalogoption-min-height-2);
+      padding-inline: var(--component-browse-catalogoption-padding-inline);
+      font-size: var(--component-browse-catalogoption-font-size-2);
     }
     .tagGrid {
-      grid-template-columns: repeat(auto-fill, minmax(clamp(92px, 15vw, 116px), 1fr));
-      gap: 12px 10px;
-      padding: 12px;
+      grid-template-columns: var(--component-browse-taggrid-grid-template-columns-3);
+      gap: var(--component-browse-taggrid-gap-2);
+      padding: var(--component-browse-taggrid-padding-2);
     }
   }
 
@@ -7540,18 +7504,18 @@
   @media (max-width: 700px) {
     .root :global(.browse-topbar) {
       grid-template-columns: minmax(0, auto) minmax(0, 1fr) minmax(0, auto);
-      gap: 8px;
+      gap: var(--component-browse-root-browse-topbar-gap-2);
     }
     .root :global(.browse-topbar .n-segmented) {
-      max-width: 190px;
+      max-width: var(--component-browse-root-browse-topbar-n-segmented-max-width);
     }
     .root :global(.browse-topbar .n-search) {
       min-width: 0;
       max-width: 100%;
     }
     .browseSubtabs {
-      gap: 18px;
-      padding-inline: 14px;
+      gap: var(--component-browse-browsesubtabs-gap-2);
+      padding-inline: var(--component-browse-browsesubtabs-padding-inline);
       overflow-x: auto;
       scrollbar-width: none;
     }
@@ -7559,22 +7523,22 @@
       display: none;
     }
     .searchLanding {
-      padding-inline: 14px;
+      padding-inline: var(--component-browse-searchlanding-padding-inline);
     }
     .searchCanvas {
       --search-card-width: clamp(128px, 39vw, 148px);
     }
     .searchRecommendationHeader {
-      gap: 8px;
+      gap: var(--component-browse-searchrecommendationheader-gap-2);
     }
     .searchRailControls button {
-      width: 26px;
-      height: 26px;
+      width: var(--component-browse-searchrailcontrols-width-2);
+      height: var(--component-browse-searchrailcontrols-height-2);
     }
     .searchInsightCard {
       grid-template-columns: 1fr;
-      row-gap: 12px;
-      padding: 16px;
+      row-gap: var(--component-browse-searchinsightcard-row-gap);
+      padding: var(--component-browse-searchinsightcard-padding-3);
     }
     .searchKnownToggle,
     .searchDiversity {
@@ -7582,18 +7546,18 @@
       grid-row: auto;
     }
     .searchKnownToggle {
-      padding-top: 14px;
-      border-top: 1px solid rgba(255, 255, 255, 0.045);
+      padding-top: var(--component-browse-searchknowntoggle-padding-top-2);
+      border-top: var(--component-browse-searchknowntoggle-border-top);
     }
     .searchHeroCopy h2 {
-      font-size: 24px;
+      font-size: var(--component-browse-searchherocopy-font-size-3);
     }
     .catalogSidebar {
-      flex-basis: 188px;
-      width: 188px;
+      flex-basis: var(--component-browse-catalogsidebar-flex-basis);
+      width: var(--component-browse-catalogsidebar-width-4);
     }
     .browseCardTitle {
-      font-size: 13px;
+      font-size: var(--component-browse-browsecardtitle-font-size-2);
     }
     .browseResetButton,
     .browseFieldLabel,
@@ -7601,10 +7565,10 @@
     .browseSelectRow,
     .browseToggleRow,
     .catalogOption {
-      font-size: 11.5px;
+      font-size: var(--component-browse-browseresetbutton-browsefieldlabel-browsesegment-font-size);
     }
     .tagGrid {
-      grid-template-columns: repeat(auto-fill, minmax(86px, 1fr));
+      grid-template-columns: var(--component-browse-taggrid-grid-template-columns-4);
     }
   }
 
@@ -7619,7 +7583,7 @@
       --search-card-width: min(132px, 42vw);
     }
     .searchHeroCopy h2 {
-      font-size: 22px;
+      font-size: var(--component-browse-searchherocopy-font-size-4);
     }
     .searchRecommendationHeader {
       flex-direction: column;
