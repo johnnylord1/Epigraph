@@ -3246,12 +3246,6 @@
     background: color-mix(in srgb, var(--accent-muted) 42%, var(--bg-raised));
   }
 
-  :global([data-aethon-motion="idle"] .aethon-app-shell .aethon-search-dim-layer) {
-    opacity: 0 !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-  }
-
   :global([data-aethon-motion="idle"] .aethon-app-shell .settings-theme-preview__tile),
   :global([data-aethon-motion="idle"] .aethon-app-shell .settings-theme-preview__glow),
   :global([data-aethon-motion="idle"] .aethon-app-shell .anim-branch) {

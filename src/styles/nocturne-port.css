@@ -527,7 +527,7 @@
   pointer-events: none;
   z-index: 500;
   background: var(--component-search-dim-bg);
-  transition: opacity 250ms ease;
+  transition: opacity 160ms ease;
 }
 
 body.aethon-settings-search-engaged .aethon-search-dim-layer,
@@ -583,7 +583,7 @@ body.aethon-downloads-search-engaged .aethon-search-dim-layer {
   opacity: 0;
   pointer-events: none;
   z-index: 0;
-  transition: opacity 220ms ease;
+  transition: opacity 160ms ease;
 }
 
 .n-sidebar::after {
@@ -595,7 +595,7 @@ body.aethon-downloads-search-engaged .aethon-search-dim-layer {
   opacity: 0;
   pointer-events: none;
   z-index: 3;
-  transition: opacity 220ms ease;
+  transition: opacity 160ms ease;
 }
 
 .n-sidebar > * {
@@ -918,7 +918,7 @@ html[data-aethon-motion="idle"] .n-topbar {
   opacity: 0;
   pointer-events: none;
   background: var(--component-topbar-scrim-bg);
-  transition: opacity 250ms ease;
+  transition: opacity 160ms ease;
 }
 
 .n-topbar__left,
@@ -952,10 +952,10 @@ html[data-aethon-motion="idle"] .n-topbar {
   height: var(--n-search-height);
   border-radius: 9999px;
   transition:
-    width 350ms var(--n-ease-spring),
-    transform 350ms var(--n-ease-spring),
-    box-shadow 350ms ease,
-    background 350ms ease;
+    width 200ms var(--n-ease-spring),
+    transform 200ms var(--n-ease-spring),
+    box-shadow 160ms ease,
+    background 160ms ease;
   z-index: 52;
   margin: 0 auto;
   -webkit-app-region: no-drag;
@@ -1235,7 +1235,11 @@ html[data-aethon-motion="idle"] .n-topbar {
   font-weight: 800;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  transition: all 250ms var(--n-ease-spring);
+  transition:
+    color 160ms ease,
+    background 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
   cursor: pointer;
   background: transparent;
   border: none;

@@ -70,7 +70,6 @@
 <style>
   .header {
     position: relative;
-    z-index: var(--component-library-header-z-index);
     display: flex;
     flex-direction: column;
     align-items: stretch;

@@ -356,7 +356,6 @@
     min-width: 0;
     min-height: 0;
     position: relative;
-    z-index: 0;
   }
 
   .page-keepalive:not(.is-active) {

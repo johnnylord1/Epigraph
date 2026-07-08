@@ -186,7 +186,7 @@
     flex-direction: column;
     height: 100%;
     overflow: visible;
-    animation: fadeIn 0.14s ease both;
+    animation: fadeIn 0.14s ease;
   }
 
   .body-slot {
