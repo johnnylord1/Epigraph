@@ -1268,3 +1268,89 @@ Comparacao visual:
 - As mudancas antigas de Discord/Rich Presence dentro de `MigrateModal.svelte` e `NovelMigrateModal.svelte` continuam fora do escopo do tema; qualquer commit seletivo do Marco 12 precisa separar hunks visuais dos hunks de Discord.
 - Ha alteracoes antigas e nao relacionadas no working tree em Discord/Rich Presence, Tauri/Cargo, mensagens i18n, Reader core, Settings e outras features. Nao misturar essas alteracoes com o Marco 12.
 - Reader core, Settings especializados e a reducao futura da camada `--n-*` seguem pendentes para marcos futuros.
+
+## Marco 13 - Settings Syncd Connection
+
+### Escopo executado
+- Migrada exclusivamente a camada visual de `src/components/settings/SyncdConnectionPanel.svelte` e `src/components/settings/SyncdSessionDetails.svelte`.
+- Nao foram alteradas APIs, stores, runtime Syncd, pairing, QR, replication, reconnect, persistencia, `Settings.svelte`, ThemeEditor, NovelRepositoriesPanel, Reader, SeriesDetailV3Shell, MangaPreview, NocturneState, Discord/Rich Presence, Tauri/Cargo ou i18n.
+- Nao foram removidos tokens Legacy nem a camada `--n-*`.
+
+### Superficies ativas
+- `SyncdConnectionPanel.svelte` e ativo em Settings > System > Security, aberto pelo controle `settings-security-syncd-manage`.
+- `SyncdSessionDetails.svelte` e ativo quando existem sessoes Syncd persistidas e renderiza o popover de detalhes de cada sessao.
+- O runtime real validado tinha `persistedCount: 0`, entao o painel principal foi reproduzido visualmente e o popover de sessao ficou como limitacao visual, com cobertura automatica por `SyncdSessionDetails.test.ts`.
+
+### Tokens utilizados/criados
+Foram adicionados tokens `--component-syncd-*` em `src/styles/tokens.css`, com implementacao Nocturne em `src/styles/nocturne-theme.css`.
+
+Categorias cobertas:
+
+- grid/card/surface/list item;
+- borders, backgrounds, text muted/label, inputs e focus;
+- QR surface, pills/status success/info/danger;
+- session trigger, popover z-index, spacing, width, padding e text hierarchy.
+
+Classificacao: todos os 60 tokens `--component-syncd-*` definidos estao Ativos por consumo direto em `SyncdConnectionPanel.svelte` ou `SyncdSessionDetails.svelte`. Validacao automatica: 60 definidos, 60 consumidos, 0 sem consumo.
+
+### Cores e efeitos diretos removidos
+Foram removidos dos blocos `<style>` dos componentes Syncd:
+
+- `rgba()` diretos de cards, surfaces, inputs, focus, QR, list items e pills;
+- `linear-gradient()` direto do trigger de detalhes;
+- `color-mix()` direto dos status pills;
+- consumo direto de `--n-on-surface` em input/textarea.
+
+Resultado apos a migracao:
+
+- `SyncdConnectionPanel.svelte`: 0 ocorrencias diretas no bloco `<style>` para cores, funcoes de cor, gradients, blur/shadow diretos ou consumo de `--n-*`.
+- `SyncdSessionDetails.svelte`: 0 ocorrencias diretas no bloco `<style>` para os mesmos criterios.
+
+### Excecoes mantidas
+- `src/styles/tokens.css` e `src/styles/nocturne-theme.css` continuam autorizados a conter valores diretos por serem arquivos de tokens/tema.
+- Dimensoes funcionais do layout responsivo, como `minmax(320px, 1fr)`, `min(100%, 220px)` e media query `880px`, permanecem no componente por serem geometria estrutural, nao cor/efeito tematico.
+- Nenhuma excecao visual direta foi mantida nos blocos `<style>` dos componentes Syncd migrados.
+
+### Acessibilidade
+Validado automaticamente:
+
+- ausencia de cores diretas, funcoes de cor, gradients, blur/shadow diretos e consumo direto de `--n-*` nos blocos `<style>` de `SyncdConnectionPanel.svelte` e `SyncdSessionDetails.svelte`;
+- consumo obrigatorio de todos os tokens `--component-syncd-*`;
+- render e interacao do popover por `SyncdSessionDetails.test.ts`;
+- render de Settings por `Settings.test.ts`.
+
+Validado visualmente no app real em Nocturne via WebView2/CDP:
+
+- Settings > System > Security com o painel Desktop Sync Pairing aberto;
+- estado real sem host ativo, sem peers e sem sessoes persistidas;
+- surfaces, cards, inputs/textarea, NocturneState local, buttons, pills e hierarquia visual.
+
+Limitacao:
+
+- Nao havia sessao Syncd persistida no runtime real (`persistedCount: 0`), portanto o popover visual de `SyncdSessionDetails.svelte` nao foi capturado com dados reais. O comportamento e render do popover seguem cobertos por teste unitario.
+
+### Screenshots reais
+Screenshots capturados da janela real do Aethon em Nocturne via WebView2/CDP:
+
+- Antes:
+  - `docs/screenshots/marco13-syncd/syncd-before-panel.png`
+- Depois:
+  - `docs/screenshots/marco13-syncd/syncd-after-panel.png`
+
+Comparacao visual:
+
+- `SyncdConnectionPanel.svelte`: geometria, cards, surfaces, inputs, QR/empty state, badges/pills, bordas, radius, spacing e hierarquia visual permaneceram equivalentes. O toast real de update do Suwayomi aparece nas capturas e pertence ao runtime, nao ao Marco 13.
+- `SyncdSessionDetails.svelte`: validacao visual real pendente por falta de sessao persistida, sem evidencia de regressao automatica nos estilos tokenizados.
+
+### Validacao
+- `npm exec vitest run -- --project shell-jsdom src/components/settings/SyncdConnectionThemeTokens.test.ts src/components/settings/SyncdSessionDetails.test.ts src/components/settings/Settings.test.ts`: passou, 3 arquivos e 13 testes.
+- Contagem de tokens novos: 60 definidos, 60 consumidos, 0 sem consumo.
+- Varredura final dos blocos `<style>` de `SyncdConnectionPanel.svelte` e `SyncdSessionDetails.svelte`: 0 ocorrencias diretas.
+- `C:\Users\jhow-\AppData\Roaming\npm\pnpm.cmd build`: passou; o Vite manteve apenas o aviso conhecido de chunks maiores que 500 kB.
+- `git diff --check`: passou; apenas avisos de normalizacao LF/CRLF do Git em arquivos ja alterados.
+
+### Riscos antes do proximo marco
+- `SyncdSessionDetails.svelte` ainda precisa de comparacao visual real quando houver sessao Syncd persistida disponivel no runtime.
+- `Settings.svelte` segue com mudancas antigas no worktree e nao foi alterado neste marco; qualquer commit seletivo do Marco 13 deve manter essas mudancas fora.
+- Ha alteracoes antigas e nao relacionadas no working tree em Discord/Rich Presence, Tauri/Cargo, mensagens i18n, Reader core, Settings, paginas de migracao e outras features. Nao misturar essas alteracoes com o Marco 13.
+- Reader core, ThemeEditor, NovelRepositoriesPanel, SeriesDetailV3Shell, MangaPreview, NocturneState e a reducao futura da camada `--n-*` seguem pendentes para marcos futuros.

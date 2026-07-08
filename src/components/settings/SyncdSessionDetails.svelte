@@ -284,7 +284,7 @@
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 12px;
+    gap: var(--component-syncd-control-gap);
     width: 100%;
     min-width: 0;
   }
@@ -298,7 +298,7 @@
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 12px;
+    gap: var(--component-syncd-control-gap);
     min-width: 0;
   }
 
@@ -306,13 +306,13 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--component-syncd-pill-gap);
   }
 
   .syncd-session-copy__status {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--component-syncd-session-popover-offset);
     flex-shrink: 0;
   }
 
@@ -320,13 +320,13 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
-    height: 24px;
+    width: var(--component-syncd-session-trigger-size);
+    height: var(--component-syncd-session-trigger-size);
     padding: 0;
-    border-radius: 999px;
-    border: 1px solid var(--border-strong);
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.015), rgba(255, 255, 255, 0.005));
-    color: var(--text-faint);
+    border-radius: var(--component-syncd-pill-radius);
+    border: 1px solid var(--component-syncd-session-trigger-border);
+    background: var(--component-syncd-session-trigger-bg);
+    color: var(--component-syncd-session-trigger-fg);
     font-family: var(--font-ui);
     font-size: var(--text-2xs);
     letter-spacing: var(--tracking-wide);
@@ -339,7 +339,7 @@
     justify-content: center;
     width: 100%;
     height: 100%;
-    border-radius: 999px;
+    border-radius: var(--component-syncd-pill-radius);
     font-family: Georgia, "Times New Roman", serif;
     font-size: 15px;
     font-style: italic;
@@ -354,21 +354,21 @@
   .syncd-session-trigger:focus-visible,
   .syncd-session-popover__close:hover,
   .syncd-session-popover__close:focus-visible {
-    color: var(--text-secondary);
-    border-color: var(--border-strong);
+    color: var(--component-syncd-session-trigger-hover-fg);
+    border-color: var(--component-syncd-session-trigger-hover-border);
     outline: none;
   }
 
   .syncd-session-popover {
     position: absolute;
-    top: calc(100% + 6px);
+    top: calc(100% + var(--component-syncd-session-popover-offset));
     right: 0;
-    z-index: 20;
-    width: min(360px, 88vw);
-    padding: 10px 11px 11px;
+    z-index: var(--component-syncd-session-popover-z-index);
+    width: var(--component-syncd-session-popover-width);
+    padding: var(--component-syncd-session-popover-padding);
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: var(--component-syncd-session-popover-gap);
   }
 
   .syncd-session-popover__head,
@@ -376,7 +376,7 @@
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 8px;
+    gap: var(--component-syncd-stack-gap);
   }
 
   .syncd-session-popover__title-wrap,
@@ -384,7 +384,7 @@
   .syncd-session-popover__row {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--component-syncd-pill-gap);
   }
 
   .syncd-session-popover__eyebrow,
@@ -400,13 +400,13 @@
     font-size: var(--text-2xs);
     letter-spacing: var(--tracking-wide);
     text-transform: uppercase;
-    color: var(--text-faint);
+    color: var(--component-syncd-label-fg);
   }
 
   .syncd-session-popover__title {
     margin: 0;
     font-size: var(--text-sm);
-    color: var(--text-primary);
+    color: var(--component-syncd-session-title-fg);
     font-weight: var(--weight-medium);
     line-height: var(--leading-tight);
     white-space: nowrap;
@@ -418,7 +418,7 @@
   .syncd-session-popover__meta {
     margin: 0;
     font-size: var(--text-xs);
-    color: var(--text-muted);
+    color: var(--component-syncd-session-summary-fg);
     line-height: 1.25;
     white-space: nowrap;
     overflow: hidden;
@@ -428,14 +428,14 @@
   .syncd-session-popover__meta-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-    gap: 8px;
+    gap: var(--component-syncd-stack-gap);
   }
 
   .syncd-session-popover__meta-grid > div {
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: calc(var(--component-syncd-pill-gap) / 2);
   }
 
   .syncd-session-popover__actions {
