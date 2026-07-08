@@ -1565,3 +1565,76 @@ Comparacao visual: Books Library empty state manteve geometria, surfaces, rail, 
 - `NovelRepositoriesPanel.svelte`, `SeriesDetailV3Shell.svelte`, `Reader` core, tracking panels e a reducao futura da camada `--n-*` seguem pendentes para marcos futuros.
 - `NocturneState` e usado por muitos fluxos; embora o contrato de tokens esteja fechado, consumidores com estados raros de erro/empty ainda podem precisar de smoke visual quando aparecerem naturalmente.
 - Ha alteracoes antigas e nao relacionadas no working tree em Discord/Rich Presence, Tauri/Cargo, mensagens i18n, Reader core, Settings, paginas de migracao e outras features. Nao misturar essas alteracoes com o Marco 16.
+
+## Marco 17 - Detail Surfaces
+
+### Escopo executado
+- Migrada a camada visual das superficies de detalhe ativas:
+  - `src/components/shared/SeriesDetailV3Shell.svelte`
+  - `src/components/pages/SeriesDetail.svelte`
+  - `src/components/pages/NovelDetail.svelte`
+  - `src/components/pages/BookDetail.svelte`
+  - `src/components/shared/TrackingPanel.svelte`
+  - `src/components/shared/NovelTrackingPanel.svelte`
+- Nao foram alteradas APIs publicas, GraphQL, stores, navegacao, leitura, migracao, Discord/Rich Presence, Tauri/Cargo ou i18n.
+- Foram preservadas mudancas antigas ja existentes em `BookDetail.svelte`, `TrackingPanel.svelte` e `NovelTrackingPanel.svelte`; este marco tocou apenas CSS/contrato de tokens nesses arquivos.
+- Nao foram removidos tokens Legacy nem a camada `--n-*`.
+
+### Superficies ativas
+- `SeriesDetail.svelte` e ativo via `Layout.svelte` quando `store.activeManga` existe.
+- `NovelDetail.svelte` e ativo via `App.svelte` quando `store.activeNovelDetail` existe.
+- `BookDetail.svelte` e ativo via `Layout.svelte` quando `store.activeBookId` resolve um livro.
+- `SeriesDetailV3Shell.svelte` e o shell visual compartilhado por Series, Novel e Book details.
+- `TrackingPanel.svelte` e aberto a partir de `SeriesDetail.svelte`.
+- `NovelTrackingPanel.svelte` e aberto a partir de `NovelDetail.svelte` e `BookDetail.svelte`.
+
+### Tokens utilizados/criados
+Classificacao: todos os tokens novos do Marco 17 estao Ativos por consumo direto nas superficies migradas.
+
+Contagem validada automaticamente:
+- `--component-detail-*`: 274 definidos, 274 consumidos, 0 sem consumo, 0 consumidos sem definicao, 0 ausentes no Nocturne.
+- `--component-tracking-*`: 116 definidos, 116 consumidos, 0 sem consumo, 0 consumidos sem definicao, 0 ausentes no Nocturne.
+
+Categorias cobertas:
+- detail shell: background, topbar, hero, cover, tags, metricas, progresso, action band, drawers, chapter toolbar/body, chapter rows/grid, menus/dropdowns e estados hover/focus/active/disabled;
+- detail pages: menus locais, download dropdowns, link picker de manga/novel, preview frame de book e estados de loading/missing;
+- tracking overlays: backdrop, modal, header, tabs, rows, selects, inputs, botoes, chapter editor, progress, search results, badges, covers, empty/error states, radius, blur, shadow, z-index, opacity e motion.
+
+### Cores e efeitos diretos removidos
+- `SeriesDetailV3Shell.svelte`: removidos hex, `rgba(...)`, gradientes, shadows, blur/filter, z-index direto, radius/opacities diretos e consumo direto de `--n-*` no componente.
+- `SeriesDetail.svelte`: menus/dropdowns e link picker migrados para `--component-detail-*`.
+- `NovelDetail.svelte`: download dropdown e link picker migrados para `--component-detail-*`.
+- `BookDetail.svelte`: preview frame visual migrado para `--component-detail-*`.
+- `TrackingPanel.svelte` e `NovelTrackingPanel.svelte`: backdrop/modal/tabs/records/search/results migrados para `--component-tracking-*`.
+
+### Excecoes mantidas
+- O HTML standalone exportado por `NovelDetail.svelte` conserva CSS direto dentro da string `const html = ...` (`#111`, `#e8e4eb`, `#d3c4ff`, `#2c2933`). Essa excecao e intencional porque o arquivo exportado precisa funcionar fora do app, sem acesso aos CSS variables do tema.
+- Inline styles dinamicos de progresso/largura (`style={...width...}`) permanecem funcionais; cor, track, radius e surfaces foram tokenizados.
+- Imagens/covers continuam dados runtime, nao valores visuais hardcoded.
+
+### Screenshots reais
+Capturas after geradas em Nocturne com app/Vite real e estado de auditoria em memoria, sem criar dados persistidos:
+
+- `docs/screenshots/marco17-detail-surfaces/detail-after-series-main.png`
+- `docs/screenshots/marco17-detail-surfaces/detail-after-series-tracking.png`
+- `docs/screenshots/marco17-detail-surfaces/detail-after-novel-main.png`
+- `docs/screenshots/marco17-detail-surfaces/detail-after-novel-tracking.png`
+
+Limitacao: screenshots before nao foram recapturados neste fechamento porque o Marco 17 ja estava com diff aplicado sobre um worktree sujo com mudancas antigas fora do tema; trocar arquivos para baseline anterior arriscaria misturar/reverter trabalho do usuario. A comparacao visual foi feita contra o comportamento/layout esperado e contra a identidade Nocturne existente. `BookDetail` nao foi capturado no runtime web porque a abertura pelo browser shim de Vite travou em dependencias runtime/Tauri; a superficie ficou coberta pelo contrato de tokens e build.
+
+### Limitacoes de estado
+- Series detail e Novel detail foram abertas com estado de auditoria em memoria para evitar escrita persistente.
+- Tracking de manga/novel foi validado nos estados reais disponiveis sem credenciais de rastreador conectadas.
+- Book tracking e estados de trackers conectados/resultados reais nao foram forcados.
+
+### Validacao
+- `npm exec vitest run -- --project shell-jsdom src/components/shared/DetailSurfacesThemeTokens.test.ts src/components/shared/SeriesDetailV3Shell.test.ts`: passou, 6 testes.
+- `pnpm build`: bloqueado antes do build por `ERR_PNPM_IGNORED_BUILDS` apos o pnpm recriar `node_modules` e exigir `pnpm approve-builds` para scripts de dependencias (`esbuild`, `protobufjs`, `svelte-preprocess`, etc.).
+- `npm run build`: passou, mantendo apenas o aviso conhecido de chunks maiores que 500 kB.
+- Varredura final dos blocos `<style>` migrados: 0 ocorrencias diretas de hex/rgb/rgba/hsl/hsla/oklch/color-mix/gradients, blur direto, shadow rgba direto, z-index numerico, radius/opacidade direta ou `--n-*`.
+
+### Riscos antes do proximo marco
+- `NovelRepositoriesPanel.svelte`, Reader core e a reducao futura da camada `--n-*` seguem pendentes.
+- O lote gerou muitos tokens por preservar fielmente a identidade atual das details; uma etapa futura pode consolidar nomes equivalentes, mas nao deve remover tokens sem evidencia e validacao visual.
+- A validacao visual de BookDetail deve ser repetida em WebView2/CDP quando o runtime Tauri estiver estavel.
+- Ha alteracoes antigas e nao relacionadas no working tree em Discord/Rich Presence, Tauri/Cargo, mensagens i18n, Reader core, Settings, paginas de migracao e outras features. Nao misturar essas alteracoes com o Marco 17.

@@ -52,6 +52,7 @@ export default defineWorkspace([
         "src/components/pages/NovelSources.test.ts",
         "src/components/pages/SourcesThemeTokens.test.ts",
         "src/components/shared/SeriesDetailV3Shell.test.ts",
+        "src/components/shared/DetailSurfacesThemeTokens.test.ts",
         "src/components/settings/SyncdConnectionThemeTokens.test.ts",
         "src/components/settings/ThemeEditorThemeTokens.test.ts",
         "src/components/settings/SyncdSessionDetails.test.ts",

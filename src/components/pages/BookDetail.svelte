@@ -1000,7 +1000,7 @@
     position: relative;
     flex: 1;
     overflow: hidden;
-    background: color-mix(in srgb, var(--bg-raised) 92%, white 8%);
+    background: var(--component-detail-preview-frame-background);
   }
 
   .preview-host {
@@ -1009,12 +1009,12 @@
   }
 
   .preview-frame.is-loading .preview-host {
-    opacity: 0.35;
+    opacity: var(--component-detail-preview-frame-is-loading-preview-host-opacity);
   }
 
   @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
+    from { opacity: var(--component-detail-keyframes-fadein-from-opacity); }
+    to { opacity: var(--component-detail-to-opacity); }
   }
 
   @media (max-width: 980px) {
