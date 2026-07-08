@@ -1177,3 +1177,94 @@ Comparacao visual:
 - Resultados completos dependem do runtime/Suwayomi/fontes instaladas.
 - Ha alteracoes antigas e nao relacionadas no working tree em Discord/Rich Presence, Tauri/Cargo, mensagens i18n, Reader core, Settings e migracoes individuais. Nao misturar essas alteracoes com o Marco 11.
 - `MigrateModal.svelte`, `NovelMigrateModal.svelte`, Reader core, Settings especializados e a reducao futura da camada `--n-*` seguem pendentes.
+
+## Marco 12 - Migration Modals
+
+### Escopo executado
+- Migrada exclusivamente a camada visual de `src/components/pages/MigrateModal.svelte` e `src/components/pages/NovelMigrateModal.svelte`.
+- Nao foram alteradas APIs, stores, GraphQL, navegacao, logica de migracao, Reader, Library, Downloads, Sources, Settings, Updater, Discord/Rich Presence, Tauri/Cargo ou i18n.
+- As alteracoes antigas de Discord/Rich Presence ja presentes em `MigrateModal.svelte` e `NovelMigrateModal.svelte` foram preservadas no worktree, mas nao pertencem a este marco e nao devem ser misturadas em commit seletivo do tema.
+- Nao foram removidos tokens Legacy nem a camada `--n-*`.
+
+### Superficies ativas
+- `MigrateModal.svelte` e ativo e renderizado por `src/components/pages/SeriesDetail.svelte` quando o usuario aciona a migracao/troca de fonte de um manga da biblioteca.
+- `NovelMigrateModal.svelte` e ativo e renderizado por `src/components/pages/NovelDetail.svelte` quando o usuario aciona a migracao de novel e o estado de seguranca/classificacao permite a migracao.
+- A validacao visual real reproduziu `MigrateModal.svelte`. O estado real disponivel nao abriu `NovelMigrateModal.svelte` sem alterar dados/configuracao do usuario; por isso a validacao visual desse modal ficou registrada como limitacao, com cobertura automatica de tokens e ausencia de valores diretos.
+
+### Tokens utilizados/criados
+Foram adicionados tokens `--component-migrate-modal-*` e `--component-novel-migrate-*` em `src/styles/tokens.css`, com implementacao Nocturne em `src/styles/nocturne-theme.css`.
+
+Categorias cobertas:
+
+- overlay, backdrop blur e z-index;
+- modal surface, border, radius, shadow, width e max-height;
+- header, divider, tipografia de titulo/eyebrow e close button;
+- steps, source rows, hover/active, warning/error states;
+- notice layer de novel migration, estados ready/blocked e disabled.
+
+Tambem foram reutilizados os tokens compartilhados `--component-migration-*` criados no Marco 8.
+
+Classificacao: todos os 28 tokens novos `--component-migrate-modal-*` e `--component-novel-migrate-*` definidos estao Ativos por consumo direto nos modais. Validacao automatica: 28 definidos, 28 consumidos, 0 sem consumo.
+
+### Cores e efeitos diretos removidos
+Foram removidos dos blocos `<style>` dos modais:
+
+- `rgba()` diretos de overlays, surfaces, borders, hover/active e error/warning states;
+- hex direto de texto e warning;
+- `linear-gradient()` direto do notice de novel migration;
+- `color-mix()` direto de estados ready/blocked;
+- `backdrop-filter: blur(...)` direto;
+- `box-shadow` direto;
+- `z-index`, `opacity` e `border-radius` numericos diretos ligados a aparencia tematica.
+
+Resultado apos a migracao:
+
+- `MigrateModal.svelte`: 0 ocorrencias diretas no bloco `<style>` para cores, funcoes de cor, gradients, blur/shadow diretos, z-index numerico direto, opacity decimal direta, radius numerico direto ou consumo de `--n-*`.
+- `NovelMigrateModal.svelte`: 0 ocorrencias diretas no bloco `<style>` para os mesmos criterios.
+
+### Excecoes mantidas
+- `src/styles/tokens.css` e `src/styles/nocturne-theme.css` continuam autorizados a conter valores diretos por serem arquivos de tokens/tema.
+- Valores de layout/comportamento nao tematicos, como percentuais dinamicos de progresso/similaridade em markup, permanecem fora do escopo visual do token test.
+- Nenhuma excecao visual direta foi mantida nos blocos `<style>` dos modais migrados.
+
+### Acessibilidade
+Validado automaticamente:
+
+- ausencia de cores diretas, funcoes de cor, gradients, blur/shadow diretos, z-index numerico direto, opacity decimal direta, radius numerico direto e consumo direto de `--n-*` nos blocos `<style>` de `MigrateModal.svelte` e `NovelMigrateModal.svelte`;
+- consumo obrigatorio de todos os tokens novos do Marco 12;
+- definicao de todos os tokens compartilhados consumidos pelos modais;
+- render/fluxo existente de `MigrateModal.test.ts`.
+
+Validado visualmente no app real em Nocturne via WebView2/CDP:
+
+- `MigrateModal.svelte` aberto a partir de `SeriesDetail.svelte`, com overlay, blur, surface, border, radius, sombra, tipografia, steps, filtros de fonte e lista de fontes.
+
+Limitacao:
+
+- `NovelMigrateModal.svelte` nao foi reproduzido visualmente no estado real atual sem criar/alterar dados ou classificacao de fontes. O modal segue coberto por token test e por varredura de valores diretos, mas precisa de smoke visual manual quando houver uma novel migravel no runtime.
+
+### Screenshots reais
+Screenshots capturados da janela real do Aethon em Nocturne via WebView2/CDP:
+
+- Antes, a partir do baseline anterior ao Marco 12:
+  - `docs/screenshots/marco12-migration-modals/migrate-modal-before-source.png`
+- Depois:
+  - `docs/screenshots/marco12-migration-modals/migrate-modal-after-source.png`
+
+Comparacao visual:
+
+- `MigrateModal.svelte`: geometria, centralizacao, overlay/blur, surface, bordas, radius, sombra, divisores, filtros, tipografia e hierarquia visual permaneceram equivalentes. Nao ha regressao visual aparente no estado capturado.
+- `NovelMigrateModal.svelte`: validacao visual real pendente por limitacao de estado runtime, sem evidencia de regressao automatica nos estilos tokenizados.
+
+### Validacao
+- `npm exec vitest run -- --project shell-jsdom src/components/pages/MigrationModalsThemeTokens.test.ts src/components/pages/MigrateModal.test.ts src/components/pages/MassMigrationThemeTokens.test.ts`: passou, 3 arquivos e 5 testes.
+- Contagem de tokens novos: 28 definidos, 28 consumidos, 0 sem consumo.
+- Varredura final dos blocos `<style>` de `MigrateModal.svelte` e `NovelMigrateModal.svelte`: 0 ocorrencias diretas.
+- `C:\Users\jhow-\AppData\Roaming\npm\pnpm.cmd build`: passou; o Vite manteve apenas o aviso conhecido de chunks maiores que 500 kB.
+- `git diff --check`: passou; apenas avisos de normalizacao LF/CRLF do Git em arquivos ja alterados.
+
+### Riscos antes do proximo marco
+- `NovelMigrateModal.svelte` ainda precisa de comparacao visual real quando houver uma novel migravel disponivel no runtime.
+- As mudancas antigas de Discord/Rich Presence dentro de `MigrateModal.svelte` e `NovelMigrateModal.svelte` continuam fora do escopo do tema; qualquer commit seletivo do Marco 12 precisa separar hunks visuais dos hunks de Discord.
+- Ha alteracoes antigas e nao relacionadas no working tree em Discord/Rich Presence, Tauri/Cargo, mensagens i18n, Reader core, Settings e outras features. Nao misturar essas alteracoes com o Marco 12.
+- Reader core, Settings especializados e a reducao futura da camada `--n-*` seguem pendentes para marcos futuros.
