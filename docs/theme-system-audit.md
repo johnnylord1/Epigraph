@@ -1354,3 +1354,77 @@ Comparacao visual:
 - `Settings.svelte` segue com mudancas antigas no worktree e nao foi alterado neste marco; qualquer commit seletivo do Marco 13 deve manter essas mudancas fora.
 - Ha alteracoes antigas e nao relacionadas no working tree em Discord/Rich Presence, Tauri/Cargo, mensagens i18n, Reader core, Settings, paginas de migracao e outras features. Nao misturar essas alteracoes com o Marco 13.
 - Reader core, ThemeEditor, NovelRepositoriesPanel, SeriesDetailV3Shell, MangaPreview, NocturneState e a reducao futura da camada `--n-*` seguem pendentes para marcos futuros.
+
+## Marco 14 - Settings ThemeEditor
+
+### Escopo executado
+- Migrada exclusivamente a camada visual de `src/components/settings/ThemeEditor.svelte`.
+- Nao foram alteradas logica de edicao, import/export, persistencia, geracao de tokens, APIs, stores, ThemeProvider, `Settings.svelte`, NovelRepositoriesPanel, Reader, SeriesDetailV3Shell, MangaPreview, NocturneState, Discord/Rich Presence, Tauri/Cargo, i18n ou migracoes antigas.
+- Nao foram removidos tokens Legacy nem a camada `--n-*`.
+
+### Superficie ativa
+- `ThemeEditor.svelte` e ativo: `src/App.svelte` faz lazy import por `themeEditor: () => import("./components/settings/ThemeEditor.svelte")`.
+- `Settings.svelte` aciona `onOpenThemeEditor?.(null)` pelo botao `New Theme` em App > Appearance > Custom theme editor.
+- Validacao real em Nocturne abriu o modal via app/WebView2/CDP sobre Settings/Appearance.
+
+### Tokens utilizados/criados
+Classificacao: todos os 220 tokens `--component-theme-editor-*` definidos estao Ativos por consumo direto em `ThemeEditor.svelte`.
+
+Contagem validada automaticamente:
+- Definidos: 220
+- Consumidos: 220
+- Sem consumo: 0
+- Consumidos sem definicao: 0
+
+Categorias cobertas:
+- backdrop, z-index e animacao do modal;
+- shell, header, actions, save button e danger state;
+- preview pane, live preview, reader preview, popover preview, toast preview e swatches;
+- editor pane, tabs, preset cards, token rows, color swatches, inputs, sliders, hover/focus e motion.
+
+### Cores e efeitos diretos removidos
+- `rgba(0, 0, 0, 0.72)` do backdrop migrado para `--component-theme-editor-backdrop-bg`.
+- `z-index: 200` migrado para `--component-theme-editor-backdrop-z-index`.
+- `color-mix(...)` do preview popover e reader chrome migrado para tokens de preview.
+- Borders `rgba(...)` de swatches migrados para `--component-theme-editor-swatch-border` e `--component-theme-editor-color-swatch-border`.
+- `box-shadow: 0 0 0 1px rgba(...)` do color swatch migrado para `--component-theme-editor-color-swatch-shadow`.
+- `filter: brightness(1.12)` migrado para `--component-theme-editor-save-hover-filter`.
+- Radius, opacity, transitions, dimensoes e spacing locais do modal/editor foram migrados para tokens de componente.
+- O componente nao consome `--n-*` diretamente.
+
+### Excecoes mantidas
+- `#000000` em `toValidColorPickerValue` e logica de validacao de cores permanece como fallback funcional do input `type="color"`, nao como cor visual aplicada ao componente.
+- Inline styles dinamicos de swatches (`background: {tokens[token]}` e `background: {hud[...]}`) permanecem para representar o valor que o usuario esta editando.
+- `style={toCssVars(tokens)}` permanece para escopar o preview ao draft do tema, sem aplicar o draft ao shell do editor.
+- `style="background: var(--{varName})"` no strip de swatches permanece como preview dinamico de tokens editaveis.
+- `style="border-radius: {hud[item.token]}"` permanece como preview dinamico dos valores HUD editados.
+
+### Screenshots reais
+Screenshots capturados/registrados em Nocturne:
+
+- Before:
+  - `docs/screenshots/marco14-theme-editor/theme-editor-before-existing-baseline.png`
+- After:
+  - `docs/screenshots/marco14-theme-editor/theme-editor-after-colors.png`
+  - `docs/screenshots/marco14-theme-editor/theme-editor-after-focus-hover.png`
+  - `docs/screenshots/marco14-theme-editor/theme-editor-after-hud.png`
+
+Observacao: a tentativa inicial de before neste marco capturou Settings/Appearance sem o modal por selecao incorreta do alvo CDP e foi descartada. O baseline before mantido e uma captura real anterior do ThemeEditor em Nocturne, reaproveitada de `docs/screenshots/marco4-validation/settings-themeeditor-real.png`. As capturas after foram feitas diretamente do elemento `.te-backdrop` no app real via WebView2/CDP.
+
+Comparacao visual: geometria, surfaces, radius, bordas, tipografia e hierarquia do ThemeEditor permaneceram equivalentes. Um toast real do updater apareceu sobre o canto inferior direito nas capturas, risco ja conhecido em auditorias visuais e nao relacionado ao ThemeEditor.
+
+### Limitacoes de estado
+- Estado de edicao de tema customizado existente e botao de delete nao foram reproduzidos sem criar dados artificiais do usuario.
+- Estado de erro de importacao nao foi forçado para evitar alterar fluxo de arquivos do usuario.
+- Estados dinamicos de swatch/color picker permanecem cobertos por teste estatico e pela validacao visual do editor principal/HUD.
+
+### Validacao
+- `npm exec vitest run -- --project shell-jsdom src/components/settings/ThemeEditorThemeTokens.test.ts`: passou, 4 testes.
+- Varredura final do bloco `<style>` de `ThemeEditor.svelte`: 0 ocorrencias diretas de hex/rgb/rgba/hsl/hsla/oklch/color-mix/gradients ou `--n-*`.
+- Contagem final de tokens `--component-theme-editor-*`: 220 definidos, 220 consumidos, 0 sem consumo.
+
+### Riscos antes do proximo marco
+- `ThemeEditor.svelte` ainda possui excecoes funcionais inevitaveis para preview de valores editaveis por usuario; nao tratar como hardcoded visual.
+- `Settings.svelte` segue com mudancas antigas no worktree e nao foi alterado neste marco; qualquer commit seletivo do Marco 14 deve manter essas mudancas fora.
+- Ha alteracoes antigas e nao relacionadas no working tree em Discord/Rich Presence, Tauri/Cargo, mensagens i18n, Reader core, Settings, paginas de migracao e outras features. Nao misturar essas alteracoes com o Marco 14.
+- NovelRepositoriesPanel, Reader core, SeriesDetailV3Shell, MangaPreview, NocturneState e a reducao futura da camada `--n-*` seguem pendentes para marcos futuros.
