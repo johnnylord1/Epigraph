@@ -818,24 +818,24 @@
   .novel-repos-panel {
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: var(--component-novel-repositories-panel-gap);
   }
 
   .novel-repos-hero,
   .novel-repos-controls,
   .novel-repo-card,
   .novel-smoke-result {
-    border: 1px solid rgba(72, 69, 79, 0.12);
-    border-radius: 18px;
-    background: rgba(21, 21, 25, 0.72);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+    border: var(--component-novel-repositories-surface-border);
+    border-radius: var(--component-novel-repositories-surface-radius);
+    background: var(--component-novel-repositories-surface-background);
+    box-shadow: var(--component-novel-repositories-surface-shadow);
   }
 
   .novel-repos-hero,
   .novel-repos-controls,
   .novel-repo-card,
   .novel-smoke-result {
-    padding: 16px;
+    padding: var(--component-novel-repositories-surface-padding);
   }
 
   .novel-repos-header,
@@ -848,7 +848,7 @@
   .novel-repos-filter-controls {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: var(--component-novel-repositories-control-gap);
   }
 
   .novel-repos-header,
@@ -862,95 +862,95 @@
   .novel-repo-entry__site,
   .novel-smoke-result__grid,
   .novel-repo-card__metrics {
-    color: rgba(202, 196, 208, 0.42);
+    color: var(--component-novel-repositories-muted-color);
   }
 
   .novel-repos-scope {
-    margin: 6px 0 0;
-    max-width: 560px;
-    font-size: 11px;
-    line-height: 1.45;
+    margin: var(--component-novel-repositories-scope-margin);
+    max-width: var(--component-novel-repositories-scope-max-width);
+    font-size: var(--component-novel-repositories-scope-font-size);
+    line-height: var(--component-novel-repositories-scope-line-height);
   }
 
   .novel-repos-summary {
     display: flex;
     flex-wrap: wrap;
-    gap: 10px;
-    margin-top: 14px;
+    gap: var(--component-novel-repositories-summary-gap);
+    margin-top: var(--component-novel-repositories-summary-margin-top);
   }
 
   .novel-repos-summary__pill {
     display: inline-flex;
     align-items: center;
-    min-height: 30px;
-    padding: 0 12px;
-    border-radius: 999px;
-    border: 1px solid rgba(84, 68, 125, 0.22);
-    background: linear-gradient(180deg, rgba(31, 28, 38, 0.96), rgba(20, 19, 27, 0.94));
-    color: rgba(225, 219, 239, 0.76);
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.08em;
+    min-height: var(--component-novel-repositories-summary-pill-min-height);
+    padding: var(--component-novel-repositories-summary-pill-padding);
+    border-radius: var(--component-novel-repositories-pill-radius);
+    border: var(--component-novel-repositories-summary-pill-border);
+    background: var(--component-novel-repositories-summary-pill-background);
+    color: var(--component-novel-repositories-summary-pill-color);
+    font-size: var(--component-novel-repositories-label-font-size);
+    font-weight: var(--component-novel-repositories-strong-font-weight);
+    letter-spacing: var(--component-novel-repositories-label-letter-spacing);
     text-transform: uppercase;
   }
 
   .novel-repos-controls__grid {
     display: grid;
-    gap: 16px;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--component-novel-repositories-controls-grid-gap);
+    grid-template-columns: var(--component-novel-repositories-controls-grid-template);
   }
 
   .novel-repos-controls--open,
   .novel-repo-card__catalog--open {
-    animation: novelReposFadeIn 180ms ease both;
+    animation: novelReposFadeIn var(--component-novel-repositories-motion-enter) var(--component-novel-repositories-motion-easing) both;
   }
 
   .novel-repos-control-block {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: var(--component-novel-repositories-control-block-gap);
   }
 
   .novel-repos-filter-grid {
     display: grid;
-    gap: 12px;
+    gap: var(--component-novel-repositories-filter-grid-gap);
   }
 
   .novel-repos-field {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--component-novel-repositories-field-gap);
     min-width: 0;
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.12em;
+    font-size: var(--component-novel-repositories-field-font-size);
+    font-weight: var(--component-novel-repositories-strong-font-weight);
+    letter-spacing: var(--component-novel-repositories-field-letter-spacing);
     text-transform: uppercase;
-    color: rgba(202, 196, 208, 0.34);
+    color: var(--component-novel-repositories-field-color);
   }
 
   .novel-repos-input {
     width: 100%;
     min-width: 0;
-    min-height: 38px;
-    border-radius: 14px;
-    border: 1px solid rgba(72, 69, 79, 0.16);
-    background: rgba(17, 17, 22, 0.82);
-    color: var(--n-on-surface);
-    padding: 0 12px;
-    font-size: 12px;
-    font-weight: 600;
+    min-height: var(--component-novel-repositories-input-min-height);
+    border-radius: var(--component-novel-repositories-control-radius);
+    border: var(--component-novel-repositories-input-border);
+    background: var(--component-novel-repositories-input-background);
+    color: var(--component-novel-repositories-text-color);
+    padding: var(--component-novel-repositories-input-padding);
+    font-size: var(--component-novel-repositories-body-font-size);
+    font-weight: var(--component-novel-repositories-body-font-weight);
   }
 
   .novel-repos-input:focus {
     outline: none;
-    border-color: rgba(184, 167, 234, 0.24);
-    background: rgba(25, 23, 31, 0.94);
-    box-shadow: 0 0 0 1px rgba(184, 167, 234, 0.08);
+    border-color: var(--component-novel-repositories-input-focus-border-color);
+    background: var(--component-novel-repositories-input-focus-background);
+    box-shadow: var(--component-novel-repositories-input-focus-shadow);
   }
 
   .novel-repos-list {
     display: grid;
-    gap: 14px;
+    gap: var(--component-novel-repositories-list-gap);
   }
 
   .novel-repo-card__identity,
@@ -962,38 +962,38 @@
 
   .novel-repo-card__title {
     display: block;
-    font-size: 12px;
-    font-weight: 700;
-    color: var(--n-on-surface);
+    font-size: var(--component-novel-repositories-body-font-size);
+    font-weight: var(--component-novel-repositories-title-font-weight);
+    color: var(--component-novel-repositories-text-color);
     overflow-wrap: anywhere;
   }
 
   .novel-repo-card__summary {
-    margin: 5px 0 0;
-    font-size: 11px;
-    line-height: 1.45;
+    margin: var(--component-novel-repositories-card-summary-margin);
+    font-size: var(--component-novel-repositories-scope-font-size);
+    line-height: var(--component-novel-repositories-scope-line-height);
   }
 
   .novel-repo-card__badges {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
-    margin-top: 10px;
+    gap: var(--component-novel-repositories-badges-gap);
+    margin-top: var(--component-novel-repositories-badges-margin-top);
   }
 
   .novel-repo-badge {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    min-height: 24px;
-    padding: 0 8px;
-    border-radius: 999px;
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.08em;
+    gap: var(--component-novel-repositories-badge-gap);
+    min-height: var(--component-novel-repositories-badge-min-height);
+    padding: var(--component-novel-repositories-badge-padding);
+    border-radius: var(--component-novel-repositories-pill-radius);
+    font-size: var(--component-novel-repositories-label-font-size);
+    font-weight: var(--component-novel-repositories-strong-font-weight);
+    letter-spacing: var(--component-novel-repositories-label-letter-spacing);
     text-transform: uppercase;
-    border: 1px solid rgba(72, 69, 79, 0.16);
-    background: rgba(255, 255, 255, 0.02);
+    border: var(--component-novel-repositories-badge-border);
+    background: var(--component-novel-repositories-badge-background);
   }
 
   .novel-repo-badge[data-variant="ready"],
@@ -1003,9 +1003,9 @@
   .novel-repo-badge[data-variant="working"],
   .novel-repo-badge[data-variant="success"],
   .novel-repo-badge[data-variant="info"] {
-    color: rgba(225, 213, 255, 0.96);
-    border-color: rgba(171, 142, 245, 0.28);
-    background: rgba(103, 72, 182, 0.18);
+    color: var(--component-novel-repositories-badge-success-color);
+    border-color: var(--component-novel-repositories-badge-success-border-color);
+    background: var(--component-novel-repositories-badge-success-background);
   }
 
   .novel-repo-badge[data-variant="untrusted"],
@@ -1013,8 +1013,8 @@
   .novel-repo-badge[data-variant="unknown"],
   .novel-repo-badge[data-variant="working-with-known-limitations"],
   .novel-repo-badge[data-variant="warning"] {
-    color: #f0c36a;
-    border-color: color-mix(in oklab, #f0c36a 60%, var(--line-soft));
+    color: var(--component-novel-repositories-badge-warning-color);
+    border-color: var(--component-novel-repositories-badge-warning-border-color);
   }
 
   .novel-repo-badge[data-variant="blocked"],
@@ -1023,7 +1023,7 @@
   .novel-repo-badge[data-variant="runtime-gap"],
   .novel-repo-badge[data-variant="danger"] {
     color: var(--color-error);
-    border-color: color-mix(in oklab, var(--color-error) 60%, var(--line-soft));
+    border-color: var(--component-novel-repositories-badge-danger-border-color);
   }
 
   .novel-repo-badge[data-variant="disabled"],
@@ -1033,100 +1033,100 @@
   .novel-repo-badge[data-variant="seed"],
   .novel-repo-badge[data-variant="pending"],
   .novel-repo-badge[data-variant="muted"] {
-    color: rgba(202, 196, 208, 0.56);
+    color: var(--component-novel-repositories-badge-muted-color);
   }
 
   .novel-repo-card__metrics,
   .novel-smoke-result__grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-    gap: 10px;
-    margin-top: 14px;
-    font-size: 11px;
+    grid-template-columns: var(--component-novel-repositories-metrics-grid-template);
+    gap: var(--component-novel-repositories-metrics-gap);
+    margin-top: var(--component-novel-repositories-section-margin-top);
+    font-size: var(--component-novel-repositories-scope-font-size);
   }
 
   .novel-repo-card__trust {
     display: grid;
-    gap: 12px;
-    margin-top: 14px;
-    padding-top: 14px;
-    border-top: 1px solid rgba(255, 255, 255, 0.04);
+    gap: var(--component-novel-repositories-trust-gap);
+    margin-top: var(--component-novel-repositories-section-margin-top);
+    padding-top: var(--component-novel-repositories-section-padding-top);
+    border-top: var(--component-novel-repositories-trust-border-top);
   }
 
   .novel-repo-card__catalog-shell {
-    margin-top: 14px;
+    margin-top: var(--component-novel-repositories-section-margin-top);
   }
 
   .novel-repo-card__catalog-toggle {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
+    gap: var(--component-novel-repositories-catalog-toggle-gap);
     width: 100%;
-    min-height: 36px;
-    padding: 0 14px;
-    border-radius: 14px;
-    border: 1px solid rgba(72, 69, 79, 0.16);
-    background: rgba(18, 18, 24, 0.8);
-    color: rgba(224, 219, 236, 0.88);
-    font-size: 11px;
-    font-weight: 800;
-    letter-spacing: 0.08em;
+    min-height: var(--component-novel-repositories-catalog-toggle-min-height);
+    padding: var(--component-novel-repositories-catalog-toggle-padding);
+    border-radius: var(--component-novel-repositories-control-radius);
+    border: var(--component-novel-repositories-catalog-toggle-border);
+    background: var(--component-novel-repositories-catalog-toggle-background);
+    color: var(--component-novel-repositories-catalog-toggle-color);
+    font-size: var(--component-novel-repositories-scope-font-size);
+    font-weight: var(--component-novel-repositories-strong-font-weight);
+    letter-spacing: var(--component-novel-repositories-label-letter-spacing);
     text-transform: uppercase;
-    transition: border-color 160ms ease, background 160ms ease, transform 90ms ease;
+    transition: border-color var(--component-novel-repositories-motion-normal) var(--component-novel-repositories-motion-easing), background var(--component-novel-repositories-motion-normal) var(--component-novel-repositories-motion-easing), transform var(--component-novel-repositories-motion-fast) var(--component-novel-repositories-motion-easing);
   }
 
   .novel-repo-card__catalog-toggle:hover {
-    border-color: rgba(171, 142, 245, 0.24);
-    background: rgba(26, 24, 33, 0.92);
+    border-color: var(--component-novel-repositories-catalog-toggle-hover-border-color);
+    background: var(--component-novel-repositories-catalog-toggle-hover-background);
   }
 
   .novel-repo-card__catalog-toggle:active {
-    transform: scale(0.985);
+    transform: var(--component-novel-repositories-catalog-toggle-active-transform);
   }
 
   .novel-repo-card__catalog {
-    margin-top: 12px;
+    margin-top: var(--component-novel-repositories-catalog-margin-top);
   }
 
   @keyframes novelReposFadeIn {
     from {
-      opacity: 0;
-      transform: translateY(-6px);
+      opacity: var(--component-novel-repositories-keyframes-fade-in-from-opacity);
+      transform: var(--component-novel-repositories-keyframes-fade-in-from-transform);
     }
     to {
-      opacity: 1;
-      transform: translateY(0);
+      opacity: var(--component-novel-repositories-keyframes-fade-in-to-opacity);
+      transform: var(--component-novel-repositories-keyframes-fade-in-to-transform);
     }
   }
 
   .novel-repo-entry-list {
     display: grid;
-    gap: 10px;
+    gap: var(--component-novel-repositories-entry-list-gap);
   }
 
   .novel-repo-entry {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
-    padding: 12px;
-    border-radius: 14px;
-    border: 1px solid rgba(72, 69, 79, 0.12);
-    background: rgba(255, 255, 255, 0.02);
+    gap: var(--component-novel-repositories-entry-gap);
+    padding: var(--component-novel-repositories-entry-padding);
+    border-radius: var(--component-novel-repositories-control-radius);
+    border: var(--component-novel-repositories-entry-border);
+    background: var(--component-novel-repositories-entry-background);
   }
 
   .novel-repo-entry__name {
     display: block;
-    font-size: 12px;
-    font-weight: 700;
-    color: rgba(229, 226, 225, 0.92);
+    font-size: var(--component-novel-repositories-body-font-size);
+    font-weight: var(--component-novel-repositories-title-font-weight);
+    color: var(--component-novel-repositories-entry-name-color);
   }
 
   .novel-repo-entry__meta,
   .novel-repo-entry__site {
     display: block;
-    font-size: 11px;
+    font-size: var(--component-novel-repositories-scope-font-size);
   }
 
   @media (max-width: 980px) {

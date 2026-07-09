@@ -1638,3 +1638,50 @@ Limitacao: screenshots before nao foram recapturados neste fechamento porque o M
 - O lote gerou muitos tokens por preservar fielmente a identidade atual das details; uma etapa futura pode consolidar nomes equivalentes, mas nao deve remover tokens sem evidencia e validacao visual.
 - A validacao visual de BookDetail deve ser repetida em WebView2/CDP quando o runtime Tauri estiver estavel.
 - Ha alteracoes antigas e nao relacionadas no working tree em Discord/Rich Presence, Tauri/Cargo, mensagens i18n, Reader core, Settings, paginas de migracao e outras features. Nao misturar essas alteracoes com o Marco 17.
+
+## Marco 18 - Settings NovelRepositoriesPanel
+
+### Escopo executado
+- Migrada exclusivamente a camada visual de `src/components/settings/NovelRepositoriesPanel.svelte`.
+- Nao foram alteradas logica de repositorios, refresh, trust gate, catalogo, instalacao/remocao de plugins, classificacao automatica, smoke test, stores, SourcesView, Settings.svelte, Reader, Discord/Rich Presence, Tauri/Cargo, i18n ou migracoes antigas.
+- Nao foram removidos tokens Legacy nem a camada `--n-*`.
+
+### Superficie e status
+- `NovelRepositoriesPanel.svelte` possui teste focado e permanece como superficie especializada/Legacy preparada.
+- Busca global confirmou que `NovelRepositoriesPanel.svelte` nao esta importado/renderizado por `Settings.svelte` nem pelo app ativo nesta build.
+- A UI ativa de repositorios de novels em runtime esta dentro de `SourcesView.svelte` via `utilityPanel === "novelRepos"` e nao foi alterada neste marco.
+
+### Tokens utilizados/criados
+Classificacao: todos os tokens novos do Marco 18 estao Legacy/Preparados por consumo direto no componente especializado, mas sem presenca confirmada no runtime ativo do app.
+
+Contagem validada automaticamente:
+- `--component-novel-repositories-*`: 89 definidos, 89 consumidos, 0 sem consumo, 0 consumidos sem definicao, 0 ausentes no Nocturne.
+
+Categorias cobertas:
+- surfaces/cards, borders, radius, shadows, textos, texto muted, summary pills, filtros, inputs/focus, badges por status, metricas, trust gate, catalog toggle, catalog entries, spacing, opacity/keyframes e motion.
+
+### Cores e efeitos diretos removidos
+- Removidos do bloco `<style>` de `NovelRepositoriesPanel.svelte`: `rgba(...)`, `#hex`, `color-mix(...)`, gradiente, shadows diretos, radius direto, opacity direta e consumo direto de `--n-*`.
+- O componente agora consome somente `--component-novel-repositories-*` para valores visuais locais.
+
+### Excecoes mantidas
+- Nenhuma excecao visual direta permaneceu no bloco `<style>` migrado.
+- O breakpoint `@media (max-width: 980px)` permanece direto por ser condicao estrutural responsiva; custom properties nao sao adequadas para media query neste caso e nao altera identidade visual por tema.
+
+### Screenshots reais
+- Nao foram geradas screenshots reais do componente porque ele nao esta montado em Settings nem em outra rota ativa do app atual.
+- Nao foram criados mockups, dados artificiais ou caminhos temporarios para forcar screenshot.
+- A validacao visual em runtime deve ser feita quando o painel voltar a ser montado ou quando houver decisao de substituir o painel ativo de `SourcesView.svelte`.
+
+### Validacao
+- `npm exec vitest run -- --project shell-jsdom src/components/settings/NovelRepositoriesPanel.test.ts src/components/settings/NovelRepositoriesThemeTokens.test.ts`: passou, 5 testes.
+- `pnpm build`: bloqueado antes do build por `ERR_PNPM_IGNORED_BUILDS`, exigindo `pnpm approve-builds` para scripts de dependencias (`core-js`, `es5-ext`, `esbuild`, `msw`, `protobufjs`, `svelte-preprocess`).
+- `npm run build`: passou, mantendo apenas o aviso conhecido de chunks maiores que 500 kB.
+- `git diff --check`: passou; apenas avisos de LF/CRLF em arquivos ja modificados no worktree.
+- Varredura final do bloco `<style>` de `NovelRepositoriesPanel.svelte`: 0 ocorrencias diretas de hex/rgb/rgba/hsl/hsla/oklch/color-mix/gradients, `--n-*`, shadow rgba direto, z-index numerico, radius direto ou opacity decimal direta.
+
+### Riscos antes do proximo marco
+- Reader core (`Reader.svelte`, `BookReader.svelte`, `NovelReader.svelte`) segue como principal superficie ativa pendente e deve ser dividido se o diff crescer.
+- A UI ativa de repositorios de novels em `SourcesView.svelte` ja foi tratada no Marco 7 dentro do escopo de Sources, mas ainda compartilha dominio funcional com este painel Legacy.
+- A reducao futura da camada `--n-*` segue pendente e deve ocorrer somente apos Reader core.
+- Ha alteracoes antigas e nao relacionadas no working tree em Discord/Rich Presence, Tauri/Cargo, mensagens i18n, Reader core, Settings, paginas de migracao e outras features. Nao misturar essas alteracoes com o Marco 18.
