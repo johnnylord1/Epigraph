@@ -450,7 +450,7 @@
               <dd style="display: flex; align-items: center; gap: 8px;">
                 <div class="popover-stepper">
                   <button class="popover-step-btn" onclick={() => updateContentWidth(-40)} disabled={store.settings.proseReaderFullWidth}>-</button>
-                  <span class="popover-step-val" style={store.settings.proseReaderFullWidth ? "opacity: 0.5;" : ""}>
+                  <span class="popover-step-val" style={store.settings.proseReaderFullWidth ? "opacity: var(--component-reader-core-disabled-step-opacity);" : ""}>
                     {store.settings.proseReaderFullWidth ? $_("ui_full") : `${proseContentWidth}px`}
                   </span>
                   <button class="popover-step-btn" onclick={() => updateContentWidth(40)} disabled={store.settings.proseReaderFullWidth}>+</button>
@@ -549,7 +549,7 @@
             <dd style="display: flex; align-items: center; gap: 8px;">
               <div class="popover-stepper">
                 <button class="popover-step-btn" onclick={() => updateContentWidth(-40)} disabled={store.settings.proseReaderFullWidth}>−</button>
-                <span class="popover-step-val" style={store.settings.proseReaderFullWidth ? "opacity: 0.5;" : ""}>
+                <span class="popover-step-val" style={store.settings.proseReaderFullWidth ? "opacity: var(--component-reader-core-disabled-step-opacity);" : ""}>
                   {store.settings.proseReaderFullWidth ? $_("ui_full") : `${proseContentWidth}px`}
                 </span>
                 <button class="popover-step-btn" onclick={() => updateContentWidth(40)} disabled={store.settings.proseReaderFullWidth}>+</button>
@@ -633,10 +633,8 @@
     overflow-y: auto;
     overflow-x: hidden;
     position: relative;
-    background:
-      radial-gradient(circle at 45% 18%, rgba(255, 255, 255, 0.015), transparent 30%),
-      linear-gradient(180deg, var(--prose-page-bg, var(--bg-void)), #050505 62%, var(--prose-page-bg, var(--bg-void)));
-    color: var(--prose-text, var(--text-primary));
+    background: var(--component-reader-core-prose-viewer-bg);
+    color: var(--component-reader-core-prose-viewer-fg);
   }
 
   .reader-body {
@@ -644,10 +642,10 @@
     margin: var(--sp-3) auto;
     width: min(var(--prose-content-width, 760px), calc(100% - 40px));
     min-height: calc(100% - var(--sp-6));
-    border: 1px solid color-mix(in srgb, var(--border-base) 68%, transparent);
-    border-radius: 14px;
-    background: var(--prose-bg, color-mix(in srgb, var(--bg-base) 88%, #d7d0c2 12%));
-    box-shadow: 0 44px 110px rgba(0, 0, 0, 0.5);
+    border: var(--component-reader-core-prose-panel-border);
+    border-radius: var(--component-reader-core-prose-panel-radius);
+    background: var(--component-reader-core-prose-panel-bg);
+    box-shadow: var(--component-reader-core-prose-panel-shadow);
     color: var(--prose-text, var(--text-primary));
     font-family: var(--prose-font-family, Georgia, serif);
     line-height: var(--prose-line-height, 1.75);
@@ -661,8 +659,8 @@
     min-height: 100%;
     margin: 0;
     border: none;
-    border-radius: 0;
-    box-shadow: none;
+    border-radius: var(--component-reader-core-prose-panel-full-radius);
+    box-shadow: var(--component-reader-core-prose-panel-full-shadow);
   }
 
   .reader-body :global(p),
@@ -677,10 +675,10 @@
   }
 
   .reader-body :global(.tts-active-segment) {
-    border-radius: 8px;
-    background: color-mix(in srgb, var(--reader-accent, #8f82e6) 20%, transparent);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--reader-accent, #8f82e6) 22%, transparent);
-    transition: background 160ms ease, box-shadow 160ms ease;
+    border-radius: var(--component-reader-core-prose-tts-radius);
+    background: var(--component-reader-core-prose-tts-bg);
+    box-shadow: var(--component-reader-core-prose-tts-shadow);
+    transition: var(--component-reader-core-prose-tts-transition);
   }
 
   .center-overlay {

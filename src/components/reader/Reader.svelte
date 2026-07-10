@@ -1280,7 +1280,7 @@
         alt="Page {store.pageNumber}"
         class={imgCls}
         decoding="async"
-        style="opacity: {fadingOut ? 0 : 1}; transition: opacity 0.1s ease;"
+        style="opacity: {fadingOut ? 'var(--component-reader-core-fade-hidden-opacity)' : 'var(--component-reader-core-fade-visible-opacity)'}; transition: opacity var(--component-reader-core-fade-transition);"
       />
 
     {:else if style === "double" && pageReady}
@@ -1337,38 +1337,38 @@
 </ReaderHud>
 
 <style>
-  .error-stack { display: flex; flex-direction: column; align-items: center; gap: 12px; }
-  .reader-error-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  .error-stack { display: flex; flex-direction: column; align-items: center; gap: var(--component-reader-core-error-stack-gap); }
+  .reader-error-actions { display: flex; align-items: center; gap: var(--component-reader-core-error-actions-gap); flex-wrap: wrap; justify-content: center; }
   .reader-error-btn {
     display: inline-flex;
     align-items: center;
-    gap: 7px;
-    min-height: 34px;
-    padding: 0 13px;
-    border-radius: 10px;
-    border: 1px solid rgba(184, 167, 234, 0.16);
-    background: rgba(184, 167, 234, 0.1);
-    color: var(--accent-fg);
-    font-family: Manrope, Inter, "Segoe UI", sans-serif;
-    font-size: 10px;
-    font-weight: 850;
-    letter-spacing: 0.055em;
+    gap: var(--component-reader-core-action-gap);
+    min-height: var(--component-reader-core-action-min-height);
+    padding: var(--component-reader-core-action-padding);
+    border-radius: var(--component-reader-core-action-radius);
+    border: var(--component-reader-core-action-border);
+    background: var(--component-reader-core-action-bg);
+    color: var(--component-reader-core-action-fg);
+    font-family: var(--component-reader-core-action-font);
+    font-size: var(--component-reader-core-action-font-size);
+    font-weight: var(--component-reader-core-action-font-weight);
+    letter-spacing: var(--component-reader-core-action-letter-spacing);
     cursor: pointer;
-    transition: background var(--t-base), border-color var(--t-base), color var(--t-base), transform var(--t-base);
+    transition: var(--component-reader-core-action-transition);
   }
   .reader-error-btn:hover {
-    border-color: rgba(184, 167, 234, 0.24);
-    background: rgba(184, 167, 234, 0.14);
-    transform: translateY(-1px);
+    border-color: var(--component-reader-core-action-hover-border);
+    background: var(--component-reader-core-action-hover-bg);
+    transform: var(--component-reader-core-action-hover-transform);
   }
   .reader-error-btn.subtle {
-    border-color: rgba(202, 196, 208, 0.08);
-    background: rgba(255, 255, 255, 0.02);
-    color: var(--text-secondary);
+    border-color: var(--component-reader-core-action-subtle-border);
+    background: var(--component-reader-core-action-subtle-bg);
+    color: var(--component-reader-core-action-subtle-fg);
   }
   .reader-error-btn.subtle:hover {
-    border-color: rgba(184, 167, 234, 0.16);
-    color: var(--text-primary);
+    border-color: var(--component-reader-core-action-subtle-hover-border);
+    color: var(--component-reader-core-action-subtle-hover-fg);
   }
 
   .viewer { flex: 1; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; align-items: center; justify-content: center; -webkit-overflow-scrolling: touch; position: relative; }
@@ -1381,7 +1381,7 @@
   .fit-height   { max-height: calc(100vh - 80px); width: auto; max-width: var(--effective-width, 100%); height: auto; }
   .fit-screen   { max-width: var(--effective-width, 100%); max-height: calc(100vh - 80px); object-fit: contain; height: auto; }
   .fit-original { max-width: 100%; width: auto; height: auto; }
-  .strip-gap { margin-bottom: 8px; }
+  .strip-gap { margin-bottom: var(--component-reader-core-strip-gap); }
 
   .double-wrap { display: flex; align-items: flex-start; justify-content: center; max-width: calc(var(--effective-width, 100%) * 2); width: 100%; }
   .page-half { flex: 1; min-width: 0; object-fit: contain; }
@@ -1390,80 +1390,78 @@
 
   .center-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
 
-  .resume-banner { position: fixed; top: 68px; left: 50%; display: flex; align-items: center; gap: var(--sp-2); background: rgba(20, 19, 38, 0.94); border: 1px solid rgba(184, 167, 234, 0.16); border-radius: 14px; padding: 8px 12px; font-family: Manrope, Inter, "Segoe UI", sans-serif; font-size: 11px; font-weight: 760; color: var(--text-secondary); z-index: 20; box-shadow: 0 18px 48px rgba(0,0,0,0.46); backdrop-filter: blur(24px) saturate(160%); animation: bannerIn var(--t-slow) cubic-bezier(0.16,1,0.3,1) both; white-space: nowrap; cursor: pointer; }
-  .resume-banner.fading { animation: bannerOut 1s ease forwards; }
-  @keyframes bannerIn  { from { opacity: 0; transform: translateX(-50%) translateY(-6px) scale(0.97); } to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); } }
-  @keyframes bannerOut { from { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); } to { opacity: 0; transform: translateX(-50%) translateY(-4px) scale(0.97); } }
-  .resume-jump { font-family: Manrope, Inter, "Segoe UI", sans-serif; font-size: 10px; font-weight: 850; letter-spacing: 0.055em; color: var(--accent-fg); background: rgba(184, 167, 234, 0.1); border: 1px solid rgba(184, 167, 234, 0.16); border-radius: 10px; padding: 4px 9px; cursor: pointer; transition: background var(--t-fast), border-color var(--t-fast), transform var(--t-fast); }
-  .resume-jump:hover { background: rgba(184, 167, 234, 0.14); border-color: rgba(184, 167, 234, 0.24); transform: translateY(-1px); }
+  .resume-banner { position: fixed; top: var(--component-reader-core-resume-top); left: 50%; display: flex; align-items: center; gap: var(--sp-2); background: var(--component-reader-core-resume-bg); border: var(--component-reader-core-resume-border); border-radius: var(--component-reader-core-resume-radius); padding: var(--component-reader-core-resume-padding); font-family: var(--component-reader-core-action-font); font-size: var(--component-reader-core-resume-font-size); font-weight: var(--component-reader-core-resume-font-weight); color: var(--component-reader-core-resume-fg); z-index: var(--component-reader-core-resume-z-index); box-shadow: var(--component-reader-core-resume-shadow); backdrop-filter: var(--component-reader-core-resume-blur); animation: bannerIn var(--component-reader-core-resume-in-animation); white-space: nowrap; cursor: pointer; }
+  .resume-banner.fading { animation: bannerOut var(--component-reader-core-resume-out-animation); }
+  @keyframes bannerIn  { from { opacity: var(--component-reader-core-fade-hidden-opacity); transform: var(--component-reader-core-banner-in-from-transform); } to { opacity: var(--component-reader-core-fade-visible-opacity); transform: var(--component-reader-core-banner-in-to-transform); } }
+  @keyframes bannerOut { from { opacity: var(--component-reader-core-fade-visible-opacity); transform: var(--component-reader-core-banner-out-from-transform); } to { opacity: var(--component-reader-core-fade-hidden-opacity); transform: var(--component-reader-core-banner-out-to-transform); } }
+  .resume-jump { font-family: var(--component-reader-core-action-font); font-size: var(--component-reader-core-action-font-size); font-weight: var(--component-reader-core-action-font-weight); letter-spacing: var(--component-reader-core-action-letter-spacing); color: var(--component-reader-core-action-fg); background: var(--component-reader-core-action-bg); border: var(--component-reader-core-action-border); border-radius: var(--component-reader-core-action-radius); padding: var(--component-reader-core-resume-jump-padding); cursor: pointer; transition: var(--component-reader-core-resume-jump-transition); }
+  .resume-jump:hover { background: var(--component-reader-core-action-hover-bg); border-color: var(--component-reader-core-action-hover-border); transform: var(--component-reader-core-action-hover-transform); }
 
-  .dl-backdrop { position: fixed; inset: 0; z-index: calc(var(--z-reader) + 10); display: flex; align-items: flex-start; justify-content: flex-end; padding: 48px var(--sp-4) 0; }
+  .dl-backdrop { position: fixed; inset: 0; z-index: var(--component-reader-core-download-z-index); display: flex; align-items: flex-start; justify-content: flex-end; padding: var(--component-reader-core-download-backdrop-padding); }
   .dl-modal {
-    background: var(--reader-panel);
-    border: 1px solid var(--reader-line-strong);
-    border-radius: 16px;
-    padding: 12px;
-    min-width: 220px;
+    background: var(--component-reader-core-download-panel-bg);
+    border: var(--component-reader-core-download-panel-border);
+    border-radius: var(--component-reader-core-download-panel-radius);
+    padding: var(--component-reader-core-download-panel-padding);
+    min-width: var(--component-reader-core-download-panel-min-width);
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    box-shadow:
-      0 24px 72px rgba(0, 0, 0, 0.54),
-      inset 0 1px 0 rgba(255, 255, 255, 0.03);
-    backdrop-filter: blur(28px) saturate(165%);
+    gap: var(--component-reader-core-download-panel-gap);
+    box-shadow: var(--component-reader-core-download-panel-shadow);
+    backdrop-filter: var(--component-reader-core-download-panel-blur);
     animation: scaleIn var(--t-fast) both;
     transform-origin: top right;
   }
   .dl-title {
-    font-family: Manrope, Inter, "Segoe UI", sans-serif;
-    font-size: 9px;
-    font-weight: 850;
-    color: var(--reader-muted);
-    letter-spacing: 0.18em;
+    font-family: var(--component-reader-core-action-font);
+    font-size: var(--component-reader-core-download-title-font-size);
+    font-weight: var(--component-reader-core-action-font-weight);
+    color: var(--component-reader-core-download-title-fg);
+    letter-spacing: var(--component-reader-core-download-title-letter-spacing);
     text-transform: uppercase;
-    padding: 2px 4px 6px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-    margin-bottom: 4px;
+    padding: var(--component-reader-core-download-title-padding);
+    border-bottom: var(--component-reader-core-download-title-border);
+    margin-bottom: var(--component-reader-core-download-title-margin-bottom);
   }
   .dl-option {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 2px;
+    gap: var(--component-reader-core-download-option-gap);
     width: 100%;
-    padding: 6px 10px;
-    border-radius: 8px;
-    font-family: Manrope, Inter, "Segoe UI", sans-serif;
-    font-size: 10px;
-    font-weight: 750;
-    color: var(--reader-text);
-    background: rgba(0, 0, 0, 0.2);
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    padding: var(--component-reader-core-download-option-padding);
+    border-radius: var(--component-reader-core-download-option-radius);
+    font-family: var(--component-reader-core-action-font);
+    font-size: var(--component-reader-core-action-font-size);
+    font-weight: var(--component-reader-core-download-option-font-weight);
+    color: var(--component-reader-core-download-option-fg);
+    background: var(--component-reader-core-download-option-bg);
+    border: var(--component-reader-core-download-option-border);
     cursor: pointer;
     text-align: left;
-    transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast), transform var(--t-fast);
+    transition: var(--component-reader-core-download-option-transition);
   }
   .dl-option:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.06);
-    border-color: rgba(255, 255, 255, 0.22);
-    color: var(--reader-text);
-    transform: translateY(-1px);
+    background: var(--component-reader-core-download-option-hover-bg);
+    border-color: var(--component-reader-core-download-option-hover-border);
+    color: var(--component-reader-core-download-option-fg);
+    transform: var(--component-reader-core-action-hover-transform);
   }
   .dl-option:disabled {
-    opacity: 0.3;
-    background: rgba(0, 0, 0, 0.1);
-    border-color: rgba(255, 255, 255, 0.04);
+    opacity: var(--component-reader-core-download-option-disabled-opacity);
+    background: var(--component-reader-core-download-option-disabled-bg);
+    border-color: var(--component-reader-core-download-option-disabled-border);
     cursor: default;
   }
-  .dl-sub { font-size: 8px; color: var(--reader-faint); letter-spacing: 0.04em; }
-  .dl-row { display: flex; align-items: stretch; gap: 6px; width: 100%; }
+  .dl-sub { font-size: var(--component-reader-core-download-sub-font-size); color: var(--component-reader-core-download-sub-fg); letter-spacing: var(--component-reader-core-download-sub-letter-spacing); }
+  .dl-row { display: flex; align-items: stretch; gap: var(--component-reader-core-download-row-gap); width: 100%; }
   .dl-row .dl-option { flex: 1; min-width: 0; }
   .dl-stepper {
     display: flex;
     align-items: center;
-    background: rgba(0, 0, 0, 0.2);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 8px;
+    background: var(--component-reader-core-download-stepper-bg);
+    border: var(--component-reader-core-download-stepper-border);
+    border-radius: var(--component-reader-core-download-stepper-radius);
     overflow: hidden;
     flex-shrink: 0;
   }
@@ -1471,11 +1469,11 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 22px;
+    width: var(--component-reader-core-download-step-size);
     height: 100%;
-    min-height: 28px;
-    font-size: 12px;
-    color: var(--reader-muted);
+    min-height: var(--component-reader-core-download-step-min-height);
+    font-size: var(--component-reader-core-download-step-font-size);
+    color: var(--component-reader-core-download-step-fg);
     background: transparent;
     border: none;
     cursor: pointer;
@@ -1483,27 +1481,27 @@
     transition: color var(--t-fast), background var(--t-fast);
   }
   .dl-step-btn:hover:not(:disabled) {
-    color: var(--reader-text);
-    background: rgba(255, 255, 255, 0.06);
+    color: var(--component-reader-core-download-option-fg);
+    background: var(--component-reader-core-download-option-hover-bg);
   }
-  .dl-step-btn:disabled { opacity: 0.25; cursor: default; }
+  .dl-step-btn:disabled { opacity: var(--component-reader-core-download-step-disabled-opacity); cursor: default; }
   .dl-step-val {
-    font-family: Manrope, Inter, "Segoe UI", sans-serif;
-    font-size: 9px;
-    font-weight: 850;
-    color: var(--reader-text);
-    min-width: 22px;
+    font-family: var(--component-reader-core-action-font);
+    font-size: var(--component-reader-core-download-title-font-size);
+    font-weight: var(--component-reader-core-action-font-weight);
+    color: var(--component-reader-core-download-option-fg);
+    min-width: var(--component-reader-core-download-step-size);
     text-align: center;
-    letter-spacing: 0.055em;
-    border-inline: 1px solid rgba(255, 255, 255, 0.12);
+    letter-spacing: var(--component-reader-core-action-letter-spacing);
+    border-inline: var(--component-reader-core-download-step-val-border);
     height: 100%;
     display: flex;
     align-items: center;
     justify-content: center;
   }
 
-  @keyframes scaleIn { from { opacity: 0; transform: scale(0.97) } to { opacity: 1; transform: scale(1) } }
-  @keyframes readerToolsIn { from { opacity: 0; transform: translateY(-6px) scale(0.98) } to { opacity: 1; transform: translateY(0) scale(1) } }
+  @keyframes scaleIn { from { opacity: var(--component-reader-core-fade-hidden-opacity); transform: var(--component-reader-core-scale-in-from-transform) } to { opacity: var(--component-reader-core-fade-visible-opacity); transform: var(--component-reader-core-scale-in-to-transform) } }
+  @keyframes readerToolsIn { from { opacity: var(--component-reader-core-fade-hidden-opacity); transform: var(--component-reader-core-tools-in-from-transform) } to { opacity: var(--component-reader-core-fade-visible-opacity); transform: var(--component-reader-core-tools-in-to-transform) } }
 
   @media (max-width: 900px) {
     .reader-tools-panel {

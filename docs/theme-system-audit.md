@@ -1685,3 +1685,79 @@ Categorias cobertas:
 - A UI ativa de repositorios de novels em `SourcesView.svelte` ja foi tratada no Marco 7 dentro do escopo de Sources, mas ainda compartilha dominio funcional com este painel Legacy.
 - A reducao futura da camada `--n-*` segue pendente e deve ocorrer somente apos Reader core.
 - Ha alteracoes antigas e nao relacionadas no working tree em Discord/Rich Presence, Tauri/Cargo, mensagens i18n, Reader core, Settings, paginas de migracao e outras features. Nao misturar essas alteracoes com o Marco 18.
+
+## Marco 19 - Reader Core
+
+### Escopo executado
+- Migrada exclusivamente a camada visual restante de `src/components/reader/Reader.svelte`, `src/components/reader/BookReader.svelte` e `src/components/reader/NovelReader.svelte`.
+- Nao foram alterados fluxo de leitura, progresso, paginacao, fullscreen, atalhos, TTS, cache/offline, GraphQL, stores, sincronizacao, renderizacao EPUB/PDF/manga ou comportamento do HUD.
+- `ReaderHud.svelte` e `TtsControls.svelte` foram inspecionados no preflight por serem dependencias visuais do Reader, mas nao foram alterados neste marco.
+- Nao foram removidos tokens Legacy nem a camada `--n-*`.
+
+### Preflight e separacao de mudancas antigas
+- `Reader.svelte`, `BookReader.svelte` e `NovelReader.svelte` ja estavam modificados no working tree antes do Marco 19 por mudancas antigas de Discord/Rich Presence, TTS presence e resolucao de capas. Essas alteracoes foram preservadas e nao fazem parte da migracao de tema.
+- A implementacao do Marco 19 se limitou a estilos e valores visuais locais, mais o inline style de opacidade visual dos step values e da transicao de fade do manga reader.
+- A migracao nao exigiu alteracao de logica de leitura, entao nao houve necessidade de dividir o marco em sub-marcos.
+
+### Tokens utilizados/criados
+Classificacao: todos os tokens novos do Marco 19 estao Ativos por consumo direto nos tres componentes ativos do Reader Core.
+
+Contagem validada automaticamente:
+- `--component-reader-core-*`: 115 definidos em `tokens.css`, 115 definidos em `nocturne-theme.css`, 115 consumidos, 0 sem consumo, 0 consumidos sem definicao, 0 ausentes no Nocturne.
+
+Categorias cobertas:
+- manga reader: botoes de erro/retry, banner de retomada, download modal, stepper local, z-index, blur, shadow, motion, fade e gap de long strip;
+- book reader: viewport prose, EPUB host, PDF canvas/page, reflow text, placeholders, full-width panel, overlay de erro, radius e shadows;
+- novel reader: viewport prose, corpo de leitura, full-width panel e destaque TTS ativo.
+
+### Cores e efeitos diretos removidos
+- `Reader.svelte`: migrados `rgba(...)`, radius, shadows, blur, z-index, opacities, transforms e transicoes locais para `--component-reader-core-*`.
+- `BookReader.svelte`: migrados backgrounds/gradientes do viewport, surfaces do EPUB/PDF, border/radius/shadow, overlay de erro e placeholder color para tokens.
+- `NovelReader.svelte`: migrados backgrounds/gradientes do viewport, surface do reader body, border/radius/shadow e destaque TTS para tokens.
+
+### Excecoes mantidas
+- Paletas de leitura prose (`light`, `sepia`, `oled`, `dark`, `slate`, `forest`, `nord`, `warm`, `nocturne`) continuam com hex diretos em `BookReader.svelte` e `NovelReader.svelte`. Elas sao dados funcionais configuraveis pelo usuario/conteudo do leitor, nao cores do tema do app.
+- Swatches inline `style="background:#..."` continuam representando essas mesmas paletas funcionais; remove-los para tokens de tema confundiria tema do app com tema de pagina lida.
+- O link color `#c9b5ff` injetado no EPUB permanece como excecao funcional dentro do CSS aplicado ao documento EPUB/iframe, onde os CSS variables do shell do app nao sao garantidos.
+- `style={\`--prose-page-bg:${prosePalette.bg};\`}` permanece para transmitir a cor selecionada pelo usuario para a superficie de leitura.
+- Regras estruturais de layout, dimensoes de pagina/canvas e media queries permanecem como geometria local, nao identidade visual por tema.
+
+### Screenshots reais
+- Validacao concluida no app desktop real em Nocturne, com WebView2/CDP estavel em `127.0.0.1:9223` e a pagina principal `Aethon [MAIN :4567]` expondo `window.__aethonAudit`.
+- `docs/screenshots/marco19-reader-core/after-manga-reader.png`: Reader de manga no estado real de erro `HTTP 404`, com surface de erro, acoes e HUD.
+- `docs/screenshots/marco19-reader-core/after-manga-reader-rendered-mangadex.png`: Reader de manga com paginas reais renderizadas a partir de uma obra MangaDex; 28 imagens detectadas e 12 carregadas no viewport/lazy load no momento da captura, sem erro.
+- `docs/screenshots/marco19-reader-core/after-manga-download-modal.png`: modal local de download, settings popover e HUD sobre o mesmo estado real.
+- `docs/screenshots/marco19-reader-core/after-book-reader.png`: BookReader EPUB com conteudo real e HUD recolhido.
+- `docs/screenshots/marco19-reader-core/after-book-reader-hud-focus.png`: BookReader EPUB com HUD e popover de configuracoes visiveis.
+- `docs/screenshots/marco19-reader-core/after-book-reader-pdf-reflow.png`: BookReader PDF real no modo reflow, com paleta Nocturne, texto extraido e HUD visivel.
+- `docs/screenshots/marco19-reader-core/after-book-reader-pdf-canvas.png`: o mesmo PDF real no modo canvas, com pagina rasterizada e settings popover; a preferencia reflow original foi restaurada depois da captura.
+- `docs/screenshots/marco19-reader-core/after-novel-reader.png`: NovelReader aberto por navegacao real a partir de NovelDetail, com conteudo persistido e HUD visivel.
+- Nao foram criados mockups, fixtures artificiais ou dados persistidos para forcar estados. Nao existe baseline before do Reader Core preservado antes da migracao; a comparacao foi feita contra a geometria, hierarquia e comportamento esperados do app e contra o HUD ja validado no Marco 5.
+- Nao foi observada regressao aparente de layout, superficies, borders, radius, shadows, tipografia, contraste ou hierarquia visual nas superficies reproduzidas.
+
+### Limitacoes de estado
+- O primeiro capitulo selecionado pelo helper retornou `HTTP 404` tanto no carregamento normal quanto em `Try web view`; uma segunda passagem confirmou que essa indisponibilidade era especifica da obra/fonte, nao do Reader Core.
+- Matriz real adicional: MangaDex (`Doumo, Suki na hito ni Horegusuri wo Iraisareta Majo desu`) renderizou 28 paginas sem erro; Comick (`Aru Hi, Totsuzen Gal no Iinazuke ga Dekita`) informou que a fonte nao fornece mais as paginas; Manganato (`God At Random`) informou `Cloudflare bypass currently disabled`; Comix (`Shihai Shoujo Kubaru-chan`) retornou `HTTP 404`.
+- O BookReader PDF foi validado com `Toaru Majutsu no Index - Old Testament Completo.` nos dois modos: reflow com texto real e uma ilustracao canvas `1116 x 1600`, e canvas nativo `1232 x 1741`; ambos sem estado de erro.
+- NovelReader nao possui helper direto `openFirstNovelReader`; ele foi aberto naturalmente pelo helper `openFirstNovel` seguido do botao unico `CONTINUE CH.1` em NovelDetail.
+- Hover/active foi validado nos controles do HUD e no settings popover. O primeiro `Tab` do BookReader transferiu foco para o iframe EPUB, comportamento esperado do documento embarcado; os estilos de foco do HUD permanecem cobertos pelo Marco 5.
+
+### Validacao
+- A validacao por computed style encontrou 6 aliases Nocturne inicialmente vazios no modal de download (`panel-bg`, `panel-border`, `title-fg`, `option-fg`, `sub-fg`, `step-fg`). As referencias Legacy inexistentes `--reader-*` foram substituidas pelos equivalentes ativos `--component-reader-*`, sem mudanca intencional de valor visual.
+- A validacao do PDF encontrou outra falha de resolucao: tokens dependentes de `--prose-text`, `--prose-bg` e `--prose-page-bg` eram computados no `:root` antes de essas variaveis funcionais existirem no viewer. No reflow Nocturne, isso fixava o texto no fallback escuro `#19151d` sobre fundo escuro.
+- Os sete tokens dependentes da paleta foram movidos para o contexto global `:where(.book-viewer, .novel-viewer)` e para seu override Nocturne. Depois da correcao, o PDF computou foreground `#ffffff`, panel `#131316` e o gradient baseado em `--prose-page-bg: #131316`, preservando a paleta funcional escolhida pelo usuario.
+- Pos-correcao no app real: 115 `--component-reader-core-*` encontrados no computed style e 0 valores vazios.
+- O modal corrigido computou `rgba(26, 26, 30, 0.97)`, border `rgba(255, 255, 255, 0.2)`, radius `16px`, shadow Nocturne e `blur(28px) saturate(1.65)`.
+- `ReaderCoreThemeTokens.test.ts` passou a validar tambem que todos os aliases usados pelos tokens Reader Core do Nocturne apontam para custom properties definidas e que os sete tokens dependentes da paleta sao definidos no contexto dos viewers.
+- `npm exec vitest run -- --project shell-jsdom src/components/reader/ReaderCoreThemeTokens.test.ts src/components/reader/ReaderHud.test.ts src/components/reader/TtsControls.test.ts`: passou apos a correcao, 3 arquivos e 16 testes.
+- `pnpm build`: passou, mantendo apenas o aviso conhecido de chunks maiores que 500 kB.
+- `git diff --check`: passou; apenas avisos de LF/CRLF em arquivos ja modificados no working tree.
+- `ReaderCoreThemeTokens.test.ts` valida contrato 115/115, paridade `tokens.css`/Nocturne, aliases resolviveis, ausencia de valores visuais diretos nos blocos `<style>` e excecoes funcionais de paleta prose.
+
+### Riscos antes do proximo marco
+- A renderizacao real do manga reader foi confirmada com MangaDex; falhas observadas nas demais obras foram respostas especificas das fontes (`Cloudflare bypass currently disabled`, paginas nao fornecidas e `404`).
+- As mudancas antigas de Discord/Rich Presence/Tauri/i18n/Settings/migracoes continuam presentes fora do escopo e exigem staging seletivo se este marco for commitado.
+- A reducao futura da camada `--n-*` continua pendente e deve ocorrer somente apos a validacao visual do Reader Core.
+
+### Veredito
+- Marco 19 aprovado para fechamento sem ressalva visual de Reader Core: manga reader, BookReader EPUB/PDF (reflow e canvas), NovelReader e estados reais de erro foram validados.

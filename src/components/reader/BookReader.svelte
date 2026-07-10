@@ -1662,7 +1662,7 @@
               <dd style="display: flex; align-items: center; gap: 8px;">
                 <div class="popover-stepper">
                   <button class="popover-step-btn" onclick={() => updateContentWidth(-40)} disabled={store.settings.proseReaderFullWidth}>-</button>
-                  <span class="popover-step-val" style={store.settings.proseReaderFullWidth ? "opacity: 0.5;" : ""}>
+                  <span class="popover-step-val" style={store.settings.proseReaderFullWidth ? "opacity: var(--component-reader-core-disabled-step-opacity);" : ""}>
                     {store.settings.proseReaderFullWidth ? $_("ui_full") : `${proseContentWidth}px`}
                   </span>
                   <button class="popover-step-btn" onclick={() => updateContentWidth(40)} disabled={store.settings.proseReaderFullWidth}>+</button>
@@ -1821,7 +1821,7 @@
           <dd style="display: flex; align-items: center; gap: 8px;">
             <div class="popover-stepper">
               <button class="popover-step-btn" onclick={() => updateContentWidth(-40)} disabled={store.settings.proseReaderFullWidth}>−</button>
-              <span class="popover-step-val" style={store.settings.proseReaderFullWidth ? "opacity: 0.5;" : ""}>
+              <span class="popover-step-val" style={store.settings.proseReaderFullWidth ? "opacity: var(--component-reader-core-disabled-step-opacity);" : ""}>
                 {store.settings.proseReaderFullWidth ? $_("ui_full") : `${proseContentWidth}px`}
               </span>
               <button class="popover-step-btn" onclick={() => updateContentWidth(40)} disabled={store.settings.proseReaderFullWidth}>+</button>
@@ -1994,7 +1994,7 @@
             <dd style="display: flex; align-items: center; gap: 8px;">
               <div class="popover-stepper">
                 <button class="popover-step-btn" onclick={() => updateContentWidth(-40)} disabled={store.settings.proseReaderFullWidth}>-</button>
-                <span class="popover-step-val" style={store.settings.proseReaderFullWidth ? "opacity: 0.5;" : ""}>
+                <span class="popover-step-val" style={store.settings.proseReaderFullWidth ? "opacity: var(--component-reader-core-disabled-step-opacity);" : ""}>
                   {store.settings.proseReaderFullWidth ? $_("ui_full") : `${proseContentWidth}px`}
                 </span>
                 <button class="popover-step-btn" onclick={() => updateContentWidth(40)} disabled={store.settings.proseReaderFullWidth}>+</button>
@@ -2124,10 +2124,8 @@
     align-items: stretch;
     justify-content: center;
     position: relative;
-    background:
-      radial-gradient(circle at 45% 18%, rgba(255, 255, 255, 0.015), transparent 30%),
-      linear-gradient(180deg, var(--prose-page-bg, var(--bg-void)), #050505 62%, var(--prose-page-bg, var(--bg-void)));
-    color: var(--text-muted);
+    background: var(--component-reader-core-prose-viewer-bg);
+    color: var(--component-reader-core-book-viewer-fg);
   }
 
   .book-viewer.pdf {
@@ -2139,13 +2137,11 @@
     width: min(var(--prose-content-width, 920px), 100%);
     height: 100%;
     margin: var(--sp-3) 0;
-    border: 1px solid color-mix(in srgb, var(--border-base) 68%, transparent);
-    border-radius: 14px;
-    background:
-      radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.1), transparent 34%),
-      var(--prose-bg, #f5f1ea);
-    color: var(--prose-text, #19151d);
-    box-shadow: 0 44px 110px rgba(0, 0, 0, 0.5);
+    border: var(--component-reader-core-prose-panel-border);
+    border-radius: var(--component-reader-core-prose-panel-radius);
+    background: var(--component-reader-core-epub-bg);
+    color: var(--component-reader-core-epub-fg);
+    box-shadow: var(--component-reader-core-prose-panel-shadow);
     overflow: hidden;
   }
 
@@ -2157,11 +2153,9 @@
 
   .pdf-stage canvas {
     display: block;
-    background: #f2eee6;
-    border-radius: 10px;
-    box-shadow:
-      0 44px 110px rgba(0, 0, 0, 0.58),
-      0 0 0 1px rgba(255, 255, 255, 0.08);
+    background: var(--component-reader-core-pdf-page-bg);
+    border-radius: var(--component-reader-core-pdf-page-radius);
+    box-shadow: var(--component-reader-core-pdf-page-shadow);
   }
 
   .book-viewer.pdf-dark .pdf-stage canvas,
@@ -2181,7 +2175,7 @@
   .error-stack {
     flex-direction: column;
     gap: var(--sp-3);
-    background: rgba(0, 0, 0, 0.72);
+    background: var(--component-reader-core-error-overlay-bg);
   }
 
   /* Full Width Reading Panel */
@@ -2191,8 +2185,8 @@
     height: 100%;
     margin: 0;
     border: none;
-    border-radius: 0;
-    box-shadow: none;
+    border-radius: var(--component-reader-core-prose-panel-full-radius);
+    box-shadow: var(--component-reader-core-prose-panel-full-shadow);
   }
 
   .book-viewer.full-width-panel .pdf-scroll-stage,
@@ -2207,7 +2201,7 @@
     width: min(var(--prose-content-width, 760px), calc(100% - 32px));
     margin: 0 auto;
     padding: clamp(24px, 5vw, 64px) 0;
-    color: var(--prose-text, #19151d);
+    color: var(--component-reader-core-pdf-reflow-fg);
     font-family: var(--prose-font-family, Georgia, serif);
   }
 
@@ -2223,7 +2217,7 @@
   .pdf-reflow-page :is(h1, h2, h3) {
     max-width: 100%;
     margin: 1.7em 0 0.75em;
-    color: var(--prose-text, #19151d);
+    color: var(--component-reader-core-pdf-reflow-fg);
     font-family: var(--prose-font-family, Georgia, serif);
     font-weight: 700;
     line-height: 1.2;
@@ -2242,7 +2236,7 @@
 
   .pdf-reflow-page p {
     margin: 0 0 var(--prose-paragraph-spacing, 1.1em);
-    color: var(--prose-text, #19151d);
+    color: var(--component-reader-core-pdf-reflow-fg);
     font-family: var(--prose-font-family, Georgia, serif);
     font-size: var(--prose-font-size, 18px);
     line-height: var(--prose-line-height, 1.75);
@@ -2267,7 +2261,7 @@
     max-height: calc(86vh * var(--pdf-reflow-image-scale, 1));
     object-fit: contain;
     background: transparent;
-    border-radius: 6px;
+    border-radius: var(--component-reader-core-pdf-figure-radius);
   }
 
   .pdf-reflow-placeholder,
@@ -2276,7 +2270,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: color-mix(in srgb, var(--prose-text, #19151d) 44%, transparent);
+    color: var(--component-reader-core-pdf-placeholder-fg);
   }
 
   /* PDF Scrolled Continuous Reading Mode */
@@ -2301,10 +2295,8 @@
 
   :global(.pdf-page-wrapper canvas) {
     display: block;
-    background: #f2eee6;
-    border-radius: 10px;
-    box-shadow:
-      0 12px 32px rgba(0, 0, 0, 0.4),
-      0 0 0 1px rgba(255, 255, 255, 0.08);
+    background: var(--component-reader-core-pdf-page-bg);
+    border-radius: var(--component-reader-core-pdf-page-radius);
+    box-shadow: var(--component-reader-core-pdf-page-compact-shadow);
   }
 </style>

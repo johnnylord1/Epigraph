@@ -1887,6 +1887,121 @@
   --component-reader-blur: blur(20px) saturate(140%);
   --component-reader-popover-blur: blur(20px) saturate(120%);
   --component-reader-focus-ring: 0 0 0 2px rgba(184, 167, 234, 0.55);
+  /* Marco 19 - Reader core */
+  --component-reader-core-error-stack-gap: 12px;
+  --component-reader-core-error-actions-gap: 8px;
+  --component-reader-core-action-gap: 7px;
+  --component-reader-core-action-min-height: 34px;
+  --component-reader-core-action-padding: 0 13px;
+  --component-reader-core-action-radius: 10px;
+  --component-reader-core-action-border: 1px solid rgba(184, 167, 234, 0.16);
+  --component-reader-core-action-bg: rgba(184, 167, 234, 0.1);
+  --component-reader-core-action-fg: var(--accent-fg);
+  --component-reader-core-action-font: Manrope, Inter, "Segoe UI", sans-serif;
+  --component-reader-core-action-font-size: 10px;
+  --component-reader-core-action-font-weight: 850;
+  --component-reader-core-action-letter-spacing: 0.055em;
+  --component-reader-core-action-transition: background var(--t-base), border-color var(--t-base), color var(--t-base), transform var(--t-base);
+  --component-reader-core-action-hover-border: rgba(184, 167, 234, 0.24);
+  --component-reader-core-action-hover-bg: rgba(184, 167, 234, 0.14);
+  --component-reader-core-action-hover-transform: translateY(-1px);
+  --component-reader-core-action-subtle-border: rgba(202, 196, 208, 0.08);
+  --component-reader-core-action-subtle-bg: rgba(255, 255, 255, 0.02);
+  --component-reader-core-action-subtle-fg: var(--text-secondary);
+  --component-reader-core-action-subtle-hover-border: rgba(184, 167, 234, 0.16);
+  --component-reader-core-action-subtle-hover-fg: var(--text-primary);
+  --component-reader-core-strip-gap: 8px;
+  --component-reader-core-fade-hidden-opacity: 0;
+  --component-reader-core-fade-visible-opacity: 1;
+  --component-reader-core-fade-transition: 0.1s ease;
+  --component-reader-core-disabled-step-opacity: 0.5;
+  --component-reader-core-book-viewer-fg: var(--text-muted);
+  --component-reader-core-prose-panel-border: 1px solid color-mix(in srgb, var(--border-base) 68%, transparent);
+  --component-reader-core-prose-panel-radius: 14px;
+  --component-reader-core-prose-panel-shadow: 0 44px 110px rgba(0, 0, 0, 0.5);
+  --component-reader-core-prose-panel-full-radius: 0;
+  --component-reader-core-prose-panel-full-shadow: none;
+  --component-reader-core-prose-tts-radius: 8px;
+  --component-reader-core-prose-tts-bg: color-mix(in srgb, var(--reader-accent, #8f82e6) 20%, transparent);
+  --component-reader-core-prose-tts-shadow: 0 0 0 3px color-mix(in srgb, var(--reader-accent, #8f82e6) 22%, transparent);
+  --component-reader-core-prose-tts-transition: background 160ms ease, box-shadow 160ms ease;
+  --component-reader-core-pdf-page-bg: #f2eee6;
+  --component-reader-core-pdf-page-radius: 10px;
+  --component-reader-core-pdf-page-shadow:
+    0 44px 110px rgba(0, 0, 0, 0.58),
+    0 0 0 1px rgba(255, 255, 255, 0.08);
+  --component-reader-core-pdf-page-compact-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.4),
+    0 0 0 1px rgba(255, 255, 255, 0.08);
+  --component-reader-core-error-overlay-bg: rgba(0, 0, 0, 0.72);
+  --component-reader-core-pdf-figure-radius: 6px;
+  --component-reader-core-resume-top: 68px;
+  --component-reader-core-resume-bg: rgba(20, 19, 38, 0.94);
+  --component-reader-core-resume-border: 1px solid rgba(184, 167, 234, 0.16);
+  --component-reader-core-resume-radius: 14px;
+  --component-reader-core-resume-padding: 8px 12px;
+  --component-reader-core-resume-font-size: 11px;
+  --component-reader-core-resume-font-weight: 760;
+  --component-reader-core-resume-fg: var(--text-secondary);
+  --component-reader-core-resume-z-index: 20;
+  --component-reader-core-resume-shadow: 0 18px 48px rgba(0, 0, 0, 0.46);
+  --component-reader-core-resume-blur: blur(24px) saturate(160%);
+  --component-reader-core-resume-in-animation: var(--t-slow) cubic-bezier(0.16, 1, 0.3, 1) both;
+  --component-reader-core-resume-out-animation: 1s ease forwards;
+  --component-reader-core-resume-jump-padding: 4px 9px;
+  --component-reader-core-resume-jump-transition: background var(--t-fast), border-color var(--t-fast), transform var(--t-fast);
+  --component-reader-core-banner-in-from-transform: translateX(-50%) translateY(-6px) scale(0.97);
+  --component-reader-core-banner-in-to-transform: translateX(-50%) translateY(0) scale(1);
+  --component-reader-core-banner-out-from-transform: translateX(-50%) translateY(0) scale(1);
+  --component-reader-core-banner-out-to-transform: translateX(-50%) translateY(-4px) scale(0.97);
+  --component-reader-core-download-z-index: calc(var(--z-reader) + 10);
+  --component-reader-core-download-backdrop-padding: 48px var(--sp-4) 0;
+  --component-reader-core-download-panel-bg: var(--component-reader-panel-bg);
+  --component-reader-core-download-panel-border: 1px solid var(--component-reader-border-active);
+  --component-reader-core-download-panel-radius: 16px;
+  --component-reader-core-download-panel-padding: 12px;
+  --component-reader-core-download-panel-min-width: 220px;
+  --component-reader-core-download-panel-gap: 6px;
+  --component-reader-core-download-panel-shadow:
+    0 24px 72px rgba(0, 0, 0, 0.54),
+    inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  --component-reader-core-download-panel-blur: blur(28px) saturate(165%);
+  --component-reader-core-download-title-font-size: 9px;
+  --component-reader-core-download-title-fg: var(--component-reader-muted-fg);
+  --component-reader-core-download-title-letter-spacing: 0.18em;
+  --component-reader-core-download-title-padding: 2px 4px 6px;
+  --component-reader-core-download-title-border: 1px solid rgba(255, 255, 255, 0.06);
+  --component-reader-core-download-title-margin-bottom: 4px;
+  --component-reader-core-download-option-gap: 2px;
+  --component-reader-core-download-option-padding: 6px 10px;
+  --component-reader-core-download-option-radius: 8px;
+  --component-reader-core-download-option-font-weight: 750;
+  --component-reader-core-download-option-fg: var(--component-reader-fg);
+  --component-reader-core-download-option-bg: rgba(0, 0, 0, 0.2);
+  --component-reader-core-download-option-border: 1px solid rgba(255, 255, 255, 0.12);
+  --component-reader-core-download-option-transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast), transform var(--t-fast);
+  --component-reader-core-download-option-hover-bg: rgba(255, 255, 255, 0.06);
+  --component-reader-core-download-option-hover-border: rgba(255, 255, 255, 0.22);
+  --component-reader-core-download-option-disabled-opacity: 0.3;
+  --component-reader-core-download-option-disabled-bg: rgba(0, 0, 0, 0.1);
+  --component-reader-core-download-option-disabled-border: rgba(255, 255, 255, 0.04);
+  --component-reader-core-download-sub-font-size: 8px;
+  --component-reader-core-download-sub-fg: var(--component-reader-faint-fg);
+  --component-reader-core-download-sub-letter-spacing: 0.04em;
+  --component-reader-core-download-row-gap: 6px;
+  --component-reader-core-download-stepper-bg: rgba(0, 0, 0, 0.2);
+  --component-reader-core-download-stepper-border: 1px solid rgba(255, 255, 255, 0.12);
+  --component-reader-core-download-stepper-radius: 8px;
+  --component-reader-core-download-step-size: 22px;
+  --component-reader-core-download-step-min-height: 28px;
+  --component-reader-core-download-step-font-size: 12px;
+  --component-reader-core-download-step-fg: var(--component-reader-muted-fg);
+  --component-reader-core-download-step-disabled-opacity: 0.25;
+  --component-reader-core-download-step-val-border: 1px solid rgba(255, 255, 255, 0.12);
+  --component-reader-core-scale-in-from-transform: scale(0.97);
+  --component-reader-core-scale-in-to-transform: scale(1);
+  --component-reader-core-tools-in-from-transform: translateY(-6px) scale(0.98);
+  --component-reader-core-tools-in-to-transform: translateY(0) scale(1);
 
   --hud-control-height:        28px;
   --hud-icon-button-size:      28px;
@@ -1903,6 +2018,20 @@
   --hud-selection-bg:          #211b3b;
   --hud-selection-border:      #4c4078;
   --hud-progress-height:       2px;
+}
+
+[data-theme="nocturne"] :where(.book-viewer, .novel-viewer) {
+  --component-reader-core-prose-viewer-bg:
+    radial-gradient(circle at 45% 18%, rgba(255, 255, 255, 0.015), transparent 30%),
+    linear-gradient(180deg, var(--prose-page-bg, var(--bg-void)), #050505 62%, var(--prose-page-bg, var(--bg-void)));
+  --component-reader-core-prose-viewer-fg: var(--prose-text, var(--text-primary));
+  --component-reader-core-prose-panel-bg: var(--prose-bg, color-mix(in srgb, var(--bg-base) 88%, #d7d0c2 12%));
+  --component-reader-core-epub-bg:
+    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.1), transparent 34%),
+    var(--prose-bg, #f5f1ea);
+  --component-reader-core-epub-fg: var(--prose-text, #19151d);
+  --component-reader-core-pdf-reflow-fg: var(--prose-text, #19151d);
+  --component-reader-core-pdf-placeholder-fg: color-mix(in srgb, var(--prose-text, #19151d) 44%, transparent);
 }
 
 :root {

@@ -2109,6 +2109,119 @@
   --component-reader-checkpoint-height: 12px;
   --component-reader-transition-fast: var(--duration-normal) var(--easing-standard);
   --component-reader-transition-popover: 180ms var(--easing-emphasized);
+  /* Marco 19 - Reader core */
+  --component-reader-core-error-stack-gap: var(--space-md);
+  --component-reader-core-error-actions-gap: var(--space-sm);
+  --component-reader-core-action-gap: 7px;
+  --component-reader-core-action-min-height: 34px;
+  --component-reader-core-action-padding: 0 13px;
+  --component-reader-core-action-radius: var(--radius-md);
+  --component-reader-core-action-border: 1px solid color-mix(in srgb, var(--color-accent) 22%, transparent);
+  --component-reader-core-action-bg: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  --component-reader-core-action-fg: var(--color-accent);
+  --component-reader-core-action-font: var(--font-sans);
+  --component-reader-core-action-font-size: 10px;
+  --component-reader-core-action-font-weight: var(--font-weight-black);
+  --component-reader-core-action-letter-spacing: 0.055em;
+  --component-reader-core-action-transition: background var(--t-base), border-color var(--t-base), color var(--t-base), transform var(--t-base);
+  --component-reader-core-action-hover-border: color-mix(in srgb, var(--color-accent) 30%, transparent);
+  --component-reader-core-action-hover-bg: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  --component-reader-core-action-hover-transform: translateY(-1px);
+  --component-reader-core-action-subtle-border: color-mix(in srgb, var(--text-secondary) 10%, transparent);
+  --component-reader-core-action-subtle-bg: color-mix(in srgb, var(--text-primary) 3%, transparent);
+  --component-reader-core-action-subtle-fg: var(--text-secondary);
+  --component-reader-core-action-subtle-hover-border: color-mix(in srgb, var(--color-accent) 22%, transparent);
+  --component-reader-core-action-subtle-hover-fg: var(--text-primary);
+  --component-reader-core-strip-gap: var(--space-sm);
+  --component-reader-core-fade-hidden-opacity: 0;
+  --component-reader-core-fade-visible-opacity: 1;
+  --component-reader-core-fade-transition: 100ms var(--easing-standard);
+  --component-reader-core-disabled-step-opacity: 0.5;
+  --component-reader-core-book-viewer-fg: var(--text-secondary);
+  --component-reader-core-prose-panel-border: 1px solid color-mix(in srgb, var(--color-border) 68%, transparent);
+  --component-reader-core-prose-panel-radius: 14px;
+  --component-reader-core-prose-panel-shadow: 0 44px 110px color-mix(in srgb, var(--color-background-void) 58%, transparent);
+  --component-reader-core-prose-panel-full-radius: 0;
+  --component-reader-core-prose-panel-full-shadow: none;
+  --component-reader-core-prose-tts-radius: var(--radius-sm);
+  --component-reader-core-prose-tts-bg: color-mix(in srgb, var(--color-accent) 20%, transparent);
+  --component-reader-core-prose-tts-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 22%, transparent);
+  --component-reader-core-prose-tts-transition: background 160ms var(--easing-standard), box-shadow 160ms var(--easing-standard);
+  --component-reader-core-pdf-page-bg: #f2eee6;
+  --component-reader-core-pdf-page-radius: 10px;
+  --component-reader-core-pdf-page-shadow:
+    0 44px 110px color-mix(in srgb, var(--color-background-void) 64%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--text-primary) 8%, transparent);
+  --component-reader-core-pdf-page-compact-shadow:
+    0 12px 32px color-mix(in srgb, var(--color-background-void) 48%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--text-primary) 8%, transparent);
+  --component-reader-core-error-overlay-bg: color-mix(in srgb, var(--color-background-void) 72%, transparent);
+  --component-reader-core-pdf-figure-radius: var(--radius-sm);
+  --component-reader-core-resume-top: 68px;
+  --component-reader-core-resume-bg: color-mix(in srgb, var(--color-popover) 94%, transparent);
+  --component-reader-core-resume-border: var(--component-reader-core-action-border);
+  --component-reader-core-resume-radius: 14px;
+  --component-reader-core-resume-padding: 8px 12px;
+  --component-reader-core-resume-font-size: 11px;
+  --component-reader-core-resume-font-weight: 760;
+  --component-reader-core-resume-fg: var(--text-secondary);
+  --component-reader-core-resume-z-index: 20;
+  --component-reader-core-resume-shadow: 0 18px 48px color-mix(in srgb, var(--color-background-void) 54%, transparent);
+  --component-reader-core-resume-blur: blur(24px) saturate(160%);
+  --component-reader-core-resume-in-animation: var(--t-slow) cubic-bezier(0.16, 1, 0.3, 1) both;
+  --component-reader-core-resume-out-animation: 1s var(--easing-standard) forwards;
+  --component-reader-core-resume-jump-padding: 4px 9px;
+  --component-reader-core-resume-jump-transition: background var(--t-fast), border-color var(--t-fast), transform var(--t-fast);
+  --component-reader-core-banner-in-from-transform: translateX(-50%) translateY(-6px) scale(0.97);
+  --component-reader-core-banner-in-to-transform: translateX(-50%) translateY(0) scale(1);
+  --component-reader-core-banner-out-from-transform: translateX(-50%) translateY(0) scale(1);
+  --component-reader-core-banner-out-to-transform: translateX(-50%) translateY(-4px) scale(0.97);
+  --component-reader-core-download-z-index: calc(var(--z-reader) + 10);
+  --component-reader-core-download-backdrop-padding: 48px var(--sp-4) 0;
+  --component-reader-core-download-panel-bg: var(--component-reader-panel-bg);
+  --component-reader-core-download-panel-border: 1px solid var(--component-reader-border-active);
+  --component-reader-core-download-panel-radius: var(--radius-lg);
+  --component-reader-core-download-panel-padding: var(--space-md);
+  --component-reader-core-download-panel-min-width: 220px;
+  --component-reader-core-download-panel-gap: 6px;
+  --component-reader-core-download-panel-shadow: 0 24px 72px color-mix(in srgb, var(--color-background-void) 60%, transparent), var(--component-reader-inset-highlight);
+  --component-reader-core-download-panel-blur: blur(28px) saturate(165%);
+  --component-reader-core-download-title-font-size: 9px;
+  --component-reader-core-download-title-fg: var(--component-reader-muted-fg);
+  --component-reader-core-download-title-letter-spacing: 0.18em;
+  --component-reader-core-download-title-padding: 2px 4px 6px;
+  --component-reader-core-download-title-border: 1px solid color-mix(in srgb, var(--text-primary) 7%, transparent);
+  --component-reader-core-download-title-margin-bottom: 4px;
+  --component-reader-core-download-option-gap: 2px;
+  --component-reader-core-download-option-padding: 6px 10px;
+  --component-reader-core-download-option-radius: var(--radius-sm);
+  --component-reader-core-download-option-font-weight: 750;
+  --component-reader-core-download-option-fg: var(--component-reader-fg);
+  --component-reader-core-download-option-bg: color-mix(in srgb, var(--color-background-void) 20%, transparent);
+  --component-reader-core-download-option-border: 1px solid color-mix(in srgb, var(--text-primary) 14%, transparent);
+  --component-reader-core-download-option-transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast), transform var(--t-fast);
+  --component-reader-core-download-option-hover-bg: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  --component-reader-core-download-option-hover-border: color-mix(in srgb, var(--text-primary) 24%, transparent);
+  --component-reader-core-download-option-disabled-opacity: 0.3;
+  --component-reader-core-download-option-disabled-bg: color-mix(in srgb, var(--color-background-void) 10%, transparent);
+  --component-reader-core-download-option-disabled-border: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  --component-reader-core-download-sub-font-size: 8px;
+  --component-reader-core-download-sub-fg: var(--component-reader-faint-fg);
+  --component-reader-core-download-sub-letter-spacing: 0.04em;
+  --component-reader-core-download-row-gap: 6px;
+  --component-reader-core-download-stepper-bg: var(--component-reader-core-download-option-bg);
+  --component-reader-core-download-stepper-border: var(--component-reader-core-download-option-border);
+  --component-reader-core-download-stepper-radius: var(--component-reader-core-download-option-radius);
+  --component-reader-core-download-step-size: 22px;
+  --component-reader-core-download-step-min-height: 28px;
+  --component-reader-core-download-step-font-size: 12px;
+  --component-reader-core-download-step-fg: var(--component-reader-muted-fg);
+  --component-reader-core-download-step-disabled-opacity: 0.25;
+  --component-reader-core-download-step-val-border: 1px solid color-mix(in srgb, var(--text-primary) 14%, transparent);
+  --component-reader-core-scale-in-from-transform: scale(0.97);
+  --component-reader-core-scale-in-to-transform: scale(1);
+  --component-reader-core-tools-in-from-transform: translateY(-6px) scale(0.98);
+  --component-reader-core-tools-in-to-transform: translateY(0) scale(1);
   /* Marco 17 - Detail surfaces */
   --component-detail-dl-danger-zone-empty-border-top-color: rgba(202, 196, 208, 0.045);
   --component-detail-hud-action-font-size: calc(11px * var(--n-hud-scale, 1));
@@ -2599,6 +2712,20 @@
    ───────────────────────────────────────────── */
 
 /* ── High Contrast (dark base, sharper text) ── */
+:where(.book-viewer, .novel-viewer) {
+  --component-reader-core-prose-viewer-bg:
+    radial-gradient(circle at 45% 18%, color-mix(in srgb, var(--text-primary) 2%, transparent), transparent 30%),
+    linear-gradient(180deg, var(--prose-page-bg, var(--color-background-void)), var(--color-background-void) 62%, var(--prose-page-bg, var(--color-background-void)));
+  --component-reader-core-prose-viewer-fg: var(--prose-text, var(--text-primary));
+  --component-reader-core-prose-panel-bg: var(--prose-bg, color-mix(in srgb, var(--color-surface) 88%, var(--text-primary) 12%));
+  --component-reader-core-epub-bg:
+    radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--text-primary) 10%, transparent), transparent 34%),
+    var(--prose-bg, #f5f1ea);
+  --component-reader-core-epub-fg: var(--prose-text, #19151d);
+  --component-reader-core-pdf-reflow-fg: var(--prose-text, #19151d);
+  --component-reader-core-pdf-placeholder-fg: color-mix(in srgb, var(--prose-text, #19151d) 44%, transparent);
+}
+
 [data-theme="high-contrast"] {
   --bg-void:      #000000;
   --bg-base:      #080808;
