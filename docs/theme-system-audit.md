@@ -1761,3 +1761,51 @@ Categorias cobertas:
 
 ### Veredito
 - Marco 19 aprovado para fechamento sem ressalva visual de Reader Core: manga reader, BookReader EPUB/PDF (reflow e canvas), NovelReader e estados reais de erro foram validados.
+
+## Marco 20 - Activity Center
+
+### Escopo executado
+- Migrada exclusivamente a camada visual ativa formada por `ActivityButton.svelte`, `ActivityOverlay.svelte` e `RecentActivity.svelte`.
+- A cadeia ativa foi confirmada por imports reais: `Layout.svelte` renderiza `ActivityOverlay`; `Home.svelte`, `BrowseV3.svelte`, `Downloads.svelte`, `LibraryHeader.svelte` e `Settings.svelte` reutilizam `ActivityButton`; ambos convergem em `RecentActivity`.
+- `Home.svelte`, `TasteInsightsModal.svelte`, wrappers Legacy de Discover/Extensions, logica de notificacoes, historico, retry de fontes, stores e i18n nao foram alterados.
+- `Home.svelte` permaneceu fora do lote porque possui 171 ocorrencias visuais diretas e somar sua migracao ao Activity Center ultrapassaria o diff razoavel do marco.
+
+### Tokens e compatibilidade
+- `--component-activity-*`: 74 definidos em `tokens.css`, 74 definidos em `nocturne-theme.css`, 74 consumidos pelos tres componentes e 0 sem consumo.
+- Os tokens cobrem badge, overlay, painel, borders/dividers, textos, accent/danger, filtros, contadores, cards de issue, thumbnails, actions, timeline, motion, radius, shadow e escala visual.
+- `ActivityButton`, `ActivityOverlay` e `RecentActivity` nao consomem mais `--n-*` diretamente.
+- `--n-hud-scale` e `--n-topbar-height` permanecem apenas dentro da camada de tokens como aliases Legacy de compatibilidade. Nenhum token Legacy foi removido.
+- Os antigos `--activity-*` permanecem definidos como Legacy em `nocturne-theme.css`; nao foram removidos nesta etapa, embora os tres consumidores ativos tenham sido migrados.
+
+### Valores diretos removidos
+- Varredura final dos tres blocos `<style>`: 0 ocorrencias de hex, rgb/rgba, hsl/hsla, oklch, color-mix, gradients, `--n-*`, shadows/blur diretos, z-index numerico, radius direto ou opacity decimal direta.
+- Geometria estrutural responsiva e calculos de dimensao continuam locais, mas passam pela escala `--component-activity-scale` em vez de acessar a compatibilidade Nocturne diretamente.
+- Nao ha excecoes visuais diretas no escopo deste marco.
+
+### Acessibilidade
+- A auditoria runtime encontrou falhas pre-existentes no before: subtitulo `4.38:1`, filtros inativos `3.43:1` e textos faint/horarios `2.61:1`.
+- Os tres tokens Nocturne correspondentes foram ajustados sem mudar layout. Ratios finais medidos no app real: subtitulo `4.75:1`, filtro inativo `5.28:1`, item subtitle `5.14:1`, issue titles `4.75:1` e horarios `4.75:1`.
+- `ActivityCenterThemeTokens.test.ts` fixa WCAG AA `>= 4.5:1` para os tokens de texto normal do Activity Center.
+
+### Screenshots reais
+- `docs/screenshots/marco20-activity-center/before-activity-center.png`: Activity Center real em Nocturne antes da migracao, com filtros, contagens e issues reais.
+- `docs/screenshots/marco20-activity-center/after-activity-center.png`: mesma superficie apos a migracao e correcao AA. A geometria computada permaneceu `1163 x 658`, radius `18px`, border e shadow equivalentes.
+- O screenshot after inclui um toast de atualizacao de biblioteca que surgiu naturalmente durante o runtime; trata-se de mudanca de estado/dados, nao regressao visual do Activity Center.
+- A captura diagnostica escurecida pela janela WebView2 inativa foi substituida; apenas o after com a janela focada foi preservado.
+
+### Validacao
+- Computed style no app real Nocturne: 74 tokens encontrados no Activity Center e 0 valores vazios.
+- `npm exec vitest run -- --project shell-jsdom src/components/layout/ActivityCenterThemeTokens.test.ts src/components/layout/layoutThemeComponents.test.ts`: 2 arquivos e 8 testes passaram antes da adicao do gate de contraste.
+- `npm exec vitest run -- --project shell-jsdom src/components/layout/ActivityCenterThemeTokens.test.ts`: 1 arquivo e 4 testes passaram apos o ajuste WCAG.
+- Reexecucao final combinada dos testes focados: 2 arquivos e 9 testes passaram, incluindo o gate WCAG.
+- `pnpm build`: passou, mantendo apenas o aviso conhecido de chunks maiores que 500 kB.
+- `git diff --check`: passou; apenas avisos informativos de conversao LF/CRLF do working tree.
+
+### Riscos antes do proximo marco
+- `Home.svelte` permanece a maior superficie ativa nao consolidada, com volume suficiente para um marco proprio.
+- `TasteInsightsModal.svelte` continua ativo via `BrowseV3.svelte` e deve ser agrupado com outras superficies auxiliares de Browse somente se o diff permanecer coeso.
+- `Discover.svelte` e `Extensions.svelte` permanecem Legacy/fora da rota ativa atual; nao migrar apenas por nome.
+- A reducao final de `--n-*` continua pendente na camada de tokens e nos consumidores ativos restantes; nao remover aliases sem busca global e validacao runtime.
+
+### Veredito
+- Marco 20 tecnicamente aprovado para fechamento seletivo; nao iniciar Home no mesmo diff.

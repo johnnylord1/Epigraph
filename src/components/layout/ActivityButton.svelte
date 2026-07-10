@@ -99,28 +99,28 @@
 <style>
   .activity-btn {
     position: relative;
-    width: calc(38px * var(--n-hud-scale));
-    min-width: calc(38px * var(--n-hud-scale));
+    width: var(--component-activity-button-size);
+    min-width: var(--component-activity-button-size);
     padding-inline: 0;
   }
 
   .activity-badge {
     position: absolute;
-    top: calc(2px * var(--n-hud-scale));
-    right: calc(2px * var(--n-hud-scale));
+    top: var(--component-activity-badge-offset);
+    right: var(--component-activity-badge-offset);
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: calc(14px * var(--n-hud-scale));
-    height: calc(14px * var(--n-hud-scale));
-    padding: 0 calc(2px * var(--n-hud-scale));
+    min-width: var(--component-activity-badge-min-size);
+    height: var(--component-activity-badge-min-size);
+    padding: 0 var(--component-activity-badge-padding-inline);
     border: 0;
-    border-radius: 999px;
+    border-radius: var(--component-activity-badge-radius);
     background: var(--component-activity-badge-bg);
     color: var(--component-activity-badge-fg);
     text-shadow: var(--component-activity-badge-text-shadow);
     font-family: var(--font-sans);
-    font-size: calc(11px * var(--n-hud-scale));
+    font-size: var(--component-activity-badge-font-size);
     font-weight: 900;
     letter-spacing: 0;
     line-height: 1;

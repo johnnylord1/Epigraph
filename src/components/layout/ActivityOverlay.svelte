@@ -33,8 +33,8 @@
     min-width: 0;
     min-height: 0;
     flex-direction: column;
-    gap: calc(20px * var(--n-hud-scale));
-    padding: calc((var(--n-topbar-height) + 24px) * var(--n-hud-scale)) calc(28px * var(--n-hud-scale)) calc(24px * var(--n-hud-scale));
+    gap: var(--component-activity-overlay-gap);
+    padding: var(--component-activity-overlay-padding);
     background: var(--component-activity-overlay-bg);
     backdrop-filter: var(--component-activity-overlay-blur);
     -webkit-app-region: no-drag;
@@ -49,15 +49,15 @@
   .activity-overlay__back {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--component-activity-overlay-back-gap);
     border: 1px solid var(--component-activity-overlay-back-border);
-    border-radius: 999px;
+    border-radius: var(--component-activity-overlay-back-radius);
     background: var(--component-activity-overlay-back-bg);
     color: var(--component-activity-overlay-back-fg);
-    font-size: calc(11px * var(--n-hud-scale));
-    letter-spacing: 0.12em;
+    font-size: var(--component-activity-overlay-back-font-size);
+    letter-spacing: var(--component-activity-overlay-back-letter-spacing);
     text-transform: uppercase;
-    padding: calc(10px * var(--n-hud-scale)) calc(16px * var(--n-hud-scale));
+    padding: var(--component-activity-overlay-back-padding);
     cursor: pointer;
   }
 
