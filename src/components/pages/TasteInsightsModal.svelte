@@ -2,6 +2,7 @@
   import { translate } from "../../lib/i18n/runtime";
   import { _ } from "../../lib/i18n/runtime";
   import { fade, fly } from "svelte/transition";
+  import { onMount } from "svelte";
   import type { TasteProfile, RecommendationItem } from "../../lib/recommendations/types";
   import { X, Info, BookOpen, Sparkle, Star } from "phosphor-svelte";
   import { setNavPage } from "../../store/state.svelte";
@@ -12,6 +13,80 @@
     contentType: "manga" | "novels";
     onClose: () => void;
   }>();
+
+  let backdropElement: HTMLDivElement;
+  let surfaceElement: HTMLDivElement;
+
+  const FOCUSABLE_SELECTOR = [
+    "button:not([disabled])",
+    "a[href]",
+    "input:not([disabled])",
+    "select:not([disabled])",
+    "textarea:not([disabled])",
+    '[tabindex]:not([tabindex="-1"])',
+  ].join(",");
+
+  function focusableElements() {
+    return Array.from(surfaceElement.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+      .filter((element) => !element.hidden && element.getAttribute("aria-hidden") !== "true");
+  }
+
+  onMount(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const inertedSiblings: HTMLElement[] = [];
+    let branch: HTMLElement = backdropElement;
+
+    while (branch.parentElement) {
+      const parent = branch.parentElement;
+      for (const sibling of Array.from(parent.children)) {
+        if (sibling === branch || !(sibling instanceof HTMLElement) || sibling.inert) continue;
+        sibling.inert = true;
+        inertedSiblings.push(sibling);
+      }
+      branch = parent;
+      if (parent === document.body) break;
+    }
+
+    const initialFocusTimer = window.setTimeout(() => {
+      (focusableElements()[0] ?? surfaceElement).focus({ preventScroll: true });
+    });
+
+    function handleKeydown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const focusable = focusableElements();
+      if (focusable.length === 0) {
+        event.preventDefault();
+        surfaceElement.focus({ preventScroll: true });
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (event.shiftKey && (active === first || !surfaceElement.contains(active))) {
+        event.preventDefault();
+        last.focus({ preventScroll: true });
+      } else if (!event.shiftKey && (active === last || !surfaceElement.contains(active))) {
+        event.preventDefault();
+        first.focus({ preventScroll: true });
+      }
+    }
+
+    document.addEventListener("keydown", handleKeydown, true);
+    return () => {
+      window.clearTimeout(initialFocusTimer);
+      document.removeEventListener("keydown", handleKeydown, true);
+      for (const sibling of inertedSiblings) sibling.inert = false;
+      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+    };
+  });
 
   // Extract all tag weights sorted descending
   const tagAffinities = $derived.by(() => {
@@ -86,12 +161,27 @@
   }
 </script>
 
-<div class="insights-backdrop" transition:fade onclick={onClose} role="presentation">
-  <div class="insights-surface" transition:fly={{ y: 20, duration: 200 }} onclick={(e) => e.stopPropagation()} role="presentation">
+<div
+  class="insights-backdrop"
+  bind:this={backdropElement}
+  transition:fade
+  onclick={(event) => event.target === event.currentTarget && onClose()}
+  role="presentation"
+>
+  <div
+    class="insights-surface"
+    bind:this={surfaceElement}
+    transition:fly={{ y: 20, duration: 200 }}
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="taste-insights-title"
+    aria-describedby="taste-insights-subtitle"
+    tabindex="-1"
+  >
     <header class="insights-header">
       <div class="insights-header-text">
-        <h2>{$_("ui_tasteInsightsAnalytics")}</h2>
-        <p class="subtitle">{$_("ui_builtFrom")} {profile.seedCount} {$_("ui_entriesInYourLibrary")}</p>
+        <h2 id="taste-insights-title">{$_("ui_tasteInsightsAnalytics")}</h2>
+        <p id="taste-insights-subtitle" class="subtitle">{$_("ui_builtFrom")} {profile.seedCount} {$_("ui_entriesInYourLibrary")}</p>
       </div>
       <button class="insights-close-btn" onclick={onClose} aria-label={$_("ui_closeInsights")}>
         <X size={22} weight="bold" />
@@ -105,7 +195,7 @@
         <!-- Genre Affinity Chart -->
         <section class="insights-card">
           <div class="insights-section-title">
-            <Sparkle size={16} weight="fill" style="color: var(--accent-bright, #9c27b0)" />
+            <Sparkle size={16} weight="fill" style="color: var(--component-taste-insights-accent)" />
             <h3>{$_("ui_topGenreTagAffinities")}</h3>
           </div>
           <p class="section-desc">{$_("ui_relativePreferenceStrengthCalculatedFromYourReadingList")}</p>
@@ -135,7 +225,7 @@
         <!-- Preferred Mediums -->
         <section class="insights-card">
           <div class="insights-section-title">
-            <BookOpen size={16} weight="fill" style="color: var(--accent-bright, #9c27b0)" />
+            <BookOpen size={16} weight="fill" style="color: var(--component-taste-insights-accent)" />
             <h3>{$_("ui_formatPreferences")}</h3>
           </div>
           <p class="section-desc">{$_("ui_formatMatchPercentagesMappedAcrossCatalogResults")}</p>
@@ -158,7 +248,7 @@
         <!-- Recommendation Weights -->
         <section class="insights-card insights-card--span">
           <div class="insights-section-title">
-            <Info size={16} weight="fill" style="color: var(--accent-bright, #9c27b0)" />
+            <Info size={16} weight="fill" style="color: var(--component-taste-insights-accent)" />
             <h3>{$_("ui_recommendationScoreBreakdown")}</h3>
           </div>
           <p class="section-desc">{$_("ui_averageFactorWeightDistributionsAcrossYourCurrentRecommended")}</p>
@@ -205,7 +295,7 @@
         <!-- Extensions Recommendations -->
         <section class="insights-card insights-card--span">
           <div class="insights-section-title">
-            <Star size={16} weight="fill" style="color: var(--accent-bright, #9c27b0)" />
+            <Star size={16} weight="fill" style="color: var(--component-taste-insights-accent)" />
             <h3>{$_("ui_recommendedExtensions")}</h3>
           </div>
           <p class="section-desc">{$_("ui_unlockMoreRecommendationPicksByInstallingTheseContent")}</p>
@@ -233,9 +323,9 @@
   .insights-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(10, 10, 12, 0.82);
-    backdrop-filter: blur(12px);
-    z-index: 10000;
+    background: var(--component-taste-insights-backdrop-bg);
+    backdrop-filter: var(--component-taste-insights-backdrop-blur);
+    z-index: var(--component-taste-insights-z-index);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -243,21 +333,19 @@
   }
 
   .insights-surface {
-    background: linear-gradient(180deg, rgba(27, 25, 36, 0.98) 0%, rgba(16, 16, 22, 0.99) 100%);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 20px;
+    background: var(--component-taste-insights-surface-bg);
+    border: 1px solid var(--component-taste-insights-surface-border);
+    border-radius: var(--component-taste-insights-surface-radius);
     width: 100%;
     max-width: 980px;
     max-height: 92vh;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    box-shadow:
-      0 32px 80px rgba(0, 0, 0, 0.65),
-      inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    box-shadow: var(--component-taste-insights-surface-shadow);
     font-family: var(--font-sans, sans-serif);
     -webkit-font-smoothing: antialiased;
-    color: var(--n-on-surface, #ffffff);
+    color: var(--component-taste-insights-fg);
   }
 
   .insights-header {
@@ -265,13 +353,13 @@
     align-items: center;
     justify-content: space-between;
     padding: 28px 32px 22px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    border-bottom: 1px solid var(--component-taste-insights-divider);
   }
 
   .insights-header-text h2 {
     font-size: 24px;
     font-weight: 800;
-    color: rgba(255, 255, 255, 0.96);
+    color: var(--component-taste-insights-title-fg);
     margin: 0 0 6px;
     line-height: 1.2;
     letter-spacing: -0.01em;
@@ -280,28 +368,34 @@
   .insights-header-text .subtitle {
     font-size: 13px;
     font-weight: 500;
-    color: var(--text-faint, rgba(255, 255, 255, 0.45));
+    color: var(--component-taste-insights-muted-fg);
     margin: 0;
   }
 
   .insights-close-btn {
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    color: rgba(255, 255, 255, 0.5);
-    border-radius: 50%;
+    background: var(--component-taste-insights-close-bg);
+    border: 1px solid var(--component-taste-insights-close-border);
+    color: var(--component-taste-insights-close-fg);
+    border-radius: var(--component-taste-insights-close-radius);
     width: 40px;
     height: 40px;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    transition: all 150ms ease;
+    transition: var(--component-taste-insights-control-transition);
   }
 
   .insights-close-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
-    border-color: rgba(255, 255, 255, 0.16);
-    color: rgba(255, 255, 255, 0.9);
+    background: var(--component-taste-insights-close-hover-bg);
+    border-color: var(--component-taste-insights-close-hover-border);
+    color: var(--component-taste-insights-close-hover-fg);
+  }
+
+  .insights-close-btn:focus-visible,
+  .ext-rec-btn:focus-visible {
+    outline: none;
+    box-shadow: var(--component-taste-insights-focus-ring);
   }
 
   .insights-content {
@@ -327,9 +421,9 @@
   }
 
   .insights-card {
-    background: rgba(255, 255, 255, 0.015);
-    border: 1px solid rgba(255, 255, 255, 0.04);
-    border-radius: 16px;
+    background: var(--component-taste-insights-card-bg);
+    border: 1px solid var(--component-taste-insights-card-border);
+    border-radius: var(--component-taste-insights-card-radius);
     padding: 24px;
     display: flex;
     flex-direction: column;
@@ -350,13 +444,13 @@
   .insights-section-title h3 {
     font-size: 17px;
     font-weight: 750;
-    color: rgba(255, 255, 255, 0.92);
+    color: var(--component-taste-insights-title-fg);
     margin: 0;
   }
 
   .section-desc {
     font-size: 12px;
-    color: rgba(255, 255, 255, 0.44);
+    color: var(--component-taste-insights-muted-fg);
     margin: 0 0 20px;
     line-height: 1.4;
   }
@@ -381,7 +475,7 @@
     font-size: 11px;
     font-weight: 750;
     width: 108px;
-    color: rgba(255, 255, 255, 0.78);
+    color: var(--component-taste-insights-button-fg);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -391,8 +485,8 @@
   .affinity-track {
     flex: 1;
     height: 10px;
-    background: rgba(255, 255, 255, 0.03);
-    border-radius: 99px;
+    background: var(--component-taste-insights-track-bg);
+    border-radius: var(--component-taste-insights-track-radius);
     overflow: hidden;
     position: relative;
   }
@@ -402,12 +496,12 @@
     top: 0;
     bottom: 0;
     left: 0;
-    border-radius: 99px;
-    background: linear-gradient(90deg, rgba(156, 39, 176, 0.5), rgba(156, 39, 176, 0.9));
+    border-radius: var(--component-taste-insights-track-radius);
+    background: var(--component-taste-insights-positive-fill);
   }
 
   .affinity-fill.is-negative {
-    background: linear-gradient(90deg, rgba(244, 67, 54, 0.5), rgba(244, 67, 54, 0.9));
+    background: var(--component-taste-insights-negative-fill);
   }
 
   .affinity-val {
@@ -415,11 +509,11 @@
     font-weight: 750;
     width: 58px;
     text-align: right;
-    color: var(--accent-bright, #ba68c8);
+    color: var(--component-taste-insights-accent);
   }
 
   .affinity-val.is-negative {
-    color: #e57373;
+    color: var(--component-taste-insights-danger);
   }
 
   /* FormatPreferences */
@@ -446,23 +540,23 @@
   .format-name {
     font-size: 13.5px;
     font-weight: 750;
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--component-taste-insights-title-fg);
   }
 
   .format-badge {
     font-size: 10.5px;
     font-weight: 600;
     padding: 2px 8px;
-    border-radius: 5px;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    color: rgba(255, 255, 255, 0.38);
+    border-radius: var(--component-taste-insights-badge-radius);
+    background: var(--component-taste-insights-badge-bg);
+    border: 1px solid var(--component-taste-insights-badge-border);
+    color: var(--component-taste-insights-badge-fg);
   }
 
   .format-badge.is-active {
-    background: rgba(156, 39, 176, 0.1);
-    border-color: rgba(156, 39, 176, 0.25);
-    color: #ce93d8;
+    background: var(--component-taste-insights-badge-active-bg);
+    border-color: var(--component-taste-insights-badge-active-border);
+    color: var(--component-taste-insights-badge-active-fg);
   }
 
   .format-gauge {
@@ -474,15 +568,15 @@
   .format-gauge-fill {
     flex: 1;
     height: 10px;
-    background: var(--accent-bright, #ba68c8);
-    border-radius: 99px;
-    opacity: 0.85;
+    background: var(--component-taste-insights-accent);
+    border-radius: var(--component-taste-insights-track-radius);
+    opacity: var(--component-taste-insights-gauge-opacity);
   }
 
   .format-val {
     font-size: 13px;
     font-weight: 750;
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--component-taste-insights-title-fg);
     width: 44px;
     text-align: right;
   }
@@ -502,9 +596,9 @@
   }
 
   .breakdown-item {
-    background: rgba(255, 255, 255, 0.01);
-    border: 1px solid rgba(255, 255, 255, 0.03);
-    border-radius: 12px;
+    background: var(--component-taste-insights-card-bg);
+    border: 1px solid var(--component-taste-insights-card-border);
+    border-radius: var(--component-taste-insights-row-radius);
     padding: 18px 14px;
     display: flex;
     flex-direction: column;
@@ -515,29 +609,29 @@
   .breakdown-label {
     font-size: 11px;
     font-weight: 750;
-    color: rgba(255, 255, 255, 0.55);
+    color: var(--component-taste-insights-muted-fg);
     margin-bottom: 14px;
     text-transform: uppercase;
     letter-spacing: 0.06em;
   }
 
   .metric-circle-container {
-    background: rgba(156, 39, 176, 0.06);
-    border: 1px solid rgba(156, 39, 176, 0.16);
-    border-radius: 50%;
+    background: var(--component-taste-insights-metric-bg);
+    border: 1px solid var(--component-taste-insights-metric-border);
+    border-radius: var(--component-taste-insights-metric-radius);
     width: 62px;
     height: 62px;
     display: flex;
     align-items: center;
     justify-content: center;
     margin-bottom: 14px;
-    box-shadow: 0 0 12px rgba(156, 39, 176, 0.05);
+    box-shadow: var(--component-taste-insights-metric-shadow);
   }
 
   .metric-number {
     font-size: 16px;
     font-weight: 850;
-    color: #e1bee7;
+    color: var(--component-taste-insights-accent);
   }
 
   .breakdown-metric {
@@ -549,7 +643,7 @@
   .breakdown-metric p {
     font-size: 11.5px;
     font-weight: 500;
-    color: rgba(255, 255, 255, 0.44);
+    color: var(--component-taste-insights-muted-fg);
     margin: 0;
     line-height: 1.35;
   }
@@ -566,9 +660,9 @@
     align-items: center;
     justify-content: space-between;
     padding: 14px 20px;
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.04);
-    border-radius: 12px;
+    background: var(--component-taste-insights-row-bg);
+    border: 1px solid var(--component-taste-insights-row-border);
+    border-radius: var(--component-taste-insights-row-radius);
     gap: 18px;
   }
 
@@ -581,36 +675,36 @@
   .ext-rec-name {
     font-size: 14px;
     font-weight: 750;
-    color: rgba(255, 255, 255, 0.94);
+    color: var(--component-taste-insights-title-fg);
   }
 
   .ext-rec-detail {
     font-size: 11.5px;
-    color: rgba(255, 255, 255, 0.44);
+    color: var(--component-taste-insights-muted-fg);
   }
 
   .ext-rec-btn {
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    color: rgba(255, 255, 255, 0.82);
+    background: var(--component-taste-insights-button-bg);
+    border: 1px solid var(--component-taste-insights-button-border);
+    color: var(--component-taste-insights-button-fg);
     font-size: 12px;
     font-weight: 650;
     padding: 8px 18px;
-    border-radius: 8px;
+    border-radius: var(--component-taste-insights-button-radius);
     cursor: pointer;
-    transition: all 150ms ease;
+    transition: var(--component-taste-insights-control-transition);
     white-space: nowrap;
   }
 
   .ext-rec-btn:hover {
-    background: rgba(156, 39, 176, 0.12);
-    border-color: rgba(156, 39, 176, 0.35);
-    color: #f3e5f5;
+    background: var(--component-taste-insights-button-hover-bg);
+    border-color: var(--component-taste-insights-button-hover-border);
+    color: var(--component-taste-insights-button-hover-fg);
   }
 
   .empty-state {
     font-size: 12px;
-    color: rgba(255, 255, 255, 0.38);
+    color: var(--component-taste-insights-muted-fg);
     text-align: center;
     margin: 16px 0;
   }

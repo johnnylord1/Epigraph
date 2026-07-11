@@ -1856,3 +1856,54 @@ Categorias cobertas:
 
 ### Veredito
 - Marco 21 tecnicamente aprovado para fechamento seletivo; o Marco 22 nao foi iniciado.
+
+## Marco 22 - Browse Taste Insights
+
+### Escopo executado
+- Migrada exclusivamente a camada visual de `src/components/pages/TasteInsightsModal.svelte`.
+- A superficie ativa foi confirmada por import e render direto em `BrowseV3.svelte`; o modal foi aberto pelo fluxo real `Browse > View full insights` com perfil e recomendacoes existentes.
+- Nao foram alterados `BrowseV3.svelte`, logica de recomendacoes, calculos de afinidade, navegacao, stores, GraphQL, i18n, Sources, Home ou demais superficies.
+- `TasteInsightsModal.svelte` nao possuia mudancas locais anteriores no preflight.
+
+### Tokens e compatibilidade
+- `--component-taste-insights-*`: 51 definidos em `tokens.css`, 51 implementados em `nocturne-theme.css`, 51 consumidos e 0 sem consumo.
+- Categorias cobertas: backdrop/blur/z-index, surface, borders, radius, shadow, texto, accent/danger, cards, tracks, gauges, badges, metricas, rows, botoes, hover, focus, opacity e motion CSS.
+- O componente nao consome mais `--n-*`, `--accent-bright` ou fallbacks de tema diretamente.
+- Nenhum token Legacy ou camada `--n-*` foi removido.
+
+### Valores diretos removidos e excecoes
+- Removidos do componente: hex, rgba, gradients, blur, shadows, radius, z-index, opacity e transitions CSS diretos, incluindo quatro fallbacks de cor inline dos icones.
+- Estado final: 0 cores/funcoes de cor, gradients, `--n-*` ou `var(--accent-*)` diretos no componente; propriedades visuais auditadas consomem tokens.
+- Permanecem somente dois inline styles dinamicos de largura para afinidades e preferencias de formato. Eles representam dados runtime, nao identidade de tema.
+- `transition:fly={{ y: 20, duration: 200 }}` permanece como excecao funcional Svelte: controla a animacao de montagem no runtime e nao e uma custom property CSS dependente de tema.
+
+### Acessibilidade
+- Textos auxiliares pequenos usavam alphas entre `0.38` e `0.55`, insuficientes sobre a surface superior do modal.
+- `--component-taste-insights-muted-fg` foi ajustado para alpha `0.62`, com contraste automatizado acima de WCAG AA.
+- Close e botoes de extensao receberam foco explicito via `--component-taste-insights-focus-ring`; validacao real por teclado mediu shadow `0 0 0 3px rgba(184, 167, 234, 0.18)`.
+- O risco comportamental foi corrigido localmente: surface com `role="dialog"`, `aria-modal`, nome/descricao associados, foco inicial, ciclo Tab/Shift+Tab, fechamento por Escape, isolamento `inert` do fundo e restauracao do foco anterior.
+
+### Screenshots reais
+- `docs/screenshots/marco22-taste-insights/before-taste-insights-main.png`: baseline real Nocturne estabilizado apos o termino do `fade`, com dados reais de 634 entradas.
+- `docs/screenshots/marco22-taste-insights/after-taste-insights-main.png`: mesma geometria e hierarquia apos a migracao, com contraste auxiliar corrigido.
+- `docs/screenshots/marco22-taste-insights/after-taste-insights-hover.png`: lista inferior de extensoes com hover real do botao.
+- `docs/screenshots/marco22-taste-insights/after-taste-insights-focus.png`: close button focado por teclado com ring visivel.
+- A primeira tentativa before ocorreu durante o `fade` e foi sobrescrita. Para recapturar corretamente, somente o diff criado neste marco em `TasteInsightsModal.svelte` foi revertido temporariamente e reaplicado de forma identica; o componente estava limpo no preflight e nenhum trabalho do usuario foi revertido.
+
+### Validacao visual e automatizada
+- Computed style before/after permaneceu `980 x 736`, gradient, border `1px solid rgba(255, 255, 255, 0.08)`, radius `20px` e shadow equivalentes.
+- Computed style final: 51 tokens encontrados e 0 valores vazios.
+- Hover final do botao: background `rgba(156, 39, 176, 0.12)`, border `rgba(156, 39, 176, 0.35)`, foreground `rgb(243, 229, 245)` e radius `8px`.
+- `npm exec vitest run -- --project shell-jsdom src/components/pages/TasteInsightsThemeTokens.test.ts src/components/pages/BrowseV3.test.ts`: reexecucao final passou, 2 arquivos e 17 testes. O stderr `Repository timeout` e esperado pelo teste de falha parcial de Sources.
+- Teste comportamental adicional valida dialog semantics, foco inicial, ciclo bidirecional, Escape, `inert` e restauracao do foco; execucao focada passou com 5/5 testes.
+- Validacao WebView2 real: close recebeu foco inicial, Tab no ultimo botao voltou ao close, Shift+Tab no close voltou ao ultimo botao, Escape desmontou o modal e restaurou foco em `View full insights`. A contagem de elementos inert passou de 1 baseline para 8 durante o modal e retornou a 1 depois do fechamento.
+- `pnpm build`: passou com 6294 modulos transformados; permaneceu apenas o aviso conhecido de chunk maior que 500 kB.
+- `git diff --check`: passou; apenas avisos informativos de conversao LF/CRLF no working tree.
+
+### Riscos antes do proximo marco
+- O risco de focus trap/inert e semantica de dialog do Taste Insights foi resolvido e coberto por teste automatizado e runtime real.
+- `NovelSourceCheckModal.svelte` e `NovelSourceStatusDetails.svelte` formam o proximo lote ativo coeso recomendado.
+- Superficies Legacy continuam sem migracao automatica e a reducao de `--n-*` permanece para o fechamento final.
+
+### Veredito
+- Marco 22 tecnicamente aprovado para fechamento seletivo; o marco seguinte nao foi iniciado.
