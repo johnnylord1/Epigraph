@@ -339,7 +339,7 @@
     height: 100%;
     min-width: 0;
     min-height: 0;
-    margin-left: var(--n-sidebar-width, 74px);
+    margin-left: var(--component-layout-main-sidebar-offset);
     overflow-x: hidden;
     overflow-y: auto;
     background: var(--component-app-bg);

@@ -1907,3 +1907,94 @@ Categorias cobertas:
 
 ### Veredito
 - Marco 22 tecnicamente aprovado para fechamento seletivo; o marco seguinte nao foi iniciado.
+
+## Marco 23 - Active Shell Compatibility Closure
+
+### Preflight e ajuste de escopo
+- O candidato anterior `NovelSourceCheckModal.svelte` e importado somente por `NovelRepositoriesPanel.svelte`; `NovelSourceStatusDetails.svelte` e importado somente por `NovelRepositoriesPanel.svelte` e `NovelSources.svelte`.
+- `NovelRepositoriesPanel.svelte` e `NovelSources.svelte` nao participam da rota ativa atual. Os dois componentes de diagnostico foram portanto reclassificados como Legacy e nao foram migrados apenas por nome.
+- A busca global identificou como consumidores ativos restantes de `--n-*` apenas `Layout.svelte` e `WindowControlsInline.svelte`.
+
+### Escopo executado
+- Migrada exclusivamente a compatibilidade visual ativa de `src/components/layout/Layout.svelte` e `src/components/layout/WindowControlsInline.svelte`.
+- `WindowControlsInline` e renderizado por Home, BrowseV3, Downloads, Settings e LibraryHeader; `Layout` e o shell ativo do app.
+- Nao foram alterados navegacao, lazy loading, keepalive, APIs de janela Tauri, comportamento de minimizar/maximizar/fechar ou qualquer superficie Legacy.
+
+### Tokens e compatibilidade
+- `--component-layout-main-*` e `--component-window-inline-*`: 8 definidos em `tokens.css`, 8 implementados em `nocturne-theme.css`, 8 consumidos e 0 sem consumo.
+- Os tokens cobrem offset da sidebar, gap, tamanho, radius, motion, active transform, icon size e focus ring dos controles.
+- `--n-sidebar-width` e `--n-hud-scale` permanecem somente dentro das definicoes de tokens Nocturne como aliases Legacy; nenhum token ou camada de compatibilidade foi removido.
+- `Layout.svelte` e `WindowControlsInline.svelte` agora possuem 0 consumo direto de `--n-*`.
+
+### Auditoria final dos consumidores
+- A varredura global de componentes encontrou `--n-*` restante somente em `Discover.svelte` e `Extensions.svelte`.
+- Ambos permanecem Legacy/fora da rota ativa, conforme Marcos 7, 11 e 20. Nao foram alterados ou removidos nesta etapa.
+- Os componentes ativos do shell nao possuem cores diretas nem valores locais de radius, transition ou transform fora de tokens.
+
+### Acessibilidade
+- A validacao runtime encontrou foco invisivel preexistente nos controles de janela: outline com estilo `none` e box-shadow `none`.
+- Foi aplicado `--component-window-inline-focus-ring` em `:focus-visible` sem alterar dimensoes ou comportamento.
+- Resultado runtime por teclado: shadow `0 0 0 3px rgba(184, 167, 234, 0.18)` no botao Minimize.
+
+### Screenshots reais
+- `docs/screenshots/marco23-active-shell-compat/before-shell-main.png` e `after-shell-main.png`: shell real Home antes/depois.
+- `docs/screenshots/marco23-active-shell-compat/before-window-controls.png` e `after-window-controls.png`: controles reais antes/depois.
+- `docs/screenshots/marco23-active-shell-compat/after-window-controls-hover.png`: hover real do botao Minimize.
+- `docs/screenshots/marco23-active-shell-compat/after-window-controls-focus.png`: foco por teclado com ring visivel.
+
+### Validacao visual e automatizada
+- Before/after preservou controles em `71.078 x 21.328px`, botoes `21.328px`, radius `8px`, foreground `rgba(239, 234, 255, 0.68)` e margem principal `67.5564px`.
+- Computed style final: 8 tokens encontrados e 0 valores vazios.
+- `npm exec vitest run -- --project shell-jsdom src/components/layout/ActiveShellCompatibilityThemeTokens.test.ts src/components/layout/layoutThemeComponents.test.ts`: passou, 2 arquivos e 8 testes.
+- `pnpm build`: passou com 6294 modulos transformados; permaneceu apenas o aviso conhecido de chunk maior que 500 kB.
+- `git diff --check`: passou; apenas avisos informativos de conversao LF/CRLF no working tree.
+
+### Riscos restantes
+- `Discover.svelte`, `Extensions.svelte`, `NovelSources.svelte`, `NovelSourceCheckModal.svelte`, `NovelSourceStatusDetails.svelte` e `NovelRepositoriesPanel.svelte` permanecem Legacy e nao devem ser removidos sem nova evidencia global/runtime.
+- A camada `--n-*` ainda existe como contrato Legacy dentro dos temas/tokens. A proxima etapa segura e uma auditoria final de aliases e classificacao, nao remocao automatica.
+
+### Veredito
+- Marco 23 tecnicamente aprovado para fechamento seletivo; nenhum componente Legacy foi migrado ou removido.
+
+## Marco futuro - Auditoria final de superficies Legacy e compatibilidade
+
+### Objetivo e momento de execucao
+- Executar somente depois do fechamento dos marcos ativos atuais.
+- Revalidar cada superficie e alias classificados como Legacy contra imports diretos/indiretos, rotas, lazy imports, flags, stores, presets, ThemeEditor, custom tokens, CSS compilado/computed style e aplicativo real.
+- Este marco e de classificacao e evidencia. Nenhum componente, token ou alias deve ser removido automaticamente; qualquer limpeza posterior exige escopo e aceite separados.
+
+### Inventario Legacy a revalidar
+
+| Item | Classificacao atual | Evidencia atual | Validacao pendente | Pode remover agora? |
+| --- | --- | --- | --- | --- |
+| `Discover.svelte` | Legacy | A navegacao ativa de Discover/Search usa `Search.svelte` com `BrowseV3.svelte`; o componente antigo ainda referencia `SourceBrowse.svelte` e `--n-primary-container`. | Confirmar ausencia em rotas alternativas, imports dinamicos, flags e runtime real. | Nao |
+| `Extensions.svelte` | Legacy | Ainda aparece em `routes.ts` e em mock de teste, mas o estado de navegacao ativo normaliza `extensions` para `search`; ainda consome `--n-hud-scale`. | Validar compatibilidade de rotas antigas, deep links, estado persistido e runtime de upgrade. | Nao |
+| `SourceBrowse.svelte` | Legacy | Consumido pela superficie Legacy `Discover.svelte`; nao foi comprovado como superficie ativa independente. | Buscar outros hosts, imports dinamicos e renderizacao condicional. | Nao |
+| `SourceList.svelte` | Legacy | Associado aos fluxos antigos/compartilhados de Sources e Discover, sem evidencia runtime suficiente para classificar como morto. | Confirmar todos os hosts e estados de Sources no app real. | Nao |
+| `NovelSources.svelte` | Legacy | Mantem testes e renderiza `NovelSourceStatusDetails.svelte`, mas nao participa da rota ativa validada. | Verificar rotas antigas, flags de novels, deep links e estados persistidos. | Nao |
+| `NovelSourceCheckModal.svelte` | Legacy | Importado por `NovelRepositoriesPanel.svelte`, atualmente fora da superficie ativa de Settings. | Ativar apenas por fluxo real de repositorios e confirmar computed style/renderizacao. | Nao |
+| `NovelSourceStatusDetails.svelte` | Legacy | Importado por `NovelRepositoriesPanel.svelte` e `NovelSources.svelte`, ambos sem renderizacao ativa comprovada. | Validar os dois hosts e estados de erro/status em runtime real. | Nao |
+| `NovelRepositoriesPanel.svelte` | Legacy preparado | Migrado no Marco 18, mas nao aparece na superficie Settings ativa validada. | Confirmar feature flags, configuracao de backend e caminho real de ativacao. | Nao |
+| `NovelsLibraryBody.svelte` | Legacy | Nao foi encontrado na cadeia de imports/renderizacao da Library ativa; pode representar compatibilidade de uma Library anterior. | Repetir busca global, lazy imports, modos/tabs, flags de novels e app real. | Nao |
+| `Tracking.svelte` | Legacy | Nao houve evidencia runtime suficiente de renderizacao na navegacao ativa durante os marcos visuais. | Mapear hosts, rotas, integrações e estados que habilitam tracking. | Nao |
+| `GenreDrillPage.svelte` | Legacy | Superficie especializada sem caminho runtime ativo comprovado na auditoria atual. | Verificar navegacao indireta a partir de Browse/Search e feature flags. | Nao |
+| Camada `--n-*` | Legacy de compatibilidade | Permanece como contrato de temas, aliases e custom themes; consumidores ativos diretos foram eliminados no Marco 23. | Auditar definicoes, fallbacks, `style.setProperty`, ThemeEditor, presets, stores, templates e CSS computado de todos os temas. | Nao |
+| `--n-sidebar-width`, `--n-hud-scale`, `--n-topbar-height` | Legacy de compatibilidade | Usados como aliases internos de tokens e/ou por superficies Legacy; podem sustentar temas customizados e estado persistido. | Confirmar consumo dinamico e compatibilidade com temas importados antes de qualquer deprecacao. | Nao |
+| Aliases `--activity-*` | Legacy de compatibilidade | Mantidos pela migracao do Marco 20 para preservar consumidores ou temas anteriores. | Buscar referencias globais, custom tokens, ThemeEditor e computed style. | Nao |
+
+### Regras de classificacao do marco futuro
+- **Ativo:** somente com evidencia de componente real renderizado e impacto observavel em CSS final/computed style.
+- **Legacy:** manter sempre que existir compatibilidade, referencia dinamica, ThemeEditor, custom tokens, preset, store, template, rota antiga ou qualquer duvida.
+- **Morto:** classificar apenas depois de provar ausencia global, dinamica, em temas/presets/stores/templates e no aplicativo rodando. Mesmo com essa prova, apenas documentar; nao remover nesse marco.
+
+### Criterios de aceite
+- Inventario global reconciliado com imports estaticos, `import()`, componentes condicionais, rotas, flags e estado persistido.
+- Busca registrada por CSS Variables, `style.setProperty`, `setAttribute`, presets, ThemeEditor, custom tokens, stores e templates.
+- Cada item acima classificado como Ativo, Legacy ou Morto com evidencia de arquivo/linha e resultado runtime.
+- Superficies que se mostrarem ativas validadas visualmente em Nocturne com screenshots reais e computed styles.
+- Nenhum token, alias, componente ou codigo legado removido durante a auditoria.
+- Testes focados relevantes, `pnpm build` e `git diff --check` verdes.
+
+### Risco registrado
+- A ausencia de uma superficie na navegacao principal nao prova que ela esteja morta: deep links, migracao de estado, feature flags, backend configurado e temas customizados podem manter caminhos indiretos ativos.
+- A camada `--n-*` e os aliases `--activity-*` devem continuar classificados como Legacy ate uma auditoria completa de compatibilidade; sua remocao nao faz parte dos marcos visuais atuais.

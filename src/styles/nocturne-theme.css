@@ -381,6 +381,14 @@
   --component-window-control-close-bg-hover: rgba(184, 48, 74, 0.92);
   --component-window-control-close-border-hover: rgba(229, 70, 99, 0.5);
   --component-window-control-close-fg-hover: #fff;
+  --component-layout-main-sidebar-offset: var(--n-sidebar-width, 74px);
+  --component-window-inline-gap: calc(4px * var(--n-hud-scale, 1));
+  --component-window-inline-button-size: calc(24px * var(--n-hud-scale, 1));
+  --component-window-inline-button-radius: 8px;
+  --component-window-inline-button-transition: background 140ms ease, color 140ms ease, transform 90ms ease;
+  --component-window-inline-button-active-transform: scale(0.92);
+  --component-window-inline-icon-size: calc(11px * var(--n-hud-scale, 1));
+  --component-window-inline-focus-ring: var(--component-focus-ring);
   --component-activity-badge-bg: rgba(16, 14, 22, 0.88);
   --component-activity-badge-fg: #eadfff;
   --component-activity-badge-text-shadow:

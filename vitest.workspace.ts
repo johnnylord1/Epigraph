@@ -38,6 +38,7 @@ export default defineWorkspace([
         "src/components/library/ComicsLibraryBody.test.ts",
         "src/components/layout/layoutThemeComponents.test.ts",
         "src/components/layout/ActivityCenterThemeTokens.test.ts",
+        "src/components/layout/ActiveShellCompatibilityThemeTokens.test.ts",
         "src/components/layout/SplashScreen.test.ts",
         "src/components/shared/baseThemeComponents.test.ts",
         "src/components/shared/NocturneStateThemeTokens.test.ts",

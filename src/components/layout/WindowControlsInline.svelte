@@ -53,26 +53,23 @@
   .window-controls-inline {
     display: inline-flex;
     align-items: center;
-    gap: calc(4px * var(--n-hud-scale));
+    gap: var(--component-window-inline-gap);
     -webkit-app-region: no-drag;
   }
 
   .window-controls-inline__btn {
-    width: calc(24px * var(--n-hud-scale));
-    height: calc(24px * var(--n-hud-scale));
-    min-width: calc(24px * var(--n-hud-scale));
+    width: var(--component-window-inline-button-size);
+    height: var(--component-window-inline-button-size);
+    min-width: var(--component-window-inline-button-size);
     padding: 0;
     line-height: 0;
     border: none;
-    border-radius: 8px;
+    border-radius: var(--component-window-inline-button-radius);
     background: transparent;
     color: var(--component-window-control-fg);
     cursor: pointer;
     -webkit-app-region: no-drag;
-    transition:
-      background 140ms ease,
-      color 140ms ease,
-      transform 90ms ease;
+    transition: var(--component-window-inline-button-transition);
   }
 
   .window-controls-inline__btn:hover {
@@ -81,11 +78,16 @@
   }
 
   .window-controls-inline__btn:active {
-    transform: scale(0.92);
+    transform: var(--component-window-inline-button-active-transform);
+  }
+
+  .window-controls-inline__btn:focus-visible {
+    outline: none;
+    box-shadow: var(--component-window-inline-focus-ring);
   }
 
   .window-controls-inline__btn .material-symbols-outlined {
-    font-size: calc(11px * var(--n-hud-scale));
+    font-size: var(--component-window-inline-icon-size);
     line-height: 1;
   }
 
