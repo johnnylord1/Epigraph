@@ -202,25 +202,41 @@
 
 <style>
   .root {
-    --reader-void: #050505;
-    --reader-panel: #131316;
-    --reader-line: #282830;
-    --reader-line-strong: #383842;
-    --reader-text: #f5f4fa;
-    --reader-muted: #b9b5cc;
-    --reader-faint: #918da5;
-    --reader-accent: #8f82e6;
-    --reader-accent-dim: #2c2547;
-    --reader-accent-bright: #ab9fff;
+    --reader-void: var(--component-reader-bg);
+    --reader-panel: var(--component-reader-panel-bg);
+    --reader-panel-hover: var(--component-reader-panel-hover-bg);
+    --reader-line: var(--component-reader-border);
+    --reader-line-hover: var(--component-reader-border-hover);
+    --reader-line-strong: var(--component-reader-panel-strong-bg);
+    --reader-line-active: var(--component-reader-border-active);
+    --reader-divider: var(--component-reader-divider);
+    --reader-text: var(--component-reader-fg);
+    --reader-muted: var(--component-reader-muted-fg);
+    --reader-faint: var(--component-reader-faint-fg);
+    --reader-accent: var(--component-reader-accent-fg);
+    --reader-accent-dim: var(--component-reader-accent-muted-bg);
+    --reader-accent-bright: var(--component-reader-accent-strong-fg);
+    --reader-control-bg: var(--component-reader-control-bg);
+    --reader-control-hover-bg: var(--component-reader-control-hover-bg);
+    --reader-control-active-bg: var(--component-reader-control-active-bg);
+    --reader-track-bg: var(--component-reader-control-track-bg);
+    --reader-track-hover-bg: var(--component-reader-control-track-hover-bg);
+    --reader-shadow: var(--component-reader-shadow);
+    --reader-shadow-compact: var(--component-reader-shadow-compact);
+    --reader-inset-highlight: var(--component-reader-inset-highlight);
+    --reader-control-shadow: var(--component-reader-control-shadow);
+    --reader-blur: var(--component-reader-blur);
+    --reader-popover-blur: var(--component-reader-popover-blur);
+    --reader-focus-ring: var(--component-reader-focus-ring);
     position: fixed;
     inset: 0;
     z-index: var(--z-reader);
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    background: radial-gradient(circle at top center, rgba(255, 255, 255, 0.015), transparent 45%), linear-gradient(180deg, #0a0a0c 0%, #050506 100%);
+    background: var(--component-reader-bg-layer);
     color: var(--reader-text);
-    font-family: Manrope, Inter, "Segoe UI", sans-serif;
+    font-family: var(--component-reader-font);
     transform: translateZ(0);
   }
 
@@ -237,18 +253,18 @@
   .reader-hud-overlay {
     position: absolute;
     inset: 0;
-    z-index: 10;
+    z-index: var(--component-reader-chrome-z-index);
     pointer-events: none;
     display: flex;
     flex-direction: column;
     justify-content: flex-end;
     align-items: center;
-    padding-bottom: 24px;
-    transition: opacity 220ms ease;
+    padding-bottom: var(--component-reader-overlay-padding-bottom);
+    transition: opacity var(--component-reader-transition-fast);
   }
 
   .reader-hud-overlay.hidden {
-    opacity: 0;
+    opacity: var(--component-reader-hidden-opacity);
     pointer-events: none;
   }
 
@@ -260,47 +276,64 @@
     display: inline-flex;
     align-items: center;
     gap: 9px;
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 999px;
-    background: rgba(26, 26, 30, 0.97);
+    border: 1px solid var(--reader-line);
+    border-radius: var(--component-reader-pill-radius);
+    background: var(--reader-panel);
     color: var(--reader-muted);
-    font-family: Manrope, Inter, "Segoe UI", sans-serif;
+    font-family: var(--component-reader-font);
     font-size: 13px;
     font-weight: 650;
     letter-spacing: 0.01em;
     padding: 7px 14px 7px 8px;
     cursor: pointer;
     box-shadow:
-      0 12px 32px rgba(0, 0, 0, 0.5),
-      inset 0 1px 0 rgba(255, 255, 255, 0.03);
-    backdrop-filter: blur(20px) saturate(140%);
-    transition: color 150ms ease, background 150ms ease, transform 150ms ease, border-color 150ms ease;
+      var(--reader-shadow),
+      var(--reader-inset-highlight);
+    backdrop-filter: var(--reader-blur);
+    transition:
+      color var(--component-reader-transition-fast),
+      background var(--component-reader-transition-fast),
+      transform var(--component-reader-transition-fast),
+      border-color var(--component-reader-transition-fast);
   }
 
   .reader-back-link:hover {
     color: var(--reader-text);
-    border-color: rgba(255, 255, 255, 0.15);
-    background: rgba(34, 34, 40, 0.97);
+    border-color: var(--reader-line-hover);
+    background: var(--reader-panel-hover);
     transform: translateX(-1px);
+  }
+
+  .reader-back-link:focus-visible,
+  .capsule-btn:focus-visible,
+  .popover-brightness-input:focus-visible,
+  .reader-settings-popover :global(button:focus-visible),
+  .reader-settings-popover :global(select:focus-visible),
+  .reader-settings-popover :global(input:focus-visible) {
+    outline: 0;
+    box-shadow: var(--reader-focus-ring);
   }
 
   .reader-back-link:hover .reader-back-icon {
     color: var(--reader-text);
-    border-color: rgba(255, 255, 255, 0.14);
-    background: rgba(255, 255, 255, 0.06);
+    border-color: var(--reader-line-hover);
+    background: var(--reader-control-hover-bg);
   }
 
   .reader-back-icon {
     color: var(--reader-muted);
     display: inline-grid;
     place-items: center;
-    width: 24px;
-    height: 24px;
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.02);
+    width: var(--component-reader-icon-button-size);
+    height: var(--component-reader-icon-button-size);
+    border: 1px solid var(--reader-line);
+    border-radius: var(--component-reader-control-radius);
+    background: var(--reader-control-bg);
     line-height: 1;
-    transition: color 150ms ease, background 150ms ease, border-color 150ms ease;
+    transition:
+      color var(--component-reader-transition-fast),
+      background var(--component-reader-transition-fast),
+      border-color var(--component-reader-transition-fast);
   }
 
   /* Series / Chapter Title Overlay (Centered above capsule) */
@@ -310,17 +343,16 @@
     align-items: center;
     gap: 8px;
     margin-bottom: 12px;
-    background: rgba(10, 10, 14, 0.9);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 9999px;
+    background: var(--reader-panel);
+    border: 1px solid var(--reader-line);
+    border-radius: var(--component-reader-pill-radius);
     padding: 6px 14px;
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.04em;
     color: var(--reader-faint);
-    box-shadow: 
-      0 4px 16px rgba(0, 0, 0, 0.45);
-    backdrop-filter: blur(8px);
+    box-shadow: var(--reader-shadow-compact);
+    backdrop-filter: var(--reader-popover-blur);
   }
 
   .reader-metadata-title .series-title {
@@ -333,7 +365,7 @@
   }
 
   .reader-metadata-title .metadata-sep {
-    color: rgba(255, 255, 255, 0.2);
+    color: var(--reader-line-active);
   }
 
   /* Unified Bottom Capsule Bar */
@@ -342,53 +374,53 @@
     pointer-events: auto;
     display: flex;
     align-items: center;
-    gap: 12px;
-    width: min(680px, calc(100% - 32px));
-    height: 52px;
-    background: rgba(26, 26, 30, 0.97);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 9999px;
-    padding: 0 12px;
+    gap: var(--component-reader-capsule-gap);
+    width: min(var(--component-reader-capsule-width), calc(100% - 32px));
+    height: var(--component-reader-capsule-height);
+    background: var(--reader-panel);
+    border: 1px solid var(--reader-line);
+    border-radius: var(--component-reader-pill-radius);
+    padding: 0 var(--component-reader-capsule-padding-x);
     box-shadow:
-      0 12px 32px rgba(0, 0, 0, 0.5),
-      inset 0 1px 0 rgba(255, 255, 255, 0.03);
-    backdrop-filter: blur(20px) saturate(140%);
+      var(--reader-shadow),
+      var(--reader-inset-highlight);
+    backdrop-filter: var(--reader-blur);
   }
 
   /* Capsule Buttons */
   .capsule-btn {
     display: inline-grid;
     place-items: center;
-    width: 36px;
-    height: 36px;
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 9999px;
+    width: var(--component-reader-button-size);
+    height: var(--component-reader-button-size);
+    border: 1px solid var(--reader-line);
+    border-radius: var(--component-reader-control-radius);
     color: var(--reader-muted);
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--reader-control-bg);
     cursor: pointer;
     flex-shrink: 0;
     transition:
-      color 150ms ease,
-      border-color 150ms ease,
-      background 150ms ease,
-      transform 150ms ease;
+      color var(--component-reader-transition-fast),
+      border-color var(--component-reader-transition-fast),
+      background var(--component-reader-transition-fast),
+      transform var(--component-reader-transition-fast);
   }
 
   .capsule-btn:hover:not(:disabled) {
     color: var(--reader-text);
-    border-color: rgba(255, 255, 255, 0.15);
-    background: rgba(255, 255, 255, 0.06);
+    border-color: var(--reader-line-hover);
+    background: var(--reader-control-hover-bg);
     transform: translateY(-1px);
   }
 
   .capsule-btn.active {
     color: var(--reader-text);
-    background: var(--reader-line-strong);
-    border-color: rgba(255, 255, 255, 0.2);
+    background: var(--reader-control-active-bg);
+    border-color: var(--reader-line-active);
   }
 
   .capsule-btn:disabled {
-    opacity: 0.35;
+    opacity: var(--component-reader-disabled-opacity);
     cursor: default;
   }
 
@@ -409,20 +441,20 @@
     position: absolute;
     bottom: 76px;
     right: 16px;
-    z-index: 100;
+    z-index: var(--component-reader-popover-z-index);
     width: 180px;
     display: flex;
     align-items: center;
     gap: 8px;
-    background: rgba(26, 26, 30, 0.97);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 9999px;
+    background: var(--reader-panel);
+    border: 1px solid var(--reader-line);
+    border-radius: var(--component-reader-pill-radius);
     padding: 8px 12px;
     box-shadow:
-      0 12px 32px rgba(0, 0, 0, 0.5),
-      inset 0 1px 0 rgba(255, 255, 255, 0.02);
-    backdrop-filter: blur(20px) saturate(120%);
-    animation: popoverIn 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+      var(--reader-shadow),
+      var(--reader-inset-highlight);
+    backdrop-filter: var(--reader-popover-blur);
+    animation: popoverIn var(--component-reader-transition-popover) both;
   }
 
   @media (min-width: 1120px) {
@@ -434,28 +466,28 @@
 
   .popover-brightness-input {
     flex: 1;
-    height: 4px;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.15);
+    height: var(--component-reader-range-track-height);
+    border-radius: var(--component-reader-pill-radius);
+    background: var(--reader-track-bg);
     outline: none;
     -webkit-appearance: none;
     cursor: pointer;
-    transition: background 150ms;
+    transition: background var(--component-reader-transition-fast);
   }
 
   .popover-brightness-input:hover {
-    background: rgba(255, 255, 255, 0.25);
+    background: var(--reader-track-hover-bg);
   }
 
   .popover-brightness-input::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 10px;
-    height: 10px;
-    border-radius: 999px;
+    width: var(--component-reader-range-thumb-size);
+    height: var(--component-reader-range-thumb-size);
+    border-radius: var(--component-reader-control-radius);
     background: var(--reader-text);
     cursor: pointer;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
-    transition: transform 120ms;
+    box-shadow: var(--reader-control-shadow);
+    transition: transform var(--component-reader-transition-fast);
   }
 
   .popover-brightness-input::-webkit-slider-thumb:hover {
@@ -484,16 +516,16 @@
     position: absolute;
     left: 0;
     right: 0;
-    height: 4px;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.08);
+    height: var(--component-reader-range-track-height);
+    border-radius: var(--component-reader-pill-radius);
+    background: var(--reader-divider);
     overflow: hidden;
   }
 
   .capsule-slider-fill {
     height: 100%;
     border-radius: inherit;
-    background: linear-gradient(90deg, var(--reader-accent), var(--reader-accent-bright));
+    background: var(--component-reader-accent-gradient);
   }
 
   .capsule-slider-input {
@@ -511,9 +543,9 @@
     position: absolute;
     top: 50%;
     z-index: 1;
-    width: 4px;
-    height: 12px;
-    border-radius: 999px;
+    width: var(--component-reader-checkpoint-width);
+    height: var(--component-reader-checkpoint-height);
+    border-radius: var(--component-reader-pill-radius);
     transform: translate(-50%, -50%);
     background: var(--reader-accent-bright);
     pointer-events: none;
@@ -525,19 +557,19 @@
     position: absolute;
     bottom: 88px;
     right: 22px;
-    z-index: 100;
+    z-index: var(--component-reader-popover-z-index);
     width: min(276px, calc(100vw - 32px));
     max-height: calc(100vh - 120px);
     overflow-y: auto;
-    background: rgba(26, 26, 30, 0.97);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 12px;
+    background: var(--reader-panel);
+    border: 1px solid var(--reader-line);
+    border-radius: var(--component-reader-popover-radius);
     padding: 10px 12px;
     box-shadow:
-      0 12px 32px rgba(0, 0, 0, 0.5),
-      inset 0 1px 0 rgba(255, 255, 255, 0.02);
-    backdrop-filter: blur(20px) saturate(140%);
-    animation: popoverIn 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+      var(--reader-shadow),
+      var(--reader-inset-highlight);
+    backdrop-filter: var(--reader-blur);
+    animation: popoverIn var(--component-reader-transition-popover) both;
   }
 
   @media (min-width: 1120px) {
@@ -572,7 +604,7 @@
     justify-content: space-between;
     gap: 12px;
     min-height: 28px;
-    border-top: 1px solid rgba(255, 255, 255, 0.025);
+    border-top: 1px solid var(--reader-divider);
     padding-top: 8px;
   }
 
@@ -597,9 +629,9 @@
 
   .reader-settings-popover :global(.popover-segmented) {
     display: flex;
-    background: rgba(0, 0, 0, 0.45);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 5px;
+    background: var(--reader-control-bg);
+    border: 1px solid var(--reader-line);
+    border-radius: var(--component-reader-toggle-radius);
     padding: 1.5px;
     overflow: hidden;
   }
@@ -611,38 +643,43 @@
     font-size: 11px;
     font-weight: 500;
     padding: 4px 8px;
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
     cursor: pointer;
-    transition: color 150ms, background 150ms;
+    transition:
+      color var(--component-reader-transition-fast),
+      background var(--component-reader-transition-fast);
   }
 
   .reader-settings-popover :global(.popover-segment:hover) {
     color: var(--reader-text);
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--reader-control-hover-bg);
   }
 
   .reader-settings-popover :global(.popover-segment.active) {
     color: var(--reader-text);
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--reader-control-active-bg);
+    border: 1px solid var(--reader-line-active);
   }
 
   .reader-settings-popover :global(.popover-btn) {
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    background: rgba(0, 0, 0, 0.45);
+    border: 1px solid var(--reader-line);
+    background: var(--reader-control-bg);
     color: var(--reader-text);
     font-size: 11px;
     font-weight: 500;
     padding: 4px 8px;
-    border-radius: 4px;
+    border-radius: var(--component-reader-toggle-radius);
     cursor: pointer;
-    transition: color 150ms, border-color 150ms, background 150ms;
+    transition:
+      color var(--component-reader-transition-fast),
+      border-color var(--component-reader-transition-fast),
+      background var(--component-reader-transition-fast);
   }
 
   .reader-settings-popover :global(.popover-btn:hover:not(:disabled)) {
     color: var(--reader-text);
-    border-color: rgba(255, 255, 255, 0.12);
-    background: rgba(255, 255, 255, 0.06);
+    border-color: var(--reader-line-hover);
+    background: var(--reader-control-hover-bg);
   }
 
   .reader-settings-popover :global(.popover-btn.active) {
@@ -657,13 +694,13 @@
   }
 
   .reader-settings-popover :global(.popover-select) {
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    background: rgba(0, 0, 0, 0.45);
+    border: 1px solid var(--reader-line);
+    background: var(--reader-control-bg);
     color: var(--reader-text);
     font-size: 11px;
     font-weight: 500;
     padding: 4px 6px;
-    border-radius: 4px;
+    border-radius: var(--component-reader-toggle-radius);
     outline: none;
     max-width: 140px;
   }
@@ -671,15 +708,15 @@
   .reader-settings-popover :global(.popover-stepper) {
     display: flex;
     align-items: center;
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 4px;
+    border: 1px solid var(--reader-line);
+    border-radius: var(--component-reader-toggle-radius);
     overflow: hidden;
-    background: rgba(0, 0, 0, 0.45);
+    background: var(--reader-control-bg);
   }
 
   .reader-settings-popover :global(.popover-step-btn) {
     border: 0;
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--reader-control-bg);
     color: var(--reader-text);
     width: 24px;
     height: 24px;
@@ -691,7 +728,7 @@
   }
 
   .reader-settings-popover :global(.popover-step-btn:hover:not(:disabled)) {
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--reader-control-hover-bg);
     color: var(--reader-text);
   }
 
@@ -705,7 +742,7 @@
     color: var(--reader-text);
     min-width: 44px;
     text-align: center;
-    border-inline: 1px solid rgba(255, 255, 255, 0.05);
+    border-inline: 1px solid var(--reader-line);
     line-height: 24px;
   }
 
@@ -717,8 +754,8 @@
   .reader-settings-popover :global(.popover-swatch) {
     width: 18px;
     height: 18px;
-    border-radius: 9999px;
-    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: var(--component-reader-control-radius);
+    border: 1px solid var(--reader-line-hover);
     cursor: pointer;
     padding: 0;
     transition: transform 120ms;
@@ -729,31 +766,33 @@
   }
 
   .reader-settings-popover :global(.popover-swatch.active) {
-    border: 2px solid rgba(255, 255, 255, 0.6);
+    border: 2px solid var(--reader-text);
     transform: scale(1.15);
   }
 
   .reader-settings-popover :global(.popover-color-picker) {
     width: 20px;
     height: 20px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    border: 1px solid var(--reader-line-active);
     padding: 0;
     background: transparent;
     cursor: pointer;
-    border-radius: 9999px;
+    border-radius: var(--component-reader-control-radius);
     overflow: hidden;
   }
 
   .reader-settings-popover :global(.popover-toggle) {
     width: 32px;
     height: 18px;
-    border-radius: 9999px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    background: rgba(0, 0, 0, 0.45);
+    border-radius: var(--component-reader-control-radius);
+    border: 1px solid var(--reader-line-active);
+    background: var(--reader-control-bg);
     position: relative;
     cursor: pointer;
     padding: 0;
-    transition: background-color 150ms, border-color 150ms;
+    transition:
+      background-color var(--component-reader-transition-fast),
+      border-color var(--component-reader-transition-fast);
   }
 
   .reader-settings-popover :global(.popover-toggle::after) {
@@ -763,25 +802,29 @@
     left: 2px;
     width: 12px;
     height: 12px;
-    border-radius: 9999px;
+    border-radius: var(--component-reader-control-radius);
     background: var(--reader-muted);
-    transition: transform 150ms, background-color 150ms;
+    transition:
+      transform var(--component-reader-transition-fast),
+      background-color var(--component-reader-transition-fast);
   }
 
   .reader-settings-popover :global(.popover-toggle.active) {
-    background-color: rgba(255, 255, 255, 0.12);
-    border-color: rgba(255, 255, 255, 0.3);
+    background-color: var(--reader-control-active-bg);
+    border-color: var(--reader-line-active);
   }
 
   .reader-settings-popover :global(.popover-toggle.active::after) {
     transform: translateX(14px);
-    background-color: rgba(255, 255, 255, 0.85);
+    background-color: var(--reader-text);
   }
 
   .reader-settings-popover :global(.popover-tts-row) {
     cursor: pointer;
-    transition: background 150ms ease, color 150ms ease;
-    border-radius: 4px;
+    transition:
+      background var(--component-reader-transition-fast),
+      color var(--component-reader-transition-fast);
+    border-radius: var(--component-reader-toggle-radius);
     padding: 5px 7px;
     margin: 0 -7px;
   }
@@ -804,7 +847,7 @@
   }
 
   .reader-settings-popover :global(.popover-tts-row:hover) {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--reader-control-hover-bg);
   }
 
   .reader-settings-popover :global(.popover-chevron) {
@@ -815,7 +858,8 @@
   }
 
   .reader-settings-popover :global(.popover-tts-row:focus-visible) {
-    outline: 2px solid rgba(184, 167, 234, 0.55);
+    outline: 0;
+    box-shadow: var(--reader-focus-ring);
     outline-offset: 2px;
   }
 </style>

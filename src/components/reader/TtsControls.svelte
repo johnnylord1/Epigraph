@@ -197,6 +197,19 @@
 
 <style>
   .tts-panel {
+    --tts-reader-text: var(--reader-text, var(--component-reader-fg));
+    --tts-reader-muted: var(--reader-muted, var(--component-reader-muted-fg));
+    --tts-reader-accent: var(--reader-accent, var(--component-reader-accent-fg));
+    --tts-reader-accent-dim: var(--reader-accent-dim, var(--component-reader-accent-muted-bg));
+    --tts-reader-accent-bright: var(--reader-accent-bright, var(--component-reader-accent-strong-fg));
+    --tts-reader-line: var(--reader-line, var(--component-reader-border));
+    --tts-reader-line-hover: var(--reader-line-hover, var(--component-reader-border-hover));
+    --tts-reader-divider: var(--reader-divider, var(--component-reader-divider));
+    --tts-reader-control-bg: var(--reader-control-bg, var(--component-reader-control-bg));
+    --tts-reader-control-hover-bg: var(--reader-control-hover-bg, var(--component-reader-control-hover-bg));
+    --tts-reader-control-active-bg: var(--reader-control-active-bg, var(--component-reader-control-active-bg));
+    --tts-reader-track-bg: var(--reader-track-bg, var(--component-reader-control-track-bg));
+    --tts-reader-focus-ring: var(--reader-focus-ring, var(--component-reader-focus-ring));
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -208,7 +221,7 @@
     align-items: center;
     justify-content: space-between;
     padding-bottom: 8px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    border-bottom: 1px solid var(--tts-reader-line);
   }
 
   .tts-back-btn {
@@ -217,22 +230,30 @@
     gap: 4px;
     background: transparent;
     border: 0;
-    color: var(--reader-accent-bright);
+    color: var(--tts-reader-accent-bright);
     font-size: 11px;
     font-weight: 600;
     cursor: pointer;
     padding: 0;
-    transition: opacity 120ms;
+    transition: opacity var(--component-reader-transition-fast);
   }
 
   .tts-back-btn:hover {
     opacity: 0.8;
   }
 
+  .tts-back-btn:focus-visible,
+  .tts-btn:focus-visible,
+  .tts-range-input:focus-visible,
+  .tts-select:focus-visible {
+    outline: 0;
+    box-shadow: var(--tts-reader-focus-ring);
+  }
+
   .tts-title {
     font-size: 11px;
     font-weight: 600;
-    color: var(--reader-muted);
+    color: var(--tts-reader-muted);
   }
 
   .tts-playback-row {
@@ -248,18 +269,21 @@
     place-items: center;
     width: 32px;
     height: 32px;
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 9999px;
-    background: rgba(255, 255, 255, 0.03);
-    color: var(--reader-muted);
+    border: 1px solid var(--tts-reader-line);
+    border-radius: var(--component-reader-control-radius);
+    background: var(--tts-reader-control-bg);
+    color: var(--tts-reader-muted);
     cursor: pointer;
-    transition: all 120ms;
+    transition:
+      color var(--component-reader-transition-fast),
+      border-color var(--component-reader-transition-fast),
+      background var(--component-reader-transition-fast);
   }
 
   .tts-btn:hover:not(:disabled) {
-    color: var(--reader-text);
-    border-color: rgba(255, 255, 255, 0.15);
-    background: rgba(255, 255, 255, 0.06);
+    color: var(--tts-reader-text);
+    border-color: var(--tts-reader-line-hover);
+    background: var(--tts-reader-control-hover-bg);
   }
 
   .tts-btn:disabled {
@@ -268,14 +292,14 @@
   }
 
   .tts-btn--primary {
-    color: var(--reader-text);
-    background: rgba(143, 130, 230, 0.2);
-    border-color: rgba(171, 159, 255, 0.2);
+    color: var(--tts-reader-text);
+    background: var(--tts-reader-accent-dim);
+    border-color: var(--tts-reader-accent);
   }
 
   .tts-btn--primary:hover:not(:disabled) {
-    background: rgba(143, 130, 230, 0.3);
-    border-color: rgba(171, 159, 255, 0.3);
+    background: var(--tts-reader-control-active-bg);
+    border-color: var(--tts-reader-accent-bright);
   }
 
   .tts-settings-list {
@@ -289,14 +313,14 @@
     align-items: center;
     justify-content: space-between;
     min-height: 28px;
-    border-top: 1px solid rgba(255, 255, 255, 0.025);
+    border-top: 1px solid var(--tts-reader-divider);
     padding-top: 8px;
   }
 
   .tts-settings-label {
     font-size: 12px;
     font-weight: 500;
-    color: var(--reader-muted);
+    color: var(--tts-reader-muted);
   }
 
   .tts-speed-control {
@@ -311,15 +335,15 @@
   .tts-speed-val {
     font-size: 11px;
     font-weight: 600;
-    color: var(--reader-text);
+    color: var(--tts-reader-text);
     min-width: 28px;
   }
 
   .tts-range-input {
     flex: 1;
-    height: 4px;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.15);
+    height: var(--component-reader-range-track-height);
+    border-radius: var(--component-reader-pill-radius);
+    background: var(--tts-reader-track-bg);
     outline: none;
     -webkit-appearance: none;
     cursor: pointer;
@@ -331,10 +355,10 @@
 
   .tts-range-input::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 10px;
-    height: 10px;
-    border-radius: 999px;
-    background: var(--reader-text);
+    width: var(--component-reader-range-thumb-size);
+    height: var(--component-reader-range-thumb-size);
+    border-radius: var(--component-reader-control-radius);
+    background: var(--tts-reader-text);
   }
 
   .tts-voice-control {
@@ -346,10 +370,10 @@
 
   .tts-select {
     width: 140px;
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 4px;
-    background: rgba(0, 0, 0, 0.45);
-    color: var(--reader-text);
+    border: 1px solid var(--tts-reader-line);
+    border-radius: var(--component-reader-toggle-radius);
+    background: var(--tts-reader-control-bg);
+    color: var(--tts-reader-text);
     font-size: 11px;
     font-weight: 500;
     padding: 4px 6px;
@@ -363,6 +387,6 @@
   .tts-status-val {
     font-size: 11px;
     font-weight: 600;
-    color: var(--reader-text);
+    color: var(--tts-reader-text);
   }
 </style>
