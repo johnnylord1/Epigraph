@@ -1809,3 +1809,50 @@ Categorias cobertas:
 
 ### Veredito
 - Marco 20 tecnicamente aprovado para fechamento seletivo; nao iniciar Home no mesmo diff.
+
+## Marco 21 - Home Dashboard
+
+### Escopo executado
+- Migrada exclusivamente a camada visual de `src/components/pages/Home.svelte`, superficie ativa carregada por `Layout.svelte` para `navPage === "home"`.
+- Foram preservadas integralmente logica de busca, navegacao, historico, cards de continuidade, snapshots, fontes, estatisticas, stores, GraphQL, MangaPreview e Activity Center.
+- `Home.svelte` nao possuia mudancas locais anteriores no preflight. As mudancas antigas de Discord/Rich Presence, Tauri/Cargo, i18n, Reader, Settings, Books e migracoes permaneceram fora do lote.
+
+### Tokens e compatibilidade
+- `--component-home-*`: 74 definidos em `tokens.css`, 74 implementados em `nocturne-theme.css`, 74 consumidos e 0 sem consumo.
+- Categorias cobertas: escala, search dim e z-index, foregrounds, accents, surfaces, borders, radius, shadows, progress, charts, status, hover/active, opacity, transforms e motion.
+- `Home.svelte` deixou de consumir diretamente a camada `--n-*`. `--component-home-scale` continua apontando para `--n-hud-scale` apenas dentro da camada de tokens e permanece classificado como alias Legacy de compatibilidade.
+- Nenhum token Legacy ou `--n-*` foi removido.
+
+### Valores diretos removidos
+- Baseline do commit anterior: 82 ocorrencias visuais diretas pelo scanner do marco e 129 referencias diretas `var(--n-*)` em `Home.svelte`.
+- Estado final: 0 hex/rgb/rgba/hsl/hsla/oklch/color-mix/gradients ou `--n-*` no bloco `<style>`; shadows, blur, radius, z-index, opacity, filter, transitions e transforms visuais usam tokens.
+- Nao permaneceram excecoes visuais diretas no componente. Geometria estrutural responsiva continua local e usa apenas `--component-home-scale` quando depende da escala do HUD.
+
+### Acessibilidade
+- Textos pequenos preexistentes usavam alphas entre `0.26` e `0.60`, abaixo de WCAG AA sobre a surface `rgba(28, 27, 27, 0.8)`.
+- Os tokens de texto normal foram ajustados para alpha `0.62`, resultando em contraste calculado de aproximadamente `4.67:1`; o token muted de tracking manteve `4.53:1`.
+- Iconografia secundaria permaneceu acima de `3:1`. Geometria, tipografia, hierarquia e identidade Nocturne foram preservadas.
+
+### Screenshots reais
+- `docs/screenshots/marco21-home/before-home-main.png`: Home real em Nocturne antes da migracao, com cards, quick actions, updates, estatisticas e finished items.
+- `docs/screenshots/marco21-home/after-home-main.png`: mesma superficie apos a migracao; geometria e hierarquia permaneceram equivalentes, com aumento apenas no contraste dos textos pequenos.
+- `docs/screenshots/marco21-home/after-home-search-focus.png`: busca real focada, acima do dim; computed style mediu z-index `540` para search/center contra `61` para o dim.
+- `docs/screenshots/marco21-home/after-home-card-hover.png`: hover real do primeiro card; computed style confirmou surface `rgba(28, 27, 27, 0.8)`, border `rgba(72, 69, 79, 0.05)`, radius, shadow e deslocamento esperados.
+- A tentativa inicial de baseline focado atingiu o input oculto de Search/Books, pois duas instancias `.n-search input` estavam montadas. Essa captura invalida foi removida; nao foi renomeada nem apresentada como baseline. O baseline before valido cobre a tela principal, e foco/hover possuem validacao runtime after e contrato automatizado.
+
+### Validacao
+- Computed style no app desktop real em Nocturne: 74 tokens encontrados e 0 valores vazios.
+- A busca focada manteve `body.aethon-home-search-engaged`, search com `position: relative` e dim com `pointer-events: auto`, sem alterar a logica de entrada/saida.
+- `npm exec vitest run -- --project shell-jsdom src/components/pages/HomeThemeTokens.test.ts`: passou, 1 arquivo e 4 testes.
+- `npm exec vitest run -- --project shell-jsdom src/components/pages/HomeThemeTokens.test.ts src/components/shared/MangaPreviewThemeTokens.test.ts`: passou, 2 arquivos e 8 testes.
+- `pnpm build`: passou com 6294 modulos transformados; permaneceu apenas o aviso conhecido de chunk maior que 500 kB.
+- `git diff --check`: passou; apenas avisos informativos de conversao LF/CRLF no working tree.
+
+### Riscos antes do proximo marco
+- `TasteInsightsModal.svelte` permanece a proxima superficie auxiliar ativa de Browse com volume visual relevante.
+- `NovelSourceCheckModal.svelte` e `NovelSourceStatusDetails.svelte` permanecem candidatos a um lote coeso posterior de diagnostico de novel sources.
+- `Discover.svelte`, `Extensions.svelte`, `NovelSources.svelte`, `Tracking.svelte` e `GenreDrillPage.svelte` continuam Legacy ate nova evidencia de renderizacao real.
+- A reducao final de `--n-*` deve ocorrer somente depois dos consumidores ativos restantes e sem remocao automatica de aliases Legacy.
+
+### Veredito
+- Marco 21 tecnicamente aprovado para fechamento seletivo; o Marco 22 nao foi iniciado.
