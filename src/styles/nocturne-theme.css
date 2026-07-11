@@ -291,6 +291,7 @@
   --component-app-bg: var(--n-gradient-bg), #131313;
   --component-app-fg: var(--n-on-surface);
   --component-app-font: "Manrope", var(--font-sans);
+  --component-app-loading-fg: var(--text-tertiary);
   --component-detail-layer-bg: var(--bg-surface);
   --component-search-dim-bg:
     radial-gradient(circle at 50% 10%, rgba(34, 26, 52, 0.18), rgba(0, 0, 0, 0) 30%),

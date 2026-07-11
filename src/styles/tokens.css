@@ -414,6 +414,7 @@
   --component-app-bg: var(--color-background);
   --component-app-fg: var(--text-primary);
   --component-app-font: var(--font-sans);
+  --component-app-loading-fg: var(--text-tertiary);
   --component-detail-layer-bg: var(--color-surface);
   --component-search-dim-bg: var(--component-overlay-bg);
   --component-sidebar-border: var(--color-border);

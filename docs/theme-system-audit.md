@@ -1956,12 +1956,20 @@ Categorias cobertas:
 ### Veredito
 - Marco 23 tecnicamente aprovado para fechamento seletivo; nenhum componente Legacy foi migrado ou removido.
 
-## Marco futuro - Auditoria final de superficies Legacy e compatibilidade
+## Marco 24 - Auditoria final de superficies Legacy e compatibilidade
 
 ### Objetivo e momento de execucao
-- Executar somente depois do fechamento dos marcos ativos atuais.
+- Iniciado depois do fechamento seletivo do Marco 23 no commit `93ee067`.
 - Revalidar cada superficie e alias classificados como Legacy contra imports diretos/indiretos, rotas, lazy imports, flags, stores, presets, ThemeEditor, custom tokens, CSS compilado/computed style e aplicativo real.
 - Este marco e de classificacao e evidencia. Nenhum componente, token ou alias deve ser removido automaticamente; qualquer limpeza posterior exige escopo e aceite separados.
+
+### Preflight inicial e correcao de classificacao
+- `src/main.ts` monta diretamente `App.svelte` e nao importa `src/routes.ts`. Assim, o mapa antigo que ainda importa `Extensions.svelte` permanece Legacy e nao comprova uma rota runtime ativa.
+- O shell ativo continua limitado a Home, Library, Search/Explore, Downloads e Settings; `Layout.svelte` carrega `Search.svelte`, que renderiza `BrowseV3.svelte` para Search, Discover e Sources.
+- A frase do Marco 23 sobre os consumidores globais restantes de `--n-*` deve ser lida como a varredura de `src/components`: o componente raiz ativo `App.svelte` ainda publica `--n-hud-scale` via `style.setProperty` e consome `--n-text-muted` no estado de carregamento.
+- `--n-hud-scale` e portanto **Ativo por compatibilidade**, nao Legacy puro. Ele alimenta `nocturne-port.css`, aliases semanticos/de componente e CSS computado real; nao pode ser removido.
+- `--n-text-muted` possui uma referencia ativa em `App.svelte`, mas nenhuma definicao global encontrada. Foi classificado como pendencia ativa de infraestrutura para correcao visual separada, sem alteracao neste preflight.
+- A validacao em `http://localhost:1420` confirmou o shell e a navegacao principal reais. O backend MAIN em `127.0.0.1:4567` nao estava disponivel, portanto a validacao runtime completa das subtelas Legacy permanece pendente e nao foi substituida por dados artificiais.
 
 ### Inventario Legacy a revalidar
 
@@ -1969,6 +1977,7 @@ Categorias cobertas:
 | --- | --- | --- | --- | --- |
 | `Discover.svelte` | Legacy | A navegacao ativa de Discover/Search usa `Search.svelte` com `BrowseV3.svelte`; o componente antigo ainda referencia `SourceBrowse.svelte` e `--n-primary-container`. | Confirmar ausencia em rotas alternativas, imports dinamicos, flags e runtime real. | Nao |
 | `Extensions.svelte` | Legacy | Ainda aparece em `routes.ts` e em mock de teste, mas o estado de navegacao ativo normaliza `extensions` para `search`; ainda consome `--n-hud-scale`. | Validar compatibilidade de rotas antigas, deep links, estado persistido e runtime de upgrade. | Nao |
+| `routes.ts` | Legacy de navegacao | Importa `Extensions.svelte`, mas nao e importado por `main.ts`, `App.svelte` ou pelo shell ativo encontrado. | Confirmar empacotamento final, entradas alternativas e compatibilidade externa antes de classificar como morto. | Nao |
 | `SourceBrowse.svelte` | Legacy | Consumido pela superficie Legacy `Discover.svelte`; nao foi comprovado como superficie ativa independente. | Buscar outros hosts, imports dinamicos e renderizacao condicional. | Nao |
 | `SourceList.svelte` | Legacy | Associado aos fluxos antigos/compartilhados de Sources e Discover, sem evidencia runtime suficiente para classificar como morto. | Confirmar todos os hosts e estados de Sources no app real. | Nao |
 | `NovelSources.svelte` | Legacy | Mantem testes e renderiza `NovelSourceStatusDetails.svelte`, mas nao participa da rota ativa validada. | Verificar rotas antigas, flags de novels, deep links e estados persistidos. | Nao |
@@ -1978,8 +1987,10 @@ Categorias cobertas:
 | `NovelsLibraryBody.svelte` | Legacy | Nao foi encontrado na cadeia de imports/renderizacao da Library ativa; pode representar compatibilidade de uma Library anterior. | Repetir busca global, lazy imports, modos/tabs, flags de novels e app real. | Nao |
 | `Tracking.svelte` | Legacy | Nao houve evidencia runtime suficiente de renderizacao na navegacao ativa durante os marcos visuais. | Mapear hosts, rotas, integrações e estados que habilitam tracking. | Nao |
 | `GenreDrillPage.svelte` | Legacy | Superficie especializada sem caminho runtime ativo comprovado na auditoria atual. | Verificar navegacao indireta a partir de Browse/Search e feature flags. | Nao |
-| Camada `--n-*` | Legacy de compatibilidade | Permanece como contrato de temas, aliases e custom themes; consumidores ativos diretos foram eliminados no Marco 23. | Auditar definicoes, fallbacks, `style.setProperty`, ThemeEditor, presets, stores, templates e CSS computado de todos os temas. | Nao |
-| `--n-sidebar-width`, `--n-hud-scale`, `--n-topbar-height` | Legacy de compatibilidade | Usados como aliases internos de tokens e/ou por superficies Legacy; podem sustentar temas customizados e estado persistido. | Confirmar consumo dinamico e compatibilidade com temas importados antes de qualquer deprecacao. | Nao |
+| Camada `--n-*` | Mista: Ativa e Legacy | Permanece como contrato de temas, aliases, `nocturne-port.css` e custom themes. `App.svelte` publica `--n-hud-scale`; `Discover.svelte` e `Extensions.svelte` sao consumidores Legacy diretos. | Separar token a token entre Ativo e Legacy por CSS compilado/computed style, sem remocao automatica. | Nao |
+| `--n-hud-scale` | Ativo por compatibilidade | Publicado dinamicamente por `App.svelte` e consumido por CSS/tokens reais, inclusive `nocturne-port.css`. | Mapear todos os aliases dependentes e manter o contrato durante a preparacao para novos temas. | Nao |
+| `--n-text-muted` | Referencia invalida corrigida | Era consumido pelo estado `.page-loading` de `App.svelte`, mas nunca esteve definido. Foi substituido por `--component-app-loading-fg`. | Manter teste de contrato para impedir regressao. | Nao se aplica |
+| `--n-sidebar-width`, `--n-topbar-height` | Ativos por compatibilidade | Alimentam `nocturne-port.css` e tokens semanticos/de componente presentes no CSS final. | Manter enquanto a camada port/token depender desses aliases. | Nao |
 | Aliases `--activity-*` | Legacy de compatibilidade | Mantidos pela migracao do Marco 20 para preservar consumidores ou temas anteriores. | Buscar referencias globais, custom tokens, ThemeEditor e computed style. | Nao |
 
 ### Regras de classificacao do marco futuro
@@ -1997,4 +2008,35 @@ Categorias cobertas:
 
 ### Risco registrado
 - A ausencia de uma superficie na navegacao principal nao prova que ela esteja morta: deep links, migracao de estado, feature flags, backend configurado e temas customizados podem manter caminhos indiretos ativos.
-- A camada `--n-*` e os aliases `--activity-*` devem continuar classificados como Legacy ate uma auditoria completa de compatibilidade; sua remocao nao faz parte dos marcos visuais atuais.
+- A porcao sem consumo da camada `--n-*` e os aliases `--activity-*` devem continuar classificados como Legacy; os demais tokens `--n-*` sao ativos por compatibilidade. Nenhuma remocao faz parte deste marco.
+
+### Resultado consolidado da classificacao
+- **Ativos:** 53 de 62 tokens `--n-*`. A evidencia inclui consumo em `nocturne-port.css`, tokens semanticos/de componente, CSS global e publicacao dinamica de `--n-hud-scale` por `App.svelte`.
+- **Legacy:** 9 de 62 tokens `--n-*`, todos ainda definidos e sem consumidor estatico atual: `--n-bg`, `--n-bg-top`, `--n-line`, `--n-line-strong`, `--n-outline-variant`, `--n-popover-control-bg`, `--n-popover-control-border`, `--n-surface-container` e `--n-surface-container-low`.
+- **Legacy:** 13 aliases `--activity-*`, definidos em `nocturne-theme.css` e sem consumidor estatico atual: `--activity-panel`, `--activity-panel-soft`, `--activity-line`, `--activity-line-soft`, `--activity-text`, `--activity-title`, `--activity-muted`, `--activity-subtle`, `--activity-faint`, `--activity-accent`, `--activity-accent-soft`, `--activity-accent-line` e `--activity-danger`.
+- **Legacy de superficie/navegacao:** `routes.ts`, `Discover.svelte`, `Extensions.svelte`, `SourceBrowse.svelte`, `SourceList.svelte`, `NovelSources.svelte`, `NovelSourceCheckModal.svelte`, `NovelSourceStatusDetails.svelte`, `NovelRepositoriesPanel.svelte`, `NovelsLibraryBody.svelte`, `Tracking.svelte` e `GenreDrillPage.svelte`.
+- `SourceBrowse.svelte` e hospedado somente por `Discover.svelte`; os dois componentes de diagnostico Novel sao hospedados somente por `NovelRepositoriesPanel.svelte`/`NovelSources.svelte`. Os demais candidatos sem host encontrado continuam Legacy por conservadorismo.
+- **Mortos:** 0. A ausencia de import estatico ou consumo atual nao foi considerada prova suficiente diante de rotas antigas, temas customizados, estado persistido e configuracoes de backend.
+- **Removidos:** 0 tokens, 0 aliases, 0 componentes e 0 arquivos Legacy.
+
+### Correcao ativa executada
+- Criado `--component-app-loading-fg` em `tokens.css` com origem semantica `--text-tertiary` e implementacao Nocturne equivalente.
+- `.page-loading` em `App.svelte` passou a consumir o novo token; a referencia indefinida `--n-text-muted` foi eliminada.
+- `--n-hud-scale` permaneceu intocado como publicador ativo de escala e passou a ser protegido explicitamente pelo teste de contrato.
+- Contagem do novo contrato: 1 token definido, 1 implementado, 1 consumido e 0 sem consumo.
+
+### Validacao visual e limitacoes
+- O app web real foi executado em Nocturne em `http://127.0.0.1:1420`; o shell ativo e a navegacao principal foram confirmados.
+- O backend MAIN em `127.0.0.1:4567` permaneceu indisponivel. Nenhum dado ou flag artificial foi criado para forcar as superficies Legacy.
+- `.page-loading` foi transitorio demais para uma captura before/after confiavel. A tentativa diagnostica ja mostrava Home e foi removida; nenhuma screenshot enganosa foi mantida.
+- A equivalencia visual da cor fica coberta pelo token semantico Nocturne e pelo contrato automatizado. Uma captura runtime do estado exato continua limitada ate ser possivel manter um lazy load visivel de forma natural.
+
+### Testes e build
+- `npm exec vitest run -- --project shell-jsdom --project unit src/AppThemeCompatibilityTokens.test.ts src/components/layout/ActiveShellCompatibilityThemeTokens.test.ts src/store/themeTokens.test.ts`: passou, 3 arquivos e 10 testes.
+- O teste novo valida definicao/consumo do token de loading, preservacao de `--n-hud-scale`, isolamento das superficies Legacy e a lista completa dos 9 tokens `--n-*` e 13 aliases `--activity-*` Legacy.
+- `pnpm build`: passou com 6294 modulos transformados; permaneceu apenas o aviso conhecido de chunk maior que 500 kB.
+
+### Riscos remanescentes e veredito
+- As superficies Legacy nao devem ser removidas ate validacao com backend/configuracoes que possam ativar rotas ou hosts indiretos.
+- Os 22 aliases/tokens Legacy permanecem definidos para compatibilidade. Uma eventual remocao deve ser um marco separado, com validacao de ThemeEditor, temas importados e estado persistido.
+- Marco 24 tecnicamente aprovado para fechamento seletivo, condicionado apenas a `git diff --check`; nenhum marco posterior foi iniciado.

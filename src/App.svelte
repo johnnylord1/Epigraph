@@ -3257,7 +3257,7 @@
     display: grid;
     place-items: center;
     min-height: 100%;
-    color: var(--n-text-muted);
+    color: var(--component-app-loading-fg);
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
