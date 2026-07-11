@@ -1,4 +1,5 @@
 import { filePathAsStableUrl, writeBookCover } from "./storage";
+import { extractIsbns } from "./isbn";
 import type { BookSectionSummaryItem } from "./types";
 import pdfjsWorkerUrl from "pdfjs-dist/build/pdf.worker.mjs?url";
 
@@ -37,6 +38,7 @@ export type ImportedPdfBookData = {
   title: string;
   author: string | null;
   description: string | null;
+  isbns: string[];
   pageCount: number;
   coverPath: string | null;
   sectionsSummary: BookSectionSummaryItem[];
@@ -132,6 +134,14 @@ function readOptionalText(value: unknown): string | null {
 function readMetadataValue(metadata: any, key: string): string | null {
   try {
     return readOptionalText(metadata?.get?.(key));
+  } catch {
+    return null;
+  }
+}
+
+function readAllMetadata(metadata: any): unknown {
+  try {
+    return metadata?.getAll?.() ?? null;
   } catch {
     return null;
   }
@@ -283,6 +293,13 @@ export async function extractPdfBookData(
       description:
         readOptionalText(info?.Subject)
         ?? readMetadataValue(metadata, "dc:description"),
+      isbns: extractIsbns(
+        info?.ISBN,
+        info?.Isbn,
+        info?.Subject,
+        readMetadataValue(metadata, "dc:identifier"),
+        readAllMetadata(metadata),
+      ),
       pageCount: Math.max(1, Number(documentRef.numPages) || 1),
       coverPath,
       sectionsSummary,

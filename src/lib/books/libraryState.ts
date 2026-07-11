@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import { reconcileBookIdentityState } from "./identity";
 import { BookAssetResolver } from "./assets";
+import { extractIsbns } from "./isbn";
 import { normalizeBookBookmark, normalizeBookProgress } from "./progress";
 import type { BookBookmarkEntry, BookEntry, BookProgress } from "./types";
 
@@ -73,6 +74,9 @@ function createEmptyState(): PersistedBookLibraryState {
 }
 
 function normalizeLoadedBook(book: any): BookEntry {
+  const hardcoverBookId = typeof book?.hardcoverBookId === "number" && Number.isFinite(book.hardcoverBookId)
+    ? Math.trunc(book.hardcoverBookId)
+    : null;
   return {
     id: String(book?.id ?? ""),
     assetFingerprint: typeof book?.assetFingerprint === "string" ? book.assetFingerprint : undefined,
@@ -80,9 +84,12 @@ function normalizeLoadedBook(book: any): BookEntry {
     author: typeof book?.author === "string" ? book.author : null,
     description: typeof book?.description === "string" ? book.description : null,
     genres: Array.isArray(book?.genres) ? book.genres.filter((entry: unknown): entry is string => typeof entry === "string") : undefined,
+    isbns: Array.isArray(book?.isbns) ? extractIsbns(book.isbns) : undefined,
     metadataBackfillVersion: typeof book?.metadataBackfillVersion === "number" ? book.metadataBackfillVersion : undefined,
     coverPath: typeof book?.coverPath === "string" ? book.coverPath : null,
     coverUrl: typeof book?.coverUrl === "string" ? book.coverUrl : undefined,
+    hardcoverBookId: hardcoverBookId && hardcoverBookId > 0 ? hardcoverBookId : null,
+    hardcoverCoverUrl: typeof book?.hardcoverCoverUrl === "string" ? book.hardcoverCoverUrl : null,
     subtype: book?.subtype === "pdf" ? "pdf" : "epub",
     pageCount: typeof book?.pageCount === "number" ? book.pageCount : null,
     createdAt: typeof book?.createdAt === "number" ? book.createdAt : 0,

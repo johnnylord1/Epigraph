@@ -118,6 +118,22 @@ describe("book library state storage", () => {
     expect(peekBookLibraryState().books[0]?.title).toBe("Reader Contract");
   });
 
+  it("normalizes optional Hardcover links for imported books", async () => {
+    invokeMock.mockResolvedValueOnce(JSON.stringify({
+      ...createState(),
+      books: createState().books.map((book) => ({
+        ...book,
+        hardcoverBookId: 456.9,
+        hardcoverCoverUrl: "https://assets.hardcover.app/covers/book.jpg",
+      })),
+    }));
+
+    const state = await loadBookLibraryState();
+
+    expect(state.books[0]?.hardcoverBookId).toBe(456);
+    expect(state.books[0]?.hardcoverCoverUrl).toBe("https://assets.hardcover.app/covers/book.jpg");
+  });
+
   it("starts with empty book state when no desktop state exists", async () => {
     invokeMock.mockResolvedValueOnce(null);
 
@@ -132,11 +148,23 @@ describe("book library state storage", () => {
   it("persists updated book state to desktop storage", async () => {
     invokeMock.mockResolvedValueOnce("C:/Users/jhow-/AppData/Roaming/aethon/books/library-state.json");
 
-    const state = await saveBookLibraryState(createState());
+    const nextState = {
+      ...createState(),
+      books: createState().books.map((book) => ({
+        ...book,
+        hardcoverBookId: 456,
+        hardcoverCoverUrl: "https://assets.hardcover.app/covers/book.jpg",
+      })),
+    };
+    const state = await saveBookLibraryState(nextState);
 
     expect(state.books).toHaveLength(1);
     expect(invokeMock).toHaveBeenCalledWith("write_book_library_state", expect.objectContaining({
       contents: expect.stringContaining("\"bookId\": \"epub-demo\""),
+      profileId: "main",
+    }));
+    expect(invokeMock).toHaveBeenCalledWith("write_book_library_state", expect.objectContaining({
+      contents: expect.stringContaining("\"hardcoverBookId\": 456"),
       profileId: "main",
     }));
   });

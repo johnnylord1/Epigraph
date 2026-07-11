@@ -1,5 +1,6 @@
 import JSZip from "jszip";
 import { XMLParser } from "fast-xml-parser";
+import { extractIsbns } from "./isbn";
 import type { ParsedBookCover, ParsedEpubBook, BookSpineItem, BookTocItem } from "./types";
 
 const xml = new XMLParser({
@@ -243,6 +244,7 @@ export async function parseEpubArchive(buffer: ArrayBuffer, fallbackTitle: strin
     author: firstText(metadata.creator, metadata["dc:creator"]),
     description: firstText(metadata.description, metadata["dc:description"]),
     genres: allText(metadata.subject, metadata["dc:subject"]),
+    isbns: extractIsbns(metadata.identifier, metadata["dc:identifier"]),
     toc,
     spine,
     cover,

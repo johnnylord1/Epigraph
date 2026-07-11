@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import { gql, gqlUpload, isGraphqlMutation } from "./client";
+import { store } from "../store/state.svelte";
+import { getServerUrl, gql, gqlUpload, isGraphqlMutation } from "./client";
 import {
   setSuwayomiUpdateInProgressForTests,
   SUWAYOMI_UPDATE_WRITE_BLOCKED_MESSAGE,
@@ -9,7 +10,42 @@ import {
 describe("GraphQL client errors", () => {
   afterEach(() => {
     setSuwayomiUpdateInProgressForTests(false);
+    store.runtimeServerUrl = null;
+    store.runtimeResolvedLocalProfileMeta = null;
     vi.unstubAllGlobals();
+  });
+
+  test("prefers the resolved runtime profile server over stale settings", () => {
+    store.settings.serverUrl = "http://127.0.0.1:4667";
+    store.runtimeResolvedLocalProfileMeta = {
+      id: "main",
+      label: "MAIN",
+      title: "Aethon [MAIN :4567]",
+      serverUrl: "http://127.0.0.1:4567",
+      port: 4567,
+      local: true,
+      builtIn: true,
+    };
+
+    expect(getServerUrl()).toBe("http://127.0.0.1:4567");
+  });
+
+  test("uses the active local session title before stale saved settings", () => {
+    store.settings.serverUrl = "http://127.0.0.1:4667";
+    store.runtimeServerUrl = null;
+    store.runtimeResolvedLocalProfileMeta = null;
+    vi.stubGlobal("document", { title: "Aethon [MAIN :4567]" });
+
+    expect(getServerUrl()).toBe("http://127.0.0.1:4567");
+  });
+
+  test("ignores the reserved test profile URL when runtime is missing", () => {
+    store.settings.serverUrl = "http://127.0.0.1:4667";
+    store.runtimeServerUrl = null;
+    store.runtimeResolvedLocalProfileMeta = null;
+    vi.stubGlobal("document", { title: "Aethon [TEST :4667]" });
+
+    expect(getServerUrl()).toBe("http://127.0.0.1:4567");
   });
 
   test("normalizes empty GraphQL errors from JSON requests", async () => {

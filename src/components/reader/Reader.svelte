@@ -11,7 +11,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { open } from "@tauri-apps/plugin-shell";
-  import { getServerUrl, gql, thumbUrl } from "../../lib/client";
+  import { getServerAuthHeader, getServerUrl, gql, thumbUrl } from "../../lib/client";
   import { acquireResolvedMediaUrl, preloadBlobUrls, resetImageCache, resolvedImage, warmResolvedMediaUrl } from "../../lib/imageCache";
   import { FETCH_CHAPTER_PAGES, MARK_CHAPTER_READ, ENQUEUE_DOWNLOAD, ENQUEUE_CHAPTERS_DOWNLOAD } from "../../lib/queries";
   import { toSuwayomiWebViewUrl } from "../../lib/suwayomiWebView";
@@ -19,7 +19,13 @@
   import { isEditableKeyboardTarget, matchesKeybind, toggleFullscreen, DEFAULT_KEYBINDS } from "../../lib/keybinds";
   import { loadOfflineMangaChapter, revokeOfflineMangaPages } from "../../lib/reader/offlineManga";
   import { setReading } from "../../lib/discord";
+  import { canResolveDiscordCover, canRunDiscordCoverImprovement } from "../../lib/discord/coverImprovementGate";
+  import { isDiscordPublicImageUrl } from "../../lib/discord/coverResolver";
+  import { discordCoverService, type DiscordCoverSource } from "../../lib/discord/discordCoverService";
+  import { discordPublicCoverResolver } from "../../lib/discord/discordPublicCoverResolver";
+  import { resolveTrackedMangaDiscordCover } from "../../lib/discord/trackerCoverResolver";
   import type { FitMode } from "../../store/state.svelte";
+  import type { Manga } from "../../lib/types";
   import NocturneState from "../shared/NocturneState.svelte";
   import ReaderHud from "./ReaderHud.svelte";
 
@@ -328,11 +334,141 @@
   });
 
   const sliderPct = $derived(sliderMax > 1 ? ((sliderPage - 1) / (sliderMax - 1)) * 100 : 0);
+  let lastDiscordMangaId: number | null = null;
+  let lastDiscordChapterId: number | null = null;
+  let mangaTrackerStateVersion = $state(0);
+  let discordCoverMangaId: number | null = null;
+  let discordCoverLookupKey: string | null = null;
+  let discordCoverLookupVersion = 0;
+  let discordPublicCoverUrl: string | null = null;
 
   $effect(() => {
+    const handleTrackerStateChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ kind?: string; mangaId?: number | string | null }>).detail;
+      if (detail?.kind && detail.kind !== "comic") return;
+      const changedMangaId = detail?.mangaId == null ? null : Number(detail.mangaId);
+      if (Number.isFinite(changedMangaId) && store.activeManga?.id !== changedMangaId) return;
+      mangaTrackerStateVersion += 1;
+    };
+    globalThis.addEventListener?.("aethon-tracker-state-changed", handleTrackerStateChanged);
+    return () => {
+      globalThis.removeEventListener?.("aethon-tracker-state-changed", handleTrackerStateChanged);
+    };
+  });
+
+  function canResolveDiscordExternalCover() {
+    return canResolveDiscordCover(store.settings);
+  }
+
+  function absoluteServerMediaUrl(path: string): string | null {
+    try {
+      return new URL(path, `${getServerUrl()}/`).toString();
+    } catch {
+      return null;
+    }
+  }
+
+  function mangaDiscordCoverSource(manga: Manga): DiscordCoverSource | null {
+    const thumbnail = typeof manga.thumbnailUrl === "string" ? manga.thumbnailUrl.trim() : "";
+    if (!thumbnail) return null;
+    if (isDiscordPublicImageUrl(thumbnail)) return { type: "public-url", value: thumbnail };
+    const trustedUrl = absoluteServerMediaUrl(thumbnail);
+    if (!trustedUrl) return null;
+    return {
+      type: "trusted-thumbnail",
+      value: trustedUrl,
+      trustedLocalBaseUrl: getServerUrl(),
+      authHeader: getServerAuthHeader(),
+    };
+  }
+
+  function coverSourceKey(source: DiscordCoverSource | null): string | null {
+    if (!source?.value) return null;
+    if (source.type === "trusted-thumbnail") {
+      return `${source.type}:${source.value}:${source.trustedLocalBaseUrl ?? ""}`;
+    }
+    return `${source.type}:${source.value}`;
+  }
+
+  function publishResolvedDiscordCover(manga: Manga, coverUrl: string, lookupVersion: number) {
+    if (lookupVersion !== discordCoverLookupVersion) return;
+    if (store.activeManga?.id !== manga.id || !canResolveDiscordExternalCover()) return;
+    const chapter = store.activeChapter;
+    if (!chapter) return;
+    discordPublicCoverUrl = coverUrl;
+    void setReading(manga, chapter, {
+      progressPercent: sliderPct,
+      publicCoverUrl: coverUrl,
+      settings: store.settings,
+      reason: "work-change",
+    });
+  }
+
+  function refreshDiscordCoverForManga(manga: Manga) {
+    const publicThumbnail = isDiscordPublicImageUrl(manga.thumbnailUrl) ? manga.thumbnailUrl : null;
+    const shouldImproveCover = canRunDiscordCoverImprovement(store.settings);
+    if (manga.id !== discordCoverMangaId) {
+      discordCoverMangaId = manga.id;
+      discordCoverLookupKey = null;
+      discordPublicCoverUrl = publicThumbnail;
+      discordCoverLookupVersion += 1;
+    }
+
+    if (!canResolveDiscordExternalCover()) {
+      discordPublicCoverUrl = null;
+      return;
+    }
+
+    const source = mangaDiscordCoverSource(manga);
+    const key = [
+      "tracker-first",
+      publicThumbnail ?? "",
+      mangaTrackerStateVersion,
+      coverSourceKey(source) ?? "",
+    ].join(":");
+    if (discordCoverLookupKey === key) return;
+    const lookupVersion = ++discordCoverLookupVersion;
+    discordCoverLookupKey = key;
+    void discordPublicCoverResolver.resolve({
+      settings: store.settings,
+      workKind: "comic",
+      workId: manga.id,
+      existingPublicCoverUrl: publicThumbnail,
+      trackerKey: `manga-track-records:${mangaTrackerStateVersion}`,
+      resolveTrackerCover: () => resolveTrackedMangaDiscordCover(manga.id),
+      workerSource: shouldImproveCover ? source : null,
+      resolveWorkerCover: shouldImproveCover && source
+        ? (candidate) => discordCoverService.resolveOptimizedCover({
+            settings: store.settings,
+            workKind: "comic",
+            workId: manga.id,
+            source: candidate,
+          })
+        : null,
+    }).then((result) => {
+      if (result?.url) publishResolvedDiscordCover(manga, result.url, lookupVersion);
+    });
+  }
+
+  $effect(() => {
+    mangaTrackerStateVersion;
     const chapter = displayChapter;
     const manga   = store.activeManga;
-    if (store.settings.discordRpc && chapter && manga) setReading(manga, chapter);
+    if (!store.settings.discordRpc || !chapter || !manga) return;
+    refreshDiscordCoverForManga(manga);
+    const reason = manga.id !== lastDiscordMangaId
+      ? "work-change"
+      : chapter.id !== lastDiscordChapterId
+        ? "chapter-change"
+        : "progress";
+    lastDiscordMangaId = manga.id;
+    lastDiscordChapterId = chapter.id;
+    void setReading(manga, chapter, {
+      progressPercent: sliderPct,
+      publicCoverUrl: discordPublicCoverUrl,
+      settings: store.settings,
+      reason,
+    });
   });
 
   $effect(() => {

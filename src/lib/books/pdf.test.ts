@@ -15,6 +15,7 @@ function makeDocumentRef(overrides: Record<string, unknown> = {}) {
         Title: "The PDF Title",
         Author: "The PDF Author",
         Subject: "The PDF Subject",
+        ISBN: "978-0-306-40615-7",
       },
       metadata: {
         get: vi.fn((key: string) => {
@@ -54,6 +55,7 @@ describe("extractPdfBookData", () => {
     expect(result.title).toBe("The PDF Title");
     expect(result.author).toBe("The PDF Author");
     expect(result.description).toBe("The PDF Subject");
+    expect(result.isbns).toEqual(["9780306406157"]);
     expect(result.pageCount).toBe(12);
     expect(result.coverPath).toBe("C:\\books\\covers\\demo.jpg");
     expect(result.sectionsSummary).toEqual([
@@ -84,6 +86,7 @@ describe("extractPdfBookData", () => {
     expect(result.title).toBe("Plain PDF");
     expect(result.author).toBeNull();
     expect(result.description).toBeNull();
+    expect(result.isbns).toEqual([]);
     expect(result.coverPath).toBeNull();
     expect(result.pageCount).toBe(12);
     expect(result.sectionsSummary).toEqual([]);

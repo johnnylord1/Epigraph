@@ -954,6 +954,11 @@ export const GET_MANGA_TRACK_RECORDS = `
           lastChapterRead
           totalChapters
           remoteUrl
+          tracker {
+            id
+            name
+            icon
+          }
           startDate
           finishDate
           private

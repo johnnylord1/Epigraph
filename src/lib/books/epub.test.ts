@@ -6,6 +6,7 @@ async function buildEpub(options?: {
   author?: string | null;
   description?: string | null;
   subjects?: string[];
+  identifiers?: string[];
   withCover?: boolean;
   withNav?: boolean;
   chapterCount?: number;
@@ -16,6 +17,7 @@ async function buildEpub(options?: {
     author = "Sample Author",
     description = "Sample description",
     subjects = [],
+    identifiers = [],
     withCover = true,
     withNav = true,
     chapterCount = 2,
@@ -72,6 +74,7 @@ async function buildEpub(options?: {
           ${author ? `<dc:creator>${author}</dc:creator>` : ""}
           ${description ? `<dc:description>${description}</dc:description>` : ""}
           ${subjects.map((subject) => `<dc:subject>${subject}</dc:subject>`).join("")}
+          ${identifiers.map((identifier) => `<dc:identifier>${identifier}</dc:identifier>`).join("")}
           ${withCover ? `<meta name="cover" content="cover-image"/>` : ""}
         </metadata>
         <manifest>
@@ -99,9 +102,19 @@ describe("parseEpubArchive", () => {
     expect(parsed.author).toBe("Sample Author");
     expect(parsed.description).toBe("Sample description");
     expect(parsed.genres).toEqual([]);
+    expect(parsed.isbns).toEqual([]);
     expect(parsed.cover?.ext).toBe("jpg");
     expect(parsed.toc.map(item => item.label)).toEqual(["Chapter 1", "Chapter 2"]);
     expect(parsed.spine).toHaveLength(2);
+  });
+
+  it("extracts and validates ISBN identifiers", async () => {
+    const buffer = await buildEpub({
+      identifiers: ["urn:isbn:978-0-306-40615-7", "urn:uuid:not-an-isbn"],
+    });
+    const parsed = await parseEpubArchive(buffer, "Fallback");
+
+    expect(parsed.isbns).toEqual(["9780306406157"]);
   });
 
   it("extracts unique subject metadata as genres", async () => {

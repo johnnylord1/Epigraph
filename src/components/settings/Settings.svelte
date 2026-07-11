@@ -11,6 +11,7 @@
   import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
   import { open as openUrl } from "@tauri-apps/plugin-shell";
   import { gql, gqlUpload, getServerAuthHeader, serverFileUrl } from "../../lib/client";
+  import { setMigrationPresence } from "../../lib/discord";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import {
     createCustomLocalProfile,
@@ -1022,6 +1023,7 @@
   async function startMigration() {
     if (!migrateFrom || !migrateTo) return;
     migrating = true; migrateError = null; migrateProgress = { done: 0, total: 0, current: "" };
+    void setMigrationPresence(true, store.settings, "settings");
 
     // Subscribe to progress events from Tauri
     const { listen } = await import("@tauri-apps/api/event");
@@ -1037,6 +1039,7 @@
     } catch (e: any) {
       migrateError = e?.message ?? "Migration failed";
     } finally {
+      void setMigrationPresence(false, store.settings, "settings");
       migrating = false;
       migrateUnlisten?.(); migrateUnlisten = null;
     }
@@ -3590,6 +3593,81 @@
                     aria-checked={store.settings.discordRpc}
                     aria-label={$_("settings.general.startup.discord")}
                     onclick={() => updateSettings({ discordRpc: !store.settings.discordRpc })}
+                  ></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">{$_("settings.general.startup.discordPrivateMode")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings.general.startup.discordPrivateModeHint")}</p>
+                  </div>
+                  <button
+                    class="settings-toggle"
+                    class:is-on={store.settings.discordRpcPrivateMode}
+                    type="button"
+                    role="switch"
+                    aria-checked={store.settings.discordRpcPrivateMode}
+                    aria-label={$_("settings.general.startup.discordPrivateMode")}
+                    onclick={() => updateSettings({ discordRpcPrivateMode: !store.settings.discordRpcPrivateMode })}
+                  ></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">{$_("settings.general.startup.discordShowTitle")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings.general.startup.discordShowTitleHint")}</p>
+                  </div>
+                  <button
+                    class="settings-toggle"
+                    class:is-on={store.settings.discordRpcShowTitle}
+                    type="button"
+                    role="switch"
+                    aria-checked={store.settings.discordRpcShowTitle}
+                    aria-label={$_("settings.general.startup.discordShowTitle")}
+                    onclick={() => updateSettings({ discordRpcShowTitle: !store.settings.discordRpcShowTitle })}
+                  ></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">{$_("settings.general.startup.discordShowCover")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings.general.startup.discordShowCoverHint")}</p>
+                  </div>
+                  <button
+                    class="settings-toggle"
+                    class:is-on={store.settings.discordRpcShowCover}
+                    type="button"
+                    role="switch"
+                    aria-checked={store.settings.discordRpcShowCover}
+                    aria-label={$_("settings.general.startup.discordShowCover")}
+                    onclick={() => updateSettings({ discordRpcShowCover: !store.settings.discordRpcShowCover })}
+                  ></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">{$_("settings.general.startup.discordImproveCovers")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings.general.startup.discordImproveCoversHint")}</p>
+                  </div>
+                  <button
+                    class="settings-toggle"
+                    class:is-on={store.settings.discordRpcImproveCovers}
+                    type="button"
+                    role="switch"
+                    aria-checked={store.settings.discordRpcImproveCovers}
+                    aria-label={$_("settings.general.startup.discordImproveCovers")}
+                    onclick={() => updateSettings({ discordRpcImproveCovers: !store.settings.discordRpcImproveCovers })}
+                  ></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">{$_("settings.general.startup.discordShowProgress")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings.general.startup.discordShowProgressHint")}</p>
+                  </div>
+                  <button
+                    class="settings-toggle"
+                    class:is-on={store.settings.discordRpcShowProgress}
+                    type="button"
+                    role="switch"
+                    aria-checked={store.settings.discordRpcShowProgress}
+                    aria-label={$_("settings.general.startup.discordShowProgress")}
+                    onclick={() => updateSettings({ discordRpcShowProgress: !store.settings.discordRpcShowProgress })}
                   ></button>
                 </div>
               </div>

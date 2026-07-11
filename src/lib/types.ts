@@ -140,6 +140,7 @@ export interface TrackRecord {
   lastChapterRead: number;
   totalChapters: number;
   remoteUrl: string | null;
+  tracker?: Pick<Tracker, "id" | "name" | "icon"> | null;
   startDate: string | null;
   finishDate: string | null;
   private: boolean;

@@ -25,6 +25,13 @@
   import ReaderHud from "./ReaderHud.svelte";
   import TtsControls from "./TtsControls.svelte";
   import { createDomTtsTextProvider, createTtsController } from "../../lib/reader/tts";
+  import { setGenericReading, setTtsPresence } from "../../lib/discord";
+  import { getServerUrl } from "../../lib/client";
+  import { canResolveDiscordCover, canRunDiscordCoverImprovement } from "../../lib/discord/coverImprovementGate";
+  import { isDiscordPublicImageUrl } from "../../lib/discord/coverResolver";
+  import { discordCoverService, type DiscordCoverSource } from "../../lib/discord/discordCoverService";
+  import { discordPublicCoverResolver } from "../../lib/discord/discordPublicCoverResolver";
+  import { resolveHardcoverNovelDiscordCover } from "../../lib/discord/trackerCoverResolver";
   import { startLocalFlareSolverrAndEnable } from "../../lib/flaresolverr";
   import { isSourceChallengeMessage } from "../../lib/sourceAccess";
 
@@ -41,6 +48,15 @@
   });
   let readerBodyEl: HTMLElement | null = $state(null);
   const tts = createTtsController();
+  let ttsStateVersion = $state(0);
+  let lastDiscordTtsPlaying = false;
+  let lastDiscordNovelId: string | null = null;
+  let lastDiscordNovelChapterId: string | null = null;
+  let lastDiscordPrivacySignature: string | null = null;
+  let discordCoverNovelId: string | null = null;
+  let discordCoverLookupKey: string | null = null;
+  let discordCoverLookupVersion = 0;
+  let discordPublicCoverUrl: string | null = null;
   let libraryState = $state(peekNovelLibraryState({
     profileId: store.runtimeResolvedLocalProfileId,
     serverUrl: store.runtimeServerUrl,
@@ -77,11 +93,164 @@
   const sliderMax = $derived(Math.max(1, currentNovel?.chapters.length ?? 1));
   const sliderValue = $derived(Math.max(1, currentChapterIndex + 1));
   const sliderPct = $derived(sliderMax > 1 ? ((sliderValue - 1) / (sliderMax - 1)) * 100 : 0);
+  $effect(() => {
+    const unsubscribe = tts.subscribe(() => {
+      ttsStateVersion += 1;
+    });
+    return unsubscribe;
+  });
+
+  $effect(() => {
+    const novelId = currentNovel?.id ?? null;
+    const title = currentNovel?.title;
+    const chapter = currentNovel && currentChapterIndex >= 0 ? currentNovel.chapters[currentChapterIndex] : null;
+    if (!store.settings.discordRpc || !novelId || !title) {
+      lastDiscordNovelId = novelId;
+      lastDiscordNovelChapterId = chapter?.id ?? null;
+      lastDiscordPrivacySignature = null;
+      return;
+    }
+    refreshDiscordCoverForNovel(currentNovel);
+    const privacySignature = discordPrivacySignature();
+    const reason = novelId !== lastDiscordNovelId
+      ? "work-change"
+      : chapter?.id !== lastDiscordNovelChapterId
+        ? "chapter-change"
+        : privacySignature !== lastDiscordPrivacySignature
+          ? "privacy-change"
+          : "progress";
+    lastDiscordNovelId = novelId;
+    lastDiscordNovelChapterId = chapter?.id ?? null;
+    lastDiscordPrivacySignature = privacySignature;
+    void setGenericReading(
+      title,
+      store.settings,
+      reason,
+      novelDiscordState(chapter),
+      discordPublicCoverUrl,
+      novelDiscordProgressPercent(),
+    );
+  });
+
+  $effect(() => {
+    ttsStateVersion;
+    const playing = tts.state.isPlaying;
+    const title = currentNovel?.title;
+    if (store.settings.discordRpc && title && playing !== lastDiscordTtsPlaying) {
+      void setTtsPresence(title, playing, store.settings, discordPublicCoverUrl);
+    }
+    lastDiscordTtsPlaying = playing;
+  });
+
+  function novelDiscordCoverSource(novel: NonNullable<typeof currentNovel>): DiscordCoverSource | null {
+    if (!isDiscordPublicImageUrl(novel.coverUrl)) return null;
+    return { type: "public-url", value: novel.coverUrl };
+  }
+
+  function coverSourceKey(source: DiscordCoverSource | null): string | null {
+    if (!source?.value) return null;
+    return `${source.type}:${source.value}`;
+  }
+
+  function refreshDiscordCoverForNovel(novel: NonNullable<typeof currentNovel>) {
+    const canShowCover = canResolveDiscordCover(store.settings);
+    const shouldImproveCover = canRunDiscordCoverImprovement(store.settings);
+    const fallbackCover = isDiscordPublicImageUrl(novel.coverUrl) ? novel.coverUrl : null;
+    if (!canShowCover) {
+      discordCoverLookupKey = null;
+      discordPublicCoverUrl = null;
+      return;
+    }
+    if (novel.id !== discordCoverNovelId) {
+      discordCoverNovelId = novel.id;
+      discordCoverLookupKey = null;
+      discordPublicCoverUrl = fallbackCover;
+      discordCoverLookupVersion += 1;
+    }
+
+    const source = novelDiscordCoverSource(novel);
+    const hardcoverScopeInput = {
+      profileId: store.runtimeResolvedLocalProfileId,
+      serverUrl: store.runtimeServerUrl ?? getServerUrl(),
+    };
+    const trackerKey = [
+      "hardcover",
+      hardcoverScopeInput.profileId ?? "",
+      hardcoverScopeInput.serverUrl ?? "",
+    ].join(":");
+    const key = [
+      "tracker-first",
+      fallbackCover ?? "",
+      trackerKey,
+      coverSourceKey(source) ?? "",
+    ].join(":");
+    if (discordCoverLookupKey === key) return;
+
+    const lookupVersion = ++discordCoverLookupVersion;
+    discordCoverLookupKey = key;
+    void discordPublicCoverResolver.resolve({
+      settings: store.settings,
+      workKind: "novel",
+      workId: novel.id,
+      existingPublicCoverUrl: fallbackCover,
+      trackerKey,
+      resolveTrackerCover: () => resolveHardcoverNovelDiscordCover({
+        novelId: novel.id,
+        title: novel.title,
+        scopeInput: hardcoverScopeInput,
+      }),
+      workerSource: shouldImproveCover ? source : null,
+      resolveWorkerCover: shouldImproveCover && source
+        ? (candidate) => discordCoverService.resolveOptimizedCover({
+            settings: store.settings,
+            workKind: "novel",
+            workId: novel.id,
+            source: candidate,
+          })
+        : null,
+    }).then((result) => {
+      const coverUrl = result?.url ?? null;
+      if (!coverUrl || lookupVersion !== discordCoverLookupVersion) return;
+      if (currentNovel?.id !== novel.id || !canResolveDiscordCover(store.settings)) return;
+      const chapter = currentNovel && currentChapterIndex >= 0 ? currentNovel.chapters[currentChapterIndex] : null;
+      discordPublicCoverUrl = coverUrl;
+      void setGenericReading(
+        novel.title,
+        store.settings,
+        "work-change",
+        novelDiscordState(chapter),
+        coverUrl,
+        novelDiscordProgressPercent(),
+      );
+      if (tts.state.isPlaying) void setTtsPresence(novel.title, true, store.settings, coverUrl);
+    });
+  }
+
   const progressLabel = $derived.by(() => {
     if (!currentNovel || currentChapterIndex < 0) return $_("ui_chapter");
     const percent = currentStats ? Math.round(currentStats.progressPercent * 100) : Math.round((sliderValue / sliderMax) * 100);
     return `${sliderValue} / ${sliderMax} - ${percent}%`;
   });
+
+  function discordPrivacySignature() {
+    const settings = store.settings;
+    return JSON.stringify({
+      privateMode: settings.discordRpcPrivateMode,
+      showCover: settings.discordRpcShowCover,
+      showProgress: settings.discordRpcShowProgress,
+      showTitle: settings.discordRpcShowTitle,
+    });
+  }
+
+  function novelDiscordState(chapter: NonNullable<typeof currentNovel>["chapters"][number] | null): string | undefined {
+    return chapter ? `Chapter ${chapter.order}` : undefined;
+  }
+
+  function novelDiscordProgressPercent(): number | undefined {
+    if (currentStats && Number.isFinite(currentStats.progressPercent)) return currentStats.progressPercent * 100;
+    return Number.isFinite(sliderPct) ? sliderPct : undefined;
+  }
+
   const proseTheme = $derived(store.settings.proseReaderTheme ?? "nocturne");
   const proseFontSize = $derived(store.settings.proseReaderFontSize ?? 18);
   const proseLineHeight = $derived(store.settings.proseReaderLineHeight ?? 1.75);

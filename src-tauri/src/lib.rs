@@ -1,3 +1,5 @@
+mod discord_cover;
+mod discord_rpc;
 mod suwayomi_lan;
 mod suwayomi_update;
 pub mod syncd;
@@ -906,7 +908,7 @@ async fn novel_runtime_host_is_open(app: tauri::AppHandle) -> Result<bool, Strin
     rx.recv().map_err(|e| e.to_string())
 }
 
-fn books_data_dir() -> PathBuf {
+pub(crate) fn books_data_dir() -> PathBuf {
     if let Ok(path) = std::env::var("AETHON_BOOKS_DATA_DIR_OVERRIDE") {
         let trimmed = path.trim();
         if !trimmed.is_empty() {
@@ -916,7 +918,7 @@ fn books_data_dir() -> PathBuf {
     suwayomi_data_dir().join("books")
 }
 
-fn library_cover_cache_dir() -> PathBuf {
+pub(crate) fn library_cover_cache_dir() -> PathBuf {
     suwayomi_data_dir().join("library-cover-cache")
 }
 
@@ -5231,7 +5233,6 @@ pub fn run() {
     let app = tauri::Builder::default()
         .register_uri_scheme_protocol("book", |_ctx, request| serve_book_asset(request))
         .register_uri_scheme_protocol("cover", |_ctx, request| serve_library_cover_asset(request))
-        .plugin(tauri_plugin_drpc::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_shell::init())
@@ -5246,6 +5247,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_launch_target,
             record_media_audit_event,
+            discord_rpc::discord_rpc_start,
+            discord_rpc::discord_rpc_stop,
+            discord_rpc::discord_rpc_clear_activity,
+            discord_rpc::discord_rpc_set_activity,
+            discord_cover::optimize_discord_cover,
             syncd_desktop::syncd_list_discovery_candidates,
             syncd_desktop::syncd_start_host_pairing,
             syncd_desktop::syncd_get_active_host_pairing,

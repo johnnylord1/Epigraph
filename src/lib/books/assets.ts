@@ -35,7 +35,7 @@ const MIME_BY_BOOK_SUBTYPE: Record<BookSubtype, string> = {
   epub: "application/epub+zip",
   pdf: "application/pdf",
 };
-const BOOK_METADATA_BACKFILL_VERSION = 1;
+const BOOK_METADATA_BACKFILL_VERSION = 2;
 
 function arrayBufferToHex(buffer: ArrayBuffer): string {
   return Array.from(new Uint8Array(buffer), (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -71,17 +71,15 @@ export function isCanonicalBookVisualState(book: Pick<BookEntry, "coverPath" | "
   return !isUsableBookCoverUrl(book.coverUrl);
 }
 
-function needsBookGenresBackfill(book: Pick<BookEntry, "subtype" | "genres" | "assetPath" | "metadataBackfillVersion">): boolean {
-  return book.subtype === "epub"
-    && Boolean(book.assetPath)
-    && book.metadataBackfillVersion !== BOOK_METADATA_BACKFILL_VERSION
-    && (!Array.isArray(book.genres) || book.genres.length === 0);
+function needsBookMetadataBackfill(book: Pick<BookEntry, "assetPath" | "metadataBackfillVersion">): boolean {
+  return Boolean(book.assetPath)
+    && book.metadataBackfillVersion !== BOOK_METADATA_BACKFILL_VERSION;
 }
 
 export function needsCanonicalBookMigration(
   book: Pick<
     BookEntry,
-    "assetFingerprint" | "tocCount" | "spineCount" | "sectionsSummary" | "sectionCount" | "coverPath" | "coverUrl" | "toc" | "spine" | "subtype" | "pageCount" | "genres" | "assetPath" | "metadataBackfillVersion"
+    "assetFingerprint" | "tocCount" | "spineCount" | "sectionsSummary" | "sectionCount" | "coverPath" | "coverUrl" | "toc" | "spine" | "subtype" | "pageCount" | "assetPath" | "metadataBackfillVersion"
   >,
 ): boolean {
   return !(
@@ -94,7 +92,7 @@ export function needsCanonicalBookMigration(
     book.coverUrl === undefined &&
     book.toc === undefined &&
     book.spine === undefined &&
-    !needsBookGenresBackfill(book)
+    !needsBookMetadataBackfill(book)
   );
 }
 
@@ -191,12 +189,13 @@ async function buildCanonicalPatch(book: BookEntry): Promise<CanonicalBookPatch 
     }
   }
 
-  if (needsBookGenresBackfill(book)) {
+  if (book.subtype === "epub" && needsBookMetadataBackfill(book)) {
     try {
       const parsed = await getParsedEpub();
       if (parsed.genres.length > 0) {
         patch.genres = parsed.genres;
       }
+      patch.isbns = parsed.isbns;
       patch.metadataBackfillVersion = BOOK_METADATA_BACKFILL_VERSION;
     } catch {
       // Metadata backfill is best-effort and must not block existing books.
@@ -208,6 +207,8 @@ async function buildCanonicalPatch(book: BookEntry): Promise<CanonicalBookPatch 
     patch.title = parsed.title;
     patch.author = parsed.author;
     patch.description = parsed.description;
+    patch.isbns = parsed.isbns;
+    patch.metadataBackfillVersion = BOOK_METADATA_BACKFILL_VERSION;
     patch.pageCount = parsed.pageCount;
     patch.sectionsSummary = parsed.sectionsSummary;
     patch.sectionCount = parsed.sectionCount;

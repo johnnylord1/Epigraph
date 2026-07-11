@@ -33,6 +33,15 @@ function preferCanonicalNumber(canonical: number | undefined, incoming: number |
   return typeof canonical === "number" ? canonical : incoming;
 }
 
+function preferCanonicalNullableNumber(
+  canonical: number | null | undefined,
+  incoming: number | null | undefined,
+): number | null {
+  return typeof canonical === "number" && canonical > 0
+    ? canonical
+    : (typeof incoming === "number" && incoming > 0 ? incoming : null);
+}
+
 export function findBookByFingerprint(
   books: BookEntry[],
   assetFingerprint: string | null | undefined,
@@ -56,9 +65,12 @@ export function mergeCanonicalBookEntries(canonical: BookEntry, incoming: BookEn
     author: preferCanonicalNullableString(canonical.author, incoming.author),
     description: preferCanonicalNullableString(canonical.description, incoming.description),
     genres: preferCanonicalArray(canonical.genres, incoming.genres),
+    isbns: preferCanonicalArray(canonical.isbns, incoming.isbns),
     metadataBackfillVersion: Math.max(canonical.metadataBackfillVersion ?? 0, incoming.metadataBackfillVersion ?? 0) || undefined,
     coverPath: preferCanonicalNullableString(canonical.coverPath, incoming.coverPath),
     coverUrl: mergedCoverUrl ?? undefined,
+    hardcoverBookId: preferCanonicalNullableNumber(canonical.hardcoverBookId, incoming.hardcoverBookId),
+    hardcoverCoverUrl: preferCanonicalNullableString(canonical.hardcoverCoverUrl, incoming.hardcoverCoverUrl),
     subtype: canonical.subtype,
     createdAt: createdAtCandidates.length ? Math.min(...createdAtCandidates) : canonical.createdAt,
     updatedAt: Math.max(canonical.updatedAt, incoming.updatedAt),

@@ -144,6 +144,11 @@ const PROFILE_SCOPED_SETTING_KEYS = [
   "showNsfw",
   "filterBlockedTags",
   "discordRpc",
+  "discordRpcShowTitle",
+  "discordRpcShowCover",
+  "discordRpcImproveCovers",
+  "discordRpcShowProgress",
+  "discordRpcPrivateMode",
   "chapterSortDir",
   "chapterSortMode",
   "chapterPageSize",
@@ -639,6 +644,11 @@ export interface Settings {
   showNsfw:                boolean;
   filterBlockedTags:       boolean;
   discordRpc:              boolean;
+  discordRpcShowTitle:     boolean;
+  discordRpcShowCover:     boolean;
+  discordRpcImproveCovers: boolean;
+  discordRpcShowProgress:  boolean;
+  discordRpcPrivateMode:   boolean;
   chapterSortDir:          ChapterSortDir;
   chapterSortMode:         ChapterSortMode;
   chapterPageSize:         number;
@@ -773,6 +783,11 @@ export const DEFAULT_SETTINGS: Settings = {
   showNsfw:               false,
   filterBlockedTags:      true,
   discordRpc:             false,
+  discordRpcShowTitle:    true,
+  discordRpcShowCover:    true,
+  discordRpcImproveCovers: false,
+  discordRpcShowProgress: true,
+  discordRpcPrivateMode:  false,
   chapterSortDir:         "desc",
   chapterSortMode:        "source",
   chapterPageSize:        25,

@@ -371,6 +371,20 @@ describe("Settings", () => {
     expect(screen.getByText("Reset settings")).toBeTruthy();
   });
 
+  test("keeps optimized Discord covers opt-in by default", async () => {
+    renderSettings();
+
+    expect(DEFAULT_SETTINGS.discordRpcImproveCovers).toBe(false);
+    expect(store.settings.discordRpcImproveCovers).toBe(false);
+
+    const toggle = screen.getByRole("switch", { name: "Improve Discord cover framing" });
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+
+    await fireEvent.click(toggle);
+
+    expect(store.settings.discordRpcImproveCovers).toBe(true);
+  });
+
   test("renders density as a discrete slider-family control with fixed steps", async () => {
     renderSettings();
 

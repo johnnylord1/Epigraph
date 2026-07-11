@@ -41,7 +41,7 @@
   import { resolveBookResumeTarget } from "../../lib/books/progress";
   import { hasBookLocalAsset, MISSING_BOOK_ASSET_MESSAGE } from "../../lib/books/availability";
   import { mediaAuditEnabled, traceMediaAudit } from "../../lib/mediaAudit";
-  import type { BookBookmarkEntry, BookProgress } from "../../lib/books/types";
+  import type { BookBookmarkEntry, BookEntry, BookProgress, BookSectionSummaryItem } from "../../lib/books/types";
   import { peekPersistedBookEntry, peekPersistedBookProgress } from "../../lib/books/libraryState";
   import {
     addBookBookmark,
@@ -52,11 +52,18 @@
     updateSettings,
   } from "../../store/state.svelte";
   import type { PdfFitMode } from "../../store/state.svelte";
-  import { getServerAuthHeader } from "../../lib/client";
+  import { getServerAuthHeader, getServerUrl } from "../../lib/client";
   import { requiresAuthenticatedMediaFetch } from "../../lib/imageCache";
   import NocturneState from "../shared/NocturneState.svelte";
   import ReaderHud from "./ReaderHud.svelte";
   import { createDomTtsTextProvider, createTtsController } from "../../lib/reader/tts";
+  import { setGenericReading, setTtsPresence } from "../../lib/discord";
+  import { canResolveDiscordCover, canRunDiscordCoverImprovement } from "../../lib/discord/coverImprovementGate";
+  import { isDiscordPublicImageUrl } from "../../lib/discord/coverResolver";
+  import { discordCoverService, type DiscordCoverSource } from "../../lib/discord/discordCoverService";
+  import { discordPublicCoverResolver } from "../../lib/discord/discordPublicCoverResolver";
+  import { createOpenLibraryBookDiscordTrackerKey, resolveOpenLibraryBookDiscordCover } from "../../lib/discord/openLibraryCoverResolver";
+  import { createHardcoverBookDiscordTrackerKey, resolveHardcoverBookDiscordCover } from "../../lib/discord/trackerCoverResolver";
   import { isEditableKeyboardTarget } from "../../lib/keybinds";
   import TtsControls from "./TtsControls.svelte";
 
@@ -148,8 +155,157 @@
   let toolsOpen = $state(true);
   let activeSubPanel = $state<"main" | "pdf" | "appearance" | "typography" | "layout" | "display" | "images" | "tts">("main");
   const tts = createTtsController();
+  let ttsStateVersion = $state(0);
+  let lastDiscordTtsPlaying = false;
+  let lastDiscordBookId: string | null = null;
+  let lastDiscordPrivacySignature: string | null = null;
+  let hardcoverStateVersion = $state(0);
+  let discordCoverBookId: string | null = null;
+  let discordCoverLookupKey: string | null = null;
+  let discordCoverLookupVersion = 0;
+  let discordPublicCoverUrl: string | null = null;
   let pageNumber = $state(1);
   const REFLOWED_PAGE_RETAIN_RADIUS = 8;
+
+  $effect(() => {
+    const unsubscribe = tts.subscribe(() => {
+      ttsStateVersion += 1;
+    });
+    return unsubscribe;
+  });
+
+  $effect(() => {
+    const handleHardcoverStateChanged = () => {
+      hardcoverStateVersion += 1;
+    };
+    globalThis.addEventListener?.("aethon-hardcover-state-changed", handleHardcoverStateChanged);
+    return () => {
+      globalThis.removeEventListener?.("aethon-hardcover-state-changed", handleHardcoverStateChanged);
+    };
+  });
+
+  $effect(() => {
+    hardcoverStateVersion;
+    const bookId = activeBook?.id ?? null;
+    const title = activeBook?.title;
+    if (!store.settings.discordRpc || !bookId || !title) {
+      lastDiscordBookId = bookId;
+      lastDiscordPrivacySignature = null;
+      return;
+    }
+    refreshDiscordCoverForBook(activeBook);
+    const privacySignature = discordPrivacySignature();
+    const reason = bookId !== lastDiscordBookId
+      ? "work-change"
+      : privacySignature !== lastDiscordPrivacySignature
+        ? "privacy-change"
+        : "progress";
+    lastDiscordBookId = bookId;
+    lastDiscordPrivacySignature = privacySignature;
+    void setGenericReading(
+      title,
+      store.settings,
+      reason,
+      bookDiscordState(),
+      discordPublicCoverUrl,
+      bookDiscordProgressPercent(),
+    );
+  });
+
+  $effect(() => {
+    ttsStateVersion;
+    const playing = tts.state.isPlaying;
+    const title = activeBook?.title;
+    if (store.settings.discordRpc && title && playing !== lastDiscordTtsPlaying) {
+      void setTtsPresence(title, playing, store.settings, discordPublicCoverUrl);
+    }
+    lastDiscordTtsPlaying = playing;
+  });
+
+  function bookDiscordCoverSource(book: BookEntry): DiscordCoverSource | null {
+    if (isDiscordPublicImageUrl(book.coverUrl)) return { type: "public-url", value: book.coverUrl };
+    const coverPath = typeof book.coverPath === "string" ? book.coverPath.trim() : "";
+    if (coverPath) return { type: "trusted-local-path", value: coverPath };
+    return null;
+  }
+
+  function coverSourceKey(source: DiscordCoverSource | null): string | null {
+    if (!source?.value) return null;
+    return `${source.type}:${source.value}`;
+  }
+
+  function refreshDiscordCoverForBook(book: BookEntry) {
+    const canShowCover = canResolveDiscordCover(store.settings);
+    const shouldImproveCover = canRunDiscordCoverImprovement(store.settings);
+    const fallbackCover = isDiscordPublicImageUrl(book.coverUrl) ? book.coverUrl : null;
+    if (!canShowCover) {
+      discordCoverLookupKey = null;
+      discordPublicCoverUrl = null;
+      return;
+    }
+    if (book.id !== discordCoverBookId) {
+      discordCoverBookId = book.id;
+      discordCoverLookupKey = null;
+      discordPublicCoverUrl = fallbackCover;
+      discordCoverLookupVersion += 1;
+    }
+
+    const source = bookDiscordCoverSource(book);
+    const scopeInput = {
+      profileId: store.runtimeResolvedLocalProfileId,
+      serverUrl: store.runtimeServerUrl ?? getServerUrl(),
+    };
+    const trackerKey = [
+      createHardcoverBookDiscordTrackerKey({ book, scopeInput }),
+      createOpenLibraryBookDiscordTrackerKey(book),
+      scopeInput.profileId ?? "",
+      scopeInput.serverUrl ?? "",
+    ].join(":");
+    const key = [
+      "tracker-first",
+      fallbackCover ?? "",
+      trackerKey,
+      coverSourceKey(source) ?? "",
+    ].join(":");
+    if (discordCoverLookupKey === key) return;
+
+    const lookupVersion = ++discordCoverLookupVersion;
+    discordCoverLookupKey = key;
+    void discordPublicCoverResolver.resolve({
+      settings: store.settings,
+      workKind: "book",
+      workId: book.id,
+      existingPublicCoverUrl: fallbackCover,
+      trackerKey,
+      resolveTrackerCover: async () => resolveHardcoverBookDiscordCover({
+        book,
+        scopeInput,
+      }) ?? resolveOpenLibraryBookDiscordCover(book),
+      workerSource: shouldImproveCover ? source : null,
+      resolveWorkerCover: shouldImproveCover && source
+        ? (candidate) => discordCoverService.resolveOptimizedCover({
+            settings: store.settings,
+            workKind: "book",
+            workId: book.id,
+            source: candidate,
+          })
+        : null,
+    }).then((result) => {
+      const coverUrl = result?.url ?? null;
+      if (!coverUrl || lookupVersion !== discordCoverLookupVersion) return;
+      if (activeBook?.id !== book.id || !canResolveDiscordCover(store.settings)) return;
+      discordPublicCoverUrl = coverUrl;
+      void setGenericReading(
+        book.title,
+        store.settings,
+        "work-change",
+        bookDiscordState(),
+        coverUrl,
+        bookDiscordProgressPercent(),
+      );
+      if (tts.state.isPlaying) void setTtsPresence(book.title, true, store.settings, coverUrl);
+    });
+  }
 
   $effect(() => {
     if (!toolsOpen) {
@@ -210,6 +366,67 @@
     }
     return Math.max(0, Math.min(100, currentBookmark.progressPercent * 100));
   });
+
+  function discordPrivacySignature() {
+    const settings = store.settings;
+    return JSON.stringify({
+      privateMode: settings.discordRpcPrivateMode,
+      showCover: settings.discordRpcShowCover,
+      showProgress: settings.discordRpcShowProgress,
+      showTitle: settings.discordRpcShowTitle,
+    });
+  }
+
+  function isGenericDiscordBookLabel(value: string | null | undefined): boolean {
+    const label = (value ?? "").trim().toLowerCase();
+    return !label || label === "epub" || label === "pdf" || label === "cover" || label === "information" || label === "untitled";
+  }
+
+  function normalizeDiscordBookLabel(value: string | null | undefined): string | null {
+    const label = (value ?? "").trim().replace(/\s+/g, " ");
+    return isGenericDiscordBookLabel(label) ? null : label;
+  }
+
+  function resolveDiscordSectionFromProgress(sections: BookSectionSummaryItem[], progress: number): string | null {
+    if (!sections.length) return null;
+    const index = Math.max(0, Math.min(sections.length - 1, Math.round(progress * (sections.length - 1))));
+    for (let i = index; i < sections.length; i += 1) {
+      const label = normalizeDiscordBookLabel(sections[i]?.label);
+      if (label) return label;
+    }
+    for (let i = index - 1; i >= 0; i -= 1) {
+      const label = normalizeDiscordBookLabel(sections[i]?.label);
+      if (label) return label;
+    }
+    return null;
+  }
+
+  function bookDiscordState(): string | undefined {
+    if (!activeBook) return undefined;
+    const persistedLabel = normalizeDiscordBookLabel(activeProgress?.sectionLabel);
+    const currentLabel = normalizeDiscordBookLabel(currentSectionLabel);
+
+    if (activeBook.subtype === "pdf") {
+      const pageLabel = normalizeDiscordBookLabel(resolvePdfSectionLabel(pdfSections, pageNumber));
+      const progressLabel = resolveDiscordSectionFromProgress(pdfSections, activeProgress?.progressPercent ?? progressPercent);
+      return currentLabel ?? persistedLabel ?? pageLabel ?? progressLabel ?? `Chapter ${pageNumber}`;
+    }
+
+    const hrefLabel = normalizeDiscordBookLabel(resolveBookSectionLabel(epubSections, currentHref));
+    const progressLabel = resolveDiscordSectionFromProgress(epubSections, activeProgress?.progressPercent ?? progressPercent);
+    return currentLabel ?? persistedLabel ?? hrefLabel ?? progressLabel ?? "Chapter";
+  }
+
+  function bookDiscordProgressPercent(): number | undefined {
+    if (!activeBook) return undefined;
+    const sourceProgress = Number.isFinite(progressPercent) && progressPercent > 0
+      ? progressPercent
+      : activeProgress?.progressPercent ?? progressPercent;
+    const percent = sourceProgress * 100;
+    if (Number.isFinite(percent)) return percent;
+    if (activeBook.subtype === "pdf" && totalPages > 1) return ((pageNumber - 1) / (totalPages - 1)) * 100;
+    return undefined;
+  }
 
   function clampZoom(value: number) {
     return Math.round(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, value)) * 100) / 100;

@@ -21,6 +21,7 @@ const {
     author: null,
     description: null,
     genres: ["Fantasy", "Adventure"],
+    isbns: ["9780306406157"],
     cover: {
       mediaType: "image/jpeg",
       ext: "jpg",
@@ -39,6 +40,7 @@ const {
     sectionCount: 1,
     tocCount: 1,
     spineCount: 0,
+    isbns: ["9780306406157"],
   })),
 }));
 
@@ -85,6 +87,7 @@ beforeEach(() => {
     author: null,
     description: null,
     genres: ["Fantasy", "Adventure"],
+    isbns: ["9780306406157"],
     cover: {
       mediaType: "image/jpeg",
       ext: "jpg",
@@ -104,6 +107,7 @@ beforeEach(() => {
     sectionCount: 1,
     tocCount: 1,
     spineCount: 0,
+    isbns: ["9780306406157"],
   }));
 });
 
@@ -114,6 +118,7 @@ function makeBook(overrides: Partial<BookEntry> = {}): BookEntry {
     author: null,
     description: null,
     genres: ["Fantasy"],
+    metadataBackfillVersion: 2,
     coverPath: "C:\\books\\cover.jpg",
     subtype: "epub",
     createdAt: 0,
@@ -221,7 +226,7 @@ describe("needsCanonicalBookMigration", () => {
     ).toBe(false);
   });
 
-  it("requires migration for canonical EPUBs that still lack genres", () => {
+  it("requires migration for canonical EPUBs that still need metadata backfill", () => {
     expect(
       needsCanonicalBookMigration(
         makeBook({
@@ -233,12 +238,13 @@ describe("needsCanonicalBookMigration", () => {
           tocCount: 1,
           spineCount: 1,
           genres: [],
+          metadataBackfillVersion: undefined,
         }),
       ),
     ).toBe(true);
   });
 
-  it("does not retry EPUB genre backfill once metadata was scanned", () => {
+  it("does not retry EPUB metadata backfill once metadata was scanned", () => {
     expect(
       needsCanonicalBookMigration(
         makeBook({
@@ -250,7 +256,7 @@ describe("needsCanonicalBookMigration", () => {
           tocCount: 1,
           spineCount: 1,
           genres: [],
-          metadataBackfillVersion: 1,
+          metadataBackfillVersion: 2,
         }),
       ),
     ).toBe(false);
@@ -376,6 +382,7 @@ describe("BookAssetResolver.ensureCanonicalBookEntry", () => {
         tocCount: 1,
         spineCount: 1,
         genres: [],
+        metadataBackfillVersion: undefined,
       }),
     );
 
@@ -384,7 +391,8 @@ describe("BookAssetResolver.ensureCanonicalBookEntry", () => {
     expect(mockedWriteBookCover).not.toHaveBeenCalled();
     expect(patch).toEqual({
       genres: ["Fantasy", "Adventure"],
-      metadataBackfillVersion: 1,
+      isbns: ["9780306406157"],
+      metadataBackfillVersion: 2,
     });
   });
 
@@ -393,6 +401,7 @@ describe("BookAssetResolver.ensureCanonicalBookEntry", () => {
       makeBook({
         assetFingerprint: undefined,
         genres: [],
+        metadataBackfillVersion: undefined,
         coverPath: null,
         coverUrl: "data:image/jpeg;base64,Zm9vYmFyYmF6cXV4cXV1eA==Zm9vYmFyYmF6cXV4cXV1eA==",
       }),
@@ -413,7 +422,8 @@ describe("BookAssetResolver.ensureCanonicalBookEntry", () => {
       tocCount: 1,
       spineCount: 1,
       genres: ["Fantasy", "Adventure"],
-      metadataBackfillVersion: 1,
+      isbns: ["9780306406157"],
+      metadataBackfillVersion: 2,
     });
     expect(mockedComputeFileSha256).toHaveBeenCalledWith("C:\\books\\example.epub");
     expect(patch?.assetFingerprint).toBe("native-file-hash");

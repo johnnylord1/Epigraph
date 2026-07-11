@@ -65,7 +65,7 @@
   import type { BackupLaunchIntent } from "./lib/backup/backupRollout";
   import type { AethonNovelRuntimeState } from "./lib/backup/novelsBackup";
   import type { RestoreReadinessSummary } from "./lib/reconciliation/types";
-  import { initRpc, setIdle, clearReading, destroyRpc } from "./lib/discord";
+  import { initRpc, setNavigationPresence, setDownloadPresence, destroyRpc } from "./lib/discord";
   import { cache, CACHE_GROUPS, CACHE_KEYS, DEFAULT_TTL_MS } from "./lib/cache";
   import { normalizeCategories } from "./lib/library/categories";
   import { reconcileComicsChapterSnapshot } from "./lib/library/comicsChapterSnapshot";
@@ -347,6 +347,10 @@
   });
 
   let prevQueue: DownloadQueueItem[] = [];
+  let discordRpcStarted = false;
+  let discordDownloadsActive = false;
+  let lastDiscordPrivacySignature = "";
+  let lastDiscordContextKey: string | null = null;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   let pollInterval: ReturnType<typeof setInterval> | null = null;
   let libraryUpdateInterval: ReturnType<typeof setInterval> | null = null;
@@ -2986,17 +2990,56 @@
 
   $effect(() => {
     if (store.settings.discordRpc) {
-      initRpc();
+      if (!discordRpcStarted) {
+        discordRpcStarted = true;
+        void initRpc(store.settings).then(() => {
+          void setNavigationPresence(store.navPage, store.settings, "app-open");
+        });
+      }
     } else {
-      clearReading();
-      destroyRpc();
+      discordRpcStarted = false;
+      void destroyRpc();
     }
   });
 
   $effect(() => {
-    if (!store.activeChapter) {
-      if (store.settings.discordRpc) setIdle();
+    const signature = [
+      store.settings.discordRpcPrivateMode,
+      store.settings.discordRpcShowTitle,
+      store.settings.discordRpcShowCover,
+      store.settings.discordRpcImproveCovers,
+      store.settings.discordRpcShowProgress,
+    ].join(":");
+    if (!store.settings.discordRpc || !discordRpcStarted) {
+      lastDiscordPrivacySignature = signature;
+      return;
     }
+    const hasActiveReader = Boolean(store.activeChapter || store.activeBookReaderId || store.activeNovelReader);
+    if (lastDiscordPrivacySignature && lastDiscordPrivacySignature !== signature && !hasActiveReader) {
+      void setNavigationPresence(store.navPage, store.settings, "privacy-change");
+    }
+    lastDiscordPrivacySignature = signature;
+  });
+
+  $effect(() => {
+    const navPage = store.navPage;
+    const hasActiveReader = Boolean(store.activeChapter || store.activeBookReaderId || store.activeNovelReader);
+    const contextKey = hasActiveReader ? "reader" : `nav:${navPage}`;
+    const reason = lastDiscordContextKey && lastDiscordContextKey !== contextKey ? "context-change" : "navigation";
+    lastDiscordContextKey = contextKey;
+    if (!hasActiveReader && store.settings.discordRpc) {
+      void setNavigationPresence(navPage, store.settings, reason);
+    }
+  });
+
+  $effect(() => {
+    const activeDownloadCount = store.activeDownloads.filter((item) => item.state === "QUEUED" || item.state === "DOWNLOADING" || !item.state).length;
+    const active = activeDownloadCount > 0;
+    const hasActiveReader = Boolean(store.activeChapter || store.activeBookReaderId || store.activeNovelReader);
+    if (store.settings.discordRpc && !hasActiveReader && active !== discordDownloadsActive) {
+      void setDownloadPresence(activeDownloadCount, store.settings, active ? "download-start" : "download-stop");
+    }
+    discordDownloadsActive = active;
   });
 
   function handleZoomKey(e: KeyboardEvent) {

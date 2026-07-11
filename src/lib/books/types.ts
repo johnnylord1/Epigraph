@@ -27,10 +27,16 @@ export interface BookEntry {
   author: string | null;
   description: string | null;
   genres?: string[];
+  /** Normalized ISBN-10/ISBN-13 values extracted from local book metadata. */
+  isbns?: string[];
   metadataBackfillVersion?: number;
   coverPath: string | null;
   /** Legacy migration-only field. Never use as an active render source. */
   coverUrl?: string | null;
+  /** Optional explicit Hardcover link for imported PDFs/EPUBs. */
+  hardcoverBookId?: number | null;
+  /** Public Hardcover/OpenLibrary cover cached at link time. */
+  hardcoverCoverUrl?: string | null;
   subtype: BookSubtype;
   pageCount?: number | null;
   createdAt: number;
@@ -79,6 +85,7 @@ export interface ParsedEpubBook {
   author: string | null;
   description: string | null;
   genres: string[];
+  isbns: string[];
   toc: BookTocItem[];
   spine: BookSpineItem[];
   cover: ParsedBookCover | null;

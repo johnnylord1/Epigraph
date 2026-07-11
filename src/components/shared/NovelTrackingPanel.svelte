@@ -27,11 +27,13 @@
     title,
     sourceNovelId,
     contentLabel = "Novel",
+    onHardcoverLinkChanged,
     onClose,
   }: {
     title: string;
     sourceNovelId: string;
     contentLabel?: string;
+    onHardcoverLinkChanged?: (link: { hardcoverBookId: number | null; hardcoverCoverUrl: string | null }) => void | Promise<void>;
     onClose: () => void;
   } = $props();
 
@@ -128,6 +130,10 @@
         book,
         sourceNovelId,
       });
+      await onHardcoverLinkChanged?.({
+        hardcoverBookId: book.id,
+        hardcoverCoverUrl: book.coverUrl,
+      });
       state = loadHardcoverState(scopeInput);
       searchResults = [];
       activeTab = "records";
@@ -161,6 +167,10 @@
 
   function unbind(record: HardcoverNovelTrackRecord) {
     state = unlinkHardcoverRecord(scopeInput, sourceNovelId, record.bookId);
+    void onHardcoverLinkChanged?.({
+      hardcoverBookId: null,
+      hardcoverCoverUrl: null,
+    });
     searchResults = [];
     error = null;
     addToast({ kind: "info", title: translate("ui_unlinkedFromHardcover") });

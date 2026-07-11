@@ -1,82 +1,129 @@
-import { start, stop, setActivity, clearActivity } from "tauri-plugin-drpc";
-import { Activity, Assets, Button, Timestamps }     from "tauri-plugin-drpc/activity";
-import type { Manga, Chapter }                       from "./types";
+import type { Manga, Chapter } from "./types";
+import { discordPresenceService } from "./discord/discordPresenceService";
+import {
+  mapDownloadsPresence,
+  mapGenericReadingPresence,
+  mapMigrationPresence,
+  mapNavigationPresence,
+  mapReadingPresence,
+  mapSearchingPresence,
+  mapTtsPresence,
+} from "./discord/presenceStateMapper";
+import type { DiscordPresenceReason, DiscordPrivacySettings } from "./discord/types";
 
-const APP_ID         = "1487894643613106298";
-const FALLBACK_IMAGE = "aethon_logo";
-const DEFAULT_AETHON_GITHUB_REPO = "johnnylord1/Aethon";
-const AETHON_GITHUB_REPO = (import.meta.env.VITE_AETHON_GITHUB_REPO ?? "").trim() || DEFAULT_AETHON_GITHUB_REPO;
-const AETHON_GITHUB_URL = `https://github.com/${AETHON_GITHUB_REPO}`;
-
-let sessionStart: number | null = null;
-
-function isPublicUrl(url: string | null | undefined): boolean {
-  return typeof url === "string" && url.startsWith("https://");
+function defaultSettings(settings?: Partial<DiscordPrivacySettings>): DiscordPrivacySettings {
+  return {
+    discordRpc: settings?.discordRpc ?? true,
+    discordRpcShowTitle: settings?.discordRpcShowTitle ?? true,
+    discordRpcShowCover: settings?.discordRpcShowCover ?? true,
+    discordRpcImproveCovers: settings?.discordRpcImproveCovers ?? false,
+    discordRpcShowProgress: settings?.discordRpcShowProgress ?? true,
+    discordRpcPrivateMode: settings?.discordRpcPrivateMode ?? false,
+  };
 }
 
-function resolveCoverImage(manga: Manga): string {
-  return isPublicUrl(manga.thumbnailUrl) ? manga.thumbnailUrl : FALLBACK_IMAGE;
+export async function initRpc(settings?: Partial<DiscordPrivacySettings>): Promise<void> {
+  if (settings && !settings.discordRpc) return;
+  await discordPresenceService.start();
 }
 
-function trunc(s: string, max = 128): string {
-  return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
+export async function setReading(
+  manga: Manga,
+  chapter: Chapter,
+  options: {
+    progressPercent?: number;
+    publicCoverUrl?: string | null;
+    settings?: Partial<DiscordPrivacySettings>;
+    reason?: DiscordPresenceReason;
+  } = {},
+): Promise<void> {
+  await discordPresenceService.setPresence(
+    mapReadingPresence(manga, chapter, options.progressPercent, options.publicCoverUrl),
+    defaultSettings(options.settings),
+    options.reason ?? "work-change",
+  );
 }
 
-function formatChapter(chapter: Chapter): string {
-  const n = chapter.chapterNumber;
-  return `Chapter ${Number.isInteger(n) ? n : n.toFixed(1)}`;
+export async function setGenericReading(
+  title: string,
+  settings?: Partial<DiscordPrivacySettings>,
+  reason: DiscordPresenceReason = "work-change",
+  state?: string,
+  publicCoverUrl?: string | null,
+  progressPercent?: number,
+): Promise<void> {
+  await discordPresenceService.setPresence(
+    mapGenericReadingPresence(title, state, publicCoverUrl, progressPercent),
+    defaultSettings(settings),
+    reason,
+  );
 }
 
-function getTimestamps(): Timestamps {
-  return new Timestamps(sessionStart ?? Date.now());
+export async function setNavigationPresence(
+  navPage: string,
+  settings?: Partial<DiscordPrivacySettings>,
+  reason: DiscordPresenceReason = "navigation",
+): Promise<void> {
+  await discordPresenceService.setPresence(
+    mapNavigationPresence(navPage),
+    defaultSettings(settings),
+    reason,
+  );
 }
 
-const BUTTONS = [
-  new Button("GitHub", AETHON_GITHUB_URL),
-  new Button("Discord", "https://discord.gg/Jq3pwuNqPp"),
-];
-
-export async function initRpc(): Promise<void> {
-  sessionStart = Date.now();
-  await start(APP_ID).catch(() => {});
+export async function setSearchingPresence(settings?: Partial<DiscordPrivacySettings>): Promise<void> {
+  await discordPresenceService.setPresence(
+    mapSearchingPresence(),
+    defaultSettings(settings),
+    "navigation",
+  );
 }
 
-export async function setReading(manga: Manga, chapter: Chapter): Promise<void> {
-  const assets = new Assets()
-    .setLargeImage(resolveCoverImage(manga))
-    .setLargeText(trunc(manga.title))
-    .setSmallImage(FALLBACK_IMAGE)
-    .setSmallText("Aethon");
-
-  const activity = new Activity()
-    .setDetails(trunc(manga.title))
-    .setState(`${formatChapter(chapter)}  ·  Reading`)
-    .setAssets(assets)
-    .setTimestamps(getTimestamps());
-  activity.setButton(BUTTONS);
-
-  await setActivity(activity).catch(() => {});
+export async function setDownloadPresence(
+  activeCount: number,
+  settings?: Partial<DiscordPrivacySettings>,
+  reason: DiscordPresenceReason = activeCount > 0 ? "download-start" : "download-stop",
+): Promise<void> {
+  await discordPresenceService.setPresence(
+    activeCount > 0 ? mapDownloadsPresence(activeCount) : mapNavigationPresence("downloads"),
+    defaultSettings(settings),
+    reason,
+  );
 }
 
-export async function setIdle(): Promise<void> {
-  const assets = new Assets()
-    .setLargeImage(FALLBACK_IMAGE)
-    .setLargeText("Aethon");
+export async function setTtsPresence(
+  title: string,
+  active: boolean,
+  settings?: Partial<DiscordPrivacySettings>,
+  publicCoverUrl?: string | null,
+): Promise<void> {
+  await discordPresenceService.setPresence(
+    active ? mapTtsPresence(title, publicCoverUrl) : mapGenericReadingPresence(title, undefined, publicCoverUrl),
+    defaultSettings(settings),
+    active ? "tts-start" : "tts-stop",
+  );
+}
 
-  const activity = new Activity()
-    .setDetails("Browsing")
-    .setAssets(assets)
-    .setTimestamps(getTimestamps());
-  activity.setButton(BUTTONS);
+export async function setMigrationPresence(
+  active: boolean,
+  settings?: Partial<DiscordPrivacySettings>,
+  fallbackNavPage = "library",
+): Promise<void> {
+  await discordPresenceService.setPresence(
+    active ? mapMigrationPresence() : mapNavigationPresence(fallbackNavPage),
+    defaultSettings(settings),
+    active ? "migration-start" : "migration-stop",
+  );
+}
 
-  await setActivity(activity).catch(() => {});
+export async function setIdle(settings?: Partial<DiscordPrivacySettings>): Promise<void> {
+  await setNavigationPresence("home", settings, "navigation");
 }
 
 export async function clearReading(): Promise<void> {
-  await clearActivity().catch(() => {});
+  await discordPresenceService.clear();
 }
 
 export async function destroyRpc(): Promise<void> {
-  sessionStart = null;
-  await stop().catch(() => {});
+  await discordPresenceService.stop();
 }

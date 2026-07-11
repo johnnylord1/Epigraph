@@ -25,6 +25,7 @@
     setBookProgress,
     store,
     updateSettings,
+    upsertBook,
   } from "../../store/state.svelte";
   import { _, translate as t } from "../../lib/i18n/runtime";
   import type { BooksCategory } from "../../store/state.svelte";
@@ -35,7 +36,7 @@
     resolveBookSectionLabel,
     resolveBookSectionProgress,
   } from "../../lib/books/summary";
-  import type { BookProgress, BookSectionSummaryItem } from "../../lib/books/types";
+  import type { BookEntry, BookProgress, BookSectionSummaryItem } from "../../lib/books/types";
   import { createPdfPageHref, parsePdfPageHref } from "../../lib/books/pdf";
   import { BookAssetResolver } from "../../lib/books/assets";
   import { getBookProgressPrecision, resolveBookResumeTarget } from "../../lib/books/progress";
@@ -607,6 +608,18 @@
     }
   }
 
+  function updateBookHardcoverLink(link: { hardcoverBookId: number | null; hardcoverCoverUrl: string | null }) {
+    const book = activeBook;
+    if (!book) return;
+    const next: BookEntry = {
+      ...book,
+      hardcoverBookId: link.hardcoverBookId,
+      hardcoverCoverUrl: link.hardcoverCoverUrl,
+      updatedAt: Date.now(),
+    };
+    upsertBook(next);
+  }
+
   $effect(() => {
     activeBook?.id;
     sectionPage = 1;
@@ -920,6 +933,7 @@
       title={activePresentation?.title ?? activeBook.title}
       sourceNovelId={activeBook.id}
       contentLabel="Book"
+      onHardcoverLinkChanged={updateBookHardcoverLink}
       onClose={() => trackingOpen = false}
     />
   {/if}

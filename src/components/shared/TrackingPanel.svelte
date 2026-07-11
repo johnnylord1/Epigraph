@@ -82,6 +82,12 @@
   function recordFor(trackerId: number){ return records.find(r => r.trackerId === trackerId); }
   const loggedInTrackers = $derived(trackers.filter(t => t.isLoggedIn));
 
+  function notifyTrackingStateChanged(trackerId: number | null = null) {
+    globalThis.dispatchEvent?.(new CustomEvent("aethon-tracker-state-changed", {
+      detail: { kind: "comic", mangaId, trackerId },
+    }));
+  }
+
   // ── Search ─────────────────────────────────────────────────────────────────
 
   let searchTimer: ReturnType<typeof setTimeout>;
@@ -121,6 +127,7 @@
       );
       records = [...records.filter(r => r.trackerId !== activeTab), res.bindTrack.trackRecord];
       cache.clearGroup(CACHE_GROUPS.LIBRARY);
+      notifyTrackingStateChanged(activeTab);
       addToast({ kind: "success", title: translate("ui_nowTracking"), body: result.title });
       activeTab = "records";
     } catch (e: any) {
@@ -136,6 +143,7 @@
       await gql(UNBIND_TRACK, { recordId: record.id });
       records = records.filter(r => r.id !== record.id);
       cache.clearGroup(CACHE_GROUPS.LIBRARY);
+      notifyTrackingStateChanged(record.trackerId);
       addToast({ kind: "info", title: translate("ui_unlinkedFrom") + trackerFor(record.trackerId)?.name });
     } catch (e: any) {
       addToast({ kind: "error", title: translate("ui_failedToUnlink"), body: e?.message });
@@ -207,6 +215,7 @@
   function patchRecord(updated: Partial<TrackRecord> & { id: number }) {
     records = records.map(r => r.id === updated.id ? { ...r, ...updated } : r);
     cache.clearGroup(CACHE_GROUPS.LIBRARY);
+    notifyTrackingStateChanged(updated.trackerId ?? null);
   }
 
   function openChapterEditor(record: TrackRecord) {

@@ -7,6 +7,7 @@
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import { GET_SOURCES, FETCH_SOURCE_MANGA, GET_TRACKERS, SEARCH_TRACKER, GET_LIBRARY_SEARCH_SNAPSHOT, GET_ALL_TRACKER_RECORDS } from "../../lib/queries";
   import { fetchSourceMangaSearchWithFallback } from "../../lib/manga/sourceSearch";
+  import { setNavigationPresence, setSearchingPresence } from "../../lib/discord";
   import { cache, CACHE_KEYS, getPageSet } from "../../lib/cache";
   import { loadLibrarySnapshot } from "../../lib/library/snapshot";
   import { dedupeSources, dedupeMangaById, dedupeMangaByTitle, shouldHideNsfw, shouldHideSource } from "../../lib/util";
@@ -597,6 +598,13 @@
   let searchRecommendationMoreRequestedWidths: Map<string, number> = $state(new Map());
   let searchRecommendationSectionOrder: Map<string, string[]> = $state(new Map());
   let lastSearchRuntimeScopeKey = $state("");
+
+  $effect(() => {
+    const tab = activeBrowseTab;
+    if (!store.settings.discordRpc) return;
+    if (tab === "keyword") void setSearchingPresence(store.settings);
+    else void setNavigationPresence("search", store.settings, "navigation");
+  });
 
   const searchRuntimeScopeKey = $derived([
     store.runtimeResolvedLocalProfileId ?? "default",
