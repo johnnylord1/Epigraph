@@ -48,6 +48,11 @@ The compatibility manifest is the only source of truth for installable versions.
 
 Checksum validation is integrity only. If Suwayomi publishes a verifiable signature later, the updater should add signature verification before relaxing any rule.
 
+Current compatibility decision:
+
+- `v2.1.1867` remains the supported and tested baseline.
+- `v2.2.2100` is explicitly blocked after a managed-runtime smoke run failed to become GraphQL-healthy. Tests may use an isolated allowlist fixture for update-flow coverage, but production must continue to follow the bundled manifest.
+
 ## Directories
 
 Managed runtime data lives under app data:
@@ -108,6 +113,10 @@ Rollback runs if promotion, restart, process stability, or health check fails. R
 - snapshot files are restored and rehashed;
 - the previous runtime starts;
 - the previous process remains alive through the stability window.
+
+On the next managed startup, Aethon prefers `suwayomi-runtime/current/Suwayomi-Server.jar` when it exists and otherwise falls back to the bundled JAR. Windows uses the bundled `javaw.exe` when available so the managed server remains background-only.
+
+The managed-current selection path was smoke-tested with a copied baseline JAR: the process command line selected `current/Suwayomi-Server.jar`, ownership was published, and the Library, Sources, and Extensions GraphQL health query completed without errors.
 
 ## Health Check
 

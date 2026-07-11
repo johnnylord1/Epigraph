@@ -3728,6 +3728,13 @@ fn suwayomi_data_dir() -> PathBuf {
     }
 }
 
+fn managed_suwayomi_runtime_jar_path() -> PathBuf {
+    suwayomi_data_dir()
+        .join("suwayomi-runtime")
+        .join("current")
+        .join("Suwayomi-Server.jar")
+}
+
 fn legacy_suwayomi_data_dirs() -> Vec<PathBuf> {
     Vec::new()
 }
@@ -3766,27 +3773,37 @@ struct ServerInvocation {
     working_dir: Option<PathBuf>,
 }
 
-/// Locate the `java` / `java.exe` binary inside a bundled JRE directory.
+/// Locate the Java runtime binary inside a bundled JRE directory.
 ///
 /// Expected layout (Windows and Linux):
 ///   <bundle_dir>/jre/bin/java[.exe]
 ///
+/// On Windows prefer `javaw.exe` so Suwayomi stays in the background without a
+/// console window, then fall back to `java.exe` if the bundled JRE lacks it.
 /// On Windows `strip_unc` is applied so Java doesn't choke on `\\?\` prefixes.
 #[cfg(not(target_os = "macos"))]
 fn find_java_in_bundle(bundle_dir: &PathBuf, log: &mut Option<std::fs::File>) -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
-    let java = strip_unc(bundle_dir.join("jre").join("bin").join("java.exe"));
+    {
+        let javaw = strip_unc(bundle_dir.join("jre").join("bin").join("javaw.exe"));
+        do_log(log, &format!("[find_java] checking path: {:?}", javaw));
+        do_log(log, &format!("[find_java] exists: {}", javaw.exists()));
+        if javaw.exists() {
+            return Some(javaw);
+        }
+
+        let java = strip_unc(bundle_dir.join("jre").join("bin").join("java.exe"));
+        do_log(log, &format!("[find_java] checking path: {:?}", java));
+        do_log(log, &format!("[find_java] exists: {}", java.exists()));
+        return java.exists().then_some(java);
+    }
 
     #[cfg(not(target_os = "windows"))]
-    let java = bundle_dir.join("jre").join("bin").join("java");
-
-    do_log(log, &format!("[find_java] checking path: {:?}", java));
-    do_log(log, &format!("[find_java] exists: {}", java.exists()));
-
-    if java.exists() {
-        Some(java)
-    } else {
-        None
+    {
+        let java = bundle_dir.join("jre").join("bin").join("java");
+        do_log(log, &format!("[find_java] checking path: {:?}", java));
+        do_log(log, &format!("[find_java] exists: {}", java.exists()));
+        java.exists().then_some(java)
     }
 }
 
@@ -3944,6 +3961,26 @@ fn resolve_server_binary(
         match find_java_in_bundle(&bundle_dir, log) {
             Some(java) => {
                 do_log(log, &format!("[resolve] java found: {:?}", java));
+                let managed_runtime_jar = managed_suwayomi_runtime_jar_path();
+                do_log(
+                    log,
+                    &format!(
+                        "[resolve] managed runtime jar = {:?} exists={}",
+                        managed_runtime_jar,
+                        managed_runtime_jar.exists()
+                    ),
+                );
+                if managed_runtime_jar.exists() {
+                    do_log(
+                        log,
+                        "[resolve] java found and managed runtime jar found - using managed runtime JAR",
+                    );
+                    return Ok(ServerInvocation {
+                        bin: java.to_string_lossy().into_owned(),
+                        args: local_server_java_args(&managed_runtime_jar),
+                        working_dir: managed_runtime_jar.parent().map(|path| path.to_path_buf()),
+                    });
+                }
                 if jar.exists() {
                     do_log(log, "[resolve] both java and jar found — using bundled JRE");
                     return Ok(ServerInvocation {

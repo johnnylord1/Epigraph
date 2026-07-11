@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
@@ -47,6 +47,7 @@ const SUWAYOMI_SNAPSHOT_ALLOWLIST: &[&str] = &[
     "database.trace.db",
     "server.owner.json",
 ];
+const SUWAYOMI_SERVER_OWNER_FILE: &str = "server.owner.json";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -481,7 +482,14 @@ pub fn create_suwayomi_update_snapshot(
     let started = log_update_start("snapshot");
     let result = (|| {
         let _guard = try_acquire_suwayomi_update_lock("snapshot")?;
-        create_suwayomi_update_snapshot_unlocked(server_url, binary, profile_id, profile_label, app)
+        create_suwayomi_update_snapshot_unlocked(
+            server_url,
+            binary,
+            profile_id,
+            profile_label,
+            true,
+            app,
+        )
     })()
     .map_err(|error| update_error(SuwayomiUpdateErrorKind::SnapshotError, error));
     log_update_result("snapshot", started, result)
@@ -492,6 +500,7 @@ fn create_suwayomi_update_snapshot_unlocked(
     binary: Option<String>,
     profile_id: Option<String>,
     profile_label: Option<String>,
+    restart_after_success: bool,
     app: AppHandle,
 ) -> Result<SuwayomiUpdateSnapshotResult, String> {
     let runtime = get_suwayomi_runtime_status(
@@ -520,10 +529,13 @@ fn create_suwayomi_update_snapshot_unlocked(
     ) {
         Ok(mut result) => {
             result.stopped_runtime = stopped_runtime;
-            result.restarted_runtime =
+            result.restarted_runtime = if restart_after_success {
                 restart_runtime_after_snapshot_failure(stopped_runtime, || {
                     restart_managed_runtime(&app, &target)
-                })?;
+                })?
+            } else {
+                false
+            };
             Ok(result)
         }
         Err(error) => {
@@ -627,6 +639,7 @@ pub async fn promote_suwayomi_runtime_update(
             snapshot_path,
             auth_header,
             app,
+            false,
         )
         .await
     }
@@ -659,6 +672,7 @@ pub async fn install_suwayomi_runtime_update(
             binary.clone(),
             profile_id.clone(),
             profile_label.clone(),
+            false,
             app.clone(),
         )?;
         promote_suwayomi_runtime_update_unlocked(
@@ -670,6 +684,7 @@ pub async fn install_suwayomi_runtime_update(
             snapshot.snapshot_path,
             auth_header,
             app,
+            true,
         )
         .await
     }
@@ -695,18 +710,21 @@ async fn promote_suwayomi_runtime_update_unlocked(
     snapshot_path: String,
     auth_header: Option<String>,
     app: AppHandle,
+    runtime_already_stopped: bool,
 ) -> Result<SuwayomiUpdatePromotionResult, String> {
-    let runtime = get_suwayomi_runtime_status(
-        server_url.clone(),
-        binary.clone(),
-        profile_id.clone(),
-        profile_label.clone(),
-        app.clone(),
-    );
-    if !runtime.update_allowed {
-        return Err(runtime
-            .block_reason
-            .unwrap_or_else(|| "This Suwayomi runtime is not managed by Aethon.".to_string()));
+    if !runtime_already_stopped {
+        let runtime = get_suwayomi_runtime_status(
+            server_url.clone(),
+            binary.clone(),
+            profile_id.clone(),
+            profile_label.clone(),
+            app.clone(),
+        );
+        if !runtime.update_allowed {
+            return Err(runtime
+                .block_reason
+                .unwrap_or_else(|| "This Suwayomi runtime is not managed by Aethon.".to_string()));
+        }
     }
 
     let manifest = load_compatibility_manifest()?;
@@ -716,7 +734,11 @@ async fn promote_suwayomi_runtime_update_unlocked(
     let staging_dir = managed_runtime_staging_root().join(normalize_version_tag(&staged_version));
     let staging_manifest = validate_staging_dir(&staging_dir, &manifest)?;
 
-    let stopped_runtime = stop_managed_runtime_for_snapshot(&app, &target)?;
+    let stopped_runtime = if runtime_already_stopped {
+        true
+    } else {
+        stop_managed_runtime_for_snapshot(&app, &target)?
+    };
     let runtime_root = managed_runtime_root();
     let promotion = match promote_staging_directories(&runtime_root, &staging_manifest.version) {
         Ok(promotion) => promotion,
@@ -1143,8 +1165,16 @@ fn copy_snapshot_plan(
     let mut files = Vec::new();
     for planned in plan {
         let target = temp_dir.join(&planned.name);
-        fs::copy(&planned.source_path, &target)
-            .map_err(|error| format!("Could not copy {}: {error}", planned.name))?;
+        match fs::copy(&planned.source_path, &target) {
+            Ok(_) => {}
+            Err(error)
+                if planned.name == SUWAYOMI_SERVER_OWNER_FILE
+                    && error.kind() == ErrorKind::NotFound =>
+            {
+                continue;
+            }
+            Err(error) => return Err(format!("Could not copy {}: {error}", planned.name)),
+        }
         let metadata = fs::metadata(&target).map_err(|error| {
             format!(
                 "Could not read copied metadata for {}: {error}",
@@ -2748,6 +2778,20 @@ mod tests {
         serde_json::from_str(SUWAYOMI_COMPATIBILITY_MANIFEST).unwrap()
     }
 
+    fn test_manifest_with_allowed_update() -> SuwayomiCompatibilityManifest {
+        let mut manifest = test_manifest();
+        manifest.max_tested_version = "v2.2.2100".to_string();
+        manifest
+            .blocked_versions
+            .retain(|blocked| blocked.version != "v2.2.2100");
+        manifest.allowed_versions.push(SuwayomiAllowedVersion {
+            version: "v2.2.2100".to_string(),
+            asset: "Suwayomi-Server-v2.2.2100.jar".to_string(),
+            notes: Some("Test-only allowed Suwayomi 2.2 release.".to_string()),
+        });
+        manifest
+    }
+
     fn release(tag: &str, prerelease: bool, assets: &[&str]) -> GithubRelease {
         release_with_draft(tag, false, prerelease, assets)
     }
@@ -2870,8 +2914,9 @@ mod tests {
         let manifest = test_manifest();
 
         assert_eq!(manifest.repository, "Suwayomi/Suwayomi-Server");
-        assert!(manifest.allowed_version("v2.2.2100").is_some());
+        assert!(manifest.allowed_version("v2.1.1867").is_some());
         assert!(manifest.blocked_reason("v2.0.1727").is_some());
+        assert!(manifest.blocked_reason("v2.2.2100").is_some());
     }
 
     #[test]
@@ -2888,7 +2933,7 @@ mod tests {
 
     #[test]
     fn compatible_release_requires_allowlist_asset_and_checksum() {
-        let manifest = test_manifest();
+        let manifest = test_manifest_with_allowed_update();
         let allowed = release(
             "v2.2.2100",
             false,
@@ -2908,7 +2953,7 @@ mod tests {
 
     #[test]
     fn compatible_release_ignores_draft() {
-        let manifest = test_manifest();
+        let manifest = test_manifest_with_allowed_update();
         let draft = release_with_draft(
             "v2.2.2100",
             true,
@@ -2921,7 +2966,7 @@ mod tests {
 
     #[test]
     fn compatible_release_ignores_prerelease() {
-        let manifest = test_manifest();
+        let manifest = test_manifest_with_allowed_update();
         let preview = release(
             "v2.2.2100",
             true,
@@ -2933,7 +2978,7 @@ mod tests {
 
     #[test]
     fn compatible_release_respects_blocklist_before_allowlist() {
-        let mut manifest = test_manifest();
+        let mut manifest = test_manifest_with_allowed_update();
         manifest.blocked_versions.push(SuwayomiBlockedVersion {
             version: "v2.2.2100".to_string(),
             reason: "test block".to_string(),
@@ -2949,7 +2994,7 @@ mod tests {
 
     #[test]
     fn compatible_release_respects_manifest_tested_range() {
-        let mut manifest = test_manifest();
+        let mut manifest = test_manifest_with_allowed_update();
         manifest.max_tested_version = "v2.1.1867".to_string();
         let above_max = release(
             "v2.2.2100",
@@ -2962,7 +3007,7 @@ mod tests {
 
     #[test]
     fn update_check_reports_update_available_from_allowlist() {
-        let manifest = test_manifest();
+        let manifest = test_manifest_with_allowed_update();
         let releases = vec![
             release(
                 "v2.2.2100",
@@ -2991,13 +3036,13 @@ mod tests {
     fn update_check_reports_up_to_date_for_latest_allowed_release() {
         let manifest = test_manifest();
         let releases = vec![release(
-            "v2.2.2100",
+            "v2.1.1867",
             false,
-            &["Suwayomi-Server-v2.2.2100.jar", "Checksums.sha256"],
+            &["Suwayomi-Server-v2.1.1867.jar", "Checksums.sha256"],
         )];
 
         let result =
-            calculate_update_check(&runtime(Some("v2.2.2100"), true), &manifest, &releases);
+            calculate_update_check(&runtime(Some("v2.1.1867"), true), &manifest, &releases);
 
         assert_eq!(result.status, UpdateCheckStatus::UpToDate);
         assert!(!result.update_allowed);
@@ -3249,6 +3294,24 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_skips_owner_file_removed_after_planning() {
+        let temp = tempfile::tempdir().unwrap();
+        write_root_file(temp.path(), "server.conf", b"server");
+        write_root_file(temp.path(), SUWAYOMI_SERVER_OWNER_FILE, b"owner");
+        let plan = plan_snapshot_files(temp.path()).unwrap();
+
+        std::fs::remove_file(temp.path().join(SUWAYOMI_SERVER_OWNER_FILE)).unwrap();
+        let snapshot_dir = temp.path().join("snapshot");
+        std::fs::create_dir(&snapshot_dir).unwrap();
+        let files = copy_snapshot_plan(&plan, &snapshot_dir).unwrap();
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].name, "server.conf");
+        assert!(snapshot_dir.join("server.conf").is_file());
+        assert!(!snapshot_dir.join(SUWAYOMI_SERVER_OWNER_FILE).exists());
+    }
+
+    #[test]
     fn snapshot_rejects_missing_root_directory() {
         let temp = tempfile::tempdir().unwrap();
         let missing = temp.path().join("missing");
@@ -3450,7 +3513,7 @@ mod tests {
 
     #[test]
     fn staging_rejects_unexpected_asset() {
-        let manifest = test_manifest();
+        let manifest = test_manifest_with_allowed_update();
         let mut candidate = staging_candidate("v2.2.2100");
         candidate.asset_name = "Unexpected.jar".to_string();
 
@@ -3462,7 +3525,7 @@ mod tests {
     #[test]
     fn staging_rejects_invalid_checksum_and_cleans_temp() {
         let temp = tempfile::tempdir().unwrap();
-        let manifest = test_manifest();
+        let manifest = test_manifest_with_allowed_update();
         let candidate = staging_candidate("v2.2.2100");
         let jar = create_test_jar_bytes("v2.2.2100");
         let bad_hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -3482,7 +3545,7 @@ mod tests {
     #[test]
     fn staging_cleans_part_after_interrupted_stream() {
         let temp = tempfile::tempdir().unwrap();
-        let manifest = test_manifest();
+        let manifest = test_manifest_with_allowed_update();
         let candidate = staging_candidate("v2.2.2100");
         let hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
@@ -3508,7 +3571,7 @@ mod tests {
     #[test]
     fn staging_rejects_unreadable_jar_and_cleans_temp() {
         let temp = tempfile::tempdir().unwrap();
-        let manifest = test_manifest();
+        let manifest = test_manifest_with_allowed_update();
         let candidate = staging_candidate("v2.2.2100");
         let jar = b"not a jar".to_vec();
         let hash = sha256_bytes(&jar);
@@ -3528,7 +3591,7 @@ mod tests {
     #[test]
     fn staging_accepts_valid_jar_without_touching_current_or_previous() {
         let temp = tempfile::tempdir().unwrap();
-        let manifest = test_manifest();
+        let manifest = test_manifest_with_allowed_update();
         let candidate = staging_candidate("v2.2.2100");
         let jar = create_test_jar_bytes("v2.2.2100");
         let hash = sha256_bytes(&jar);
@@ -3549,7 +3612,7 @@ mod tests {
     #[test]
     fn staging_rejects_jar_version_mismatch() {
         let temp = tempfile::tempdir().unwrap();
-        let manifest = test_manifest();
+        let manifest = test_manifest_with_allowed_update();
         let candidate = staging_candidate("v2.2.2100");
         let jar = create_test_jar_bytes("v2.1.1867");
         let hash = sha256_bytes(&jar);
