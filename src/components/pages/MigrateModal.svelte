@@ -10,6 +10,7 @@
   import { fetchSourceMangaSearchWithFallback } from "../../lib/manga/sourceSearch";
   import { ensureServerAwakeFor } from "../../lib/serverLifecycle";
   import { waitForSuwayomiGraphqlReady } from "../../lib/suwayomiReadiness";
+  import { setMigrationPresence } from "../../lib/discord";
   import { addToast, store } from "../../store/state.svelte";
   import type { Manga, Source, Chapter } from "../../lib/types";
   import {
@@ -196,6 +197,7 @@
   async function migrate() {
     if (!selectedMatch) return;
     migrating = true; error = null;
+    void setMigrationPresence(true, store.settings, "library");
     try {
       const result = await applyMangaMigrationWithJournal({
         currentManga: manga,
@@ -234,6 +236,8 @@
     } catch (e: any) {
       error = e.message;
       migrating = false;
+    } finally {
+      void setMigrationPresence(false, store.settings, "library");
     }
   }
 

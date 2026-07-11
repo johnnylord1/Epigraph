@@ -36,6 +36,7 @@
   } from "../../lib/migration/manga";
   import { ensureServerAwakeFor } from "../../lib/serverLifecycle";
   import { waitForSuwayomiGraphqlReady } from "../../lib/suwayomiReadiness";
+  import { setMigrationPresence } from "../../lib/discord";
   import { addToast, store } from "../../store/state.svelte";
   import type { Chapter, Manga, Source } from "../../lib/types";
   import type { ManagedExtension } from "../../lib/managedExtensions";
@@ -678,6 +679,7 @@
     applying = true;
     step = "migrating";
     error = null;
+    void setMigrationPresence(true, store.settings, "library");
     activeActionsMenuId = null;
     runtimeStatuses = new Map([...runtimeStatuses, ...[...selectedMigrationIds].map((id) => [id, "migrating" as const])]);
     try {
@@ -743,6 +745,7 @@
       runtimeErrors = nextErrors;
       saveDraft(preview, selectedIds, runtimeStatuses);
     } finally {
+      void setMigrationPresence(false, store.settings, "library");
       applying = false;
       step = "review";
     }

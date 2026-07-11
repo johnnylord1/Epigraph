@@ -34,6 +34,7 @@
     type MassNovelMigrationPreview,
     type NovelMigrationPreview,
   } from "../../lib/migration/novels";
+  import { setMigrationPresence } from "../../lib/discord";
   import { loadNovelSourceClassificationState, peekNovelSourceClassificationState, type PersistedNovelSourceClassificationState } from "../../lib/novels/sourceClassificationState";
   import NocturneState from "../shared/NocturneState.svelte";
   import { getNovelMigrationBlocker, hasMinimumNovelMigrationSafeCohort, isNovelSourceMigrationSafe } from "../../lib/novels/migrationSafe";
@@ -189,6 +190,7 @@
     if (!selectedTarget) return;
     migrating = true;
     error = null;
+    void setMigrationPresence(true, store.settings, "library");
     try {
       const result = await applyNovelMigrationWithJournal({
         scopeInput,
@@ -240,6 +242,8 @@
     } catch (migrationError) {
       error = migrationError instanceof Error ? migrationError.message : String(migrationError);
       migrating = false;
+    } finally {
+      void setMigrationPresence(false, store.settings, "library");
     }
   }
 
@@ -247,6 +251,7 @@
     if (!massPreview) return;
     migrating = true;
     error = null;
+    void setMigrationPresence(true, store.settings, "library");
     try {
       const result = await applyMassNovelMigrationWithJournal({
         scopeInput,
@@ -308,6 +313,8 @@
     } catch (massError) {
       error = massError instanceof Error ? massError.message : String(massError);
       migrating = false;
+    } finally {
+      void setMigrationPresence(false, store.settings, "library");
     }
   }
 

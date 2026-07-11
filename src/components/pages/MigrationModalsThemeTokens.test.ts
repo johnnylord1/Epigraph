@@ -9,6 +9,12 @@ const MIGRATION_MODAL_FILES = [
   "src/components/pages/NovelMigrateModal.svelte",
 ] as const;
 
+const MIGRATION_PRESENCE_FILES = [
+  ["src/components/pages/MigrateModal.svelte", 1],
+  ["src/components/pages/MassMigrateModal.svelte", 1],
+  ["src/components/pages/NovelMigrateModal.svelte", 2],
+] as const;
+
 const TOKEN_FILES = [
   "src/styles/tokens.css",
   "src/styles/nocturne-theme.css",
@@ -57,5 +63,19 @@ describe("individual migration modal theme tokens", () => {
     expect(newMilestoneDefinitions.length).toBeGreaterThan(0);
     expect(unused, "all Marco 12 migration modal tokens should be consumed").toEqual([]);
     expect(undefinedTokens, "all consumed migration modal tokens should be defined").toEqual([]);
+  });
+
+  test("restores Discord presence after every migration operation", () => {
+    for (const [file, expectedOperations] of MIGRATION_PRESENCE_FILES) {
+      const source = readRepoFile(file);
+      const starts = source.match(/void setMigrationPresence\(true, store\.settings, "library"\);/g) ?? [];
+      const guardedStops = source.match(/finally\s*\{\s*void setMigrationPresence\(false, store\.settings, "library"\);/g) ?? [];
+
+      expect(source, `${file} should import the migration presence helper`).toContain(
+        'import { setMigrationPresence } from "../../lib/discord";',
+      );
+      expect(starts, `${file} should publish each migration start`).toHaveLength(expectedOperations);
+      expect(guardedStops, `${file} should restore presence from finally`).toHaveLength(expectedOperations);
+    }
   });
 });
