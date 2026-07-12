@@ -32,6 +32,8 @@ const MIGRATED_PREFIXES = [
   "activity",
   "downloads",
   "browse",
+  "sources",
+  "taste",
 ] as const;
 
 const directColorPattern =
@@ -74,7 +76,7 @@ describe("derived component color contract", () => {
     const legacyAliases = migrated
       .filter(
         ({ value }) =>
-          /var\(--n-(?!(?:hud-scale|topbar-height|search-width|search-width-focus)\b)/.test(
+          /var\(--n-(?!(?:hud-scale|topbar-height|sidebar-width|search-width|search-width-focus)\b)/.test(
             value,
           ),
       )

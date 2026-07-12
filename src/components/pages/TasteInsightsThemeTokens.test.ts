@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import TasteInsightsModal from "./TasteInsightsModal.svelte";
+import { resolveCssColor, type RgbaColor } from "../../test/themeColor";
 
 const ROOT = process.cwd();
 const NATIVE_ANIMATE = Element.prototype.animate;
@@ -21,18 +22,10 @@ function uniqueMatches(source: string, pattern: RegExp) {
   return Array.from(new Set(source.match(pattern) ?? [])).sort();
 }
 
-function customProperty(source: string, token: string) {
-  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = source.match(new RegExp(`${escaped}\\s*:\\s*([^;]+);`));
-  if (!match) throw new Error(`Missing ${token}`);
-  return match[1].trim();
-}
-
-function contrastOverWhiteAlpha(value: string, background: [number, number, number]) {
-  const match = value.match(/^rgba\(255,\s*255,\s*255,\s*([\d.]+)\)$/);
-  if (!match) throw new Error(`Expected translucent white, received ${value}`);
-  const alpha = Number(match[1]);
-  const foreground = background.map((channel) => 255 * alpha + channel * (1 - alpha));
+function contrastOver(color: RgbaColor, background: [number, number, number]) {
+  const foreground = background.map(
+    (channel, index) => color[index] * color[3] + channel * (1 - color[3]),
+  );
   const luminance = (channels: number[]) => {
     const values = channels.map((channel) => {
       const normalized = channel / 255;
@@ -75,8 +68,12 @@ describe("Taste Insights theme tokens", () => {
   });
 
   it("keeps Nocturne supporting text at WCAG AA contrast", () => {
+    const defaults = readProjectFile("src/styles/tokens.css");
     const nocturne = readProjectFile("src/styles/nocturne-theme.css");
-    const ratio = contrastOverWhiteAlpha(customProperty(nocturne, "--component-taste-insights-muted-fg"), [27, 25, 36]);
+    const ratio = contrastOver(
+      resolveCssColor(`${defaults}\n${nocturne}`, "--component-taste-insights-muted-fg"),
+      [27, 25, 36],
+    );
     expect(ratio).toBeGreaterThanOrEqual(4.5);
   });
 

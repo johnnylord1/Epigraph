@@ -2241,3 +2241,33 @@ Categorias cobertas:
 - `pnpm build`: verde com 6.297 modulos; permanece apenas o aviso conhecido de chunk acima de 500 kB.
 - `git diff --check`: verde.
 - Nenhum componente Svelte, API, store, GraphQL, busca, filtros ou navegacao foi alterado.
+
+### Marco 28C.3b - Sources e Taste
+
+#### Escopo e derivacao
+
+- Prefixos migrados: `sources` e `taste`, com 98/106 e 38/42 declaracoes/ocorrencias respectivamente; total de 136 declaracoes e 148 ocorrencias, todas antes nos overrides Nocturne.
+- Restam zero cores literais nos 133 tokens Sources e 51 tokens Taste de fallback e Nocturne.
+- `--component-sources-control-hover-fg` deixou de usar `--n-primary`; `--component-taste-insights-fg` deixou de usar `--n-on-surface` com fallback literal. `--n-sidebar-width` permanece somente como geometria Legacy.
+- Foram adicionadas 6 fontes genericas para scrims e superficies profundas/insights, 12 papeis locais de Sources e 7 de Taste. Browse e Shell passaram a referenciar os papeis genericos equivalentes sem alteracao visual.
+- Warning, danger, repository rows, fields e status de Sources permanecem papeis semanticos do dominio. A paleta analitica positiva/negativa de Taste tambem permanece funcional, sem virar token global de marca.
+
+#### Acessibilidade
+
+- O teste WCAG de Taste aceitava apenas white `rgba` literal. Ele passou a usar `resolveCssColor`, mantendo o mesmo background, composicao alpha e minimo 4.5:1.
+- O modal continua isolando o background, prendendo foco, fechando com Escape e restaurando o foco do disparador; esses comportamentos passaram no teste existente.
+
+#### Validacao visual real
+
+- Before: `docs/screenshots/marco7-sources/`, `docs/screenshots/marco22-taste-insights/` e Search do preflight.
+- After em `docs/screenshots/marco28c3b-sources-taste/`: Sources com 10 extensoes reais, overlay Manage repositories com 5 feeds reais e Taste Insights calculado de 634 entradas da Library.
+- Nenhuma extensao ou repository foi instalada/removida; o overlay foi apenas aberto e fechado.
+- Sources preservou table, tabs, search, status badges, actions, repository overlay, backdrop, borders, shadows e hierarchy. Taste preservou modal, cards, charts, positive fills, badges, scroll e foco.
+- `ExtensionSettingsPanel` nao estava exposto pelas extensoes instaladas nesta sessao e nao foi forçado; sua cobertura estatica permanece no contrato Sources/BrowseV3.
+
+#### Gates
+
+- Testes focados: `componentColorDerivation.test.ts`, `SourcesThemeTokens.test.ts`, `TasteInsightsThemeTokens.test.ts` e `BrowseV3.test.ts`; 4 arquivos e 21 testes verdes.
+- `pnpm build`: verde com 6.297 modulos; permanece apenas o aviso conhecido de chunk acima de 500 kB.
+- `git diff --check`: verde.
+- Nenhum componente Svelte, API, store, extensao, repository ou comportamento foi alterado.
