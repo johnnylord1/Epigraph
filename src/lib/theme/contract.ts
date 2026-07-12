@@ -80,7 +80,7 @@ export interface HudThemeTokens {
   "hud-progress-height": string;
 }
 
-export interface CustomTheme {
+export interface LegacyCustomTheme {
   id: string;
   name: string;
   tokens: ThemeTokens;
@@ -90,6 +90,35 @@ export interface CustomTheme {
   description?: string;
   preview?: string;
 }
+
+export type ThemePrimitiveTokens = Partial<Pick<ThemeTokens,
+  | "bg-void" | "bg-base" | "bg-surface" | "bg-raised" | "bg-overlay" | "bg-subtle"
+  | "border-dim" | "border-base" | "border-strong" | "border-focus"
+  | "text-primary" | "text-secondary" | "text-muted" | "text-faint" | "text-disabled" | "text-tertiary" | "text-inverse"
+  | "accent" | "accent-dim" | "accent-muted" | "accent-fg" | "accent-bright"
+>>;
+
+export type ThemeSemanticTokens = Pick<ThemeTokens,
+  | "color-error" | "color-error-bg" | "color-success" | "color-success-bg"
+  | "color-warning" | "color-warning-bg" | "color-danger" | "color-danger-bg"
+  | "color-info" | "color-info-bg" | "color-background" | "color-background-void"
+  | "color-surface" | "color-surface-secondary" | "color-elevated" | "color-card"
+  | "color-modal" | "color-popover" | "color-menu" | "color-overlay"
+  | "color-border" | "color-outline" | "color-divider" | "color-accent" | "color-accent-muted"
+>;
+
+export interface ThemeDocumentV4 {
+  version: 4;
+  id: `custom:${string}`;
+  name: string;
+  base: BuiltinTheme;
+  primitives: ThemePrimitiveTokens;
+  semanticOverrides?: Partial<ThemeSemanticTokens>;
+  hud?: Partial<HudThemeTokens>;
+  motion: ThemeMotionPreset;
+}
+
+export type CustomTheme = LegacyCustomTheme | ThemeDocumentV4;
 
 export interface BuiltinThemeMetadata {
   id: BuiltinTheme;
@@ -118,6 +147,20 @@ export const THEME_TOKEN_KEYS = [
   "color-surface", "color-surface-secondary", "color-elevated", "color-card", "color-modal", "color-popover",
   "color-menu", "color-overlay", "color-border", "color-outline", "color-divider", "color-accent", "color-accent-muted",
 ] as const satisfies readonly (keyof ThemeTokens)[];
+
+export const THEME_PRIMITIVE_TOKEN_KEYS = [
+  "bg-void", "bg-base", "bg-surface", "bg-raised", "bg-overlay", "bg-subtle",
+  "border-dim", "border-base", "border-strong", "border-focus",
+  "text-primary", "text-secondary", "text-muted", "text-faint", "text-disabled", "text-tertiary", "text-inverse",
+  "accent", "accent-dim", "accent-muted", "accent-fg", "accent-bright",
+] as const satisfies readonly (keyof ThemePrimitiveTokens)[];
+
+export const THEME_SEMANTIC_TOKEN_KEYS = [
+  "color-error", "color-error-bg", "color-success", "color-success-bg", "color-warning", "color-warning-bg",
+  "color-danger", "color-danger-bg", "color-info", "color-info-bg", "color-background", "color-background-void",
+  "color-surface", "color-surface-secondary", "color-elevated", "color-card", "color-modal", "color-popover",
+  "color-menu", "color-overlay", "color-border", "color-outline", "color-divider", "color-accent", "color-accent-muted",
+] as const satisfies readonly (keyof ThemeSemanticTokens)[];
 
 export const HUD_THEME_TOKEN_KEYS = [
   "hud-control-height", "hud-icon-button-size", "hud-control-radius", "hud-chip-radius",
