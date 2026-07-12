@@ -1,3 +1,4 @@
+pub mod assets;
 pub mod audit;
 pub mod bootstrap;
 pub mod capabilities;
