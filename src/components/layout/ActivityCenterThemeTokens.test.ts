@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import ActivityOverlay from "./ActivityOverlay.svelte";
 import { store } from "../../store/state.svelte";
+import { resolveCssColor } from "../../test/themeColor";
 
 const ROOT = process.cwd();
 const ACTIVITY_FILES = [
@@ -24,19 +25,6 @@ function readProjectFile(path: string) {
 
 function uniqueMatches(source: string, pattern: RegExp) {
   return Array.from(new Set(source.match(pattern) ?? [])).sort();
-}
-
-function customProperty(source: string, token: string) {
-  const match = source.match(new RegExp(`${token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:\\s*([^;]+);`));
-  if (!match) throw new Error(`Missing ${token}`);
-  return match[1].trim();
-}
-
-function rgba(value: string): [number, number, number, number] {
-  const match = value.match(/^rgba?\(([^)]+)\)$/);
-  if (!match) throw new Error(`Expected rgb color, received ${value}`);
-  const parts = match[1].split(/[,\s/]+/).filter(Boolean).map(Number);
-  return [parts[0], parts[1], parts[2], parts[3] ?? 1];
 }
 
 function composite(color: [number, number, number, number], background: [number, number, number]) {
@@ -91,7 +79,9 @@ describe("Activity Center theme tokens", () => {
   });
 
   it("keeps normal-size Nocturne Activity Center text at WCAG AA contrast", () => {
+    const defaults = readProjectFile("src/styles/tokens.css");
     const nocturne = readProjectFile("src/styles/nocturne-theme.css");
+    const theme = `${defaults}\n${nocturne}`;
     const panel: [number, number, number] = [18, 17, 22];
     const textTokens = [
       "--component-activity-center-text",
@@ -103,7 +93,7 @@ describe("Activity Center theme tokens", () => {
     ];
 
     for (const token of textTokens) {
-      const ratio = contrast(composite(rgba(customProperty(nocturne, token)), panel), panel);
+      const ratio = contrast(composite(resolveCssColor(theme, token), panel), panel);
       expect(ratio, `${token} should meet WCAG AA`).toBeGreaterThanOrEqual(4.5);
     }
   });

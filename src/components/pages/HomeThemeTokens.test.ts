@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { resolveCssColor } from "../../test/themeColor";
 
 const ROOT = process.cwd();
 const HOME_PATH = "src/components/pages/Home.svelte";
@@ -16,20 +17,6 @@ function readProjectFile(path: string) {
 
 function uniqueMatches(source: string, pattern: RegExp) {
   return Array.from(new Set(source.match(pattern) ?? [])).sort();
-}
-
-function customProperty(source: string, token: string) {
-  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = source.match(new RegExp(`${escaped}\\s*:\\s*([^;]+);`));
-  if (!match) throw new Error(`Missing ${token}`);
-  return match[1].trim();
-}
-
-function rgba(value: string): [number, number, number, number] {
-  const match = value.match(/^rgba?\(([^)]+)\)$/);
-  if (!match) throw new Error(`Expected rgb color, received ${value}`);
-  const parts = match[1].split(/[,\s/]+/).filter(Boolean).map(Number);
-  return [parts[0], parts[1], parts[2], parts[3] ?? 1];
 }
 
 function contrastOver(color: [number, number, number, number], background: [number, number, number]) {
@@ -69,7 +56,9 @@ describe("Home theme tokens", () => {
   });
 
   it("keeps normal-size Nocturne Home text at WCAG AA contrast", () => {
+    const defaults = readProjectFile("src/styles/tokens.css");
     const nocturne = readProjectFile("src/styles/nocturne-theme.css");
+    const theme = `${defaults}\n${nocturne}`;
     const panel: [number, number, number] = [28, 27, 27];
     const textTokens = [
       "--component-home-muted-fg",
@@ -85,7 +74,7 @@ describe("Home theme tokens", () => {
     ];
 
     for (const token of textTokens) {
-      expect(contrastOver(rgba(customProperty(nocturne, token)), panel), token).toBeGreaterThanOrEqual(4.5);
+      expect(contrastOver(resolveCssColor(theme, token), panel), token).toBeGreaterThanOrEqual(4.5);
     }
   });
 

@@ -2181,3 +2181,36 @@ Categorias cobertas:
 - `pnpm build`: verde com 6.297 modulos; permanece apenas o aviso conhecido de chunk acima de 500 kB.
 - `git diff --check`: verde.
 - Nenhum componente Svelte, layout, API, store, tracking provider ou comportamento foi alterado.
+
+### Marco 28C.2 - Library e Dashboard
+
+#### Escopo e derivacao
+
+- Prefixos migrados: `library`, `home`, `activity` e `downloads`.
+- O lote removeu 179 declaracoes e 195 ocorrencias de cor direta, todas antes concentradas nos overrides Nocturne. Restam zero literais nesses prefixos no fallback e no tema.
+- Tambem foram removidas 24 dependencias Legacy de cor (`--n-on-surface`, `--n-primary*`, `--n-gradient-primary`, `--n-on-primary*`, `--n-on-surface-variant` e o alias inexistente `--n-error`). `--n-hud-scale` e `--n-topbar-height` permanecem apenas em geometria.
+- Foram adicionadas 45 fontes semanticas: papeis compartilhados para texto/superficie profunda, tracks, status e gradient accent; papeis locais para Library, Activity Center e Downloads. Nenhuma primitiva nova foi necessaria.
+- Search passou a compartilhar `--color-deep-neutral-surface-source`; o progresso de Detail, Home e Downloads converge em `--color-neutral-track-source`; MangaPreview reutiliza os status vivid. As relacoes preservam os valores Nocturne e removem acoplamentos entre componentes.
+- `--component-downloads-danger-fg` agora resolve por `--color-danger`, corrigindo a referencia anterior a `--n-error`, que nunca foi definida.
+
+#### Acessibilidade e testes de cor
+
+- Os helpers WCAG de Home e Activity Center aceitavam apenas `rgb/rgba` literal e falharam corretamente ao encontrar a nova derivacao.
+- Foi criado `src/test/themeColor.ts`, que resolve a cascata fallback -> Nocturne, aliases, hex/rgb, alpha, `color-mix()` e ciclos. Os mesmos pares e limites de contraste foram mantidos; nenhum threshold foi reduzido.
+- O gate progressivo confirma zero cor literal e zero alias `--n-*` de cor em todos os component tokens dos quatro prefixos.
+
+#### Validacao visual real
+
+- Before: Home, Activity Center, Library Comics/Books, display popover e Downloads em `docs/screenshots/marco28-preflight/`.
+- After em `docs/screenshots/marco28c2-library-dashboard/`: Home, Activity Center, Library Comics, Library Books, display popover, Downloads vazio, filtro e menu de acoes.
+- Library manteve grid, capas, badges, filtros, densidade, progressos, popover, toggles e hierarquia. Home manteve cards de continuidade, atalhos, graficos e activity summaries.
+- Activity Center abriu com notificacoes reais; surfaces, issue rows, tabs, count pills, danger state e tipografia permaneceram equivalentes.
+- Downloads estava vazio no runtime real. Empty/loading, summary, filtro, acoes e disabled foram validados visualmente; estados active/paused/error continuam cobertos por `Downloads.test.ts`, sem dados artificiais.
+- Dois frames CDP iniciais vieram com tiles pretos do WebView2. O popover da Library e o menu de Downloads foram recapturados isoladamente e somente os frames finais integros foram mantidos.
+
+#### Gates
+
+- Testes focados: 17 arquivos e 79 testes verdes, cobrindo contratos, render, teclado, Library browser-components, Home, Activity, Downloads e navigation.
+- `pnpm build`: verde com 6.297 modulos; permanece apenas o aviso conhecido de chunk acima de 500 kB.
+- `git diff --check`: verde.
+- Nenhum componente Svelte, layout, API, store, fila de downloads ou comportamento foi alterado.

@@ -27,6 +27,10 @@ const MIGRATED_PREFIXES = [
   "detail",
   "tracking",
   "manga",
+  "library",
+  "home",
+  "activity",
+  "downloads",
 ] as const;
 
 const directColorPattern =
