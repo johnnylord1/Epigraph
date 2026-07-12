@@ -34,10 +34,11 @@ const MIGRATED_PREFIXES = [
   "browse",
   "sources",
   "taste",
+  "reader",
 ] as const;
 
 const directColorPattern =
-  /#[0-9a-f]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)|oklch\([^)]*\)|\b(?:black|white)\b/i;
+  /#[0-9a-f]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)|oklch\([^)]*\)|(?<![\w-])(?:black|white)(?![\w-])/i;
 
 interface CssDeclaration {
   name: string;
@@ -114,5 +115,15 @@ describe("derived component color contract", () => {
     const unused = sourceNames.filter((name) => !reachable.has(name));
     expect(sourceNames.length).toBeGreaterThan(0);
     expect(unused).toEqual([]);
+  });
+
+  test.each([
+    ["black", true],
+    ["1px solid white", true],
+    ["var(--fallback, black)", true],
+    ["var(--font-weight-black)", false],
+    ["var(--black-level)", false],
+  ])("classifies named color boundaries in %s", (value, expected) => {
+    expect(directColorPattern.test(value)).toBe(expected);
   });
 });

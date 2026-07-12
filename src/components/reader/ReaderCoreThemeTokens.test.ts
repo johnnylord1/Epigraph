@@ -68,14 +68,21 @@ describe("Reader core theme tokens", () => {
   });
 
   it("keeps Nocturne Reader core aliases resolvable", () => {
-    const componentSources = READER_FILES.map(readProjectFile).join("\n");
     const defaultTokens = readProjectFile("src/styles/tokens.css");
     const nocturneTokens = readProjectFile("src/styles/nocturne-theme.css");
-    const defined = new Set(uniqueMatches(
-      `${defaultTokens}\n${nocturneTokens}\n${componentSources}`,
-      CUSTOM_PROPERTY_DEFINITION_PATTERN
+    const defaultDefined = new Set(uniqueMatches(defaultTokens, CUSTOM_PROPERTY_DEFINITION_PATTERN));
+    const nocturneDefined = new Set(uniqueMatches(
+      `${defaultTokens}\n${nocturneTokens}`,
+      CUSTOM_PROPERTY_DEFINITION_PATTERN,
     ));
+    const defaultDeclarations = defaultTokens.match(READER_TOKEN_DECLARATION_PATTERN) ?? [];
     const declarations = nocturneTokens.match(READER_TOKEN_DECLARATION_PATTERN) ?? [];
+    const defaultReferences = defaultDeclarations.flatMap((declaration) =>
+      Array.from(declaration.matchAll(CUSTOM_PROPERTY_REFERENCE_PATTERN), (match) => ({
+        token: match[1],
+        hasFallback: Boolean(match[2]),
+      })),
+    );
     const references = declarations.flatMap((declaration) =>
       Array.from(declaration.matchAll(CUSTOM_PROPERTY_REFERENCE_PATTERN), (match) => ({
         token: match[1],
@@ -83,7 +90,8 @@ describe("Reader core theme tokens", () => {
       }))
     );
 
-    expect(references.filter(({ token, hasFallback }) => !hasFallback && !defined.has(token))).toEqual([]);
+    expect(defaultReferences.filter(({ token, hasFallback }) => !hasFallback && !defaultDefined.has(token))).toEqual([]);
+    expect(references.filter(({ token, hasFallback }) => !hasFallback && !nocturneDefined.has(token))).toEqual([]);
   });
 
   it("resolves prose palette dependent tokens in the viewer context", () => {

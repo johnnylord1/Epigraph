@@ -2,6 +2,7 @@ import { cleanup, render, screen, fireEvent } from "@testing-library/svelte";
 import { afterEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { resolveCssColor } from "../../test/themeColor";
 import ReaderHudFixture from "./ReaderHud.test.fixture.svelte";
 
 const READER_HUD_COMPONENT_FILES = [
@@ -11,9 +12,15 @@ const READER_HUD_COMPONENT_FILES = [
 ] as const;
 
 const DIRECT_COLOR_PATTERN = /#[0-9A-Fa-f]{3,8}\b|rgba?\(|hsla?\(|oklch\(|color-mix\(/;
+const READER_HUD_TOKEN_PATTERN = /--component-reader-(?!core-)[A-Za-z0-9_-]+/g;
+const READER_HUD_TOKEN_DEFINITION_PATTERN = /--component-reader-(?!core-)[A-Za-z0-9_-]+(?=\s*:)/g;
 
 function source(path: string) {
   return readFileSync(join(process.cwd(), path), "utf8");
+}
+
+function uniqueMatches(value: string, pattern: RegExp) {
+  return Array.from(new Set(value.match(pattern) ?? [])).sort();
 }
 
 function relativeLuminance([red, green, blue]: readonly number[]) {
@@ -138,37 +145,33 @@ describe("ReaderHud", () => {
     }
   });
 
-  it("consumes Reader HUD component tokens for chrome, popovers, controls, focus, and motion", () => {
-    const hudSource = source("src/components/reader/ReaderHud.svelte");
-    const ttsSource = source("src/components/reader/TtsControls.svelte");
+  it("defines and consumes the complete Reader HUD token inventory", () => {
+    const componentSource = READER_HUD_COMPONENT_FILES.map(source).join("\n");
+    const defaultTokens = source("src/styles/tokens.css");
+    const nocturneTokens = source("src/styles/nocturne-theme.css");
+    const consumed = uniqueMatches(componentSource, READER_HUD_TOKEN_PATTERN);
+    const defaultDefined = uniqueMatches(defaultTokens, READER_HUD_TOKEN_DEFINITION_PATTERN);
+    const nocturneDefined = uniqueMatches(nocturneTokens, READER_HUD_TOKEN_DEFINITION_PATTERN);
 
-    for (const token of [
-      "--component-reader-bg-layer",
-      "--component-reader-panel-bg",
-      "--component-reader-border",
-      "--component-reader-control-bg",
-      "--component-reader-control-hover-bg",
-      "--component-reader-control-active-bg",
-      "--component-reader-accent-gradient",
-      "--component-reader-focus-ring",
-      "--component-reader-popover-z-index",
-      "--component-reader-transition-fast",
-    ]) {
-      expect(`${hudSource}\n${ttsSource}`, `Missing Reader HUD token ${token}`).toContain(token);
-    }
+    expect(consumed).toHaveLength(50);
+    expect(defaultDefined).toEqual(consumed);
+    expect(nocturneDefined).toHaveLength(29);
+    expect(nocturneDefined.filter((token) => !consumed.includes(token))).toEqual([]);
   });
 
   it("keeps Nocturne Reader HUD foreground colors at WCAG AA contrast", () => {
-    const panelBackground = [26, 26, 30] as const;
+    const themeSource = `${source("src/styles/tokens.css")}\n${source("src/styles/nocturne-theme.css")}`;
+    const panelBackground = resolveCssColor(themeSource, "--component-reader-panel-bg");
     const foregrounds = {
-      "primary HUD text": [245, 244, 250],
-      "muted HUD text": [185, 181, 204],
-      "faint metadata text": [145, 141, 165],
-      "accent controls": [143, 130, 230],
-      "accent strong controls": [171, 159, 255],
+      "primary HUD text": "--component-reader-fg",
+      "muted HUD text": "--component-reader-muted-fg",
+      "faint metadata text": "--component-reader-faint-fg",
+      "accent controls": "--component-reader-accent-fg",
+      "accent strong controls": "--component-reader-accent-strong-fg",
     } as const;
 
-    for (const [label, foreground] of Object.entries(foregrounds)) {
+    for (const [label, token] of Object.entries(foregrounds)) {
+      const foreground = resolveCssColor(themeSource, token);
       expect(
         contrastRatio(foreground, panelBackground),
         `${label} contrast should be at least 4.5:1`,

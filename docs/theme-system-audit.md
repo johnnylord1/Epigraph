@@ -2271,3 +2271,36 @@ Categorias cobertas:
 - `pnpm build`: verde com 6.297 modulos; permanece apenas o aviso conhecido de chunk acima de 500 kB.
 - `git diff --check`: verde.
 - Nenhum componente Svelte, API, store, extensao, repository ou comportamento foi alterado.
+
+### Marco 28D.1 - Reader
+
+#### Escopo e derivacao
+
+- Prefixo migrado: `reader`, cobrindo os 50 tokens do HUD compartilhado e os 115 tokens do Reader Core usados por `Reader.svelte`, `BookReader.svelte` e `NovelReader.svelte`.
+- O inventario corrigido possui 65 declaracoes e 73 ocorrencias de cor direta: 5/5 no fallback e 60/68 no Nocturne. A estimativa anterior 66/74 contava incorretamente `black` dentro do identificador `--font-weight-black`.
+- Restam zero hex/rgb/rgba/hsl/hsla/oklch ou cores nomeadas nos component tokens `--component-reader-*`. Nenhum alias `--n-*` e usado pelo Reader migrado.
+- Foram adicionadas 19 fontes semanticas para void/layers, paineis, texto, accent, focus, papel PDF, paleta prose e resume banner. Todas sao alcancaveis transitivamente pelos component tokens; nenhuma primitiva de cor nova foi necessaria.
+- Sombras, alpha, gradients e stops foram preservados por `color-mix()` com fontes semanticas. `--font-weight-black` foi definido como token tipografico para resolver o alias que ja era consumido no fallback.
+- Nenhum componente Svelte foi alterado. Paginacao, fullscreen, TTS, atalhos, adapters, progresso, GraphQL, cache e renderizacao permaneceram intactos.
+
+#### Contratos e acessibilidade
+
+- O detector progressivo passou a reconhecer `black`/`white` apenas como palavras CSS completas; identificadores como `--font-weight-black` e `--black-level` nao geram falso positivo, com casos positivos e negativos cobertos por teste.
+- `ReaderHud.test.ts` agora exige o inventario completo 50/50 do HUD, confirma que os 29 overrides Nocturne sao todos consumidos e calcula contraste a partir dos tokens reais resolvidos pela cascata.
+- `ReaderCoreThemeTokens.test.ts` valida referencias do fallback e do Nocturne em grafos de definicoes separados, impedindo que uma declaracao disponivel somente no tema mascare alias ausente no fallback.
+- Os cinco foregrounds principais do HUD continuam acima de WCAG AA 4.5:1 sobre a superficie real do painel.
+
+#### Validacao visual real
+
+- Before: `docs/screenshots/marco28-preflight/before-book-reader.png`, `before-novel-reader.png` e `before-manga-reader.png`.
+- After em `docs/screenshots/marco28d1-reader/`: BookReader EPUB, BookReader PDF reflow com settings, PDF canvas, NovelReader com HUD, manga MangaDex com 54 imagens reais carregadas e popover de brilho.
+- EPUB e NovelReader mantiveram geometria, painel prose, tipografia, HUD, superficies, bordas, sombras e hierarquia visual aparentes. PDF foi validado tanto em reflow quanto no canvas nativo; o modo reflow foi restaurado ao final.
+- O manga reader foi aberto com a obra MangaDex real `My Stepmother's Love isn't Going How I Thought!`; 54 imagens estavam carregadas e nenhuma fixture/dado artificial foi criado.
+- A primeira tentativa apos o relaunch coincidiu com o bootstrap do perfil e gerou um frame preto/loading. Esses diagnosticos foram removidos; somente capturas finais estaveis foram mantidas.
+
+#### Gates
+
+- Testes focados: `componentColorDerivation.test.ts`, `ReaderCoreThemeTokens.test.ts`, `ReaderHud.test.ts`, `TtsControls.test.ts` e `tts.test.ts`; 5 arquivos e 30 testes verdes.
+- `pnpm build`: verde com 6.297 modulos; permanece apenas o aviso conhecido de chunk acima de 500 kB.
+- `git diff --check`: verde.
+- Risco remanescente: nao existe teste browser automatizado do Reader; a cobertura visual continua dependendo do app Tauri real/CDP e do conteudo persistido disponivel.

@@ -291,6 +291,25 @@
   --color-tracking-title-emphasis: var(--text-primary);
   --color-manga-status-success-source: var(--color-status-success-vivid-source);
   --color-manga-status-warning-source: var(--color-status-warning-vivid-source);
+  --color-reader-void-source: var(--color-background-void);
+  --color-reader-layer-top-source: var(--color-background);
+  --color-reader-panel-source: var(--color-popover);
+  --color-reader-panel-hover-source: var(--color-elevated);
+  --color-reader-panel-strong-source: var(--color-surface-secondary);
+  --color-reader-text-source: var(--text-primary);
+  --color-reader-muted-source: var(--text-secondary);
+  --color-reader-faint-source: var(--text-muted);
+  --color-reader-accent-source: var(--accent);
+  --color-reader-accent-muted-source: var(--accent-muted);
+  --color-reader-accent-strong-source: var(--accent-fg);
+  --color-reader-focus-source: var(--accent-fg);
+  --color-reader-subtle-ink-source: var(--text-secondary);
+  --color-reader-paper-source: var(--text-primary);
+  --color-reader-prose-page-source: var(--text-primary);
+  --color-reader-prose-ink-source: var(--text-inverse);
+  --color-reader-prose-surface-mix-source: var(--text-secondary);
+  --color-reader-resume-source: var(--color-popover);
+  --color-reader-prose-void-source: var(--color-background-void);
   --gradient-settings-meter: linear-gradient(90deg, var(--color-settings-meter-accent-start), var(--color-settings-meter-accent-end));
   --gradient-settings-meter-warning: linear-gradient(90deg, var(--color-settings-meter-warning-start), var(--color-settings-meter-warning-end));
   --gradient-settings-meter-critical: linear-gradient(90deg, var(--color-settings-meter-critical-start), var(--color-settings-meter-critical-end));
@@ -324,6 +343,7 @@
   --weight-semibold: var(--weight-semi);
   --weight-bold:   700;
   --weight-extrabold: 800;
+  --font-weight-black: 850;
 
   /* Leading */
   --leading-none:  1;
@@ -2563,7 +2583,7 @@
   --component-reader-core-prose-tts-bg: color-mix(in srgb, var(--color-accent) 20%, transparent);
   --component-reader-core-prose-tts-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 22%, transparent);
   --component-reader-core-prose-tts-transition: background 160ms var(--easing-standard), box-shadow 160ms var(--easing-standard);
-  --component-reader-core-pdf-page-bg: #f2eee6;
+  --component-reader-core-pdf-page-bg: var(--color-reader-paper-source);
   --component-reader-core-pdf-page-radius: 10px;
   --component-reader-core-pdf-page-shadow:
     0 44px 110px color-mix(in srgb, var(--color-background-void) 64%, transparent),
@@ -3136,10 +3156,10 @@
   --component-reader-core-prose-panel-bg: var(--prose-bg, color-mix(in srgb, var(--color-surface) 88%, var(--text-primary) 12%));
   --component-reader-core-epub-bg:
     radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--text-primary) 10%, transparent), transparent 34%),
-    var(--prose-bg, #f5f1ea);
-  --component-reader-core-epub-fg: var(--prose-text, #19151d);
-  --component-reader-core-pdf-reflow-fg: var(--prose-text, #19151d);
-  --component-reader-core-pdf-placeholder-fg: color-mix(in srgb, var(--prose-text, #19151d) 44%, transparent);
+    var(--prose-bg, var(--color-reader-prose-page-source));
+  --component-reader-core-epub-fg: var(--prose-text, var(--color-reader-prose-ink-source));
+  --component-reader-core-pdf-reflow-fg: var(--prose-text, var(--color-reader-prose-ink-source));
+  --component-reader-core-pdf-placeholder-fg: color-mix(in srgb, var(--prose-text, var(--color-reader-prose-ink-source)) 44%, transparent);
 }
 
 [data-theme="high-contrast"] {
