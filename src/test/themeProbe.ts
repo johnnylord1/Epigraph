@@ -1,0 +1,76 @@
+import type { HudThemeTokens, ThemeTokens } from "../lib/theme/contract";
+
+// Test-only high-contrast palette used to prove that component tokens are theme-derived.
+export const THEME_PROBE_TOKENS = {
+  "bg-void": "#f7fbff",
+  "bg-base": "#edf4f8",
+  "bg-surface": "#ffffff",
+  "bg-raised": "#e2edf2",
+  "bg-overlay": "#d8e5eb",
+  "bg-subtle": "#ccdce3",
+  "border-dim": "#9aaab2",
+  "border-base": "#7e8f98",
+  "border-strong": "#5d6c74",
+  "border-focus": "#c2185b",
+  "text-primary": "#11151a",
+  "text-secondary": "#28323a",
+  "text-muted": "#42515a",
+  "text-faint": "#5f6e76",
+  "text-disabled": "#738089",
+  "text-tertiary": "#42515a",
+  "text-inverse": "#ffffff",
+  accent: "#c2185b",
+  "accent-dim": "#8e0e40",
+  "accent-muted": "rgba(194, 24, 91, 0.12)",
+  "accent-fg": "#7a0d38",
+  "accent-bright": "#e91e63",
+  "color-error": "#b42318",
+  "color-error-bg": "rgba(180, 35, 24, 0.12)",
+  "color-success": "#087f5b",
+  "color-success-bg": "rgba(8, 127, 91, 0.12)",
+  "color-warning": "#8a5a00",
+  "color-warning-bg": "rgba(138, 90, 0, 0.12)",
+  "color-danger": "#b42318",
+  "color-danger-bg": "rgba(180, 35, 24, 0.12)",
+  "color-info": "#175cd3",
+  "color-info-bg": "rgba(23, 92, 211, 0.12)",
+  "color-background": "#edf4f8",
+  "color-background-void": "#f7fbff",
+  "color-surface": "#ffffff",
+  "color-surface-secondary": "#ccdce3",
+  "color-elevated": "#e2edf2",
+  "color-card": "#e2edf2",
+  "color-modal": "#d8e5eb",
+  "color-popover": "#d8e5eb",
+  "color-menu": "#d8e5eb",
+  "color-overlay": "rgba(17, 21, 26, 0.48)",
+  "color-border": "#7e8f98",
+  "color-outline": "#c2185b",
+  "color-divider": "#9aaab2",
+  "color-accent": "#c2185b",
+  "color-accent-muted": "rgba(194, 24, 91, 0.12)",
+} satisfies ThemeTokens;
+
+export const THEME_PROBE_HUD_TOKENS = {
+  "hud-control-height": "32px",
+  "hud-icon-button-size": "32px",
+  "hud-control-radius": "6px",
+  "hud-chip-radius": "9999px",
+  "hud-popover-radius": "8px",
+  "hud-status-radius": "9999px",
+  "hud-toast-radius": "8px",
+  "hud-chapter-row-radius": "6px",
+  "hud-surface-opacity": "1",
+  "hud-sidebar-width": "60px",
+  "hud-toolbar-gap": "8px",
+  "hud-reader-chrome-opacity": "1",
+  "hud-selection-bg": "rgba(194, 24, 91, 0.12)",
+  "hud-selection-border": "#8e0e40",
+  "hud-progress-height": "3px",
+} satisfies HudThemeTokens;
+
+export function themeProbeCss(): string {
+  return Object.entries({ ...THEME_PROBE_TOKENS, ...THEME_PROBE_HUD_TOKENS })
+    .map(([name, value]) => `--${name}: ${value};`)
+    .join("\n");
+}

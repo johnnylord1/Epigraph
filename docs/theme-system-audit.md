@@ -2334,3 +2334,38 @@ Categorias cobertas:
 - Testes focados: gate progressivo, Mass Migration, migration modals, MigrateModal, Browse/Sources host, Updater e Novel Repositories; 9 arquivos e 42 testes verdes. O stderr `Repository timeout` e esperado pelo caso de falha parcial de update-all.
 - `pnpm build`: verde com 6.297 modulos; permanece apenas o aviso conhecido de chunk acima de 500 kB.
 - `git diff --check`: verde.
+
+### Marco 28E - Gate global de derivacao
+
+#### Contrato global
+
+- O gate terminal varre dinamicamente todos os `--component-*`, sem depender da lista incremental de prefixos. Resultado: zero cor literal no fallback e zero em todos os component tokens Nocturne fora da allowlist explicita `--component-syncd-*`.
+- Syncd permanece fora do plano por decisao de escopo: seus 18 tokens Nocturne com 19 ocorrencias diretas nao foram alterados nem reclassificados.
+- Gradients, shadows e `color-mix()` dos componentes ativos usam somente variables semanticas/componentes e `transparent`; nenhuma excecao de branding/asset foi necessaria em component tokens.
+- O gate de aliases agora valida fallback e Nocturne separadamente. Ele encontrou e corrigiu `--radius-xs`, `--color-toast-surface-hover-source` e os fallbacks geometricos ativos `--n-hud-scale`, `--n-topbar-height`, `--n-search-width` e `--n-search-width-focus`, antes disponiveis apenas sob Nocturne.
+- Os aliases geometricos `--n-*` foram preservados e ganharam apenas defaults theme-neutral; nenhuma compatibilidade foi removida.
+
+#### Theme probe e compatibilidade
+
+- Foi criado `src/test/themeProbe.ts`, paleta sintetica oposta ao Nocturne e disponivel somente para testes. Ela implementa os 47 `ThemeTokens` e 15 `HudThemeTokens`, sem criar tema builtin ou opcao de UI.
+- O teste Chromium aplica cada token individualmente via `style.setProperty` e confirma por computed style que 13 superficies representativas (base, shell, Settings, Detail, Home, Activity, Downloads, Library, Browse, Sources, Reader, Migration e Updater) ficam resolvidas, nao transparentes e diferentes do Nocturne.
+- O inventario permanece: 62 aliases `--n-*`, sendo 53 Ativos por compatibilidade e 9 Legacy; 13 aliases `--activity-*` Legacy. Todos continuam definidos e nenhum ganhou consumidor novo.
+
+#### WCAG AA
+
+- O gate alpha-aware compoe foreground, surface e canvas reais e valida 11 pares em Nocturne e no theme probe, sempre com minimo 4.5:1.
+- Foram corrigidos somente os cinco papeis comprovadamente abaixo do minimo: Migration eyebrow/muted e NovelRepositories Legacy field/muted/badge-muted. Eles agora usam `--text-tertiary` (alpha Nocturne 0.62), preservando a identidade e elevando o contraste para aproximadamente 4.5:1 ou mais.
+- Percentuais binarios espurios produzidos pela derivacao mecanica (`56.00000000000001%`, por exemplo) foram normalizados sem alterar os valores visuais.
+
+#### Validacao visual real
+
+- Comparacao final contra `docs/screenshots/marco28-preflight/` e os after de 28A-28D nao mostrou regressao aparente de layout, superficies, bordas, sombras, blur, radius, tipografia ou hierarquia.
+- Capturas finais em `docs/screenshots/marco28e-gate/`: Library Books, Browse/Search, Settings General e NovelReader real.
+- A recaptura do MigrateModal apos o ajuste WCAG encontrou o estado conhecido de tiles pretos do WebView2 em cinco tentativas identicas; todos os frames diagnosticos foram removidos. A captura integra do Marco 28D.2 permanece valida para geometria, e os foregrounds alterados sao cobertos pelo teste de contraste computado.
+
+#### Gates
+
+- Testes unitarios: `themeGate.test.ts`, `componentColorDerivation.test.ts`, `AppThemeCompatibilityTokens.test.ts` e `contract.test.ts`; 4 arquivos e 29 testes verdes.
+- Teste browser Chromium: `themeProbe.browser.test.ts`; 1 arquivo e 1 teste verde.
+- `pnpm build`: verde com 6.297 modulos; permanece apenas o aviso conhecido de chunk acima de 500 kB.
+- `git diff --check`: verde.

@@ -104,6 +104,7 @@
   --color-toast-surface-accent: var(--accent-bright);
   --color-toast-surface-base: var(--color-modal);
   --color-toast-surface: var(--color-modal);
+  --color-toast-surface-hover-source: var(--color-elevated);
   --color-toast-surface-hover: var(--color-elevated);
   --color-toast-border-source: var(--border-strong);
   --color-toast-border: var(--color-border);
@@ -419,6 +420,7 @@
 
   /* Radius */
   --radius-sm:   calc(3px * var(--app-resolution-scale));
+  --radius-xs:   calc(2px * var(--app-resolution-scale));
   --radius-md:   calc(5px * var(--app-resolution-scale));
   --radius-lg:   calc(7px * var(--app-resolution-scale));
   --radius-xl:   calc(10px * var(--app-resolution-scale));
@@ -456,6 +458,14 @@
 
   /* Sidebar */
   --sidebar-width: var(--hud-sidebar-width);
+
+  /* Active Nocturne-port geometry aliases with theme-neutral fallbacks. */
+  --hud-scale: var(--app-resolution-scale);
+  --n-hud-scale: var(--hud-scale);
+  --n-topbar-height-base: 56px;
+  --n-topbar-height: calc(var(--n-topbar-height-base) * var(--n-hud-scale));
+  --n-search-width: calc(300px * var(--n-hud-scale));
+  --n-search-width-focus: calc(380px * var(--n-hud-scale));
 
   /* Z-index */
   --z-reader:   50;
@@ -3100,12 +3110,12 @@
   --component-novel-repositories-badge-danger-border-color: color-mix(in oklab, var(--color-error) 60%, var(--color-border));
   --component-novel-repositories-badge-gap: 4px;
   --component-novel-repositories-badge-min-height: 24px;
-  --component-novel-repositories-badge-muted-color: color-mix(in srgb, var(--text-secondary) 56.00000000000001%, transparent);
+  --component-novel-repositories-badge-muted-color: var(--text-tertiary);
   --component-novel-repositories-badge-padding: 0 8px;
   --component-novel-repositories-badges-gap: 8px;
   --component-novel-repositories-badges-margin-top: 10px;
   --component-novel-repositories-badge-success-background: color-mix(in srgb, var(--color-novel-success-source) 18%, transparent);
-  --component-novel-repositories-badge-success-border-color: color-mix(in srgb, var(--color-novel-success-border-source) 28.000000000000004%, transparent);
+  --component-novel-repositories-badge-success-border-color: color-mix(in srgb, var(--color-novel-success-border-source) 28%, transparent);
   --component-novel-repositories-badge-success-color: color-mix(in srgb, var(--color-novel-success-text-source) 96%, transparent);
   --component-novel-repositories-badge-warning-border-color: color-mix(in oklab, var(--color-novel-warning-source) 60%, var(--color-border));
   --component-novel-repositories-badge-warning-color: var(--color-novel-warning-source);
@@ -3133,7 +3143,7 @@
   --component-novel-repositories-entry-list-gap: 10px;
   --component-novel-repositories-entry-name-color: color-mix(in srgb, var(--text-primary) 92%, transparent);
   --component-novel-repositories-entry-padding: 12px;
-  --component-novel-repositories-field-color: color-mix(in srgb, var(--text-secondary) 34%, transparent);
+  --component-novel-repositories-field-color: var(--text-tertiary);
   --component-novel-repositories-field-font-size: 10px;
   --component-novel-repositories-field-gap: 8px;
   --component-novel-repositories-field-letter-spacing: 0.12em;
@@ -3158,7 +3168,7 @@
   --component-novel-repositories-motion-enter: 180ms;
   --component-novel-repositories-motion-fast: 90ms;
   --component-novel-repositories-motion-normal: 160ms;
-  --component-novel-repositories-muted-color: color-mix(in srgb, var(--text-secondary) 42%, transparent);
+  --component-novel-repositories-muted-color: var(--text-tertiary);
   --component-novel-repositories-panel-gap: 14px;
   --component-novel-repositories-pill-radius: 999px;
   --component-novel-repositories-scope-font-size: 11px;
