@@ -390,7 +390,7 @@ async fn ensure_spawned(
             let validated = match wait_for_persistent_runtime(&request, pid).await {
                 Ok(validated) => validated,
                 Err(error) => {
-                    let _ = child.kill();
+                    drop(child);
                     return Err(format!(
                         "persistent syncd failed identity readiness probe: {error}"
                     ));
@@ -504,6 +504,16 @@ async fn wait_for_persistent_runtime(
 
         match read_runtime_manifest(&request.data_dir) {
             Ok(manifest) if manifest.pid == expected_pid => {
+                match runtime_process_matches(&manifest) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        return Err(format!(
+                            "spawned persistent syncd PID {} is no longer running",
+                            expected_pid
+                        ));
+                    }
+                    Err(error) => return Err(error),
+                }
                 match fetch_pinned_descriptor(&manifest).await {
                     Ok(descriptor) => {
                         validate_descriptor_identity(&manifest, &descriptor)?;
@@ -840,5 +850,21 @@ mod tests {
         );
 
         assert!(runtime_process_matches(&manifest).unwrap());
+    }
+
+    #[test]
+    fn stale_runtime_pid_is_not_attachable() {
+        let manifest = SyncdRuntimeManifest::new(
+            u32::MAX,
+            "server-a",
+            4777,
+            "a".repeat(64),
+            std::env::current_exe()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+        );
+
+        assert!(!runtime_process_matches(&manifest).unwrap());
     }
 }
