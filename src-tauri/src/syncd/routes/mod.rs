@@ -7,3 +7,4 @@ pub mod health;
 pub mod local;
 pub mod mutations;
 pub mod pairing;
+pub mod snapshot;
