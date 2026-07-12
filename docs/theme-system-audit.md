@@ -2154,3 +2154,30 @@ Categorias cobertas:
 - `pnpm build`: verde com 6.297 modulos; permanece apenas o aviso conhecido de chunk acima de 500 kB.
 - `git diff --check`: verde.
 - Nenhum componente Svelte, layout, API, store ou comportamento foi alterado neste sublote.
+
+### Marco 28C.1.2 - Details e Tracking (fechamento)
+
+#### Escopo e derivacao
+
+- O segundo sublote derivou as 67 declaracoes restantes de `detail` em cada CSS, as 85 de `tracking` em cada CSS e `manga` (1 fallback e 12 Nocturne): 317 declaracoes e 339 ocorrencias no total.
+- Resultado global dos prefixos: `detail` 275/275 tokens sem cor direta, `tracking` 116/116 e `manga` 191/191, tanto no fallback quanto no Nocturne. Nao ha token sem consumo segundo os contratos de cada superficie.
+- Foram adicionadas 12 fontes semanticas para controles/superficies profundas de Detail, track de progresso, gradiente primario, superficie/titulos de Tracking e status success/warning do MangaPreview. Todas sao alcancaveis transitivamente por component tokens ativos.
+- A fonte de progresso de Detail e propria (`--color-detail-progress-track-source`), evitando dependencia semantica indevida de Settings. Tracking e MangaPreview tambem nao dependem de valores especificos do Nocturne.
+- As unicas referencias `--n-*` nesses prefixos sao geometricas: `--n-hud-scale` e `--n-topbar-height`. Nenhum alias Legacy foi removido ou alterado.
+
+#### Validacao visual real
+
+- Baselines: Details em `docs/screenshots/marco28-preflight/`, Tracking em `docs/screenshots/marco17-detail-surfaces/` e MangaPreview em `docs/screenshots/marco15-manga-preview/`.
+- After em `docs/screenshots/marco28c1-detail-part2/`: SeriesDetail list/grid, menu real de download, Tracking, MangaPreview principal, folder menu e link modal.
+- SeriesDetail preservou geometria, hero, tags, progresso, controles, cards/list rows, dropdown, shadows, radius e hierarquia nos modos list/grid.
+- Tracking abriu no estado real desconectado e preservou backdrop, blur, modal, tabs, close control e empty state. Estados MyAnimeList/AniList conectados nao estavam disponiveis e nao foram simulados.
+- MangaPreview foi aberto apenas em memoria com a primeira obra real da Library; nenhum dado persistido foi criado. Modal, backdrop, folder menu e link modal mantiveram superficies, bordas, blur, sombras e hierarquia equivalentes.
+- Com o backend MAIN indisponivel, folder menu e link modal permaneceram em loading. Success/error e resultados reais continuam cobertos pelos contratos de tokens, sem fixtures persistidas.
+
+#### Gates
+
+- Testes focados: `componentColorDerivation.test.ts`, `DetailSurfacesThemeTokens.test.ts`, `MangaPreviewThemeTokens.test.ts` e `SeriesDetailV3Shell.test.ts`; 4 arquivos e 13 testes verdes.
+- A varredura progressiva confirma zero hex/rgb/rgba/hsl/hsla/oklch/keywords de cor e zero aliases `--n-*` de cor em `detail`, `tracking` e `manga`.
+- `pnpm build`: verde com 6.297 modulos; permanece apenas o aviso conhecido de chunk acima de 500 kB.
+- `git diff --check`: verde.
+- Nenhum componente Svelte, layout, API, store, tracking provider ou comportamento foi alterado.
