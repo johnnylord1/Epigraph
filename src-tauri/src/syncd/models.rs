@@ -232,6 +232,7 @@ pub struct CapabilitiesResponse {
     pub supports_manual_ip_fallback: bool,
     pub supports_owner_transfer: bool,
     pub supports_snapshot: bool,
+    pub supports_assets: bool,
     pub snapshot_schema_version: u32,
     pub snapshot_entity_types: Vec<String>,
     pub tls_cert_sha256: String,

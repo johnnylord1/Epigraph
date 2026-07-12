@@ -19,7 +19,7 @@ use super::discovery::{
 use super::middleware::require_authenticated_session;
 use super::models::AppState;
 use super::routes::{
-    bootstrap, capabilities, discovery, events, health, local, mutations, pairing, snapshot,
+    assets, bootstrap, capabilities, discovery, events, health, local, mutations, pairing, snapshot,
 };
 use super::runtime_manifest::{RuntimeManifestLease, SyncdRuntimeManifest};
 use super::tls;
@@ -107,6 +107,12 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/v1/changes", get(events::get_changes))
         .route("/v1/mutations", post(mutations::post_mutations))
         .route("/v1/snapshot", get(snapshot::get_snapshot))
+        .route(
+            "/v1/assets/:sha256",
+            get(assets::get_asset)
+                .head(assets::head_asset)
+                .put(assets::put_asset),
+        )
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             require_authenticated_session,
@@ -566,6 +572,7 @@ mod tests {
         let payload: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(payload["supportsSseReplay"], true);
         assert_eq!(payload["supportsSnapshot"], true);
+        assert_eq!(payload["supportsAssets"], true);
         assert_eq!(payload["snapshotSchemaVersion"], 1);
         assert_eq!(payload["snapshotEntityTypes"].as_array().unwrap().len(), 12);
         assert_eq!(payload["tlsCertSha256"], "fingerprint");

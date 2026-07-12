@@ -11,6 +11,7 @@ const DEFAULT_DISCOVERY_MDNS_PORT: u16 = 5353;
 const DEFAULT_PROTOCOL_VERSION: u32 = 1;
 const DEFAULT_MIN_CLIENT_VERSION: &str = "0.1.0";
 const DEFAULT_MDNS_SERVICE_NAME: &str = "_aethon-sync._tcp.local.";
+const DEFAULT_ASSET_MAX_UPLOAD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -244,6 +245,7 @@ pub struct SyncdConfig {
     pub retention_window: Duration,
     pub bootstrap_session_window: Duration,
     pub token_inactivity_window: Duration,
+    pub asset_max_upload_bytes: u64,
     pub ownership_mode: SyncdOwnershipMode,
     pub parent_pid: Option<u32>,
 }
@@ -363,6 +365,17 @@ impl SyncdConfig {
                     .unwrap_or(120),
             ),
             token_inactivity_window: Duration::from_secs(30 * 24 * 60 * 60),
+            asset_max_upload_bytes: std::env::var("AETHON_SYNCD_ASSET_MAX_BYTES")
+                .ok()
+                .map(|raw| {
+                    raw.parse::<u64>()
+                        .ok()
+                        .filter(|value| *value > 0)
+                        .unwrap_or_else(|| {
+                            panic!("AETHON_SYNCD_ASSET_MAX_BYTES must be a positive integer")
+                        })
+                })
+                .unwrap_or(DEFAULT_ASSET_MAX_UPLOAD_BYTES),
             ownership_mode,
             parent_pid,
         }
@@ -393,6 +406,7 @@ impl SyncdConfig {
             retention_window: Duration::from_secs(30 * 24 * 60 * 60),
             bootstrap_session_window: Duration::from_secs(120),
             token_inactivity_window: Duration::from_secs(30 * 24 * 60 * 60),
+            asset_max_upload_bytes: DEFAULT_ASSET_MAX_UPLOAD_BYTES,
             ownership_mode: SyncdOwnershipMode::PersistentAttached,
             parent_pid: None,
         }
