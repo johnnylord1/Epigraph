@@ -2129,3 +2129,28 @@ Categorias cobertas:
 - Browser: `Settings.browser.test.ts`; 1 arquivo e 6 testes verdes, incluindo as cinco baselines visuais.
 - `pnpm build`: verde com 6.297 modulos; permanece apenas o aviso conhecido de chunk acima de 500 kB.
 - Nenhum componente visual, API, store ou comportamento foi alterado; a unica mudanca fora de CSS/docs e o reforco dos testes de navegacao/screenshot.
+
+### Marco 28C.1.1 - Details (primeiro lote)
+
+#### Escopo e derivacao
+
+- O prefixo `detail` possui 178 declaracoes de cor direta por arquivo. Para respeitar o limite de 350 declaracoes por commit, o lote foi dividido por ordem estavel dos tokens: esta primeira parte termina em `--component-detail-link-title-color`.
+- Foram derivadas 111 declaracoes por arquivo, 222 no total, removendo 264 ocorrencias literais. Os 164 component tokens ate o limite do lote possuem zero cor direta; permanecem 67 declaracoes diretas por arquivo para o segundo lote.
+- Foram adicionadas 16 fontes semanticas de `detail` para superficies de painel, controles, capitulos, hero, dropdown, danger e link modal. Todas sao consumidas transitivamente pelos component tokens migrados; nenhuma primitiva nova foi necessaria.
+- Sombras, gradients, alphas e stops foram preservados. As cores agora partem de semantic variables e usam `color-mix()` apenas com `transparent`.
+- `--component-detail-topbar-height` continua usando o alias Legacy geometrico `--n-topbar-height`; nenhuma camada `--n-*` foi removida ou alterada.
+
+#### Validacao visual real
+
+- Before: `docs/screenshots/marco28-preflight/before-book-detail.png`, `before-series-detail.png` e `before-novel-detail.png`.
+- After: `docs/screenshots/marco28c1-detail-part1/after-book-detail.png`, `after-series-detail.png` e `after-novel-detail.png`.
+- BookDetail e NovelDetail mantiveram a mesma obra e apresentam equivalencia aparente de geometria, superficies, bordas, contraste, tipografia, controles e hierarquia.
+- A primeira obra de manga persistida mudou de `Osananajimi wo Erabenai!` para `The Greatest Estate Developer` entre as capturas. A diferenca e de dados; SeriesDetail manteve a mesma estrutura e os mesmos estados visuais. Nenhum dado foi fabricado ou alterado para forcar equivalencia de conteudo.
+- O WebView2 ocasionalmente retornou um frame intermediario preto durante captura CDP. As capturas finais foram recapturadas em sequencia e validadas visualmente; nenhum frame diagnostico foi preservado.
+
+#### Gates
+
+- Testes focados: `componentColorDerivation.test.ts`, `DetailSurfacesThemeTokens.test.ts` e `SeriesDetailV3Shell.test.ts`; 3 arquivos e 9 testes verdes.
+- `pnpm build`: verde com 6.297 modulos; permanece apenas o aviso conhecido de chunk acima de 500 kB.
+- `git diff --check`: verde.
+- Nenhum componente Svelte, layout, API, store ou comportamento foi alterado neste sublote.

@@ -26,6 +26,8 @@ const MIGRATED_PREFIXES = [
   "theme-editor",
 ] as const;
 
+const PARTIAL_DETAIL_END = "--component-detail-link-title-color";
+
 const directColorPattern =
   /#[0-9a-f]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)|oklch\([^)]*\)|\b(?:black|white)\b/i;
 
@@ -53,10 +55,18 @@ function references(value: string): string[] {
 
 describe("derived component color contract", () => {
   const declarations = readDeclarations(themeCss);
+  const fallbackDetailNames = readDeclarations(tokensCss)
+    .filter(({ name }) => name.startsWith("--component-detail-"))
+    .map(({ name }) => name);
+  const partialDetailEnd = fallbackDetailNames.indexOf(PARTIAL_DETAIL_END);
+  const partialDetailNames = new Set(fallbackDetailNames.slice(0, partialDetailEnd + 1));
   const migrated = declarations.filter(
     ({ name }) =>
       name.startsWith("--component-") &&
-      MIGRATED_PREFIXES.includes(componentFamily(name) as (typeof MIGRATED_PREFIXES)[number]),
+      (MIGRATED_PREFIXES.includes(
+        componentFamily(name) as (typeof MIGRATED_PREFIXES)[number],
+      ) ||
+        partialDetailNames.has(name)),
   );
 
   test("keeps migrated component values free of direct colors and legacy Nocturne aliases", () => {
@@ -64,9 +74,10 @@ describe("derived component color contract", () => {
       .filter(({ value }) => directColorPattern.test(value))
       .map(({ name, value }) => `${name}: ${value}`);
     const legacyAliases = migrated
-      .filter(({ value }) => /var\(--n-(?!hud-scale)/.test(value))
+      .filter(({ value }) => /var\(--n-(?!(?:hud-scale|topbar-height)\b)/.test(value))
       .map(({ name, value }) => `${name}: ${value}`);
 
+    expect(partialDetailEnd).toBeGreaterThanOrEqual(0);
     expect(directColors).toEqual([]);
     expect(legacyAliases).toEqual([]);
   });
