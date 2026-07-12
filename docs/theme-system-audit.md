@@ -2304,3 +2304,33 @@ Categorias cobertas:
 - `pnpm build`: verde com 6.297 modulos; permanece apenas o aviso conhecido de chunk acima de 500 kB.
 - `git diff --check`: verde.
 - Risco remanescente: nao existe teste browser automatizado do Reader; a cobertura visual continua dependendo do app Tauri real/CDP e do conteudo persistido disponivel.
+
+### Marco 28D.2 - Superficies especializadas
+
+#### Escopo e derivacao
+
+- Prefixos migrados: `migration` (88 tokens), `migrate` (19), `updater` (49) e `novel` (98, sendo 9 do NovelMigrateModal e 89 do NovelRepositoriesPanel).
+- Foram derivadas 149 declaracoes e 170 ocorrencias de cor direta: 30/31 no fallback e 119/139 no Nocturne. Restam zero cores literais nos 254 component tokens desses quatro prefixos em ambos os CSS.
+- Foram adicionadas 45 fontes semanticas para Migration, Updater e superficies Novel. Todos os novos sources sao alcancaveis transitivamente pelos component tokens; nenhuma primitiva nova foi criada.
+- Quatro dependencias invalidas/Legacy foram consolidadas: `--n-primary` passou a `--color-accent`; `--border` a `--color-border`; `--text` a `--text-primary`; e `--line-soft` a `--color-border` nos badges danger/warning de Novel Repositories.
+- Sombras, gradients, alpha e geometria foram preservados. Nenhum componente Svelte, API, store, journal, updater runtime, instalacao, migration flow ou persistencia foi alterado.
+
+#### Validacao visual real
+
+- Baselines: Mass Migration em `docs/screenshots/marco8-mass-migration/`, migration modal em `docs/screenshots/marco12-migration-modals/` e Updater em `docs/screenshots/marco9-updater/`.
+- After em `docs/screenshots/marco28d2-specialized/`: Mass Migration com MangaDex e 29 titulos reais, MigrateModal de `The Greatest Estate Developer` com fontes instaladas reais e Updater/About com Suwayomi `v2.1.1867 - managed-bundled` no estado `Up to date`.
+- Mass Migration e MigrateModal preservaram modal/backdrop, blur, surfaces, dividers, steps, source rows, borders, focus, buttons e hierarquia. Nenhuma busca de matches ou migracao foi executada.
+- O painel de releases do Updater retornou `GitHub API returned 404 Not Found` no runtime real; trata-se de estado externo de dados. A geometria, status card, pill `Up to date`, surfaces, borders e hierarquia permaneceram equivalentes.
+- `NovelMigrateModal` continua bloqueado pelo cohort de seguranca no runtime real e nao foi forcado. `NovelRepositoriesPanel` permanece Legacy preparado, sem host ativo em Settings. Ambos foram validados por contrato/render jsdom, sem fixtures persistidas.
+
+#### Acessibilidade e riscos
+
+- Focus visivel, teclado e render dos modais/painel continuam cobertos pelos testes existentes; as capturas reais confirmam foco visivel no close control do Mass Migration.
+- Os contrastes alpha-aware historicamente limítrofes foram preservados neste lote: Migration eyebrow ~3.38:1 e muted ~4.37:1; NovelRepositories Legacy field ~2.31:1, muted ~2.88:1 e badge muted ~4.15:1. O ajuste pertence ao gate WCAG do Marco 28E para evitar misturar derivacao pixel-equivalente com correcao visual.
+- O focus trap/inert de Mass Migration e a semantica modal/focus trap incompleta de `MigrateModal`/`NovelMigrateModal` continuam registrados como riscos funcionais separados e nao foram alterados.
+
+#### Gates
+
+- Testes focados: gate progressivo, Mass Migration, migration modals, MigrateModal, Browse/Sources host, Updater e Novel Repositories; 9 arquivos e 42 testes verdes. O stderr `Repository timeout` e esperado pelo caso de falha parcial de update-all.
+- `pnpm build`: verde com 6.297 modulos; permanece apenas o aviso conhecido de chunk acima de 500 kB.
+- `git diff --check`: verde.

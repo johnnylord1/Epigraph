@@ -35,6 +35,10 @@ const MIGRATED_PREFIXES = [
   "sources",
   "taste",
   "reader",
+  "migration",
+  "migrate",
+  "updater",
+  "novel",
 ] as const;
 
 const directColorPattern =
