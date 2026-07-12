@@ -15,7 +15,8 @@ use super::models::{
     BookCategoryAssignmentPatch, BookCategoryAssignmentRecord, BookCategoryAssignmentRow,
     BookCategoryPatch, BookCategoryRecord, BookCategoryRow, BookEntryPatch, BookEntryRecord,
     BookEntryRow, BookLibraryUiPatch, BookLibraryUiRecord, BookLibraryUiRow, BookProgressPatch,
-    BookProgressRecord, BookProgressRow, ChangeEnvelope, ChangeLogRow, NovelBookmarkPatch,
+    BookProgressRecord, BookProgressRow, ChangeEnvelope, ChangeLogRow, MutationOperation,
+    MutationReceiptContext, MutationResult, MutationResultStatus, NovelBookmarkPatch,
     NovelBookmarkRecord, NovelBookmarkRow, NovelChapterPatch, NovelChapterRecord, NovelChapterRow,
     NovelClassificationPatch, NovelClassificationRecord, NovelClassificationRow, NovelEntryPatch,
     NovelEntryRecord, NovelEntryRow, NovelHistoryPatch, NovelHistoryRecord, NovelHistoryRow,
@@ -102,6 +103,88 @@ pub struct MutationWriteOutcome {
     pub envelope: ChangeEnvelope,
     pub record: Value,
     pub applied_lamport: i64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum MutationReceiptLookup {
+    Missing,
+    Match(MutationResult),
+    Conflict { existing_hash: String },
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct MutationReceiptRow {
+    mutation_hash: String,
+    result_json: String,
+}
+
+pub async fn lookup_mutation_receipt(
+    pool: &sqlx::SqlitePool,
+    device_id: &str,
+    client_mutation_id: &str,
+    mutation_hash: &str,
+) -> anyhow::Result<MutationReceiptLookup> {
+    let row = sqlx::query_as::<_, MutationReceiptRow>(
+        r#"
+        SELECT mutation_hash, result_json
+        FROM mutation_receipts
+        WHERE device_id = ? AND client_mutation_id = ?
+        "#,
+    )
+    .bind(device_id)
+    .bind(client_mutation_id)
+    .fetch_optional(pool)
+    .await?;
+
+    let Some(row) = row else {
+        return Ok(MutationReceiptLookup::Missing);
+    };
+    if row.mutation_hash != mutation_hash {
+        return Ok(MutationReceiptLookup::Conflict {
+            existing_hash: row.mutation_hash,
+        });
+    }
+
+    let result = serde_json::from_str(&row.result_json)
+        .context("stored mutation receipt contains an invalid result")?;
+    Ok(MutationReceiptLookup::Match(result))
+}
+
+pub async fn persist_rejected_mutation_receipt(
+    pool: &sqlx::SqlitePool,
+    context: &MutationReceiptContext,
+    result: &MutationResult,
+) -> anyhow::Result<MutationReceiptLookup> {
+    let result_json = serde_json::to_string(result)?;
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO mutation_receipts (
+            device_id,
+            client_mutation_id,
+            mutation_hash,
+            mutation_json,
+            result_json,
+            applied_server_version,
+            created_at_ms
+        ) VALUES (?, ?, ?, ?, ?, NULL, ?)
+        "#,
+    )
+    .bind(&context.device_id)
+    .bind(&context.client_mutation_id)
+    .bind(&context.mutation_hash)
+    .bind(&context.mutation_json)
+    .bind(result_json)
+    .bind(now_ms())
+    .execute(pool)
+    .await?;
+
+    lookup_mutation_receipt(
+        pool,
+        &context.device_id,
+        &context.client_mutation_id,
+        &context.mutation_hash,
+    )
+    .await
 }
 
 #[allow(dead_code)]
@@ -1255,7 +1338,7 @@ pub async fn apply_book_entry_mutation(
         entity_id,
         "merge",
         merged.record_lamport,
-        &session.device_id,
+        session,
         Some(&record),
         retention_window,
     )
@@ -1367,7 +1450,7 @@ pub async fn delete_book_entry_mutation(
         entity_id,
         "delete",
         applied_lamport,
-        &session.device_id,
+        session,
         None,
         retention_window,
     )
@@ -1437,7 +1520,7 @@ pub async fn apply_book_category_mutation(
         entity_id,
         "merge",
         merged.record_lamport,
-        &session.device_id,
+        session,
         Some(&record),
         retention_window,
     )
@@ -1515,7 +1598,7 @@ pub async fn delete_book_category_mutation(
         entity_id,
         "delete",
         applied_lamport,
-        &session.device_id,
+        session,
         None,
         retention_window,
     )
@@ -1592,7 +1675,7 @@ pub async fn apply_book_category_assignment_mutation(
         entity_id,
         "merge",
         merged.record_lamport,
-        &session.device_id,
+        session,
         Some(&record),
         retention_window,
     )
@@ -1669,7 +1752,7 @@ pub async fn delete_book_category_assignment_mutation(
         entity_id,
         "delete",
         applied_lamport,
-        &session.device_id,
+        session,
         None,
         retention_window,
     )
@@ -1735,7 +1818,7 @@ pub async fn apply_book_library_ui_mutation(
         entity_id,
         "merge",
         merged.record_lamport,
-        &session.device_id,
+        session,
         Some(&record),
         retention_window,
     )
@@ -1829,7 +1912,7 @@ pub async fn apply_novel_entry_mutation(
         entity_id,
         "merge",
         merged.record_lamport,
-        &session.device_id,
+        session,
         Some(&record),
         retention_window,
     )
@@ -1927,7 +2010,7 @@ pub async fn delete_novel_entry_mutation(
         entity_id,
         "delete",
         applied_lamport,
-        &session.device_id,
+        session,
         None,
         retention_window,
     )
@@ -1997,7 +2080,7 @@ pub async fn apply_novel_chapter_mutation(
         entity_id,
         "merge",
         merged.record_lamport,
-        &session.device_id,
+        session,
         Some(&record),
         retention_window,
     )
@@ -2084,7 +2167,7 @@ pub async fn delete_novel_chapter_mutation(
         entity_id,
         "delete",
         applied_lamport,
-        &session.device_id,
+        session,
         None,
         retention_window,
     )
@@ -2154,7 +2237,7 @@ pub async fn apply_novel_history_mutation(
         entity_id,
         "merge",
         merged.record_lamport,
-        &session.device_id,
+        session,
         Some(&record),
         retention_window,
     )
@@ -2239,7 +2322,7 @@ pub async fn delete_novel_history_mutation(
         entity_id,
         "delete",
         applied_lamport,
-        &session.device_id,
+        session,
         None,
         retention_window,
     )
@@ -2323,7 +2406,7 @@ pub async fn apply_novel_classification_mutation(
         entity_id,
         "merge",
         merged.record_lamport,
-        &session.device_id,
+        session,
         Some(&record),
         retention_window,
     )
@@ -2427,7 +2510,7 @@ pub async fn delete_novel_classification_mutation(
         entity_id,
         "delete",
         applied_lamport,
-        &session.device_id,
+        session,
         None,
         retention_window,
     )
@@ -2511,7 +2594,7 @@ pub async fn apply_book_progress_mutation(
         entity_id,
         "merge",
         merged.record_lamport,
-        &session.device_id,
+        session,
         Some(&record),
         retention_window,
     )
@@ -2632,7 +2715,7 @@ pub async fn apply_novel_progress_mutation(
         entity_id,
         "merge",
         merged.record_lamport,
-        &session.device_id,
+        session,
         Some(&record),
         retention_window,
     )
@@ -2753,7 +2836,7 @@ pub async fn apply_book_bookmark_mutation(
         entity_id,
         "merge",
         merged.record_lamport,
-        &session.device_id,
+        session,
         Some(&record),
         retention_window,
     )
@@ -2879,7 +2962,7 @@ pub async fn apply_novel_bookmark_mutation(
         entity_id,
         "merge",
         merged.record_lamport,
-        &session.device_id,
+        session,
         Some(&record),
         retention_window,
     )
@@ -2990,7 +3073,7 @@ pub async fn delete_book_bookmark_mutation(
         entity_id,
         "delete",
         applied_lamport,
-        &session.device_id,
+        session,
         None,
         retention_window,
     )
@@ -3061,7 +3144,7 @@ pub async fn delete_novel_bookmark_mutation(
         entity_id,
         "delete",
         applied_lamport,
-        &session.device_id,
+        session,
         None,
         retention_window,
     )
@@ -3108,7 +3191,7 @@ async fn append_change_log_in_tx(
     entity_id: &str,
     op: &str,
     lamport: i64,
-    changed_by_device_id: &str,
+    session: &AuthenticatedSession,
     patch: Option<&Value>,
     retention_window: Duration,
 ) -> anyhow::Result<(i64, i64)> {
@@ -3138,7 +3221,7 @@ async fn append_change_log_in_tx(
     .bind(entity_id)
     .bind(op)
     .bind(lamport)
-    .bind(changed_by_device_id)
+    .bind(&session.device_id)
     .bind(patch_json.as_deref())
     .bind(replay_until_ms)
     .bind(applied_at_ms)
@@ -3158,6 +3241,56 @@ async fn append_change_log_in_tx(
     .bind(applied_at_ms)
     .execute(&mut **tx)
     .await?;
+
+    if let Some(context) = session.mutation_receipt.as_ref() {
+        if context.device_id != session.device_id
+            || context.entity_type.as_str() != entity_type
+            || context.entity_id != entity_id
+            || context.scope_id != scope_id
+            || match context.op {
+                MutationOperation::Merge => op != "merge",
+                MutationOperation::Delete => op != "delete",
+            }
+        {
+            bail!("active mutation receipt context does not match the persisted change");
+        }
+
+        let result = MutationResult {
+            client_mutation_id: context.client_mutation_id.clone(),
+            entity_type: context.entity_type,
+            entity_id: context.entity_id.clone(),
+            scope_id: context.scope_id.clone(),
+            op: context.op,
+            status: MutationResultStatus::Applied,
+            applied_server_version: Some(server_version),
+            applied_lamport: Some(lamport),
+            record: Some(patch.cloned().unwrap_or(Value::Null)),
+            error: None,
+        };
+        let result_json = serde_json::to_string(&result)?;
+        sqlx::query(
+            r#"
+            INSERT INTO mutation_receipts (
+                device_id,
+                client_mutation_id,
+                mutation_hash,
+                mutation_json,
+                result_json,
+                applied_server_version,
+                created_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&context.device_id)
+        .bind(&context.client_mutation_id)
+        .bind(&context.mutation_hash)
+        .bind(&context.mutation_json)
+        .bind(result_json)
+        .bind(server_version)
+        .bind(applied_at_ms)
+        .execute(&mut **tx)
+        .await?;
+    }
 
     Ok((server_version, applied_at_ms))
 }
@@ -4277,6 +4410,7 @@ mod tests {
                 "books:global".to_string(),
                 "novels:profile:main".to_string(),
             ]),
+            mutation_receipt: None,
         };
 
         let before_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM change_log")
