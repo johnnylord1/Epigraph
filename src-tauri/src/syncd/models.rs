@@ -30,6 +30,7 @@ pub struct AppState {
     pub pool: sqlx::SqlitePool,
     pub change_sender: broadcast::Sender<ChangeEnvelope>,
     pub pairing_status_sender: broadcast::Sender<PairingStatusEvent>,
+    pub mutation_gate: Arc<Mutex<()>>,
     pub tls_cert_sha256: String,
 }
 
@@ -41,7 +42,7 @@ pub struct ErrorBody {
     pub error: ErrorDetail,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ErrorDetail {
     pub code: String,
@@ -763,6 +764,7 @@ pub struct AuthenticatedSession {
     pub device_id: String,
     pub profile_id: String,
     pub scopes: BTreeSet<String>,
+    pub mutation_receipt: Option<MutationReceiptContext>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -826,14 +828,14 @@ pub enum MutationOperation {
     Delete,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MutationsRequest {
     pub request_id: String,
     pub mutations: Vec<MutationInput>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MutationBase {
     pub client_mutation_id: String,
@@ -844,7 +846,7 @@ pub struct MutationBase {
     pub lamport: i64,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "entityType")]
 pub enum MutationInput {
     #[serde(rename = "book.entry")]
@@ -919,6 +921,18 @@ pub enum MutationInput {
         base: MutationBase,
         patch: Option<NovelClassificationPatch>,
     },
+}
+
+#[derive(Debug, Clone)]
+pub struct MutationReceiptContext {
+    pub device_id: String,
+    pub client_mutation_id: String,
+    pub mutation_hash: String,
+    pub mutation_json: String,
+    pub entity_type: MutationEntityType,
+    pub entity_id: String,
+    pub scope_id: String,
+    pub op: MutationOperation,
 }
 
 impl MutationInput {
@@ -1115,7 +1129,7 @@ pub struct MutationsResponse {
     pub results: Vec<MutationResult>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct MutationResult {
     pub client_mutation_id: String,
@@ -1134,7 +1148,7 @@ pub struct MutationResult {
     pub error: Option<ErrorDetail>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum MutationResultStatus {
     Applied,

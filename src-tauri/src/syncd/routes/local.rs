@@ -101,6 +101,7 @@ mod tests {
             pool,
             change_sender,
             pairing_status_sender,
+            mutation_gate: Arc::new(Mutex::new(())),
             tls_cert_sha256: "fingerprint".to_string(),
         })
     }

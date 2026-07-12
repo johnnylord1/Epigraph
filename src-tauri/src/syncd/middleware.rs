@@ -205,6 +205,7 @@ async fn authenticate_token(
         device_id,
         profile_id,
         scopes,
+        mutation_receipt: None,
     })
 }
 
@@ -256,6 +257,7 @@ mod tests {
             pool,
             change_sender: tx,
             pairing_status_sender,
+            mutation_gate: Arc::new(Mutex::new(())),
             tls_cert_sha256: "fingerprint".to_string(),
         })
     }
@@ -270,6 +272,7 @@ mod tests {
                 "books:global".to_string(),
                 "novels:profile:main".to_string(),
             ]),
+            mutation_receipt: None,
         };
 
         assert!(validate_scope(&session, "books:global").is_ok());
@@ -284,6 +287,7 @@ mod tests {
             device_id: "d".to_string(),
             profile_id: "main".to_string(),
             scopes: BTreeSet::from(["novels:profile:main".to_string()]),
+            mutation_receipt: None,
         };
 
         assert!(validate_scope(&session, "novels:profile:main").is_ok());
@@ -294,6 +298,7 @@ mod tests {
             device_id: "d".to_string(),
             profile_id: "main".to_string(),
             scopes: BTreeSet::from(["books:global".to_string()]),
+            mutation_receipt: None,
         };
 
         assert!(validate_scope(&session, "books:global").is_ok());
@@ -346,6 +351,7 @@ mod tests {
             pool,
             change_sender: tx,
             pairing_status_sender,
+            mutation_gate: Arc::new(Mutex::new(())),
             tls_cert_sha256: "fingerprint".to_string(),
         });
 
@@ -395,6 +401,7 @@ mod tests {
             pool,
             change_sender: tx,
             pairing_status_sender,
+            mutation_gate: Arc::new(Mutex::new(())),
             tls_cert_sha256: "fingerprint".to_string(),
         });
 
