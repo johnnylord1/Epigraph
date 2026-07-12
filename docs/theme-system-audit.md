@@ -2402,3 +2402,28 @@ Categorias cobertas:
 - `pnpm build`: verde com 6.299 modulos; permanece apenas o aviso conhecido de chunk acima de 500 kB.
 - `git diff --check`: verde.
 - Syncd, `--n-*`, component tokens, layout, i18n e logica funcional fora do tema permaneceram intocados.
+
+### Marco 30 - Gate de autoria
+
+#### Contrato final
+
+- `authoringGate.test.ts` materializa o theme probe como V4, exige round-trip identico, resolucao dos 47 ThemeTokens e 15 HudThemeTokens, e zero `component-*` no documento serializado.
+- O mesmo gate repete a garantia de migracao imutavel de V1/V2/V3, confirma que runtime e preview usam apenas CSSOM allowlisted e transforma `docs/theme-authoring.md` em parte testada do contrato.
+- `themeGate.test.ts` permanece o gate de WCAG AA para 11 pares em Nocturne e no theme probe, alem de preservar 53 aliases `--n-*` Ativos, 9 Legacy e 13 aliases `--activity-*` Legacy.
+- O fluxo oficial documentado e `ThemeEditor -> export -> validation -> promotion`. Um futuro tema exige documento V4, metadados e evidencia visual; nenhuma folha CSS de componente deve ser criada.
+
+#### Browser e validacao visual real
+
+- Browser Chromium: Theme probe (1), LibraryCardGrid (7) e Settings (6), total de 14 testes verdes.
+- O baseline `settings-advanced-about.png` estava 0,1605% atras do estado tokenizado atual apenas no pill `Failed` do Updater. Baseline e actual foram inspecionados: geometria, texto e hierarquia eram identicos; somente o danger border/background atual diferia. O baseline foi consolidado e a suite passou 6/6 na repeticao.
+- Capturas reais finais em `docs/screenshots/marco30-authoring/`: Library Books, Browse com 83 recomendacoes reais, Settings Appearance, BookReader PDF, ThemeEditor modal, Display popover e toast persistente do refresh real da Library.
+- O refresh usado para o toast foi interrompido pela propria acao `Stop` apos a captura e o runtime drenou os trabalhos ja iniciados. Nenhuma fixture, tema ou dado artificial foi criado.
+- A comparacao com o preflight e os after dos Marcos 28-29 nao mostrou regressao aparente em layout, superficies, borders, shadows, blur, radius, tipografia, foco ou hierarquia.
+
+#### Gates finais
+
+- Gate unitario: 7 arquivos e 63 testes verdes.
+- Gate browser: 3 arquivos e 14 testes verdes nas execucoes finais.
+- `pnpm build`: verde com 6.299 modulos; permanece apenas o aviso conhecido de chunk acima de 500 kB.
+- `git diff --check`: verde.
+- Artefatos `.actual` e screenshots diagnosticos do runner foram removidos; somente o baseline valido e as sete evidencias reais finais permanecem.
