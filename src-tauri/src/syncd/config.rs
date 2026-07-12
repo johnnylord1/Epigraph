@@ -13,6 +13,31 @@ const DEFAULT_MIN_CLIENT_VERSION: &str = "0.1.0";
 const DEFAULT_MDNS_SERVICE_NAME: &str = "_aethon-sync._tcp.local.";
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SyncdOwnershipMode {
+    EphemeralOwned,
+    PersistentAttached,
+}
+
+impl SyncdOwnershipMode {
+    #[allow(dead_code)]
+    pub fn as_env_value(self) -> &'static str {
+        match self {
+            Self::EphemeralOwned => "ephemeral-owned",
+            Self::PersistentAttached => "persistent-attached",
+        }
+    }
+
+    fn parse(raw: &str) -> anyhow::Result<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "ephemeral-owned" => Ok(Self::EphemeralOwned),
+            "persistent-attached" => Ok(Self::PersistentAttached),
+            other => bail!("unsupported syncd ownership mode '{other}'"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum SyncdDiscoveryProviderMode {
     Disabled,
@@ -219,6 +244,7 @@ pub struct SyncdConfig {
     pub retention_window: Duration,
     pub bootstrap_session_window: Duration,
     pub token_inactivity_window: Duration,
+    pub ownership_mode: SyncdOwnershipMode,
     pub parent_pid: Option<u32>,
 }
 
@@ -288,6 +314,22 @@ impl SyncdConfig {
             })
             .unwrap_or_default();
 
+        let parent_pid = std::env::var("AETHON_SYNCD_PARENT_PID")
+            .ok()
+            .and_then(|raw| raw.parse::<u32>().ok());
+        let ownership_mode = std::env::var("AETHON_SYNCD_OWNERSHIP")
+            .ok()
+            .map(|raw| SyncdOwnershipMode::parse(&raw))
+            .transpose()
+            .unwrap_or_else(|error| panic!("invalid AETHON_SYNCD_OWNERSHIP: {error}"))
+            .unwrap_or_else(|| {
+                if parent_pid.is_some() {
+                    SyncdOwnershipMode::EphemeralOwned
+                } else {
+                    SyncdOwnershipMode::PersistentAttached
+                }
+            });
+
         Self {
             data_dir,
             db_path,
@@ -321,9 +363,8 @@ impl SyncdConfig {
                     .unwrap_or(120),
             ),
             token_inactivity_window: Duration::from_secs(30 * 24 * 60 * 60),
-            parent_pid: std::env::var("AETHON_SYNCD_PARENT_PID")
-                .ok()
-                .and_then(|raw| raw.parse::<u32>().ok()),
+            ownership_mode,
+            parent_pid,
         }
     }
 
@@ -352,6 +393,7 @@ impl SyncdConfig {
             retention_window: Duration::from_secs(30 * 24 * 60 * 60),
             bootstrap_session_window: Duration::from_secs(120),
             token_inactivity_window: Duration::from_secs(30 * 24 * 60 * 60),
+            ownership_mode: SyncdOwnershipMode::PersistentAttached,
             parent_pid: None,
         }
     }
@@ -468,5 +510,22 @@ mod tests {
         assert!(error
             .to_string()
             .contains("unsupported effective discovery policy"));
+    }
+
+    #[test]
+    fn ownership_mode_has_stable_environment_values() {
+        assert_eq!(
+            SyncdOwnershipMode::EphemeralOwned.as_env_value(),
+            "ephemeral-owned"
+        );
+        assert_eq!(
+            SyncdOwnershipMode::PersistentAttached.as_env_value(),
+            "persistent-attached"
+        );
+        assert_eq!(
+            SyncdOwnershipMode::parse("ephemeral-owned").unwrap(),
+            SyncdOwnershipMode::EphemeralOwned
+        );
+        assert!(SyncdOwnershipMode::parse("host").is_err());
     }
 }
