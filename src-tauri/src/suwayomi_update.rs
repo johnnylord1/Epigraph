@@ -199,6 +199,7 @@ struct SuwayomiCompatibilityManifest {
 struct SuwayomiAllowedVersion {
     version: String,
     asset: String,
+    sha256: String,
     notes: Option<String>,
 }
 
@@ -614,7 +615,13 @@ pub async fn stage_suwayomi_runtime_update(
             select_staging_candidate(&runtime, &manifest, &releases, target_version.as_deref())?;
 
         let checksum_text = download_release_text(&candidate.checksum_url).await?;
-        let expected_sha256 = checksum_for_asset(&checksum_text, &candidate.asset_name)?;
+        let published_sha256 = checksum_for_asset(&checksum_text, &candidate.asset_name)?;
+        let expected_sha256 = certified_release_checksum(
+            &manifest,
+            &candidate.version,
+            &candidate.asset_name,
+            &published_sha256,
+        )?;
 
         stage_release_jar(
             &managed_runtime_staging_root(),
@@ -879,7 +886,7 @@ fn load_compatibility_manifest() -> Result<SuwayomiCompatibilityManifest, String
 fn validate_compatibility_manifest(
     manifest: SuwayomiCompatibilityManifest,
 ) -> Result<SuwayomiCompatibilityManifest, String> {
-    if manifest.schema_version != 1 {
+    if manifest.schema_version != 2 {
         return Err(format!(
             "Unsupported Suwayomi compatibility manifest schema {}.",
             manifest.schema_version
@@ -907,9 +914,12 @@ fn validate_compatibility_manifest(
         );
     }
     for allowed in &manifest.allowed_versions {
-        if allowed.version.trim().is_empty() || allowed.asset.trim().is_empty() {
+        if allowed.version.trim().is_empty()
+            || allowed.asset.trim().is_empty()
+            || !is_sha256(&allowed.sha256)
+        {
             return Err(
-                "Suwayomi compatibility manifest contains an incomplete allowed version."
+                "Suwayomi compatibility manifest contains an incomplete allowed version or invalid certified SHA-256."
                     .to_string(),
             );
         }
@@ -925,6 +935,10 @@ fn validate_compatibility_manifest(
         }
     }
     Ok(manifest)
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn suwayomi_update_lock() -> &'static Mutex<Option<ActiveSuwayomiUpdateLock>> {
@@ -1651,6 +1665,27 @@ fn checksum_for_asset(checksums: &str, asset_name: &str) -> Result<String, Strin
     Err(format!("Checksum file does not contain {asset_name}."))
 }
 
+fn certified_release_checksum(
+    manifest: &SuwayomiCompatibilityManifest,
+    version: &str,
+    asset_name: &str,
+    published_sha256: &str,
+) -> Result<String, String> {
+    let allowed = manifest
+        .allowed_version(version)
+        .ok_or_else(|| "Target Suwayomi version is not in Aethon's allowlist.".to_string())?;
+    if allowed.asset != asset_name {
+        return Err("Target Suwayomi asset does not match Aethon's allowlist.".to_string());
+    }
+    if !allowed.sha256.eq_ignore_ascii_case(published_sha256) {
+        return Err(
+            "Published Suwayomi checksum does not match Aethon's certified SHA-256."
+                .to_string(),
+        );
+    }
+    Ok(allowed.sha256.to_ascii_lowercase())
+}
+
 fn managed_runtime_staging_root() -> PathBuf {
     managed_runtime_root().join(SUWAYOMI_STAGING_DIR)
 }
@@ -1990,6 +2025,13 @@ fn validate_staging_dir(
         },
         manifest,
     )?;
+    let certified_sha256 = manifest
+        .allowed_version(&staging_manifest.version)
+        .map(|allowed| allowed.sha256.as_str())
+        .ok_or_else(|| "Staged Suwayomi version is not in Aethon's allowlist.".to_string())?;
+    if !staging_manifest.sha256.eq_ignore_ascii_case(certified_sha256) {
+        return Err("Staged Suwayomi JAR does not match Aethon's certified SHA-256.".to_string());
+    }
     validate_staged_jar(
         &staging_dir.join(SUWAYOMI_SERVER_JAR),
         &staging_manifest.sha256,
@@ -2885,6 +2927,7 @@ mod tests {
         manifest.allowed_versions.push(SuwayomiAllowedVersion {
             version: "v2.2.2100".to_string(),
             asset: "Suwayomi-Server-v2.2.2100.jar".to_string(),
+            sha256: "a".repeat(64),
             notes: Some("Test-only allowed Suwayomi 2.2 release.".to_string()),
         });
         manifest
@@ -3027,6 +3070,29 @@ mod tests {
         let mut incomplete = test_manifest();
         incomplete.allowed_versions[0].asset = String::new();
         assert!(validate_compatibility_manifest(incomplete).is_err());
+
+        let mut invalid_hash = test_manifest();
+        invalid_hash.allowed_versions[0].sha256 = "not-a-sha256".to_string();
+        assert!(validate_compatibility_manifest(invalid_hash).is_err());
+    }
+
+    #[test]
+    fn certified_checksum_must_match_the_published_release_checksum() {
+        let manifest = test_manifest_with_allowed_update();
+        let asset = "Suwayomi-Server-v2.2.2100.jar";
+
+        assert_eq!(
+            certified_release_checksum(&manifest, "v2.2.2100", asset, &"A".repeat(64))
+                .unwrap(),
+            "a".repeat(64),
+        );
+        assert!(certified_release_checksum(
+            &manifest,
+            "v2.2.2100",
+            asset,
+            &"b".repeat(64),
+        )
+        .is_err());
     }
 
     #[test]

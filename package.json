@@ -10,6 +10,8 @@
     "test": "vitest run",
     "test:unit": "vitest run --project unit --project shell-jsdom",
     "test:browser": "vitest run --project browser-components",
+    "test:suwayomi-certification": "node --test scripts/certify-suwayomi-release.test.mjs",
+    "certify:suwayomi": "node scripts/certify-suwayomi-release.mjs",
     "syncd:prepare-sidecar": "node ./scripts/prepare-syncd-sidecar.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",

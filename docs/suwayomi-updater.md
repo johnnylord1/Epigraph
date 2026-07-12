@@ -46,12 +46,34 @@ The compatibility manifest is the only source of truth for installable versions.
 - published in `Suwayomi/Suwayomi-Server`;
 - carrying the expected JAR asset and `Checksums.sha256`.
 
+Schema 2 pins the exact SHA-256 of every allowed JAR. During staging, Aethon requires the checksum published by Suwayomi to match this certified hash before it downloads or promotes the runtime. A replaced release asset or checksum therefore fails closed even when the version and asset name remain unchanged.
+
 Checksum validation is integrity only. If Suwayomi publishes a verifiable signature later, the updater should add signature verification before relaxing any rule.
 
 Current compatibility decision:
 
 - `v2.1.1867` remains the supported and tested baseline.
 - `v2.2.2100` is explicitly blocked after a managed-runtime smoke run failed to become GraphQL-healthy. Tests may use an isolated allowlist fixture for update-flow coverage, but production must continue to follow the bundled manifest.
+
+## Release Certification
+
+New Suwayomi releases are evaluated through the manual `Certify Suwayomi Runtime` GitHub Actions workflow. The workflow runs independently on Windows and macOS and never changes the allowlist automatically.
+
+Each runner:
+
+1. resolves the exact stable release from `Suwayomi/Suwayomi-Server`;
+2. downloads the expected JAR and `Checksums.sha256` from official HTTPS release URLs;
+3. verifies the JAR checksum and its internal `Specification-Version`;
+4. starts the JAR with Aethon's headless memory/configuration profile in an isolated temporary root;
+5. validates typename, Library, Sources, and Extensions GraphQL queries;
+6. stops and starts the same root again, then repeats all health checks;
+7. emits `certification-report.json` and `allowlist-candidate.json` as CI artifacts.
+
+An allowlist update requires successful evidence from both platforms and manual review of the generated candidate. Local maintainers can exercise the same gate with:
+
+```text
+pnpm certify:suwayomi -- --version v2.1.1867
+```
 
 ## Directories
 
