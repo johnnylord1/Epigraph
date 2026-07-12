@@ -56,6 +56,7 @@ pub async fn run() -> anyhow::Result<()> {
         pool,
         change_sender,
         pairing_status_sender,
+        mutation_gate: Arc::new(Mutex::new(())),
         tls_cert_sha256: tls.fingerprint_sha256.clone(),
     });
 
@@ -287,6 +288,7 @@ mod tests {
             pool,
             change_sender,
             pairing_status_sender,
+            mutation_gate: Arc::new(Mutex::new(())),
             tls_cert_sha256: "fingerprint".to_string(),
         });
         (temp, state)
