@@ -6,6 +6,7 @@ pub mod middleware;
 pub mod models;
 pub mod replay;
 pub mod routes;
+pub mod runtime_manifest;
 pub mod tls;
 
 pub async fn run() -> anyhow::Result<()> {
