@@ -855,11 +855,14 @@ function readPersistedAppReadingSnapshot(): {
   };
 }
 
-function persist(patch: Record<string, unknown>) {
+function persist(patch: Record<string, unknown>): boolean {
   try {
     const current = loadPersisted() ?? {};
     localStorage.setItem(STORE_KEY, JSON.stringify({ ...current, ...patch }));
-  } catch {}
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 const saved = (() => {
@@ -2269,12 +2272,19 @@ class Store {
   resetKeybinds()                                { this.updateSettings({ keybinds: DEFAULT_KEYBINDS }); }
 
 
-  saveCustomTheme(theme: CustomTheme) {
+  saveCustomTheme(theme: CustomTheme, activate = false): boolean {
     const existing = this.settings.customThemes.findIndex(t => t.id === theme.id);
     const next = existing >= 0
       ? this.settings.customThemes.map((t, i) => i === existing ? theme : t)
       : [...this.settings.customThemes, theme];
-    this.settings = { ...this.settings, customThemes: next };
+    const nextSettings = updateSettingsWithProfileScope(
+      this.settings,
+      { customThemes: next, theme: activate ? theme.id : this.settings.theme },
+      this.runtimeResolvedLocalProfileId,
+    );
+    if (!persist({ settings: sanitizeSettingsForPersistence(nextSettings) })) return false;
+    this.settings = nextSettings;
+    return true;
   }
 
   deleteCustomTheme(id: string) {
@@ -2607,7 +2617,7 @@ export function removeBookmark(chapterId: number)                            { s
 export function clearBookmarks()                                             { store.clearBookmarks(); }
 export function getBookmark(chapterId: number)                               { return store.getBookmark(chapterId); }
 export function toggleHiddenCategory(id: number)                           { store.toggleHiddenCategory(id); }
-export function saveCustomTheme(theme: CustomTheme)                        { store.saveCustomTheme(theme); }
+export function saveCustomTheme(theme: CustomTheme, activate = false)      { return store.saveCustomTheme(theme, activate); }
 export function deleteCustomTheme(id: string)                              { store.deleteCustomTheme(id); }
 export function openSearchKeyword()                                      { store.openSearchKeyword(); }
 export function openSearchBrowseFeatured(genre?: string | null)          { store.openSearchBrowseFeatured(genre); }

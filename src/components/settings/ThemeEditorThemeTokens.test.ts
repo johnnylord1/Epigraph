@@ -19,6 +19,9 @@ describe("ThemeEditor theme tokens", () => {
 
     expect(app).toContain('themeEditor: () => import("./components/settings/ThemeEditor.svelte")');
     expect(settings).toContain("onOpenThemeEditor?.(null)");
+    expect(app).toContain("applyCustomTheme(root, custom)");
+    expect(app).not.toContain("aethon-custom-theme");
+    expect(app).not.toContain("themeStyleEl.textContent");
   });
 
   test("keeps ThemeEditor styles free of direct visual values and Nocturne internals", () => {
@@ -82,7 +85,13 @@ describe("ThemeEditor theme tokens", () => {
       .filter((style) => /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(|oklch\(|color-mix\(|linear-gradient\(|radial-gradient\(|--n-/.test(style));
 
     expect(staticInlineOffenders).toEqual([]);
-    expect(source).toContain("style={toCssVars(tokens)}");
+    expect(source).not.toContain("toCssVars");
+    expect(source).toContain("use:themePreview={{ tokens, hud, motion }}");
+    expect(source).toContain("applyThemeContract(node, draft.tokens, draft.hud, draft.motion)");
+    expect(source).toContain("createThemeDocumentV4(");
+    expect(source).toContain("importThemeDocument(text)");
+    expect(source).toContain("serializeThemeDocument(data)");
+    expect(source).not.toContain("version: 3");
     expect(source).toContain("style=\"background: {tokens[token]};\"");
     expect(source).toContain("style=\"background: {hud[token as keyof HudThemeTokens]};\"");
   });

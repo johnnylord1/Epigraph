@@ -55,10 +55,8 @@
     refreshAppReadingStateFromPersistence,
     setRuntimeSettingsTab,
     setSettingsOpen,
-    NOCTURNE_HUD_THEME_TOKENS,
-    NOCTURNE_THEME_TOKENS,
-    THEME_MOTION_VARS,
   } from "./store/state.svelte";
+  import { applyCustomTheme, clearCustomThemeProperties } from "./lib/theme/provider";
   import { readFileAsArrayBuffer } from "./lib/books/storage";
   import { importLocalBookFile } from "./lib/books/importFile";
   import type { AethonRestorePlan, AethonRestorePlannerRuntime } from "./lib/backup/aethonRestorePlanner";
@@ -106,46 +104,23 @@
   import Layout from "./components/layout/Layout.svelte";
   import { NOVEL_RUNTIME_HOST_LABEL } from "./lib/novels/runtimeHost";
 
-  let themeStyleEl: HTMLStyleElement | null = null;
-
   $effect(() => {
     const themeId  = store.settings.theme ?? "dark";
     const isCustom = themeId.startsWith("custom:");
+    const root = document.documentElement;
 
     if (!isCustom) {
-      themeStyleEl?.remove();
-      themeStyleEl = null;
-      document.documentElement.setAttribute("data-theme", themeId);
+      clearCustomThemeProperties(root);
+      root.setAttribute("data-theme", themeId);
       return;
     }
 
     const custom = store.settings.customThemes?.find(t => t.id === themeId);
-    if (!custom) {
-      themeStyleEl?.remove();
-      themeStyleEl = null;
-      document.documentElement.setAttribute("data-theme", "dark");
+    if (!custom || !applyCustomTheme(root, custom)) {
+      clearCustomThemeProperties(root);
+      root.setAttribute("data-theme", "dark");
       return;
     }
-
-    const tokens = { ...NOCTURNE_THEME_TOKENS, ...(custom.tokens ?? {}) };
-    const hudTokens = { ...NOCTURNE_HUD_THEME_TOKENS, ...(custom.hud ?? {}) };
-    const motionVars = custom.motion ? (THEME_MOTION_VARS[custom.motion] ?? {}) : {};
-    const vars = [
-      ...Object.entries(tokens).map(([k, v]) => `  --${k}: ${v};`),
-      ...Object.entries(hudTokens).map(([k, v]) => `  --${k}: ${v};`),
-      ...Object.entries(motionVars).map(([k, v]) => `  ${k}: ${v};`),
-      "  --sidebar-width: var(--hud-sidebar-width);",
-    ]
-      .join("\n");
-    const css = `[data-theme="custom"] {\n${vars}\n}`;
-
-    if (!themeStyleEl) {
-      themeStyleEl = document.createElement("style");
-      themeStyleEl.id = "aethon-custom-theme";
-      document.head.appendChild(themeStyleEl);
-    }
-    themeStyleEl.textContent = css;
-    document.documentElement.setAttribute("data-theme", "custom");
   });
 
   let themeEditorOpen   = $state(false);

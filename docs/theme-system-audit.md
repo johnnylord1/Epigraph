@@ -2369,3 +2369,36 @@ Categorias cobertas:
 - Teste browser Chromium: `themeProbe.browser.test.ts`; 1 arquivo e 1 teste verde.
 - `pnpm build`: verde com 6.297 modulos; permanece apenas o aviso conhecido de chunk acima de 500 kB.
 - `git diff --check`: verde.
+
+### Marco 29 - ThemeEditor V4
+
+#### Contrato de autoria
+
+- O contrato persistido passou a aceitar `ThemeDocumentV4`: `version: 4`, id `custom:*`, nome, tema builtin base, primitive overrides, semantic overrides opcionais, HUD parcial e preset de motion.
+- Os 22 primitive keys e 25 semantic keys formam uma particao exata dos 47 `ThemeTokens`. `--component-*` nao faz parte do documento, nao e editavel e e rejeitado tanto como chave quanto como referencia.
+- Documentos v1, v2 e v3 continuam armazenados sem alteracao. O runtime e o editor os migram somente em memoria, usam Nocturne como base historica e removem valores iguais ao base; o item persistido so vira V4 durante um save explicito.
+- Import e autoria rejeitam chaves desconhecidas, regras CSS, `url()`, comentarios, caracteres de injecao, expressoes, valores que nao sejam cores, variables desconhecidas, ciclos e unidades HUD invalidas.
+- Parse, import, serialize, round-trip, materializacao do contrato e criacao sparse estao centralizados em `src/lib/theme/document.ts`.
+
+#### Aplicacao e persistencia
+
+- O antigo `<style id="aethon-custom-theme">` construido por concatenacao foi removido. O provider aplica exclusivamente os 47 ThemeTokens, 15 HudThemeTokens, 3 motion vars e o alias de sidebar via `style.setProperty`; a troca para builtin remove a mesma allowlist via `removeProperty`.
+- O `data-theme` permanece no builtin base do documento, preservando toda a camada de component tokens derivada daquele tema. `data-custom-theme` registra apenas o documento ativo; nenhum componente depende dele.
+- O ThemeEditor continua sendo a interface oficial. A aba Colors mantem primitives e o grupo avancado Semantic; HUD mantem presets, geometria, cores e motion. Preview e swatches tambem passaram a usar `setProperty`, sem CSS gerado como string.
+- O save persiste o V4 completo antes de trocar o estado em memoria e antes de ativa-lo. Se `localStorage` falhar, o documento antigo e a selecao anterior permanecem intactos e o editor mostra erro em vez de `Saved`.
+- Export sempre produz V4 sparse. Import aceita V1-V4, valida/migra em memoria e nao grava nem ativa ate o usuario salvar.
+
+#### Validacao visual real
+
+- Before: baseline real `docs/screenshots/marco14-theme-editor/theme-editor-before-existing-baseline.png` e capturas Colors/HUD do mesmo marco.
+- After: `docs/screenshots/marco29-theme-editor/theme-editor-after-colors.png` e `theme-editor-after-hud-motion.png`, capturadas no app Tauri real em Nocturne.
+- Colors, Semantic list, preview, swatches, HUD presets, motion, sliders, foco, backdrop, shell, tipografia, spacing e hierarquia permaneceram visualmente equivalentes. O runtime confirmou `data-theme="nocturne"`, ausencia do style tag legado e preview resolvido com `--accent: #d3c4ff`.
+- Nenhum tema foi salvo durante o smoke real para nao modificar os dados do usuario. Import/export, falha de persistencia e ativacao customizada ficaram cobertos por testes puros/provider; o seletor nativo de arquivos nao foi automatizado.
+
+#### Gates
+
+- Testes focados: contrato, V1/V2/V3 -> V4, round-trip, import invalido, injecao, ciclos, HUD, provider, persistencia, ThemeEditor e Settings; 6 arquivos e 52 testes verdes.
+- Teste browser Chromium: `themeProbe.browser.test.ts`; 1 arquivo e 1 teste verde apos a troca do provider.
+- `pnpm build`: verde com 6.299 modulos; permanece apenas o aviso conhecido de chunk acima de 500 kB.
+- `git diff --check`: verde.
+- Syncd, `--n-*`, component tokens, layout, i18n e logica funcional fora do tema permaneceram intocados.

@@ -3,16 +3,24 @@
   import { _ } from "../../lib/i18n/runtime";
   import { X, FloppyDisk, UploadSimple, DownloadSimple, ArrowLeft, Trash } from "phosphor-svelte";
   import {
-    store, updateSettings, saveCustomTheme, deleteCustomTheme,
-    type CustomTheme,
+    store, saveCustomTheme, deleteCustomTheme,
     type HudThemeTokens,
     type ThemeMotionPreset,
     type ThemeTokens,
     DEFAULT_HUD_THEME_TOKENS,
     NOCTURNE_HUD_THEME_TOKENS,
     NOCTURNE_THEME_TOKENS,
-    THEME_MOTION_VARS,
   } from "../../store/state.svelte";
+  import {
+    createThemeDocumentV4,
+    importThemeDocument,
+    isValidThemeTokenValue,
+    migrateThemeDocument,
+    resolveThemeDocument,
+    serializeThemeDocument,
+  } from "../../lib/theme/document";
+  import { applyThemeContract, readBuiltinThemeContract } from "../../lib/theme/provider";
+  import type { BuiltinTheme } from "../../lib/theme/contract";
 
   interface Props {
     editingId?: string | null;
@@ -185,20 +193,27 @@
 
   // ── State ─────────────────────────────────────────────────────────────────
 
-  function loadInitial(): { name: string; tokens: ThemeTokens; hud: HudThemeTokens; motion: ThemeMotionPreset } {
+  function loadInitial(): { name: string; base: BuiltinTheme; tokens: ThemeTokens; hud: HudThemeTokens; motion: ThemeMotionPreset } {
     if (editingId) {
       const existing = store.settings.customThemes.find(t => t.id === editingId);
       if (existing) {
-        return {
-          name: existing.name,
-          tokens: { ...NOCTURNE_THEME_TOKENS, ...existing.tokens },
-          hud: { ...NOCTURNE_HUD_THEME_TOKENS, ...(existing.hud ?? {}) },
-          motion: existing.motion ?? "soft",
-        };
+        const migrated = migrateThemeDocument(existing);
+        if (migrated.ok) {
+          const baseContract = readBuiltinThemeContract(migrated.document.base);
+          const resolved = resolveThemeDocument(migrated.document, baseContract.tokens, baseContract.hud);
+          return {
+            name: migrated.document.name,
+            base: migrated.document.base,
+            tokens: resolved.tokens,
+            hud: resolved.hud,
+            motion: migrated.document.motion,
+          };
+        }
       }
     }
     return {
       name: "My Theme",
+      base: "nocturne",
       tokens: { ...NOCTURNE_THEME_TOKENS },
       hud: { ...NOCTURNE_HUD_THEME_TOKENS },
       motion: "soft",
@@ -207,6 +222,7 @@
 
   const initial = loadInitial();
   let themeName: string   = $state(initial.name);
+  let base: BuiltinTheme  = $state(initial.base);
   let tokens: ThemeTokens = $state(initial.tokens);
   let hud: HudThemeTokens = $state(initial.hud);
   let motion: ThemeMotionPreset = $state(initial.motion);
@@ -230,25 +246,17 @@
     return "#000000";
   }
 
-  function isValidThemeTokenValue(v: string): boolean {
-    return (
-      /^#[0-9a-fA-F]{3,8}$/.test(v) ||
-      /^rgba?\([^)]+\)$/.test(v) ||
-      /^hsla?\([^)]+\)$/.test(v) ||
-      /^oklch\([^)]+\)$/.test(v) ||
-      /^color-mix\(.+\)$/.test(v) ||
-      /^var\(--[a-zA-Z0-9_-]+\)$/.test(v)
-    );
-  }
-
   // ── CSS vars helper ───────────────────────────────────────────────────────
-  function toCssVars(t: ThemeTokens, h: HudThemeTokens = hud, m: ThemeMotionPreset = motion): string {
-    return [
-      ...Object.entries(t).map(([k, v]) => `--${k}: ${v};`),
-      ...Object.entries(h).map(([k, v]) => `--${k}: ${v};`),
-      ...Object.entries(THEME_MOTION_VARS[m] ?? {}).map(([k, v]) => `${k}: ${v};`),
-      "--sidebar-width: var(--hud-sidebar-width);",
-    ].join(" ");
+  function themePreview(
+    node: HTMLElement,
+    draft: { tokens: ThemeTokens; hud: HudThemeTokens; motion: ThemeMotionPreset },
+  ) {
+    applyThemeContract(node, draft.tokens, draft.hud, draft.motion);
+    return {
+      update(next: { tokens: ThemeTokens; hud: HudThemeTokens; motion: ThemeMotionPreset }) {
+        applyThemeContract(node, next.tokens, next.hud, next.motion);
+      },
+    };
   }
 
   function parseHudNumber(token: keyof HudThemeTokens): number {
@@ -272,12 +280,22 @@
   function handleSave() {
     const name = themeName.trim() || "Untitled Theme";
     const id   = editingId ?? `custom:${Math.random().toString(36).slice(2, 10)}`;
-    const theme: CustomTheme = { id, name, tokens: { ...tokens }, hud: { ...hud }, motion, version: 3 };
-    saveCustomTheme(theme);
-    updateSettings({ theme: id });
-    editingId = id;
-    saveStatus = "saved";
-    setTimeout(() => (saveStatus = "idle"), 1800);
+    try {
+      const baseContract = readBuiltinThemeContract(base);
+      const theme = createThemeDocumentV4(
+        { id, name, base, tokens: { ...tokens }, hud: { ...hud }, motion },
+        baseContract.tokens,
+        baseContract.hud,
+      );
+      if (!saveCustomTheme(theme, true)) throw new Error("Could not persist the theme. Your previous document was preserved.");
+      editingId = id;
+      importError = null;
+      saveStatus = "saved";
+      setTimeout(() => (saveStatus = "idle"), 1800);
+    } catch (error) {
+      importError = error instanceof Error ? error.message : "Could not save the theme";
+      setTimeout(() => (importError = null), 4000);
+    }
   }
 
   function handleDelete() {
@@ -288,21 +306,31 @@
   }
 
   function handleExport() {
-    const data: CustomTheme = {
-      id:     editingId ?? "custom:export",
-      name:   themeName.trim() || "Untitled Theme",
-      tokens: { ...tokens },
-      hud:    { ...hud },
-      motion,
-      version: 3,
-    };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement("a");
-    a.href     = url;
-    a.download = `${data.name.replace(/[^a-z0-9]/gi, "-").toLowerCase()}-theme.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    try {
+      const baseContract = readBuiltinThemeContract(base);
+      const data = createThemeDocumentV4(
+        {
+          id: editingId ?? "custom:export",
+          name: themeName.trim() || "Untitled Theme",
+          base,
+          tokens: { ...tokens },
+          hud: { ...hud },
+          motion,
+        },
+        baseContract.tokens,
+        baseContract.hud,
+      );
+      const blob = new Blob([serializeThemeDocument(data)], { type: "application/json" });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
+      a.download = `${data.name.replace(/[^a-z0-9]/gi, "-").toLowerCase()}-theme.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      importError = error instanceof Error ? error.message : "Could not export the theme";
+      setTimeout(() => (importError = null), 4000);
+    }
   }
 
   function handleImport() {
@@ -314,12 +342,15 @@
       if (!file) return;
       try {
         const text = await file.text();
-        const data = JSON.parse(text);
-        if (!data.tokens || typeof data.tokens !== "object") throw new Error("Invalid theme file — missing tokens");
-        if (typeof data.name === "string") themeName = data.name;
-        tokens      = { ...NOCTURNE_THEME_TOKENS, ...data.tokens };
-        hud         = { ...NOCTURNE_HUD_THEME_TOKENS, ...(data.hud ?? {}) };
-        motion      = (data.motion === "minimal" || data.motion === "soft" || data.motion === "expressive") ? data.motion : "soft";
+        const imported = importThemeDocument(text);
+        if (!imported.ok) throw new Error(imported.error);
+        const baseContract = readBuiltinThemeContract(imported.document.base);
+        const resolved = resolveThemeDocument(imported.document, baseContract.tokens, baseContract.hud);
+        themeName   = imported.document.name;
+        base        = imported.document.base;
+        tokens      = resolved.tokens;
+        hud         = resolved.hud;
+        motion      = imported.document.motion;
         importError = null;
       } catch (e: any) {
         importError = e.message ?? "Could not parse theme file";
@@ -330,6 +361,7 @@
   }
 
   function resetToDefaults() {
+    base = "nocturne";
     tokens = { ...NOCTURNE_THEME_TOKENS };
     hud = { ...NOCTURNE_HUD_THEME_TOKENS };
     motion = "soft";
@@ -405,11 +437,7 @@
       <aside class="te-preview-pane">
         <div class="te-pane-label">{$_("ui_livePreview")}</div>
 
-        <!--
-          FIX 1: toCssVars scoped only to this element, so only the
-          preview UI sees the draft tokens — not the editor shell.
-        -->
-        <div class="te-preview-ui" style={toCssVars(tokens)}>
+        <div class="te-preview-ui" use:themePreview={{ tokens, hud, motion }}>
           <!-- Sidebar -->
           <div class="prv-sidebar">
             {#each [true, false, false, false] as active}
@@ -468,7 +496,7 @@
         </div>
 
         <!-- Swatch strip — scoped to draft tokens too -->
-        <div class="te-swatches" style={toCssVars(tokens)}>
+        <div class="te-swatches" use:themePreview={{ tokens, hud, motion }}>
           {#each [
             ["bg-base","bg-base"],["bg-surface","bg-surface"],
             ["accent","accent"],["accent-fg","accent-fg"],
