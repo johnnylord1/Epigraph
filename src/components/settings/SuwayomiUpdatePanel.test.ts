@@ -183,7 +183,7 @@ describe("SuwayomiUpdatePanel", () => {
     expect(screen.getByText(/Safer runtime update/)).toBeTruthy();
   });
 
-  test("shows failed state when health rollback returns an error", async () => {
+  test("shows a user-friendly failed state when automatic rollback also fails", async () => {
     installSuwayomiRuntimeUpdateMock.mockRejectedValue(new Error("RollbackError: Promotion failed. Automatic rollback also failed."));
 
     render(SuwayomiUpdatePanel);
@@ -196,7 +196,24 @@ describe("SuwayomiUpdatePanel", () => {
     await waitFor(() => expect(screen.getAllByText("Ready to install").length).toBeGreaterThan(0));
     await fireEvent.click(screen.getByRole("button", { name: "Install update" }));
 
-    await waitFor(() => expect(screen.getAllByText("Promotion failed. Automatic rollback also failed.").length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getAllByText("Aethon could not verify the downloaded Suwayomi update and could not restore the previous runtime automatically. Restart Aethon before trying again.").length).toBeGreaterThan(0));
+  });
+
+  test("hides health-check internals after a safe rollback", async () => {
+    installSuwayomiRuntimeUpdateMock.mockRejectedValue(new Error("HealthCheckError: Suwayomi GraphQL sources health check failed. The previous Suwayomi runtime was restored."));
+
+    render(SuwayomiUpdatePanel);
+
+    await waitFor(() => expect(screen.getByText("Up to date")).toBeTruthy());
+    await openDetails();
+    await fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
+    await waitFor(() => expect(screen.getAllByText("Update available").length).toBeGreaterThan(0));
+    await fireEvent.click(screen.getByRole("button", { name: "Download update" }));
+    await waitFor(() => expect(screen.getAllByText("Ready to install").length).toBeGreaterThan(0));
+    await fireEvent.click(screen.getByRole("button", { name: "Install update" }));
+
+    await waitFor(() => expect(screen.getAllByText("Aethon could not verify the downloaded Suwayomi update, so it kept the current runtime.").length).toBeGreaterThan(0));
+    expect(screen.queryByText(/GraphQL sources health check failed/)).toBeNull();
   });
 
   test("shows failed state for update check failures", async () => {

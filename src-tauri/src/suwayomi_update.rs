@@ -36,10 +36,11 @@ const SUWAYOMI_STAGING_DIR: &str = "staging";
 const SUWAYOMI_CURRENT_DIR: &str = "current";
 const SUWAYOMI_PREVIOUS_DIR: &str = "previous";
 const SUWAYOMI_STAGING_MANIFEST: &str = "staging-manifest.json";
+const SUWAYOMI_DIAGNOSTICS_DIR: &str = "diagnostics";
 const MIN_STAGED_JAR_BYTES: u64 = 1024 * 1024;
 const PROMOTED_RUNTIME_MIN_ALIVE_MS: u64 = 2_000;
-const SUWAYOMI_HEALTH_ATTEMPTS: usize = 24;
-const SUWAYOMI_HEALTH_DELAY_MS: u64 = 500;
+const SUWAYOMI_HEALTH_MAX_WAIT_MS: u64 = 90_000;
+const SUWAYOMI_HEALTH_DELAY_MS: u64 = 1_000;
 const SUWAYOMI_HEALTH_TIMEOUT_SECS: u64 = 5;
 const SUWAYOMI_SNAPSHOT_ALLOWLIST: &[&str] = &[
     "server.conf",
@@ -265,6 +266,32 @@ struct ActiveSuwayomiUpdateLock {
     token: String,
     owner: String,
     started_at_ms: u128,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct SuwayomiHealthDiagnosticCheck {
+    attempt: usize,
+    check: String,
+    ok: bool,
+    duration_ms: u128,
+    error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct SuwayomiHealthDiagnosticReport {
+    schema_version: u8,
+    target_version: String,
+    endpoint: String,
+    started_at_ms: u128,
+    elapsed_ms: u128,
+    max_wait_ms: u64,
+    timeout_secs: u64,
+    delay_ms: u64,
+    attempts: usize,
+    last_error: String,
+    checks: Vec<SuwayomiHealthDiagnosticCheck>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -759,7 +786,12 @@ async fn promote_suwayomi_runtime_update_unlocked(
     });
     let health_result = match start_result {
         Ok(()) => {
-            run_suwayomi_graphql_health_check(&target.server_url, auth_header.as_deref()).await
+            run_suwayomi_graphql_health_check(
+                &target.server_url,
+                auth_header.as_deref(),
+                &staging_manifest.version,
+            )
+            .await
         }
         Err(error) => Err(error),
     };
@@ -2145,6 +2177,7 @@ fn wait_for_runtime_jar(
 async fn run_suwayomi_graphql_health_check(
     server_url: &str,
     auth_header: Option<&str>,
+    target_version: &str,
 ) -> Result<(), String> {
     let endpoint = graphql_endpoint(server_url)?;
     let client = reqwest::Client::builder()
@@ -2175,12 +2208,34 @@ async fn run_suwayomi_graphql_health_check(
     ];
 
     let mut last_error = String::new();
-    for attempt in 0..SUWAYOMI_HEALTH_ATTEMPTS {
+    let started = Instant::now();
+    let started_at_ms = unix_now_ms();
+    let max_wait = Duration::from_millis(SUWAYOMI_HEALTH_MAX_WAIT_MS);
+    let mut attempt = 0usize;
+    let mut diagnostic_checks = Vec::new();
+    while started.elapsed() < max_wait {
+        attempt += 1;
         let mut failed = None;
         for (key, query, message) in checks {
+            let check_started = Instant::now();
             match run_graphql_health_query(&client, &endpoint, auth_header, key, query).await {
-                Ok(()) => {}
+                Ok(()) => {
+                    diagnostic_checks.push(SuwayomiHealthDiagnosticCheck {
+                        attempt,
+                        check: key.to_string(),
+                        ok: true,
+                        duration_ms: check_started.elapsed().as_millis(),
+                        error: None,
+                    });
+                }
                 Err(error) => {
+                    diagnostic_checks.push(SuwayomiHealthDiagnosticCheck {
+                        attempt,
+                        check: key.to_string(),
+                        ok: false,
+                        duration_ms: check_started.elapsed().as_millis(),
+                        error: Some(error.clone()),
+                    });
                     failed = Some(format!("{message} {error}"));
                     break;
                 }
@@ -2190,18 +2245,61 @@ async fn run_suwayomi_graphql_health_check(
             return Ok(());
         }
         last_error = failed.unwrap_or_default();
-        if attempt + 1 < SUWAYOMI_HEALTH_ATTEMPTS {
+        if started.elapsed() < max_wait {
             tokio::time::sleep(Duration::from_millis(SUWAYOMI_HEALTH_DELAY_MS)).await;
         }
     }
+    let report = SuwayomiHealthDiagnosticReport {
+        schema_version: 1,
+        target_version: target_version.to_string(),
+        endpoint,
+        started_at_ms,
+        elapsed_ms: started.elapsed().as_millis(),
+        max_wait_ms: SUWAYOMI_HEALTH_MAX_WAIT_MS,
+        timeout_secs: SUWAYOMI_HEALTH_TIMEOUT_SECS,
+        delay_ms: SUWAYOMI_HEALTH_DELAY_MS,
+        attempts: attempt,
+        last_error: last_error.clone(),
+        checks: diagnostic_checks,
+    };
+    match write_suwayomi_health_diagnostic_report(&report) {
+        Ok(path) => eprintln!(
+            "[aethon-suwayomi-update] health_diagnostic path={}",
+            path.display()
+        ),
+        Err(error) => eprintln!(
+            "[aethon-suwayomi-update] health_diagnostic_failed reason={}",
+            error.replace('\n', " ")
+        ),
+    }
     Err(update_error(
         SuwayomiUpdateErrorKind::HealthCheckError,
-        format!(
-            "Suwayomi GraphQL did not become ready within {} ms. Last error: {}",
-            (SUWAYOMI_HEALTH_ATTEMPTS as u64) * SUWAYOMI_HEALTH_DELAY_MS,
-            last_error
-        ),
+        "The downloaded Suwayomi runtime could not be verified safely. Aethon kept the current runtime.",
     ))
+}
+
+fn write_suwayomi_health_diagnostic_report(
+    report: &SuwayomiHealthDiagnosticReport,
+) -> Result<PathBuf, String> {
+    write_suwayomi_health_diagnostic_report_to_dir(
+        &managed_runtime_root().join(SUWAYOMI_DIAGNOSTICS_DIR),
+        report,
+    )
+}
+
+fn write_suwayomi_health_diagnostic_report_to_dir(
+    diagnostics_dir: &Path,
+    report: &SuwayomiHealthDiagnosticReport,
+) -> Result<PathBuf, String> {
+    fs::create_dir_all(diagnostics_dir)
+        .map_err(|error| format!("Could not create Suwayomi diagnostics directory: {error}"))?;
+    let version = normalize_version_tag(&report.target_version);
+    let path = diagnostics_dir.join(format!("health-{version}-{}.json", report.started_at_ms));
+    let bytes = serde_json::to_vec_pretty(report)
+        .map_err(|error| format!("Could not serialize Suwayomi health diagnostic: {error}"))?;
+    fs::write(&path, bytes)
+        .map_err(|error| format!("Could not write Suwayomi health diagnostic: {error}"))?;
+    Ok(path)
 }
 
 async fn run_graphql_health_query(
@@ -3188,6 +3286,47 @@ mod tests {
         )
         .unwrap_err();
         assert!(missing_library.contains("nodes array"));
+    }
+
+    #[test]
+    fn health_diagnostic_report_writer_keeps_structured_internal_details() {
+        let temp = tempfile::tempdir().unwrap();
+        let report = SuwayomiHealthDiagnosticReport {
+            schema_version: 1,
+            target_version: "v2.2.2100".to_string(),
+            endpoint: "http://127.0.0.1:4567/api/graphql".to_string(),
+            started_at_ms: 123,
+            elapsed_ms: 456,
+            max_wait_ms: SUWAYOMI_HEALTH_MAX_WAIT_MS,
+            timeout_secs: SUWAYOMI_HEALTH_TIMEOUT_SECS,
+            delay_ms: SUWAYOMI_HEALTH_DELAY_MS,
+            attempts: 1,
+            last_error: "Sources health check failed.".to_string(),
+            checks: vec![
+                SuwayomiHealthDiagnosticCheck {
+                    attempt: 1,
+                    check: "typename".to_string(),
+                    ok: true,
+                    duration_ms: 10,
+                    error: None,
+                },
+                SuwayomiHealthDiagnosticCheck {
+                    attempt: 1,
+                    check: "sources".to_string(),
+                    ok: false,
+                    duration_ms: 12,
+                    error: Some("database unavailable".to_string()),
+                },
+            ],
+        };
+
+        let path = write_suwayomi_health_diagnostic_report_to_dir(temp.path(), &report).unwrap();
+        let text = std::fs::read_to_string(path).unwrap();
+
+        assert!(text.contains("\"targetVersion\": \"v2.2.2100\""));
+        assert!(text.contains("\"check\": \"sources\""));
+        assert!(text.contains("database unavailable"));
+        assert!(!text.contains("Authorization"));
     }
 
     #[test]

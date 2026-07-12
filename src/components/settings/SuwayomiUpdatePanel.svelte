@@ -85,6 +85,12 @@
 
   function formatUpdaterError(error: unknown) {
     const raw = error instanceof Error ? error.message : String(error);
+    if (/Automatic rollback also failed/i.test(raw)) {
+      return $_("suwayomi.update.failedRollbackMessage");
+    }
+    if (/HealthCheckError|Promotion failed|previous Suwayomi runtime was restored|current runtime/i.test(raw)) {
+      return $_("suwayomi.update.safeRollbackMessage");
+    }
     return raw.replace(/^((OwnershipError|CompatibilityError|DownloadError|ChecksumError|SnapshotError|PromotionError|RollbackError|HealthCheckError):\s*)+/, "");
   }
 

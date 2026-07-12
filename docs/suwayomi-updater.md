@@ -129,6 +129,16 @@ Startup alone is not success. After promotion the updater validates GraphQL:
 
 The check validates payload shape and absence of GraphQL errors. It does not require identical Library counts immediately after startup.
 
+The readiness window is intentionally longer than a normal launch because a promoted server can run database or extension migrations before GraphQL becomes stable. If verification still fails, Aethon writes an internal diagnostic report under:
+
+```text
+suwayomi-runtime/
+  diagnostics/
+    health-<version>-<timestamp>.json
+```
+
+The report records each attempted GraphQL check, duration and sanitized error, but never stores authorization headers. This is for maintenance/debugging only; the user-facing flow remains simple.
+
 ## Logs And Errors
 
 Native updater commands log start, success/failure, duration, and sanitized failure reason using the `aethon-suwayomi-update` prefix.
@@ -145,6 +155,8 @@ Command errors are categorized:
 - `HealthCheckError`
 
 The UI strips these prefixes for friendly user-facing messages.
+
+Promotion or health-check failures are normalized in the Settings UI to explain only the outcome: Aethon could not verify the downloaded update and kept the current runtime. If automatic rollback itself fails, the UI asks the user to restart Aethon before retrying. Query names, migration details and diagnostic paths remain in logs/diagnostic files so regular users do not need to understand the internal certification process.
 
 ## Limitations
 
