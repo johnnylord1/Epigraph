@@ -9,7 +9,7 @@ use sysinfo::{Pid, ProcessesToUpdate, System};
 use tokio::sync::{broadcast, Mutex, RwLock};
 use tracing_subscriber::EnvFilter;
 
-use super::config::{SyncdAdvertisedEndpointResolver, SyncdConfig};
+use super::config::{SyncdAdvertisedEndpointResolver, SyncdConfig, SyncdOwnershipMode};
 use super::db;
 use super::discovery::{
     start_discovery_provider, SyncdClientDiscoveryContractProvider,
@@ -21,6 +21,7 @@ use super::models::AppState;
 use super::routes::{
     bootstrap, capabilities, discovery, events, health, local, mutations, pairing, snapshot,
 };
+use super::runtime_manifest::{RuntimeManifestLease, SyncdRuntimeManifest};
 use super::tls;
 
 pub async fn run() -> anyhow::Result<()> {
@@ -36,6 +37,7 @@ pub async fn run() -> anyhow::Result<()> {
     let tls = tls::load_or_create(&config).await?;
     let pool = db::connect(&config).await?;
     db::upsert_server_identity(&pool, &config, &tls.fingerprint_sha256).await?;
+    let server_identity = db::load_server_identity(&pool).await?;
     db::prune_expired_rows(&pool, db::now_ms()).await?;
 
     let (change_sender, _) = broadcast::channel(1_024);
@@ -72,6 +74,26 @@ pub async fn run() -> anyhow::Result<()> {
         tls_cert_sha256 = %state.tls_cert_sha256,
         "aethon-syncd starting"
     );
+
+    let _runtime_manifest_lease = if config.ownership_mode == SyncdOwnershipMode::PersistentAttached
+    {
+        let executable =
+            std::env::current_exe().context("failed to resolve aethon-syncd executable path")?;
+        let executable = std::fs::canonicalize(&executable).unwrap_or(executable);
+        let manifest = SyncdRuntimeManifest::new(
+            std::process::id(),
+            &server_identity.server_id,
+            config.bind_addr.port(),
+            &tls.fingerprint_sha256,
+            executable.to_string_lossy().into_owned(),
+        );
+        Some(
+            RuntimeManifestLease::publish(&config.data_dir, &manifest)
+                .context("failed to publish syncd runtime manifest")?,
+        )
+    } else {
+        None
+    };
 
     axum_server::bind_rustls(config.bind_addr, tls.rustls_config)
         .serve(router.into_make_service_with_connect_info::<SocketAddr>())
@@ -151,7 +173,7 @@ fn spawn_gc_task(state: Arc<AppState>) {
 }
 
 fn spawn_parent_watchdog(state: Arc<AppState>) {
-    let Some(parent_pid) = state.config.parent_pid else {
+    let Some(parent_pid) = watchdog_parent_pid(&state.config) else {
         return;
     };
 
@@ -168,6 +190,14 @@ fn spawn_parent_watchdog(state: Arc<AppState>) {
             }
         }
     });
+}
+
+fn watchdog_parent_pid(config: &SyncdConfig) -> Option<u32> {
+    if config.ownership_mode == SyncdOwnershipMode::EphemeralOwned {
+        config.parent_pid
+    } else {
+        None
+    }
 }
 
 fn spawn_discovery_provider_task(state: Arc<AppState>) {
@@ -209,6 +239,19 @@ mod tests {
     fn token_hash(raw: &str) -> String {
         let digest = Sha256::digest(raw.as_bytes());
         digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    #[test]
+    fn parent_watchdog_only_applies_to_ephemeral_owned_processes() {
+        let temp = tempdir().unwrap();
+        let mut config = SyncdConfig::for_test(temp.path().to_path_buf());
+        config.parent_pid = Some(42);
+
+        config.ownership_mode = SyncdOwnershipMode::PersistentAttached;
+        assert_eq!(watchdog_parent_pid(&config), None);
+
+        config.ownership_mode = SyncdOwnershipMode::EphemeralOwned;
+        assert_eq!(watchdog_parent_pid(&config), Some(42));
     }
 
     async fn build_state_for_http() -> (tempfile::TempDir, Arc<AppState>) {
