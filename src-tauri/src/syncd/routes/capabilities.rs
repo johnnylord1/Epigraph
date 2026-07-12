@@ -28,6 +28,7 @@ pub async fn get_capabilities(
         supports_manual_ip_fallback: true,
         supports_owner_transfer: true,
         supports_snapshot: true,
+        supports_assets: true,
         snapshot_schema_version: SNAPSHOT_SCHEMA_VERSION,
         snapshot_entity_types: SNAPSHOT_ENTITY_TYPES
             .iter()
