@@ -83,17 +83,14 @@ pub fn validate_client_version_fields(
 }
 
 pub fn validate_scope(session: &AuthenticatedSession, scope: &str) -> Result<(), AppError> {
-    if scope == "books:global" {
-        return Ok(());
-    }
-
     let expected = format!("novels:profile:{}", session.profile_id);
-    if scope == expected {
+    let scope_is_available = scope == "books:global" || scope == expected;
+    if scope_is_available && session.scopes.contains(scope) {
         return Ok(());
     }
 
     Err(AppError::Forbidden(format!(
-        "Scope '{scope}' is not available for profile '{}'.",
+        "Scope '{scope}' is not granted to this token or available for profile '{}'.",
         session.profile_id
     )))
 }
@@ -278,6 +275,29 @@ mod tests {
         assert!(validate_scope(&session, "books:global").is_ok());
         assert!(validate_scope(&session, "novels:profile:main").is_ok());
         assert!(validate_scope(&session, "novels:profile:test").is_err());
+    }
+
+    #[test]
+    fn rejects_structurally_valid_scope_not_granted_to_token() {
+        let session = AuthenticatedSession {
+            token_id: "t".to_string(),
+            device_id: "d".to_string(),
+            profile_id: "main".to_string(),
+            scopes: BTreeSet::from(["novels:profile:main".to_string()]),
+        };
+
+        assert!(validate_scope(&session, "novels:profile:main").is_ok());
+        assert!(validate_scope(&session, "books:global").is_err());
+
+        let session = AuthenticatedSession {
+            token_id: "t".to_string(),
+            device_id: "d".to_string(),
+            profile_id: "main".to_string(),
+            scopes: BTreeSet::from(["books:global".to_string()]),
+        };
+
+        assert!(validate_scope(&session, "books:global").is_ok());
+        assert!(validate_scope(&session, "novels:profile:main").is_err());
     }
 
     #[tokio::test]
