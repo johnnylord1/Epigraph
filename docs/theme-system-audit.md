@@ -2214,3 +2214,30 @@ Categorias cobertas:
 - `pnpm build`: verde com 6.297 modulos; permanece apenas o aviso conhecido de chunk acima de 500 kB.
 - `git diff --check`: verde.
 - Nenhum componente Svelte, layout, API, store, fila de downloads ou comportamento foi alterado.
+
+### Marco 28C.3a - Browse
+
+#### Escopo e derivacao
+
+- O lote `browse` foi separado de Sources/Taste para respeitar o limite: 138 declaracoes/156 ocorrencias no fallback e 140/158 no Nocturne, totalizando 278/314.
+- Restam zero cores literais nos 443 component tokens `--component-browse-*` de ambos os CSS.
+- Oito declaracoes de cor que ainda dependiam de `--n-primary`, `--n-on-primary` e `--n-gradient-primary` foram migradas para `--accent`, `--color-on-accent-strong` e `--gradient-accent-primary`.
+- `--n-hud-scale`, `--n-topbar-height`, `--n-search-width` e `--n-search-width-focus` permanecem apenas para geometria responsiva Legacy.
+- Foram adicionadas 3 fontes semanticas genericas para accent soft, superficie mais profunda e input profundo, mais 25 papeis locais de Browse para catalog, sidebar, search, insight cards, NSFW e controles. Todas sao alcancaveis por component tokens ativos.
+- As fontes compartilhadas substituem duplicacoes anteriores de Detail e Library sem alterar seus valores Nocturne.
+
+#### Validacao visual real
+
+- Before: `docs/screenshots/marco28-preflight/before-browse.png`, `before-browse-focus.png` e baselines reais de `docs/screenshots/marco11-browsev3/`.
+- After em `docs/screenshots/marco28c3a-browse/`: Search inicial, Search com resultados/foco, Discover real e dropdown de Language.
+- O app foi reiniciado pelo launcher gerenciado apos o CDP anterior degradar o handshake. A nova sessao abriu em Nocturne com os mesmos dados persistidos.
+- Search carregou recomendacoes reais, taste profile, rails, insights e diversity; Discover carregou 48+ resultados reais, sidebar, status segments, toggles, genre list e dropdown.
+- Geometria, scroll containers, cards, surfaces, borders, shadows, contraste, active/hover/focus e hierarquia permaneceram equivalentes. Nenhum resultado ou estado foi fabricado.
+- `Discover.svelte`, `Extensions.svelte`, `SourceBrowse.svelte` e `SourceList.svelte` Legacy nao foram ativados, removidos ou editados.
+
+#### Gates
+
+- Testes focados: `componentColorDerivation.test.ts`, `BrowseV3ThemeTokens.test.ts` e `BrowseV3.test.ts`; 3 arquivos e 16 testes verdes.
+- `pnpm build`: verde com 6.297 modulos; permanece apenas o aviso conhecido de chunk acima de 500 kB.
+- `git diff --check`: verde.
+- Nenhum componente Svelte, API, store, GraphQL, busca, filtros ou navegacao foi alterado.

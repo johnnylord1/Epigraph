@@ -31,6 +31,7 @@ const MIGRATED_PREFIXES = [
   "home",
   "activity",
   "downloads",
+  "browse",
 ] as const;
 
 const directColorPattern =
@@ -71,7 +72,12 @@ describe("derived component color contract", () => {
       .filter(({ value }) => directColorPattern.test(value))
       .map(({ name, value }) => `${name}: ${value}`);
     const legacyAliases = migrated
-      .filter(({ value }) => /var\(--n-(?!(?:hud-scale|topbar-height)\b)/.test(value))
+      .filter(
+        ({ value }) =>
+          /var\(--n-(?!(?:hud-scale|topbar-height|search-width|search-width-focus)\b)/.test(
+            value,
+          ),
+      )
       .map(({ name, value }) => `${name}: ${value}`);
 
     expect(directColors).toEqual([]);
