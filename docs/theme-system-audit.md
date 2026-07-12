@@ -2097,3 +2097,35 @@ Categorias cobertas:
 
 - Toasts de sucesso/erro/download nao ocorreram naturalmente nesta sessao; o toast real de progresso e os demais estados ficam cobertos pelo contrato de tokens e testes de render existentes.
 - Os demais 1.488 component tokens com valores diretos pertencem aos lotes posteriores e continuam bloqueados pelo gate progressivo assim que cada prefixo for migrado.
+
+### Marco 28B - Shell e Settings
+
+#### Escopo e derivacao
+
+- Prefixos migrados: `app`, `search`, `sidebar`, `topbar`, `nav`, `toolbar`, `window`, `settings` e `theme-editor`.
+- Syncd permaneceu integralmente excluido; nenhum `--component-syncd-*`, componente ou teste Syncd foi alterado.
+- Foram removidas 123 declaracoes e 142 ocorrencias de cor direta. Restam zero cores literais e zero aliases `--n-*` de cor nesses prefixos; `--n-hud-scale` permanece ativo apenas para geometria/escala Legacy.
+- Foram adicionados 41 papeis semanticos para o background do app, shell, Search, navigation errors, toolbar, window controls e Settings. Nenhuma primitiva nova foi necessaria neste lote.
+- `--n-gradient-bg`, `--n-primary`, `--n-on-surface`, `--n-on-primary` e equivalentes deixaram de ser dependencias diretas dos component tokens migrados. Os aliases continuam definidos e intocados para consumidores Legacy.
+- O gradiente de app agora deriva de `--accent-bright`, `--color-app-background-top` e `--color-background`; Settings, shell e ThemeEditor consomem somente semantic/component tokens.
+
+#### Regressao do dim da Search
+
+- O teste de navegacao foi ampliado para abrir/limpar os cinco estados de Search (`home`, `library`, `browse`, `downloads`, `settings`) em ciclos sucessivos de navegacao.
+- No app real, Home foi focado, Library foi aberta, Home foi focado novamente, o dim foi fechado e Browse foi focado. Em todas as repeticoes, a navegacao removeu a classe anterior e o dim voltou de `opacity: 1` para `0` ao fechar/trocar de pagina.
+- Computed style real: dim global em `z-index: 500`, topbar em `520` e campo Search em `540`. A barra permaneceu acima do dim na primeira e na segunda abertura, inclusive depois da troca de pagina.
+
+#### Validacao visual e browser
+
+- Before: `docs/screenshots/marco28-preflight/before-home.png`, `before-browse-focus.png` e `before-settings.png`.
+- After em `docs/screenshots/marco28b-shell-settings/`: `after-search-home-first-focus.png`, `after-search-library-cleared.png`, `after-search-home-second-focus.png`, `after-search-home-closed.png`, `after-search-browse-focus.png` e `after-settings.png`.
+- A primeira execucao do matcher customizado por elemento produziu PNGs vazios ao serializar `color(srgb ...)`, embora o DOM e o screenshot completo estivessem corretos. `src/test/browser/setup.ts` passou a comparar o frame real e aceitar somente arredondamento de rasterizacao: delta maximo de 1 canal e ate 0,2% de pixels alterados.
+- A comparacao diagnostica da tela General encontrou 0,1059% de pixels alterados, todos com delta maximo 1. Storage revelou um delta real no meter porque os alphas 0,86/0,94 haviam sido perdidos; os alphas foram restaurados antes do gate final.
+- As cinco baselines browser de Settings passaram sem atualizacao. Nenhum `.actual.png` ou screenshot diagnostico foi preservado.
+
+#### Gates
+
+- Testes focados: `componentColorDerivation`, layout, Settings, ThemeEditor e navigation; 5 arquivos e 32 testes verdes.
+- Browser: `Settings.browser.test.ts`; 1 arquivo e 6 testes verdes, incluindo as cinco baselines visuais.
+- `pnpm build`: verde com 6.297 modulos; permanece apenas o aviso conhecido de chunk acima de 500 kB.
+- Nenhum componente visual, API, store ou comportamento foi alterado; a unica mudanca fora de CSS/docs e o reforco dos testes de navegacao/screenshot.

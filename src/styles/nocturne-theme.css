@@ -123,6 +123,57 @@
   --color-state-compact-top: rgba(18, 17, 22, 0.58);
   --color-state-compact-bottom: rgba(11, 11, 14, 0.5);
   --color-state-icon-surface: rgba(18, 17, 24, 0.72);
+  --color-app-background-top: #15151a;
+  --color-shell-sidebar-surface-source: #1e1c28;
+  --color-shell-topbar-surface-source: #13131a;
+  --color-shell-scrim-source: #020205;
+  --color-nav-error-surface: #ffb4ab;
+  --color-nav-error-ink: #690005;
+  --color-on-accent-strong: #352660;
+  --color-on-accent-muted: #483a74;
+  --color-search-dim-accent: #221a34;
+  --color-search-field-surface-source: #24212b;
+  --color-toolbar-icon-source: #b3acbf;
+  --color-window-control-surface-source: #1a1822;
+  --color-window-control-hover-source: #221f2c;
+  --color-window-control-active-source: #14121c;
+  --color-window-control-fg-source: #efeaff;
+  --color-window-control-hover-fg-source: #f8f4ff;
+  --color-window-control-close-source: #b8304a;
+  --color-window-control-close-border-source: #e54663;
+  --color-settings-accent-emphasis: #ece4ff;
+  --color-settings-raised-source: #151519;
+  --color-settings-button-emphasis: #efebf5;
+  --color-settings-danger-text: #e9aaaa;
+  --color-settings-danger-text-hover: #ffdada;
+  --color-settings-danger-surface: #4f272e;
+  --color-settings-danger-border: #c96e6e;
+  --color-settings-toggle-source: #948f9a;
+  --color-settings-input-source: #111116;
+  --color-settings-input-focus-source: #19171f;
+  --color-settings-menu-top: #18161f;
+  --color-settings-menu-base: #121118;
+  --color-settings-meter-accent-start: #bea7ff;
+  --color-settings-meter-accent-end: #d5c6ff;
+  --color-settings-meter-warning-start: #eacb8a;
+  --color-settings-meter-warning-end: #ffe19d;
+  --color-settings-meter-critical-start: #ff8787;
+  --color-settings-meter-critical-end: #ffb1b1;
+  --gradient-settings-meter: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-settings-meter-accent-start) 86%, transparent),
+    color-mix(in srgb, var(--color-settings-meter-accent-end) 94%, transparent)
+  );
+  --gradient-settings-meter-warning: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-settings-meter-warning-start) 86%, transparent),
+    color-mix(in srgb, var(--color-settings-meter-warning-end) 94%, transparent)
+  );
+  --gradient-settings-meter-critical: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-settings-meter-critical-start) 82%, transparent),
+    color-mix(in srgb, var(--color-settings-meter-critical-end) 94%, transparent)
+  );
 
   --shadow-sm: 0 8px 22px rgba(0, 0, 0, 0.22);
   --shadow-md: 0 16px 42px rgba(0, 0, 0, 0.32);
@@ -348,102 +399,95 @@
   --component-nocturne-state-success-action-primary-fg: color-mix(in srgb, var(--color-state-success-accent) 78%, var(--color-highlight-source));
   --component-nocturne-state-success-action-primary-border: color-mix(in srgb, var(--component-nocturne-state-success-accent) 34%, transparent);
   --component-nocturne-state-success-action-primary-bg: color-mix(in srgb, var(--component-nocturne-state-success-accent) 13%, var(--bg-overlay));
-  --component-sidebar-bg: rgba(30, 28, 40, 0.55);
-  --component-topbar-bg: rgba(19, 19, 26, 0.82);
-  --component-app-bg: var(--n-gradient-bg), #131313;
-  --component-app-fg: var(--n-on-surface);
+  --component-sidebar-bg: color-mix(in srgb, var(--color-shell-sidebar-surface-source) 55%, transparent);
+  --component-topbar-bg: color-mix(in srgb, var(--color-shell-topbar-surface-source) 82%, transparent);
+  --component-app-bg: var(--gradient-app-background), var(--color-background);
+  --component-app-fg: var(--text-primary);
   --component-app-font: "Manrope", var(--font-sans);
   --component-app-loading-fg: var(--text-tertiary);
   --component-detail-layer-bg: var(--bg-surface);
-  --component-search-dim-bg:
-    radial-gradient(circle at 50% 10%, rgba(34, 26, 52, 0.18), rgba(0, 0, 0, 0) 30%),
-    rgba(0, 0, 0, 0.54);
-  --component-sidebar-border: rgba(255, 255, 255, 0.12);
-  --component-sidebar-shadow:
-    0 12px 40px rgba(0, 0, 0, 0.4),
-    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  --component-search-dim-bg: radial-gradient(circle at 50% 10%, color-mix(in srgb, var(--color-search-dim-accent) 18%, transparent), transparent 30%),
+    color-mix(in srgb, var(--color-shadow-source) 54%, transparent);
+  --component-sidebar-border: color-mix(in srgb, var(--color-highlight-source) 12%, transparent);
+  --component-sidebar-shadow: 0 12px 40px color-mix(in srgb, var(--color-shadow-source) 40%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--color-highlight-source) 20%, transparent);
   --component-sidebar-blur: blur(32px) saturate(180%);
-  --component-sidebar-scrim-bg: rgba(0, 0, 0, 0.56);
-  --component-sidebar-highlight-bg:
-    radial-gradient(circle at 50% 8%, rgba(184, 167, 234, 0.08), transparent 44%),
-    rgba(2, 2, 5, 0.6);
+  --component-sidebar-scrim-bg: color-mix(in srgb, var(--color-shadow-source) 56%, transparent);
+  --component-sidebar-highlight-bg: radial-gradient(circle at 50% 8%, color-mix(in srgb, var(--accent-bright) 8%, transparent), transparent 44%),
+    color-mix(in srgb, var(--color-shell-scrim-source) 60%, transparent);
   --component-sidebar-z-index: 80;
   --component-sidebar-search-z-index: 40;
-  --component-nav-item-fg: rgba(229, 226, 225, 0.38);
-  --component-nav-item-hover-bg: rgba(255, 255, 255, 0.04);
-  --component-nav-item-hover-fg: rgba(229, 226, 225, 0.7);
-  --component-nav-item-active-bg: rgba(184, 167, 234, 0.08);
-  --component-nav-item-active-fg: var(--n-primary);
-  --component-nav-item-active-glow:
-    radial-gradient(circle at center,
-      rgba(184, 167, 234, 0.24) 0%,
-      rgba(184, 167, 234, 0.12) 42%,
-      rgba(184, 167, 234, 0) 74%);
-  --component-nav-item-active-text-shadow: 0 0 6px rgba(184, 167, 234, 0.45);
-  --component-nav-item-error-fg: #ffb4ab;
-  --component-nav-tooltip-bg: var(--n-surface-container-highest);
-  --component-nav-tooltip-fg: var(--n-on-surface);
-  --component-nav-badge-bg: var(--n-primary);
-  --component-nav-badge-fg: var(--n-on-primary);
-  --component-nav-badge-border: rgba(0, 0, 0, 0.6);
-  --component-nav-badge-error-bg: #ffb4ab;
-  --component-nav-badge-error-fg: #690005;
+  --component-nav-item-fg: color-mix(in srgb, var(--text-primary) 38%, transparent);
+  --component-nav-item-hover-bg: color-mix(in srgb, var(--color-highlight-source) 4%, transparent);
+  --component-nav-item-hover-fg: color-mix(in srgb, var(--text-primary) 70%, transparent);
+  --component-nav-item-active-bg: color-mix(in srgb, var(--accent-bright) 8%, transparent);
+  --component-nav-item-active-fg: var(--color-accent);
+  --component-nav-item-active-glow: radial-gradient(circle at center,
+      color-mix(in srgb, var(--accent-bright) 24%, transparent) 0%,
+      color-mix(in srgb, var(--accent-bright) 12%, transparent) 42%,
+      transparent 74%);
+  --component-nav-item-active-text-shadow: 0 0 6px color-mix(in srgb, var(--accent-bright) 45%, transparent);
+  --component-nav-item-error-fg: var(--color-nav-error-surface);
+  --component-nav-tooltip-bg: var(--color-surface-secondary);
+  --component-nav-tooltip-fg: var(--text-primary);
+  --component-nav-badge-bg: var(--color-accent);
+  --component-nav-badge-fg: var(--color-on-accent-strong);
+  --component-nav-badge-border: color-mix(in srgb, var(--color-shadow-source) 60%, transparent);
+  --component-nav-badge-error-bg: var(--color-nav-error-surface);
+  --component-nav-badge-error-fg: var(--color-nav-error-ink);
   --component-topbar-border: transparent;
-  --component-topbar-border-image: linear-gradient(90deg, transparent 5%, rgba(184, 167, 234, 0.08) 50%, transparent 95%) 1;
-  --component-topbar-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.02), 0 2px 12px rgba(0, 0, 0, 0.15);
+  --component-topbar-border-image: linear-gradient(90deg, transparent 5%, color-mix(in srgb, var(--accent-bright) 8%, transparent) 50%, transparent 95%) 1;
+  --component-topbar-shadow: inset 0 -1px 0 color-mix(in srgb, var(--color-highlight-source) 2%, transparent), 0 2px 12px color-mix(in srgb, var(--color-shadow-source) 15%, transparent);
   --component-topbar-blur: blur(32px) saturate(140%);
   --component-topbar-idle-blur: blur(8px) saturate(110%);
-  --component-topbar-idle-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.015);
-  --component-topbar-noise-bg:
-    repeating-linear-gradient(
+  --component-topbar-idle-shadow: inset 0 -1px 0 color-mix(in srgb, var(--color-highlight-source) 1.5%, transparent);
+  --component-topbar-noise-bg: repeating-linear-gradient(
       90deg,
       transparent,
       transparent 3px,
-      rgba(255, 255, 255, 0.004) 3px,
-      rgba(255, 255, 255, 0.004) 6px
+      color-mix(in srgb, var(--color-highlight-source) 0.4%, transparent) 3px,
+      color-mix(in srgb, var(--color-highlight-source) 0.4%, transparent) 6px
     );
-  --component-topbar-scrim-bg: rgba(2, 2, 5, 0.54);
+  --component-topbar-scrim-bg: color-mix(in srgb, var(--color-shell-scrim-source) 54%, transparent);
   --component-topbar-z-index: 50;
   --component-topbar-search-z-index: 520;
   --component-topbar-search-content-z-index: 540;
-  --component-search-shadow-focus: 0 24px 60px rgba(0, 0, 0, 0.7);
-  --component-search-icon-fg: rgba(202, 196, 208, 0.35);
-  --component-search-icon-focus-fg: var(--n-primary-container);
-  --component-search-bg: rgba(36, 33, 43, 0.8);
-  --component-search-border: rgba(202, 196, 208, 0.08);
-  --component-search-border-focus: rgba(184, 167, 234, 0.18);
-  --component-search-fg: var(--n-on-surface);
-  --component-search-placeholder-fg: rgba(202, 196, 208, 0.4);
-  --component-search-inset-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
-  --component-toolbar-icon-bg: rgba(255, 255, 255, 0.02);
-  --component-toolbar-icon-bg-hover: rgba(184, 167, 234, 0.06);
-  --component-toolbar-icon-bg-active: rgba(184, 167, 234, 0.1);
-  --component-toolbar-icon-border: rgba(202, 196, 208, 0.06);
-  --component-toolbar-icon-border-hover: rgba(184, 167, 234, 0.12);
-  --component-toolbar-icon-border-active: rgba(184, 167, 234, 0.16);
-  --component-toolbar-icon-fg: rgba(179, 172, 191, 0.85);
-  --component-toolbar-icon-fg-hover: var(--n-on-surface);
-  --component-toolbar-icon-fg-active: var(--n-primary);
-  --component-toolbar-icon-shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.12);
-  --component-toolbar-icon-active-text-shadow: 0 0 5px rgba(184, 167, 234, 0.4);
+  --component-search-shadow-focus: 0 24px 60px color-mix(in srgb, var(--color-shadow-source) 70%, transparent);
+  --component-search-icon-fg: color-mix(in srgb, var(--text-secondary) 35%, transparent);
+  --component-search-icon-focus-fg: var(--accent-bright);
+  --component-search-bg: color-mix(in srgb, var(--color-search-field-surface-source) 80%, transparent);
+  --component-search-border: color-mix(in srgb, var(--text-secondary) 8%, transparent);
+  --component-search-border-focus: color-mix(in srgb, var(--accent-bright) 18%, transparent);
+  --component-search-fg: var(--text-primary);
+  --component-search-placeholder-fg: color-mix(in srgb, var(--text-secondary) 40%, transparent);
+  --component-search-inset-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-highlight-source) 2%, transparent);
+  --component-toolbar-icon-bg: color-mix(in srgb, var(--color-highlight-source) 2%, transparent);
+  --component-toolbar-icon-bg-hover: color-mix(in srgb, var(--accent-bright) 6%, transparent);
+  --component-toolbar-icon-bg-active: color-mix(in srgb, var(--accent-bright) 10%, transparent);
+  --component-toolbar-icon-border: color-mix(in srgb, var(--text-secondary) 6%, transparent);
+  --component-toolbar-icon-border-hover: color-mix(in srgb, var(--accent-bright) 12%, transparent);
+  --component-toolbar-icon-border-active: color-mix(in srgb, var(--accent-bright) 16%, transparent);
+  --component-toolbar-icon-fg: color-mix(in srgb, var(--color-toolbar-icon-source) 85%, transparent);
+  --component-toolbar-icon-fg-hover: var(--text-primary);
+  --component-toolbar-icon-fg-active: var(--color-accent);
+  --component-toolbar-icon-shadow-hover: 0 4px 12px color-mix(in srgb, var(--color-shadow-source) 12%, transparent);
+  --component-toolbar-icon-active-text-shadow: 0 0 5px color-mix(in srgb, var(--accent-bright) 40%, transparent);
   --component-window-controls-z-index: 3000;
-  --component-window-control-bg: rgba(26, 24, 34, 0.88);
-  --component-window-control-bg-hover: rgba(34, 31, 44, 0.94);
-  --component-window-control-bg-active: rgba(20, 18, 28, 0.96);
-  --component-window-control-border: rgba(184, 167, 234, 0.12);
-  --component-window-control-border-hover: rgba(184, 167, 234, 0.24);
-  --component-window-control-fg: rgba(239, 234, 255, 0.68);
-  --component-window-control-fg-hover: rgba(248, 244, 255, 0.92);
-  --component-window-control-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.04),
-    0 6px 16px rgba(0, 0, 0, 0.24);
-  --component-window-control-shadow-hover:
-    inset 0 1px 0 rgba(255, 255, 255, 0.06),
-    0 10px 24px rgba(0, 0, 0, 0.3);
+  --component-window-control-bg: color-mix(in srgb, var(--color-window-control-surface-source) 88%, transparent);
+  --component-window-control-bg-hover: color-mix(in srgb, var(--color-window-control-hover-source) 94%, transparent);
+  --component-window-control-bg-active: color-mix(in srgb, var(--color-window-control-active-source) 96%, transparent);
+  --component-window-control-border: color-mix(in srgb, var(--accent-bright) 12%, transparent);
+  --component-window-control-border-hover: color-mix(in srgb, var(--accent-bright) 24%, transparent);
+  --component-window-control-fg: color-mix(in srgb, var(--color-window-control-fg-source) 68%, transparent);
+  --component-window-control-fg-hover: color-mix(in srgb, var(--color-window-control-hover-fg-source) 92%, transparent);
+  --component-window-control-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-highlight-source) 4%, transparent),
+    0 6px 16px color-mix(in srgb, var(--color-shadow-source) 24%, transparent);
+  --component-window-control-shadow-hover: inset 0 1px 0 color-mix(in srgb, var(--color-highlight-source) 6%, transparent),
+    0 10px 24px color-mix(in srgb, var(--color-shadow-source) 30%, transparent);
   --component-window-control-blur: blur(22px) saturate(140%);
-  --component-window-control-close-bg-hover: rgba(184, 48, 74, 0.92);
-  --component-window-control-close-border-hover: rgba(229, 70, 99, 0.5);
-  --component-window-control-close-fg-hover: #fff;
+  --component-window-control-close-bg-hover: color-mix(in srgb, var(--color-window-control-close-source) 92%, transparent);
+  --component-window-control-close-border-hover: color-mix(in srgb, var(--color-window-control-close-border-source) 50%, transparent);
+  --component-window-control-close-fg-hover: var(--color-highlight-source);
   --component-layout-main-sidebar-offset: var(--n-sidebar-width, 74px);
   --component-window-inline-gap: calc(4px * var(--n-hud-scale, 1));
   --component-window-inline-button-size: calc(24px * var(--n-hud-scale, 1));
@@ -657,95 +701,92 @@
   --component-taste-insights-focus-ring: var(--component-focus-ring);
   --component-focus-ring: var(--shadow-focus);
   --component-settings-font: "Manrope", var(--font-sans);
-  --component-settings-fg: var(--n-on-surface);
-  --component-settings-accent-fg: var(--n-primary);
-  --component-settings-accent-bright: #ece4ff;
-  --component-settings-accent-muted: rgba(184, 167, 234, 0.1);
-  --component-settings-accent-dim: rgba(184, 167, 234, 0.2);
-  --component-settings-surface-raised: rgba(21, 21, 25, 0.72);
-  --component-settings-surface-overlay: rgba(28, 27, 27, 0.82);
-  --component-settings-border-dim: rgba(72, 69, 79, 0.16);
-  --component-settings-border-base: rgba(72, 69, 79, 0.18);
-  --component-settings-border-strong: rgba(184, 167, 234, 0.18);
-  --component-settings-border-focus: rgba(184, 167, 234, 0.26);
-  --component-settings-text-primary: var(--n-on-surface);
-  --component-settings-text-secondary: rgba(229, 226, 225, 0.92);
-  --component-settings-text-muted: rgba(202, 196, 208, 0.72);
-  --component-settings-text-faint: rgba(202, 196, 208, 0.42);
-  --component-settings-info-bg: rgba(184, 167, 234, 0.1);
-  --component-settings-modal-bg: var(--n-gradient-bg), #131313;
-  --component-settings-modal-border: rgba(202, 196, 208, 0.08);
-  --component-settings-modal-shadow:
-    0 24px 64px rgba(0, 0, 0, 0.62),
-    inset 0 1px 0 rgba(255, 255, 255, 0.02);
-  --component-settings-topbar-bg: rgba(19, 19, 26, 0.82);
+  --component-settings-fg: var(--text-primary);
+  --component-settings-accent-fg: var(--color-accent);
+  --component-settings-accent-bright: var(--color-settings-accent-emphasis);
+  --component-settings-accent-muted: color-mix(in srgb, var(--accent-bright) 10%, transparent);
+  --component-settings-accent-dim: color-mix(in srgb, var(--accent-bright) 20%, transparent);
+  --component-settings-surface-raised: color-mix(in srgb, var(--color-settings-raised-source) 72%, transparent);
+  --component-settings-surface-overlay: color-mix(in srgb, var(--bg-surface) 82%, transparent);
+  --component-settings-border-dim: color-mix(in srgb, var(--border-strong) 16%, transparent);
+  --component-settings-border-base: color-mix(in srgb, var(--border-strong) 18%, transparent);
+  --component-settings-border-strong: color-mix(in srgb, var(--accent-bright) 18%, transparent);
+  --component-settings-border-focus: color-mix(in srgb, var(--accent-bright) 26%, transparent);
+  --component-settings-text-primary: var(--text-primary);
+  --component-settings-text-secondary: color-mix(in srgb, var(--text-primary) 92%, transparent);
+  --component-settings-text-muted: color-mix(in srgb, var(--text-secondary) 72%, transparent);
+  --component-settings-text-faint: color-mix(in srgb, var(--text-secondary) 42%, transparent);
+  --component-settings-info-bg: color-mix(in srgb, var(--accent-bright) 10%, transparent);
+  --component-settings-modal-bg: var(--gradient-app-background), var(--color-background);
+  --component-settings-modal-border: color-mix(in srgb, var(--text-secondary) 8%, transparent);
+  --component-settings-modal-shadow: 0 24px 64px color-mix(in srgb, var(--color-shadow-source) 62%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--color-highlight-source) 2%, transparent);
+  --component-settings-topbar-bg: color-mix(in srgb, var(--color-shell-topbar-surface-source) 82%, transparent);
   --component-settings-topbar-blur: blur(32px) saturate(140%);
-  --component-settings-topbar-border-image: linear-gradient(90deg, transparent 5%, rgba(184, 167, 234, 0.08) 50%, transparent 95%) 1;
-  --component-settings-topbar-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.02), 0 2px 12px rgba(0, 0, 0, 0.15);
+  --component-settings-topbar-border-image: linear-gradient(90deg, transparent 5%, color-mix(in srgb, var(--accent-bright) 8%, transparent) 50%, transparent 95%) 1;
+  --component-settings-topbar-shadow: inset 0 -1px 0 color-mix(in srgb, var(--color-highlight-source) 2%, transparent), 0 2px 12px color-mix(in srgb, var(--color-shadow-source) 15%, transparent);
   --component-settings-topbar-idle-blur: blur(8px) saturate(110%);
-  --component-settings-topbar-idle-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.015);
-  --component-settings-topbar-noise-bg:
-    repeating-linear-gradient(
+  --component-settings-topbar-idle-shadow: inset 0 -1px 0 color-mix(in srgb, var(--color-highlight-source) 1.5%, transparent);
+  --component-settings-topbar-noise-bg: repeating-linear-gradient(
       90deg,
       transparent,
       transparent 3px,
-      rgba(255, 255, 255, 0.004) 3px,
-      rgba(255, 255, 255, 0.004) 6px
+      color-mix(in srgb, var(--color-highlight-source) 0.4%, transparent) 3px,
+      color-mix(in srgb, var(--color-highlight-source) 0.4%, transparent) 6px
     );
-  --component-settings-rail-bg: rgba(28, 27, 27, 0.3);
-  --component-settings-rail-border: rgba(72, 69, 79, 0.05);
-  --component-settings-nav-fg: rgba(202, 196, 208, 0.76);
-  --component-settings-nav-hover-bg: rgba(255, 255, 255, 0.025);
-  --component-settings-nav-hover-fg: rgba(229, 226, 225, 0.92);
-  --component-settings-nav-active-bg: rgba(184, 167, 234, 0.08);
-  --component-settings-nav-active-border: rgba(184, 167, 234, 0.14);
-  --component-settings-nav-active-fg: #f0edf8;
-  --component-settings-card-bg: rgba(28, 27, 27, 0.6);
-  --component-settings-card-border: rgba(72, 69, 79, 0.14);
-  --component-settings-card-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
-  --component-settings-row-border: rgba(255, 255, 255, 0.04);
-  --component-settings-row-hover-bg: rgba(184, 167, 234, 0.035);
-  --component-settings-button-bg: rgba(255, 255, 255, 0.03);
-  --component-settings-button-bg-hover: rgba(184, 167, 234, 0.08);
-  --component-settings-button-fg: rgba(202, 196, 208, 0.74);
-  --component-settings-button-fg-hover: rgba(239, 235, 245, 0.96);
-  --component-settings-button-border: rgba(255, 255, 255, 0.05);
-  --component-settings-button-border-hover: rgba(184, 167, 234, 0.25);
-  --component-settings-button-shadow-hover: 0 0 calc(12px * var(--n-hud-scale)) rgba(184, 167, 234, 0.04);
-  --component-settings-danger-fg: rgba(233, 170, 170, 0.88);
-  --component-settings-danger-fg-hover: #ffdada;
-  --component-settings-danger-bg-hover: rgba(79, 39, 46, 0.18);
-  --component-settings-danger-border-hover: rgba(201, 110, 110, 0.24);
-  --component-settings-toggle-bg: rgba(148, 143, 154, 0.2);
-  --component-settings-toggle-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
-  --component-settings-toggle-knob-bg: rgba(202, 196, 208, 0.56);
-  --component-settings-toggle-on-bg: var(--n-primary-container);
-  --component-settings-toggle-on-knob-bg: var(--n-on-primary-container);
-  --component-settings-toggle-hover-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.04),
-    0 0 0 1px rgba(184, 167, 234, 0.08);
-  --component-settings-chip-bg: rgba(255, 255, 255, 0.02);
-  --component-settings-chip-border: rgba(72, 69, 79, 0.18);
-  --component-settings-chip-fg: rgba(229, 226, 225, 0.86);
-  --component-settings-chip-active-bg: rgba(184, 167, 234, 0.1);
-  --component-settings-chip-active-border: rgba(184, 167, 234, 0.28);
-  --component-settings-input-bg: rgba(17, 17, 22, 0.82);
-  --component-settings-input-bg-focus: rgba(25, 23, 31, 0.94);
-  --component-settings-input-border: rgba(72, 69, 79, 0.16);
-  --component-settings-input-border-focus: rgba(184, 167, 234, 0.24);
-  --component-settings-input-fg: var(--n-on-surface);
-  --component-settings-input-placeholder: rgba(202, 196, 208, 0.34);
-  --component-settings-select-menu-bg: linear-gradient(180deg, rgb(24, 22, 31), rgb(18, 17, 24));
-  --component-settings-select-menu-border: rgba(72, 69, 79, 0.72);
-  --component-settings-select-menu-shadow: 0 18px 44px rgba(0,0,0,0.64), inset 0 1px 0 rgba(255,255,255,0.035);
-  --component-settings-meter-track-bg: rgba(255, 255, 255, 0.055);
-  --component-settings-meter-track-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.025);
-  --component-settings-meter-fill-bg: linear-gradient(90deg, rgba(190, 167, 255, 0.86), rgba(213, 198, 255, 0.94));
-  --component-settings-meter-warn-bg: linear-gradient(90deg, rgba(234, 203, 138, 0.86), rgba(255, 225, 157, 0.94));
-  --component-settings-meter-critical-bg: linear-gradient(90deg, rgba(255, 135, 135, 0.82), rgba(255, 177, 177, 0.94));
-  --component-settings-overlay-bg: rgba(0, 0, 0, 0.72);
+  --component-settings-rail-bg: color-mix(in srgb, var(--bg-surface) 30%, transparent);
+  --component-settings-rail-border: color-mix(in srgb, var(--border-strong) 5%, transparent);
+  --component-settings-nav-fg: color-mix(in srgb, var(--text-secondary) 76%, transparent);
+  --component-settings-nav-hover-bg: color-mix(in srgb, var(--color-highlight-source) 2.5%, transparent);
+  --component-settings-nav-hover-fg: color-mix(in srgb, var(--text-primary) 92%, transparent);
+  --component-settings-nav-active-bg: color-mix(in srgb, var(--accent-bright) 8%, transparent);
+  --component-settings-nav-active-border: color-mix(in srgb, var(--accent-bright) 14%, transparent);
+  --component-settings-nav-active-fg: var(--color-text-tab-active);
+  --component-settings-card-bg: color-mix(in srgb, var(--bg-surface) 60%, transparent);
+  --component-settings-card-border: color-mix(in srgb, var(--border-strong) 14%, transparent);
+  --component-settings-card-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-highlight-source) 2%, transparent);
+  --component-settings-row-border: color-mix(in srgb, var(--color-highlight-source) 4%, transparent);
+  --component-settings-row-hover-bg: color-mix(in srgb, var(--accent-bright) 3.5%, transparent);
+  --component-settings-button-bg: color-mix(in srgb, var(--color-highlight-source) 3%, transparent);
+  --component-settings-button-bg-hover: color-mix(in srgb, var(--accent-bright) 8%, transparent);
+  --component-settings-button-fg: color-mix(in srgb, var(--text-secondary) 74%, transparent);
+  --component-settings-button-fg-hover: color-mix(in srgb, var(--color-settings-button-emphasis) 96%, transparent);
+  --component-settings-button-border: color-mix(in srgb, var(--color-highlight-source) 5%, transparent);
+  --component-settings-button-border-hover: color-mix(in srgb, var(--accent-bright) 25%, transparent);
+  --component-settings-button-shadow-hover: 0 0 calc(12px * var(--n-hud-scale)) color-mix(in srgb, var(--accent-bright) 4%, transparent);
+  --component-settings-danger-fg: color-mix(in srgb, var(--color-settings-danger-text) 88%, transparent);
+  --component-settings-danger-fg-hover: var(--color-settings-danger-text-hover);
+  --component-settings-danger-bg-hover: color-mix(in srgb, var(--color-settings-danger-surface) 18%, transparent);
+  --component-settings-danger-border-hover: color-mix(in srgb, var(--color-settings-danger-border) 24%, transparent);
+  --component-settings-toggle-bg: color-mix(in srgb, var(--color-settings-toggle-source) 20%, transparent);
+  --component-settings-toggle-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-highlight-source) 3%, transparent);
+  --component-settings-toggle-knob-bg: color-mix(in srgb, var(--text-secondary) 56%, transparent);
+  --component-settings-toggle-on-bg: var(--accent-bright);
+  --component-settings-toggle-on-knob-bg: var(--color-on-accent-muted);
+  --component-settings-toggle-hover-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-highlight-source) 4%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--accent-bright) 8%, transparent);
+  --component-settings-chip-bg: color-mix(in srgb, var(--color-highlight-source) 2%, transparent);
+  --component-settings-chip-border: color-mix(in srgb, var(--border-strong) 18%, transparent);
+  --component-settings-chip-fg: color-mix(in srgb, var(--text-primary) 86%, transparent);
+  --component-settings-chip-active-bg: color-mix(in srgb, var(--accent-bright) 10%, transparent);
+  --component-settings-chip-active-border: color-mix(in srgb, var(--accent-bright) 28%, transparent);
+  --component-settings-input-bg: color-mix(in srgb, var(--color-settings-input-source) 82%, transparent);
+  --component-settings-input-bg-focus: color-mix(in srgb, var(--color-settings-input-focus-source) 94%, transparent);
+  --component-settings-input-border: color-mix(in srgb, var(--border-strong) 16%, transparent);
+  --component-settings-input-border-focus: color-mix(in srgb, var(--accent-bright) 24%, transparent);
+  --component-settings-input-fg: var(--text-primary);
+  --component-settings-input-placeholder: color-mix(in srgb, var(--text-secondary) 34%, transparent);
+  --component-settings-select-menu-bg: var(--gradient-settings-menu);
+  --component-settings-select-menu-border: color-mix(in srgb, var(--border-strong) 72%, transparent);
+  --component-settings-select-menu-shadow: 0 18px 44px color-mix(in srgb, var(--color-shadow-source) 64%, transparent), inset 0 1px 0 color-mix(in srgb, var(--color-highlight-source) 3.5%, transparent);
+  --component-settings-meter-track-bg: color-mix(in srgb, var(--color-highlight-source) 5.5%, transparent);
+  --component-settings-meter-track-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-highlight-source) 2.5%, transparent);
+  --component-settings-meter-fill-bg: var(--gradient-settings-meter);
+  --component-settings-meter-warn-bg: var(--gradient-settings-meter-warning);
+  --component-settings-meter-critical-bg: var(--gradient-settings-meter-critical);
+  --component-settings-overlay-bg: color-mix(in srgb, var(--color-shadow-source) 72%, transparent);
   --component-settings-overlay-blur: blur(4px);
-  --component-theme-editor-backdrop-bg: rgba(0, 0, 0, 0.72);
+  --component-theme-editor-backdrop-bg: var(--component-settings-overlay-bg);
   --component-theme-editor-backdrop-z-index: 200;
   --component-theme-editor-backdrop-animation: 0.14s ease;
   --component-theme-editor-shell-bg: var(--bg-base);
@@ -804,7 +845,7 @@
   --component-theme-editor-preview-toast-bg: var(--bg-overlay);
   --component-theme-editor-preview-toast-border: var(--accent-dim);
   --component-theme-editor-preview-toast-dot-bg: var(--accent);
-  --component-theme-editor-swatch-border: rgba(255, 255, 255, 0.07);
+  --component-theme-editor-swatch-border: color-mix(in srgb, var(--color-highlight-source) 7%, transparent);
   --component-theme-editor-scrollbar-thumb-bg: var(--border-strong);
   --component-theme-editor-tabs-border: var(--border-dim);
   --component-theme-editor-tabs-bg: var(--bg-surface);
@@ -820,8 +861,8 @@
   --component-theme-editor-preset-desc-fg: var(--text-faint);
   --component-theme-editor-group-label-border: var(--border-dim);
   --component-theme-editor-token-row-hover-bg: var(--bg-raised);
-  --component-theme-editor-color-swatch-border: rgba(255, 255, 255, 0.12);
-  --component-theme-editor-color-swatch-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2);
+  --component-theme-editor-color-swatch-border: color-mix(in srgb, var(--color-highlight-source) 12%, transparent);
+  --component-theme-editor-color-swatch-shadow: 0 0 0 1px color-mix(in srgb, var(--color-shadow-source) 20%, transparent);
   --component-theme-editor-shape-swatch-bg: var(--accent-muted);
   --component-theme-editor-shape-swatch-border: var(--accent-dim);
   --component-theme-editor-token-key-fg: var(--text-faint);

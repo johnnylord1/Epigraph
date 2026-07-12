@@ -125,6 +125,49 @@
   --color-state-compact-top: var(--color-elevated);
   --color-state-compact-bottom: var(--color-background-void);
   --color-state-icon-surface: var(--color-elevated);
+  --color-app-background-top: var(--color-elevated);
+  --gradient-app-background:
+    radial-gradient(circle at top center, color-mix(in srgb, var(--accent-bright) 8%, transparent), transparent 34%),
+    linear-gradient(180deg, var(--color-app-background-top) 0%, var(--color-background) 100%);
+  --color-shell-sidebar-surface-source: var(--color-elevated);
+  --color-shell-topbar-surface-source: var(--color-background);
+  --color-shell-scrim-source: var(--color-background-void);
+  --color-nav-error-surface: var(--color-danger);
+  --color-nav-error-ink: var(--text-inverse);
+  --color-on-accent-strong: var(--text-inverse);
+  --color-on-accent-muted: var(--text-inverse);
+  --color-search-dim-accent: var(--accent-dim);
+  --color-search-field-surface-source: var(--color-popover);
+  --color-toolbar-icon-source: var(--text-secondary);
+  --color-window-control-surface-source: var(--color-elevated);
+  --color-window-control-hover-source: var(--color-surface-secondary);
+  --color-window-control-active-source: var(--color-background);
+  --color-window-control-fg-source: var(--text-secondary);
+  --color-window-control-hover-fg-source: var(--text-primary);
+  --color-window-control-close-source: var(--color-danger);
+  --color-window-control-close-border-source: var(--color-danger);
+  --color-settings-accent-emphasis: var(--accent-fg);
+  --color-settings-raised-source: var(--color-elevated);
+  --color-settings-button-emphasis: var(--text-primary);
+  --color-settings-danger-text: var(--color-danger);
+  --color-settings-danger-text-hover: var(--color-danger);
+  --color-settings-danger-surface: var(--color-danger-bg);
+  --color-settings-danger-border: var(--color-danger);
+  --color-settings-toggle-source: var(--color-surface-secondary);
+  --color-settings-input-source: var(--color-elevated);
+  --color-settings-input-focus-source: var(--color-popover);
+  --color-settings-menu-top: var(--color-popover);
+  --color-settings-menu-base: var(--color-elevated);
+  --gradient-settings-menu: linear-gradient(180deg, var(--color-settings-menu-top), var(--color-settings-menu-base));
+  --color-settings-meter-accent-start: var(--accent-bright);
+  --color-settings-meter-accent-end: var(--accent-fg);
+  --color-settings-meter-warning-start: var(--color-warning);
+  --color-settings-meter-warning-end: var(--color-warning);
+  --color-settings-meter-critical-start: var(--color-danger);
+  --color-settings-meter-critical-end: var(--color-danger);
+  --gradient-settings-meter: linear-gradient(90deg, var(--color-settings-meter-accent-start), var(--color-settings-meter-accent-end));
+  --gradient-settings-meter-warning: linear-gradient(90deg, var(--color-settings-meter-warning-start), var(--color-settings-meter-warning-end));
+  --gradient-settings-meter-critical: linear-gradient(90deg, var(--color-settings-meter-critical-start), var(--color-settings-meter-critical-end));
 
   /* Status dots */
   --dot-active:   var(--accent);

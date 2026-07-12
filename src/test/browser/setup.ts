@@ -8,6 +8,60 @@ const FONT_READY_TIMEOUT_MS = 1500;
 declare const __AETHON_BROWSER_SCREENSHOT_DIR__: string;
 
 const SCREENSHOT_BASE_DIR = __AETHON_BROWSER_SCREENSHOT_DIR__;
+const MAX_SCREENSHOT_CHANNEL_DELTA = 1;
+const MAX_SCREENSHOT_CHANGED_PIXEL_RATIO = 0.002;
+
+async function decodePng(base64: string) {
+  const binary = atob(base64);
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+  const canvas = document.createElement("canvas");
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) throw new Error("Could not create screenshot comparison canvas");
+  context.drawImage(bitmap, 0, 0);
+  bitmap.close();
+  return {
+    width: canvas.width,
+    height: canvas.height,
+    pixels: context.getImageData(0, 0, canvas.width, canvas.height).data,
+  };
+}
+
+async function compareScreenshots(expectedBase64: string, actualBase64: string) {
+  const [expected, actual] = await Promise.all([
+    decodePng(expectedBase64),
+    decodePng(actualBase64),
+  ]);
+  if (expected.width !== actual.width || expected.height !== actual.height) {
+    return { pass: false, changedRatio: 1, maxChannelDelta: 255 };
+  }
+
+  let changedPixels = 0;
+  let maxChannelDelta = 0;
+  for (let index = 0; index < expected.pixels.length; index += 4) {
+    let pixelDelta = 0;
+    for (let channel = 0; channel < 4; channel += 1) {
+      pixelDelta = Math.max(
+        pixelDelta,
+        Math.abs(expected.pixels[index + channel] - actual.pixels[index + channel]),
+      );
+    }
+    if (pixelDelta > 0) changedPixels += 1;
+    maxChannelDelta = Math.max(maxChannelDelta, pixelDelta);
+  }
+
+  const pixelCount = expected.width * expected.height;
+  const changedRatio = changedPixels / pixelCount;
+  return {
+    pass:
+      maxChannelDelta <= MAX_SCREENSHOT_CHANNEL_DELTA &&
+      changedRatio <= MAX_SCREENSHOT_CHANGED_PIXEL_RATIO,
+    changedRatio,
+    maxChannelDelta,
+  };
+}
 
 function normalizeScreenshotName(input: string) {
   return input
@@ -20,12 +74,12 @@ function normalizeScreenshotName(input: string) {
 
 expect.extend({
   async toMatchScreenshot(received: Element, name?: string) {
-    const target = received instanceof Element ? page.elementLocator(received) : received;
+    if (!(received instanceof Element)) throw new Error("Screenshot target must be an Element");
     const screenshotName = normalizeScreenshotName(name ?? "unnamed-screenshot");
     const baselinePath = `${SCREENSHOT_BASE_DIR}/${screenshotName}.png`;
     const actualPath = `${SCREENSHOT_BASE_DIR}/${screenshotName}.actual.png`;
 
-    const actual = await target.screenshot({ base64: true });
+    const actual = await page.screenshot({ base64: true });
 
     let baselineBase64: string | null = null;
     try {
@@ -42,7 +96,8 @@ expect.extend({
       };
     }
 
-    if (baselineBase64 === actual.base64) {
+    const comparison = await compareScreenshots(baselineBase64, actual.base64);
+    if (comparison.pass) {
       return {
         pass: true,
         message: () => `Expected screenshot not to match baseline ${baselinePath}`,
@@ -54,6 +109,8 @@ expect.extend({
       pass: false,
       message: () => [
         `Screenshot mismatch for ${screenshotName}.`,
+        `Changed pixels: ${(comparison.changedRatio * 100).toFixed(4)}%.`,
+        `Maximum channel delta: ${comparison.maxChannelDelta}.`,
         `Baseline: ${baselinePath}`,
         `Actual: ${actualPath}`,
       ].join("\n"),

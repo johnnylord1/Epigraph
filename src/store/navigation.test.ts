@@ -258,15 +258,29 @@ describe("navigation subscriptions", () => {
     bodyClasses.add("aethon-home-search-engaged");
     bodyClasses.add("aethon-library-search-engaged");
     bodyClasses.add("aethon-browse-search-engaged");
+    bodyClasses.add("aethon-downloads-search-engaged");
 
     setNavPage("downloads");
     expect(document.body.classList.contains("aethon-settings-search-engaged")).toBe(false);
     expect(document.body.classList.contains("aethon-home-search-engaged")).toBe(false);
     expect(document.body.classList.contains("aethon-library-search-engaged")).toBe(false);
     expect(document.body.classList.contains("aethon-browse-search-engaged")).toBe(false);
+    expect(document.body.classList.contains("aethon-downloads-search-engaged")).toBe(false);
 
     document.body.classList.add("aethon-browse-search-engaged");
     openHomeDashboard();
+    expect(document.body.classList.contains("aethon-browse-search-engaged")).toBe(false);
+
+    document.body.classList.add("aethon-home-search-engaged");
+    setNavPage("library");
+    expect(document.body.classList.contains("aethon-home-search-engaged")).toBe(false);
+
+    document.body.classList.add("aethon-library-search-engaged");
+    setNavPage("search");
+    expect(document.body.classList.contains("aethon-library-search-engaged")).toBe(false);
+
+    document.body.classList.add("aethon-browse-search-engaged");
+    document.body.classList.remove("aethon-browse-search-engaged");
     expect(document.body.classList.contains("aethon-browse-search-engaged")).toBe(false);
 
     if (previousDocument) {

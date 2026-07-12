@@ -15,6 +15,15 @@ const MIGRATED_PREFIXES = [
   "tab",
   "toast",
   "nocturne-state",
+  "app",
+  "search",
+  "sidebar",
+  "topbar",
+  "nav",
+  "toolbar",
+  "window",
+  "settings",
+  "theme-editor",
 ] as const;
 
 const directColorPattern =
@@ -55,7 +64,7 @@ describe("derived component color contract", () => {
       .filter(({ value }) => directColorPattern.test(value))
       .map(({ name, value }) => `${name}: ${value}`);
     const legacyAliases = migrated
-      .filter(({ value }) => value.includes("var(--n-"))
+      .filter(({ value }) => /var\(--n-(?!hud-scale)/.test(value))
       .map(({ name, value }) => `${name}: ${value}`);
 
     expect(directColors).toEqual([]);
