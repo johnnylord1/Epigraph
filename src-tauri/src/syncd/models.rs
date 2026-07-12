@@ -231,10 +231,62 @@ pub struct CapabilitiesResponse {
     pub supports_sse_replay: bool,
     pub supports_manual_ip_fallback: bool,
     pub supports_owner_transfer: bool,
+    pub supports_snapshot: bool,
+    pub snapshot_schema_version: u32,
+    pub snapshot_entity_types: Vec<String>,
     pub tls_cert_sha256: String,
     pub mdns_service_name: String,
     pub current_server_version: i64,
     pub min_replayable_server_version: i64,
+}
+
+pub const SNAPSHOT_SCHEMA_VERSION: u32 = 1;
+
+pub const SNAPSHOT_ENTITY_TYPES: [&str; 12] = [
+    "book.entry",
+    "book.category",
+    "book.category_assignment",
+    "book.library_ui",
+    "book.progress",
+    "book.bookmark",
+    "novel.entry",
+    "novel.chapter",
+    "novel.progress",
+    "novel.bookmark",
+    "novel.history",
+    "novel.classification",
+];
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotEntity {
+    pub entity_type: String,
+    pub entity_id: String,
+    pub server_version: i64,
+    pub lamport: i64,
+    pub record: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotTombstone {
+    pub entity_type: String,
+    pub entity_id: String,
+    pub server_version: i64,
+    pub lamport: i64,
+    pub deleted_at_ms: i64,
+    pub reason_code: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotResponse {
+    pub schema_version: u32,
+    pub scope_id: String,
+    pub snapshot_version: i64,
+    pub min_replayable_server_version: i64,
+    pub entities: Vec<SnapshotEntity>,
+    pub tombstones: Vec<SnapshotTombstone>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

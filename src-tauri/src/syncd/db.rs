@@ -20,7 +20,7 @@ use super::models::{
     NovelClassificationPatch, NovelClassificationRecord, NovelClassificationRow, NovelEntryPatch,
     NovelEntryRecord, NovelEntryRow, NovelHistoryPatch, NovelHistoryRecord, NovelHistoryRow,
     NovelProgressPatch, NovelProgressRecord, NovelProgressRow, PairingGrantVia, PairingPlatform,
-    ServerRuntimeRow,
+    ServerRuntimeRow, SnapshotEntity, SnapshotResponse, SnapshotTombstone, SNAPSHOT_SCHEMA_VERSION,
 };
 
 #[derive(Debug, Clone, FromRow, Serialize)]
@@ -226,6 +226,307 @@ pub async fn load_server_runtime(pool: &sqlx::SqlitePool) -> anyhow::Result<Serv
     .fetch_one(pool)
     .await?;
     Ok(row)
+}
+
+pub async fn load_scope_snapshot(
+    pool: &sqlx::SqlitePool,
+    scope_id: &str,
+) -> anyhow::Result<SnapshotResponse> {
+    let mut tx = pool.begin().await?;
+    let runtime = sqlx::query_as::<_, ServerRuntimeRow>(
+        r#"
+        SELECT current_server_version, min_replayable_server_version
+        FROM server_runtime
+        WHERE singleton_id = 1
+        "#,
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+
+    let mut entities = Vec::new();
+    if scope_id == "books:global" {
+        let rows = sqlx::query_as::<_, BookEntryRow>(
+            "SELECT * FROM book_library_entries WHERE scope_id = ? ORDER BY book_id",
+        )
+        .bind(scope_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in rows {
+            let entity_id = row.book_id.clone();
+            let server_version = row.record_server_version;
+            let lamport = row.record_lamport;
+            push_snapshot_entity(
+                &mut entities,
+                "book.entry",
+                entity_id,
+                server_version,
+                lamport,
+                BookEntryRecord::try_from(row)?,
+            )?;
+        }
+
+        let rows = sqlx::query_as::<_, BookCategoryRow>(
+            "SELECT * FROM book_categories WHERE scope_id = ? ORDER BY category_id",
+        )
+        .bind(scope_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in rows {
+            let entity_id = row.category_id.clone();
+            let server_version = row.record_server_version;
+            let lamport = row.record_lamport;
+            push_snapshot_entity(
+                &mut entities,
+                "book.category",
+                entity_id,
+                server_version,
+                lamport,
+                BookCategoryRecord::from(row),
+            )?;
+        }
+
+        let rows = sqlx::query_as::<_, BookCategoryAssignmentRow>(
+            "SELECT * FROM book_category_assignments WHERE scope_id = ? ORDER BY book_id",
+        )
+        .bind(scope_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in rows {
+            let entity_id = row.book_id.clone();
+            let server_version = row.record_server_version;
+            let lamport = row.record_lamport;
+            push_snapshot_entity(
+                &mut entities,
+                "book.category_assignment",
+                entity_id,
+                server_version,
+                lamport,
+                BookCategoryAssignmentRecord::try_from(row)?,
+            )?;
+        }
+
+        let rows = sqlx::query_as::<_, BookLibraryUiRow>(
+            "SELECT * FROM book_library_ui_state WHERE scope_id = ? ORDER BY ui_state_id",
+        )
+        .bind(scope_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in rows {
+            let entity_id = row.ui_state_id.clone();
+            let server_version = row.record_server_version;
+            let lamport = row.record_lamport;
+            push_snapshot_entity(
+                &mut entities,
+                "book.library_ui",
+                entity_id,
+                server_version,
+                lamport,
+                BookLibraryUiRecord::from(row),
+            )?;
+        }
+
+        let rows = sqlx::query_as::<_, BookProgressRow>(
+            "SELECT * FROM book_progress WHERE scope_id = ? ORDER BY book_id",
+        )
+        .bind(scope_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in rows {
+            let entity_id = row.book_id.clone();
+            let server_version = row.record_server_version;
+            let lamport = row.record_lamport;
+            push_snapshot_entity(
+                &mut entities,
+                "book.progress",
+                entity_id,
+                server_version,
+                lamport,
+                BookProgressRecord::from(row),
+            )?;
+        }
+
+        let rows = sqlx::query_as::<_, BookBookmarkRow>(
+            "SELECT * FROM book_bookmarks WHERE scope_id = ? ORDER BY bookmark_id",
+        )
+        .bind(scope_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in rows {
+            let entity_id = row.bookmark_id.clone();
+            let server_version = row.record_server_version;
+            let lamport = row.record_lamport;
+            push_snapshot_entity(
+                &mut entities,
+                "book.bookmark",
+                entity_id,
+                server_version,
+                lamport,
+                BookBookmarkRecord::from(row),
+            )?;
+        }
+    } else if scope_id.starts_with("novels:profile:") {
+        let rows = sqlx::query_as::<_, NovelEntryRow>(
+            "SELECT * FROM novel_library_entries WHERE scope_id = ? ORDER BY novel_id",
+        )
+        .bind(scope_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in rows {
+            let entity_id = row.novel_id.clone();
+            let server_version = row.record_server_version;
+            let lamport = row.record_lamport;
+            push_snapshot_entity(
+                &mut entities,
+                "novel.entry",
+                entity_id,
+                server_version,
+                lamport,
+                NovelEntryRecord::try_from(row)?,
+            )?;
+        }
+
+        let rows = sqlx::query_as::<_, NovelChapterRow>(
+            "SELECT * FROM novel_chapters WHERE scope_id = ? ORDER BY chapter_id",
+        )
+        .bind(scope_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in rows {
+            let entity_id = row.chapter_id.clone();
+            let server_version = row.record_server_version;
+            let lamport = row.record_lamport;
+            push_snapshot_entity(
+                &mut entities,
+                "novel.chapter",
+                entity_id,
+                server_version,
+                lamport,
+                NovelChapterRecord::from(row),
+            )?;
+        }
+
+        let rows = sqlx::query_as::<_, NovelProgressRow>(
+            "SELECT * FROM novel_progress WHERE scope_id = ? ORDER BY novel_id",
+        )
+        .bind(scope_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in rows {
+            let entity_id = row.novel_id.clone();
+            let server_version = row.record_server_version;
+            let lamport = row.record_lamport;
+            push_snapshot_entity(
+                &mut entities,
+                "novel.progress",
+                entity_id,
+                server_version,
+                lamport,
+                NovelProgressRecord::from(row),
+            )?;
+        }
+
+        let rows = sqlx::query_as::<_, NovelBookmarkRow>(
+            "SELECT * FROM novel_bookmarks WHERE scope_id = ? ORDER BY bookmark_id",
+        )
+        .bind(scope_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in rows {
+            let entity_id = row.bookmark_id.clone();
+            let server_version = row.record_server_version;
+            let lamport = row.record_lamport;
+            push_snapshot_entity(
+                &mut entities,
+                "novel.bookmark",
+                entity_id,
+                server_version,
+                lamport,
+                NovelBookmarkRecord::from(row),
+            )?;
+        }
+
+        let rows = sqlx::query_as::<_, NovelHistoryRow>(
+            "SELECT * FROM novel_history WHERE scope_id = ? ORDER BY history_id",
+        )
+        .bind(scope_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in rows {
+            let entity_id = row.history_id.clone();
+            let server_version = row.record_server_version;
+            let lamport = row.record_lamport;
+            push_snapshot_entity(
+                &mut entities,
+                "novel.history",
+                entity_id,
+                server_version,
+                lamport,
+                NovelHistoryRecord::from(row),
+            )?;
+        }
+
+        let rows = sqlx::query_as::<_, NovelClassificationRow>(
+            "SELECT * FROM novel_source_classification_records WHERE scope_id = ? ORDER BY plugin_id",
+        )
+        .bind(scope_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in rows {
+            let entity_id = row.plugin_id.clone();
+            let server_version = row.record_server_version;
+            let lamport = row.record_lamport;
+            push_snapshot_entity(
+                &mut entities,
+                "novel.classification",
+                entity_id,
+                server_version,
+                lamport,
+                NovelClassificationRecord::try_from(row)?,
+            )?;
+        }
+    } else {
+        bail!("unsupported snapshot scope: {scope_id}");
+    }
+
+    let tombstones = sqlx::query_as::<_, SnapshotTombstone>(
+        r#"
+        SELECT entity_type, entity_id, server_version, lamport, deleted_at_ms, reason_code
+        FROM tombstones
+        WHERE scope_id = ?
+        ORDER BY server_version, entity_type, entity_id
+        "#,
+    )
+    .bind(scope_id)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+    Ok(SnapshotResponse {
+        schema_version: SNAPSHOT_SCHEMA_VERSION,
+        scope_id: scope_id.to_string(),
+        snapshot_version: runtime.current_server_version,
+        min_replayable_server_version: runtime.min_replayable_server_version,
+        entities,
+        tombstones,
+    })
+}
+
+fn push_snapshot_entity<T: Serialize>(
+    entities: &mut Vec<SnapshotEntity>,
+    entity_type: &str,
+    entity_id: String,
+    server_version: i64,
+    lamport: i64,
+    record: T,
+) -> anyhow::Result<()> {
+    entities.push(SnapshotEntity {
+        entity_type: entity_type.to_string(),
+        entity_id,
+        server_version,
+        lamport,
+        record: serde_json::to_value(record)?,
+    });
+    Ok(())
 }
 
 pub async fn load_server_identity(pool: &sqlx::SqlitePool) -> anyhow::Result<ServerIdentityRow> {
