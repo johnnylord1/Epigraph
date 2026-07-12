@@ -2040,3 +2040,13 @@ Categorias cobertas:
 - As superficies Legacy nao devem ser removidas ate validacao com backend/configuracoes que possam ativar rotas ou hosts indiretos.
 - Os 22 aliases/tokens Legacy permanecem definidos para compatibilidade. Uma eventual remocao deve ser um marco separado, com validacao de ThemeEditor, temas importados e estado persistido.
 - Marco 24 tecnicamente aprovado para fechamento seletivo, condicionado apenas a `git diff --check`; nenhum marco posterior foi iniciado.
+
+## Marco 27 - Contrato canonico de temas
+
+- Tipos, defaults, presets de motion, inventarios de chaves e metadados dos temas built-in foram centralizados em `src/lib/theme/contract.ts`.
+- `state.svelte.ts` continua reexportando a API anterior para preservar todos os consumidores existentes; nenhuma API publica de componente ou store foi removida.
+- `Settings.svelte` deixou de manter uma segunda lista local de temas e passou a consumir `BUILTIN_THEMES` do contrato central.
+- Os valores de `DEFAULT_THEME_TOKENS`, `NOCTURNE_THEME_TOKENS`, HUD e motion foram preservados sem alteracao visual.
+- Nenhum tema novo, token `--n-*`, alias Legacy ou componente foi adicionado/removido.
+- O teste de contrato valida IDs unicos, inventarios completos de 47 tokens de tema e 15 tokens HUD, reexports do store e consumo do registro compartilhado em Settings.
+- Como este marco apenas move ownership de dados TypeScript, nao ha screenshot before/after; a equivalencia visual permanece coberta pelo mesmo CSS e pelos gates de build/componentes.

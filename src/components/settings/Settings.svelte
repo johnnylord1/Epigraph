@@ -63,6 +63,7 @@
   } from "../../lib/novels/hardcover";
   import type { Category, Source, Extension } from "../../lib/types";
   import { BOOKS_FILTER_OPTIONS } from "../../lib/library/booksSection";
+  import { BUILTIN_THEMES } from "../../lib/theme/contract";
   import {
     countBooksForCategory,
     createBooksCategory,
@@ -85,7 +86,7 @@
   import { store, updateSettings, resetSettings, resetKeybinds, clearHistory, wipeAllData, setSettingsOpen, setRuntimeSettingsTab, deleteCustomTheme, toggleHiddenCategory, setCategories, setLibraryMangaSnapshot, setLibraryTrackingSummarySnapshot, addToast, openSearchSources, replaceAppReadingState, replaceBooksState, DEFAULT_READING_STATS } from "../../store/state.svelte";
   import { cache } from "../../lib/cache";
   import { KEYBIND_LABELS, DEFAULT_KEYBINDS, eventToKeybind } from "../../lib/keybinds";
-  import type { HistoryEntry, ReadLogEntry, ReadingStats, Settings, FitMode, Theme, BooksCategory, BooksLibraryStatusFilter, BooksLibraryTypeFilter, RuntimeSettingsTab } from "../../store/state.svelte";
+  import type { HistoryEntry, ReadLogEntry, ReadingStats, Settings, FitMode, BooksCategory, BooksLibraryStatusFilter, BooksLibraryTypeFilter, RuntimeSettingsTab } from "../../store/state.svelte";
   import type { Keybinds } from "../../lib/keybinds";
   import type { Tracker } from "../../lib/types";
   import type { AvailableExtensionEntry, OverlayEntry, ParsedBackup, ReconciliationAnalysis, ReconciliationClusterResult, RestoreReadinessSummary, SourceInventoryEntry } from "../../lib/reconciliation/types";
@@ -373,20 +374,11 @@
 
   function themeLabel(value: string | null | undefined): string {
     const normalized = value ?? "nocturne";
-    const builtIn = THEMES.find((theme) => theme.id === normalized);
+    const builtIn = BUILTIN_THEMES.find((theme) => theme.id === normalized);
     if (builtIn) return builtIn.label;
     const custom = (store.settings.customThemes ?? []).find((theme) => theme.id === normalized);
     return custom?.name ?? "Nocturne";
   }
-  const THEMES: { id: Theme; label: string; description: string; swatches: string[] }[] = [
-    { id: "nocturne",       label: "Nocturne",       description: "Default lunar graphite HUD",    swatches: ["#080813","#0d0d1b","#8f82e6","#f1eefc"] },
-    { id: "dark",           label: "Dark",           description: "Classic near-black",            swatches: ["#101010","#151515","#a8c4a8","#f0efec"] },
-    { id: "high-contrast",  label: "High Contrast",  description: "Darker base, sharper text",     swatches: ["#080808","#111111","#bcd8bc","#ffffff"] },
-    { id: "light",          label: "Light",          description: "Warm off-white",                swatches: ["#f4f2ee","#faf8f4","#2a5a2a","#1a1916"] },
-    { id: "light-contrast", label: "Light Contrast", description: "Light with maximum contrast",   swatches: ["#ece8e2","#f5f2ec","#183818","#080806"] },
-    { id: "midnight",       label: "Midnight",       description: "Deep blue-black tint",          swatches: ["#0c1020","#101428","#a8b4e8","#eeeef8"] },
-    { id: "warm",           label: "Warm",           description: "Amber and sepia tones",         swatches: ["#16130c","#1c1810","#e0b860","#f5f0e0"] },
-  ];
   let tab: Tab          = $state("general");
   let activeGroup: SettingsGroupId = $state("app");
   let contentBodyEl: HTMLDivElement;
@@ -3907,7 +3899,7 @@
                     </button>
                     {#if selectOpen === "appearance-theme"}
                       <div class="select-menu">
-                        {#each THEMES as theme}
+                        {#each BUILTIN_THEMES as theme}
                           <button
                             class="select-option"
                             class:active={(store.settings.theme ?? "nocturne") === theme.id}
