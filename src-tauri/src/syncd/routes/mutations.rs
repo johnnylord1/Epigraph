@@ -1,21 +1,23 @@
 use axum::extract::{Extension, State};
 use axum::response::Json;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, HashMap};
 
 use crate::syncd::db;
 use crate::syncd::middleware::validate_scope;
 use crate::syncd::models::{
     AppError, AuthenticatedSession, BookBookmarkPatch, BookCategoryAssignmentPatch,
     BookCategoryPatch, BookEntryPatch, BookLibraryUiPatch, BookProgressPatch, ErrorDetail,
-    MutationEntityType, MutationInput, MutationOperation, MutationResult, MutationResultStatus,
-    MutationsRequest, MutationsResponse, NovelBookmarkPatch, NovelChapterPatch,
-    NovelClassificationPatch, NovelEntryPatch, NovelHistoryPatch, NovelProgressPatch,
-    SharedAppState,
+    MutationEntityType, MutationInput, MutationOperation, MutationReceiptContext, MutationResult,
+    MutationResultStatus, MutationsRequest, MutationsResponse, NovelBookmarkPatch,
+    NovelChapterPatch, NovelClassificationPatch, NovelEntryPatch, NovelHistoryPatch,
+    NovelProgressPatch, SharedAppState,
 };
 
 pub async fn post_mutations(
     State(state): State<SharedAppState>,
-    Extension(session): Extension<AuthenticatedSession>,
+    Extension(mut session): Extension<AuthenticatedSession>,
     Json(request): Json<MutationsRequest>,
 ) -> Result<Json<MutationsResponse>, AppError> {
     if request.request_id.trim().is_empty() {
@@ -29,7 +31,10 @@ pub async fn post_mutations(
         ));
     }
 
+    let _mutation_guard = state.mutation_gate.lock().await;
+
     let mut results = Vec::with_capacity(request.mutations.len());
+    let mut receipt_contexts = HashMap::<String, MutationReceiptContext>::new();
     let mut current_server_version = db::load_server_runtime(&state.pool)
         .await
         .map_err(|_| AppError::Internal("Failed to load syncd runtime state.".to_string()))?
@@ -38,6 +43,59 @@ pub async fn post_mutations(
     for mutation in request.mutations {
         let entity_type = mutation.entity_type();
         let base = mutation.base();
+        if base.client_mutation_id.trim().is_empty() {
+            return Err(AppError::BadRequest(
+                "Mutation clientMutationId must not be empty.".to_string(),
+            ));
+        }
+
+        let (mutation_json, mutation_hash) = canonical_mutation(&mutation)?;
+        let receipt_context = MutationReceiptContext {
+            device_id: session.device_id.clone(),
+            client_mutation_id: base.client_mutation_id.clone(),
+            mutation_hash,
+            mutation_json,
+            entity_type,
+            entity_id: base.entity_id.clone(),
+            scope_id: base.scope_id.clone(),
+            op: base.op,
+        };
+        if let Some(previous) = receipt_contexts.get(&base.client_mutation_id) {
+            if previous.mutation_hash != receipt_context.mutation_hash {
+                return Err(receipt_conflict_error(previous, &receipt_context));
+            }
+        } else {
+            receipt_contexts.insert(base.client_mutation_id.clone(), receipt_context.clone());
+        }
+
+        match db::lookup_mutation_receipt(
+            &state.pool,
+            &session.device_id,
+            &base.client_mutation_id,
+            &receipt_context.mutation_hash,
+        )
+        .await
+        .map_err(|error| AppError::Internal(format!("Failed to load mutation receipt: {error}")))?
+        {
+            db::MutationReceiptLookup::Missing => {}
+            db::MutationReceiptLookup::Match(result) => {
+                if let Some(version) = result.applied_server_version {
+                    current_server_version = current_server_version.max(version);
+                }
+                results.push(result);
+                continue;
+            }
+            db::MutationReceiptLookup::Conflict { existing_hash } => {
+                return Err(receipt_hash_conflict_error(
+                    &session.device_id,
+                    &base.client_mutation_id,
+                    &existing_hash,
+                    &receipt_context.mutation_hash,
+                ));
+            }
+        }
+
+        session.mutation_receipt = Some(receipt_context);
         if let Some(error) = validate_mutation_base(
             &session,
             entity_type,
@@ -622,11 +680,102 @@ pub async fn post_mutations(
         });
     }
 
+    for result in &mut results {
+        if result.status != MutationResultStatus::Rejected {
+            continue;
+        }
+        let Some(context) = receipt_contexts.get(&result.client_mutation_id) else {
+            return Err(AppError::Internal(
+                "Mutation receipt context was lost before persistence.".to_string(),
+            ));
+        };
+        match db::persist_rejected_mutation_receipt(&state.pool, context, result)
+            .await
+            .map_err(|error| {
+                AppError::Internal(format!("Failed to persist mutation receipt: {error}"))
+            })? {
+            db::MutationReceiptLookup::Match(stored) => *result = stored,
+            db::MutationReceiptLookup::Conflict { existing_hash } => {
+                return Err(receipt_hash_conflict_error(
+                    &context.device_id,
+                    &context.client_mutation_id,
+                    &existing_hash,
+                    &context.mutation_hash,
+                ));
+            }
+            db::MutationReceiptLookup::Missing => {
+                return Err(AppError::Internal(
+                    "Mutation receipt disappeared after persistence.".to_string(),
+                ));
+            }
+        }
+    }
+
     Ok(Json(MutationsResponse {
         request_id: request.request_id,
         current_server_version,
         results,
     }))
+}
+
+fn canonical_mutation(mutation: &MutationInput) -> Result<(String, String), AppError> {
+    let value = serde_json::to_value(mutation)
+        .map_err(|error| AppError::Internal(format!("Failed to encode mutation: {error}")))?;
+    let canonical = canonicalize_json(value);
+    let mutation_json = serde_json::to_string(&canonical)
+        .map_err(|error| AppError::Internal(format!("Failed to canonicalize mutation: {error}")))?;
+    let mutation_hash = format!("{:x}", Sha256::digest(mutation_json.as_bytes()));
+    Ok((mutation_json, mutation_hash))
+}
+
+fn canonicalize_json(value: Value) -> Value {
+    match value {
+        Value::Array(values) => Value::Array(values.into_iter().map(canonicalize_json).collect()),
+        Value::Object(values) => {
+            let sorted = values
+                .into_iter()
+                .map(|(key, value)| (key, canonicalize_json(value)))
+                .collect::<BTreeMap<_, _>>();
+            Value::Object(sorted.into_iter().collect())
+        }
+        scalar => scalar,
+    }
+}
+
+fn receipt_conflict_error(
+    existing: &MutationReceiptContext,
+    incoming: &MutationReceiptContext,
+) -> AppError {
+    receipt_hash_conflict_error(
+        &incoming.device_id,
+        &incoming.client_mutation_id,
+        &existing.mutation_hash,
+        &incoming.mutation_hash,
+    )
+}
+
+fn receipt_hash_conflict_error(
+    device_id: &str,
+    client_mutation_id: &str,
+    existing_hash: &str,
+    incoming_hash: &str,
+) -> AppError {
+    AppError::Conflict(ErrorDetail {
+        code: "CLIENT_MUTATION_ID_REUSED".to_string(),
+        message: "clientMutationId was already used by this device for different content."
+            .to_string(),
+        retryable: Some(false),
+        min_client_version: None,
+        current_server_version: None,
+        min_replayable_server_version: None,
+        required_action: Some("generate_new_client_mutation_id".to_string()),
+        details: Some(json!({
+            "deviceId": device_id,
+            "clientMutationId": client_mutation_id,
+            "existingMutationHash": existing_hash,
+            "incomingMutationHash": incoming_hash,
+        })),
+    })
 }
 
 fn validate_mutation_base(
@@ -1002,7 +1151,12 @@ mod tests {
 
     async fn build_state() -> (tempfile::TempDir, SharedAppState) {
         let temp = tempdir().unwrap();
-        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let state = build_state_in(temp.path().to_path_buf()).await;
+        (temp, state)
+    }
+
+    async fn build_state_in(data_dir: std::path::PathBuf) -> SharedAppState {
+        let config = SyncdConfig::for_test(data_dir);
         let pool = connect(&config).await.unwrap();
         upsert_server_identity(&pool, &config, "fingerprint")
             .await
@@ -1033,23 +1187,21 @@ mod tests {
             discovery_provider_manager.initial_status(&config, &advertised_endpoint_resolver);
         let (change_sender, _) = broadcast::channel(128);
         let (pairing_status_sender, _) = broadcast::channel(64);
-        (
-            temp,
-            Arc::new(AppState {
-                config,
-                advertised_endpoint_resolver,
-                discovery_descriptor_provider: SyncdDiscoveryDescriptorProvider::default(),
-                client_discovery_contract_provider: SyncdClientDiscoveryContractProvider::default(),
-                client_discovery_guidance_provider: SyncdClientDiscoveryGuidanceProvider::default(),
-                discovery_provider_state: Arc::new(RwLock::new(initial_status)),
-                discovery_provider_manager,
-                discovery_provider_runtime: Arc::new(Mutex::new(None)),
-                pool,
-                change_sender,
-                pairing_status_sender,
-                tls_cert_sha256: "fingerprint".to_string(),
-            }),
-        )
+        Arc::new(AppState {
+            config,
+            advertised_endpoint_resolver,
+            discovery_descriptor_provider: SyncdDiscoveryDescriptorProvider::default(),
+            client_discovery_contract_provider: SyncdClientDiscoveryContractProvider::default(),
+            client_discovery_guidance_provider: SyncdClientDiscoveryGuidanceProvider::default(),
+            discovery_provider_state: Arc::new(RwLock::new(initial_status)),
+            discovery_provider_manager,
+            discovery_provider_runtime: Arc::new(Mutex::new(None)),
+            pool,
+            change_sender,
+            pairing_status_sender,
+            mutation_gate: Arc::new(Mutex::new(())),
+            tls_cert_sha256: "fingerprint".to_string(),
+        })
     }
 
     fn auth_headers(token: &str) -> Vec<(String, String)> {
@@ -2344,6 +2496,285 @@ mod tests {
         assert_eq!(
             payload["currentServerVersion"].as_i64().unwrap(),
             runtime.current_server_version
+        );
+    }
+
+    fn idempotent_book_progress(
+        request_id: &str,
+        client_mutation_id: &str,
+        progress_percent: f64,
+    ) -> Value {
+        json!({
+            "requestId": request_id,
+            "mutations": [{
+                "entityType": "book.progress",
+                "clientMutationId": client_mutation_id,
+                "scopeId": "books:global",
+                "entityId": "idempotent-book",
+                "lamport": 7,
+                "patch": {
+                    "renderer": "pdf",
+                    "progressPercent": progress_percent,
+                    "lastReadAtMs": 700,
+                    "pageIndex": 7,
+                    "totalPages": 10
+                }
+            }]
+        })
+    }
+
+    #[tokio::test]
+    async fn identical_retry_returns_receipt_without_incrementing_server_version() {
+        let (_temp, state) = build_state().await;
+        let app = build_test_router(state.clone());
+        let mutation = idempotent_book_progress("first-request", "stable-mutation", 0.7);
+
+        let first = app
+            .clone()
+            .oneshot(request_with_json("/v1/mutations", "main-token", mutation))
+            .await
+            .unwrap();
+        let first_payload = json_body(first).await;
+        let first_version = first_payload["results"][0]["appliedServerVersion"]
+            .as_i64()
+            .unwrap();
+
+        let retry = app
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                idempotent_book_progress("retry-request", "stable-mutation", 0.7),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(retry.status(), StatusCode::OK);
+        let retry_payload = json_body(retry).await;
+        assert_eq!(retry_payload["results"][0], first_payload["results"][0]);
+
+        let runtime = load_server_runtime(&state.pool).await.unwrap();
+        assert_eq!(runtime.current_server_version, first_version);
+    }
+
+    #[tokio::test]
+    async fn identical_retry_survives_database_restart() {
+        let temp = tempdir().unwrap();
+        let state = build_state_in(temp.path().to_path_buf()).await;
+        let app = build_test_router(state.clone());
+        let first = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                idempotent_book_progress("before-restart", "restart-mutation", 0.7),
+            ))
+            .await
+            .unwrap();
+        let first_payload = json_body(first).await;
+        let first_result = first_payload["results"][0].clone();
+        let first_version = first_result["appliedServerVersion"].as_i64().unwrap();
+
+        drop(app);
+        state.pool.close().await;
+        drop(state);
+
+        let restarted_state = build_state_in(temp.path().to_path_buf()).await;
+        let restarted_app = build_test_router(restarted_state.clone());
+        let retry = restarted_app
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                idempotent_book_progress("after-restart", "restart-mutation", 0.7),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(retry.status(), StatusCode::OK);
+        let retry_payload = json_body(retry).await;
+        assert_eq!(retry_payload["results"][0], first_result);
+        assert_eq!(
+            load_server_runtime(&restarted_state.pool)
+                .await
+                .unwrap()
+                .current_server_version,
+            first_version
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_identical_retries_apply_once() {
+        let (_temp, state) = build_state().await;
+        let app = build_test_router(state.clone());
+        let first_request = request_with_json(
+            "/v1/mutations",
+            "main-token",
+            idempotent_book_progress("concurrent-a", "concurrent-mutation", 0.7),
+        );
+        let second_request = request_with_json(
+            "/v1/mutations",
+            "main-token",
+            idempotent_book_progress("concurrent-b", "concurrent-mutation", 0.7),
+        );
+
+        let (first, second) = tokio::join!(
+            app.clone().oneshot(first_request),
+            app.clone().oneshot(second_request)
+        );
+        let first = first.unwrap();
+        let second = second.unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        assert_eq!(second.status(), StatusCode::OK);
+        let first_payload = json_body(first).await;
+        let second_payload = json_body(second).await;
+        assert_eq!(first_payload["results"][0], second_payload["results"][0]);
+        assert_eq!(
+            load_server_runtime(&state.pool)
+                .await
+                .unwrap()
+                .current_server_version,
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn reused_client_mutation_id_with_different_content_conflicts() {
+        let (_temp, state) = build_state().await;
+        let app = build_test_router(state.clone());
+        let first = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                idempotent_book_progress("conflict-a", "reused-mutation", 0.7),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        let first_version = load_server_runtime(&state.pool)
+            .await
+            .unwrap()
+            .current_server_version;
+
+        let conflict = app
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                idempotent_book_progress("conflict-b", "reused-mutation", 0.8),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(conflict.status(), StatusCode::CONFLICT);
+        let conflict_payload = json_body(conflict).await;
+        assert_eq!(
+            conflict_payload["error"]["code"],
+            "CLIENT_MUTATION_ID_REUSED"
+        );
+        assert_eq!(
+            load_server_runtime(&state.pool)
+                .await
+                .unwrap()
+                .current_server_version,
+            first_version
+        );
+    }
+
+    #[tokio::test]
+    async fn client_mutation_id_namespace_is_isolated_per_device() {
+        let (_temp, state) = build_state().await;
+        let app = build_test_router(state.clone());
+        let first = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                idempotent_book_progress("device-main", "shared-client-id", 0.7),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+
+        let second = app
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "test-token",
+                idempotent_book_progress("device-test", "shared-client-id", 0.8),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(second.status(), StatusCode::OK);
+        let second_payload = json_body(second).await;
+        assert_eq!(second_payload["results"][0]["status"], "applied");
+        assert_eq!(
+            load_server_runtime(&state.pool)
+                .await
+                .unwrap()
+                .current_server_version,
+            2
+        );
+        let receipt_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM mutation_receipts WHERE client_mutation_id = ?",
+        )
+        .bind("shared-client-id")
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+        assert_eq!(receipt_count, 2);
+    }
+
+    #[tokio::test]
+    async fn rejected_mutation_decision_is_receipted() {
+        let (_temp, state) = build_state().await;
+        let app = build_test_router(state.clone());
+        let invalid = json!({
+            "requestId": "invalid-a",
+            "mutations": [{
+                "entityType": "book.progress",
+                "clientMutationId": "invalid-receipt",
+                "scopeId": "novels:profile:main",
+                "entityId": "book-invalid",
+                "lamport": 1,
+                "patch": {
+                    "renderer": "pdf",
+                    "progressPercent": 0.1,
+                    "lastReadAtMs": 100
+                }
+            }]
+        });
+        let first = app
+            .clone()
+            .oneshot(request_with_json("/v1/mutations", "main-token", invalid))
+            .await
+            .unwrap();
+        let first_payload = json_body(first).await;
+
+        let retry = app
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                json!({
+                    "requestId": "invalid-b",
+                    "mutations": [{
+                        "entityType": "book.progress",
+                        "clientMutationId": "invalid-receipt",
+                        "scopeId": "novels:profile:main",
+                        "entityId": "book-invalid",
+                        "lamport": 1,
+                        "patch": {
+                            "renderer": "pdf",
+                            "progressPercent": 0.1,
+                            "lastReadAtMs": 100
+                        }
+                    }]
+                }),
+            ))
+            .await
+            .unwrap();
+        let retry_payload = json_body(retry).await;
+        assert_eq!(retry_payload["results"][0], first_payload["results"][0]);
+        assert_eq!(
+            load_server_runtime(&state.pool)
+                .await
+                .unwrap()
+                .current_server_version,
+            0
         );
     }
 }
