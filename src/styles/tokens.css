@@ -77,6 +77,55 @@
   --text-tertiary: var(--text-muted);
   --text-inverse: var(--bg-void);
 
+  /* Derived theme sources: shared primitives -> semantic visual roles. */
+  --primitive-absolute-black: #000000;
+  --primitive-absolute-white: #ffffff;
+  --color-shadow-source: var(--primitive-absolute-black);
+  --color-highlight-source: var(--primitive-absolute-white);
+  --color-control-border-subtle: var(--color-border);
+  --color-control-border-elevated: var(--border-strong);
+  --color-control-surface: var(--color-elevated);
+  --color-control-surface-hover: var(--color-surface-secondary);
+  --color-control-field-surface: var(--color-elevated);
+  --color-control-placeholder: var(--text-faint);
+  --color-text-emphasis: var(--text-primary);
+  --color-text-tab-active: var(--accent-fg);
+  --color-text-accent-emphasis: var(--accent-fg);
+  --color-text-danger-emphasis: var(--color-danger);
+  --color-accent-interactive: var(--accent-bright);
+  --color-accent-interactive-strong: var(--accent);
+  --color-status-success-emphasis: var(--color-success);
+  --color-status-error-emphasis: var(--color-danger);
+  --color-popover-surface-top: var(--color-popover);
+  --color-popover-surface-base: var(--color-elevated);
+  --color-popover-surface: var(--color-popover);
+  --color-popover-border: var(--color-border);
+  --shadow-popover: var(--shadow-md);
+  --color-toast-surface-accent: var(--accent-bright);
+  --color-toast-surface-base: var(--color-modal);
+  --color-toast-surface: var(--color-modal);
+  --color-toast-surface-hover: var(--color-elevated);
+  --color-toast-border-source: var(--border-strong);
+  --color-toast-border: var(--color-border);
+  --color-toast-border-hover: var(--color-outline);
+  --shadow-toast: var(--shadow-md);
+  --color-toast-progress-end: var(--accent);
+  --gradient-toast-life: var(--color-accent);
+  --gradient-toast-progress: var(--color-accent);
+  --shadow-toast-progress: none;
+  --color-state-action-surface: var(--color-elevated);
+  --color-state-danger-emphasis: var(--color-danger);
+  --color-state-neutral-accent: var(--accent-fg);
+  --color-state-info-accent: var(--color-info);
+  --color-state-warning-accent: var(--color-warning);
+  --color-state-danger-accent: var(--color-danger);
+  --color-state-success-accent: var(--color-success);
+  --color-state-panel-top: var(--color-surface);
+  --color-state-panel-bottom: var(--color-background-void);
+  --color-state-compact-top: var(--color-elevated);
+  --color-state-compact-bottom: var(--color-background-void);
+  --color-state-icon-surface: var(--color-elevated);
+
   /* Status dots */
   --dot-active:   var(--accent);
   --dot-inactive: var(--text-faint);
@@ -228,7 +277,7 @@
   --component-input-border: var(--border-base);
   --component-input-placeholder: var(--text-faint);
   --component-tab-bg-active: var(--accent-muted);
-  --component-tab-fg-active: var(--accent-fg);
+  --component-tab-fg-active: var(--color-text-tab-active);
   --component-toast-bg: var(--bg-overlay);
   --component-toast-bg-hover: var(--color-elevated);
   --component-toast-border: var(--border-base);
@@ -274,7 +323,7 @@
   --component-nocturne-state-center-width: min(620px, calc(100% - 48px));
   --component-nocturne-state-icon-size: 34px;
   --component-nocturne-state-icon-radius: var(--radius-md);
-  --component-nocturne-state-icon-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --component-nocturne-state-icon-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-highlight-source) 4%, transparent);
   --component-nocturne-state-icon-font-size: 18px;
   --component-nocturne-state-compact-icon-size: 30px;
   --component-nocturne-state-compact-icon-radius: var(--radius-sm);

@@ -2050,3 +2050,50 @@ Categorias cobertas:
 - Nenhum tema novo, token `--n-*`, alias Legacy ou componente foi adicionado/removido.
 - O teste de contrato valida IDs unicos, inventarios completos de 47 tokens de tema e 15 tokens HUD, reexports do store e consumo do registro compartilhado em Settings.
 - Como este marco apenas move ownership de dados TypeScript, nao ha screenshot before/after; a equivalencia visual permanece coberta pelo mesmo CSS e pelos gates de build/componentes.
+
+## Marcos 28-30 - Consolidacao final de temas
+
+### Preflight global
+
+- Baseline de codigo: `8caa8a5` (`refactor(theme): centralize theme contract`).
+- A varredura automatica encontrou 439 declaracoes de component tokens com cor direta no fallback de `tokens.css` e 1.124 em `nocturne-theme.css`; nenhuma quantidade foi assumida manualmente.
+- As 1.563 declaracoes possuem 604 grafias de cor e 224 bases RGB distintas. Apenas 24 bases aparecem em tres ou mais grupos de componentes; somente essas bases sao candidatas a primitivas compartilhadas. Bases locais permanecem papeis semanticos do dominio.
+- Distribuicao inicial por lote: 28A = 75 declaracoes/91 ocorrencias; 28B = 123/142; 28C.1 = 539/603; 28C.2 = 179/195; 28C.3 = 414/462; 28D.1 = 66/74; 28D.2 = 149/170.
+- Os lotes 28C.1 e 28C.3 excedem o limite de 350 declaracoes e serao divididos automaticamente antes da edicao, sem ampliar o escopo funcional.
+- Syncd, componentes Legacy e a camada `--n-*` permanecem fora da migracao. O inventario anterior de 53 aliases `--n-*` ativos, 9 Legacy e 13 aliases `--activity-*` Legacy continua valido.
+
+### Baselines reais do preflight
+
+- O app desktop real foi iniciado pelo launcher gerenciado, em Nocturne, com WebView2/CDP na porta 9223 e dados persistidos reais. Nenhuma fixture ou dado artificial foi criado.
+- Capturas em `docs/screenshots/marco28-preflight/`: Home, Activity Center, Library Books/Comics, display popover, Browse normal/focus, Downloads, Settings, Book/Series/Novel Details e Book/Manga/Novel Readers.
+- O backend MAIN em `127.0.0.1:4567` estava indisponivel. Superficies que dependem exclusivamente dele continuam limitadas aos estados persistidos disponiveis e aos testes focados.
+
+### Marco 28A - Componentes base
+
+#### Escopo e derivacao
+
+- Prefixos migrados: `card`, `modal`, `popover`, `menu`, `button`, `input`, `tab`, `toast` e `nocturne-state`.
+- Valores diretos removidos: 75 declaracoes e 91 ocorrencias, sendo 1 declaracao no fallback e 74 na implementacao Nocturne. Restam zero cores literais nesses prefixos.
+- Foram adicionadas 2 primitivas absolutas compartilhadas (`--primitive-absolute-black` e `--primitive-absolute-white`) e 45 fontes semanticas para controles, popover, toast e estados. O teste percorre o grafo de referencias e confirma 47/47 fontes alcancaveis por component tokens migrados.
+- `popover` e `menu` deixaram de depender diretamente de `--n-popover-*`; os aliases `--n-*` foram preservados sem remocao ou alteracao.
+- Gradients, shadows e `color-mix()` dos component tokens mantiveram geometria, stops, alpha e ordem, mas suas cores agora partem de variables semanticas. `transparent` permanece a unica keyword de cor permitida.
+- Nenhum componente Svelte, API, layout, animacao ou comportamento foi alterado.
+
+#### Validacao visual
+
+- Before: `docs/screenshots/marco28-preflight/before-library-display-popover.png`, `before-downloads.png`, `before-settings.png` e `before-home.png`.
+- After: `docs/screenshots/marco28a-base/after-library-comics-display-popover.png`, `after-downloads-state.png`, `after-settings-controls.png`, `after-home.png`, `after-activity-center.png` e `after-toast-real.png`.
+- A Library carregou capas e executou uma atualizacao real entre as capturas. Essa mudanca de dados explica as diferencas de conteudo; popover, toast, cards, bordas, sombras, tipografia e hierarquia permaneceram equivalentes.
+- `Settings.browser.test.ts` reutilizou as seis baselines existentes e passou sem gerar `.actual.png`, fornecendo comparacao visual byte-exata para cards, inputs, buttons, tabs, hover/focus e estados de Settings cobertos.
+
+#### Gates
+
+- `pnpm test:unit -- src/lib/theme/componentColorDerivation.test.ts src/components/shared/baseThemeComponents.test.ts src/components/shared/NocturneStateThemeTokens.test.ts`: 3 arquivos, 9 testes, todos verdes.
+- `pnpm test:browser -- src/components/settings/Settings.browser.test.ts`: 1 arquivo, 6 testes/browser screenshots, todos verdes.
+- `pnpm build`: verde, 6.297 modulos; permanece apenas o aviso conhecido de chunk acima de 500 kB.
+- `git diff --check`: verde para os arquivos do lote.
+
+#### Riscos remanescentes
+
+- Toasts de sucesso/erro/download nao ocorreram naturalmente nesta sessao; o toast real de progresso e os demais estados ficam cobertos pelo contrato de tokens e testes de render existentes.
+- Os demais 1.488 component tokens com valores diretos pertencem aos lotes posteriores e continuam bloqueados pelo gate progressivo assim que cada prefixo for migrado.
