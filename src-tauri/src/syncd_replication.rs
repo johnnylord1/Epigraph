@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
-use std::io::Write;
-use std::path::PathBuf;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -20,10 +20,11 @@ use crate::syncd::models::{
     BookCategoryAssignmentPatch, BookCategoryAssignmentRecord, BookCategoryPatch,
     BookCategoryRecord, BookEntryPatch, BookEntryRecord, BookLibraryUiPatch, BookLibraryUiRecord,
     BookProgressPatch, BookProgressRecord, ChangeEnvelope, ComicHistoryPatch,
-    ComicPageBookmarkPatch, ErrorBody, MutationOperation, NovelBookmarkPatch, NovelBookmarkRecord,
-    NovelChapterPatch, NovelChapterRecord, NovelClassificationPatch, NovelClassificationRecord,
-    NovelEntryPatch, NovelEntryRecord, NovelHistoryPatch, NovelHistoryRecord, NovelProgressPatch,
-    NovelProgressRecord, SyncdEffectiveDiscoverySource,
+    ComicPageBookmarkPatch, ErrorBody, MutationOperation, MutationResultStatus, MutationsResponse,
+    NovelBookmarkPatch, NovelBookmarkRecord, NovelChapterPatch, NovelChapterRecord,
+    NovelClassificationPatch, NovelClassificationRecord, NovelEntryPatch, NovelEntryRecord,
+    NovelHistoryPatch, NovelHistoryRecord, NovelProgressPatch, NovelProgressRecord,
+    SnapshotResponse, SyncdEffectiveDiscoverySource, SNAPSHOT_SCHEMA_VERSION,
 };
 use crate::syncd_desktop::{
     build_pinned_http_client, desktop_state_dir, is_connection_error, is_needs_reauth_error,
@@ -41,6 +42,7 @@ const BOOKS_SCOPE_ID: &str = "books:global";
 const EVENT_REPLICATION_STATE: &str = "syncd-replication-state";
 const EVENT_REPLICATION_ERROR: &str = "syncd-replication-error";
 const EVENT_COMIC_READER_STATE_APPLIED: &str = "syncd-comic-reader-state-applied";
+const COMIC_SERVER_IDENTITY_DOMAIN: &str = "aethon-core-suwayomi-v1";
 const RECONNECT_DELAY: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -168,6 +170,8 @@ struct PersistedReplicationProfileState {
     comics_scope_checkpoint: Option<SyncdReplicationScopeCheckpoint>,
     #[serde(default)]
     pending_comic_reader_changes: Vec<ChangeEnvelope>,
+    #[serde(default)]
+    pending_comic_reader_snapshot: Option<SyncdComicReaderSnapshotMarker>,
     per_entity_remote_clock: BTreeMap<String, i64>,
     last_local_snapshot_digest_books: Option<String>,
     last_local_snapshot_digest_novels: Option<String>,
@@ -205,6 +209,7 @@ impl Default for PersistedReplicationProfileState {
             novels_scope_checkpoint: None,
             comics_scope_checkpoint: None,
             pending_comic_reader_changes: Vec::new(),
+            pending_comic_reader_snapshot: None,
             per_entity_remote_clock: BTreeMap::new(),
             last_local_snapshot_digest_books: None,
             last_local_snapshot_digest_novels: None,
@@ -285,13 +290,75 @@ fn load_replication_state() -> Result<PersistedReplicationState, String> {
     serde_json::from_str(&raw).map_err(|error| error.to_string())
 }
 
+fn write_file_atomic(path: &Path, payload: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let temp_path = path.with_extension(format!(
+        "{}.{}.tmp",
+        path.extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("state"),
+        Uuid::now_v7()
+    ));
+    let result = (|| -> io::Result<()> {
+        let mut file = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temp_path)?;
+        file.write_all(payload)?;
+        file.sync_all()?;
+        drop(file);
+        replace_file_atomic(&temp_path, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+    result.map_err(|error| error.to_string())
+}
+
+#[cfg(windows)]
+fn replace_file_atomic(source: &Path, destination: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+    let source_wide = source
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let destination_wide = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let moved = unsafe {
+        MoveFileExW(
+            source_wide.as_ptr(),
+            destination_wide.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if moved == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+fn replace_file_atomic(source: &Path, destination: &Path) -> io::Result<()> {
+    fs::rename(source, destination)
+}
+
 fn save_replication_state(state: &PersistedReplicationState) -> Result<(), String> {
     let path = replication_state_path();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
     let payload = serde_json::to_vec_pretty(state).map_err(|error| error.to_string())?;
-    fs::write(path, payload).map_err(|error| error.to_string())
+    write_file_atomic(&path, &payload)
 }
 
 fn profile_state_mut<'a>(
@@ -704,6 +771,25 @@ impl SerializableMutationInput {
             Self::BookLibraryUi { base, .. } => &base.entity_id,
         }
     }
+
+    fn client_mutation_id(&self) -> &str {
+        match self {
+            Self::BookEntry { base, .. }
+            | Self::BookCategory { base, .. }
+            | Self::BookCategoryAssignment { base, .. }
+            | Self::BookProgress { base, .. }
+            | Self::NovelProgress { base, .. }
+            | Self::BookBookmark { base, .. }
+            | Self::NovelEntry { base, .. }
+            | Self::NovelChapter { base, .. }
+            | Self::NovelBookmark { base, .. }
+            | Self::NovelHistory { base, .. }
+            | Self::NovelClassification { base, .. }
+            | Self::ComicHistory { base, .. }
+            | Self::ComicPageBookmark { base, .. }
+            | Self::BookLibraryUi { base, .. } => &base.client_mutation_id,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -856,6 +942,15 @@ fn comics_scope_id(profile_id: &str) -> String {
 pub struct SyncdComicReaderStateAppliedPayload {
     pub local_profile_id: String,
     pub changes: Vec<ChangeEnvelope>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authoritative_snapshot: Option<SyncdComicReaderSnapshotMarker>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncdComicReaderSnapshotMarker {
+    pub scope_id: String,
+    pub snapshot_version: i64,
 }
 
 fn hash_digest(input: &str) -> String {
@@ -879,7 +974,7 @@ fn read_books_state() -> Result<PersistedBookLibraryState, String> {
 fn write_books_state(state: &PersistedBookLibraryState) -> Result<(), String> {
     let path = book_library_state_path()?;
     let payload = serde_json::to_vec_pretty(state).map_err(|error| error.to_string())?;
-    fs::write(path, payload).map_err(|error| error.to_string())
+    write_file_atomic(&path, &payload)
 }
 
 fn read_novels_state(
@@ -901,7 +996,7 @@ fn write_novels_state(
 ) -> Result<(), String> {
     let path = novel_library_state_path_for_target(launch_target, Some(profile_id), None)?;
     let payload = serde_json::to_vec_pretty(state).map_err(|error| error.to_string())?;
-    fs::write(path, payload).map_err(|error| error.to_string())
+    write_file_atomic(&path, &payload)
 }
 
 fn read_novel_classification_state(
@@ -925,7 +1020,7 @@ fn write_novel_classification_state(
     let path =
         novel_source_classification_state_path_for_target(launch_target, Some(profile_id), None)?;
     let payload = serde_json::to_vec_pretty(state).map_err(|error| error.to_string())?;
-    fs::write(path, payload).map_err(|error| error.to_string())
+    write_file_atomic(&path, &payload)
 }
 
 pub async fn bootstrap_runtime(app: AppHandle, state: SyncdReplicationState) -> Result<(), String> {
@@ -1319,6 +1414,11 @@ struct ChangesResponsePayload {
     changes: Vec<ChangeEnvelope>,
 }
 
+enum ChangesFetchOutcome {
+    Changes(ChangesResponsePayload),
+    ReplayWindowExpired,
+}
+
 async fn replay_and_stream_remote(
     app: &AppHandle,
     profile_id: &str,
@@ -1349,7 +1449,21 @@ async fn replay_and_stream_remote(
         .into_iter()
         .min()
         .unwrap_or_default();
-        let changes = fetch_changes_remote(session, connected_origin, since_version).await?;
+        let changes = match fetch_changes_remote(session, connected_origin, since_version).await? {
+            ChangesFetchOutcome::Changes(changes) => changes,
+            ChangesFetchOutcome::ReplayWindowExpired => {
+                recover_from_snapshots_remote(
+                    app,
+                    &launch_target,
+                    profile_id,
+                    session,
+                    connected_origin,
+                    novels_profile_id,
+                )
+                .await?;
+                continue;
+            }
+        };
         let _ = update_profile_state(profile_id, |profile| {
             profile.replication_status = SyncdReplicationStatus::Replaying;
             profile.last_error = None;
@@ -1424,7 +1538,14 @@ async fn replay_and_stream_local_authority(
         .into_iter()
         .min()
         .unwrap_or_default();
-        let changes = fetch_changes_local_authority(authority, since_version).await?;
+        let changes = match fetch_changes_local_authority(authority, since_version).await? {
+            ChangesFetchOutcome::Changes(changes) => changes,
+            ChangesFetchOutcome::ReplayWindowExpired => {
+                recover_from_snapshots_local_authority(app, &launch_target, profile_id, authority)
+                    .await?;
+                continue;
+            }
+        };
         let _ = update_profile_state(profile_id, |profile| {
             profile.replication_status = SyncdReplicationStatus::Replaying;
             profile.last_error = None;
@@ -1461,7 +1582,7 @@ async fn fetch_changes_remote(
     session: &PersistedSyncSession,
     origin: &str,
     since_version: i64,
-) -> Result<ChangesResponsePayload, String> {
+) -> Result<ChangesFetchOutcome, String> {
     let client = build_pinned_http_client(&session.tls_cert_sha256)?;
     let response = client
         .get(format!("{origin}/v1/changes"))
@@ -1476,7 +1597,11 @@ async fn fetch_changes_remote(
         .await
         .map_err(|error| error.to_string())?;
     if response.status().is_success() {
-        return response.json().await.map_err(|error| error.to_string());
+        return response
+            .json()
+            .await
+            .map(ChangesFetchOutcome::Changes)
+            .map_err(|error| error.to_string());
     }
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
@@ -1485,7 +1610,7 @@ async fn fetch_changes_remote(
         .map(|body| body.error);
     if let Some(detail) = detail {
         if detail.code == "REPLAY_WINDOW_EXPIRED" {
-            return Err("Replication fell behind syncd's replay window and syncd still has no authoritative snapshot route for recovery.".to_string());
+            return Ok(ChangesFetchOutcome::ReplayWindowExpired);
         }
         if detail.code == "UNAUTHORIZED" {
             return Err("needs_reauth".to_string());
@@ -1498,7 +1623,7 @@ async fn fetch_changes_remote(
 async fn fetch_changes_local_authority(
     authority: &LocalAuthoritySession,
     since_version: i64,
-) -> Result<ChangesResponsePayload, String> {
+) -> Result<ChangesFetchOutcome, String> {
     let client = insecure_local_syncd_client()?;
     let response = client
         .get(format!("{}/v1/changes", authority.local_base_url))
@@ -1516,7 +1641,11 @@ async fn fetch_changes_local_authority(
         .await
         .map_err(|error| error.to_string())?;
     if response.status().is_success() {
-        return response.json().await.map_err(|error| error.to_string());
+        return response
+            .json()
+            .await
+            .map(ChangesFetchOutcome::Changes)
+            .map_err(|error| error.to_string());
     }
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
@@ -1525,7 +1654,7 @@ async fn fetch_changes_local_authority(
         .map(|body| body.error);
     if let Some(detail) = detail {
         if detail.code == "REPLAY_WINDOW_EXPIRED" {
-            return Err("Replication fell behind syncd's replay window and syncd still has no authoritative snapshot route for recovery.".to_string());
+            return Ok(ChangesFetchOutcome::ReplayWindowExpired);
         }
         if detail.code == "UNAUTHORIZED" {
             return Err("needs_reauth".to_string());
@@ -1533,6 +1662,434 @@ async fn fetch_changes_local_authority(
         return Err(detail.message);
     }
     Err(format!("Changes replay failed with HTTP {status}."))
+}
+
+async fn fetch_authoritative_snapshot(
+    client: &reqwest::Client,
+    origin: &str,
+    access_token: &str,
+    scope_id: &str,
+) -> Result<SnapshotResponse, String> {
+    let response = client
+        .get(format!("{origin}/v1/snapshot"))
+        .query(&[("scopeId", scope_id)])
+        .header("Authorization", format!("Bearer {access_token}"))
+        .header(CLIENT_VERSION_HEADER.as_str(), CLIENT_VERSION)
+        .header(
+            CLIENT_PROTOCOL_HEADER.as_str(),
+            CLIENT_PROTOCOL_VERSION.to_string(),
+        )
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    if response.status().is_success() {
+        let snapshot = response
+            .json::<SnapshotResponse>()
+            .await
+            .map_err(|error| format!("Invalid snapshot response for {scope_id}: {error}"))?;
+        validate_snapshot(&snapshot, scope_id)?;
+        return Ok(snapshot);
+    }
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if let Ok(error_body) = serde_json::from_str::<ErrorBody>(&body) {
+        if error_body.error.code == "UNAUTHORIZED" {
+            return Err("needs_reauth".to_string());
+        }
+        return Err(error_body.error.message);
+    }
+    Err(format!(
+        "Authoritative snapshot failed for {scope_id} with HTTP {status}."
+    ))
+}
+
+fn validate_snapshot(snapshot: &SnapshotResponse, expected_scope_id: &str) -> Result<(), String> {
+    if snapshot.schema_version != SNAPSHOT_SCHEMA_VERSION {
+        return Err(format!(
+            "Unsupported snapshot schema {} for {expected_scope_id}; expected {}.",
+            snapshot.schema_version, SNAPSHOT_SCHEMA_VERSION
+        ));
+    }
+    if snapshot.scope_id != expected_scope_id {
+        return Err(format!(
+            "Snapshot scope mismatch: expected {expected_scope_id}, received {}.",
+            snapshot.scope_id
+        ));
+    }
+    if snapshot.snapshot_version < 0
+        || snapshot.min_replayable_server_version < 0
+        || snapshot.snapshot_version < snapshot.min_replayable_server_version
+    {
+        return Err(format!(
+            "Snapshot checkpoint is invalid for {expected_scope_id}."
+        ));
+    }
+    Ok(())
+}
+
+fn materialize_book_snapshot(
+    current: &PersistedBookLibraryState,
+    snapshot: &SnapshotResponse,
+) -> Result<PersistedBookLibraryState, String> {
+    validate_snapshot(snapshot, BOOKS_SCOPE_ID)?;
+    let mut next = PersistedBookLibraryState {
+        version: current.version,
+        ..PersistedBookLibraryState::default()
+    };
+    for entity in &snapshot.entities {
+        match entity.entity_type.as_str() {
+            "book.entry" => upsert_book_entry(
+                &mut next,
+                serde_json::from_value::<BookEntryRecord>(entity.record.clone())
+                    .map_err(|error| error.to_string())?,
+            ),
+            "book.category" => upsert_book_category(
+                &mut next,
+                serde_json::from_value::<BookCategoryRecord>(entity.record.clone())
+                    .map_err(|error| error.to_string())?,
+            ),
+            "book.category_assignment" => upsert_book_category_assignment(
+                &mut next,
+                serde_json::from_value::<BookCategoryAssignmentRecord>(entity.record.clone())
+                    .map_err(|error| error.to_string())?,
+            ),
+            "book.library_ui" => upsert_book_library_ui(
+                &mut next,
+                serde_json::from_value::<BookLibraryUiRecord>(entity.record.clone())
+                    .map_err(|error| error.to_string())?,
+            ),
+            "book.progress" => upsert_book_progress(
+                &mut next,
+                serde_json::from_value::<BookProgressRecord>(entity.record.clone())
+                    .map_err(|error| error.to_string())?,
+            ),
+            "book.bookmark" => upsert_book_bookmark(
+                &mut next,
+                serde_json::from_value::<BookBookmarkRecord>(entity.record.clone())
+                    .map_err(|error| error.to_string())?,
+            ),
+            other => return Err(format!("Unsupported book snapshot entity: {other}.")),
+        }
+    }
+    next.updated_at_ms = Some(now_ms());
+    Ok(next)
+}
+
+fn materialize_novel_snapshot(
+    current: &PersistedNovelLibraryState,
+    current_classification: &PersistedNovelSourceClassificationState,
+    snapshot: &SnapshotResponse,
+) -> Result<
+    (
+        PersistedNovelLibraryState,
+        PersistedNovelSourceClassificationState,
+    ),
+    String,
+> {
+    let mut next = PersistedNovelLibraryState {
+        version: current.version,
+        scope_key: current.scope_key.clone(),
+        ..PersistedNovelLibraryState::default()
+    };
+    let mut next_classification = PersistedNovelSourceClassificationState {
+        version: current_classification.version,
+        scope_key: current_classification.scope_key.clone(),
+        ..PersistedNovelSourceClassificationState::default()
+    };
+    for entity in &snapshot.entities {
+        match entity.entity_type.as_str() {
+            "novel.entry" => upsert_novel_entry(
+                &mut next,
+                serde_json::from_value::<NovelEntryRecord>(entity.record.clone())
+                    .map_err(|error| error.to_string())?,
+            ),
+            "novel.chapter" => upsert_novel_chapter(
+                &mut next,
+                serde_json::from_value::<NovelChapterRecord>(entity.record.clone())
+                    .map_err(|error| error.to_string())?,
+            ),
+            "novel.progress" => upsert_novel_progress(
+                &mut next,
+                serde_json::from_value::<NovelProgressRecord>(entity.record.clone())
+                    .map_err(|error| error.to_string())?,
+            ),
+            "novel.bookmark" => upsert_novel_bookmark(
+                &mut next,
+                serde_json::from_value::<NovelBookmarkRecord>(entity.record.clone())
+                    .map_err(|error| error.to_string())?,
+            ),
+            "novel.history" => upsert_novel_history(
+                &mut next,
+                serde_json::from_value::<NovelHistoryRecord>(entity.record.clone())
+                    .map_err(|error| error.to_string())?,
+            ),
+            "novel.classification" => upsert_novel_classification(
+                &mut next_classification,
+                serde_json::from_value::<NovelClassificationRecord>(entity.record.clone())
+                    .map_err(|error| error.to_string())?,
+            ),
+            other => return Err(format!("Unsupported novel snapshot entity: {other}.")),
+        }
+    }
+    next.updated_at_ms = Some(now_ms());
+    next_classification.updated_at_ms = Some(now_ms());
+    Ok((next, next_classification))
+}
+
+fn comic_snapshot_changes(
+    snapshot: &SnapshotResponse,
+    remote_profile_id: &str,
+) -> Result<Vec<ChangeEnvelope>, String> {
+    let expected_scope = comics_scope_id(remote_profile_id);
+    validate_snapshot(snapshot, &expected_scope)?;
+    let mut changes = Vec::with_capacity(snapshot.entities.len() + snapshot.tombstones.len());
+    for entity in &snapshot.entities {
+        if !matches!(
+            entity.entity_type.as_str(),
+            "comic.history" | "comic.page_bookmark"
+        ) {
+            return Err(format!(
+                "Unsupported comic snapshot entity: {}.",
+                entity.entity_type
+            ));
+        }
+        changes.push(ChangeEnvelope {
+            server_version: entity.server_version,
+            scope_id: snapshot.scope_id.clone(),
+            profile_id: Some(remote_profile_id.to_string()),
+            entity_type: entity.entity_type.clone(),
+            entity_id: entity.entity_id.clone(),
+            op: "merge".to_string(),
+            lamport: entity.lamport,
+            patch: Some(entity.record.clone()),
+            applied_at_ms: now_ms(),
+        });
+    }
+    for tombstone in &snapshot.tombstones {
+        if !matches!(
+            tombstone.entity_type.as_str(),
+            "comic.history" | "comic.page_bookmark"
+        ) {
+            return Err(format!(
+                "Unsupported comic snapshot tombstone: {}.",
+                tombstone.entity_type
+            ));
+        }
+        changes.push(ChangeEnvelope {
+            server_version: tombstone.server_version,
+            scope_id: snapshot.scope_id.clone(),
+            profile_id: Some(remote_profile_id.to_string()),
+            entity_type: tombstone.entity_type.clone(),
+            entity_id: tombstone.entity_id.clone(),
+            op: "delete".to_string(),
+            lamport: tombstone.lamport,
+            patch: None,
+            applied_at_ms: tombstone.deleted_at_ms,
+        });
+    }
+    changes.sort_by(|left, right| {
+        left.server_version
+            .cmp(&right.server_version)
+            .then_with(|| left.entity_type.cmp(&right.entity_type))
+            .then_with(|| left.entity_id.cmp(&right.entity_id))
+    });
+    Ok(changes)
+}
+
+fn snapshot_checkpoint(snapshot: &SnapshotResponse) -> SyncdReplicationScopeCheckpoint {
+    SyncdReplicationScopeCheckpoint {
+        scope_id: snapshot.scope_id.clone(),
+        last_applied_server_version: snapshot.snapshot_version,
+        min_replayable_seen: snapshot.min_replayable_server_version,
+        last_replay_mode: SyncdReplicationReplayMode::RecoveryReplay,
+        last_applied_at_ms: now_ms(),
+    }
+}
+
+fn stage_snapshot_recovery(
+    profile: &mut PersistedReplicationProfileState,
+    books_snapshot: &SnapshotResponse,
+    novels_snapshot: &SnapshotResponse,
+    comics_snapshot: &SnapshotResponse,
+    comic_changes: &[ChangeEnvelope],
+) -> SyncdComicReaderSnapshotMarker {
+    let recovered_scopes = [
+        books_snapshot.scope_id.clone(),
+        novels_snapshot.scope_id.clone(),
+        comics_snapshot.scope_id.clone(),
+    ];
+    profile.per_entity_remote_clock.retain(|key, _| {
+        !recovered_scopes
+            .iter()
+            .any(|scope_id| key.starts_with(&format!("{scope_id}::")))
+    });
+    for snapshot in [books_snapshot, novels_snapshot, comics_snapshot] {
+        for entity in &snapshot.entities {
+            profile.per_entity_remote_clock.insert(
+                remote_clock_key(&snapshot.scope_id, &entity.entity_type, &entity.entity_id),
+                entity.lamport,
+            );
+        }
+        for tombstone in &snapshot.tombstones {
+            profile.per_entity_remote_clock.insert(
+                remote_clock_key(
+                    &snapshot.scope_id,
+                    &tombstone.entity_type,
+                    &tombstone.entity_id,
+                ),
+                tombstone.lamport,
+            );
+        }
+    }
+    profile
+        .pending_comic_reader_changes
+        .retain(|change| change.scope_id != comics_snapshot.scope_id);
+    profile
+        .pending_comic_reader_changes
+        .extend(comic_changes.iter().cloned());
+    profile.pending_comic_reader_changes.sort_by(|left, right| {
+        left.server_version
+            .cmp(&right.server_version)
+            .then_with(|| left.entity_type.cmp(&right.entity_type))
+            .then_with(|| left.entity_id.cmp(&right.entity_id))
+    });
+    let comic_marker = SyncdComicReaderSnapshotMarker {
+        scope_id: comics_snapshot.scope_id.clone(),
+        snapshot_version: comics_snapshot.snapshot_version,
+    };
+    // The durable inbox and its reset marker are staged before checkpoints.
+    // save_replication_state atomically publishes this complete profile state.
+    profile.pending_comic_reader_snapshot = Some(comic_marker.clone());
+    profile.books_scope_checkpoint = Some(snapshot_checkpoint(books_snapshot));
+    profile.novels_scope_checkpoint = Some(snapshot_checkpoint(novels_snapshot));
+    profile.comics_scope_checkpoint = Some(snapshot_checkpoint(comics_snapshot));
+    profile.last_applied_scopes = recovered_scopes.into_iter().collect();
+    profile.last_applied_at_ms = Some(now_ms());
+    profile.last_connected_at_ms = Some(now_ms());
+    profile.last_error = None;
+    comic_marker
+}
+
+async fn apply_authoritative_snapshots(
+    app: &AppHandle,
+    launch_target: &LaunchTargetInfo,
+    local_profile_id: &str,
+    remote_profile_id: &str,
+    books_snapshot: SnapshotResponse,
+    novels_snapshot: SnapshotResponse,
+    comics_snapshot: SnapshotResponse,
+) -> Result<(), String> {
+    validate_snapshot(&books_snapshot, BOOKS_SCOPE_ID)?;
+    validate_snapshot(&novels_snapshot, &novels_scope_id(remote_profile_id))?;
+    validate_snapshot(&comics_snapshot, &comics_scope_id(remote_profile_id))?;
+
+    let books_state = materialize_book_snapshot(&read_books_state()?, &books_snapshot)?;
+    let (novels_state, classification_state) = materialize_novel_snapshot(
+        &read_novels_state(launch_target, local_profile_id)?,
+        &read_novel_classification_state(launch_target, local_profile_id)?,
+        &novels_snapshot,
+    )?;
+    let comic_changes = comic_snapshot_changes(&comics_snapshot, remote_profile_id)?;
+
+    // Scope files are replaced before their checkpoints. A failed write leaves
+    // the old checkpoint in place, so the authoritative recovery is retried.
+    write_books_state(&books_state)?;
+    write_novels_state(launch_target, local_profile_id, &novels_state)?;
+    write_novel_classification_state(launch_target, local_profile_id, &classification_state)?;
+
+    let mut replication = load_replication_state()?;
+    let profile = profile_state_mut(&mut replication, local_profile_id);
+    let comic_marker = stage_snapshot_recovery(
+        profile,
+        &books_snapshot,
+        &novels_snapshot,
+        &comics_snapshot,
+        &comic_changes,
+    );
+    save_replication_state(&replication)?;
+
+    let _ = emit_replication_state_for_profile(app, local_profile_id).await;
+    let _ = app.emit(
+        EVENT_COMIC_READER_STATE_APPLIED,
+        SyncdComicReaderStateAppliedPayload {
+            local_profile_id: local_profile_id.to_string(),
+            changes: comic_changes,
+            authoritative_snapshot: Some(comic_marker),
+        },
+    );
+    Ok(())
+}
+
+async fn recover_from_snapshots_remote(
+    app: &AppHandle,
+    launch_target: &LaunchTargetInfo,
+    local_profile_id: &str,
+    session: &PersistedSyncSession,
+    origin: &str,
+    remote_profile_id: &str,
+) -> Result<(), String> {
+    let client = build_pinned_http_client(&session.tls_cert_sha256)?;
+    let books =
+        fetch_authoritative_snapshot(&client, origin, &session.access_token, BOOKS_SCOPE_ID)
+            .await?;
+    let novels_scope = novels_scope_id(remote_profile_id);
+    let novels =
+        fetch_authoritative_snapshot(&client, origin, &session.access_token, &novels_scope).await?;
+    let comics_scope = comics_scope_id(remote_profile_id);
+    let comics =
+        fetch_authoritative_snapshot(&client, origin, &session.access_token, &comics_scope).await?;
+    apply_authoritative_snapshots(
+        app,
+        launch_target,
+        local_profile_id,
+        remote_profile_id,
+        books,
+        novels,
+        comics,
+    )
+    .await
+}
+
+async fn recover_from_snapshots_local_authority(
+    app: &AppHandle,
+    launch_target: &LaunchTargetInfo,
+    local_profile_id: &str,
+    authority: &LocalAuthoritySession,
+) -> Result<(), String> {
+    let client = insecure_local_syncd_client()?;
+    let books = fetch_authoritative_snapshot(
+        &client,
+        &authority.local_base_url,
+        &authority.access_token,
+        BOOKS_SCOPE_ID,
+    )
+    .await?;
+    let novels_scope = novels_scope_id(&authority.profile_id);
+    let novels = fetch_authoritative_snapshot(
+        &client,
+        &authority.local_base_url,
+        &authority.access_token,
+        &novels_scope,
+    )
+    .await?;
+    let comics_scope = comics_scope_id(&authority.profile_id);
+    let comics = fetch_authoritative_snapshot(
+        &client,
+        &authority.local_base_url,
+        &authority.access_token,
+        &comics_scope,
+    )
+    .await?;
+    apply_authoritative_snapshots(
+        app,
+        launch_target,
+        local_profile_id,
+        &authority.profile_id,
+        books,
+        novels,
+        comics,
+    )
+    .await
 }
 
 async fn stream_live_events(
@@ -1916,6 +2473,7 @@ async fn apply_remote_envelopes(
             SyncdComicReaderStateAppliedPayload {
                 local_profile_id: profile_id.to_string(),
                 changes: outcome.comic_reader_changes,
+                authoritative_snapshot: None,
             },
         );
     }
@@ -2033,8 +2591,30 @@ async fn remote_profile_id_for_local_profile(
         .ok_or_else(|| "The active Core sync session no longer exists locally.".to_string())
 }
 
+fn derive_comic_server_fingerprint(core_fingerprint: &str, remote_profile_id: &str) -> String {
+    hash_digest(&format!(
+        "{COMIC_SERVER_IDENTITY_DOMAIN}\0{}\0{remote_profile_id}",
+        core_fingerprint.trim().to_ascii_lowercase()
+    ))
+}
+
+fn local_core_runtime_fingerprint(app: &AppHandle) -> Result<String, String> {
+    let runtime = crate::syncd_sidecar::current_runtime_info(app)
+        .ok_or_else(|| "No hosted Core runtime is available.".to_string())?;
+    let raw = fs::read_to_string(PathBuf::from(runtime.data_dir).join("runtime.json"))
+        .map_err(|error| error.to_string())?;
+    let manifest = serde_json::from_str::<Value>(&raw).map_err(|error| error.to_string())?;
+    manifest
+        .get("fingerprint")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .map(|value| value.to_ascii_lowercase())
+        .ok_or_else(|| "Core runtime fingerprint is invalid.".to_string())
+}
+
 #[tauri::command]
-pub fn syncd_get_comic_server_fingerprint(
+pub async fn syncd_get_comic_server_fingerprint(
     app: AppHandle,
     profile_id: String,
 ) -> Result<String, String> {
@@ -2042,6 +2622,21 @@ pub fn syncd_get_comic_server_fingerprint(
     if profile_id.is_empty() || profile_id.contains('\0') {
         return Err("profileId is invalid.".to_string());
     }
+    let authority_profile_id = {
+        let state = app.state::<SyncdReplicationState>();
+        let runtime = state.runtime.lock().await;
+        runtime
+            .local_authority
+            .get(profile_id)
+            .map(|authority| authority.profile_id.clone())
+    };
+    if let Some(authority_profile_id) = authority_profile_id {
+        return Ok(derive_comic_server_fingerprint(
+            &local_core_runtime_fingerprint(&app)?,
+            &authority_profile_id,
+        ));
+    }
+
     let replication = load_replication_state()?;
     if let Some(active_session_key) = replication
         .profiles
@@ -2052,20 +2647,11 @@ pub fn syncd_get_comic_server_fingerprint(
         if let Some(session) = desktop.sessions.iter().find(|session| {
             session.local_profile_id == profile_id && session.session_key == active_session_key
         }) {
-            return Ok(session.tls_cert_sha256.clone());
+            return Ok(derive_comic_server_fingerprint(
+                &session.tls_cert_sha256,
+                &session.remote_profile_id,
+            ));
         }
-    }
-    if let Some(runtime) = crate::syncd_sidecar::current_runtime_info(&app) {
-        let raw = fs::read_to_string(PathBuf::from(runtime.data_dir).join("runtime.json"))
-            .map_err(|error| error.to_string())?;
-        let manifest = serde_json::from_str::<Value>(&raw).map_err(|error| error.to_string())?;
-        let fingerprint = manifest
-            .get("fingerprint")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
-            .ok_or_else(|| "Core runtime fingerprint is invalid.".to_string())?;
-        return Ok(fingerprint.to_ascii_lowercase());
     }
     Err("No paired Core identity is available for this profile.".to_string())
 }
@@ -2144,6 +2730,10 @@ pub fn syncd_get_pending_comic_reader_changes(
     Ok(SyncdComicReaderStateAppliedPayload {
         local_profile_id: profile_id.to_string(),
         changes,
+        authoritative_snapshot: replication
+            .profiles
+            .get(profile_id)
+            .and_then(|profile| profile.pending_comic_reader_snapshot.clone()),
     })
 }
 
@@ -2163,6 +2753,14 @@ pub fn syncd_ack_comic_reader_changes(
         profile
             .pending_comic_reader_changes
             .retain(|change| change.server_version > input.through_server_version);
+        if profile
+            .pending_comic_reader_snapshot
+            .as_ref()
+            .map(|marker| marker.snapshot_version <= input.through_server_version)
+            .unwrap_or(false)
+        {
+            profile.pending_comic_reader_snapshot = None;
+        }
         save_replication_state(&replication)?;
     }
     Ok(())
@@ -3115,6 +3713,47 @@ async fn submit_mutations_for_active_profiles(
     Ok(())
 }
 
+fn validate_mutation_receipts(
+    request: &SerializableMutationsRequest,
+    response: &MutationsResponse,
+) -> Result<(), String> {
+    if response.request_id != request.request_id {
+        return Err(format!(
+            "Core mutation receipt requestId mismatch: expected {}, received {}.",
+            request.request_id, response.request_id
+        ));
+    }
+    let mut results = BTreeMap::new();
+    for result in &response.results {
+        if results
+            .insert(result.client_mutation_id.as_str(), result)
+            .is_some()
+        {
+            return Err(format!(
+                "Core returned duplicate receipt for clientMutationId {}.",
+                result.client_mutation_id
+            ));
+        }
+    }
+    for mutation in &request.mutations {
+        let mutation_id = mutation.client_mutation_id();
+        let result = results
+            .get(mutation_id)
+            .ok_or_else(|| format!("Core omitted receipt for clientMutationId {mutation_id}."))?;
+        if result.status != MutationResultStatus::Applied {
+            let detail = result
+                .error
+                .as_ref()
+                .map(|error| error.message.as_str())
+                .unwrap_or("mutation rejected without details");
+            return Err(format!(
+                "Core rejected clientMutationId {mutation_id}: {detail}."
+            ));
+        }
+    }
+    Ok(())
+}
+
 async fn post_mutations_for_local_authority(
     authority: &LocalAuthoritySession,
     mutations: &[SerializableMutationInput],
@@ -3147,6 +3786,11 @@ async fn post_mutations_for_local_authority(
         .await
         .map_err(|error| error.to_string())?;
     if response.status().is_success() {
+        let receipts = response
+            .json::<MutationsResponse>()
+            .await
+            .map_err(|error| format!("Invalid Core mutation receipt response: {error}"))?;
+        validate_mutation_receipts(&request, &receipts)?;
         replication_log(format!(
             "post_mutations_for_local_authority profile_id={} http_status=success",
             authority.profile_id
@@ -3205,6 +3849,11 @@ async fn post_mutations_for_session(
             .await;
         match response {
             Ok(response) if response.status().is_success() => {
+                let receipts = response
+                    .json::<MutationsResponse>()
+                    .await
+                    .map_err(|error| format!("Invalid Core mutation receipt response: {error}"))?;
+                validate_mutation_receipts(&request, &receipts)?;
                 replication_log(format!(
                     "post_mutations_for_session session_key={} origin={} http_status=success",
                     session.session_key, origin
@@ -3235,7 +3884,10 @@ async fn post_mutations_for_session(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::syncd::models::SyncdEffectiveDiscoverySource;
+    use crate::syncd::models::{
+        MutationEntityType, MutationResult, SnapshotEntity, SnapshotTombstone,
+        SyncdEffectiveDiscoverySource,
+    };
 
     fn fixture_session(
         session_key: &str,
@@ -3723,10 +4375,279 @@ mod tests {
         let profile = value["profiles"]["local-a"].as_object_mut().unwrap();
         profile.remove("comicsScopeCheckpoint");
         profile.remove("pendingComicReaderChanges");
+        profile.remove("pendingComicReaderSnapshot");
         let decoded: PersistedReplicationState = serde_json::from_value(value).unwrap();
         let profile = decoded.profiles.get("local-a").unwrap();
         assert!(profile.comics_scope_checkpoint.is_none());
         assert!(profile.pending_comic_reader_changes.is_empty());
+        assert!(profile.pending_comic_reader_snapshot.is_none());
+    }
+
+    #[test]
+    fn comic_server_fingerprint_matches_mobile_golden_and_separates_profiles() {
+        let tls = "a".repeat(64);
+        assert_eq!(
+            derive_comic_server_fingerprint(&tls.to_ascii_uppercase(), "main"),
+            "c47cc567e6c7ed7481dca23ed601f99a0d5f3beaa10b3cadae703c09505ed63f"
+        );
+        assert_ne!(
+            derive_comic_server_fingerprint(&tls, "main"),
+            derive_comic_server_fingerprint(&tls, "secondary")
+        );
+    }
+
+    #[test]
+    fn authoritative_book_snapshot_replaces_stale_scope_state() {
+        let current = PersistedBookLibraryState {
+            version: Some(7),
+            book_progress: vec![LocalBookProgress {
+                book_id: "stale-book".to_string(),
+                location: None,
+                href: None,
+                progress_percent: 0.1,
+                last_read_at: 1,
+                page_index: None,
+                total_pages: None,
+                section_label: None,
+                renderer: None,
+            }],
+            ..PersistedBookLibraryState::default()
+        };
+        let record = BookProgressRecord {
+            book_id: "book-remote".to_string(),
+            renderer: Some("epub".to_string()),
+            location: Some("epubcfi(/6/2)".to_string()),
+            href: None,
+            progress_percent: 0.75,
+            last_read_at_ms: 20,
+            page_index: None,
+            total_pages: None,
+            section_label: None,
+            record_lamport: 9,
+        };
+        let snapshot = SnapshotResponse {
+            schema_version: SNAPSHOT_SCHEMA_VERSION,
+            scope_id: BOOKS_SCOPE_ID.to_string(),
+            snapshot_version: 40,
+            min_replayable_server_version: 10,
+            entities: vec![SnapshotEntity {
+                entity_type: "book.progress".to_string(),
+                entity_id: "book.progress::book-remote".to_string(),
+                server_version: 39,
+                lamport: 9,
+                record: serde_json::to_value(record).unwrap(),
+            }],
+            tombstones: vec![SnapshotTombstone {
+                entity_type: "book.progress".to_string(),
+                entity_id: "book.progress::stale-book".to_string(),
+                server_version: 38,
+                lamport: 8,
+                deleted_at_ms: 18,
+                reason_code: "deleted".to_string(),
+            }],
+        };
+
+        let next = materialize_book_snapshot(&current, &snapshot).unwrap();
+        assert_eq!(next.version, Some(7));
+        assert_eq!(next.book_progress.len(), 1);
+        assert_eq!(next.book_progress[0].book_id, "book-remote");
+    }
+
+    #[test]
+    fn authoritative_novel_snapshot_replaces_library_and_classification() {
+        let current = PersistedNovelLibraryState {
+            version: Some(3),
+            scope_key: Some("local-main".to_string()),
+            progress: vec![LocalNovelProgress {
+                novel_id: "stale".to_string(),
+                chapter_id: None,
+                chapter_title: None,
+                progress_percent: 0.2,
+                locator: None,
+                updated_at: 1,
+            }],
+            ..PersistedNovelLibraryState::default()
+        };
+        let current_classification = PersistedNovelSourceClassificationState {
+            version: Some(2),
+            scope_key: Some("local-main".to_string()),
+            records: vec![json!({"pluginId": "stale"})],
+            updated_at_ms: Some(1),
+        };
+        let record = NovelProgressRecord {
+            novel_id: "novel-remote".to_string(),
+            chapter_id: Some("chapter-2".to_string()),
+            chapter_title: Some("Two".to_string()),
+            chapter_order_key: Some(2.0),
+            progress_percent: 0.6,
+            locator: Some("paragraph-4".to_string()),
+            locator_sort_key: Some(4.0),
+            updated_at_ms: 25,
+            record_lamport: 11,
+        };
+        let snapshot = SnapshotResponse {
+            schema_version: SNAPSHOT_SCHEMA_VERSION,
+            scope_id: "novels:profile:remote-main".to_string(),
+            snapshot_version: 50,
+            min_replayable_server_version: 12,
+            entities: vec![SnapshotEntity {
+                entity_type: "novel.progress".to_string(),
+                entity_id: "novel.progress::novel-remote".to_string(),
+                server_version: 49,
+                lamport: 11,
+                record: serde_json::to_value(record).unwrap(),
+            }],
+            tombstones: Vec::new(),
+        };
+
+        let (next, classification) =
+            materialize_novel_snapshot(&current, &current_classification, &snapshot).unwrap();
+        assert_eq!(next.version, Some(3));
+        assert_eq!(next.scope_key.as_deref(), Some("local-main"));
+        assert_eq!(next.progress.len(), 1);
+        assert_eq!(next.progress[0].novel_id, "novel-remote");
+        assert_eq!(classification.version, Some(2));
+        assert!(classification.records.is_empty());
+    }
+
+    #[test]
+    fn comic_snapshot_becomes_ordered_persistent_inbox_payload() {
+        let comic_id = format!("suwayomi:{}:manga:7", "b".repeat(64));
+        let record = crate::syncd::models::ComicHistoryRecord {
+            history_id: format!("comic.history::{comic_id}"),
+            comic_id: comic_id.clone(),
+            chapter_id: "2".to_string(),
+            page_index: 4,
+            page_count: Some(20),
+            progress_percent: 0.25,
+            read_at_ms: 100,
+            record_lamport: 12,
+        };
+        let snapshot = SnapshotResponse {
+            schema_version: SNAPSHOT_SCHEMA_VERSION,
+            scope_id: "comics:profile:remote-main".to_string(),
+            snapshot_version: 80,
+            min_replayable_server_version: 20,
+            entities: vec![SnapshotEntity {
+                entity_type: "comic.history".to_string(),
+                entity_id: record.history_id.clone(),
+                server_version: 79,
+                lamport: 12,
+                record: serde_json::to_value(record).unwrap(),
+            }],
+            tombstones: vec![SnapshotTombstone {
+                entity_type: "comic.page_bookmark".to_string(),
+                entity_id: "bookmark-old".to_string(),
+                server_version: 78,
+                lamport: 10,
+                deleted_at_ms: 90,
+                reason_code: "deleted".to_string(),
+            }],
+        };
+
+        let changes = comic_snapshot_changes(&snapshot, "remote-main").unwrap();
+        assert_eq!(changes.len(), 2);
+        assert_eq!(changes[0].op, "delete");
+        assert_eq!(changes[1].op, "merge");
+        let checkpoint = snapshot_checkpoint(&snapshot);
+        assert_eq!(checkpoint.last_applied_server_version, 80);
+        assert_eq!(
+            checkpoint.last_replay_mode,
+            SyncdReplicationReplayMode::RecoveryReplay
+        );
+
+        let books_snapshot = SnapshotResponse {
+            schema_version: SNAPSHOT_SCHEMA_VERSION,
+            scope_id: BOOKS_SCOPE_ID.to_string(),
+            snapshot_version: 80,
+            min_replayable_server_version: 20,
+            entities: Vec::new(),
+            tombstones: Vec::new(),
+        };
+        let novels_snapshot = SnapshotResponse {
+            schema_version: SNAPSHOT_SCHEMA_VERSION,
+            scope_id: "novels:profile:remote-main".to_string(),
+            snapshot_version: 80,
+            min_replayable_server_version: 20,
+            entities: Vec::new(),
+            tombstones: Vec::new(),
+        };
+        let mut profile = PersistedReplicationProfileState::default();
+        let marker = stage_snapshot_recovery(
+            &mut profile,
+            &books_snapshot,
+            &novels_snapshot,
+            &snapshot,
+            &changes,
+        );
+        assert_eq!(profile.pending_comic_reader_snapshot, Some(marker));
+        assert_eq!(profile.pending_comic_reader_changes.len(), changes.len());
+        assert_eq!(
+            profile.pending_comic_reader_changes[0].server_version,
+            changes[0].server_version
+        );
+        assert_eq!(
+            profile
+                .comics_scope_checkpoint
+                .as_ref()
+                .unwrap()
+                .last_applied_server_version,
+            80
+        );
+    }
+
+    fn receipt_fixture(
+        status: MutationResultStatus,
+    ) -> (SerializableMutationsRequest, MutationsResponse) {
+        let mutation = SerializableMutationInput::ComicHistory {
+            base: SerializableMutationBase {
+                client_mutation_id: "mutation-1".to_string(),
+                scope_id: "comics:profile:main".to_string(),
+                entity_id: "history-1".to_string(),
+                op: MutationOperation::Delete,
+                lamport: 1,
+            },
+            patch: None,
+        };
+        let request = SerializableMutationsRequest {
+            request_id: "request-1".to_string(),
+            mutations: vec![mutation],
+        };
+        let response = MutationsResponse {
+            request_id: "request-1".to_string(),
+            current_server_version: 1,
+            results: vec![MutationResult {
+                client_mutation_id: "mutation-1".to_string(),
+                entity_type: MutationEntityType::ComicHistory,
+                entity_id: "history-1".to_string(),
+                canonical_entity_id: None,
+                scope_id: "comics:profile:main".to_string(),
+                op: MutationOperation::Delete,
+                status,
+                applied_server_version: Some(1),
+                applied_lamport: Some(1),
+                record: None,
+                error: None,
+            }],
+        };
+        (request, response)
+    }
+
+    #[test]
+    fn mutation_receipts_require_applied_result_for_every_request() {
+        let (request, applied) = receipt_fixture(MutationResultStatus::Applied);
+        validate_mutation_receipts(&request, &applied).unwrap();
+
+        let (_, rejected) = receipt_fixture(MutationResultStatus::Rejected);
+        assert!(validate_mutation_receipts(&request, &rejected)
+            .unwrap_err()
+            .contains("rejected"));
+
+        let (_, mut missing) = receipt_fixture(MutationResultStatus::Applied);
+        missing.results.clear();
+        assert!(validate_mutation_receipts(&request, &missing)
+            .unwrap_err()
+            .contains("omitted receipt"));
     }
 
     #[test]
