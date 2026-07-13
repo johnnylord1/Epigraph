@@ -19,11 +19,11 @@ use crate::syncd::models::{
     canonical_novel_identity_key, BookBookmarkPatch, BookBookmarkRecord,
     BookCategoryAssignmentPatch, BookCategoryAssignmentRecord, BookCategoryPatch,
     BookCategoryRecord, BookEntryPatch, BookEntryRecord, BookLibraryUiPatch, BookLibraryUiRecord,
-    BookProgressPatch, BookProgressRecord, ChangeEnvelope, ErrorBody, MutationOperation,
-    NovelBookmarkPatch, NovelBookmarkRecord, NovelChapterPatch, NovelChapterRecord,
-    NovelClassificationPatch, NovelClassificationRecord, NovelEntryPatch, NovelEntryRecord,
-    NovelHistoryPatch, NovelHistoryRecord, NovelProgressPatch, NovelProgressRecord,
-    SyncdEffectiveDiscoverySource,
+    BookProgressPatch, BookProgressRecord, ChangeEnvelope, ComicHistoryPatch,
+    ComicPageBookmarkPatch, ErrorBody, MutationOperation, NovelBookmarkPatch, NovelBookmarkRecord,
+    NovelChapterPatch, NovelChapterRecord, NovelClassificationPatch, NovelClassificationRecord,
+    NovelEntryPatch, NovelEntryRecord, NovelHistoryPatch, NovelHistoryRecord, NovelProgressPatch,
+    NovelProgressRecord, SyncdEffectiveDiscoverySource,
 };
 use crate::syncd_desktop::{
     build_pinned_http_client, desktop_state_dir, is_connection_error, is_needs_reauth_error,
@@ -40,6 +40,7 @@ const CLIENT_PROTOCOL_VERSION: u32 = 1;
 const BOOKS_SCOPE_ID: &str = "books:global";
 const EVENT_REPLICATION_STATE: &str = "syncd-replication-state";
 const EVENT_REPLICATION_ERROR: &str = "syncd-replication-error";
+const EVENT_COMIC_READER_STATE_APPLIED: &str = "syncd-comic-reader-state-applied";
 const RECONNECT_DELAY: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -83,6 +84,7 @@ pub struct SyncdReplicationSnapshot {
     pub last_error: Option<String>,
     pub books_scope_checkpoint: Option<SyncdReplicationScopeCheckpoint>,
     pub novels_scope_checkpoint: Option<SyncdReplicationScopeCheckpoint>,
+    pub comics_scope_checkpoint: Option<SyncdReplicationScopeCheckpoint>,
     pub paused: bool,
     pub last_applied_scopes: Vec<String>,
     pub last_applied_at_ms: Option<i64>,
@@ -162,6 +164,10 @@ struct PersistedReplicationProfileState {
     last_error: Option<String>,
     books_scope_checkpoint: Option<SyncdReplicationScopeCheckpoint>,
     novels_scope_checkpoint: Option<SyncdReplicationScopeCheckpoint>,
+    #[serde(default)]
+    comics_scope_checkpoint: Option<SyncdReplicationScopeCheckpoint>,
+    #[serde(default)]
+    pending_comic_reader_changes: Vec<ChangeEnvelope>,
     per_entity_remote_clock: BTreeMap<String, i64>,
     last_local_snapshot_digest_books: Option<String>,
     last_local_snapshot_digest_novels: Option<String>,
@@ -180,6 +186,7 @@ impl PersistedReplicationProfileState {
             last_error: self.last_error.clone(),
             books_scope_checkpoint: self.books_scope_checkpoint.clone(),
             novels_scope_checkpoint: self.novels_scope_checkpoint.clone(),
+            comics_scope_checkpoint: self.comics_scope_checkpoint.clone(),
             paused: self.paused,
             last_applied_scopes: self.last_applied_scopes.clone(),
             last_applied_at_ms: self.last_applied_at_ms,
@@ -196,6 +203,8 @@ impl Default for PersistedReplicationProfileState {
             last_error: None,
             books_scope_checkpoint: None,
             novels_scope_checkpoint: None,
+            comics_scope_checkpoint: None,
+            pending_comic_reader_changes: Vec::new(),
             per_entity_remote_clock: BTreeMap::new(),
             last_local_snapshot_digest_books: None,
             last_local_snapshot_digest_novels: None,
@@ -620,6 +629,18 @@ enum SerializableMutationInput {
         base: SerializableMutationBase,
         patch: Option<NovelClassificationPatch>,
     },
+    #[serde(rename = "comic.history")]
+    ComicHistory {
+        #[serde(flatten)]
+        base: SerializableMutationBase,
+        patch: Option<ComicHistoryPatch>,
+    },
+    #[serde(rename = "comic.page_bookmark")]
+    ComicPageBookmark {
+        #[serde(flatten)]
+        base: SerializableMutationBase,
+        patch: Option<ComicPageBookmarkPatch>,
+    },
 }
 
 impl SerializableMutationInput {
@@ -637,6 +658,8 @@ impl SerializableMutationInput {
             Self::NovelBookmark { .. } => "novel.bookmark",
             Self::NovelHistory { .. } => "novel.history",
             Self::NovelClassification { .. } => "novel.classification",
+            Self::ComicHistory { .. } => "comic.history",
+            Self::ComicPageBookmark { .. } => "comic.page_bookmark",
         }
     }
 
@@ -652,7 +675,9 @@ impl SerializableMutationInput {
             | Self::NovelChapter { base, .. }
             | Self::NovelBookmark { base, .. }
             | Self::NovelHistory { base, .. }
-            | Self::NovelClassification { base, .. } => &base.op,
+            | Self::NovelClassification { base, .. }
+            | Self::ComicHistory { base, .. }
+            | Self::ComicPageBookmark { base, .. } => &base.op,
             Self::BookLibraryUi { base, .. } => &base.op,
         };
         match op {
@@ -673,10 +698,29 @@ impl SerializableMutationInput {
             | Self::NovelChapter { base, .. }
             | Self::NovelBookmark { base, .. }
             | Self::NovelHistory { base, .. }
-            | Self::NovelClassification { base, .. } => &base.entity_id,
+            | Self::NovelClassification { base, .. }
+            | Self::ComicHistory { base, .. }
+            | Self::ComicPageBookmark { base, .. } => &base.entity_id,
             Self::BookLibraryUi { base, .. } => &base.entity_id,
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncdPublishComicReaderMutationInput {
+    pub profile_id: String,
+    pub entity_type: String,
+    pub entity_id: String,
+    pub op: MutationOperation,
+    pub patch: Option<Value>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncdAckComicReaderChangesInput {
+    pub profile_id: String,
+    pub through_server_version: i64,
 }
 
 fn summarize_mutations(mutations: &[SerializableMutationInput]) -> String {
@@ -795,11 +839,23 @@ struct LocalNovelBookmark {
 struct RemoteApplyOutcome {
     books_changed: bool,
     novels_changed: bool,
+    comic_reader_changes: Vec<ChangeEnvelope>,
     applied_scopes: HashSet<String>,
 }
 
 fn novels_scope_id(remote_profile_id: &str) -> String {
     format!("novels:profile:{remote_profile_id}")
+}
+
+fn comics_scope_id(profile_id: &str) -> String {
+    format!("comics:profile:{profile_id}")
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncdComicReaderStateAppliedPayload {
+    pub local_profile_id: String,
+    pub changes: Vec<ChangeEnvelope>,
 }
 
 fn hash_digest(input: &str) -> String {
@@ -1284,6 +1340,11 @@ async fn replay_and_stream_remote(
                 .as_ref()
                 .map(|checkpoint| checkpoint.last_applied_server_version)
                 .unwrap_or_default(),
+            snapshot
+                .comics_scope_checkpoint
+                .as_ref()
+                .map(|checkpoint| checkpoint.last_applied_server_version)
+                .unwrap_or_default(),
         ]
         .into_iter()
         .min()
@@ -1351,6 +1412,11 @@ async fn replay_and_stream_local_authority(
                 .unwrap_or_default(),
             snapshot
                 .novels_scope_checkpoint
+                .as_ref()
+                .map(|checkpoint| checkpoint.last_applied_server_version)
+                .unwrap_or_default(),
+            snapshot
+                .comics_scope_checkpoint
                 .as_ref()
                 .map(|checkpoint| checkpoint.last_applied_server_version)
                 .unwrap_or_default(),
@@ -1634,6 +1700,7 @@ async fn apply_remote_envelopes(
     let mut novels_state = read_novels_state(launch_target, profile_id)?;
     let mut classification_state = read_novel_classification_state(launch_target, profile_id)?;
     let novels_scope = novels_scope_id(novels_profile_id);
+    let comics_scope = comics_scope_id(novels_profile_id);
     let mut outcome = RemoteApplyOutcome::default();
     let mut replication = load_replication_state()?;
     let profile = profile_state_mut(&mut replication, profile_id);
@@ -1645,6 +1712,8 @@ async fn apply_remote_envelopes(
             &mut profile.books_scope_checkpoint
         } else if envelope.scope_id == novels_scope {
             &mut profile.novels_scope_checkpoint
+        } else if envelope.scope_id == comics_scope {
+            &mut profile.comics_scope_checkpoint
         } else {
             continue;
         };
@@ -1788,6 +1857,9 @@ async fn apply_remote_envelopes(
                 }
                 classification_state.updated_at_ms = Some(now_ms());
             }
+            "comic.history" | "comic.page_bookmark" => {
+                outcome.comic_reader_changes.push(envelope.clone());
+            }
             _ => continue,
         }
         profile.per_entity_remote_clock.insert(
@@ -1819,6 +1891,17 @@ async fn apply_remote_envelopes(
     if classification_state.updated_at_ms.is_some() {
         write_novel_classification_state(launch_target, profile_id, &classification_state)?;
     }
+    if !outcome.comic_reader_changes.is_empty() {
+        for change in &outcome.comic_reader_changes {
+            profile
+                .pending_comic_reader_changes
+                .retain(|pending| pending.server_version != change.server_version);
+            profile.pending_comic_reader_changes.push(change.clone());
+        }
+        profile
+            .pending_comic_reader_changes
+            .sort_by_key(|change| change.server_version);
+    }
     if !outcome.applied_scopes.is_empty() {
         profile.last_applied_scopes = outcome.applied_scopes.iter().cloned().collect();
         profile.last_applied_at_ms = Some(now_ms());
@@ -1826,6 +1909,15 @@ async fn apply_remote_envelopes(
         profile.last_error = None;
         save_replication_state(&replication)?;
         let _ = emit_replication_state_for_profile(app, profile_id).await;
+    }
+    if !outcome.comic_reader_changes.is_empty() {
+        let _ = app.emit(
+            EVENT_COMIC_READER_STATE_APPLIED,
+            SyncdComicReaderStateAppliedPayload {
+                local_profile_id: profile_id.to_string(),
+                changes: outcome.comic_reader_changes,
+            },
+        );
     }
     Ok(())
 }
@@ -1905,6 +1997,175 @@ pub async fn notify_novel_source_classification_state_written(
         return Ok(());
     }
     submit_mutations_for_active_profiles(app, Some(profile_id), diff).await
+}
+
+async fn remote_profile_id_for_local_profile(
+    app: &AppHandle,
+    local_profile_id: &str,
+) -> Result<String, String> {
+    let local_authority_profile_id = {
+        let state = app.state::<SyncdReplicationState>();
+        let runtime = state.runtime.lock().await;
+        runtime
+            .local_authority
+            .get(local_profile_id)
+            .map(|authority| authority.profile_id.clone())
+    };
+    if let Some(profile_id) = local_authority_profile_id {
+        return Ok(profile_id);
+    }
+
+    let replication = load_replication_state()?;
+    let active_session_key = replication
+        .profiles
+        .get(local_profile_id)
+        .and_then(|profile| profile.active_session_key.as_deref())
+        .ok_or_else(|| "No active Core sync session for this profile.".to_string())?;
+    let desktop = load_persisted_state()?;
+    desktop
+        .sessions
+        .iter()
+        .find(|session| {
+            session.local_profile_id == local_profile_id
+                && session.session_key == active_session_key
+        })
+        .map(|session| session.remote_profile_id.clone())
+        .ok_or_else(|| "The active Core sync session no longer exists locally.".to_string())
+}
+
+#[tauri::command]
+pub fn syncd_get_comic_server_fingerprint(
+    app: AppHandle,
+    profile_id: String,
+) -> Result<String, String> {
+    let profile_id = profile_id.trim();
+    if profile_id.is_empty() || profile_id.contains('\0') {
+        return Err("profileId is invalid.".to_string());
+    }
+    let replication = load_replication_state()?;
+    if let Some(active_session_key) = replication
+        .profiles
+        .get(profile_id)
+        .and_then(|profile| profile.active_session_key.as_deref())
+    {
+        let desktop = load_persisted_state()?;
+        if let Some(session) = desktop.sessions.iter().find(|session| {
+            session.local_profile_id == profile_id && session.session_key == active_session_key
+        }) {
+            return Ok(session.tls_cert_sha256.clone());
+        }
+    }
+    if let Some(runtime) = crate::syncd_sidecar::current_runtime_info(&app) {
+        let raw = fs::read_to_string(PathBuf::from(runtime.data_dir).join("runtime.json"))
+            .map_err(|error| error.to_string())?;
+        let manifest = serde_json::from_str::<Value>(&raw).map_err(|error| error.to_string())?;
+        let fingerprint = manifest
+            .get("fingerprint")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .ok_or_else(|| "Core runtime fingerprint is invalid.".to_string())?;
+        return Ok(fingerprint.to_ascii_lowercase());
+    }
+    Err("No paired Core identity is available for this profile.".to_string())
+}
+
+#[tauri::command]
+pub async fn syncd_publish_comic_reader_mutation(
+    app: AppHandle,
+    input: SyncdPublishComicReaderMutationInput,
+) -> Result<(), String> {
+    let profile_id = input.profile_id.trim();
+    if profile_id.is_empty() || profile_id.contains('\0') {
+        return Err("profileId is invalid.".to_string());
+    }
+    let entity_id = input.entity_id.trim();
+    if entity_id.is_empty() || entity_id.contains('\0') {
+        return Err("entityId is invalid.".to_string());
+    }
+    let remote_profile_id = remote_profile_id_for_local_profile(&app, profile_id).await?;
+
+    let patch = input.patch;
+    let base = SerializableMutationBase {
+        client_mutation_id: Uuid::now_v7().to_string(),
+        scope_id: comics_scope_id(&remote_profile_id),
+        entity_id: entity_id.to_string(),
+        op: input.op.clone(),
+        lamport: now_ms(),
+    };
+    let mutation = match input.entity_type.trim() {
+        "comic.history" => SerializableMutationInput::ComicHistory {
+            base,
+            patch: match input.op {
+                MutationOperation::Merge => Some(
+                    serde_json::from_value::<ComicHistoryPatch>(
+                        patch.ok_or_else(|| "comic.history merge requires patch.".to_string())?,
+                    )
+                    .map_err(|error| format!("Invalid comic.history patch: {error}"))?,
+                ),
+                MutationOperation::Delete => None,
+            },
+        },
+        "comic.page_bookmark" => {
+            SerializableMutationInput::ComicPageBookmark {
+                base,
+                patch: match input.op {
+                    MutationOperation::Merge => Some(
+                        serde_json::from_value::<ComicPageBookmarkPatch>(patch.ok_or_else(
+                            || "comic.page_bookmark merge requires patch.".to_string(),
+                        )?)
+                        .map_err(|error| format!("Invalid comic.page_bookmark patch: {error}"))?,
+                    ),
+                    MutationOperation::Delete => None,
+                },
+            }
+        }
+        _ => return Err("Unsupported comic reader entityType.".to_string()),
+    };
+
+    submit_mutations_for_active_profiles(&app, Some(profile_id), vec![mutation]).await
+}
+
+#[tauri::command]
+pub fn syncd_get_pending_comic_reader_changes(
+    profile_id: String,
+) -> Result<SyncdComicReaderStateAppliedPayload, String> {
+    let profile_id = profile_id.trim();
+    if profile_id.is_empty() || profile_id.contains('\0') {
+        return Err("profileId is invalid.".to_string());
+    }
+    let replication = load_replication_state()?;
+    let mut changes = replication
+        .profiles
+        .get(profile_id)
+        .map(|profile| profile.pending_comic_reader_changes.clone())
+        .unwrap_or_default();
+    changes.sort_by_key(|change| change.server_version);
+    Ok(SyncdComicReaderStateAppliedPayload {
+        local_profile_id: profile_id.to_string(),
+        changes,
+    })
+}
+
+#[tauri::command]
+pub fn syncd_ack_comic_reader_changes(
+    input: SyncdAckComicReaderChangesInput,
+) -> Result<(), String> {
+    let profile_id = input.profile_id.trim();
+    if profile_id.is_empty() || profile_id.contains('\0') {
+        return Err("profileId is invalid.".to_string());
+    }
+    if input.through_server_version < 0 {
+        return Err("throughServerVersion must be non-negative.".to_string());
+    }
+    let mut replication = load_replication_state()?;
+    if let Some(profile) = replication.profiles.get_mut(profile_id) {
+        profile
+            .pending_comic_reader_changes
+            .retain(|change| change.server_version > input.through_server_version);
+        save_replication_state(&replication)?;
+    }
+    Ok(())
 }
 
 fn upsert_book_progress(state: &mut PersistedBookLibraryState, record: BookProgressRecord) {
@@ -2752,6 +3013,9 @@ async fn submit_mutations_for_active_profiles(
         mutations.len(),
         summarize_mutations(&mutations)
     ));
+    let mut attempted = false;
+    let mut delivered = false;
+    let mut last_delivery_error: Option<String> = None;
     for (profile_id, profile) in &replication.profiles {
         if restrict_profile_id.is_some() && restrict_profile_id != Some(profile_id.as_str()) {
             continue;
@@ -2764,11 +3028,13 @@ async fn submit_mutations_for_active_profiles(
             continue;
         }
         if let Some(authority) = local_authority.get(profile_id) {
+            attempted = true;
             replication_log(format!(
                 "submit_mutations target profile_id={} mode=local_authority base_url={}",
                 profile_id, authority.local_base_url
             ));
             if let Err(error) = post_mutations_for_local_authority(authority, &mutations).await {
+                last_delivery_error = Some(error.clone());
                 replication_log(format!(
                     "submit_mutations result profile_id={} mode=local_authority status=error error={}",
                     profile_id, error
@@ -2786,6 +3052,7 @@ async fn submit_mutations_for_active_profiles(
                 });
                 let _ = emit_replication_state_for_profile(app, profile_id).await;
             } else {
+                delivered = true;
                 replication_log(format!(
                     "submit_mutations result profile_id={} mode=local_authority status=ok",
                     profile_id
@@ -2805,11 +3072,13 @@ async fn submit_mutations_for_active_profiles(
             ));
             continue;
         };
+        attempted = true;
         replication_log(format!(
             "submit_mutations target profile_id={} mode=remote canonical_origin={}",
             profile_id, session.canonical_origin
         ));
         if let Err(error) = post_mutations_for_session(session, &mutations).await {
+            last_delivery_error = Some(error.clone());
             replication_log(format!(
                 "submit_mutations result profile_id={} mode=remote status=error error={}",
                 profile_id, error
@@ -2827,11 +3096,21 @@ async fn submit_mutations_for_active_profiles(
             });
             let _ = emit_replication_state_for_profile(app, profile_id).await;
         } else {
+            delivered = true;
             replication_log(format!(
                 "submit_mutations result profile_id={} mode=remote status=ok",
                 profile_id
             ));
         }
+    }
+    if restrict_profile_id.is_some() && !delivered {
+        return Err(last_delivery_error.unwrap_or_else(|| {
+            if attempted {
+                "Core rejected the comic reader mutation.".to_string()
+            } else {
+                "No active Core sync endpoint for this profile.".to_string()
+            }
+        }));
     }
     Ok(())
 }
@@ -3401,6 +3680,53 @@ mod tests {
         assert!(!secondary.actions.can_pause);
         assert!(!secondary.actions.can_resume);
         assert!(secondary.actions.can_forget);
+    }
+
+    #[test]
+    fn comic_history_mutation_serializes_with_profile_scope() {
+        let comic_id = format!("suwayomi:{}:manga:42", "a".repeat(64));
+        let history_id = format!("comic.history::{comic_id}");
+        let mutation = SerializableMutationInput::ComicHistory {
+            base: SerializableMutationBase {
+                client_mutation_id: "mutation-a".to_string(),
+                scope_id: "comics:profile:remote-a".to_string(),
+                entity_id: history_id.clone(),
+                op: MutationOperation::Merge,
+                lamport: 123,
+            },
+            patch: Some(ComicHistoryPatch {
+                history_id: history_id.clone(),
+                comic_id,
+                chapter_id: "9".to_string(),
+                page_index: 3,
+                page_count: Some(20),
+                progress_percent: 0.2,
+                read_at_ms: 123,
+            }),
+        };
+        let value = serde_json::to_value(mutation).unwrap();
+        assert_eq!(value["entityType"], "comic.history");
+        assert_eq!(value["scopeId"], "comics:profile:remote-a");
+        assert_eq!(value["entityId"], history_id);
+        assert_eq!(value["op"], "merge");
+    }
+
+    #[test]
+    fn old_replication_profiles_default_new_comic_state_fields() {
+        let mut value = serde_json::to_value(PersistedReplicationState {
+            profiles: BTreeMap::from([(
+                "local-a".to_string(),
+                PersistedReplicationProfileState::default(),
+            )]),
+        })
+        .unwrap();
+        let profile = value["profiles"]["local-a"].as_object_mut().unwrap();
+        profile.remove("comicsScopeCheckpoint");
+        profile.remove("pendingComicReaderChanges");
+        let decoded: PersistedReplicationState = serde_json::from_value(value).unwrap();
+        let profile = decoded.profiles.get("local-a").unwrap();
+        assert!(profile.comics_scope_checkpoint.is_none());
+        assert!(profile.pending_comic_reader_changes.is_empty());
     }
 
     #[test]
