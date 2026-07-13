@@ -30,6 +30,15 @@ const LEGACY_ACTIVITY_TOKENS = [
   "--activity-accent-line",
   "--activity-danger",
 ];
+const LEGACY_SURFACES = [
+  "Discover.svelte",
+  "Extensions.svelte",
+  "NovelSources.svelte",
+  "NovelsLibraryBody.svelte",
+  "Tracking.svelte",
+  "GenreDrillPage.svelte",
+  "NovelRepositoriesPanel.svelte",
+];
 
 function readProjectFile(path: string) {
   return readFileSync(resolve(ROOT, path), "utf8");
@@ -78,15 +87,7 @@ describe("App theme compatibility contract", () => {
       "src/components/pages/Library.svelte",
     ].map(readProjectFile).join("\n");
 
-    for (const legacySurface of [
-      "Discover.svelte",
-      "Extensions.svelte",
-      "NovelSources.svelte",
-      "NovelsLibraryBody.svelte",
-      "Tracking.svelte",
-      "GenreDrillPage.svelte",
-      "NovelRepositoriesPanel.svelte",
-    ]) {
+    for (const legacySurface of LEGACY_SURFACES) {
       expect(activeShell, legacySurface).not.toContain(legacySurface);
     }
 
@@ -94,6 +95,36 @@ describe("App theme compatibility contract", () => {
       'import Extensions from "./components/pages/Extensions.svelte"',
     );
     expect(readProjectFile("src/main.ts")).not.toContain("./routes");
+  });
+
+  it("keeps legacy navigation aliases quarantined to the active Search surface", () => {
+    const state = readProjectFile("src/store/state.svelte.ts");
+    const layout = readProjectFile("src/components/layout/Layout.svelte");
+    const search = readProjectFile("src/components/pages/Search.svelte");
+
+    expect(state).toContain('savedNavPage === "explore"');
+    expect(state).toContain('savedNavPage === "extensions"');
+    expect(state).toContain('savedNavPage === "sources"');
+    expect(state).toContain('return "search"');
+    expect(layout).toContain('search: () => import("../pages/Search.svelte")');
+    expect(search).toContain('import BrowseV3 from "./BrowseV3.svelte"');
+    expect(search).not.toContain("Discover.svelte");
+    expect(search).not.toContain("Extensions.svelte");
+  });
+
+  it("keeps legacy diagnostic hosts explicit until runtime evidence changes", () => {
+    const discover = readProjectFile("src/components/pages/Discover.svelte");
+    const routes = readProjectFile("src/routes.ts");
+    const novelSources = readProjectFile("src/components/pages/NovelSources.svelte");
+    const novelRepositories = readProjectFile("src/components/settings/NovelRepositoriesPanel.svelte");
+    const settings = readProjectFile("src/components/settings/Settings.svelte");
+
+    expect(discover).toContain('import SourceBrowse from "../shared/SourceBrowse.svelte"');
+    expect(routes).toContain('import Extensions from "./components/pages/Extensions.svelte"');
+    expect(novelSources).toContain('import NovelSourceStatusDetails from "../novels/NovelSourceStatusDetails.svelte"');
+    expect(novelRepositories).toContain('import NovelSourceCheckModal');
+    expect(novelRepositories).toContain('import NovelSourceStatusDetails');
+    expect(settings).not.toContain("NovelRepositoriesPanel");
   });
 
   it("keeps unreferenced compatibility aliases classified as Legacy", () => {

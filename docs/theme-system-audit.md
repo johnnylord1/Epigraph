@@ -2427,3 +2427,64 @@ Categorias cobertas:
 - `pnpm build`: verde com 6.299 modulos; permanece apenas o aviso conhecido de chunk acima de 500 kB.
 - `git diff --check`: verde.
 - Artefatos `.actual` e screenshots diagnosticos do runner foram removidos; somente o baseline valido e as sete evidencias reais finais permanecem.
+
+## Marco 31 - Legacy Surface Proof/Quarantine
+
+### Escopo
+
+- Marco de evidencia, sem alteracao visual, sem remocao de codigo e sem criacao de tema novo.
+- Revalidar as superficies classificadas como Legacy apos o Marco 30 contra imports ativos, shell real, rotas antigas, aliases de navegacao, hosts de diagnostico e contratos de teste.
+- Syncd permaneceu fora do escopo por decisao de produto. Ele e ativo em Settings, mas a validacao visual com sessao persistida real continua como trabalho futuro separado.
+
+### Evidencias de rota ativa
+
+- `src/main.ts` monta diretamente `App.svelte` e nao importa `src/routes.ts`.
+- `Layout.svelte` carrega somente `Home.svelte`, `Library.svelte`, `Search.svelte`, `Downloads.svelte` e `Settings.svelte` como paginas principais.
+- `Search.svelte` renderiza `BrowseV3.svelte`; a superficie antiga `Discover.svelte` nao participa desse caminho.
+- `state.svelte.ts` normaliza navs persistidas antigas `explore`, `extensions` e `sources` para `search`, mantendo compatibilidade sem reativar `Extensions.svelte`.
+
+### Inventario de quarentena
+
+| Superficie | Classificacao | Evidencia atual | Decisao |
+| --- | --- | --- | --- |
+| `Discover.svelte` | Legacy | Hospeda `SourceBrowse.svelte`, mas a rota ativa de Search usa `BrowseV3.svelte`. | Manter. Nao migrar/remover sem prova de deep link ou reativacao. |
+| `Extensions.svelte` | Legacy de rota antiga | Importado por `routes.ts`; `main.ts` nao usa `routes.ts` e nav antiga `extensions` normaliza para `search`. | Manter como compatibilidade ate auditoria de entrypoints/deep links. |
+| `SourceBrowse.svelte` | Legacy acoplado | Host estatico encontrado em `Discover.svelte`. | Manter junto da decisao sobre `Discover.svelte`. |
+| `SourceList.svelte` | Legacy incerto | Sem host ativo comprovado; ainda mantido por conservadorismo. | Nao classificar como morto sem validacao runtime/deep links. |
+| `NovelSources.svelte` | Legacy preparado | Possui testes e renderiza `NovelSourceStatusDetails.svelte`, mas nao aparece no shell ativo. | Manter ate existir rota/flag real. |
+| `NovelSourceCheckModal.svelte` | Legacy acoplado | Host em `NovelRepositoriesPanel.svelte`. | Manter junto da decisao sobre Novel Repositories. |
+| `NovelSourceStatusDetails.svelte` | Legacy acoplado | Host em `NovelRepositoriesPanel.svelte` e `NovelSources.svelte`. | Manter junto dos hosts. |
+| `NovelRepositoriesPanel.svelte` | Legacy preparado | Migrado no Marco 18; `Settings.svelte` ativo nao o importa. | Manter, sem remover nem reanexar automaticamente. |
+| `NovelsLibraryBody.svelte` | Legacy | Library ativa usa `LibraryShell` e corpos atuais, nao este componente antigo. | Manter ate fechar ownership de novels na Library. |
+| `Tracking.svelte` | Legacy | Tracking ativo acontece pelos paineis `TrackingPanel`/`NovelTrackingPanel`; pagina antiga sem rota ativa comprovada. | Manter ate auditoria de integrações/rotas. |
+| `GenreDrillPage.svelte` | Legacy | Sem caminho ativo comprovado no shell atual. | Manter ate auditoria de navegacao indireta a partir de Browse/Search. |
+| `routes.ts` | Legacy de navegacao | Continua importando `Extensions.svelte`, mas nao e usado pelo entrypoint atual. | Manter ate prova de ausencia em entrypoints externos. |
+
+### Tokens e compatibilidade
+
+- Nenhum token Legacy foi removido.
+- A camada `--n-*` permanece mista: 53 aliases Ativos por compatibilidade e 9 Legacy documentados no Marco 24/28E.
+- Os 13 aliases `--activity-*` continuam Legacy de compatibilidade.
+- `nocturne-port.css` segue como camada port/compat com valores diretos historicos. O gate final de component tokens continua exigindo zero cor literal em `--component-*` ativos, salvo allowlist documentada.
+
+### Testes
+
+- `AppThemeCompatibilityTokens.test.ts` foi reforcado para:
+  - preservar `--n-hud-scale` como publicador ativo de compatibilidade;
+  - garantir que superficies Legacy auditadas nao entrem no shell ativo;
+  - garantir que aliases de navegacao antigos continuam normalizados para `search`;
+  - registrar explicitamente hosts Legacy acoplados (`Discover -> SourceBrowse`, `NovelRepositoriesPanel -> NovelSourceCheckModal/NovelSourceStatusDetails`, `NovelSources -> NovelSourceStatusDetails`);
+  - manter `NovelRepositoriesPanel` fora de `Settings.svelte` ativo.
+
+### Validacao
+
+- Marco sem mudancas visuais. Screenshots reais nao foram recapturadas porque nenhum componente visual, token, layout, superficie ou tema foi alterado.
+- Teste focado: `pnpm test:unit -- src/AppThemeCompatibilityTokens.test.ts`; 1 arquivo e 6 testes verdes.
+- `pnpm build`: verde com 6.299 modulos; permanece apenas o aviso conhecido de chunk acima de 500 kB.
+- `git diff --check`: verde, com avisos esperados de normalizacao LF/CRLF no Windows.
+
+### Riscos restantes
+
+- Nenhuma superficie da quarentena deve ser removida ate haver prova de ausencia em deep links, estado persistido, entrypoints alternativos, flags e runtime real com backend disponivel.
+- Se alguma superficie Legacy for reativada, ela deve virar um marco proprio de migracao ou reanexacao, com screenshots reais antes/depois.
+- Syncd continua fora deste plano e deve receber validacao propria somente quando houver sessao persistida real disponivel.
