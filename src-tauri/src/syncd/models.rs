@@ -1238,7 +1238,7 @@ pub struct ComicPageBookmarkPatch {
     pub saved_at_ms: i64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MutationsResponse {
     pub request_id: String,
