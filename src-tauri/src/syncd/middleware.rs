@@ -83,8 +83,10 @@ pub fn validate_client_version_fields(
 }
 
 pub fn validate_scope(session: &AuthenticatedSession, scope: &str) -> Result<(), AppError> {
-    let expected = format!("novels:profile:{}", session.profile_id);
-    let scope_is_available = scope == "books:global" || scope == expected;
+    let novel_scope = format!("novels:profile:{}", session.profile_id);
+    let comic_scope = format!("comics:profile:{}", session.profile_id);
+    let scope_is_available =
+        scope == "books:global" || scope == novel_scope || scope == comic_scope;
     if scope_is_available && session.scopes.contains(scope) {
         return Ok(());
     }
@@ -107,7 +109,10 @@ pub fn filter_allowed_scopes<'a>(
     }
 
     for scope in &session.scopes {
-        if scope == "books:global" || scope == &format!("novels:profile:{}", session.profile_id) {
+        if scope == "books:global"
+            || scope == &format!("novels:profile:{}", session.profile_id)
+            || scope == &format!("comics:profile:{}", session.profile_id)
+        {
             allowed.insert(scope.clone());
         }
     }
@@ -271,13 +276,16 @@ mod tests {
             scopes: BTreeSet::from([
                 "books:global".to_string(),
                 "novels:profile:main".to_string(),
+                "comics:profile:main".to_string(),
             ]),
             mutation_receipt: None,
         };
 
         assert!(validate_scope(&session, "books:global").is_ok());
         assert!(validate_scope(&session, "novels:profile:main").is_ok());
+        assert!(validate_scope(&session, "comics:profile:main").is_ok());
         assert!(validate_scope(&session, "novels:profile:test").is_err());
+        assert!(validate_scope(&session, "comics:profile:test").is_err());
     }
 
     #[test]

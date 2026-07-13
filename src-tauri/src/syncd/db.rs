@@ -16,13 +16,14 @@ use super::models::{
     BookCategoryAssignmentRecord, BookCategoryAssignmentRow, BookCategoryPatch, BookCategoryRecord,
     BookCategoryRow, BookEntryPatch, BookEntryRecord, BookEntryRow, BookLibraryUiPatch,
     BookLibraryUiRecord, BookLibraryUiRow, BookProgressPatch, BookProgressRecord, BookProgressRow,
-    ChangeEnvelope, ChangeLogRow, MutationOperation, MutationReceiptContext, MutationResult,
-    MutationResultStatus, NovelBookmarkPatch, NovelBookmarkRecord, NovelBookmarkRow,
-    NovelChapterPatch, NovelChapterRecord, NovelChapterRow, NovelClassificationPatch,
-    NovelClassificationRecord, NovelClassificationRow, NovelEntryPatch, NovelEntryRecord,
-    NovelEntryRow, NovelHistoryPatch, NovelHistoryRecord, NovelHistoryRow, NovelProgressPatch,
-    NovelProgressRecord, NovelProgressRow, PairingGrantVia, PairingPlatform, ServerRuntimeRow,
-    SnapshotEntity, SnapshotResponse, SnapshotTombstone, SNAPSHOT_SCHEMA_VERSION,
+    ChangeEnvelope, ChangeLogRow, ComicHistoryPatch, ComicHistoryRecord, ComicHistoryRow,
+    ComicPageBookmarkPatch, ComicPageBookmarkRecord, ComicPageBookmarkRow, MutationOperation,
+    MutationReceiptContext, MutationResult, MutationResultStatus, NovelBookmarkPatch,
+    NovelBookmarkRecord, NovelBookmarkRow, NovelChapterPatch, NovelChapterRecord, NovelChapterRow,
+    NovelClassificationPatch, NovelClassificationRecord, NovelClassificationRow, NovelEntryPatch,
+    NovelEntryRecord, NovelEntryRow, NovelHistoryPatch, NovelHistoryRecord, NovelHistoryRow,
+    NovelProgressPatch, NovelProgressRecord, NovelProgressRow, PairingGrantVia, PairingPlatform,
+    ServerRuntimeRow, SnapshotEntity, SnapshotResponse, SnapshotTombstone, SNAPSHOT_SCHEMA_VERSION,
 };
 
 #[derive(Debug, Clone, FromRow, Serialize)]
@@ -566,6 +567,46 @@ pub async fn load_scope_snapshot(
                 server_version,
                 lamport,
                 NovelClassificationRecord::try_from(row)?,
+            )?;
+        }
+    } else if scope_id.starts_with("comics:profile:") {
+        let rows = sqlx::query_as::<_, ComicHistoryRow>(
+            "SELECT * FROM comic_history WHERE scope_id = ? ORDER BY history_id",
+        )
+        .bind(scope_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in rows {
+            let entity_id = row.history_id.clone();
+            let server_version = row.record_server_version;
+            let lamport = row.record_lamport;
+            push_snapshot_entity(
+                &mut entities,
+                "comic.history",
+                entity_id,
+                server_version,
+                lamport,
+                ComicHistoryRecord::from(row),
+            )?;
+        }
+
+        let rows = sqlx::query_as::<_, ComicPageBookmarkRow>(
+            "SELECT * FROM comic_page_bookmarks WHERE scope_id = ? ORDER BY bookmark_id",
+        )
+        .bind(scope_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in rows {
+            let entity_id = row.bookmark_id.clone();
+            let server_version = row.record_server_version;
+            let lamport = row.record_lamport;
+            push_snapshot_entity(
+                &mut entities,
+                "comic.page_bookmark",
+                entity_id,
+                server_version,
+                lamport,
+                ComicPageBookmarkRecord::from(row),
             )?;
         }
     } else {
@@ -3295,6 +3336,349 @@ pub async fn delete_novel_bookmark_mutation(
     })
 }
 
+pub async fn apply_comic_history_mutation(
+    pool: &sqlx::SqlitePool,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_id: &str,
+    patch: &ComicHistoryPatch,
+    client_lamport: i64,
+    retention_window: Duration,
+) -> anyhow::Result<MutationWriteOutcome> {
+    let mut tx = pool.begin().await?;
+    let current = sqlx::query_as::<_, ComicHistoryRow>(
+        r#"
+        SELECT
+            scope_id, history_id, comic_id, chapter_id, page_index, page_count,
+            progress_percent, read_at_ms, record_updated_at_ms,
+            record_updated_by_device_id, record_lamport, record_server_version
+        FROM comic_history
+        WHERE scope_id = ? AND history_id = ?
+        "#,
+    )
+    .bind(scope_id)
+    .bind(entity_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "comic.history", entity_id).await?;
+    if let Some(tombstone) = tombstone.as_ref() {
+        ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
+    }
+
+    let merged = merge_comic_history(current.map(Into::into), entity_id, patch, client_lamport)?;
+    let record = serde_json::to_value(&merged)?;
+    let (server_version, applied_at_ms) = append_change_log_in_tx(
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        "comic.history",
+        entity_id,
+        "merge",
+        merged.record_lamport,
+        session,
+        Some(&record),
+        retention_window,
+    )
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO comic_history (
+            scope_id, history_id, comic_id, chapter_id, page_index, page_count,
+            progress_percent, read_at_ms, record_updated_at_ms,
+            record_updated_by_device_id, record_lamport, record_server_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(scope_id, history_id) DO UPDATE SET
+            comic_id = excluded.comic_id,
+            chapter_id = excluded.chapter_id,
+            page_index = excluded.page_index,
+            page_count = excluded.page_count,
+            progress_percent = excluded.progress_percent,
+            read_at_ms = excluded.read_at_ms,
+            record_updated_at_ms = excluded.record_updated_at_ms,
+            record_updated_by_device_id = excluded.record_updated_by_device_id,
+            record_lamport = excluded.record_lamport,
+            record_server_version = excluded.record_server_version
+        "#,
+    )
+    .bind(scope_id)
+    .bind(entity_id)
+    .bind(&merged.comic_id)
+    .bind(&merged.chapter_id)
+    .bind(merged.page_index)
+    .bind(merged.page_count)
+    .bind(merged.progress_percent)
+    .bind(merged.read_at_ms)
+    .bind(applied_at_ms)
+    .bind(&session.device_id)
+    .bind(merged.record_lamport)
+    .bind(server_version)
+    .execute(&mut *tx)
+    .await?;
+
+    if tombstone.is_some() {
+        delete_tombstone_in_tx(&mut tx, scope_id, "comic.history", entity_id).await?;
+    }
+    tx.commit().await?;
+
+    Ok(MutationWriteOutcome {
+        envelope: ChangeEnvelope {
+            server_version,
+            scope_id: scope_id.to_string(),
+            profile_id: Some(session.profile_id.clone()),
+            entity_type: "comic.history".to_string(),
+            entity_id: entity_id.to_string(),
+            op: "merge".to_string(),
+            lamport: merged.record_lamport,
+            patch: Some(record.clone()),
+            applied_at_ms,
+        },
+        record,
+        applied_lamport: merged.record_lamport,
+    })
+}
+
+pub async fn delete_comic_history_mutation(
+    pool: &sqlx::SqlitePool,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_id: &str,
+    client_lamport: i64,
+    retention_window: Duration,
+) -> anyhow::Result<MutationWriteOutcome> {
+    let mut tx = pool.begin().await?;
+    let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "comic.history", entity_id).await?;
+    if let Some(tombstone) = tombstone.as_ref() {
+        ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
+    }
+    sqlx::query("DELETE FROM comic_history WHERE scope_id = ? AND history_id = ?")
+        .bind(scope_id)
+        .bind(entity_id)
+        .execute(&mut *tx)
+        .await?;
+    let applied_lamport = tombstone
+        .as_ref()
+        .map(|value| next_lamport(value.lamport, client_lamport))
+        .unwrap_or(client_lamport);
+    let (server_version, applied_at_ms) = append_change_log_in_tx(
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        "comic.history",
+        entity_id,
+        "delete",
+        applied_lamport,
+        session,
+        None,
+        retention_window,
+    )
+    .await?;
+    upsert_tombstone_in_tx(
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        "comic.history",
+        entity_id,
+        &session.device_id,
+        applied_lamport,
+        applied_at_ms,
+        server_version,
+        retention_window,
+        "comic_history_deleted",
+    )
+    .await?;
+    tx.commit().await?;
+
+    Ok(MutationWriteOutcome {
+        envelope: ChangeEnvelope {
+            server_version,
+            scope_id: scope_id.to_string(),
+            profile_id: Some(session.profile_id.clone()),
+            entity_type: "comic.history".to_string(),
+            entity_id: entity_id.to_string(),
+            op: "delete".to_string(),
+            lamport: applied_lamport,
+            patch: None,
+            applied_at_ms,
+        },
+        record: Value::Null,
+        applied_lamport,
+    })
+}
+
+pub async fn apply_comic_page_bookmark_mutation(
+    pool: &sqlx::SqlitePool,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_id: &str,
+    patch: &ComicPageBookmarkPatch,
+    client_lamport: i64,
+    retention_window: Duration,
+) -> anyhow::Result<MutationWriteOutcome> {
+    let mut tx = pool.begin().await?;
+    let current = sqlx::query_as::<_, ComicPageBookmarkRow>(
+        r#"
+        SELECT
+            scope_id, bookmark_id, comic_id, chapter_id, page_index, page_count,
+            label, saved_at_ms, record_updated_at_ms, record_updated_by_device_id,
+            record_lamport, record_server_version
+        FROM comic_page_bookmarks
+        WHERE scope_id = ? AND bookmark_id = ?
+        "#,
+    )
+    .bind(scope_id)
+    .bind(entity_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let tombstone =
+        load_tombstone_in_tx(&mut tx, scope_id, "comic.page_bookmark", entity_id).await?;
+    if let Some(tombstone) = tombstone.as_ref() {
+        ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
+    }
+
+    let merged =
+        merge_comic_page_bookmark(current.map(Into::into), entity_id, patch, client_lamport)?;
+    let record = serde_json::to_value(&merged)?;
+    let (server_version, applied_at_ms) = append_change_log_in_tx(
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        "comic.page_bookmark",
+        entity_id,
+        "merge",
+        merged.record_lamport,
+        session,
+        Some(&record),
+        retention_window,
+    )
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO comic_page_bookmarks (
+            scope_id, bookmark_id, comic_id, chapter_id, page_index, page_count,
+            label, saved_at_ms, record_updated_at_ms, record_updated_by_device_id,
+            record_lamport, record_server_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(scope_id, bookmark_id) DO UPDATE SET
+            comic_id = excluded.comic_id,
+            chapter_id = excluded.chapter_id,
+            page_index = excluded.page_index,
+            page_count = excluded.page_count,
+            label = excluded.label,
+            saved_at_ms = excluded.saved_at_ms,
+            record_updated_at_ms = excluded.record_updated_at_ms,
+            record_updated_by_device_id = excluded.record_updated_by_device_id,
+            record_lamport = excluded.record_lamport,
+            record_server_version = excluded.record_server_version
+        "#,
+    )
+    .bind(scope_id)
+    .bind(entity_id)
+    .bind(&merged.comic_id)
+    .bind(&merged.chapter_id)
+    .bind(merged.page_index)
+    .bind(merged.page_count)
+    .bind(merged.label.as_deref())
+    .bind(merged.saved_at_ms)
+    .bind(applied_at_ms)
+    .bind(&session.device_id)
+    .bind(merged.record_lamport)
+    .bind(server_version)
+    .execute(&mut *tx)
+    .await?;
+
+    if tombstone.is_some() {
+        delete_tombstone_in_tx(&mut tx, scope_id, "comic.page_bookmark", entity_id).await?;
+    }
+    tx.commit().await?;
+
+    Ok(MutationWriteOutcome {
+        envelope: ChangeEnvelope {
+            server_version,
+            scope_id: scope_id.to_string(),
+            profile_id: Some(session.profile_id.clone()),
+            entity_type: "comic.page_bookmark".to_string(),
+            entity_id: entity_id.to_string(),
+            op: "merge".to_string(),
+            lamport: merged.record_lamport,
+            patch: Some(record.clone()),
+            applied_at_ms,
+        },
+        record,
+        applied_lamport: merged.record_lamport,
+    })
+}
+
+pub async fn delete_comic_page_bookmark_mutation(
+    pool: &sqlx::SqlitePool,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_id: &str,
+    client_lamport: i64,
+    retention_window: Duration,
+) -> anyhow::Result<MutationWriteOutcome> {
+    let mut tx = pool.begin().await?;
+    let tombstone =
+        load_tombstone_in_tx(&mut tx, scope_id, "comic.page_bookmark", entity_id).await?;
+    if let Some(tombstone) = tombstone.as_ref() {
+        ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
+    }
+    sqlx::query("DELETE FROM comic_page_bookmarks WHERE scope_id = ? AND bookmark_id = ?")
+        .bind(scope_id)
+        .bind(entity_id)
+        .execute(&mut *tx)
+        .await?;
+    let applied_lamport = tombstone
+        .as_ref()
+        .map(|value| next_lamport(value.lamport, client_lamport))
+        .unwrap_or(client_lamport);
+    let (server_version, applied_at_ms) = append_change_log_in_tx(
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        "comic.page_bookmark",
+        entity_id,
+        "delete",
+        applied_lamport,
+        session,
+        None,
+        retention_window,
+    )
+    .await?;
+    upsert_tombstone_in_tx(
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        "comic.page_bookmark",
+        entity_id,
+        &session.device_id,
+        applied_lamport,
+        applied_at_ms,
+        server_version,
+        retention_window,
+        "comic_page_bookmark_deleted",
+    )
+    .await?;
+    tx.commit().await?;
+
+    Ok(MutationWriteOutcome {
+        envelope: ChangeEnvelope {
+            server_version,
+            scope_id: scope_id.to_string(),
+            profile_id: Some(session.profile_id.clone()),
+            entity_type: "comic.page_bookmark".to_string(),
+            entity_id: entity_id.to_string(),
+            op: "delete".to_string(),
+            lamport: applied_lamport,
+            patch: None,
+            applied_at_ms,
+        },
+        record: Value::Null,
+        applied_lamport,
+    })
+}
+
 async fn append_change_log_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     scope_id: &str,
@@ -3910,6 +4294,70 @@ fn merge_novel_bookmark(
                 ..winner
             }
         }
+    })
+}
+
+fn merge_comic_history(
+    current: Option<ComicHistoryRecord>,
+    entity_id: &str,
+    patch: &ComicHistoryPatch,
+    client_lamport: i64,
+) -> anyhow::Result<ComicHistoryRecord> {
+    anyhow::ensure!(
+        patch.history_id == entity_id,
+        "comic history patch history_id must match entity_id"
+    );
+    if let Some(existing) = current.as_ref() {
+        anyhow::ensure!(
+            existing.comic_id == patch.comic_id,
+            "comic history parent comic_id is immutable"
+        );
+    }
+    let applied_lamport = current
+        .as_ref()
+        .map(|existing| next_lamport(existing.record_lamport, client_lamport))
+        .unwrap_or(client_lamport);
+    Ok(ComicHistoryRecord {
+        history_id: entity_id.to_string(),
+        comic_id: patch.comic_id.clone(),
+        chapter_id: patch.chapter_id.clone(),
+        page_index: patch.page_index,
+        page_count: patch.page_count,
+        progress_percent: patch.progress_percent,
+        read_at_ms: patch.read_at_ms,
+        record_lamport: applied_lamport,
+    })
+}
+
+fn merge_comic_page_bookmark(
+    current: Option<ComicPageBookmarkRecord>,
+    entity_id: &str,
+    patch: &ComicPageBookmarkPatch,
+    client_lamport: i64,
+) -> anyhow::Result<ComicPageBookmarkRecord> {
+    anyhow::ensure!(
+        patch.bookmark_id == entity_id,
+        "comic page bookmark patch bookmark_id must match entity_id"
+    );
+    if let Some(existing) = current.as_ref() {
+        anyhow::ensure!(
+            existing.comic_id == patch.comic_id,
+            "comic page bookmark parent comic_id is immutable"
+        );
+    }
+    let applied_lamport = current
+        .as_ref()
+        .map(|existing| next_lamport(existing.record_lamport, client_lamport))
+        .unwrap_or(client_lamport);
+    Ok(ComicPageBookmarkRecord {
+        bookmark_id: entity_id.to_string(),
+        comic_id: patch.comic_id.clone(),
+        chapter_id: patch.chapter_id.clone(),
+        page_index: patch.page_index,
+        page_count: patch.page_count,
+        label: normalize_optional_string(patch.label.as_deref()),
+        saved_at_ms: patch.saved_at_ms,
+        record_lamport: applied_lamport,
     })
 }
 

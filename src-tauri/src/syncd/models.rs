@@ -249,7 +249,7 @@ pub struct CapabilitiesResponse {
 
 pub const SNAPSHOT_SCHEMA_VERSION: u32 = 1;
 
-pub const SNAPSHOT_ENTITY_TYPES: [&str; 12] = [
+pub const SNAPSHOT_ENTITY_TYPES: [&str; 14] = [
     "book.entry",
     "book.category",
     "book.category_assignment",
@@ -262,6 +262,8 @@ pub const SNAPSHOT_ENTITY_TYPES: [&str; 12] = [
     "novel.bookmark",
     "novel.history",
     "novel.classification",
+    "comic.history",
+    "comic.page_bookmark",
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -805,6 +807,10 @@ pub enum MutationEntityType {
     NovelHistory,
     #[serde(rename = "novel.classification")]
     NovelClassification,
+    #[serde(rename = "comic.history")]
+    ComicHistory,
+    #[serde(rename = "comic.page_bookmark")]
+    ComicPageBookmark,
 }
 
 impl MutationEntityType {
@@ -822,6 +828,8 @@ impl MutationEntityType {
             Self::NovelBookmark => "novel.bookmark",
             Self::NovelHistory => "novel.history",
             Self::NovelClassification => "novel.classification",
+            Self::ComicHistory => "comic.history",
+            Self::ComicPageBookmark => "comic.page_bookmark",
         }
     }
 }
@@ -927,6 +935,18 @@ pub enum MutationInput {
         base: MutationBase,
         patch: Option<NovelClassificationPatch>,
     },
+    #[serde(rename = "comic.history")]
+    ComicHistory {
+        #[serde(flatten)]
+        base: MutationBase,
+        patch: Option<ComicHistoryPatch>,
+    },
+    #[serde(rename = "comic.page_bookmark")]
+    ComicPageBookmark {
+        #[serde(flatten)]
+        base: MutationBase,
+        patch: Option<ComicPageBookmarkPatch>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -957,6 +977,8 @@ impl MutationInput {
             Self::NovelBookmark { .. } => MutationEntityType::NovelBookmark,
             Self::NovelHistory { .. } => MutationEntityType::NovelHistory,
             Self::NovelClassification { .. } => MutationEntityType::NovelClassification,
+            Self::ComicHistory { .. } => MutationEntityType::ComicHistory,
+            Self::ComicPageBookmark { .. } => MutationEntityType::ComicPageBookmark,
         }
     }
 
@@ -973,7 +995,9 @@ impl MutationInput {
             | Self::NovelChapter { base, .. }
             | Self::NovelBookmark { base, .. }
             | Self::NovelHistory { base, .. }
-            | Self::NovelClassification { base, .. } => base,
+            | Self::NovelClassification { base, .. }
+            | Self::ComicHistory { base, .. }
+            | Self::ComicPageBookmark { base, .. } => base,
         }
     }
 }
@@ -1186,6 +1210,34 @@ pub struct NovelClassificationPatch {
     pub classified_at_ms: i64,
 }
 
+/// Latest persisted comic reader position. `comicId` uses the mobile MediaKey
+/// wire format: `suwayomi:<server-fingerprint>:manga:<manga-id>`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ComicHistoryPatch {
+    pub history_id: String,
+    pub comic_id: String,
+    pub chapter_id: String,
+    pub page_index: i64,
+    pub page_count: Option<i64>,
+    pub progress_percent: f64,
+    pub read_at_ms: i64,
+}
+
+/// Explicit page bookmark. The entity id is client-generated and must equal
+/// `bookmarkId`; updating it may not move the bookmark to another comic.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ComicPageBookmarkPatch {
+    pub bookmark_id: String,
+    pub comic_id: String,
+    pub chapter_id: String,
+    pub page_index: i64,
+    pub page_count: Option<i64>,
+    pub label: Option<String>,
+    pub saved_at_ms: i64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MutationsResponse {
@@ -1390,6 +1442,32 @@ pub struct NovelClassificationRecord {
     pub filter_keys: Vec<String>,
     pub plugin_settings_keys: Vec<String>,
     pub classified_at_ms: i64,
+    pub record_lamport: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ComicHistoryRecord {
+    pub history_id: String,
+    pub comic_id: String,
+    pub chapter_id: String,
+    pub page_index: i64,
+    pub page_count: Option<i64>,
+    pub progress_percent: f64,
+    pub read_at_ms: i64,
+    pub record_lamport: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ComicPageBookmarkRecord {
+    pub bookmark_id: String,
+    pub comic_id: String,
+    pub chapter_id: String,
+    pub page_index: i64,
+    pub page_count: Option<i64>,
+    pub label: Option<String>,
+    pub saved_at_ms: i64,
     pub record_lamport: i64,
 }
 
@@ -1615,6 +1693,40 @@ pub struct NovelClassificationRow {
     pub record_server_version: i64,
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Clone, FromRow)]
+pub struct ComicHistoryRow {
+    pub scope_id: String,
+    pub history_id: String,
+    pub comic_id: String,
+    pub chapter_id: String,
+    pub page_index: i64,
+    pub page_count: Option<i64>,
+    pub progress_percent: f64,
+    pub read_at_ms: i64,
+    pub record_updated_at_ms: i64,
+    pub record_updated_by_device_id: String,
+    pub record_lamport: i64,
+    pub record_server_version: i64,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, FromRow)]
+pub struct ComicPageBookmarkRow {
+    pub scope_id: String,
+    pub bookmark_id: String,
+    pub comic_id: String,
+    pub chapter_id: String,
+    pub page_index: i64,
+    pub page_count: Option<i64>,
+    pub label: Option<String>,
+    pub saved_at_ms: i64,
+    pub record_updated_at_ms: i64,
+    pub record_updated_by_device_id: String,
+    pub record_lamport: i64,
+    pub record_server_version: i64,
+}
+
 impl From<BookProgressRow> for BookProgressRecord {
     fn from(value: BookProgressRow) -> Self {
         Self {
@@ -1818,6 +1930,36 @@ impl TryFrom<NovelClassificationRow> for NovelClassificationRecord {
             classified_at_ms: value.classified_at_ms,
             record_lamport: value.record_lamport,
         })
+    }
+}
+
+impl From<ComicHistoryRow> for ComicHistoryRecord {
+    fn from(value: ComicHistoryRow) -> Self {
+        Self {
+            history_id: value.history_id,
+            comic_id: value.comic_id,
+            chapter_id: value.chapter_id,
+            page_index: value.page_index,
+            page_count: value.page_count,
+            progress_percent: value.progress_percent,
+            read_at_ms: value.read_at_ms,
+            record_lamport: value.record_lamport,
+        }
+    }
+}
+
+impl From<ComicPageBookmarkRow> for ComicPageBookmarkRecord {
+    fn from(value: ComicPageBookmarkRow) -> Self {
+        Self {
+            bookmark_id: value.bookmark_id,
+            comic_id: value.comic_id,
+            chapter_id: value.chapter_id,
+            page_index: value.page_index,
+            page_count: value.page_count,
+            label: value.label,
+            saved_at_ms: value.saved_at_ms,
+            record_lamport: value.record_lamport,
+        }
     }
 }
 
