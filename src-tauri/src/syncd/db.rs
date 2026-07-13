@@ -3534,6 +3534,7 @@ pub async fn apply_comic_page_bookmark_mutation(
         load_tombstone_in_tx(&mut tx, scope_id, "comic.page_bookmark", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
+        ensure_comic_parent_matches_tombstone(tombstone, &patch.comic_id)?;
     }
 
     let merged =
@@ -3624,6 +3625,13 @@ pub async fn delete_comic_page_bookmark_mutation(
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
     }
+    let current_comic_id: Option<String> = sqlx::query_scalar(
+        "SELECT comic_id FROM comic_page_bookmarks WHERE scope_id = ? AND bookmark_id = ?",
+    )
+    .bind(scope_id)
+    .bind(entity_id)
+    .fetch_optional(&mut *tx)
+    .await?;
     sqlx::query("DELETE FROM comic_page_bookmarks WHERE scope_id = ? AND bookmark_id = ?")
         .bind(scope_id)
         .bind(entity_id)
@@ -3646,6 +3654,11 @@ pub async fn delete_comic_page_bookmark_mutation(
         retention_window,
     )
     .await?;
+    let reason_code = current_comic_id
+        .as_deref()
+        .map(comic_page_bookmark_tombstone_reason)
+        .or_else(|| tombstone.as_ref().map(|value| value.reason_code.clone()))
+        .unwrap_or_else(|| "comic_page_bookmark_deleted".to_string());
     upsert_tombstone_in_tx(
         &mut tx,
         scope_id,
@@ -3657,7 +3670,7 @@ pub async fn delete_comic_page_bookmark_mutation(
         applied_at_ms,
         server_version,
         retention_window,
-        "comic_page_bookmark_deleted",
+        &reason_code,
     )
     .await?;
     tx.commit().await?;
@@ -3906,6 +3919,38 @@ fn ensure_not_stale_against_tombstone(
             tombstone.lamport
         );
     }
+    Ok(())
+}
+
+const COMIC_BOOKMARK_PARENT_REASON_PREFIX: &str = "comic_page_bookmark_deleted:parent_sha256:";
+
+fn comic_page_bookmark_tombstone_reason(comic_id: &str) -> String {
+    use sha2::{Digest, Sha256};
+
+    format!(
+        "{COMIC_BOOKMARK_PARENT_REASON_PREFIX}{:x}",
+        Sha256::digest(comic_id.as_bytes())
+    )
+}
+
+fn ensure_comic_parent_matches_tombstone(
+    tombstone: &TombstoneRow,
+    comic_id: &str,
+) -> anyhow::Result<()> {
+    let Some(expected_hash) = tombstone
+        .reason_code
+        .strip_prefix(COMIC_BOOKMARK_PARENT_REASON_PREFIX)
+    else {
+        return Ok(());
+    };
+    let incoming_reason = comic_page_bookmark_tombstone_reason(comic_id);
+    let incoming_hash = incoming_reason
+        .strip_prefix(COMIC_BOOKMARK_PARENT_REASON_PREFIX)
+        .expect("generated comic bookmark tombstone reason has its prefix");
+    anyhow::ensure!(
+        expected_hash == incoming_hash,
+        "comic page bookmark parent comic_id does not match tombstone"
+    );
     Ok(())
 }
 
