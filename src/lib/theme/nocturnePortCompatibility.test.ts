@@ -48,7 +48,24 @@ const PORT_N_REFERENCES = [
   "--n-topbar-height",
   "--n-topbar-pad-x",
 ];
-const DIRECT_COLOR_PATTERN = /#[0-9A-Fa-f]{3,8}\b|rgba?\(|hsla?\(|oklch\(|color-mix\(|(?<![-\w])(?:white|black)(?![-\w])/g;
+const DIRECT_COLOR_PATTERN = /#[0-9A-Fa-f]{3,8}\b|rgba?\(|hsla?\(|oklch\(|(?<![-\w])(?:white|black)(?![-\w])/g;
+const PORT_DERIVED_SINGLE_SOURCES = [
+  "--color-chip-surface-source",
+  "--color-rating-star-source",
+  "--color-recommendation-pill-dark-source",
+  "--color-recommendation-pill-ink-source",
+  "--color-recommendation-pill-light-source",
+  "--color-settings-danger-soft-source",
+  "--color-soft-control-text-source",
+];
+const PORT_DERIVED_COMPONENT_ALIASES = new Map([
+  ["--color-chip-surface-source", "--component-chip-surface-source"],
+  ["--color-rating-star-source", "--component-sources-metric-rating-star-source"],
+  ["--color-recommendation-pill-dark-source", "--component-sources-metric-recommendation-dark-source"],
+  ["--color-recommendation-pill-ink-source", "--component-sources-metric-recommendation-ink-source"],
+  ["--color-recommendation-pill-light-source", "--component-sources-metric-recommendation-light-source"],
+  ["--color-soft-control-text-source", "--component-soft-control-fg-source"],
+]);
 
 function readProjectFile(path: string) {
   return readFileSync(resolve(ROOT, path), "utf8");
@@ -83,6 +100,20 @@ function withoutDefinitions(source: string, token: string): string {
 
 function directColorCount(source: string): number {
   return source.match(DIRECT_COLOR_PATTERN)?.length ?? 0;
+}
+
+function portDerivedSources(source: string): string[] {
+  return definitions(source).filter((token) =>
+    token.startsWith("--color-splash-")
+      || token.startsWith("--color-settings-density-")
+      || token.startsWith("--color-settings-preview-")
+      || token.startsWith("--color-settings-selection-")
+      || PORT_DERIVED_SINGLE_SOURCES.includes(token),
+  );
+}
+
+function componentAliasForSource(source: string): string {
+  return PORT_DERIVED_COMPONENT_ALIASES.get(source) ?? source.replace("--color-", "--component-");
 }
 
 describe("Nocturne port compatibility contract", () => {
@@ -129,20 +160,30 @@ describe("Nocturne port compatibility contract", () => {
     expect(readProjectFile("src/components/pages/BrowseV3.svelte")).toContain("searchRecommendationCard");
   });
 
-  test("prevents direct color debt from growing before incremental migration", () => {
+  test("derives every port color from semantic sources", () => {
     const port = readProjectFile(PORT_PATH);
+    const tokens = readProjectFile("src/styles/tokens.css");
+    const nocturne = readProjectFile("src/styles/nocturne-theme.css");
     const shellStart = port.indexOf(".aethon-app-shell {");
     const settingsStart = port.indexOf(".aethon-port--settings {");
     const metricsLabel = port.indexOf("Shared Source & Tracker Metric Banner");
     const metricsStart = port.lastIndexOf("/*", metricsLabel);
+    const derivedSources = portDerivedSources(tokens);
 
     expect(shellStart).toBeGreaterThan(0);
     expect(settingsStart).toBeGreaterThan(shellStart);
     expect(metricsStart).toBeGreaterThan(settingsStart);
-    expect(directColorCount(port.slice(0, shellStart))).toBeLessThanOrEqual(61);
-    expect(directColorCount(port.slice(shellStart, settingsStart))).toBeLessThanOrEqual(58);
-    expect(directColorCount(port.slice(settingsStart, metricsStart))).toBeLessThanOrEqual(49);
-    expect(directColorCount(port.slice(metricsStart))).toBeLessThanOrEqual(21);
-    expect(directColorCount(port)).toBeLessThanOrEqual(189);
+    expect(directColorCount(port.slice(0, shellStart))).toBe(0);
+    expect(directColorCount(port.slice(shellStart, settingsStart))).toBe(0);
+    expect(directColorCount(port.slice(settingsStart, metricsStart))).toBe(0);
+    expect(directColorCount(port.slice(metricsStart))).toBe(0);
+    expect(directColorCount(port)).toBe(0);
+    expect(derivedSources).toHaveLength(44);
+    for (const token of derivedSources) {
+      const component = componentAliasForSource(token);
+      expect(nocturne).toMatch(new RegExp(`${token}\\s*:`));
+      expect(tokens).toContain(`${component}: var(${token});`);
+      expect(port).toContain(`var(${component})`);
+    }
   });
 });

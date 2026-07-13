@@ -2586,3 +2586,55 @@ Categorias cobertas:
 - O port nao e envolvido por `[data-theme="nocturne"]`; portanto, seus literais e aliases locais tambem atingem temas builtin claros e custom themes, salvo tres overrides claros pontuais. Este e o principal bloqueio atual para autoria realmente theme-only.
 - O port contem overrides para estados/light selectors e aliases herdados por componentes. A derivacao deve preservar especificidade, ordem, alpha, gradients e geometria; mover seletores ou reordenar folhas seria mudanca de comportamento visual.
 - Syncd continua fora do escopo. Os aliases Legacy e `--n-*` nao devem ser removidos durante a derivacao.
+
+## Marco 34 - Nocturne Port Color Derivation
+
+### Escopo e arquitetura
+
+- As 189 ocorrencias diretas inventariadas no Marco 33 foram migradas sem alterar seletores, ordem da cascata, geometria, blur, radius, z-index, opacidade, motion ou comportamento.
+- A camada agora segue `semantic source -> component alias -> nocturne-port.css`: foram adicionados 44 sources semanticos com fallback theme-neutral e 44 aliases `--component-*` consumidos pelo port.
+- Os valores Nocturne dos 44 sources ficam em `nocturne-theme.css`; nenhum valor especifico do Nocturne permanece em `nocturne-port.css`.
+- Nenhum primitive novo foi criado: os novos valores representam funcoes visuais locais de Splash, controles compartilhados, Settings e source metrics, nao entradas de paleta reutilizadas por tres ou mais grupos.
+- A camada `--n-*`, os 3 tokens locais Legacy do port e todos os componentes Legacy foram preservados. Syncd permaneceu integralmente fora do escopo.
+
+### Contagem e consumo
+
+- Cores diretas no port: **189 -> 0** para hex, `rgb/rgba`, `hsl/hsla`, `oklch` e cores nomeadas.
+- `color-mix()` permanece permitido somente com variables de source/componente e `transparent`; nenhum argumento usa cor literal.
+- Sources novos: **44 definidos / 44 implementados no Nocturne / 44 alcancados por component tokens / 0 sem consumo**.
+- Component aliases novos: **44 definidos / 44 consumidos pelo port / 0 sem consumo**.
+- Os 46 tokens locais do port mantiveram a classificacao: **43 Ativos, 3 Legacy, 0 Mortos**. Nenhum token foi removido.
+- O inventario `--n-*` permanece **45 Ativos / 17 Legacy**, e os 13 aliases `--activity-*` continuam Legacy.
+
+### Superficies migradas
+
+- Splash: canvas visual CSS, starfield, aura, estados, erro, progresso e acoes.
+- Shell/base: botoes globais, segmented controls, chips, pills, density controls e Library cards.
+- Settings: density rail, value/readout states, listening state, theme preview, brand card e danger action.
+- Source metrics: flags, unread pill, rating star e recommendation pill, incluindo os overrides claros existentes.
+
+### Validacao visual real
+
+- App Tauri real em Nocturne, WebView2/CDP estavel em `127.0.0.1:9223`, viewport 1280x800 e dados persistidos reais. Nenhuma fixture ou dado do usuario foi criado ou alterado.
+- O baseline foi capturado com reversao temporaria apenas do patch de `nocturne-port.css`, recompilado pelo Vite/HMR na posicao original da cascata; o patch foi reaplicado em `finally` antes das capturas after.
+- Evidencias em `docs/screenshots/marco34-nocturne-port/`: `before/after-library.png`, `before/after-search-dim.png`, `before/after-settings.png` e `before/after-splash.png`.
+- Search dim: body `aethon-browse-search-engaged` confirmado nos dois lados; diferenca acima de 2 niveis RGB: **0,000%**, media **0,000**.
+- Library: header, filtros, chips e toolbar (faixa y=0..259) tiveram **0,000%** de pixels acima de 2 niveis RGB. A diferenca no frame completo veio de covers que terminaram de carregar entre capturas, nao de CSS.
+- Settings: **0,005%** acima de 2 niveis RGB, media **0,001**; diferenca residual restrita a antialias/estado temporal, sem mudanca aparente.
+- Splash: **0,060%** acima de 2 niveis RGB, media **0,167**; diferenca residual corresponde a stars/FPS e fase da animacao. Background, logo, aura, tipografia e hierarquia permaneceram equivalentes.
+- A revisao visual nao encontrou regressao aparente de contraste, superficies, bordas, shadows, blur, radius, tipografia, hover/focus ou hierarquia.
+
+### Contratos e testes
+
+- `nocturnePortCompatibility.test.ts` passou a exigir zero literal em cada um dos quatro blocos e 44/44 sources implementados e consumidos via component alias.
+- `componentColorDerivation.test.ts` passou a reconhecer Splash, soft controls e chips como familias migradas; o gate continua proibindo cor direta e `--n-*` fora da allowlist nos component tokens.
+- Testes unitarios finais: 6 arquivos, 39 testes verdes, incluindo derivacao, inventario do port, gate global, autoria, contrato e provider.
+- Testes browser Chromium: port e theme probe, 2 arquivos e 2 testes verdes; o primeiro comprova pintura computada nos quatro hosts ativos e o segundo preserva o gate global existente.
+- `pnpm build`: verde com 6.299 modulos; permanece apenas o aviso conhecido de chunk acima de 500 kB.
+- `git diff --check`: verde, com avisos esperados de normalizacao LF/CRLF no Windows.
+
+### Riscos restantes
+
+- Os 44 sources sao papeis semanticos de tema e possuem fallback compartilhado, mas nao fazem parte das 47 chaves editaveis de `ThemeDocumentV4`. Um tema builtin futuro pode implementa-los somente por tokens, sem CSS de componente; um tema custom baseado no ThemeEditor herda os detalhes do tema-base para esses papeis.
+- Antes de afirmar que todo detalhe do port responde somente ao documento V4, o proximo gate deve aplicar o theme probe especificamente a Splash, density/preview de Settings e source metrics e decidir entre derivacao estrita das 47 chaves atuais ou extensao controlada do contrato sem expor component tokens.
+- Os aliases `--n-*` e os seletores Legacy continuam preservados e exigem auditoria separada. Syncd continua adiado por decisao de escopo.
