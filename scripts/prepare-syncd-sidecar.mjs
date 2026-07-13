@@ -7,6 +7,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
 const srcTauriDir = path.join(projectRoot, "src-tauri");
 const extension = process.platform === "win32" ? ".exe" : "";
+const release = process.argv.includes("--release");
+const profile = release ? "release" : "debug";
 
 function hostTuple() {
   try {
@@ -24,7 +26,7 @@ function hostTuple() {
 }
 
 const targetTriple = hostTuple();
-const sourceBinary = path.join(srcTauriDir, "target", "debug", `aethon-syncd${extension}`);
+const sourceBinary = path.join(srcTauriDir, "target", profile, `aethon-syncd${extension}`);
 const binariesDir = path.join(srcTauriDir, "binaries");
 const targetBinary = path.join(
   binariesDir,
@@ -38,10 +40,28 @@ if (!fs.existsSync(targetBinary)) {
 
 execFileSync(
   "cargo",
-  ["build", "--manifest-path", path.join(srcTauriDir, "Cargo.toml"), "--bin", "aethon-syncd"],
+  [
+    "build",
+    ...(release ? ["--release"] : []),
+    "--manifest-path",
+    path.join(srcTauriDir, "Cargo.toml"),
+    "--bin",
+    "aethon-syncd",
+  ],
   { cwd: projectRoot, stdio: "inherit" },
 );
 
 fs.copyFileSync(sourceBinary, targetBinary);
 
-console.log(`Prepared syncd sidecar: ${targetBinary}`);
+const size = fs.statSync(targetBinary).size;
+if (size < 1024 * 1024) {
+  throw new Error(`Prepared syncd sidecar is unexpectedly small (${size} bytes)`);
+}
+const smokeDataDir = path.join(projectRoot, "tmp", "syncd-sidecar-build-smoke-missing");
+execFileSync(
+  targetBinary,
+  ["shutdown", "--data-dir", smokeDataDir, "--timeout-seconds", "1"],
+  { cwd: projectRoot, stdio: "inherit" },
+);
+
+console.log(`Prepared ${profile} syncd sidecar: ${targetBinary}`);
