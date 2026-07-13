@@ -16,13 +16,14 @@ use uuid::Uuid;
 
 use crate::syncd::middleware::{CLIENT_PROTOCOL_HEADER, CLIENT_VERSION_HEADER};
 use crate::syncd::models::{
-    BookBookmarkPatch, BookBookmarkRecord, BookCategoryAssignmentPatch,
-    BookCategoryAssignmentRecord, BookCategoryPatch, BookCategoryRecord, BookEntryPatch,
-    BookEntryRecord, BookLibraryUiPatch, BookLibraryUiRecord, BookProgressPatch,
-    BookProgressRecord, ChangeEnvelope, ErrorBody, MutationOperation, NovelBookmarkPatch,
-    NovelBookmarkRecord, NovelChapterPatch, NovelChapterRecord, NovelClassificationPatch,
-    NovelClassificationRecord, NovelEntryPatch, NovelEntryRecord, NovelHistoryPatch,
-    NovelHistoryRecord, NovelProgressPatch, NovelProgressRecord, SyncdEffectiveDiscoverySource,
+    canonical_novel_identity_key, BookBookmarkPatch, BookBookmarkRecord,
+    BookCategoryAssignmentPatch, BookCategoryAssignmentRecord, BookCategoryPatch,
+    BookCategoryRecord, BookEntryPatch, BookEntryRecord, BookLibraryUiPatch, BookLibraryUiRecord,
+    BookProgressPatch, BookProgressRecord, ChangeEnvelope, ErrorBody, MutationOperation,
+    NovelBookmarkPatch, NovelBookmarkRecord, NovelChapterPatch, NovelChapterRecord,
+    NovelClassificationPatch, NovelClassificationRecord, NovelEntryPatch, NovelEntryRecord,
+    NovelHistoryPatch, NovelHistoryRecord, NovelProgressPatch, NovelProgressRecord,
+    SyncdEffectiveDiscoverySource,
 };
 use crate::syncd_desktop::{
     build_pinned_http_client, desktop_state_dir, is_connection_error, is_needs_reauth_error,
@@ -2421,7 +2422,7 @@ fn build_book_library_ui_patch(value: &Value) -> BookLibraryUiPatch {
 
 #[allow(dead_code)]
 fn build_novel_entry_patch(value: &Value) -> Option<NovelEntryPatch> {
-    Some(NovelEntryPatch {
+    let mut patch = NovelEntryPatch {
         identity_key: value_string_field(value, "id")?,
         title: value_string_field(value, "title")?,
         author: value_string_field(value, "author"),
@@ -2433,7 +2434,11 @@ fn build_novel_entry_patch(value: &Value) -> Option<NovelEntryPatch> {
         source: value.get("source").cloned().unwrap_or(Value::Null),
         added_at_ms: value_i64_field(value, "addedAt").unwrap_or_else(now_ms),
         updated_at_ms: value_i64_field(value, "updatedAt").unwrap_or_else(now_ms),
-    })
+    };
+    if let Some(identity_key) = canonical_novel_identity_key(&patch) {
+        patch.identity_key = identity_key;
+    }
+    Some(patch)
 }
 
 #[allow(dead_code)]
@@ -2516,6 +2521,7 @@ fn diff_book_mutations(
                 page_index: entry.page_index,
                 total_pages: entry.total_pages,
                 section_label: entry.section_label.clone(),
+                reset: false,
             },
         });
     }
@@ -2611,6 +2617,7 @@ fn diff_novel_mutations(
                 locator: entry.locator.clone(),
                 locator_sort_key: None,
                 updated_at_ms: entry.updated_at,
+                reset: false,
             },
         });
     }
@@ -3170,6 +3177,45 @@ mod tests {
 
         let diff = diff_novel_mutations("local-main", &previous, &next);
         assert!(diff.is_empty());
+    }
+
+    #[test]
+    fn desktop_bridge_uses_canonical_novel_identity_when_source_is_complete() {
+        let patch = build_novel_entry_patch(&json!({
+            "id": "novel:source:%2Fnovel%2F1",
+            "title": "Example",
+            "path": "/novel/1",
+            "source": {
+                "repositoryUrl": "HTTPS://Example.COM:443/repository/",
+                "pluginId": "plugin",
+                "sourceId": "source"
+            },
+            "addedAt": 1,
+            "updatedAt": 1
+        }))
+        .unwrap();
+
+        assert_eq!(
+            patch.identity_key,
+            "novel-2ddcfbbb73a4bc27095ac742d5e3355a7f432b5ecd484525fb59fbbaf8a9b127"
+        );
+    }
+
+    #[test]
+    fn desktop_bridge_preserves_legacy_identity_for_metadata_only_novel() {
+        let patch = build_novel_entry_patch(&json!({
+            "id": "novel:legacy:%2Fnovel%2F1",
+            "title": "Legacy",
+            "path": "/novel/1",
+            "source": {
+                "pluginId": "plugin"
+            },
+            "addedAt": 1,
+            "updatedAt": 1
+        }))
+        .unwrap();
+
+        assert_eq!(patch.identity_key, "novel:legacy:%2Fnovel%2F1");
     }
 
     #[test]

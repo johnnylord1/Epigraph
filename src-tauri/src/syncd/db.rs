@@ -11,17 +11,18 @@ use uuid::Uuid;
 
 use super::config::SyncdConfig;
 use super::models::{
-    AuthenticatedSession, BookBookmarkPatch, BookBookmarkRecord, BookBookmarkRow,
-    BookCategoryAssignmentPatch, BookCategoryAssignmentRecord, BookCategoryAssignmentRow,
-    BookCategoryPatch, BookCategoryRecord, BookCategoryRow, BookEntryPatch, BookEntryRecord,
-    BookEntryRow, BookLibraryUiPatch, BookLibraryUiRecord, BookLibraryUiRow, BookProgressPatch,
-    BookProgressRecord, BookProgressRow, ChangeEnvelope, ChangeLogRow, MutationOperation,
-    MutationReceiptContext, MutationResult, MutationResultStatus, NovelBookmarkPatch,
-    NovelBookmarkRecord, NovelBookmarkRow, NovelChapterPatch, NovelChapterRecord, NovelChapterRow,
-    NovelClassificationPatch, NovelClassificationRecord, NovelClassificationRow, NovelEntryPatch,
-    NovelEntryRecord, NovelEntryRow, NovelHistoryPatch, NovelHistoryRecord, NovelHistoryRow,
-    NovelProgressPatch, NovelProgressRecord, NovelProgressRow, PairingGrantVia, PairingPlatform,
-    ServerRuntimeRow, SnapshotEntity, SnapshotResponse, SnapshotTombstone, SNAPSHOT_SCHEMA_VERSION,
+    canonical_novel_identity_key, canonical_novel_identity_key_from_source, AuthenticatedSession,
+    BookBookmarkPatch, BookBookmarkRecord, BookBookmarkRow, BookCategoryAssignmentPatch,
+    BookCategoryAssignmentRecord, BookCategoryAssignmentRow, BookCategoryPatch, BookCategoryRecord,
+    BookCategoryRow, BookEntryPatch, BookEntryRecord, BookEntryRow, BookLibraryUiPatch,
+    BookLibraryUiRecord, BookLibraryUiRow, BookProgressPatch, BookProgressRecord, BookProgressRow,
+    ChangeEnvelope, ChangeLogRow, MutationOperation, MutationReceiptContext, MutationResult,
+    MutationResultStatus, NovelBookmarkPatch, NovelBookmarkRecord, NovelBookmarkRow,
+    NovelChapterPatch, NovelChapterRecord, NovelChapterRow, NovelClassificationPatch,
+    NovelClassificationRecord, NovelClassificationRow, NovelEntryPatch, NovelEntryRecord,
+    NovelEntryRow, NovelHistoryPatch, NovelHistoryRecord, NovelHistoryRow, NovelProgressPatch,
+    NovelProgressRecord, NovelProgressRow, PairingGrantVia, PairingPlatform, ServerRuntimeRow,
+    SnapshotEntity, SnapshotResponse, SnapshotTombstone, SNAPSHOT_SCHEMA_VERSION,
 };
 
 #[derive(Debug, Clone, FromRow, Serialize)]
@@ -1959,6 +1960,25 @@ pub async fn apply_novel_entry_mutation(
     .bind(server_version)
     .execute(&mut *tx)
     .await?;
+    if let Some(context) = session.mutation_receipt.as_ref() {
+        if context.entity_type == super::models::MutationEntityType::NovelEntry
+            && context.entity_id != entity_id
+        {
+            sqlx::query(
+                r#"INSERT INTO novel_entity_aliases (
+                    scope_id, alias_entity_id, canonical_entity_id, created_at_ms
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(scope_id, alias_entity_id) DO UPDATE SET
+                    canonical_entity_id = excluded.canonical_entity_id"#,
+            )
+            .bind(scope_id)
+            .bind(&context.entity_id)
+            .bind(entity_id)
+            .bind(applied_at_ms)
+            .execute(&mut *tx)
+            .await?;
+        }
+    }
     if tombstone.is_some() {
         delete_tombstone_in_tx(&mut tx, scope_id, "novel.entry", entity_id).await?;
     }
@@ -1978,6 +1998,97 @@ pub async fn apply_novel_entry_mutation(
         record,
         applied_lamport: merged.record_lamport,
     })
+}
+
+/// Resolves a requested novel entry to the already persisted entity with the
+/// same canonical mobile identity. The caller holds the process-wide mutation
+/// gate, so the lookup and subsequent write cannot race another mutation.
+pub async fn resolve_novel_entry_entity_id(
+    pool: &sqlx::SqlitePool,
+    scope_id: &str,
+    requested_entity_id: &str,
+    patch: &NovelEntryPatch,
+) -> anyhow::Result<String> {
+    let resolved_alias = resolve_novel_entity_id(pool, scope_id, requested_entity_id).await?;
+    if resolved_alias != requested_entity_id {
+        return Ok(resolved_alias);
+    }
+
+    let identity_key = canonical_novel_identity_key(patch)
+        .unwrap_or_else(|| patch.identity_key.trim().to_string());
+
+    let rows = sqlx::query_as::<_, (String, String, String, Option<String>)>(
+        r#"SELECT novel_id, identity_key, source_json, external_url
+        FROM novel_library_entries
+        WHERE scope_id = ?
+        ORDER BY novel_id"#,
+    )
+    .bind(scope_id)
+    .fetch_all(pool)
+    .await?;
+
+    if let Some((novel_id, _, _, _)) = rows
+        .iter()
+        .find(|(_, persisted_identity, _, _)| persisted_identity == &identity_key)
+    {
+        return Ok(novel_id.clone());
+    }
+
+    for (novel_id, _, source_json, path) in rows {
+        let source: Value = serde_json::from_str(&source_json)?;
+        let Some(path) = path else {
+            continue;
+        };
+        if canonical_novel_identity_key_from_source(&source, &path).as_deref()
+            == Some(identity_key.as_str())
+        {
+            return Ok(novel_id);
+        }
+    }
+
+    Ok(requested_entity_id.to_string())
+}
+
+/// Resolves a persisted alias (or a canonical identity key used as an entity
+/// reference) to the entity id that owns the novel record.
+pub async fn resolve_novel_entity_id(
+    pool: &sqlx::SqlitePool,
+    scope_id: &str,
+    requested_entity_id: &str,
+) -> anyhow::Result<String> {
+    let mut resolved = requested_entity_id.to_string();
+    for _ in 0..8 {
+        let next: Option<String> = sqlx::query_scalar(
+            r#"SELECT canonical_entity_id
+            FROM novel_entity_aliases
+            WHERE scope_id = ? AND alias_entity_id = ?"#,
+        )
+        .bind(scope_id)
+        .bind(&resolved)
+        .fetch_optional(pool)
+        .await?;
+        let Some(next) = next else {
+            break;
+        };
+        if next == resolved {
+            break;
+        }
+        resolved = next;
+    }
+    if resolved != requested_entity_id {
+        return Ok(resolved);
+    }
+
+    let identity_owner: Option<String> = sqlx::query_scalar(
+        r#"SELECT novel_id
+        FROM novel_library_entries
+        WHERE scope_id = ? AND identity_key = ?"#,
+    )
+    .bind(scope_id)
+    .bind(requested_entity_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(identity_owner.unwrap_or(resolved))
 }
 
 pub async fn delete_novel_entry_mutation(
@@ -3243,9 +3354,13 @@ async fn append_change_log_in_tx(
     .await?;
 
     if let Some(context) = session.mutation_receipt.as_ref() {
+        let persisted_entity_id = context
+            .canonical_entity_id
+            .as_deref()
+            .unwrap_or(context.entity_id.as_str());
         if context.device_id != session.device_id
             || context.entity_type.as_str() != entity_type
-            || context.entity_id != entity_id
+            || persisted_entity_id != entity_id
             || context.scope_id != scope_id
             || match context.op {
                 MutationOperation::Merge => op != "merge",
@@ -3259,6 +3374,7 @@ async fn append_change_log_in_tx(
             client_mutation_id: context.client_mutation_id.clone(),
             entity_type: context.entity_type,
             entity_id: context.entity_id.clone(),
+            canonical_entity_id: context.canonical_entity_id.clone(),
             scope_id: context.scope_id.clone(),
             op: context.op,
             status: MutationResultStatus::Applied,
@@ -3528,7 +3644,8 @@ fn merge_novel_entry(
 ) -> anyhow::Result<NovelEntryRecord> {
     let incoming = NovelEntryRecord {
         novel_id: entity_id.to_string(),
-        identity_key: patch.identity_key.clone(),
+        identity_key: canonical_novel_identity_key(patch)
+            .unwrap_or_else(|| patch.identity_key.trim().to_string()),
         title: patch.title.clone(),
         author: normalize_optional_string(patch.author.as_deref()),
         description: normalize_optional_string(patch.description.as_deref()),
@@ -3677,9 +3794,13 @@ fn merge_book_progress(
         None => incoming,
         Some(existing) => {
             let applied_lamport = next_lamport(existing.record_lamport, client_lamport);
-            let winner = match effective_book_renderer(&existing, &incoming) {
-                Some("pdf") => pick_book_pdf_progress(existing, incoming),
-                _ => pick_book_epub_progress(existing, incoming),
+            let winner = if patch.reset {
+                incoming
+            } else {
+                match effective_book_renderer(&existing, &incoming) {
+                    Some("pdf") => pick_book_pdf_progress(existing, incoming),
+                    _ => pick_book_epub_progress(existing, incoming),
+                }
             };
             BookProgressRecord {
                 record_lamport: applied_lamport,
@@ -3715,7 +3836,11 @@ fn merge_novel_progress(
         None => incoming,
         Some(existing) => {
             let applied_lamport = next_lamport(existing.record_lamport, client_lamport);
-            let winner = pick_novel_progress(existing, incoming);
+            let winner = if patch.reset {
+                incoming
+            } else {
+                pick_novel_progress(existing, incoming)
+            };
             NovelProgressRecord {
                 record_lamport: applied_lamport,
                 ..winner
@@ -4322,6 +4447,7 @@ mod tests {
             page_index: Some(5),
             total_pages: Some(100),
             section_label: Some("Backslide".to_string()),
+            reset: false,
         };
 
         let merged = merge_book_progress(Some(current), "book-1", &patch, 99).unwrap();
@@ -4352,6 +4478,7 @@ mod tests {
             locator: Some("/19#p9".to_string()),
             locator_sort_key: Some(9.0),
             updated_at_ms: 2000,
+            reset: false,
         };
 
         let merged = merge_novel_progress(Some(current), "novel-1", &patch, 77).unwrap();
@@ -4371,6 +4498,7 @@ mod tests {
             page_index: Some(12),
             total_pages: Some(100),
             section_label: None,
+            reset: false,
         };
 
         let merged = merge_book_progress(None, "book.progress::book-1", &patch, 3).unwrap();
@@ -4387,6 +4515,7 @@ mod tests {
             locator: Some("/1".to_string()),
             locator_sort_key: Some(1.0),
             updated_at_ms: 1000,
+            reset: false,
         };
 
         let merged = merge_novel_progress(None, "novel.progress::novel-1", &patch, 7).unwrap();
@@ -4432,6 +4561,7 @@ mod tests {
                 page_index: Some(12),
                 total_pages: Some(100),
                 section_label: None,
+                reset: false,
             },
             3,
             config.retention_window,
