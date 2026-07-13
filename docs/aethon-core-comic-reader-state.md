@@ -92,8 +92,10 @@ equal it:
 }
 ```
 
-An existing bookmark cannot be moved to another `comicId`. Its chapter, page,
-label, and timestamp may be edited by a later accepted command.
+An existing bookmark cannot be moved to another `comicId`. Its parent identity
+is retained as a one-way hash in its tombstone, so delete followed by
+resurrection cannot reparent the same ID either. Its chapter, page, label, and
+timestamp may be edited by a later accepted command.
 
 ## Delete, replay, and convergence
 
