@@ -318,6 +318,7 @@ fn build_upstream_url(mut base: Url, path: &str, query: Option<&str>) -> Result<
         segment.is_empty()
             || *segment == "."
             || *segment == ".."
+            || segment.contains('%')
             || segment.contains('\\')
             || segment.chars().any(char::is_control)
     }) {
@@ -436,6 +437,7 @@ mod tests {
             "http://127.0.0.1:4567/api/v1/manga/12/thumbnail?useCache=true"
         );
         assert!(build_upstream_url(base.clone(), "api/../admin", None).is_err());
+        assert!(build_upstream_url(base.clone(), "api/%252e%252e/admin", None).is_err());
         assert!(build_upstream_url(base, "https:\\evil.example", None).is_err());
     }
 
