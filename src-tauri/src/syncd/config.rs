@@ -2,6 +2,11 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::time::Duration;
 
+#[cfg(test)]
+use std::collections::BTreeMap;
+#[cfg(test)]
+use std::sync::{Arc, RwLock};
+
 use anyhow::{anyhow, bail, Context};
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -248,6 +253,8 @@ pub struct SyncdConfig {
     pub asset_max_upload_bytes: u64,
     pub ownership_mode: SyncdOwnershipMode,
     pub parent_pid: Option<u32>,
+    #[cfg(test)]
+    pub suwayomi_proxy_test_upstreams: Arc<RwLock<BTreeMap<String, String>>>,
 }
 
 impl SyncdConfig {
@@ -378,6 +385,8 @@ impl SyncdConfig {
                 .unwrap_or(DEFAULT_ASSET_MAX_UPLOAD_BYTES),
             ownership_mode,
             parent_pid,
+            #[cfg(test)]
+            suwayomi_proxy_test_upstreams: Arc::new(RwLock::new(BTreeMap::new())),
         }
     }
 
@@ -409,7 +418,16 @@ impl SyncdConfig {
             asset_max_upload_bytes: DEFAULT_ASSET_MAX_UPLOAD_BYTES,
             ownership_mode: SyncdOwnershipMode::PersistentAttached,
             parent_pid: None,
+            suwayomi_proxy_test_upstreams: Arc::new(RwLock::new(BTreeMap::new())),
         }
+    }
+
+    #[cfg(test)]
+    pub fn set_suwayomi_proxy_test_upstream(&self, profile_id: &str, base_url: &str) {
+        self.suwayomi_proxy_test_upstreams
+            .write()
+            .expect("test Suwayomi upstream registry poisoned")
+            .insert(profile_id.to_string(), base_url.to_string());
     }
 }
 

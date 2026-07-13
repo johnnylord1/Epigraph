@@ -23,12 +23,17 @@ pub async fn get_capabilities(
         supported_scopes: vec![
             "books:global".to_string(),
             "novels:profile:<paired-profile>".to_string(),
+            "comics:profile:<paired-profile>".to_string(),
         ],
         supports_sse_replay: true,
         supports_manual_ip_fallback: true,
         supports_owner_transfer: true,
         supports_snapshot: true,
         supports_assets: true,
+        supports_suwayomi_proxy: true,
+        supports_suwayomi_websocket_proxy: false,
+        suwayomi_proxy_path_template:
+            "/v1/suwayomi/{path}?scopeId=comics%3Aprofile%3A{pairedProfile}".to_string(),
         snapshot_schema_version: SNAPSHOT_SCHEMA_VERSION,
         snapshot_entity_types: SNAPSHOT_ENTITY_TYPES
             .iter()
