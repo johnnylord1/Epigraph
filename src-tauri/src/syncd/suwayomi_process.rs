@@ -116,6 +116,11 @@ fn owner_matches_root_and_endpoint(owner: &ServerOwner, root: &Path) -> bool {
     matches!(url.scheme(), "http" | "https")
         && matches!(url.host_str(), Some("127.0.0.1") | Some("localhost"))
         && url.port_or_known_default() == Some(owner.port)
+        && url.username().is_empty()
+        && url.password().is_none()
+        && matches!(url.path(), "" | "/")
+        && url.query().is_none()
+        && url.fragment().is_none()
 }
 
 fn java_process_matches_root(process: &sysinfo::Process, root: &Path) -> bool {
@@ -225,6 +230,14 @@ mod tests {
         let mut wrong_port = owner(&root);
         wrong_port.server_url = "http://127.0.0.1:9999".to_string();
         assert!(!owner_matches_root_and_endpoint(&wrong_port, &root));
+
+        let mut with_credentials = owner(&root);
+        with_credentials.server_url = "http://admin:secret@127.0.0.1:4567".to_string();
+        assert!(!owner_matches_root_and_endpoint(&with_credentials, &root));
+
+        let mut with_path = owner(&root);
+        with_path.server_url = "http://127.0.0.1:4567/proxy".to_string();
+        assert!(!owner_matches_root_and_endpoint(&with_path, &root));
     }
 
     #[test]

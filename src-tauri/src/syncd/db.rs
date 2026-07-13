@@ -1031,6 +1031,7 @@ async fn issue_pairing_token_in_tx(
     let scopes = vec![
         "books:global".to_string(),
         format!("novels:profile:{}", session.profile_id),
+        format!("comics:profile:{}", session.profile_id),
     ];
 
     sqlx::query(
@@ -4056,6 +4057,22 @@ pub async fn ensure_token_with_hash(
     Ok(())
 }
 
+pub async fn grant_comics_scopes_to_existing_tokens(
+    pool: &sqlx::SqlitePool,
+) -> anyhow::Result<u64> {
+    let result = sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO paired_device_scopes (token_id, scope_id)
+        SELECT token_id, 'comics:profile:' || profile_id
+        FROM paired_device_tokens
+        WHERE revoked_at_ms IS NULL
+        "#,
+    )
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
 pub async fn issue_local_authority_token(
     pool: &sqlx::SqlitePool,
     config: &SyncdConfig,
@@ -4071,6 +4088,7 @@ pub async fn issue_local_authority_token(
     let scopes = vec![
         "books:global".to_string(),
         format!("novels:profile:{profile_id}"),
+        format!("comics:profile:{profile_id}"),
     ];
 
     let mut tx = pool.begin().await?;
