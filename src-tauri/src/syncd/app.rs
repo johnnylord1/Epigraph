@@ -22,7 +22,8 @@ use super::lifecycle::{
 use super::middleware::require_authenticated_session;
 use super::models::AppState;
 use super::routes::{
-    assets, bootstrap, capabilities, discovery, events, health, local, mutations, pairing, snapshot,
+    assets, bootstrap, capabilities, discovery, events, health, local, mutations, pairing,
+    snapshot, suwayomi_proxy,
 };
 use super::runtime_manifest::{RuntimeManifestLease, RuntimeProcessLock, SyncdRuntimeManifest};
 use super::tls;
@@ -48,6 +49,13 @@ pub async fn run() -> anyhow::Result<()> {
     let tls = tls::load_or_create(&config).await?;
     let pool = db::connect(&config).await?;
     db::upsert_server_identity(&pool, &config, &tls.fingerprint_sha256).await?;
+    let granted_comics_scopes = db::grant_comics_scopes_to_existing_tokens(&pool).await?;
+    if granted_comics_scopes > 0 {
+        tracing::info!(
+            granted_comics_scopes,
+            "granted comics proxy scope to existing active paired tokens"
+        );
+    }
     let server_identity = db::load_server_identity(&pool).await?;
     db::prune_expired_rows(&pool, db::now_ms()).await?;
 
@@ -152,6 +160,12 @@ fn build_router(state: Arc<AppState>, shutdown: ShutdownCoordinator) -> Router {
             get(assets::get_asset)
                 .head(assets::head_asset)
                 .put(assets::put_asset),
+        )
+        .route(
+            "/v1/suwayomi/*path",
+            get(suwayomi_proxy::get_or_head)
+                .head(suwayomi_proxy::get_or_head)
+                .post(suwayomi_proxy::post_graphql),
         )
         .layer(Extension(shutdown))
         .route_layer(middleware::from_fn_with_state(
