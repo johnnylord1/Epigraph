@@ -13,7 +13,9 @@
     "test:suwayomi-certification": "node --test scripts/certify-suwayomi-release.test.mjs",
     "certify:suwayomi": "node scripts/certify-suwayomi-release.mjs",
     "syncd:prepare-sidecar": "node ./scripts/prepare-syncd-sidecar.mjs",
+    "syncd:prepare-sidecar:release": "node ./scripts/prepare-syncd-sidecar.mjs --release",
     "tauri": "tauri",
+    "tauri:build": "pnpm syncd:prepare-sidecar:release && tauri build --config src-tauri/tauri.conf.json",
     "tauri:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "tauri:dev:gate": "tauri dev --config src-tauri/tauri.dev.conf.json --no-watch"
   },
