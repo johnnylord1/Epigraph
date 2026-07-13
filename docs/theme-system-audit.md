@@ -2537,3 +2537,52 @@ Categorias cobertas:
 - Entry points mantidos fora deste repositorio (atalhos antigos ou builds instalados anteriores) nao podem ser provados por analise do source atual; o build produzido neste marco, contudo, nao empacota as superficies em quarentena.
 - A classificacao Legacy continua conservadora. Remocao futura exige marco proprio, busca global repetida e validacao de upgrade antes de excluir arquivos ou aliases.
 - `nocturne-port.css`, os 53 aliases `--n-*` Ativos, 9 `--n-*` Legacy e 13 `--activity-*` Legacy permanecem intocados e devem ser tratados em auditoria separada.
+
+## Marco 33 - Nocturne Port Compatibility Inventory
+
+### Escopo e cascata
+
+- Marco de inventario/contrato, sem alteracao em CSS de producao, componentes, tokens, layout ou comportamento.
+- `global.css` importa, nesta ordem, `tokens.css`, `nocturne-theme.css`, `animations.css` e por ultimo `nocturne-port.css`. Portanto, o port participa da cascata final e pode sobrescrever os niveis anteriores.
+- Ele e o ultimo import, nao a ultima regra absoluta: declaracoes posteriores de `global.css` e estilos scoped dos chunks Svelte ainda participam da especificidade. Nao existe `@layer` para explicitar essa precedencia.
+- O arquivo possui 3.803 linhas e quatro blocos visualmente ativos: Splash, shell/base, Settings e metric/rating banners.
+- Os hosts reais foram confirmados em `SplashScreen.svelte`, `App.svelte`/`Layout.svelte`, `Settings.svelte`, `LibraryCard.svelte` e `BrowseV3.svelte`.
+
+### Classificacao dos tokens locais
+
+- Foram encontradas 59 declaracoes correspondentes a 46 custom properties unicas.
+- **Ativos (43):** os aliases semanticos/Settings comprovados, tokens geometricos locais, `--splash-ink`, `--splash-ink-soft` e `--state-accent` possuem consumidor de producao e resolvem no contexto dos hosts ativos.
+- **Legacy (3):** `--splash-error` e `--splash-ink-muted` permanecem sem referencia comprovada; `--color-info-bg` participa apenas do ciclo fallback `--color-info-bg -> --component-settings-info-bg -> --color-info-bg`, quebrado hoje pelo override Nocturne, mas nao seguro para temas futuros.
+- **Mortos (0):** nenhum token foi classificado como Morto e nenhum token foi removido. Os tres casos duvidosos permanecem Legacy por conservadorismo.
+- O port referencia exatamente 41 aliases `--n-*`; a lista completa e fixa no contrato `nocturnePortCompatibility.test.ts`. A validacao de hosts mostrou que 6 dessas referencias pertencem somente a seletores Legacy sem host ativo (`.n-btn-secondary` e toolbar cluster/divider).
+- O inventario global corrigido e **45 Ativos / 17 Legacy** entre os 62 aliases `--n-*`. Dos 17 Legacy, 11 nao possuem referencia e 6 aparecem somente nos seletores Legacy citados. O inventario anterior 53/9 contava referencia textual como atividade visual.
+
+### Valores visuais diretos
+
+- O port contem 189 ocorrencias de cor direta sob o detector global (`hex`, `rgb/rgba`, `hsl/hsla`, `oklch`, `color-mix`, `white` e `black`), incluindo ramos ativos e seletores Legacy preservados.
+- Distribuicao: Splash 61, shell/base 58, Settings 49 e metric/rating banners 21.
+- Essas ocorrencias nao sao uma nova allowlist permanente. Elas foram classificadas como divida ativa da camada port e devem ser derivadas para primitive/semantic/component tokens antes de considerar a infraestrutura integralmente portavel entre temas.
+- O teste usa tetos regressivos por secao (61/58/49/21 e 189 total): reducoes sao aceitas; qualquer aumento falha.
+
+### Computed style e validacao
+
+- O teste Chromium monta os mesmos hosts/classes reais e confirma que Splash, Sidebar, Settings card e metric pill recebem pintura resolvida da cascata final.
+- O teste tambem confirma que `--splash-ink` e `--settings-card-radius` aparecem em computed style, distinguindo tokens ativos de declaracoes apenas textuais.
+- Teste unitario: `pnpm test:unit -- src/lib/theme/nocturnePortCompatibility.test.ts`; 1 arquivo e 5 testes verdes.
+- Teste browser: `pnpm test:browser -- src/lib/theme/nocturnePortCompatibility.browser.test.ts`; 1 arquivo e 1 teste verde.
+- `pnpm build`: verde com 6.299 modulos; permanece apenas o aviso conhecido de chunk acima de 500 kB.
+- `git diff --check`: verde, com avisos esperados de normalizacao LF/CRLF no Windows.
+- Nenhuma screenshot foi recapturada porque este marco nao altera CSS nem superficie visual.
+
+### Proximo lote recomendado
+
+- Marco 34: derivar as 189 ocorrencias ativas de `nocturne-port.css` para primitive/semantic/component tokens, mantendo o arquivo e a camada `--n-*`.
+- O lote pode permanecer unico porque ha 189 ocorrencias, abaixo do limite de 350 declaracoes. Se o diff ultrapassar 900 linhas, deve ser dividido automaticamente por bloco visual sem ampliar escopo.
+- Gates visuais obrigatorios do Marco 34: Splash, Sidebar/Topbar/Search dim, Settings, Library metric banner e Browse recommendation rating, todos before/after em Nocturne.
+
+### Riscos restantes
+
+- Apesar do gate global dos component tokens estar verde, a existencia dessas 189 ocorrencias na ultima folha da cascata impede afirmar que qualquer tema futuro depende somente do documento V4 em todas as superficies.
+- O port nao e envolvido por `[data-theme="nocturne"]`; portanto, seus literais e aliases locais tambem atingem temas builtin claros e custom themes, salvo tres overrides claros pontuais. Este e o principal bloqueio atual para autoria realmente theme-only.
+- O port contem overrides para estados/light selectors e aliases herdados por componentes. A derivacao deve preservar especificidade, ordem, alpha, gradients e geometria; mover seletores ou reordenar folhas seria mudanca de comportamento visual.
+- Syncd continua fora do escopo. Os aliases Legacy e `--n-*` nao devem ser removidos durante a derivacao.

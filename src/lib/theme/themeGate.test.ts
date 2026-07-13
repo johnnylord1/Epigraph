@@ -7,18 +7,33 @@ import { themeProbeCss } from "../../test/themeProbe";
 const ROOT = process.cwd();
 const tokensCss = readFileSync(resolve(ROOT, "src/styles/tokens.css"), "utf8");
 const nocturneCss = readFileSync(resolve(ROOT, "src/styles/nocturne-theme.css"), "utf8");
+const nocturnePortCss = readFileSync(resolve(ROOT, "src/styles/nocturne-port.css"), "utf8");
 const directColorPattern =
   /#[0-9a-f]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)|oklch\([^)]*\)|(?<![\w-])(?:black|white)(?![\w-])/i;
-const legacyNocturneTokens = [
+const unreferencedLegacyNocturneTokens = [
   "--n-bg",
   "--n-bg-top",
+  "--n-gradient-bg",
   "--n-line",
   "--n-line-strong",
+  "--n-on-primary-container",
   "--n-outline-variant",
   "--n-popover-control-bg",
   "--n-popover-control-border",
   "--n-surface-container",
   "--n-surface-container-low",
+] as const;
+const selectorOnlyLegacyNocturneTokens = [
+  "--n-surface-container-high",
+  "--n-surface-container-highest",
+  "--n-toolbar-cluster-padding",
+  "--n-toolbar-cluster-radius",
+  "--n-toolbar-divider-height",
+  "--n-toolbar-icon-btn-size",
+] as const;
+const legacyNocturneTokens = [
+  ...unreferencedLegacyNocturneTokens,
+  ...selectorOnlyLegacyNocturneTokens,
 ] as const;
 const legacyActivityTokens = [
   "--activity-panel",
@@ -72,7 +87,7 @@ function sourceCorpus(path: string): string {
 }
 
 function withoutDefinitions(source: string, token: string): string {
-  return source.replace(new RegExp(`${token}\s*:[^;]+;`, "g"), "");
+  return source.replace(new RegExp(`${token}\\s*:[^;]+;`, "g"), "");
 }
 
 function composite(foreground: RgbaColor, background: RgbaColor): RgbaColor {
@@ -145,15 +160,20 @@ describe("final derived theme gate", () => {
     );
 
     expect(nocturneTokens.size).toBe(62);
-    expect(activeTokens).toHaveLength(53);
-    expect(legacyNocturneTokens).toHaveLength(9);
+    expect(activeTokens).toHaveLength(45);
+    expect(legacyNocturneTokens).toHaveLength(17);
     expect(legacyActivityTokens).toHaveLength(13);
 
-    for (const token of [...legacyNocturneTokens, ...legacyActivityTokens]) {
-      expect(nocturneCss, `${token} must remain defined`).toMatch(new RegExp(`${token}\s*:`));
+    for (const token of [...unreferencedLegacyNocturneTokens, ...legacyActivityTokens]) {
+      expect(nocturneCss, `${token} must remain defined`).toMatch(new RegExp(`${token}\\s*:`));
       expect(withoutDefinitions(source, token), `${token} gained an active reference`).not.toMatch(
         new RegExp(`${token}(?![A-Za-z0-9_-])`),
       );
+    }
+
+    for (const token of selectorOnlyLegacyNocturneTokens) {
+      expect(nocturneCss, `${token} must remain defined`).toMatch(new RegExp(`${token}\\s*:`));
+      expect(nocturnePortCss, `${token} must remain attached to its Legacy selector`).toContain(`var(${token})`);
     }
   });
 

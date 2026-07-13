@@ -1,0 +1,148 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { describe, expect, test } from "vitest";
+
+const ROOT = process.cwd();
+const PORT_PATH = "src/styles/nocturne-port.css";
+const PORT_LEGACY_TOKENS = ["--color-info-bg", "--splash-error", "--splash-ink-muted"];
+const PORT_N_REFERENCES = [
+  "--n-brand-offset-bottom",
+  "--n-brand-offset-top",
+  "--n-brand-size",
+  "--n-duration-fast",
+  "--n-duration-normal",
+  "--n-ease-spring",
+  "--n-gradient-primary",
+  "--n-hud-scale",
+  "--n-icon-btn-radius",
+  "--n-icon-btn-size",
+  "--n-on-primary",
+  "--n-on-surface",
+  "--n-on-surface-variant",
+  "--n-primary",
+  "--n-primary-container",
+  "--n-search-height",
+  "--n-search-icon-offset",
+  "--n-search-icon-size",
+  "--n-search-padding-left",
+  "--n-search-padding-right",
+  "--n-search-width",
+  "--n-search-width-focus",
+  "--n-segmented-height",
+  "--n-sidebar-btn-radius",
+  "--n-sidebar-btn-size",
+  "--n-sidebar-edge-x",
+  "--n-sidebar-edge-y",
+  "--n-sidebar-gap",
+  "--n-sidebar-padding-y",
+  "--n-sidebar-radius",
+  "--n-sidebar-rail-width",
+  "--n-sidebar-width",
+  "--n-surface-container-high",
+  "--n-surface-container-highest",
+  "--n-toolbar-cluster-padding",
+  "--n-toolbar-cluster-radius",
+  "--n-toolbar-divider-height",
+  "--n-toolbar-icon-btn-size",
+  "--n-topbar-gap",
+  "--n-topbar-height",
+  "--n-topbar-pad-x",
+];
+const DIRECT_COLOR_PATTERN = /#[0-9A-Fa-f]{3,8}\b|rgba?\(|hsla?\(|oklch\(|color-mix\(|(?<![-\w])(?:white|black)(?![-\w])/g;
+
+function readProjectFile(path: string) {
+  return readFileSync(resolve(ROOT, path), "utf8");
+}
+
+function productionCorpus(path: string): string {
+  return readdirSync(resolve(ROOT, path), { withFileTypes: true })
+    .flatMap((entry) => {
+      const child = `${path}/${entry.name}`;
+      if (entry.isDirectory()) return productionCorpus(child);
+      if (!/\.(?:css|svelte|ts)$/.test(entry.name) || entry.name.endsWith(".test.ts")) return [];
+      return [readProjectFile(child)];
+    })
+    .join("\n");
+}
+
+function definitions(source: string): string[] {
+  return Array.from(source.matchAll(/^\s*(--[A-Za-z0-9_-]+)\s*:/gm), (match) => match[1])
+    .filter((token, index, tokens) => tokens.indexOf(token) === index)
+    .sort();
+}
+
+function references(source: string, prefix: string): string[] {
+  return Array.from(source.matchAll(new RegExp(`var\\((${prefix}[A-Za-z0-9_-]+)`, "g")), (match) => match[1])
+    .filter((token, index, tokens) => tokens.indexOf(token) === index)
+    .sort();
+}
+
+function withoutDefinitions(source: string, token: string): string {
+  return source.replace(new RegExp(`${token}\\s*:[^;]+;`, "g"), "");
+}
+
+function directColorCount(source: string): number {
+  return source.match(DIRECT_COLOR_PATTERN)?.length ?? 0;
+}
+
+describe("Nocturne port compatibility contract", () => {
+  test("keeps the port last in the active CSS cascade", () => {
+    const globalCss = readProjectFile("src/styles/global.css");
+    const tokens = globalCss.indexOf('@import "./tokens.css"');
+    const nocturne = globalCss.indexOf('@import "./nocturne-theme.css"');
+    const port = globalCss.indexOf('@import "./nocturne-port.css"');
+
+    expect(tokens).toBeGreaterThan(-1);
+    expect(nocturne).toBeGreaterThan(tokens);
+    expect(port).toBeGreaterThan(nocturne);
+  });
+
+  test("classifies every port-local token as active or Legacy", () => {
+    const port = readProjectFile(PORT_PATH);
+    const corpus = productionCorpus("src");
+    const defined = definitions(port);
+    const active = defined.filter((token) => {
+      if (PORT_LEGACY_TOKENS.includes(token)) return false;
+      const source = withoutDefinitions(corpus, token);
+      return source.includes(`var(${token}`) || source.includes(`setProperty("${token}`);
+    });
+    const legacy = defined.filter((token) => !active.includes(token));
+
+    expect(defined).toHaveLength(46);
+    expect(active).toHaveLength(43);
+    expect(legacy).toEqual(PORT_LEGACY_TOKENS);
+    expect(port).toContain("--color-info-bg: var(--component-settings-info-bg);");
+    expect(readProjectFile("src/styles/tokens.css")).toContain(
+      "--component-settings-info-bg: var(--color-info-bg);",
+    );
+  });
+
+  test("preserves the exact referenced --n-* compatibility surface", () => {
+    expect(references(readProjectFile(PORT_PATH), "--n-")).toEqual(PORT_N_REFERENCES);
+  });
+
+  test("keeps all four port sections attached to active hosts", () => {
+    expect(readProjectFile("src/components/layout/SplashScreen.svelte")).toContain("aethon-port--splash");
+    expect(readProjectFile("src/components/layout/Layout.svelte")).toContain("aethon-app-shell");
+    expect(readProjectFile("src/components/settings/Settings.svelte")).toContain("aethon-port--settings");
+    expect(readProjectFile("src/components/library/LibraryCard.svelte")).toContain("source-metric-banner");
+    expect(readProjectFile("src/components/pages/BrowseV3.svelte")).toContain("searchRecommendationCard");
+  });
+
+  test("prevents direct color debt from growing before incremental migration", () => {
+    const port = readProjectFile(PORT_PATH);
+    const shellStart = port.indexOf(".aethon-app-shell {");
+    const settingsStart = port.indexOf(".aethon-port--settings {");
+    const metricsLabel = port.indexOf("Shared Source & Tracker Metric Banner");
+    const metricsStart = port.lastIndexOf("/*", metricsLabel);
+
+    expect(shellStart).toBeGreaterThan(0);
+    expect(settingsStart).toBeGreaterThan(shellStart);
+    expect(metricsStart).toBeGreaterThan(settingsStart);
+    expect(directColorCount(port.slice(0, shellStart))).toBeLessThanOrEqual(61);
+    expect(directColorCount(port.slice(shellStart, settingsStart))).toBeLessThanOrEqual(58);
+    expect(directColorCount(port.slice(settingsStart, metricsStart))).toBeLessThanOrEqual(49);
+    expect(directColorCount(port.slice(metricsStart))).toBeLessThanOrEqual(21);
+    expect(directColorCount(port)).toBeLessThanOrEqual(189);
+  });
+});

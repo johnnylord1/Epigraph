@@ -7,8 +7,10 @@ const APP_LOADING_TOKEN = "--component-app-loading-fg";
 const LEGACY_NOCTURNE_TOKENS = [
   "--n-bg",
   "--n-bg-top",
+  "--n-gradient-bg",
   "--n-line",
   "--n-line-strong",
+  "--n-on-primary-container",
   "--n-outline-variant",
   "--n-popover-control-bg",
   "--n-popover-control-border",
