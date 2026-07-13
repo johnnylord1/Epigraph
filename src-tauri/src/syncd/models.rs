@@ -3,10 +3,12 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use sqlx::FromRow;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex, RwLock};
+use url::Url;
 
 use super::config::{
     SyncdAdvertisedEndpointResolver, SyncdConfig, SyncdDiscoveryProviderMode,
@@ -932,6 +934,7 @@ pub struct MutationReceiptContext {
     pub mutation_json: String,
     pub entity_type: MutationEntityType,
     pub entity_id: String,
+    pub canonical_entity_id: Option<String>,
     pub scope_id: String,
     pub op: MutationOperation,
 }
@@ -1027,6 +1030,8 @@ pub struct BookProgressPatch {
     pub page_index: Option<i64>,
     pub total_pages: Option<i64>,
     pub section_label: Option<String>,
+    #[serde(default)]
+    pub reset: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1039,6 +1044,8 @@ pub struct NovelProgressPatch {
     pub locator: Option<String>,
     pub locator_sort_key: Option<f64>,
     pub updated_at_ms: i64,
+    #[serde(default)]
+    pub reset: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1080,6 +1087,56 @@ pub struct NovelEntryPatch {
     pub source: Value,
     pub added_at_ms: i64,
     pub updated_at_ms: i64,
+}
+
+/// Returns the mobile-compatible novel identity when the source metadata is
+/// complete. Metadata-only legacy records deliberately return `None` so their
+/// existing identity key remains usable.
+pub fn canonical_novel_identity_key(patch: &NovelEntryPatch) -> Option<String> {
+    canonical_novel_identity_key_from_source(&patch.source, &patch.path)
+}
+
+pub fn canonical_novel_identity_key_from_source(source: &Value, path: &str) -> Option<String> {
+    let source = source.as_object()?;
+    let repository = source
+        .get("repositoryUrl")
+        .or_else(|| source.get("repositoryUri"))?
+        .as_str()?;
+    let plugin_id = source.get("pluginId")?.as_str()?.trim();
+    let source_id = source.get("sourceId")?.as_str()?.trim();
+    let path = path.trim();
+    if plugin_id.is_empty()
+        || source_id.is_empty()
+        || path.is_empty()
+        || plugin_id.contains('\0')
+        || source_id.contains('\0')
+        || path.contains('\0')
+    {
+        return None;
+    }
+
+    let repository = canonicalize_novel_repository(repository)?;
+    let parts = [repository.as_str(), plugin_id, source_id, path];
+    let encoded = serde_json::to_vec(&parts).ok()?;
+    Some(format!("novel-{:x}", Sha256::digest(encoded)))
+}
+
+fn canonicalize_novel_repository(raw: &str) -> Option<String> {
+    let mut repository = Url::parse(raw.trim()).ok()?;
+    if !matches!(repository.scheme(), "http" | "https")
+        || repository.host_str().is_none()
+        || !repository.username().is_empty()
+        || repository.password().is_some()
+    {
+        return None;
+    }
+
+    repository.set_fragment(None);
+    let path = repository.path().to_string();
+    if path.len() > 1 && path.ends_with('/') {
+        repository.set_path(path.trim_end_matches('/'));
+    }
+    Some(repository.to_string())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1136,6 +1193,8 @@ pub struct MutationResult {
     pub client_mutation_id: String,
     pub entity_type: MutationEntityType,
     pub entity_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub canonical_entity_id: Option<String>,
     pub scope_id: String,
     pub op: MutationOperation,
     pub status: MutationResultStatus,
@@ -1752,5 +1811,58 @@ impl TryFrom<NovelClassificationRow> for NovelClassificationRecord {
             classified_at_ms: value.classified_at_ms,
             record_lamport: value.record_lamport,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn omitted_progress_reset_defaults_to_false() {
+        let book: BookProgressPatch = serde_json::from_value(json!({
+            "renderer": "pdf",
+            "progressPercent": 0.5,
+            "lastReadAtMs": 1,
+            "pageIndex": 4
+        }))
+        .unwrap();
+        let novel: NovelProgressPatch = serde_json::from_value(json!({
+            "chapterId": "chapter-1",
+            "progressPercent": 0.5,
+            "updatedAtMs": 1
+        }))
+        .unwrap();
+
+        assert!(!book.reset);
+        assert!(!novel.reset);
+    }
+
+    #[test]
+    fn canonical_novel_identity_matches_mobile_contract() {
+        let patch = NovelEntryPatch {
+            identity_key: "legacy".to_string(),
+            title: "Example".to_string(),
+            author: None,
+            description: None,
+            cover_url: None,
+            path: "/novel/1".to_string(),
+            status: None,
+            tags: Vec::new(),
+            source: json!({
+                "repositoryUrl": "HTTPS://Example.COM:443/repository/",
+                "pluginId": "plugin",
+                "sourceId": "source"
+            }),
+            added_at_ms: 1,
+            updated_at_ms: 1,
+        };
+
+        assert_eq!(
+            canonical_novel_identity_key(&patch).as_deref(),
+            Some("novel-2ddcfbbb73a4bc27095ac742d5e3355a7f432b5ecd484525fb59fbbaf8a9b127")
+        );
     }
 }
