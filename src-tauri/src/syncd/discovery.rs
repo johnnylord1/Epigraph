@@ -208,7 +208,7 @@ pub struct SyncdDiscoveryProviderManager {
 }
 
 pub struct SyncdDiscoveryRuntimeHandle {
-    runtime: SyncdDiscoveryProviderRuntime,
+    runtime: Option<SyncdDiscoveryProviderRuntime>,
 }
 
 enum SyncdDiscoveryProviderRuntime {
@@ -222,12 +222,37 @@ struct SyncdLanPublicationRuntime {
 
 impl Drop for SyncdDiscoveryRuntimeHandle {
     fn drop(&mut self) {
-        match &self.runtime {
+        let Some(runtime) = self.runtime.take() else {
+            return;
+        };
+        match runtime {
             SyncdDiscoveryProviderRuntime::LanPublication(runtime) => {
                 runtime.monitor_task.abort();
                 let _ = runtime.daemon.shutdown();
             }
         }
+    }
+}
+
+impl SyncdDiscoveryRuntimeHandle {
+    pub async fn shutdown(mut self, timeout: std::time::Duration) -> anyhow::Result<()> {
+        let Some(runtime) = self.runtime.take() else {
+            return Ok(());
+        };
+        match runtime {
+            SyncdDiscoveryProviderRuntime::LanPublication(runtime) => {
+                runtime.monitor_task.abort();
+                let receiver = runtime
+                    .daemon
+                    .shutdown()
+                    .context("failed to request mDNS daemon shutdown")?;
+                tokio::task::spawn_blocking(move || receiver.recv_timeout(timeout))
+                    .await
+                    .context("mDNS shutdown waiter panicked")?
+                    .context("timed out waiting for mDNS daemon shutdown")?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -659,10 +684,12 @@ fn start_lan_publication_runtime(
     })?;
 
     Ok(SyncdDiscoveryRuntimeHandle {
-        runtime: SyncdDiscoveryProviderRuntime::LanPublication(SyncdLanPublicationRuntime {
-            daemon,
-            monitor_task,
-        }),
+        runtime: Some(SyncdDiscoveryProviderRuntime::LanPublication(
+            SyncdLanPublicationRuntime {
+                daemon,
+                monitor_task,
+            },
+        )),
     })
 }
 

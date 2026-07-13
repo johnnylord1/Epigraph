@@ -1,3 +1,4 @@
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
@@ -7,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const RUNTIME_MANIFEST_SCHEMA_VERSION: u32 = 1;
 const RUNTIME_MANIFEST_FILE_NAME: &str = "runtime.json";
+const RUNTIME_LOCK_FILE_NAME: &str = "runtime.lock";
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -71,6 +73,42 @@ pub struct RuntimeManifestLease {
     path: PathBuf,
     pid: u32,
     server_id: String,
+}
+
+#[derive(Debug)]
+pub struct RuntimeProcessLock {
+    file: std::fs::File,
+}
+
+impl RuntimeProcessLock {
+    pub fn acquire(data_dir: &Path) -> io::Result<Self> {
+        fs::create_dir_all(data_dir)?;
+        let path = data_dir.join(RUNTIME_LOCK_FILE_NAME);
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(&path)?;
+        file.try_lock_exclusive().map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!(
+                    "another persistent Core process owns {}: {error}",
+                    path.display()
+                ),
+            )
+        })?;
+        file.set_len(0)?;
+        writeln!(&file, "pid={}", std::process::id())?;
+        file.sync_all()?;
+        Ok(Self { file })
+    }
+}
+
+impl Drop for RuntimeProcessLock {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
 }
 
 impl RuntimeManifestLease {
@@ -202,6 +240,18 @@ fn unix_now_millis() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn process_lock_rejects_a_second_owner() {
+        let temp = tempfile::tempdir().unwrap();
+        let first = RuntimeProcessLock::acquire(temp.path()).unwrap();
+        let error = RuntimeProcessLock::acquire(temp.path()).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("another persistent Core process"));
+        drop(first);
+        RuntimeProcessLock::acquire(temp.path()).unwrap();
+    }
     use tempfile::tempdir;
 
     fn manifest(pid: u32, server_id: &str) -> SyncdRuntimeManifest {
