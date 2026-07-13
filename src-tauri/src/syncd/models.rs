@@ -1030,7 +1030,7 @@ pub struct BookProgressPatch {
     pub page_index: Option<i64>,
     pub total_pages: Option<i64>,
     pub section_label: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub reset: bool,
 }
 
@@ -1044,8 +1044,12 @@ pub struct NovelProgressPatch {
     pub locator: Option<String>,
     pub locator_sort_key: Option<f64>,
     pub updated_at_ms: i64,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub reset: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1838,6 +1842,8 @@ mod tests {
 
         assert!(!book.reset);
         assert!(!novel.reset);
+        assert!(serde_json::to_value(&book).unwrap().get("reset").is_none());
+        assert!(serde_json::to_value(&novel).unwrap().get("reset").is_none());
     }
 
     #[test]
