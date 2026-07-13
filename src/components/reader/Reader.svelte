@@ -15,9 +15,16 @@
   import { acquireResolvedMediaUrl, preloadBlobUrls, resetImageCache, resolvedImage, warmResolvedMediaUrl } from "../../lib/imageCache";
   import { FETCH_CHAPTER_PAGES, MARK_CHAPTER_READ, ENQUEUE_DOWNLOAD, ENQUEUE_CHAPTERS_DOWNLOAD } from "../../lib/queries";
   import { toSuwayomiWebViewUrl } from "../../lib/suwayomiWebView";
-  import { store, closeReader, openReader, addHistory, updateSettings, checkAndMarkCompleted, setSettingsOpen, addBookmark, removeBookmark } from "../../store/state.svelte";
+  import { store, closeReader, openReader, addHistory, updateSettings, checkAndMarkCompleted, setSettingsOpen, addBookmark, removePageBookmark } from "../../store/state.svelte";
   import { isEditableKeyboardTarget, matchesKeybind, toggleFullscreen, DEFAULT_KEYBINDS } from "../../lib/keybinds";
   import { loadOfflineMangaChapter, revokeOfflineMangaPages } from "../../lib/reader/offlineManga";
+  import {
+    deleteComicPageBookmark,
+    flushPendingComicHistory,
+    recordComicHistory,
+    recordComicPageBookmark,
+    resolveSyncedComicResumePage,
+  } from "../../lib/reader/comicReaderStateBridge";
   import { setReading } from "../../lib/discord";
   import { canResolveDiscordCover, canRunDiscordCoverImprovement } from "../../lib/discord/coverImprovementGate";
   import { isDiscordPublicImageUrl } from "../../lib/discord/coverResolver";
@@ -231,6 +238,10 @@
   let emptyReaderRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
   let pointerInsideHud = false;
 
+  function comicSyncProfileId(): string | null {
+    return store.runtimeResolvedLocalProfileId ?? store.settings.defaultLocalProfileId ?? null;
+  }
+
   function scheduleResumeDismiss() {
     if (resumeTimer)     clearTimeout(resumeTimer);
     if (resumeFadeTimer) clearTimeout(resumeFadeTimer);
@@ -259,8 +270,12 @@
       ? (store.activeChapterList.find(c => c.id === visibleChapterId) ?? store.activeChapter)
       : store.activeChapter
   );
-  const currentBookmark = $derived(displayChapter ? store.bookmarks.find(b => b.chapterId === displayChapter!.id) : undefined);
-  const isBookmarked = $derived(!!currentBookmark && currentBookmark.pageNumber === store.pageNumber);
+  const currentBookmark = $derived(displayChapter ? store.bookmarks.find(b => (
+    b.mangaId === store.activeManga?.id
+    && b.chapterId === displayChapter!.id
+    && b.pageNumber === store.pageNumber
+  )) : undefined);
+  const isBookmarked = $derived(!!currentBookmark);
 
   const showResumeBanner = $derived(
     resumeVisible && resumePage > 1 &&
@@ -520,8 +535,22 @@
     fadingOut        = false;
     closeReaderWebView().catch(() => {});
 
-    const bookmark  = store.bookmarks.find(b => b.chapterId === id);
-    const resumeTo  = bookmark ? bookmark.pageNumber : 0;
+    const bookmark = store.bookmarks.find(b => b.chapterId === id);
+    const localHistory = store.activeManga
+      ? store.history.find(entry => entry.mangaId === store.activeManga?.id && entry.chapterId === id)
+      : undefined;
+    const syncedResume = store.activeManga
+      ? await resolveSyncedComicResumePage({
+          profileId: comicSyncProfileId(),
+          serverKey: getServerUrl(),
+          mangaId: store.activeManga.id,
+          chapterId: id,
+          pageCount: store.activeChapter?.pageCount,
+          localPageNumber: Math.max(bookmark?.pageNumber ?? 0, localHistory?.pageNumber ?? 0),
+          localSavedAtMs: bookmark?.savedAt,
+        }).catch(() => null)
+      : null;
+    const resumeTo = syncedResume ?? bookmark?.pageNumber ?? 0;
     resumePage      = resumeTo > 1 ? resumeTo : 0;
     resumeDismissed  = false;
     resumeVisible    = resumeTo > 1;
@@ -827,7 +856,27 @@
       untrack(() => {
         if (!hasNavigated) return;
         if (style === "longstrip" && visibleChapterId && chapterId !== visibleChapterId) return;
-        addHistory({ mangaId, mangaTitle, thumbnailUrl: thumb, chapterId, chapterName, readAt: Date.now() });
+        const physicalPageCount = style === "longstrip"
+          ? (stripChapters.find((chunk) => chunk.chapterId === chapterId)?.urls.length ?? lastPage)
+          : lastPage;
+        addHistory({
+          mangaId,
+          mangaTitle,
+          thumbnailUrl: thumb,
+          chapterId,
+          chapterName,
+          readAt: Date.now(),
+          pageNumber: pageNum,
+          pageCount: physicalPageCount,
+        });
+        void recordComicHistory({
+          profileId: comicSyncProfileId(),
+          serverKey: getServerUrl(),
+          mangaId,
+          chapterId,
+          pageNumber: pageNum,
+          pageCount: physicalPageCount,
+        }).catch(() => {});
         if (autoBookmark) {
           addBookmark({ mangaId, mangaTitle, thumbnailUrl: thumb, chapterId, chapterName, pageNumber: pageNum });
         }
@@ -954,10 +1003,29 @@
     const manga = store.activeManga;
     if (!ch || !manga) return;
     if (isBookmarked) {
-      removeBookmark(ch.id);
+      const bookmarkId = currentBookmark?.syncEntityId;
+      removePageBookmark(ch.id, store.pageNumber, bookmarkId);
       resumeVisible = false;
+      void deleteComicPageBookmark({
+        profileId: comicSyncProfileId(),
+        serverKey: getServerUrl(),
+        mangaId: manga.id,
+        chapterId: ch.id,
+        pageNumber: store.pageNumber,
+        bookmarkId,
+      }).catch(() => {});
     } else {
       addBookmark({ mangaId: manga.id, mangaTitle: manga.title, thumbnailUrl: manga.thumbnailUrl, chapterId: ch.id, chapterName: ch.name, pageNumber: store.pageNumber });
+      void recordComicPageBookmark({
+        profileId: comicSyncProfileId(),
+        serverKey: getServerUrl(),
+        mangaId: manga.id,
+        chapterId: ch.id,
+        pageNumber: store.pageNumber,
+        pageCount: style === "longstrip"
+          ? (stripChapters.find((chunk) => chunk.chapterId === ch.id)?.urls.length ?? lastPage)
+          : lastPage,
+      }).catch(() => {});
     }
   }
 
@@ -1119,6 +1187,7 @@
   });
 
   onDestroy(() => {
+    void flushPendingComicHistory();
     closeReaderWebView().catch(() => {});
     clearOfflinePages();
     resetReaderSessionCaches();

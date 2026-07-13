@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { SyncdComicReaderStateAppliedPayload } from "./reader/comicReaderStateBridge";
 
 export type SyncdEffectiveDiscoverySource =
   | "advertised-endpoint"
@@ -129,6 +130,7 @@ export interface SyncdReplicationSnapshot {
   lastError?: string | null;
   booksScopeCheckpoint?: SyncdReplicationScopeCheckpoint | null;
   novelsScopeCheckpoint?: SyncdReplicationScopeCheckpoint | null;
+  comicsScopeCheckpoint?: SyncdReplicationScopeCheckpoint | null;
   paused: boolean;
   lastAppliedScopes: string[];
   lastAppliedAtMs?: number | null;
@@ -276,6 +278,21 @@ export function syncdForgetPersistedSession(
   return invoke("syncd_forget_persisted_session", { input: { profileId, sessionKey } });
 }
 
+export function syncdGetPendingComicReaderChanges(
+  profileId: string,
+): Promise<SyncdComicReaderStateAppliedPayload> {
+  return invoke("syncd_get_pending_comic_reader_changes", { profileId });
+}
+
+export function syncdAckComicReaderChanges(
+  profileId: string,
+  throughServerVersion: number,
+): Promise<void> {
+  return invoke("syncd_ack_comic_reader_changes", {
+    input: { profileId, throughServerVersion },
+  });
+}
+
 export function listenSyncdDesktopState(
   handler: (payload: SyncdDesktopSnapshot) => void,
 ): Promise<UnlistenFn> {
@@ -304,4 +321,10 @@ export function listenSyncdReplicationError(
   handler: (payload: SyncdReplicationErrorPayload) => void,
 ): Promise<UnlistenFn> {
   return listen<SyncdReplicationErrorPayload>("syncd-replication-error", ({ payload }) => handler(payload));
+}
+
+export function listenSyncdComicReaderStateApplied(
+  handler: (payload: SyncdComicReaderStateAppliedPayload) => void,
+): Promise<UnlistenFn> {
+  return listen<SyncdComicReaderStateAppliedPayload>("syncd-comic-reader-state-applied", ({ payload }) => handler(payload));
 }

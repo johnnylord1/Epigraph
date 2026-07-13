@@ -87,11 +87,18 @@
   } from "./lib/serverLifecycle";
   import { loadNovelRepositoryState } from "./lib/novels/repositoryState";
   import {
+    listenSyncdComicReaderStateApplied,
     listenSyncdReplicationError,
     listenSyncdReplicationState,
+    syncdAckComicReaderChanges,
+    syncdGetPendingComicReaderChanges,
     type TrackerCompletionTracker,
     type SyncdReplicationSnapshot,
   } from "./lib/syncdDesktop";
+  import {
+    applySyncedComicReaderChanges,
+    flushPendingComicHistory,
+  } from "./lib/reader/comicReaderStateBridge";
   import { createBooksCategory, getBooksUpdateExcludedBookIds, sortBooksCategories } from "./lib/library/domainCategories";
   import type { Category, Chapter, DownloadStatus, DownloadQueueItem, Manga, Tracker } from "./lib/types";
   import type { ActiveDownload } from "./store/state.svelte";
@@ -334,8 +341,10 @@
   let unlistenDownload: (() => void) | undefined;
   let unlistenSyncdReplicationState: (() => void) | undefined;
   let unlistenSyncdReplicationError: (() => void) | undefined;
+  let unlistenSyncdComicReaderStateApplied: (() => void) | undefined;
   let syncdListenersAttached = false;
   let syncdListenersPromise: Promise<void> | null = null;
+  let comicReaderDrainPromise: Promise<void> | null = null;
   const syncdAppliedMarks = new Map<string, number>();
   let pageHidden = $state(false);
   let appWindowFocused = true;
@@ -344,6 +353,24 @@
   let lastDownloadEventAt = $state(Date.now());
   let lastRuntimeTrimAt = 0;
   let libraryBootstrapScopeKey: string | null = null;
+
+  function drainPendingComicReaderChanges(profileId: string): Promise<void> {
+    if (comicReaderDrainPromise) return comicReaderDrainPromise;
+    comicReaderDrainPromise = (async () => {
+      const payload = await syncdGetPendingComicReaderChanges(profileId);
+      if (!payload.changes.length) return;
+      const serverKey = store.runtimeServerUrl ?? store.settings.serverUrl;
+      if (!serverKey) throw new Error("Suwayomi server identity is unavailable.");
+      await applySyncedComicReaderChanges(profileId, serverKey, payload.changes);
+      const throughServerVersion = Math.max(
+        ...payload.changes.map((change) => change.serverVersion),
+      );
+      await syncdAckComicReaderChanges(profileId, throughServerVersion);
+    })().finally(() => {
+      comicReaderDrainPromise = null;
+    });
+    return comicReaderDrainPromise;
+  }
   let libraryBootstrapInFlight: Promise<void> | null = null;
   let automaticLibraryUpdateInFlight: Promise<void> | null = null;
   let standbyInFlight = false;
@@ -2609,6 +2636,11 @@
           store.bumpContentSetupVersion();
         }
       }
+      if (payload.lastAppliedScopes.some((scope) => scope.startsWith("comics:profile:"))) {
+        void drainPendingComicReaderChanges(payload.localProfileId).catch((error) => {
+          console.warn("Failed to materialize pending comic reader state:", error);
+        });
+      }
     }
     const ensureProbeStarted = () => {
       if (probeStarted || cancelled) return;
@@ -2753,6 +2785,31 @@
         return;
       }
       unlistenDownload = downloadUnlisten;
+
+      const comicReaderStateUnlisten = await listenSyncdComicReaderStateApplied((payload) => {
+        const activeProfileId = store.runtimeResolvedLocalProfileId
+          ?? store.settings.defaultLocalProfileId;
+        if (!activeProfileId || payload.localProfileId !== activeProfileId) return;
+        void drainPendingComicReaderChanges(payload.localProfileId).catch((error) => {
+          console.warn("Could not apply synced comic reader state:", error);
+        });
+      }).catch((error) => {
+        console.warn("syncd comic reader state listener failed during startup:", error);
+        return () => {};
+      });
+      if (cancelled) {
+        comicReaderStateUnlisten();
+        return;
+      }
+      unlistenSyncdComicReaderStateApplied = comicReaderStateUnlisten;
+      void flushPendingComicHistory();
+      const initialProfileId = store.runtimeResolvedLocalProfileId
+        ?? store.settings.defaultLocalProfileId;
+      if (initialProfileId) {
+        void drainPendingComicReaderChanges(initialProfileId).catch((error) => {
+          console.warn("Could not hydrate pending comic reader state:", error);
+        });
+      }
     })().catch((error) => {
       console.error("App startup bootstrap failed before profile probe settled:", error);
       if (!cancelled) {
@@ -2779,6 +2836,7 @@
       unlistenDownload?.();
       unlistenSyncdReplicationState?.();
       unlistenSyncdReplicationError?.();
+      unlistenSyncdComicReaderStateApplied?.();
       window.removeEventListener("keydown", handleAuditShortcut, true);
       uninstallAuditBridge();
       delete (globalThis as typeof globalThis & { __AETHON_DIAGNOSTICS__?: unknown }).__AETHON_DIAGNOSTICS__;
