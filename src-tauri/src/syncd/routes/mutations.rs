@@ -57,6 +57,7 @@ pub async fn post_mutations(
             mutation_json,
             entity_type,
             entity_id: base.entity_id.clone(),
+            canonical_entity_id: None,
             scope_id: base.scope_id.clone(),
             op: base.op,
         };
@@ -310,11 +311,26 @@ pub async fn post_mutations(
                     results.push(rejected_result(&mutation, error));
                     continue;
                 }
+                let (prefix, requested_novel_id) = base
+                    .entity_id
+                    .strip_prefix("novel.progress::")
+                    .map(|novel_id| ("novel.progress::", novel_id))
+                    .unwrap_or(("", base.entity_id.as_str()));
+                let canonical_novel_id =
+                    db::resolve_novel_entity_id(&state.pool, &base.scope_id, requested_novel_id)
+                        .await
+                        .map_err(|error| {
+                            AppError::Internal(format!(
+                                "Failed to resolve novel progress identity: {error}"
+                            ))
+                        })?;
+                let canonical_entity_id = format!("{prefix}{canonical_novel_id}");
+                set_canonical_receipt(&mut session, &base.entity_id, &canonical_entity_id);
                 db::apply_novel_progress_mutation(
                     &state.pool,
                     &session,
                     &base.scope_id,
-                    &base.entity_id,
+                    &canonical_entity_id,
                     patch,
                     base.lamport,
                     state.config.retention_window,
@@ -418,11 +434,28 @@ pub async fn post_mutations(
                         results.push(rejected_result(&mutation, error));
                         continue;
                     }
+                    let canonical_entity_id = db::resolve_novel_entry_entity_id(
+                        &state.pool,
+                        &base.scope_id,
+                        &base.entity_id,
+                        patch,
+                    )
+                    .await
+                    .map_err(|error| {
+                        AppError::Internal(format!(
+                            "Failed to resolve novel entry identity: {error}"
+                        ))
+                    })?;
+                    if canonical_entity_id != base.entity_id {
+                        if let Some(context) = session.mutation_receipt.as_mut() {
+                            context.canonical_entity_id = Some(canonical_entity_id.clone());
+                        }
+                    }
                     db::apply_novel_entry_mutation(
                         &state.pool,
                         &session,
                         &base.scope_id,
-                        &base.entity_id,
+                        &canonical_entity_id,
                         patch,
                         base.lamport,
                         state.config.retention_window,
@@ -434,18 +467,31 @@ pub async fn post_mutations(
                         ))
                     })?
                 }
-                MutationOperation::Delete => db::delete_novel_entry_mutation(
-                    &state.pool,
-                    &session,
-                    &base.scope_id,
-                    &base.entity_id,
-                    base.lamport,
-                    state.config.retention_window,
-                )
-                .await
-                .map_err(|error| {
-                    AppError::Internal(format!("Failed to delete novel entry mutation: {error}"))
-                })?,
+                MutationOperation::Delete => {
+                    let canonical_entity_id =
+                        db::resolve_novel_entity_id(&state.pool, &base.scope_id, &base.entity_id)
+                            .await
+                            .map_err(|error| {
+                                AppError::Internal(format!(
+                                    "Failed to resolve novel entry identity for delete: {error}"
+                                ))
+                            })?;
+                    set_canonical_receipt(&mut session, &base.entity_id, &canonical_entity_id);
+                    db::delete_novel_entry_mutation(
+                        &state.pool,
+                        &session,
+                        &base.scope_id,
+                        &canonical_entity_id,
+                        base.lamport,
+                        state.config.retention_window,
+                    )
+                    .await
+                    .map_err(|error| {
+                        AppError::Internal(format!(
+                            "Failed to delete novel entry mutation: {error}"
+                        ))
+                    })?
+                }
             },
             MutationInput::NovelChapter { base, patch } => match base.op {
                 MutationOperation::Merge => {
@@ -464,12 +510,21 @@ pub async fn post_mutations(
                         results.push(rejected_result(&mutation, error));
                         continue;
                     }
+                    let mut canonical_patch = patch.clone();
+                    canonical_patch.novel_id =
+                        db::resolve_novel_entity_id(&state.pool, &base.scope_id, &patch.novel_id)
+                            .await
+                            .map_err(|error| {
+                                AppError::Internal(format!(
+                                    "Failed to resolve novel chapter owner: {error}"
+                                ))
+                            })?;
                     db::apply_novel_chapter_mutation(
                         &state.pool,
                         &session,
                         &base.scope_id,
                         &base.entity_id,
-                        patch,
+                        &canonical_patch,
                         base.lamport,
                         state.config.retention_window,
                     )
@@ -510,12 +565,21 @@ pub async fn post_mutations(
                         results.push(rejected_result(&mutation, error));
                         continue;
                     }
+                    let mut canonical_patch = patch.clone();
+                    canonical_patch.novel_id =
+                        db::resolve_novel_entity_id(&state.pool, &base.scope_id, &patch.novel_id)
+                            .await
+                            .map_err(|error| {
+                                AppError::Internal(format!(
+                                    "Failed to resolve novel bookmark owner: {error}"
+                                ))
+                            })?;
                     match db::apply_novel_bookmark_mutation(
                         &state.pool,
                         &session,
                         &base.scope_id,
                         &base.entity_id,
-                        patch,
+                        &canonical_patch,
                         base.lamport,
                         state.config.retention_window,
                     )
@@ -585,12 +649,21 @@ pub async fn post_mutations(
                         results.push(rejected_result(&mutation, error));
                         continue;
                     }
+                    let mut canonical_patch = patch.clone();
+                    canonical_patch.novel_id =
+                        db::resolve_novel_entity_id(&state.pool, &base.scope_id, &patch.novel_id)
+                            .await
+                            .map_err(|error| {
+                                AppError::Internal(format!(
+                                    "Failed to resolve novel history owner: {error}"
+                                ))
+                            })?;
                     db::apply_novel_history_mutation(
                         &state.pool,
                         &session,
                         &base.scope_id,
                         &base.entity_id,
-                        patch,
+                        &canonical_patch,
                         base.lamport,
                         state.config.retention_window,
                     )
@@ -670,6 +743,8 @@ pub async fn post_mutations(
             client_mutation_id: base.client_mutation_id.clone(),
             entity_type,
             entity_id: base.entity_id.clone(),
+            canonical_entity_id: (outcome.envelope.entity_id != base.entity_id)
+                .then(|| outcome.envelope.entity_id.clone()),
             scope_id: base.scope_id.clone(),
             op: base.op,
             status: MutationResultStatus::Applied,
@@ -726,6 +801,19 @@ fn canonical_mutation(mutation: &MutationInput) -> Result<(String, String), AppE
         .map_err(|error| AppError::Internal(format!("Failed to canonicalize mutation: {error}")))?;
     let mutation_hash = format!("{:x}", Sha256::digest(mutation_json.as_bytes()));
     Ok((mutation_json, mutation_hash))
+}
+
+fn set_canonical_receipt(
+    session: &mut AuthenticatedSession,
+    requested_entity_id: &str,
+    canonical_entity_id: &str,
+) {
+    if requested_entity_id == canonical_entity_id {
+        return;
+    }
+    if let Some(context) = session.mutation_receipt.as_mut() {
+        context.canonical_entity_id = Some(canonical_entity_id.to_string());
+    }
 }
 
 fn canonicalize_json(value: Value) -> Value {
@@ -1088,6 +1176,7 @@ fn rejected_result(mutation: &MutationInput, error: ErrorDetail) -> MutationResu
         client_mutation_id: base.client_mutation_id.clone(),
         entity_type: mutation.entity_type(),
         entity_id: base.entity_id.clone(),
+        canonical_entity_id: None,
         scope_id: base.scope_id.clone(),
         op: base.op,
         status: MutationResultStatus::Rejected,
@@ -1451,6 +1540,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn book_progress_explicit_reset_accepts_regression_without_persisting_flag() {
+        let (_temp, state) = build_state().await;
+        let app = build_test_router(state);
+
+        for (client_mutation_id, lamport, page_index, progress_percent, reset) in [
+            ("book-reset-high", 1, 20, 0.8, false),
+            ("book-reset-low", 2, 2, 0.1, true),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(request_with_json(
+                    "/v1/mutations",
+                    "main-token",
+                    json!({
+                        "requestId": format!("request-{client_mutation_id}"),
+                        "mutations": [{
+                            "entityType": "book.progress",
+                            "clientMutationId": client_mutation_id,
+                            "scopeId": "books:global",
+                            "entityId": "book-reset",
+                            "lamport": lamport,
+                            "patch": {
+                                "renderer": "pdf",
+                                "progressPercent": progress_percent,
+                                "lastReadAtMs": lamport * 1000,
+                                "pageIndex": page_index,
+                                "reset": reset
+                            }
+                        }]
+                    }),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let payload = json_body(response).await;
+            if reset {
+                assert_eq!(payload["results"][0]["record"]["pageIndex"], 2);
+                assert_eq!(payload["results"][0]["record"]["progressPercent"], 0.1);
+                assert!(payload["results"][0]["record"].get("reset").is_none());
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn novel_progress_never_regresses_chapter_order() {
         let (_temp, state) = build_state().await;
         let app = build_test_router(state);
@@ -1520,6 +1653,304 @@ mod tests {
             20.0
         );
         assert_eq!(payload["results"][0]["record"]["chapterId"], "c20");
+    }
+
+    #[tokio::test]
+    async fn novel_progress_explicit_reset_accepts_regression_without_persisting_flag() {
+        let (_temp, state) = build_state().await;
+        let app = build_test_router(state);
+
+        for (client_mutation_id, lamport, chapter, order, progress, reset) in [
+            ("novel-reset-high", 1, "c20", 20, 0.8, false),
+            ("novel-reset-low", 2, "c2", 2, 0.1, true),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(request_with_json(
+                    "/v1/mutations",
+                    "main-token",
+                    json!({
+                        "requestId": format!("request-{client_mutation_id}"),
+                        "mutations": [{
+                            "entityType": "novel.progress",
+                            "clientMutationId": client_mutation_id,
+                            "scopeId": "novels:profile:main",
+                            "entityId": "novel-reset",
+                            "lamport": lamport,
+                            "patch": {
+                                "chapterId": chapter,
+                                "chapterTitle": chapter,
+                                "chapterOrderKey": order,
+                                "progressPercent": progress,
+                                "locator": format!("/{chapter}"),
+                                "locatorSortKey": progress,
+                                "updatedAtMs": lamport * 1000,
+                                "reset": reset
+                            }
+                        }]
+                    }),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let payload = json_body(response).await;
+            if reset {
+                assert_eq!(payload["results"][0]["record"]["chapterId"], "c2");
+                assert_eq!(
+                    payload["results"][0]["record"]["chapterOrderKey"].as_f64(),
+                    Some(2.0)
+                );
+                assert!(payload["results"][0]["record"].get("reset").is_none());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn novel_entry_deduplicates_canonical_identity_and_returns_existing_entity_id() {
+        let (_temp, state) = build_state().await;
+        let app = build_test_router(state.clone());
+        let canonical_identity =
+            "novel-2ddcfbbb73a4bc27095ac742d5e3355a7f432b5ecd484525fb59fbbaf8a9b127";
+
+        let desktop = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                json!({
+                    "requestId": "request-desktop-novel",
+                    "mutations": [{
+                        "entityType": "novel.entry",
+                        "clientMutationId": "desktop-novel",
+                        "scopeId": "novels:profile:main",
+                        "entityId": "novel:source:%2Fnovel%2F1",
+                        "lamport": 1,
+                        "patch": {
+                            "identityKey": "novel:source:%2Fnovel%2F1",
+                            "title": "Example Novel",
+                            "path": "/novel/1",
+                            "tags": [],
+                            "source": {
+                                "repositoryUrl": "HTTPS://Example.COM:443/repository/",
+                                "pluginId": "plugin",
+                                "sourceId": "source"
+                            },
+                            "addedAtMs": 1000,
+                            "updatedAtMs": 1000
+                        }
+                    }]
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(desktop.status(), StatusCode::OK);
+        let desktop_payload = json_body(desktop).await;
+        assert_eq!(
+            desktop_payload["results"][0]["record"]["identityKey"],
+            canonical_identity
+        );
+
+        let mobile_mutation = json!({
+            "entityType": "novel.entry",
+            "clientMutationId": "mobile-novel",
+            "scopeId": "novels:profile:main",
+            "entityId": canonical_identity,
+            "lamport": 2,
+            "patch": {
+                "identityKey": canonical_identity,
+                "title": "Example Novel Mobile",
+                "path": "/novel/1",
+                "tags": ["updated"],
+                "source": {
+                    "repositoryUrl": "https://example.com/repository",
+                    "pluginId": "plugin",
+                    "sourceId": "source"
+                },
+                "addedAtMs": 1000,
+                "updatedAtMs": 2000
+            }
+        });
+        let mobile = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                json!({
+                    "requestId": "request-mobile-novel",
+                    "mutations": [
+                        mobile_mutation.clone(),
+                        {
+                            "entityType": "novel.progress",
+                            "clientMutationId": "mobile-novel-progress",
+                            "scopeId": "novels:profile:main",
+                            "entityId": format!("novel.progress::{canonical_identity}"),
+                            "lamport": 3,
+                            "patch": {
+                                "chapterId": "chapter-1",
+                                "chapterOrderKey": 1,
+                                "progressPercent": 0.5,
+                                "updatedAtMs": 3000
+                            }
+                        },
+                        {
+                            "entityType": "novel.bookmark",
+                            "clientMutationId": "mobile-novel-bookmark",
+                            "scopeId": "novels:profile:main",
+                            "entityId": "bookmark-mobile-1",
+                            "lamport": 4,
+                            "patch": {
+                                "novelId": canonical_identity,
+                                "chapterId": "chapter-1",
+                                "progressPercent": 0.5,
+                                "savedAtMs": 4000
+                            }
+                        },
+                        {
+                            "entityType": "novel.history",
+                            "clientMutationId": "mobile-novel-history",
+                            "scopeId": "novels:profile:main",
+                            "entityId": "history-mobile-1",
+                            "lamport": 5,
+                            "patch": {
+                                "novelId": canonical_identity,
+                                "chapterId": "chapter-1",
+                                "readAtMs": 5000
+                            }
+                        }
+                    ]
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(mobile.status(), StatusCode::OK);
+        let mobile_payload = json_body(mobile).await;
+        assert_eq!(mobile_payload["results"][0]["entityId"], canonical_identity);
+        assert_eq!(
+            mobile_payload["results"][0]["canonicalEntityId"],
+            "novel:source:%2Fnovel%2F1"
+        );
+        assert_eq!(
+            mobile_payload["results"][0]["record"]["novelId"],
+            "novel:source:%2Fnovel%2F1"
+        );
+        assert_eq!(
+            mobile_payload["results"][1]["entityId"],
+            format!("novel.progress::{canonical_identity}")
+        );
+        assert_eq!(
+            mobile_payload["results"][1]["canonicalEntityId"],
+            "novel.progress::novel:source:%2Fnovel%2F1"
+        );
+        assert_eq!(
+            mobile_payload["results"][1]["record"]["novelId"],
+            "novel:source:%2Fnovel%2F1"
+        );
+        assert_eq!(
+            mobile_payload["results"][2]["record"]["novelId"],
+            "novel:source:%2Fnovel%2F1"
+        );
+        assert_eq!(
+            mobile_payload["results"][3]["record"]["novelId"],
+            "novel:source:%2Fnovel%2F1"
+        );
+
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM novel_library_entries WHERE scope_id = ?")
+                .bind("novels:profile:main")
+                .fetch_one(&state.pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 1);
+
+        let retry = app
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                json!({
+                    "requestId": "request-mobile-novel-retry",
+                    "mutations": [mobile_mutation]
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(retry.status(), StatusCode::OK);
+        let retry_payload = json_body(retry).await;
+        assert_eq!(retry_payload["results"][0], mobile_payload["results"][0]);
+    }
+
+    #[tokio::test]
+    async fn concurrent_novel_entry_additions_converge_to_one_entity() {
+        let (_temp, state) = build_state().await;
+        let app = build_test_router(state.clone());
+        let canonical_identity =
+            "novel-2ddcfbbb73a4bc27095ac742d5e3355a7f432b5ecd484525fb59fbbaf8a9b127";
+        let mutation = |client_mutation_id: &str, entity_id: &str, repository: &str| {
+            json!({
+                "requestId": format!("request-{client_mutation_id}"),
+                "mutations": [{
+                    "entityType": "novel.entry",
+                    "clientMutationId": client_mutation_id,
+                    "scopeId": "novels:profile:main",
+                    "entityId": entity_id,
+                    "lamport": 1,
+                    "patch": {
+                        "identityKey": entity_id,
+                        "title": "Concurrent Novel",
+                        "path": "/novel/1",
+                        "tags": [],
+                        "source": {
+                            "repositoryUrl": repository,
+                            "pluginId": "plugin",
+                            "sourceId": "source"
+                        },
+                        "addedAtMs": 1000,
+                        "updatedAtMs": 1000
+                    }
+                }]
+            })
+        };
+
+        let desktop_request = request_with_json(
+            "/v1/mutations",
+            "main-token",
+            mutation(
+                "concurrent-desktop-novel",
+                "novel:source:%2Fnovel%2F1",
+                "HTTPS://Example.COM:443/repository/",
+            ),
+        );
+        let mobile_request = request_with_json(
+            "/v1/mutations",
+            "main-token",
+            mutation(
+                "concurrent-mobile-novel",
+                canonical_identity,
+                "https://example.com/repository",
+            ),
+        );
+        let (desktop, mobile) = tokio::join!(
+            app.clone().oneshot(desktop_request),
+            app.oneshot(mobile_request)
+        );
+        let desktop = desktop.unwrap();
+        let mobile = mobile.unwrap();
+        assert_eq!(desktop.status(), StatusCode::OK);
+        assert_eq!(mobile.status(), StatusCode::OK);
+        let desktop = json_body(desktop).await;
+        let mobile = json_body(mobile).await;
+
+        let canonical_results = [&desktop, &mobile]
+            .into_iter()
+            .filter(|payload| payload["results"][0].get("canonicalEntityId").is_some())
+            .count();
+        assert_eq!(canonical_results, 1);
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM novel_library_entries WHERE scope_id = ?")
+                .bind("novels:profile:main")
+                .fetch_one(&state.pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 1);
     }
 
     #[tokio::test]
