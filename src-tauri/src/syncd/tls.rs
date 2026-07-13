@@ -45,7 +45,7 @@ pub async fn load_or_create(config: &SyncdConfig) -> anyhow::Result<TlsMaterial>
     })
 }
 
-fn ensure_crypto_provider() {
+pub(crate) fn ensure_crypto_provider() {
     static INSTALLED: OnceLock<()> = OnceLock::new();
     INSTALLED.get_or_init(|| {
         let _ = aws_lc_rs::default_provider().install_default();
