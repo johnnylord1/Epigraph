@@ -361,6 +361,7 @@
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   let pollInterval: ReturnType<typeof setInterval> | null = null;
   let libraryUpdateInterval: ReturnType<typeof setInterval> | null = null;
+  let comicSyncRetryInterval: ReturnType<typeof setInterval> | null = null;
   let lastInteractionAt = Date.now();
   let unlistenDownload: (() => void) | undefined;
   let unlistenSyncdReplicationState: (() => void) | undefined;
@@ -368,7 +369,10 @@
   let unlistenSyncdComicReaderStateApplied: (() => void) | undefined;
   let syncdListenersAttached = false;
   let syncdListenersPromise: Promise<void> | null = null;
-  let comicReaderDrainPromise: Promise<void> | null = null;
+  const comicReaderDrains = new Map<string, {
+    promise: Promise<void>;
+    rerun: boolean;
+  }>();
   const syncdAppliedMarks = new Map<string, number>();
   let pageHidden = $state(false);
   let appWindowFocused = true;
@@ -379,21 +383,39 @@
   let libraryBootstrapScopeKey: string | null = null;
 
   function drainPendingComicReaderChanges(profileId: string): Promise<void> {
-    if (comicReaderDrainPromise) return comicReaderDrainPromise;
-    comicReaderDrainPromise = (async () => {
-      const payload = await syncdGetPendingComicReaderChanges(profileId);
-      if (!payload.changes.length) return;
-      const serverKey = store.runtimeServerUrl ?? store.settings.serverUrl;
-      if (!serverKey) throw new Error("Suwayomi server identity is unavailable.");
-      await applySyncedComicReaderChanges(profileId, serverKey, payload.changes);
-      const throughServerVersion = Math.max(
-        ...payload.changes.map((change) => change.serverVersion),
-      );
-      await syncdAckComicReaderChanges(profileId, throughServerVersion);
+    const active = comicReaderDrains.get(profileId);
+    if (active) {
+      active.rerun = true;
+      return active.promise;
+    }
+    const state = { promise: Promise.resolve(), rerun: false };
+    state.promise = (async () => {
+      do {
+        state.rerun = false;
+        while (true) {
+          const payload = await syncdGetPendingComicReaderChanges(profileId);
+          if (!payload.changes.length && !payload.authoritativeSnapshot) break;
+          const serverKey = store.runtimeServerUrl ?? store.settings.serverUrl;
+          if (!serverKey) throw new Error("Suwayomi server identity is unavailable.");
+          const throughServerVersion = await applySyncedComicReaderChanges(
+            profileId,
+            serverKey,
+            payload.changes,
+            payload.authoritativeSnapshot,
+          );
+          if (throughServerVersion == null) {
+            throw new Error("Comic reader inbox made no contiguous progress.");
+          }
+          await syncdAckComicReaderChanges(profileId, throughServerVersion);
+        }
+      } while (state.rerun);
     })().finally(() => {
-      comicReaderDrainPromise = null;
+      if (comicReaderDrains.get(profileId) === state) {
+        comicReaderDrains.delete(profileId);
+      }
     });
-    return comicReaderDrainPromise;
+    comicReaderDrains.set(profileId, state);
+    return state.promise;
   }
   let libraryBootstrapInFlight: Promise<void> | null = null;
   let automaticLibraryUpdateInFlight: Promise<void> | null = null;
@@ -2616,6 +2638,14 @@
       void runAutomaticLibraryUpdate("interval");
       void maybeStandbyAfterIdle("periodic-idle-check");
     }, 60_000);
+    comicSyncRetryInterval = setInterval(() => {
+      void flushPendingComicHistory();
+      const profileId = store.runtimeResolvedLocalProfileId
+        ?? store.settings.defaultLocalProfileId;
+      if (profileId) {
+        void drainPendingComicReaderChanges(profileId).catch(() => {});
+      }
+    }, 5_000);
 
     let cancelled = false;
     let unlistenResize = () => {};
@@ -2857,6 +2887,7 @@
       if (idleTimer) clearTimeout(idleTimer);
       if (pollInterval) clearInterval(pollInterval);
       if (libraryUpdateInterval) clearInterval(libraryUpdateInterval);
+      if (comicSyncRetryInterval) clearInterval(comicSyncRetryInterval);
       unlistenDownload?.();
       unlistenSyncdReplicationState?.();
       unlistenSyncdReplicationError?.();

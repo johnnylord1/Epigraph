@@ -237,6 +237,7 @@ export interface HistoryEntry {
   pageNumber?:  number;
   pageCount?:   number;
   syncComicId?: string;
+  syncProfileId?: string;
 }
 
 export interface BookmarkEntry {
@@ -249,8 +250,11 @@ export interface BookmarkEntry {
   savedAt:      number;
   /** Optional user label, e.g. "before the fight scene" */
   label?:       string;
+  /** Resume marker maintained by the reader; never published as an explicit bookmark. */
+  isAutomatic?: boolean;
   /** Stable Core entity id for an explicitly synchronized page bookmark. */
   syncEntityId?: string;
+  syncProfileId?: string;
 }
 
 /**
@@ -1749,11 +1753,14 @@ class Store {
     const bookmark: BookmarkEntry = { ...entry, savedAt: Date.now(), label };
     this.bookmarks = [
       bookmark,
-      ...this.bookmarks.filter(b => !(
-        b.mangaId === entry.mangaId
-        && b.chapterId === entry.chapterId
-        && b.pageNumber === entry.pageNumber
-      )),
+      ...this.bookmarks.filter(b => entry.isAutomatic
+        ? !(b.isAutomatic && b.mangaId === entry.mangaId)
+        : !(
+          !b.isAutomatic
+          && b.mangaId === entry.mangaId
+          && b.chapterId === entry.chapterId
+          && b.pageNumber === entry.pageNumber
+        )),
     ].slice(0, 200);
   }
 
@@ -1761,10 +1768,15 @@ class Store {
     this.bookmarks = this.bookmarks.filter(b => b.chapterId !== chapterId);
   }
 
-  removePageBookmark(chapterId: number, pageNumber: number, syncEntityId?: string) {
+  removePageBookmark(chapterId: number, pageNumber: number, syncEntityId?: string, profileId?: string) {
     this.bookmarks = this.bookmarks.filter(b => !(
       (syncEntityId && b.syncEntityId === syncEntityId)
-      || (b.chapterId === chapterId && b.pageNumber === pageNumber)
+      || (
+        !b.isAutomatic
+        && b.chapterId === chapterId
+        && b.pageNumber === pageNumber
+        && (!profileId || !b.syncProfileId || b.syncProfileId === profileId)
+      )
     ));
   }
 
@@ -2617,7 +2629,7 @@ export function resetKeybinds()                                          { store
 export function clearDiscoverCache()                                       { store.clearDiscoverCache(); }
 export function addBookmark(entry: Omit<BookmarkEntry, "savedAt">, label?: string) { store.addBookmark(entry, label); }
 export function removeBookmark(chapterId: number)                            { store.removeBookmark(chapterId); }
-export function removePageBookmark(chapterId: number, pageNumber: number, syncEntityId?: string) { store.removePageBookmark(chapterId, pageNumber, syncEntityId); }
+export function removePageBookmark(chapterId: number, pageNumber: number, syncEntityId?: string, profileId?: string) { store.removePageBookmark(chapterId, pageNumber, syncEntityId, profileId); }
 export function clearBookmarks()                                             { store.clearBookmarks(); }
 export function getBookmark(chapterId: number)                               { return store.getBookmark(chapterId); }
 export function toggleHiddenCategory(id: number)                           { store.toggleHiddenCategory(id); }
