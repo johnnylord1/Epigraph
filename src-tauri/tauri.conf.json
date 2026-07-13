@@ -45,6 +45,7 @@
     "windows": {
       "nsis": {
         "installerIcon": "icons/icon.ico",
+        "installerHooks": "./windows/aethon-core-hooks.nsh",
         "installMode": "currentUser"
       }
     }
