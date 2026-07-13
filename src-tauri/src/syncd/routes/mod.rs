@@ -9,3 +9,4 @@ pub mod local;
 pub mod mutations;
 pub mod pairing;
 pub mod snapshot;
+pub mod suwayomi_proxy;
