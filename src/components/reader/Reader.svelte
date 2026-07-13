@@ -271,6 +271,10 @@
       : store.activeChapter
   );
   const currentBookmark = $derived(displayChapter ? store.bookmarks.find(b => (
+    !b.isAutomatic
+    &&
+    (!b.syncProfileId || b.syncProfileId === comicSyncProfileId())
+    &&
     b.mangaId === store.activeManga?.id
     && b.chapterId === displayChapter!.id
     && b.pageNumber === store.pageNumber
@@ -535,9 +539,18 @@
     fadingOut        = false;
     closeReaderWebView().catch(() => {});
 
-    const bookmark = store.bookmarks.find(b => b.chapterId === id);
+    const activeProfileId = comicSyncProfileId();
+    const bookmark = store.bookmarks.find(b => (
+      b.mangaId === store.activeManga?.id
+      && b.chapterId === id
+      && (!b.syncProfileId || b.syncProfileId === activeProfileId)
+    ));
     const localHistory = store.activeManga
-      ? store.history.find(entry => entry.mangaId === store.activeManga?.id && entry.chapterId === id)
+      ? store.history.find(entry => (
+          entry.mangaId === store.activeManga?.id
+          && entry.chapterId === id
+          && (!entry.syncProfileId || entry.syncProfileId === activeProfileId)
+        ))
       : undefined;
     const syncedResume = store.activeManga
       ? await resolveSyncedComicResumePage({
@@ -868,6 +881,7 @@
           readAt: Date.now(),
           pageNumber: pageNum,
           pageCount: physicalPageCount,
+          syncProfileId: comicSyncProfileId() ?? undefined,
         });
         void recordComicHistory({
           profileId: comicSyncProfileId(),
@@ -878,7 +892,16 @@
           pageCount: physicalPageCount,
         }).catch(() => {});
         if (autoBookmark) {
-          addBookmark({ mangaId, mangaTitle, thumbnailUrl: thumb, chapterId, chapterName, pageNumber: pageNum });
+          addBookmark({
+            mangaId,
+            mangaTitle,
+            thumbnailUrl: thumb,
+            chapterId,
+            chapterName,
+            pageNumber: pageNum,
+            isAutomatic: true,
+            syncProfileId: comicSyncProfileId() ?? undefined,
+          });
         }
         if (style !== "longstrip" && store.settings.autoMarkRead && atLast) markChapterRead(chapterId);
       });
@@ -1004,7 +1027,7 @@
     if (!ch || !manga) return;
     if (isBookmarked) {
       const bookmarkId = currentBookmark?.syncEntityId;
-      removePageBookmark(ch.id, store.pageNumber, bookmarkId);
+      removePageBookmark(ch.id, store.pageNumber, bookmarkId, comicSyncProfileId() ?? undefined);
       resumeVisible = false;
       void deleteComicPageBookmark({
         profileId: comicSyncProfileId(),
@@ -1015,7 +1038,15 @@
         bookmarkId,
       }).catch(() => {});
     } else {
-      addBookmark({ mangaId: manga.id, mangaTitle: manga.title, thumbnailUrl: manga.thumbnailUrl, chapterId: ch.id, chapterName: ch.name, pageNumber: store.pageNumber });
+      addBookmark({
+        mangaId: manga.id,
+        mangaTitle: manga.title,
+        thumbnailUrl: manga.thumbnailUrl,
+        chapterId: ch.id,
+        chapterName: ch.name,
+        pageNumber: store.pageNumber,
+        syncProfileId: comicSyncProfileId() ?? undefined,
+      });
       void recordComicPageBookmark({
         profileId: comicSyncProfileId(),
         serverKey: getServerUrl(),

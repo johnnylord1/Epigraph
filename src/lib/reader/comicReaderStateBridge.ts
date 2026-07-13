@@ -37,9 +37,15 @@ export interface ComicReaderChangeEnvelope {
   patch?: Record<string, unknown> | null;
 }
 
+export interface ComicReaderSnapshotMarker {
+  scopeId: string;
+  snapshotVersion: number;
+}
+
 export interface SyncdComicReaderStateAppliedPayload {
   localProfileId: string;
   changes: ComicReaderChangeEnvelope[];
+  authoritativeSnapshot?: ComicReaderSnapshotMarker | null;
 }
 
 interface ComicReaderMirror {
@@ -58,6 +64,7 @@ interface PendingComicMutation {
   entityId: string;
   op: ComicReaderChangeEnvelope["op"];
   patch: ComicHistoryPatch | ComicPageBookmarkPatch | null;
+  serverFingerprint: string;
 }
 
 export interface RecordComicHistoryInput {
@@ -182,6 +189,7 @@ export async function sha256Utf8Hex(value: string): Promise<string> {
 async function comicServerFingerprint(
   profileId: string | null | undefined,
   serverKey: string,
+  requireCoreIdentity = false,
 ): Promise<string> {
   const normalizedProfileId = normalizeProfileId(profileId);
   if (normalizedProfileId) {
@@ -189,8 +197,11 @@ async function comicServerFingerprint(
       return await invoke<string>("syncd_get_comic_server_fingerprint", {
         profileId: normalizedProfileId,
       });
-    } catch {}
+    } catch (error) {
+      if (requireCoreIdentity) throw error;
+    }
   }
+  if (requireCoreIdentity) throw new Error("Paired Core comic identity is unavailable.");
   return sha256Utf8Hex(canonicalizeSuwayomiServerKey(serverKey));
 }
 
@@ -264,6 +275,12 @@ export async function flushPendingComicHistory(): Promise<void> {
     const mirror = loadMirror(profileId);
     for (const [key, mutation] of Object.entries(mirror.outbox)) {
       try {
+        const currentFingerprint = await invoke<string>("syncd_get_comic_server_fingerprint", {
+          profileId,
+        });
+        if (currentFingerprint !== mutation.serverFingerprint) {
+          continue;
+        }
         await submitComicMutation(
           profileId,
           mutation.entityType,
@@ -297,6 +314,7 @@ export async function recordComicHistory(input: RecordComicHistoryInput): Promis
     entityId: patch.historyId,
     op: "merge",
     patch,
+    serverFingerprint: comicParts(comicId)?.fingerprint ?? "",
   });
   if (historyTimer) clearTimeout(historyTimer);
   historyTimer = setTimeout(() => {
@@ -321,12 +339,13 @@ export async function recordComicPageBookmark(input: RecordComicBookmarkInput): 
   const profileId = normalizeProfileId(input.profileId);
   const mirror = loadMirror(profileId);
   mirror.bookmarks[bookmarkId] = patch;
+  delete mirror.tombstones[bookmarkId];
   saveMirror(profileId, mirror);
   store.bookmarks = store.bookmarks.map((bookmark) => (
     bookmark.mangaId === Number(input.mangaId)
       && bookmark.chapterId === Number(input.chapterId)
       && bookmark.pageNumber === input.pageNumber
-      ? { ...bookmark, syncEntityId: bookmarkId }
+      ? { ...bookmark, syncEntityId: bookmarkId, syncProfileId: profileId ?? undefined }
       : bookmark
   ));
 
@@ -336,6 +355,7 @@ export async function recordComicPageBookmark(input: RecordComicBookmarkInput): 
       entityId: bookmarkId,
       op: "merge",
       patch,
+      serverFingerprint: comicParts(comicId)?.fingerprint ?? "",
     });
     void flushPendingComicHistory();
   }
@@ -350,6 +370,7 @@ export async function deleteComicPageBookmark(input: DeleteComicBookmarkInput): 
   const profileId = normalizeProfileId(input.profileId);
   const mirror = loadMirror(profileId);
   delete mirror.bookmarks[bookmarkId];
+  mirror.tombstones[bookmarkId] = Date.now();
   saveMirror(profileId, mirror);
   if (profileId) {
     enqueueMutation(profileId, {
@@ -357,6 +378,7 @@ export async function deleteComicPageBookmark(input: DeleteComicBookmarkInput): 
       entityId: bookmarkId,
       op: "delete",
       patch: null,
+      serverFingerprint: comicParts(comicId)?.fingerprint ?? "",
     });
     void flushPendingComicHistory();
   }
@@ -395,75 +417,97 @@ function parseBookmarkPatch(value: Record<string, unknown> | null | undefined): 
   return value as unknown as ComicPageBookmarkPatch;
 }
 
-function mangaMetadata(mangaId: number) {
+function mangaMetadata(mangaId: number, profileId: string) {
   const manga = store.activeManga?.id === mangaId
     ? store.activeManga
     : store.libraryMangaSnapshot.find((candidate) => candidate.id === mangaId);
-  const history = store.history.find((entry) => entry.mangaId === mangaId);
-  const bookmark = store.bookmarks.find((entry) => entry.mangaId === mangaId);
+  const history = store.history.find((entry) => (
+    entry.mangaId === mangaId
+    && (!entry.syncProfileId || entry.syncProfileId === profileId)
+  ));
+  const bookmark = store.bookmarks.find((entry) => (
+    entry.mangaId === mangaId
+    && (!entry.syncProfileId || entry.syncProfileId === profileId)
+  ));
   return {
     title: manga?.title ?? history?.mangaTitle ?? bookmark?.mangaTitle ?? "",
     thumbnailUrl: manga?.thumbnailUrl ?? history?.thumbnailUrl ?? bookmark?.thumbnailUrl ?? "",
   };
 }
 
-function chapterMetadata(mangaId: number, chapterId: number) {
+function chapterMetadata(mangaId: number, chapterId: number, profileId: string) {
   const chapter = store.activeManga?.id === mangaId
     ? store.activeChapterList.find((candidate) => candidate.id === chapterId)
     : null;
-  const history = store.history.find((entry) => entry.mangaId === mangaId && entry.chapterId === chapterId);
-  const bookmark = store.bookmarks.find((entry) => entry.mangaId === mangaId && entry.chapterId === chapterId);
+  const history = store.history.find((entry) => (
+    entry.mangaId === mangaId
+    && entry.chapterId === chapterId
+    && (!entry.syncProfileId || entry.syncProfileId === profileId)
+  ));
+  const bookmark = store.bookmarks.find((entry) => (
+    entry.mangaId === mangaId
+    && entry.chapterId === chapterId
+    && (!entry.syncProfileId || entry.syncProfileId === profileId)
+  ));
   return chapter?.name ?? history?.chapterName ?? bookmark?.chapterName ?? "";
 }
 
-function applyHistoryToStore(patch: ComicHistoryPatch): void {
+function applyHistoryToStore(profileId: string, patch: ComicHistoryPatch): void {
   const parts = comicParts(patch.comicId);
   const chapterId = Number(patch.chapterId);
   if (!parts || !Number.isFinite(chapterId)) return;
-  const metadata = mangaMetadata(parts.mangaId);
+  const metadata = mangaMetadata(parts.mangaId, profileId);
   if (!metadata.title) return;
   const entry: HistoryEntry = {
     mangaId: parts.mangaId,
     mangaTitle: metadata.title,
     thumbnailUrl: metadata.thumbnailUrl,
     chapterId,
-    chapterName: chapterMetadata(parts.mangaId, chapterId),
+    chapterName: chapterMetadata(parts.mangaId, chapterId, profileId),
     readAt: patch.readAtMs,
     pageNumber: patch.pageIndex + 1,
     pageCount: patch.pageCount ?? undefined,
     syncComicId: patch.comicId,
+    syncProfileId: profileId,
   };
   store.history = [
     entry,
-    ...store.history.filter((current) => current.mangaId !== entry.mangaId),
+    ...store.history.filter((current) => !(
+      current.mangaId === entry.mangaId
+      && (!current.syncProfileId || current.syncProfileId === profileId)
+    )),
   ].slice(0, 300);
 }
 
-function applyBookmarkToStore(patch: ComicPageBookmarkPatch): void {
+function applyBookmarkToStore(profileId: string, patch: ComicPageBookmarkPatch): void {
   const parts = comicParts(patch.comicId);
   const chapterId = Number(patch.chapterId);
   if (!parts || !Number.isFinite(chapterId)) return;
-  const metadata = mangaMetadata(parts.mangaId);
+  const metadata = mangaMetadata(parts.mangaId, profileId);
   if (!metadata.title) return;
   const entry: BookmarkEntry = {
     mangaId: parts.mangaId,
     mangaTitle: metadata.title,
     thumbnailUrl: metadata.thumbnailUrl,
     chapterId,
-    chapterName: chapterMetadata(parts.mangaId, chapterId),
+    chapterName: chapterMetadata(parts.mangaId, chapterId, profileId),
     pageNumber: patch.pageIndex + 1,
     savedAt: patch.savedAtMs,
     label: patch.label ?? undefined,
     syncEntityId: patch.bookmarkId,
+    syncProfileId: profileId,
   };
   store.bookmarks = [
     entry,
     ...store.bookmarks.filter((current) => (
-      current.syncEntityId !== entry.syncEntityId
-      && !(
-        current.mangaId === entry.mangaId
-        && current.chapterId === entry.chapterId
-        && current.pageNumber === entry.pageNumber
+      (current.syncProfileId && current.syncProfileId !== profileId)
+      || (
+        current.syncEntityId !== entry.syncEntityId
+        && !(
+          current.mangaId === entry.mangaId
+          && current.chapterId === entry.chapterId
+          && current.pageNumber === entry.pageNumber
+        )
       )
     )),
   ].slice(0, 200);
@@ -474,61 +518,138 @@ export async function applySyncedComicReaderChanges(
   profileId: string,
   serverKey: string,
   changes: ComicReaderChangeEnvelope[],
-): Promise<void> {
-  const expectedFingerprint = await comicServerFingerprint(profileId, serverKey);
+  authoritativeSnapshot?: ComicReaderSnapshotMarker | null,
+): Promise<number | null> {
+  const expectedFingerprint = await comicServerFingerprint(profileId, serverKey, true);
   const mirror = loadMirror(profileId);
   let changed = false;
+  let throughServerVersion: number | null = null;
+
+  if (authoritativeSnapshot) {
+    if (!/^comics:profile:[^\0]+$/.test(authoritativeSnapshot.scopeId)
+      || !Number.isSafeInteger(authoritativeSnapshot.snapshotVersion)
+      || authoritativeSnapshot.snapshotVersion < 0) {
+      throw new Error("Invalid authoritative comic snapshot marker.");
+    }
+    if (changes.some((change) => (
+      change.scopeId !== authoritativeSnapshot.scopeId
+      || change.serverVersion > authoritativeSnapshot.snapshotVersion
+    ))) {
+      throw new Error("Comic snapshot contents do not match its authoritative marker.");
+    }
+
+    // A snapshot replaces the synchronized mirror for this local profile, even
+    // when it contains no entities. Local pending writes remain durable and are
+    // retried after the reset.
+    mirror.histories = {};
+    mirror.bookmarks = {};
+    mirror.tombstones = {};
+    store.history = store.history.filter((entry) => !(
+      entry.syncProfileId === profileId
+      || (!entry.syncProfileId && Boolean(entry.syncComicId))
+    ));
+    store.bookmarks = store.bookmarks.filter((entry) => !(
+      entry.syncProfileId === profileId
+      || (!entry.syncProfileId && Boolean(entry.syncEntityId))
+    ));
+    changed = true;
+    throughServerVersion = authoritativeSnapshot.snapshotVersion;
+  }
+
   for (const change of [...changes].sort((left, right) => left.serverVersion - right.serverVersion)) {
+    if (!/^comics:profile:[^\0]+$/.test(change.scopeId)) {
+      throw new Error("Invalid comic reader change scope.");
+    }
     if (change.entityType === "comic.history") {
       if (change.op === "delete") {
         const comicId = change.entityId.startsWith("comic.history::")
           ? change.entityId.slice("comic.history::".length)
           : null;
-        if (!comicId || comicParts(comicId)?.fingerprint !== expectedFingerprint) continue;
-        if ((mirror.tombstones[change.entityId] ?? -1) > change.lamport) continue;
+        if (!comicId || comicParts(comicId)?.fingerprint !== expectedFingerprint) {
+          throw new Error("comic.history delete does not match the paired Core identity.");
+        }
+        if ((mirror.tombstones[change.entityId] ?? -1) > change.lamport) {
+          throughServerVersion = change.serverVersion;
+          continue;
+        }
         delete mirror.histories[comicId];
         mirror.tombstones[change.entityId] = change.lamport;
         const mangaId = comicParts(comicId)?.mangaId;
-        if (mangaId != null) store.history = store.history.filter((entry) => entry.mangaId !== mangaId);
+        if (mangaId != null) store.history = store.history.filter((entry) => !(
+          entry.mangaId === mangaId
+          && (!entry.syncProfileId || entry.syncProfileId === profileId)
+        ));
         changed = true;
+        throughServerVersion = change.serverVersion;
         continue;
       }
       const patch = parseHistoryPatch(change.patch);
-      if (!patch || comicParts(patch.comicId)?.fingerprint !== expectedFingerprint) continue;
-      if ((mirror.tombstones[change.entityId] ?? -1) >= change.lamport) continue;
+      if (!patch || comicParts(patch.comicId)?.fingerprint !== expectedFingerprint) {
+        throw new Error("Invalid comic.history change for the paired Core identity.");
+      }
+      if ((mirror.tombstones[change.entityId] ?? -1) >= change.lamport) {
+        throughServerVersion = change.serverVersion;
+        continue;
+      }
       const current = mirror.histories[patch.comicId];
-      if (current?.recordLamport != null && current.recordLamport > change.lamport) continue;
+      if (current?.recordLamport != null && current.recordLamport > change.lamport) {
+        throughServerVersion = change.serverVersion;
+        continue;
+      }
       const next = { ...patch, recordLamport: change.lamport };
       mirror.histories[patch.comicId] = next;
       delete mirror.tombstones[change.entityId];
-      applyHistoryToStore(next);
+      applyHistoryToStore(profileId, next);
       changed = true;
+      throughServerVersion = change.serverVersion;
       continue;
     }
 
     if (change.op === "delete") {
       const current = mirror.bookmarks[change.entityId];
-      if (!current || comicParts(current.comicId)?.fingerprint !== expectedFingerprint) continue;
-      if ((mirror.tombstones[change.entityId] ?? -1) > change.lamport) continue;
+      if (current && comicParts(current.comicId)?.fingerprint !== expectedFingerprint) {
+        throw new Error("comic.page_bookmark delete does not match the paired Core identity.");
+      }
+      if ((mirror.tombstones[change.entityId] ?? -1) > change.lamport) {
+        throughServerVersion = change.serverVersion;
+        continue;
+      }
       delete mirror.bookmarks[change.entityId];
       mirror.tombstones[change.entityId] = change.lamport;
-      store.bookmarks = store.bookmarks.filter((entry) => entry.syncEntityId !== change.entityId);
+      store.bookmarks = store.bookmarks.filter((entry) => !(
+        entry.syncEntityId === change.entityId
+        && (!entry.syncProfileId || entry.syncProfileId === profileId)
+      ));
       changed = true;
+      throughServerVersion = change.serverVersion;
       continue;
     }
     const patch = parseBookmarkPatch(change.patch);
-    if (!patch || comicParts(patch.comicId)?.fingerprint !== expectedFingerprint) continue;
-    if ((mirror.tombstones[change.entityId] ?? -1) >= change.lamport) continue;
+    if (!patch || comicParts(patch.comicId)?.fingerprint !== expectedFingerprint) {
+      throw new Error("Invalid comic.page_bookmark change for the paired Core identity.");
+    }
+    if ((mirror.tombstones[change.entityId] ?? -1) >= change.lamport) {
+      throughServerVersion = change.serverVersion;
+      continue;
+    }
     const current = mirror.bookmarks[patch.bookmarkId];
-    if (current?.recordLamport != null && current.recordLamport > change.lamport) continue;
+    if (current?.recordLamport != null && current.recordLamport > change.lamport) {
+      throughServerVersion = change.serverVersion;
+      continue;
+    }
     const next = { ...patch, recordLamport: change.lamport };
     mirror.bookmarks[patch.bookmarkId] = next;
     delete mirror.tombstones[change.entityId];
-    applyBookmarkToStore(next);
+    applyBookmarkToStore(profileId, next);
     changed = true;
+    throughServerVersion = change.serverVersion;
   }
   if (changed) {
     saveMirror(profileId, mirror);
     store.bumpContentSetupVersion();
   }
+  if (authoritativeSnapshot) {
+    return Math.max(authoritativeSnapshot.snapshotVersion, throughServerVersion ?? 0);
+  }
+  return throughServerVersion;
 }
