@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use axum::middleware;
 use axum::routing::{get, post};
-use axum::Router;
+use axum::{Extension, Router};
 use sysinfo::{Pid, ProcessesToUpdate, System};
 use tokio::sync::{broadcast, Mutex, RwLock};
 use tracing_subscriber::EnvFilter;
@@ -16,18 +16,29 @@ use super::discovery::{
     SyncdClientDiscoveryGuidanceProvider, SyncdDiscoveryDescriptorProvider,
     SyncdDiscoveryProviderManager,
 };
+use super::lifecycle::{
+    response_delay, wait_for_shutdown_request, ShutdownCoordinator, ShutdownReason, ShutdownRequest,
+};
 use super::middleware::require_authenticated_session;
 use super::models::AppState;
 use super::routes::{
     assets, bootstrap, capabilities, discovery, events, health, local, mutations, pairing, snapshot,
 };
-use super::runtime_manifest::{RuntimeManifestLease, SyncdRuntimeManifest};
+use super::runtime_manifest::{RuntimeManifestLease, RuntimeProcessLock, SyncdRuntimeManifest};
 use super::tls;
 
 pub async fn run() -> anyhow::Result<()> {
     install_tracing();
 
     let config = SyncdConfig::from_env();
+    let _runtime_process_lock = if config.ownership_mode == SyncdOwnershipMode::PersistentAttached {
+        Some(
+            RuntimeProcessLock::acquire(&config.data_dir)
+                .context("failed to acquire persistent Core process lock")?,
+        )
+    } else {
+        None
+    };
     let advertised_endpoint_resolver = SyncdAdvertisedEndpointResolver::from_config(&config)
         .context("failed to resolve syncd advertised endpoint policy")?;
     let discovery_descriptor_provider = SyncdDiscoveryDescriptorProvider::from_config(&config)
@@ -62,10 +73,21 @@ pub async fn run() -> anyhow::Result<()> {
 
     let advertised_resolution = advertised_endpoint_resolver.resolve(config.bind_addr);
 
-    spawn_gc_task(state.clone());
-    spawn_parent_watchdog(state.clone());
-    spawn_discovery_provider_task(state.clone());
-    let router = build_router(state.clone());
+    for instance in super::suwayomi_process::attach_owned_instances() {
+        tracing::info!(
+            profile = instance.profile_key,
+            pid = instance.java_pid,
+            endpoint = instance.server_url,
+            root = %instance.root_dir.display(),
+            "attached Core lifecycle to existing owned Suwayomi"
+        );
+    }
+
+    let (shutdown, shutdown_receiver) = ShutdownCoordinator::channel();
+    spawn_gc_task(state.clone(), shutdown.subscribe());
+    spawn_parent_watchdog(state.clone(), shutdown.clone());
+    spawn_discovery_provider_task(state.clone(), shutdown.subscribe());
+    let router = build_router(state.clone(), shutdown.clone());
 
     tracing::info!(
         bind = %config.bind_addr,
@@ -96,24 +118,42 @@ pub async fn run() -> anyhow::Result<()> {
         None
     };
 
-    axum_server::bind_rustls(config.bind_addr, tls.rustls_config)
+    let server_handle = axum_server::Handle::new();
+    let shutdown_task = spawn_shutdown_task(
+        state.clone(),
+        shutdown_receiver,
+        shutdown.clone(),
+        server_handle.clone(),
+    );
+    let serve_result = axum_server::bind_rustls(config.bind_addr, tls.rustls_config)
+        .handle(server_handle)
         .serve(router.into_make_service_with_connect_info::<SocketAddr>())
         .await
-        .context("aethon-syncd failed while serving")
+        .context("aethon-syncd failed while serving");
+
+    shutdown_task.abort();
+    stop_discovery_provider(&state).await;
+    state.pool.close().await;
+    serve_result
 }
 
-fn build_router(state: Arc<AppState>) -> Router {
+fn build_router(state: Arc<AppState>, shutdown: ShutdownCoordinator) -> Router {
     let protected = Router::new()
         .route("/v1/events", get(events::get_events))
         .route("/v1/changes", get(events::get_changes))
         .route("/v1/mutations", post(mutations::post_mutations))
         .route("/v1/snapshot", get(snapshot::get_snapshot))
         .route(
+            "/v1/local/shutdown",
+            post(super::lifecycle::post_local_shutdown),
+        )
+        .route(
             "/v1/assets/:sha256",
             get(assets::get_asset)
                 .head(assets::head_asset)
                 .put(assets::put_asset),
         )
+        .layer(Extension(shutdown))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             require_authenticated_session,
@@ -167,19 +207,30 @@ fn build_router(state: Arc<AppState>) -> Router {
     router
 }
 
-fn spawn_gc_task(state: Arc<AppState>) {
+fn spawn_gc_task(
+    state: Arc<AppState>,
+    mut shutdown: tokio::sync::watch::Receiver<Option<ShutdownRequest>>,
+) {
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
         loop {
-            ticker.tick().await;
-            if let Err(error) = db::prune_expired_rows(&state.pool, db::now_ms()).await {
-                tracing::warn!(error = %error, "failed to prune expired syncd rows");
+            tokio::select! {
+                _ = ticker.tick() => {
+                    if let Err(error) = db::prune_expired_rows(&state.pool, db::now_ms()).await {
+                        tracing::warn!(error = %error, "failed to prune expired syncd rows");
+                    }
+                }
+                changed = shutdown.changed() => {
+                    if changed.is_err() || shutdown.borrow().is_some() {
+                        break;
+                    }
+                }
             }
         }
     });
 }
 
-fn spawn_parent_watchdog(state: Arc<AppState>) {
+fn spawn_parent_watchdog(state: Arc<AppState>, shutdown: ShutdownCoordinator) {
     let Some(parent_pid) = watchdog_parent_pid(&state.config) else {
         return;
     };
@@ -192,11 +243,65 @@ fn spawn_parent_watchdog(state: Arc<AppState>) {
             let refreshed = system
                 .refresh_processes(ProcessesToUpdate::Some(&[Pid::from_u32(parent_pid)]), true);
             if refreshed == 0 || system.process(Pid::from_u32(parent_pid)).is_none() {
-                tracing::warn!(parent_pid, "syncd parent process missing; exiting sidecar");
-                std::process::exit(0);
+                tracing::warn!(
+                    parent_pid,
+                    "syncd parent process missing; shutting down sidecar"
+                );
+                shutdown.request(ShutdownRequest {
+                    server_id: String::new(),
+                    expected_pid: std::process::id(),
+                    reason: ShutdownReason::ParentExited,
+                });
+                break;
             }
         }
     });
+}
+
+fn spawn_shutdown_task(
+    state: Arc<AppState>,
+    mut receiver: tokio::sync::watch::Receiver<Option<ShutdownRequest>>,
+    coordinator: ShutdownCoordinator,
+    server_handle: axum_server::Handle,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let request = tokio::select! {
+            request = wait_for_shutdown_request(&mut receiver) => request,
+            signal = tokio::signal::ctrl_c() => {
+                if let Err(error) = signal {
+                    tracing::warn!(error = %error, "failed to listen for Core shutdown signal");
+                }
+                let request = ShutdownRequest {
+                    server_id: String::new(),
+                    expected_pid: std::process::id(),
+                    reason: ShutdownReason::OsSignal,
+                };
+                coordinator.request(request.clone());
+                Some(request)
+            }
+        };
+        let Some(request) = request else {
+            return;
+        };
+
+        tracing::info!(reason = ?request.reason, "graceful Core shutdown requested");
+        tokio::time::sleep(response_delay()).await;
+        stop_discovery_provider(&state).await;
+        server_handle.graceful_shutdown(Some(std::time::Duration::from_secs(15)));
+    })
+}
+
+async fn stop_discovery_provider(state: &Arc<AppState>) {
+    let stopping = state
+        .discovery_provider_manager
+        .stopping_status(&state.config, &state.advertised_endpoint_resolver);
+    *state.discovery_provider_state.write().await = stopping;
+    let runtime = state.discovery_provider_runtime.lock().await.take();
+    if let Some(runtime) = runtime {
+        if let Err(error) = runtime.shutdown(std::time::Duration::from_secs(5)).await {
+            tracing::warn!(error = %error, "failed to confirm mDNS shutdown");
+        }
+    }
 }
 
 fn watchdog_parent_pid(config: &SyncdConfig) -> Option<u32> {
@@ -207,9 +312,17 @@ fn watchdog_parent_pid(config: &SyncdConfig) -> Option<u32> {
     }
 }
 
-fn spawn_discovery_provider_task(state: Arc<AppState>) {
+fn spawn_discovery_provider_task(
+    state: Arc<AppState>,
+    mut shutdown: tokio::sync::watch::Receiver<Option<ShutdownRequest>>,
+) {
     tokio::spawn(async move {
-        start_discovery_provider(state).await;
+        tokio::select! {
+            _ = start_discovery_provider(state.clone()) => {}
+            _ = wait_for_shutdown_request(&mut shutdown) => {
+                stop_discovery_provider(&state).await;
+            }
+        }
     });
 }
 
@@ -225,7 +338,16 @@ fn install_tracing() {
 
 #[cfg(test)]
 pub fn build_test_router(state: Arc<AppState>) -> Router {
-    build_router(state)
+    let (shutdown, _) = ShutdownCoordinator::channel();
+    build_router(state, shutdown)
+}
+
+#[cfg(test)]
+pub fn build_test_router_with_shutdown(
+    state: Arc<AppState>,
+    shutdown: ShutdownCoordinator,
+) -> Router {
+    build_router(state, shutdown)
 }
 
 #[cfg(test)]
