@@ -712,7 +712,12 @@ mod tests {
         assert_eq!(payload["supportsSnapshot"], true);
         assert_eq!(payload["supportsAssets"], true);
         assert_eq!(payload["snapshotSchemaVersion"], 1);
-        assert_eq!(payload["snapshotEntityTypes"].as_array().unwrap().len(), 12);
+        let entity_types = payload["snapshotEntityTypes"].as_array().unwrap();
+        assert_eq!(entity_types.len(), 14);
+        assert!(entity_types.iter().any(|value| value == "comic.history"));
+        assert!(entity_types
+            .iter()
+            .any(|value| value == "comic.page_bookmark"));
         assert_eq!(payload["tlsCertSha256"], "fingerprint");
     }
 

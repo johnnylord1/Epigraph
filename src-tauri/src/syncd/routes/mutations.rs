@@ -8,11 +8,11 @@ use crate::syncd::db;
 use crate::syncd::middleware::validate_scope;
 use crate::syncd::models::{
     AppError, AuthenticatedSession, BookBookmarkPatch, BookCategoryAssignmentPatch,
-    BookCategoryPatch, BookEntryPatch, BookLibraryUiPatch, BookProgressPatch, ErrorDetail,
-    MutationEntityType, MutationInput, MutationOperation, MutationReceiptContext, MutationResult,
-    MutationResultStatus, MutationsRequest, MutationsResponse, NovelBookmarkPatch,
-    NovelChapterPatch, NovelClassificationPatch, NovelEntryPatch, NovelHistoryPatch,
-    NovelProgressPatch, SharedAppState,
+    BookCategoryPatch, BookEntryPatch, BookLibraryUiPatch, BookProgressPatch, ComicHistoryPatch,
+    ComicPageBookmarkPatch, ErrorDetail, MutationEntityType, MutationInput, MutationOperation,
+    MutationReceiptContext, MutationResult, MutationResultStatus, MutationsRequest,
+    MutationsResponse, NovelBookmarkPatch, NovelChapterPatch, NovelClassificationPatch,
+    NovelEntryPatch, NovelHistoryPatch, NovelProgressPatch, SharedAppState,
 };
 
 pub async fn post_mutations(
@@ -735,6 +735,157 @@ pub async fn post_mutations(
                     ))
                 })?,
             },
+            MutationInput::ComicHistory { base, patch } => match base.op {
+                MutationOperation::Merge => {
+                    let Some(patch) = patch.as_ref() else {
+                        results.push(rejected_result(
+                            &mutation,
+                            error_detail(
+                                "MISSING_PATCH",
+                                "Comic history merge mutations must include a patch.",
+                                None,
+                            ),
+                        ));
+                        continue;
+                    };
+                    if let Some(error) = validate_comic_history_patch(&base.entity_id, patch) {
+                        results.push(rejected_result(&mutation, error));
+                        continue;
+                    }
+                    match db::apply_comic_history_mutation(
+                        &state.pool,
+                        &session,
+                        &base.scope_id,
+                        &base.entity_id,
+                        patch,
+                        base.lamport,
+                        state.config.retention_window,
+                    )
+                    .await
+                    {
+                        Ok(outcome) => outcome,
+                        Err(error) => {
+                            if let Some(error) = comic_state_persist_error_detail(error) {
+                                results.push(rejected_result(&mutation, error));
+                                continue;
+                            }
+                            return Err(AppError::Internal(
+                                "Failed to persist comic history mutation.".to_string(),
+                            ));
+                        }
+                    }
+                }
+                MutationOperation::Delete => {
+                    if patch.is_some() {
+                        results.push(rejected_result(
+                            &mutation,
+                            error_detail(
+                                "DELETE_PATCH_NOT_ALLOWED",
+                                "Comic history delete mutations must not include a patch.",
+                                None,
+                            ),
+                        ));
+                        continue;
+                    }
+                    match db::delete_comic_history_mutation(
+                        &state.pool,
+                        &session,
+                        &base.scope_id,
+                        &base.entity_id,
+                        base.lamport,
+                        state.config.retention_window,
+                    )
+                    .await
+                    {
+                        Ok(outcome) => outcome,
+                        Err(error) => {
+                            if let Some(error) = comic_state_persist_error_detail(error) {
+                                results.push(rejected_result(&mutation, error));
+                                continue;
+                            }
+                            return Err(AppError::Internal(
+                                "Failed to delete comic history mutation.".to_string(),
+                            ));
+                        }
+                    }
+                }
+            },
+            MutationInput::ComicPageBookmark { base, patch } => match base.op {
+                MutationOperation::Merge => {
+                    let Some(patch) = patch.as_ref() else {
+                        results.push(rejected_result(
+                            &mutation,
+                            error_detail(
+                                "MISSING_PATCH",
+                                "Comic page bookmark merge mutations must include a patch.",
+                                None,
+                            ),
+                        ));
+                        continue;
+                    };
+                    if let Some(error) = validate_comic_page_bookmark_patch(&base.entity_id, patch)
+                    {
+                        results.push(rejected_result(&mutation, error));
+                        continue;
+                    }
+                    match db::apply_comic_page_bookmark_mutation(
+                        &state.pool,
+                        &session,
+                        &base.scope_id,
+                        &base.entity_id,
+                        patch,
+                        base.lamport,
+                        state.config.retention_window,
+                    )
+                    .await
+                    {
+                        Ok(outcome) => outcome,
+                        Err(error) => {
+                            if let Some(error) = comic_state_persist_error_detail(error) {
+                                results.push(rejected_result(&mutation, error));
+                                continue;
+                            }
+                            return Err(AppError::Internal(
+                                "Failed to persist comic page bookmark mutation.".to_string(),
+                            ));
+                        }
+                    }
+                }
+                MutationOperation::Delete => {
+                    if patch.is_some() {
+                        results.push(rejected_result(
+                            &mutation,
+                            error_detail(
+                                "DELETE_PATCH_NOT_ALLOWED",
+                                "Comic page bookmark delete mutations must not include a patch.",
+                                None,
+                            ),
+                        ));
+                        continue;
+                    }
+                    match db::delete_comic_page_bookmark_mutation(
+                        &state.pool,
+                        &session,
+                        &base.scope_id,
+                        &base.entity_id,
+                        base.lamport,
+                        state.config.retention_window,
+                    )
+                    .await
+                    {
+                        Ok(outcome) => outcome,
+                        Err(error) => {
+                            if let Some(error) = comic_state_persist_error_detail(error) {
+                                results.push(rejected_result(&mutation, error));
+                                continue;
+                            }
+                            return Err(AppError::Internal(
+                                "Failed to delete comic page bookmark mutation.".to_string(),
+                            ));
+                        }
+                    }
+                }
+            },
         };
 
         current_server_version = outcome.envelope.server_version;
@@ -921,6 +1072,19 @@ fn validate_mutation_base(
                     Some(json!({
                         "entityType": entity_type.as_str(),
                         "expectedScopePattern": "novels:profile:<id>",
+                        "receivedScope": scope_id,
+                    })),
+                ));
+            }
+        }
+        MutationEntityType::ComicHistory | MutationEntityType::ComicPageBookmark => {
+            if !scope_id.starts_with("comics:profile:") {
+                return Some(error_detail(
+                    "INVALID_SCOPE_FOR_ENTITY",
+                    "Comic reader-state mutations must use comics:profile:<id>.",
+                    Some(json!({
+                        "entityType": entity_type.as_str(),
+                        "expectedScopePattern": "comics:profile:<id>",
                         "receivedScope": scope_id,
                     })),
                 ));
@@ -1148,6 +1312,139 @@ fn validate_novel_classification_patch(patch: &NovelClassificationPatch) -> Opti
     validate_non_negative_timestamp(patch.classified_at_ms, "classifiedAtMs")
 }
 
+fn validate_comic_history_patch(entity_id: &str, patch: &ComicHistoryPatch) -> Option<ErrorDetail> {
+    validate_payload_identity("historyId", entity_id, &patch.history_id)
+        .or_else(|| validate_comic_media_key(&patch.comic_id))
+        .or_else(|| validate_comic_history_entity_id(entity_id, &patch.comic_id))
+        .or_else(|| validate_bounded_identifier(&patch.chapter_id, "chapterId"))
+        .or_else(|| validate_page_locator(patch.page_index, patch.page_count))
+        .or_else(|| validate_progress_value(patch.progress_percent))
+        .or_else(|| validate_non_negative_timestamp(patch.read_at_ms, "readAtMs"))
+}
+
+fn validate_comic_page_bookmark_patch(
+    entity_id: &str,
+    patch: &ComicPageBookmarkPatch,
+) -> Option<ErrorDetail> {
+    validate_payload_identity("bookmarkId", entity_id, &patch.bookmark_id)
+        .or_else(|| validate_comic_media_key(&patch.comic_id))
+        .or_else(|| validate_bounded_identifier(&patch.chapter_id, "chapterId"))
+        .or_else(|| validate_page_locator(patch.page_index, patch.page_count))
+        .or_else(|| {
+            patch.label.as_deref().and_then(|label| {
+                if label.contains('\0') || label.len() > 512 {
+                    Some(error_detail(
+                        "INVALID_LABEL",
+                        "Comic page bookmark label must be at most 512 bytes and contain no NUL.",
+                        None,
+                    ))
+                } else {
+                    None
+                }
+            })
+        })
+        .or_else(|| validate_non_negative_timestamp(patch.saved_at_ms, "savedAtMs"))
+}
+
+fn validate_payload_identity(field: &str, entity_id: &str, value: &str) -> Option<ErrorDetail> {
+    if value != entity_id {
+        return Some(error_detail(
+            "ENTITY_ID_MISMATCH",
+            &format!("Comic mutation {field} must exactly match entityId."),
+            Some(json!({
+                "field": field,
+                "entityId": entity_id,
+                "receivedId": value,
+            })),
+        ));
+    }
+    validate_bounded_identifier(value, field)
+}
+
+fn validate_comic_history_entity_id(entity_id: &str, comic_id: &str) -> Option<ErrorDetail> {
+    let expected = format!("comic.history::{comic_id}");
+    if entity_id != expected {
+        return Some(error_detail(
+            "ENTITY_ID_MISMATCH",
+            "Comic history entityId must be comic.history::<comicId>.",
+            Some(json!({
+                "expectedEntityId": expected,
+                "receivedEntityId": entity_id,
+                "comicId": comic_id,
+            })),
+        ));
+    }
+    None
+}
+
+fn validate_bounded_identifier(value: &str, field: &str) -> Option<ErrorDetail> {
+    if value.trim().is_empty() || value != value.trim() || value.contains('\0') || value.len() > 512
+    {
+        return Some(error_detail(
+            "INVALID_IDENTIFIER",
+            &format!(
+                "Comic mutation {field} must be non-empty, at most 512 bytes, and contain no NUL."
+            ),
+            Some(json!({ "field": field })),
+        ));
+    }
+    None
+}
+
+fn validate_comic_media_key(comic_id: &str) -> Option<ErrorDetail> {
+    let Some(rest) = comic_id.strip_prefix("suwayomi:") else {
+        return Some(invalid_comic_id(comic_id));
+    };
+    let Some((fingerprint, manga_id)) = rest.rsplit_once(":manga:") else {
+        return Some(invalid_comic_id(comic_id));
+    };
+    let valid_fingerprint = !fingerprint.is_empty()
+        && fingerprint.len() <= 128
+        && fingerprint.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"._-".contains(&byte)
+        });
+    let valid_manga_id = !manga_id.trim().is_empty()
+        && manga_id == manga_id.trim()
+        && manga_id.len() <= 256
+        && !manga_id.contains('\0')
+        && !manga_id.contains(":manga:");
+    if !valid_fingerprint || !valid_manga_id {
+        return Some(invalid_comic_id(comic_id));
+    }
+    None
+}
+
+fn invalid_comic_id(comic_id: &str) -> ErrorDetail {
+    error_detail(
+        "INVALID_COMIC_ID",
+        "comicId must use suwayomi:<normalized-server-fingerprint>:manga:<manga-id>.",
+        Some(json!({ "receivedComicId": comic_id })),
+    )
+}
+
+fn validate_page_locator(page_index: i64, page_count: Option<i64>) -> Option<ErrorDetail> {
+    if page_index < 0 {
+        return Some(error_detail(
+            "INVALID_PAGE_INDEX",
+            "Comic pageIndex must be zero or greater.",
+            Some(json!({ "receivedPageIndex": page_index })),
+        ));
+    }
+    if let Some(page_count) = page_count {
+        if page_count <= 0 || page_index >= page_count {
+            return Some(error_detail(
+                "INVALID_PAGE_COUNT",
+                "Comic pageCount must be positive and greater than pageIndex.",
+                Some(json!({
+                    "receivedPageIndex": page_index,
+                    "receivedPageCount": page_count,
+                })),
+            ));
+        }
+    }
+    None
+}
+
 fn validate_progress_value(progress_percent: f64) -> Option<ErrorDetail> {
     if !(0.0..=1.0).contains(&progress_percent) {
         return Some(error_detail(
@@ -1209,6 +1506,19 @@ fn bookmark_persist_error_detail(error: anyhow::Error) -> Option<ErrorDetail> {
     }
 }
 
+fn comic_state_persist_error_detail(error: anyhow::Error) -> Option<ErrorDetail> {
+    let message = error.to_string();
+    if message.contains("stale bookmark mutation rejected by tombstone lamport") {
+        Some(error_detail("STALE_COMIC_STATE_MUTATION", &message, None))
+    } else if message.contains("parent comic_id is immutable") {
+        Some(error_detail("PARENT_ID_MISMATCH", &message, None))
+    } else if message.contains("must match entity_id") {
+        Some(error_detail("ENTITY_ID_MISMATCH", &message, None))
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1255,7 +1565,7 @@ mod tests {
             "device-main",
             "main",
             &token_hash("main-token"),
-            &["books:global", "novels:profile:main"],
+            &["books:global", "novels:profile:main", "comics:profile:main"],
         )
         .await
         .unwrap();
@@ -1264,7 +1574,7 @@ mod tests {
             "device-test",
             "test",
             &token_hash("test-token"),
-            &["books:global", "novels:profile:test"],
+            &["books:global", "novels:profile:test", "comics:profile:test"],
         )
         .await
         .unwrap();
@@ -3200,6 +3510,428 @@ mod tests {
             .unwrap();
         let retry_payload = json_body(retry).await;
         assert_eq!(retry_payload["results"][0], first_payload["results"][0]);
+        assert_eq!(
+            load_server_runtime(&state.pool)
+                .await
+                .unwrap()
+                .current_server_version,
+            0
+        );
+    }
+
+    fn comic_state_batch(request_id: &str) -> Value {
+        json!({
+            "requestId": request_id,
+            "mutations": [
+                {
+                    "entityType": "comic.history",
+                    "clientMutationId": "comic-history-1",
+                    "scopeId": "comics:profile:main",
+                    "entityId": "comic.history::suwayomi:server-main:manga:42",
+                    "lamport": 1,
+                    "patch": {
+                        "historyId": "comic.history::suwayomi:server-main:manga:42",
+                        "comicId": "suwayomi:server-main:manga:42",
+                        "chapterId": "chapter-7",
+                        "pageIndex": 4,
+                        "pageCount": 20,
+                        "progressPercent": 0.25,
+                        "readAtMs": 1000
+                    }
+                },
+                {
+                    "entityType": "comic.page_bookmark",
+                    "clientMutationId": "comic-bookmark-1",
+                    "scopeId": "comics:profile:main",
+                    "entityId": "bookmark-1",
+                    "lamport": 2,
+                    "patch": {
+                        "bookmarkId": "bookmark-1",
+                        "comicId": "suwayomi:server-main:manga:42",
+                        "chapterId": "chapter-7",
+                        "pageIndex": 4,
+                        "pageCount": 20,
+                        "label": "Splash page",
+                        "savedAtMs": 1001
+                    }
+                }
+            ]
+        })
+    }
+
+    #[tokio::test]
+    async fn comic_state_receipts_snapshot_changes_and_events_are_exact() {
+        let (_temp, state) = build_state().await;
+        let app = build_test_router(state.clone());
+
+        let first = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                comic_state_batch("comic-state-first"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        let first_payload = json_body(first).await;
+        assert_eq!(first_payload["currentServerVersion"], 2);
+        assert_eq!(first_payload["results"][0]["status"], "applied");
+        assert_eq!(first_payload["results"][1]["status"], "applied");
+
+        let retry = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                comic_state_batch("comic-state-retry"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(retry.status(), StatusCode::OK);
+        let retry_payload = json_body(retry).await;
+        assert_eq!(retry_payload["results"], first_payload["results"]);
+        assert_eq!(retry_payload["currentServerVersion"], 2);
+
+        let snapshot = app
+            .clone()
+            .oneshot(request_without_body(
+                "/v1/snapshot?scopeId=comics:profile:main",
+                "main-token",
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(snapshot.status(), StatusCode::OK);
+        let snapshot = json_body(snapshot).await;
+        assert_eq!(snapshot["scopeId"], "comics:profile:main");
+        assert_eq!(snapshot["snapshotVersion"], 2);
+        assert_eq!(snapshot["entities"].as_array().unwrap().len(), 2);
+        assert_eq!(snapshot["entities"][0]["entityType"], "comic.history");
+        assert_eq!(snapshot["entities"][1]["entityType"], "comic.page_bookmark");
+        assert_eq!(snapshot["entities"][0]["record"]["pageIndex"], 4);
+        assert_eq!(snapshot["tombstones"].as_array().unwrap().len(), 0);
+
+        let changes = app
+            .clone()
+            .oneshot(request_without_body(
+                "/v1/changes?scopeId=comics%3Aprofile%3Amain&sinceVersion=0",
+                "main-token",
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(changes.status(), StatusCode::OK);
+        let changes = json_body(changes).await;
+        assert_eq!(changes["changes"].as_array().unwrap().len(), 2);
+        assert_eq!(changes["changes"][0]["entityType"], "comic.history");
+        assert_eq!(changes["changes"][1]["entityType"], "comic.page_bookmark");
+
+        let events = app
+            .oneshot(request_without_body(
+                "/v1/events?scopeId=comics:profile:main",
+                "main-token",
+                Some(0),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(events.status(), StatusCode::OK);
+        let events = collect_sse_change_events(events, 2).await;
+        assert_eq!(events[0]["entityType"], "comic.history");
+        assert_eq!(events[1]["entityType"], "comic.page_bookmark");
+    }
+
+    #[tokio::test]
+    async fn rejects_comic_state_in_wrong_or_foreign_profile_scope() {
+        let (_temp, state) = build_state().await;
+        let app = build_test_router(state);
+        let wrong_entity_scope = json!({
+            "requestId": "comic-wrong-entity-scope",
+            "mutations": [{
+                "entityType": "comic.history",
+                "clientMutationId": "comic-wrong-entity-scope",
+                "scopeId": "novels:profile:main",
+                "entityId": "comic.history::suwayomi:server-main:manga:42",
+                "lamport": 1,
+                "patch": {
+                    "historyId": "comic.history::suwayomi:server-main:manga:42",
+                    "comicId": "suwayomi:server-main:manga:42",
+                    "chapterId": "chapter-1",
+                    "pageIndex": 0,
+                    "pageCount": 1,
+                    "progressPercent": 1.0,
+                    "readAtMs": 1
+                }
+            }]
+        });
+        let response = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                wrong_entity_scope,
+            ))
+            .await
+            .unwrap();
+        let payload = json_body(response).await;
+        assert_eq!(
+            payload["results"][0]["error"]["code"],
+            "INVALID_SCOPE_FOR_ENTITY"
+        );
+
+        let mut foreign_profile = comic_state_batch("comic-foreign-profile");
+        foreign_profile["mutations"][0]["clientMutationId"] =
+            json!("comic-foreign-profile-history");
+        foreign_profile["mutations"][0]["scopeId"] = json!("comics:profile:test");
+        foreign_profile["mutations"]
+            .as_array_mut()
+            .unwrap()
+            .truncate(1);
+        let response = app
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                foreign_profile,
+            ))
+            .await
+            .unwrap();
+        let payload = json_body(response).await;
+        assert_eq!(payload["results"][0]["error"]["code"], "FORBIDDEN_SCOPE");
+    }
+
+    #[tokio::test]
+    async fn rejects_comic_payload_identity_and_parent_changes() {
+        let (_temp, state) = build_state().await;
+        let app = build_test_router(state);
+        let identity_mismatch = json!({
+            "requestId": "comic-identity-mismatch",
+            "mutations": [{
+                "entityType": "comic.history",
+                "clientMutationId": "comic-identity-mismatch",
+                "scopeId": "comics:profile:main",
+                "entityId": "comic.history::suwayomi:server-main:manga:42",
+                "lamport": 1,
+                "patch": {
+                    "historyId": "history-other",
+                    "comicId": "suwayomi:server-main:manga:42",
+                    "chapterId": "chapter-1",
+                    "pageIndex": 0,
+                    "pageCount": 2,
+                    "progressPercent": 0.5,
+                    "readAtMs": 1
+                }
+            }]
+        });
+        let response = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                identity_mismatch,
+            ))
+            .await
+            .unwrap();
+        let payload = json_body(response).await;
+        assert_eq!(payload["results"][0]["error"]["code"], "ENTITY_ID_MISMATCH");
+
+        let create = comic_state_batch("comic-parent-create");
+        let response = app
+            .clone()
+            .oneshot(request_with_json("/v1/mutations", "main-token", create))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let reparent = json!({
+            "requestId": "comic-parent-change",
+            "mutations": [{
+                "entityType": "comic.page_bookmark",
+                "clientMutationId": "comic-parent-change",
+                "scopeId": "comics:profile:main",
+                "entityId": "bookmark-1",
+                "lamport": 3,
+                "patch": {
+                    "bookmarkId": "bookmark-1",
+                    "comicId": "suwayomi:server-main:manga:99",
+                    "chapterId": "chapter-7",
+                    "pageIndex": 4,
+                    "pageCount": 20,
+                    "label": null,
+                    "savedAtMs": 1002
+                }
+            }]
+        });
+        let response = app
+            .oneshot(request_with_json("/v1/mutations", "main-token", reparent))
+            .await
+            .unwrap();
+        let payload = json_body(response).await;
+        assert_eq!(payload["results"][0]["error"]["code"], "PARENT_ID_MISMATCH");
+    }
+
+    #[tokio::test]
+    async fn comic_bookmark_delete_replay_tombstone_and_resurrection_converge() {
+        let (_temp, state) = build_state().await;
+        let app = build_test_router(state);
+        let mut create = comic_state_batch("comic-delete-create");
+        create["mutations"].as_array_mut().unwrap().remove(0);
+        let response = app
+            .clone()
+            .oneshot(request_with_json("/v1/mutations", "main-token", create))
+            .await
+            .unwrap();
+        assert_eq!(json_body(response).await["results"][0]["status"], "applied");
+
+        let delete = json!({
+            "requestId": "comic-delete",
+            "mutations": [{
+                "entityType": "comic.page_bookmark",
+                "clientMutationId": "comic-bookmark-delete",
+                "scopeId": "comics:profile:main",
+                "entityId": "bookmark-1",
+                "op": "delete",
+                "lamport": 3
+            }]
+        });
+        let response = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                delete.clone(),
+            ))
+            .await
+            .unwrap();
+        let deleted = json_body(response).await;
+        assert_eq!(deleted["results"][0]["status"], "applied");
+        let response = app
+            .clone()
+            .oneshot(request_with_json("/v1/mutations", "main-token", delete))
+            .await
+            .unwrap();
+        let replayed_delete = json_body(response).await;
+        assert_eq!(
+            replayed_delete["results"][0]["appliedServerVersion"],
+            deleted["results"][0]["appliedServerVersion"]
+        );
+        assert_eq!(replayed_delete["currentServerVersion"], 2);
+
+        let stale = json!({
+            "requestId": "comic-stale-resurrection",
+            "mutations": [{
+                "entityType": "comic.page_bookmark",
+                "clientMutationId": "comic-stale-resurrection",
+                "scopeId": "comics:profile:main",
+                "entityId": "bookmark-1",
+                "lamport": 3,
+                "patch": {
+                    "bookmarkId": "bookmark-1",
+                    "comicId": "suwayomi:server-main:manga:42",
+                    "chapterId": "chapter-7",
+                    "pageIndex": 5,
+                    "pageCount": 20,
+                    "label": null,
+                    "savedAtMs": 1003
+                }
+            }]
+        });
+        let response = app
+            .clone()
+            .oneshot(request_with_json("/v1/mutations", "main-token", stale))
+            .await
+            .unwrap();
+        assert_eq!(
+            json_body(response).await["results"][0]["error"]["code"],
+            "STALE_COMIC_STATE_MUTATION"
+        );
+
+        let snapshot = app
+            .clone()
+            .oneshot(request_without_body(
+                "/v1/snapshot?scopeId=comics:profile:main",
+                "main-token",
+                None,
+            ))
+            .await
+            .unwrap();
+        let snapshot = json_body(snapshot).await;
+        assert_eq!(snapshot["entities"].as_array().unwrap().len(), 0);
+        assert_eq!(snapshot["tombstones"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            snapshot["tombstones"][0]["entityType"],
+            "comic.page_bookmark"
+        );
+
+        let resurrect = json!({
+            "requestId": "comic-valid-resurrection",
+            "mutations": [{
+                "entityType": "comic.page_bookmark",
+                "clientMutationId": "comic-valid-resurrection",
+                "scopeId": "comics:profile:main",
+                "entityId": "bookmark-1",
+                "lamport": 4,
+                "patch": {
+                    "bookmarkId": "bookmark-1",
+                    "comicId": "suwayomi:server-main:manga:42",
+                    "chapterId": "chapter-7",
+                    "pageIndex": 5,
+                    "pageCount": 20,
+                    "label": "Restored",
+                    "savedAtMs": 1004
+                }
+            }]
+        });
+        let response = app
+            .clone()
+            .oneshot(request_with_json("/v1/mutations", "main-token", resurrect))
+            .await
+            .unwrap();
+        assert_eq!(json_body(response).await["results"][0]["status"], "applied");
+
+        let snapshot = app
+            .clone()
+            .oneshot(request_without_body(
+                "/v1/snapshot?scopeId=comics:profile:main",
+                "main-token",
+                None,
+            ))
+            .await
+            .unwrap();
+        let snapshot = json_body(snapshot).await;
+        assert_eq!(snapshot["entities"].as_array().unwrap().len(), 1);
+        assert_eq!(snapshot["entities"][0]["record"]["label"], "Restored");
+        assert_eq!(snapshot["tombstones"].as_array().unwrap().len(), 0);
+
+        let changes = app
+            .oneshot(request_without_body(
+                "/v1/changes?scopeId=comics%3Aprofile%3Amain&sinceVersion=0",
+                "main-token",
+                None,
+            ))
+            .await
+            .unwrap();
+        let changes = json_body(changes).await;
+        let ops = changes["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|change| change["op"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(ops, vec!["merge", "delete", "merge"]);
+    }
+
+    #[tokio::test]
+    async fn comic_payloads_reject_unknown_fields_before_persistence() {
+        let (_temp, state) = build_state().await;
+        let app = build_test_router(state.clone());
+        let mut request = comic_state_batch("comic-unknown-field");
+        request["mutations"][0]["patch"]["accessToken"] = json!("must-not-pass");
+        request["mutations"].as_array_mut().unwrap().truncate(1);
+        let response = app
+            .oneshot(request_with_json("/v1/mutations", "main-token", request))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(
             load_server_runtime(&state.pool)
                 .await
