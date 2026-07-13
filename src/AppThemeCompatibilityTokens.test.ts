@@ -39,6 +39,22 @@ const LEGACY_SURFACES = [
   "GenreDrillPage.svelte",
   "NovelRepositoriesPanel.svelte",
 ];
+const LEGACY_SURFACE_IMPORTERS = new Map<string, string[]>([
+  ["Discover.svelte", []],
+  ["Extensions.svelte", ["src/routes.ts"]],
+  ["SourceBrowse.svelte", ["src/components/pages/Discover.svelte"]],
+  ["SourceList.svelte", []],
+  ["NovelSources.svelte", []],
+  ["NovelSourceCheckModal.svelte", ["src/components/settings/NovelRepositoriesPanel.svelte"]],
+  ["NovelSourceStatusDetails.svelte", [
+    "src/components/pages/NovelSources.svelte",
+    "src/components/settings/NovelRepositoriesPanel.svelte",
+  ]],
+  ["NovelRepositoriesPanel.svelte", []],
+  ["NovelsLibraryBody.svelte", []],
+  ["Tracking.svelte", []],
+  ["GenreDrillPage.svelte", []],
+]);
 
 function readProjectFile(path: string) {
   return readFileSync(resolve(ROOT, path), "utf8");
@@ -51,6 +67,26 @@ function sourceCorpus(path: string): string {
       if (entry.isDirectory()) return sourceCorpus(child);
       if (!/\.(?:css|svelte|ts)$/.test(entry.name) || entry.name.endsWith(".test.ts")) return [];
       return readProjectFile(child);
+    })
+    .join("\n");
+}
+
+function productionSourceFiles(path: string): Array<{ path: string; source: string }> {
+  return readdirSync(resolve(ROOT, path), { withFileTypes: true })
+    .flatMap((entry) => {
+      const child = `${path}/${entry.name}`;
+      if (entry.isDirectory()) return productionSourceFiles(child);
+      if (!/\.(?:svelte|ts)$/.test(entry.name) || entry.name.endsWith(".test.ts")) return [];
+      return [{ path: child, source: readProjectFile(child) }];
+    });
+}
+
+function rustCorpus(path: string): string {
+  return readdirSync(resolve(ROOT, path), { withFileTypes: true })
+    .flatMap((entry) => {
+      const child = `${path}/${entry.name}`;
+      if (entry.isDirectory()) return rustCorpus(child);
+      return entry.name.endsWith(".rs") ? [readProjectFile(child)] : [];
     })
     .join("\n");
 }
@@ -125,6 +161,79 @@ describe("App theme compatibility contract", () => {
     expect(novelRepositories).toContain('import NovelSourceCheckModal');
     expect(novelRepositories).toContain('import NovelSourceStatusDetails');
     expect(settings).not.toContain("NovelRepositoriesPanel");
+  });
+
+  it("locks the audited importer graph for every quarantined surface", () => {
+    const files = productionSourceFiles("src");
+
+    for (const [surface, expectedImporters] of LEGACY_SURFACE_IMPORTERS) {
+      const importers = files
+        .filter(({ source }) => source.includes(surface))
+        .map(({ path }) => path)
+        .sort();
+
+      expect(importers, surface).toEqual([...expectedImporters].sort());
+    }
+  });
+
+  it("keeps the obsolete route map outside every application entrypoint", () => {
+    const webEntrypoints = [
+      "index.html",
+      "src/main.ts",
+      "vite.config.ts",
+      "package.json",
+    ].map(readProjectFile).join("\n");
+    const tauriEntrypoints = [
+      "src-tauri/Cargo.toml",
+      "src-tauri/tauri.conf.json",
+      "src-tauri/tauri.dev.conf.json",
+      "src-tauri/tauri.automation.conf.json",
+      "src-tauri/tauri.macos.conf.json",
+      "src-tauri/tauri.windows.conf.json",
+    ].map(readProjectFile).join("\n");
+    const frontend = sourceCorpus("src");
+    const tauriRuntime = rustCorpus("src-tauri/src");
+
+    expect(webEntrypoints).not.toContain("src/routes.ts");
+    expect(webEntrypoints).not.toMatch(/(?:from|import\()\s*["'][^"']*\/routes["']/);
+    expect(tauriEntrypoints).not.toMatch(/deep[-_]link|single[-_]instance/i);
+    expect(frontend).not.toMatch(/onOpenUrl|open-url|deep[-_]link/i);
+    expect(tauriRuntime).not.toMatch(/RunEvent::Opened|deep[-_]link/i);
+  });
+
+  it("keeps startup audit targets on active surfaces only", () => {
+    const rust = readProjectFile("src-tauri/src/lib.rs");
+    const parserStart = rust.indexOf('arg.strip_prefix("--audit-open=")');
+    const parserEnd = rust.indexOf('arg.strip_prefix("--audit-manga-id=")', parserStart);
+    const parser = rust.slice(parserStart, parserEnd);
+    const app = readProjectFile("src/App.svelte");
+    const handlerStart = app.indexOf("if (pendingAuditOpen)");
+    const handlerEnd = app.indexOf("function clearStartupFailsafe", handlerStart);
+    const handler = app.slice(handlerStart, handlerEnd);
+
+    expect(parserStart).toBeGreaterThan(-1);
+    expect(parserEnd).toBeGreaterThan(parserStart);
+    expect(handlerStart).toBeGreaterThan(-1);
+    expect(handlerEnd).toBeGreaterThan(handlerStart);
+
+    for (const target of [
+      "library",
+      "manga",
+      "reader",
+      "books",
+      "book",
+      "book-reader",
+      "settings",
+      "settings-security",
+    ]) {
+      expect(parser, target).toContain(`"${target}"`);
+      expect(handler, target).toContain(`"${target}"`);
+    }
+
+    for (const legacyTarget of ["history", "explore", "extensions", "sources", "discover"]) {
+      expect(parser, legacyTarget).not.toContain(`"${legacyTarget}"`);
+      expect(handler, legacyTarget).not.toContain(`"${legacyTarget}"`);
+    }
   });
 
   it("keeps unreferenced compatibility aliases classified as Legacy", () => {

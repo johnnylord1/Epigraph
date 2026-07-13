@@ -2488,3 +2488,52 @@ Categorias cobertas:
 - Nenhuma superficie da quarentena deve ser removida ate haver prova de ausencia em deep links, estado persistido, entrypoints alternativos, flags e runtime real com backend disponivel.
 - Se alguma superficie Legacy for reativada, ela deve virar um marco proprio de migracao ou reanexacao, com screenshots reais antes/depois.
 - Syncd continua fora deste plano e deve receber validacao propria somente quando houver sessao persistida real disponivel.
+
+## Marco 32 - Legacy Runtime Entrypoint Audit
+
+### Escopo
+
+- Marco exclusivamente de evidencia e contrato: nenhum componente, token, tema, layout, comportamento ou codigo Legacy foi alterado/removido.
+- Foram auditados o bootstrap web/Tauri, o grafo de imports, navegacao persistida, argumentos internos de auditoria, WebViews auxiliares, callbacks OAuth, protocolos de assets e o bundle de producao.
+- Syncd permaneceu fora do escopo.
+
+### Bootstrap e navegacao ativos
+
+- O caminho de bootstrap comprovado e `src-tauri/src/main.rs -> aethon_lib::run() -> index.html -> src/main.ts -> App.svelte -> Layout.svelte`.
+- `Layout.svelte` continua sendo o router efetivo do shell, com `home`, `library`, `search`, `downloads` e `settings`; detalhes e readers sao carregados pelos loaders ativos de `Layout.svelte`/`App.svelte`.
+- A navegacao inicial vem do estado persistido normalizado. Os aliases `explore`, `extensions` e `sources` convergem para `search`; pathname, hash e History API nao alimentam `NavPage`.
+- O argumento interno `--audit-open=` aceita somente `library`, `manga`, `reader`, `books`, `book`, `book-reader`, `settings` e `settings-security`. Nenhum alvo Legacy pode ser aberto por esse caminho.
+
+### Entry points externos e auxiliares
+
+- Nao existe dependencia/configuracao Tauri para deep link ou single instance, protocolo externo de navegacao registrado, listener `RunEvent::Opened`, `onOpenUrl` ou handler equivalente no frontend.
+- As WebViews externas de reader e tracker OAuth nao importam o shell nem o mapa de rotas: a primeira navega apenas no host permitido e a segunda intercepta o callback e publica um evento interno.
+- Os protocolos `book:` e `cover:` servem assets locais para a WebView e nao sao entrypoints de navegacao do app.
+- A janela auxiliar de novels usa URL/query interna e um label proprio para montar somente `NovelRuntimeHost`; ela nao consome `src/routes.ts`.
+
+### Grafo Legacy e bundle
+
+- O teste agora calcula os importadores de todas as superficies em quarentena. O unico importador de `Extensions.svelte` e `src/routes.ts`; `SourceBrowse.svelte` pertence apenas a `Discover.svelte`; os dois diagnosticos Novel pertencem somente aos hosts Legacy ja documentados.
+- `Discover.svelte`, `SourceList.svelte`, `NovelSources.svelte`, `NovelRepositoriesPanel.svelte`, `NovelsLibraryBody.svelte`, `Tracking.svelte` e `GenreDrillPage.svelte` seguem sem importador de producao ativo.
+- `src/routes.ts` nao tem importador em nenhum entrypoint web/Tauri. Ele ainda referencia `History.svelte` e `Explore.svelte`, arquivos que nao existem; portanto, o modulo tambem nao resolveria caso fosse reativado sem migracao explicita.
+- O build de producao nao emitiu chunks com os nomes das superficies Legacy auditadas, incluindo `Discover`, `Extensions`, `SourceBrowse`, `SourceList`, `NovelSources`, `NovelRepositoriesPanel`, `Tracking`, `GenreDrillPage`, `History` e `Explore`.
+
+### Classificacao e decisao
+
+- As superficies permanecem **Legacy**, nao Mortas. A ausencia foi comprovada para o repositorio e bundle atuais, mas nenhum arquivo ou token foi removido nesta etapa.
+- Qualquer novo importador, target de auditoria ou suporte a deep link que referencie uma superficie em quarentena faz o contrato falhar e exige um marco explicito de reativacao/migracao.
+- `routes.ts` permanece preservado como evidencia historica ate uma etapa futura autorizar limpeza de codigo Legacy.
+
+### Validacao
+
+- `pnpm test:unit -- src/AppThemeCompatibilityTokens.test.ts`: 1 arquivo e 9 testes verdes.
+- `pnpm build`: verde com 6.299 modulos; permanece apenas o aviso conhecido de chunk acima de 500 kB.
+- Inspecao dos chunks de `dist/assets`: zero chunk das superficies Legacy auditadas.
+- `git diff --check`: verde, com avisos esperados de normalizacao LF/CRLF no Windows.
+- Nenhuma screenshot foi recapturada porque o marco nao altera superficie visual, CSS ou runtime.
+
+### Riscos restantes
+
+- Entry points mantidos fora deste repositorio (atalhos antigos ou builds instalados anteriores) nao podem ser provados por analise do source atual; o build produzido neste marco, contudo, nao empacota as superficies em quarentena.
+- A classificacao Legacy continua conservadora. Remocao futura exige marco proprio, busca global repetida e validacao de upgrade antes de excluir arquivos ou aliases.
+- `nocturne-port.css`, os 53 aliases `--n-*` Ativos, 9 `--n-*` Legacy e 13 `--activity-*` Legacy permanecem intocados e devem ser tratados em auditoria separada.
