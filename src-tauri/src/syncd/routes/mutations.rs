@@ -1510,7 +1510,7 @@ fn comic_state_persist_error_detail(error: anyhow::Error) -> Option<ErrorDetail>
     let message = error.to_string();
     if message.contains("stale bookmark mutation rejected by tombstone lamport") {
         Some(error_detail("STALE_COMIC_STATE_MUTATION", &message, None))
-    } else if message.contains("parent comic_id is immutable") {
+    } else if message.contains("parent comic_id") {
         Some(error_detail("PARENT_ID_MISMATCH", &message, None))
     } else if message.contains("must match entity_id") {
         Some(error_detail("ENTITY_ID_MISMATCH", &message, None))
@@ -3862,6 +3862,39 @@ mod tests {
             "comic.page_bookmark"
         );
 
+        let wrong_parent_resurrection = json!({
+            "requestId": "comic-wrong-parent-resurrection",
+            "mutations": [{
+                "entityType": "comic.page_bookmark",
+                "clientMutationId": "comic-wrong-parent-resurrection",
+                "scopeId": "comics:profile:main",
+                "entityId": "bookmark-1",
+                "lamport": 4,
+                "patch": {
+                    "bookmarkId": "bookmark-1",
+                    "comicId": "suwayomi:server-main:manga:99",
+                    "chapterId": "chapter-7",
+                    "pageIndex": 5,
+                    "pageCount": 20,
+                    "label": "Wrong parent",
+                    "savedAtMs": 1004
+                }
+            }]
+        });
+        let response = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                wrong_parent_resurrection,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            json_body(response).await["results"][0]["error"]["code"],
+            "PARENT_ID_MISMATCH"
+        );
+
         let resurrect = json!({
             "requestId": "comic-valid-resurrection",
             "mutations": [{
@@ -3869,7 +3902,7 @@ mod tests {
                 "clientMutationId": "comic-valid-resurrection",
                 "scopeId": "comics:profile:main",
                 "entityId": "bookmark-1",
-                "lamport": 4,
+                "lamport": 5,
                 "patch": {
                     "bookmarkId": "bookmark-1",
                     "comicId": "suwayomi:server-main:manga:42",
@@ -3877,7 +3910,7 @@ mod tests {
                     "pageIndex": 5,
                     "pageCount": 20,
                     "label": "Restored",
-                    "savedAtMs": 1004
+                    "savedAtMs": 1005
                 }
             }]
         });
