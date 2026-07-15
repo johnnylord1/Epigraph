@@ -31,6 +31,7 @@ pub async fn get_capabilities(
         supports_snapshot: true,
         supports_assets: true,
         supports_novel_chapter_assets: true,
+        supports_novel_plugin_sync: true,
         supports_suwayomi_proxy: true,
         supports_suwayomi_websocket_proxy: true,
         suwayomi_proxy_path_template:
