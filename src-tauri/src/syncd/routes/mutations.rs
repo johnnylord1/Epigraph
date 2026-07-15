@@ -7,14 +7,16 @@ use std::collections::{BTreeMap, HashMap};
 use crate::syncd::db;
 use crate::syncd::middleware::validate_scope;
 use crate::syncd::models::{
-    canonical_novel_category_assignment_id, AppError, AuthenticatedSession, BookBookmarkPatch,
-    BookCategoryAssignmentPatch, BookCategoryPatch, BookEntryPatch, BookHistoryPatch,
-    BookLibraryUiPatch, BookProgressPatch, ComicHistoryPatch, ComicPageBookmarkPatch, ErrorDetail,
-    MutationEntityType, MutationInput, MutationOperation, MutationReceiptContext, MutationResult,
-    MutationResultStatus, MutationsRequest, MutationsResponse, NovelBookmarkPatch,
-    NovelCategoryAssignmentPatch, NovelCategoryPatch, NovelChapterPatch, NovelClassificationPatch,
-    NovelEntryPatch, NovelHistoryPatch, NovelProgressPatch, SharedAppState,
+    canonical_novel_category_assignment_id, canonical_novel_chapter_asset_id, AppError,
+    AuthenticatedSession, BookBookmarkPatch, BookCategoryAssignmentPatch, BookCategoryPatch,
+    BookEntryPatch, BookHistoryPatch, BookLibraryUiPatch, BookProgressPatch, ComicHistoryPatch,
+    ComicPageBookmarkPatch, ErrorDetail, MutationEntityType, MutationInput, MutationOperation,
+    MutationReceiptContext, MutationResult, MutationResultStatus, MutationsRequest,
+    MutationsResponse, NovelBookmarkPatch, NovelCategoryAssignmentPatch, NovelCategoryPatch,
+    NovelChapterAssetPatch, NovelChapterPatch, NovelClassificationPatch, NovelEntryPatch,
+    NovelHistoryPatch, NovelProgressPatch, SharedAppState,
 };
+use crate::syncd::routes::assets::{validate_asset_reference, AssetReferenceError};
 
 pub async fn post_mutations(
     State(state): State<SharedAppState>,
@@ -604,7 +606,7 @@ pub async fn post_mutations(
                         ))
                     })?
                 }
-                MutationOperation::Delete => db::delete_novel_chapter_mutation(
+                MutationOperation::Delete => match db::delete_novel_chapter_mutation(
                     &state.pool,
                     &session,
                     &base.scope_id,
@@ -613,9 +615,148 @@ pub async fn post_mutations(
                     state.config.retention_window,
                 )
                 .await
-                .map_err(|error| {
-                    AppError::Internal(format!("Failed to delete novel chapter mutation: {error}"))
-                })?,
+                {
+                    Ok(outcome) => outcome,
+                    Err(error) => {
+                        if error.to_string().contains("FOREIGN KEY constraint failed") {
+                            results.push(rejected_result(
+                                &mutation,
+                                error_detail(
+                                    "NOVEL_CHAPTER_ASSETS_EXIST",
+                                    "Novel chapter cannot be deleted while a downloaded asset references it.",
+                                    None,
+                                ),
+                            ));
+                            continue;
+                        }
+                        return Err(AppError::Internal(
+                            "Failed to delete novel chapter mutation.".to_string(),
+                        ));
+                    }
+                },
+            },
+            MutationInput::NovelChapterAsset { base, patch } => match base.op {
+                MutationOperation::Merge => {
+                    let Some(patch) = patch.as_ref() else {
+                        results.push(rejected_result(
+                            &mutation,
+                            error_detail(
+                                "MISSING_PATCH",
+                                "Novel chapter asset merge mutations must include a patch.",
+                                None,
+                            ),
+                        ));
+                        continue;
+                    };
+                    if let Some(error) = validate_novel_chapter_asset_patch(patch) {
+                        results.push(rejected_result(&mutation, error));
+                        continue;
+                    }
+                    let canonical_novel_id =
+                        db::resolve_novel_entity_id(&state.pool, &base.scope_id, &patch.novel_id)
+                            .await
+                            .map_err(|_| {
+                                AppError::Internal(
+                                    "Failed to resolve novel chapter asset owner.".to_string(),
+                                )
+                            })?;
+                    let requested_entity_id =
+                        canonical_novel_chapter_asset_id(&patch.novel_id, &patch.chapter_id);
+                    let canonical_entity_id =
+                        canonical_novel_chapter_asset_id(&canonical_novel_id, &patch.chapter_id);
+                    if base.entity_id != requested_entity_id
+                        && base.entity_id != canonical_entity_id
+                    {
+                        results.push(rejected_result(
+                            &mutation,
+                            error_detail(
+                                "ENTITY_ID_MISMATCH",
+                                "Novel chapter asset entityId does not match novelId and chapterId.",
+                                Some(json!({
+                                    "expectedEntityId": canonical_entity_id,
+                                    "receivedEntityId": base.entity_id,
+                                })),
+                            ),
+                        ));
+                        continue;
+                    }
+                    set_canonical_receipt(&mut session, &base.entity_id, &canonical_entity_id);
+                    let mut canonical_patch = patch.clone();
+                    canonical_patch.novel_id = canonical_novel_id;
+                    match validate_asset_reference(
+                        &state.config.data_dir,
+                        &canonical_patch.blob_sha256,
+                        &base.scope_id,
+                        canonical_patch.byte_length as u64,
+                    )
+                    .await
+                    {
+                        Ok(()) => {}
+                        Err(error) => {
+                            results.push(rejected_result(
+                                &mutation,
+                                novel_chapter_asset_reference_error_detail(error),
+                            ));
+                            continue;
+                        }
+                    }
+                    match db::apply_novel_chapter_asset_mutation(
+                        &state.pool,
+                        &session,
+                        &base.scope_id,
+                        &canonical_entity_id,
+                        &canonical_patch,
+                        base.lamport,
+                        state.config.retention_window,
+                    )
+                    .await
+                    {
+                        Ok(outcome) => outcome,
+                        Err(error) => {
+                            if let Some(error) = novel_chapter_asset_persist_error_detail(error) {
+                                results.push(rejected_result(&mutation, error));
+                                continue;
+                            }
+                            return Err(AppError::Internal(
+                                "Failed to persist novel chapter asset mutation.".to_string(),
+                            ));
+                        }
+                    }
+                }
+                MutationOperation::Delete => {
+                    if patch.is_some() {
+                        results.push(rejected_result(
+                            &mutation,
+                            error_detail(
+                                "DELETE_PATCH_NOT_ALLOWED",
+                                "Novel chapter asset delete mutations must not include a patch.",
+                                None,
+                            ),
+                        ));
+                        continue;
+                    }
+                    match db::delete_novel_chapter_asset_mutation(
+                        &state.pool,
+                        &session,
+                        &base.scope_id,
+                        &base.entity_id,
+                        base.lamport,
+                        state.config.retention_window,
+                    )
+                    .await
+                    {
+                        Ok(outcome) => outcome,
+                        Err(error) => {
+                            if let Some(error) = novel_chapter_asset_persist_error_detail(error) {
+                                results.push(rejected_result(&mutation, error));
+                                continue;
+                            }
+                            return Err(AppError::Internal(
+                                "Failed to delete novel chapter asset mutation.".to_string(),
+                            ));
+                        }
+                    }
+                }
             },
             MutationInput::NovelBookmark { base, patch } => match base.op {
                 MutationOperation::Merge => {
@@ -1321,6 +1462,7 @@ fn validate_mutation_base(
         }
         MutationEntityType::NovelEntry
         | MutationEntityType::NovelChapter
+        | MutationEntityType::NovelChapterAsset
         | MutationEntityType::NovelHistory
         | MutationEntityType::NovelProgress
         | MutationEntityType::NovelBookmark
@@ -1513,6 +1655,67 @@ fn validate_novel_chapter_patch(patch: &NovelChapterPatch) -> Option<ErrorDetail
         return validate_non_negative_timestamp(release_time_ms, "releaseTimeMs");
     }
     None
+}
+
+fn validate_novel_chapter_asset_patch(patch: &NovelChapterAssetPatch) -> Option<ErrorDetail> {
+    if patch.schema_version != 1 {
+        return Some(error_detail(
+            "UNSUPPORTED_CHAPTER_ASSET_SCHEMA",
+            "Novel chapter asset schemaVersion must be 1.",
+            Some(json!({ "receivedSchemaVersion": patch.schema_version })),
+        ));
+    }
+    for (field, value) in [
+        ("novelId", patch.novel_id.as_str()),
+        ("chapterId", patch.chapter_id.as_str()),
+    ] {
+        if value.is_empty() || value != value.trim() || value.len() > 512 || value.contains('\0') {
+            return Some(error_detail(
+                "INVALID_CHAPTER_ASSET_ID",
+                "Novel chapter asset identifiers must be non-empty, trimmed, at most 512 bytes, and contain no NUL.",
+                Some(json!({ "field": field })),
+            ));
+        }
+    }
+    if patch.blob_sha256.len() != 64
+        || !patch
+            .blob_sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Some(error_detail(
+            "INVALID_ASSET_SHA256",
+            "Novel chapter asset blobSha256 must contain exactly 64 lowercase hexadecimal characters.",
+            None,
+        ));
+    }
+    if patch.byte_length <= 0 {
+        return Some(error_detail(
+            "INVALID_ASSET_BYTE_LENGTH",
+            "Novel chapter asset byteLength must be greater than zero.",
+            Some(json!({ "receivedByteLength": patch.byte_length })),
+        ));
+    }
+    if patch.archive_format != "zip" {
+        return Some(error_detail(
+            "UNSUPPORTED_ARCHIVE_FORMAT",
+            "Novel chapter asset archiveFormat must be 'zip'.",
+            Some(json!({ "receivedArchiveFormat": patch.archive_format })),
+        ));
+    }
+    validate_non_negative_timestamp(patch.created_at_ms, "createdAtMs")
+        .or_else(|| validate_non_negative_timestamp(patch.updated_at_ms, "updatedAtMs"))
+        .or_else(|| {
+            if patch.updated_at_ms < patch.created_at_ms {
+                Some(error_detail(
+                    "INVALID_TIMESTAMP_ORDER",
+                    "Novel chapter asset updatedAtMs must not precede createdAtMs.",
+                    None,
+                ))
+            } else {
+                None
+            }
+        })
 }
 
 fn validate_book_bookmark_patch(patch: &BookBookmarkPatch) -> Option<ErrorDetail> {
@@ -1862,6 +2065,74 @@ fn bookmark_persist_error_detail(error: anyhow::Error) -> Option<ErrorDetail> {
     let message = error.to_string();
     if message.contains("stale bookmark mutation rejected by tombstone lamport") {
         Some(error_detail("STALE_BOOKMARK_MUTATION", &message, None))
+    } else {
+        None
+    }
+}
+
+fn novel_chapter_asset_reference_error_detail(error: AssetReferenceError) -> ErrorDetail {
+    match error {
+        AssetReferenceError::InvalidSha256 => error_detail(
+            "INVALID_ASSET_SHA256",
+            "Novel chapter asset blobSha256 is invalid.",
+            None,
+        ),
+        AssetReferenceError::NotAvailableForScope => error_detail(
+            "ASSET_NOT_AVAILABLE_FOR_SCOPE",
+            "The chapter archive must be uploaded and granted to this novel scope before publication.",
+            None,
+        ),
+        AssetReferenceError::SizeMismatch => error_detail(
+            "ASSET_SIZE_MISMATCH",
+            "Novel chapter asset byteLength does not match the stored blob.",
+            None,
+        ),
+        AssetReferenceError::Storage => error_detail(
+            "ASSET_VALIDATION_UNAVAILABLE",
+            "The Core could not validate the stored chapter archive.",
+            None,
+        ),
+    }
+}
+
+fn novel_chapter_asset_persist_error_detail(error: anyhow::Error) -> Option<ErrorDetail> {
+    let message = error.to_string();
+    if message.contains("stale novel chapter asset mutation") {
+        Some(error_detail(
+            "STALE_NOVEL_CHAPTER_ASSET_MUTATION",
+            "Novel chapter asset mutation is older than its deletion tombstone.",
+            None,
+        ))
+    } else if message.contains("references missing novel") {
+        Some(error_detail(
+            "NOVEL_NOT_FOUND",
+            "Novel chapter asset references a novel that is not active.",
+            None,
+        ))
+    } else if message.contains("references missing chapter") {
+        Some(error_detail(
+            "NOVEL_CHAPTER_NOT_FOUND",
+            "Novel chapter asset references a chapter that is not active.",
+            None,
+        ))
+    } else if message.contains("chapter belongs to another novel") {
+        Some(error_detail(
+            "NOVEL_CHAPTER_OWNER_MISMATCH",
+            "Novel chapter asset chapterId does not belong to novelId.",
+            None,
+        ))
+    } else if message.contains("parent identity is immutable") {
+        Some(error_detail(
+            "PARENT_ID_MISMATCH",
+            "Novel chapter asset parent identity cannot be changed.",
+            None,
+        ))
+    } else if message.contains("FOREIGN KEY constraint failed") {
+        Some(error_detail(
+            "NOVEL_CHAPTER_ASSET_REFERENCE_INVALID",
+            "Novel chapter asset references are no longer active.",
+            None,
+        ))
     } else {
         None
     }
