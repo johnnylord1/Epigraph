@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 import { resolveCssColor, type RgbaColor } from "../../test/themeColor";
 import { themeProbeCss } from "../../test/themeProbe";
+import { THEME_TOKEN_KEYS } from "./contract";
 
 const ROOT = process.cwd();
 const tokensCss = readFileSync(resolve(ROOT, "src/styles/tokens.css"), "utf8");
@@ -151,6 +152,37 @@ describe("final derived theme gate", () => {
     expect(new Set(exactSources.map(({ name }) => name)).size).toBe(232);
     expect(missingFallback).toEqual([]);
     expect(unreferenced).toEqual([]);
+    expect(leaked).toEqual([]);
+  });
+
+  test("limits exact derived semantic colors to the builtin Nocturne document", () => {
+    const selector = '[data-theme="nocturne"]:not([data-custom-theme]) {';
+    const selectorStart = nocturneCss.indexOf(selector);
+    const selectorEnd = nocturneCss.indexOf("\n}", selectorStart);
+    const builtinBlock = nocturneCss.slice(selectorStart, selectorEnd);
+    const outsideBuiltin = `${nocturneCss.slice(0, selectorStart)}${nocturneCss.slice(selectorEnd + 2)}`;
+    const editable = new Set(THEME_TOKEN_KEYS.map((name) => `--${name}`));
+    const exactRoles = declarations(builtinBlock).filter(
+      ({ name, value }) =>
+        name.startsWith("--color-") && !name.endsWith("-source") && directColorPattern.test(value),
+    );
+    const fallbackDefinitions = new Set(declarations(tokensCss).map(({ name }) => name));
+    const missingFallback = exactRoles
+      .filter(({ name }) => !fallbackDefinitions.has(name))
+      .map(({ name }) => name);
+    const leaked = declarations(outsideBuiltin)
+      .filter(
+        ({ name, value }) =>
+          name.startsWith("--color-") &&
+          !name.endsWith("-source") &&
+          !editable.has(name) &&
+          directColorPattern.test(value),
+      )
+      .map(({ name, value }) => `${name}: ${value}`);
+
+    expect(exactRoles).toHaveLength(57);
+    expect(new Set(exactRoles.map(({ name }) => name)).size).toBe(57);
+    expect(missingFallback).toEqual([]);
     expect(leaked).toEqual([]);
   });
 

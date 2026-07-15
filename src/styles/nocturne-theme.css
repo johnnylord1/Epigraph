@@ -59,22 +59,6 @@
   --text-inverse: #08080b;
 
   /* Nocturne implementation of the shared semantic visual roles. */
-  --color-control-border-subtle: rgba(72, 69, 79, 0.18);
-  --color-control-border-elevated: rgba(72, 69, 79, 0.42);
-  --color-control-surface: rgba(255, 255, 255, 0.035);
-  --color-control-surface-hover: rgba(184, 167, 234, 0.08);
-  --color-control-field-surface: rgba(20, 19, 24, 0.72);
-  --color-control-placeholder: rgba(202, 196, 208, 0.28);
-  --color-text-emphasis: #e8e4eb;
-  --color-text-tab-active: #f0edf8;
-  --color-text-accent-emphasis: #d8cbff;
-  --color-text-danger-emphasis: #ff9f9f;
-  --color-accent-interactive: #c9b5ff;
-  --color-accent-interactive-strong: #8f7ee0;
-  --color-status-success-emphasis: #c9f0cf;
-  --color-status-error-emphasis: #f08f9b;
-  --color-popover-surface-top: #1b1924;
-  --color-popover-surface-base: #101016;
   --color-popover-surface:
     linear-gradient(
       180deg,
@@ -86,8 +70,6 @@
   --shadow-popover:
     0 16px 42px color-mix(in srgb, var(--color-shadow-source) 24%, transparent),
     inset 0 1px 0 color-mix(in srgb, var(--color-highlight-source) 2.5%, transparent);
-  --color-toast-surface-accent: #c9b5ff;
-  --color-toast-surface-base: #151419;
   --color-toast-surface:
     radial-gradient(circle at 0% 0%, color-mix(in srgb, var(--color-toast-surface-accent) 8%, transparent), transparent 46%),
     color-mix(in srgb, var(--color-toast-surface-base) 96%, transparent);
@@ -102,62 +84,24 @@
     color-mix(in srgb, var(--color-toast-surface-accent) 75%, transparent),
     color-mix(in srgb, var(--color-accent-interactive-strong) 70%, transparent)
   );
-  --color-toast-progress-end: #a486ff;
   --gradient-toast-progress: linear-gradient(
     90deg,
     color-mix(in srgb, var(--color-toast-surface-accent) 92%, transparent),
     color-mix(in srgb, var(--color-toast-progress-end) 80%, transparent)
   );
   --shadow-toast-progress: 0 0 14px color-mix(in srgb, var(--color-toast-surface-accent) 28%, transparent);
-  --color-state-action-surface: rgba(20, 19, 25, 0.58);
-  --color-state-danger-emphasis: #ef9aa8;
   --color-state-neutral-accent: var(--accent-fg);
-  --color-state-info-accent: #c9b5ff;
-  --color-state-warning-accent: #d6c09a;
-  --color-state-danger-accent: #d8b4ff;
-  --color-state-success-accent: #b8dfbe;
-  --color-state-panel-top: rgba(24, 23, 30, 0.62);
-  --color-state-panel-bottom: rgba(13, 13, 17, 0.54);
-  --color-state-compact-top: rgba(18, 17, 22, 0.58);
-  --color-state-compact-bottom: rgba(11, 11, 14, 0.5);
-  --color-state-icon-surface: rgba(18, 17, 24, 0.72);
-  --color-app-background-top: #15151a;
   --color-shell-scrim-source: var(--color-deep-scrim-source);
-  --color-nav-error-surface: #ffb4ab;
-  --color-nav-error-ink: #690005;
-  --color-on-accent-muted: #483a74;
-  --color-search-dim-accent: #221a34;
   --color-search-field-surface-source: var(--color-deep-neutral-surface-source);
-  --color-settings-accent-emphasis: #ece4ff;
-  --color-settings-button-emphasis: #efebf5;
-  --color-settings-danger-text: #e9aaaa;
-  --color-settings-danger-text-hover: #ffdada;
-  --color-settings-danger-surface: #4f272e;
-  --color-settings-danger-border: #c96e6e;
-  --color-settings-menu-top: #18161f;
-  --color-settings-menu-base: #121118;
-  --color-settings-meter-accent-start: #bea7ff;
-  --color-settings-meter-accent-end: #d5c6ff;
-  --color-settings-meter-warning-start: #eacb8a;
-  --color-settings-meter-warning-end: #ffe19d;
-  --color-settings-meter-critical-start: #ff8787;
-  --color-settings-meter-critical-end: #ffb1b1;
   --gradient-accent-primary: linear-gradient(135deg, var(--accent-bright) 0%, var(--accent) 100%);
   --color-library-accent-soft-source: var(--color-accent-soft-emphasis-source);
   --color-browse-catalog-surface-source: var(--color-surface-ink-raised-source);
   --color-browse-sidebar-surface-source: var(--color-deep-panel-raised-source);
   --color-browse-insight-surface-source: var(--color-insight-surface-source);
   --color-browse-insight-raised-source: var(--color-insight-raised-source);
-  --color-detail-danger-text-soft: #ffd1d1;
-  --color-detail-danger-text-strong: #ffb3b3;
   --color-detail-link-search-source: var(--color-deepest-panel-source);
-  --color-detail-link-text-emphasis: #f1edf5;
   --color-detail-input-deep-source: var(--color-deep-input-source);
-  --color-detail-icon-outline: #c8bbff;
   --color-detail-progress-track-source: var(--color-neutral-track-source);
-  --color-detail-primary-gradient-start: #c1b1ef;
-  --color-detail-primary-gradient-end: #dfd5ff;
-  --color-tracking-title-emphasis: #f0ecf7;
   --color-manga-status-success-source: var(--color-status-success-vivid-source);
   --color-manga-status-warning-source: var(--color-status-warning-vivid-source);
   --gradient-settings-meter: linear-gradient(
@@ -2325,6 +2269,62 @@
 /* Preserve the exact reference palette for the builtin theme. Custom themes
    based on Nocturne intentionally resolve these roles from the V4 contract. */
 [data-theme="nocturne"]:not([data-custom-theme]) {
+  --color-control-border-subtle: rgba(72, 69, 79, 0.18);
+  --color-control-border-elevated: rgba(72, 69, 79, 0.42);
+  --color-control-surface: rgba(255, 255, 255, 0.035);
+  --color-control-surface-hover: rgba(184, 167, 234, 0.08);
+  --color-control-field-surface: rgba(20, 19, 24, 0.72);
+  --color-control-placeholder: rgba(202, 196, 208, 0.28);
+  --color-text-emphasis: #e8e4eb;
+  --color-text-tab-active: #f0edf8;
+  --color-text-accent-emphasis: #d8cbff;
+  --color-text-danger-emphasis: #ff9f9f;
+  --color-accent-interactive: #c9b5ff;
+  --color-accent-interactive-strong: #8f7ee0;
+  --color-status-success-emphasis: #c9f0cf;
+  --color-status-error-emphasis: #f08f9b;
+  --color-popover-surface-top: #1b1924;
+  --color-popover-surface-base: #101016;
+  --color-toast-surface-accent: #c9b5ff;
+  --color-toast-surface-base: #151419;
+  --color-toast-progress-end: #a486ff;
+  --color-state-action-surface: rgba(20, 19, 25, 0.58);
+  --color-state-danger-emphasis: #ef9aa8;
+  --color-state-info-accent: #c9b5ff;
+  --color-state-warning-accent: #d6c09a;
+  --color-state-danger-accent: #d8b4ff;
+  --color-state-success-accent: #b8dfbe;
+  --color-state-panel-top: rgba(24, 23, 30, 0.62);
+  --color-state-panel-bottom: rgba(13, 13, 17, 0.54);
+  --color-state-compact-top: rgba(18, 17, 22, 0.58);
+  --color-state-compact-bottom: rgba(11, 11, 14, 0.5);
+  --color-state-icon-surface: rgba(18, 17, 24, 0.72);
+  --color-app-background-top: #15151a;
+  --color-nav-error-surface: #ffb4ab;
+  --color-nav-error-ink: #690005;
+  --color-on-accent-muted: #483a74;
+  --color-search-dim-accent: #221a34;
+  --color-settings-accent-emphasis: #ece4ff;
+  --color-settings-button-emphasis: #efebf5;
+  --color-settings-danger-text: #e9aaaa;
+  --color-settings-danger-text-hover: #ffdada;
+  --color-settings-danger-surface: #4f272e;
+  --color-settings-danger-border: #c96e6e;
+  --color-settings-menu-top: #18161f;
+  --color-settings-menu-base: #121118;
+  --color-settings-meter-accent-start: #bea7ff;
+  --color-settings-meter-accent-end: #d5c6ff;
+  --color-settings-meter-warning-start: #eacb8a;
+  --color-settings-meter-warning-end: #ffe19d;
+  --color-settings-meter-critical-start: #ff8787;
+  --color-settings-meter-critical-end: #ffb1b1;
+  --color-detail-danger-text-soft: #ffd1d1;
+  --color-detail-danger-text-strong: #ffb3b3;
+  --color-detail-link-text-emphasis: #f1edf5;
+  --color-detail-icon-outline: #c8bbff;
+  --color-detail-primary-gradient-start: #c1b1ef;
+  --color-detail-primary-gradient-end: #dfd5ff;
+  --color-tracking-title-emphasis: #f0ecf7;
   --color-on-accent-strong: #352660;
   --color-toast-surface-hover-source: #19181d;
   --color-toast-border-source: #5c5867;

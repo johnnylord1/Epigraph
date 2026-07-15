@@ -2708,3 +2708,37 @@ Categorias cobertas:
 - `git diff --check`: verde, com avisos esperados de normalização LF/CRLF no Windows.
 - Os sources agora respondem integralmente ao contrato V4, mas ainda existem papéis semânticos Nocturne sem sufixo `-source` e aliases compostos no seletor geral. O próximo gate deve comparar os component tokens ativos entre custom Nocturne e probe, inventariar apenas os bloqueios reais e condicioná-los sem mover geometria, motion ou component aliases.
 - A camada `--n-*`, aliases Legacy e componentes Legacy continuam preservados; Syncd permanece fora do plano atual.
+
+## Marco 37 - Custom Nocturne Derived Semantics
+
+### Escopo e consolidacao
+
+- O preflight separou os valores diretos remanescentes do seletor geral em quatro classes: 47 propriedades editáveis do contrato V4, 2 propriedades HUD editáveis, 4 shadows do tema-base e 56 papéis semânticos derivados com fallback compartilhado.
+- Somente os 56 papéis derivados foram movidos para `[data-theme="nocturne"]:not([data-custom-theme])`, mantendo exatamente os valores Nocturne. Somados a `--color-on-accent-strong` do Marco 36, o bloco possui **57 semantic colors exatas / 57 fallbacks / 57 consumidas / 0 sem fallback**.
+- Fora do bloco builtin permanecem exatamente **47 ThemeTokens + 2 HudThemeTokens + 4 shadow tokens** com valores diretos. Os 49 tokens editáveis são sobrescritos por CSSOM no fluxo V4; os shadows preservam a composição/alpha do tema-base e não foram transformados sem necessidade comprovada.
+- Nenhum component token, componente Svelte, contrato persistido, provider, store, layout, comportamento, alias `--n-*`, código Legacy ou Syncd foi alterado.
+
+### Gates de contrato e browser
+
+- `themeGate.test.ts` importa a allowlist pública `THEME_TOKEN_KEYS` e exige **57/57** papéis derivados únicos no bloco builtin, fallback presente para todos e zero cor semântica derivada literal fora dele.
+- `themeProbe.browser.test.ts` descobre os 57 nomes pela CSSOM, aplica um contrato V4 custom baseado em Nocturne e compara com o mesmo probe fora do seletor Nocturne.
+- Todos os 57 valores custom resolveram exatamente como o fallback compartilhado; pelo menos 50 mudaram materialmente em relação ao Nocturne builtin.
+- A composição dos component tokens do tema-base permanece ativa. O que mudou foi apenas a origem dos valores semânticos quando `data-custom-theme` está presente.
+
+### Validacao visual real
+
+- Baseline imediato do Marco 36 e novas capturas do app Tauri real, Nocturne builtin, viewport 1280x800, sem `data-custom-theme` e sem alteração de dados persistidos.
+- Evidências em `docs/screenshots/marco37-custom-nocturne-semantics/`: `before/after-home.png`, `before/after-library.png`, `before/after-browse.png`, `before/after-downloads.png` e `before/after-settings.png`.
+- Browse permaneceu essencialmente pixel-equivalente (**0,0000%** acima de 2 níveis RGB, média **0,0002**). Settings ficou em **0,0106%**, média **0,0008**.
+- Home ficou em **0,1558%**, média **0,0338**; Downloads em **0,0592%**, média **0,0213**. As diferenças são estado temporal/tooltip/badge, sem regressão aparente.
+- Library ficou em **10,5827%**, média **1,2172**, novamente por carregamento e ordenação de covers reais. Geometria, surfaces, cards, filtros, tipografia e hierarquia permaneceram equivalentes.
+
+### Testes e riscos restantes
+
+- Testes unitários focados: 2 arquivos, 23 testes verdes (`themeGate` e derivação de component colors).
+- Gate unitário ampliado: 7 arquivos, 72 testes verdes, incluindo autoria V4, provider, documentos, port e contrato público.
+- Testes browser Chromium: 2 arquivos, 5 testes verdes (`themeProbe` e computed compatibility do port).
+- `pnpm build`: verde; permanece apenas o aviso conhecido de chunk acima de 500 kB.
+- `git diff --check`: verde, com avisos esperados de normalização LF/CRLF no Windows.
+- O próximo gate deve medir component tokens coloridos em computed style no estado custom Nocturne. Valores imutáveis por geometria, motion, alpha de shadow ou cores absolutas documentadas não devem ser confundidos com falha de derivação.
+- A camada `--n-*`, aliases Legacy e componentes Legacy permanecem preservados; Syncd continua fora do plano atual.
