@@ -120,9 +120,9 @@
     color-mix(in srgb, var(--color-settings-meter-critical-end) 94%, transparent)
   );
 
-  --shadow-sm: 0 8px 22px rgba(0, 0, 0, 0.22);
-  --shadow-md: 0 16px 42px rgba(0, 0, 0, 0.32);
-  --shadow-lg: 0 28px 80px rgba(0, 0, 0, 0.48);
+  --shadow-sm: 0 8px 22px color-mix(in srgb, var(--color-shadow-source) 22%, transparent);
+  --shadow-md: 0 16px 42px color-mix(in srgb, var(--color-shadow-source) 32%, transparent);
+  --shadow-lg: 0 28px 80px color-mix(in srgb, var(--color-shadow-source) 48%, transparent);
   --shadow-focus: 0 0 0 3px color-mix(in srgb, var(--accent-bright) 18%, transparent);
   --blur-backdrop: blur(22px);
   --blur-glass: blur(32px) saturate(180%);
@@ -790,6 +790,7 @@
   --component-theme-editor-preview-control-fg: var(--text-faint);
   --component-theme-editor-preview-popover-border: var(--border-base);
   --component-theme-editor-preview-popover-bg: color-mix(in srgb, var(--bg-overlay) calc(var(--hud-surface-opacity) * 100%), transparent);
+  --component-theme-editor-preview-popover-shadow: var(--shadow-md), inset 0 1px 0 color-mix(in srgb, var(--color-highlight-source) 8%, transparent);
   --component-theme-editor-preview-popover-row-bg: var(--text-faint);
   --component-theme-editor-preview-popover-row-active-bg: var(--accent-fg);
   --component-theme-editor-preview-card-border: var(--border-dim);

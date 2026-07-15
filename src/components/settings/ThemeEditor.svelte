@@ -77,6 +77,8 @@
         "color-warning-bg",
         "color-info",
         "color-info-bg",
+        "color-shadow-source",
+        "color-highlight-source",
       ],
     },
   ]);
@@ -129,6 +131,8 @@
     "color-divider": "Divider",
     "color-accent": "Semantic accent",
     "color-accent-muted": "Muted semantic accent",
+    "color-shadow-source": "Shadow source",
+    "color-highlight-source": "Highlight source",
   };
 
   const HUD_TOKEN_LABELS: Record<keyof HudThemeTokens, string> = {
@@ -959,6 +963,7 @@
     border: 1px solid var(--component-theme-editor-preview-popover-border);
     border-radius: var(--hud-popover-radius);
     background: var(--component-theme-editor-preview-popover-bg);
+    box-shadow: var(--component-theme-editor-preview-popover-shadow);
   }
   .prv-popover-row {
     height: var(--component-theme-editor-preview-popover-row-height);

@@ -237,6 +237,46 @@ describe("test-only theme probe", () => {
     }
   });
 
+  test("derives shared elevation from source-only semantic overrides", async () => {
+    const root = document.documentElement;
+    const original = rememberRootState();
+
+    try {
+      root.dataset.theme = "nocturne";
+      root.removeAttribute("data-custom-theme");
+      for (const property of probeProperties) root.style.removeProperty(property);
+      await new Promise(requestAnimationFrame);
+      const builtin = new Map(
+        ["--shadow-sm", "--shadow-md", "--shadow-lg", "--component-theme-editor-preview-popover-shadow"]
+          .map((token) => [token, computedShadow(token)]),
+      );
+      const document = {
+        version: 4,
+        id: "custom:effect-source-probe",
+        name: "Effect source probe",
+        base: "nocturne",
+        primitives: {},
+        semanticOverrides: {
+          "color-shadow-source": THEME_PROBE_TOKENS["color-shadow-source"],
+          "color-highlight-source": THEME_PROBE_TOKENS["color-highlight-source"],
+        },
+        motion: "soft",
+      } as const;
+
+      expect(applyCustomTheme(root, document)).toBe(true);
+      await new Promise(requestAnimationFrame);
+
+      for (const [token, value] of builtin) {
+        expect(computedShadow(token), `${token} should respond to source-only overrides`).not.toBe(value);
+      }
+      expect(computedToken("--color-shadow-source")).toBe(THEME_PROBE_TOKENS["color-shadow-source"]);
+      expect(computedToken("--color-highlight-source")).toBe(THEME_PROBE_TOKENS["color-highlight-source"]);
+    } finally {
+      restoreRootState(original);
+      await new Promise(requestAnimationFrame);
+    }
+  });
+
   test("derives Nocturne port roles from a custom V4 contract", async () => {
     const root = document.documentElement;
     const original = rememberRootState();

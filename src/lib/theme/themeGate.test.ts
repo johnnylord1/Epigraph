@@ -296,11 +296,6 @@ describe("final derived theme gate", () => {
     const absoluteRoots = new Set([
       "--primitive-absolute-black",
       "--primitive-absolute-white",
-      "--color-shadow-source",
-      "--color-highlight-source",
-      "--shadow-sm",
-      "--shadow-md",
-      "--shadow-lg",
     ]);
     const runtimeRoots = new Set([
       "--prose-bg",
@@ -353,11 +348,11 @@ describe("final derived theme gate", () => {
       runtime: runtime.length,
       neutral: neutral.length,
     }).toEqual({
-      componentColors: 1455,
-      editable: 1184,
-      absolute: 289,
-      absoluteOnly: 260,
-      mixedEditableAbsolute: 29,
+      componentColors: 1456,
+      editable: 1445,
+      absolute: 290,
+      absoluteOnly: 0,
+      mixedEditableAbsolute: 290,
       runtime: 9,
       neutral: 11,
     });

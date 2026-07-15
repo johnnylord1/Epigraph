@@ -2883,3 +2883,34 @@ Categorias cobertas:
 - `git diff --check`: verde, com avisos esperados de normalizacao LF/CRLF no Windows.
 - Riscos mantidos: o runtime atual nao expos um tracking record com selects; EPUB nao renderizou conteudo por falha ambiental preexistente. Nenhum dado artificial foi criado para contornar essas limitacoes.
 - Proximo lote recomendado: autoria semantica de shadow/highlight. A camada Legacy, Syncd e `--n-*` continuam explicitamente fora desse escopo.
+
+## Marco 42 - Semantic Shadow And Highlight Authoring
+
+### Escopo e contrato
+
+- `color-shadow-source` e `color-highlight-source` passaram a integrar `ThemeTokens` e `ThemeSemanticTokens`, com defaults compartilhados preto e branco e valores Nocturne equivalentes.
+- `--shadow-sm`, `--shadow-md` e `--shadow-lg` agora derivam dessas fontes por `color-mix()`. Geometria e alpha continuam pertencendo ao design system; somente a tinta e autoravel.
+- O ThemeEditor expoe os dois papeis no grupo Semantic e o preview de popover consome a composicao real de `--shadow-md` com highlight interno.
+- O formato persistido permanece `ThemeDocumentV4`. Nao houve migracao de documento, mudanca de API ou exposicao de component tokens.
+
+### Inventario e gates
+
+- Foram adicionados **2 tokens semanticos**, ambos definidos, consumidos pelo grafo e aplicados pelo provider; **0 sem consumo**.
+- O grafo possui **1.456 component colors / 1.445 editaveis / 290 com fallback absoluto compartilhado / 0 somente absolutos / 9 runtime Reader / 11 neutros / 0 unresolved**.
+- Os 290 papeis mistos usam preto/branco somente como fallback de `color-shadow-source` ou `color-highlight-source`; todos agora respondem a override semantico.
+- Testes de contrato, documento, provider, ThemeEditor e probe verificam round-trip, aplicacao por CSSOM, controles de autoria e alteracao computada das tres elevacoes.
+
+### Validacao visual real
+
+- App Tauri real em Nocturne, WebView2/CDP `127.0.0.1:9223`, sem persistir tema custom ou alterar dados do usuario.
+- Evidencias em `docs/screenshots/marco42-shadow-highlight/`: `before/after-settings-appearance.png`, `after-theme-editor.png` e `after-semantic-effects.png`. A baseline anterior valida do editor permanece em `docs/screenshots/marco14-theme-editor/theme-editor-after-colors.png`; a tentativa local chamada `before-theme-editor.png` ainda mostrava Appearance e foi descartada para nao representar uma comparacao falsa.
+- O Nocturne preserva surfaces, geometria, radius, tipografia e hierarquia. A nova autoria altera somente a tinta das sombras/highlights quando os papeis semanticos sao sobrescritos.
+- No runtime real, as fontes resolveram para `#000000`/`#ffffff` e as tres elevacoes para 22%/32%/48%. Overrides temporarios `#003366`/`#fff700` alteraram as tres shadows e o highlight interno do preview; todas as inline properties foram restauradas sem salvar documento.
+
+### Riscos restantes
+
+- Testes unitarios focados: **68/68** verdes. Contrato jsdom do ThemeEditor: **4/4** verdes. Probe browser Chromium: **6/6** verdes.
+- `pnpm build`: verde; permanece somente o aviso conhecido de chunks acima de 500 kB. `git diff --check`: verde, com avisos esperados de normalizacao LF/CRLF no Windows.
+- Primitives e semantic overrides continuam deliberadamente independentes: mudar uma primitive nao recalcula overrides semanticos ja persistidos. Resolver isso exige politica explicita de ownership/migracao e fica fora deste lote.
+- Os 11 HudThemeTokens Legacy continuam aceitos para compatibilidade e preview, sem prometer efeito runtime inexistente.
+- Syncd, componentes Legacy e a camada `--n-*` permanecem preservados e fora do escopo.

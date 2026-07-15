@@ -27,6 +27,12 @@ interface ThemeDocumentV4 {
 
 Primitive and semantic maps are sparse. Values equal to the selected base are omitted when the document is saved or exported. Component tokens are never authored, persisted, imported, exported, or promoted. They remain derived by the shared design system.
 
+Shadow and highlight tint are semantic roles (`color-shadow-source` and
+`color-highlight-source`). Authors may override their color, while elevation
+geometry, alpha and component composition remain owned by the shared design
+system. This keeps shadows responsive to a palette without exposing component
+tokens or duplicating theme CSS.
+
 ## Official Flow
 
 The supported workflow is:

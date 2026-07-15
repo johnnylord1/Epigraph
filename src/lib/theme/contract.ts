@@ -60,6 +60,8 @@ export interface ThemeTokens {
   "color-divider": string;
   "color-accent": string;
   "color-accent-muted": string;
+  "color-shadow-source": string;
+  "color-highlight-source": string;
 }
 
 export interface HudThemeTokens {
@@ -105,6 +107,7 @@ export type ThemeSemanticTokens = Pick<ThemeTokens,
   | "color-surface" | "color-surface-secondary" | "color-elevated" | "color-card"
   | "color-modal" | "color-popover" | "color-menu" | "color-overlay"
   | "color-border" | "color-outline" | "color-divider" | "color-accent" | "color-accent-muted"
+  | "color-shadow-source" | "color-highlight-source"
 >;
 
 export interface ThemeDocumentV4 {
@@ -146,6 +149,7 @@ export const THEME_TOKEN_KEYS = [
   "color-danger", "color-danger-bg", "color-info", "color-info-bg", "color-background", "color-background-void",
   "color-surface", "color-surface-secondary", "color-elevated", "color-card", "color-modal", "color-popover",
   "color-menu", "color-overlay", "color-border", "color-outline", "color-divider", "color-accent", "color-accent-muted",
+  "color-shadow-source", "color-highlight-source",
 ] as const satisfies readonly (keyof ThemeTokens)[];
 
 export const THEME_PRIMITIVE_TOKEN_KEYS = [
@@ -160,6 +164,7 @@ export const THEME_SEMANTIC_TOKEN_KEYS = [
   "color-danger", "color-danger-bg", "color-info", "color-info-bg", "color-background", "color-background-void",
   "color-surface", "color-surface-secondary", "color-elevated", "color-card", "color-modal", "color-popover",
   "color-menu", "color-overlay", "color-border", "color-outline", "color-divider", "color-accent", "color-accent-muted",
+  "color-shadow-source", "color-highlight-source",
 ] as const satisfies readonly (keyof ThemeSemanticTokens)[];
 
 export const HUD_THEME_TOKEN_KEYS = [
@@ -180,6 +185,7 @@ export const DEFAULT_THEME_TOKENS: ThemeTokens = {
   "color-surface": "#101010", "color-surface-secondary": "#202020", "color-elevated": "#151515", "color-card": "#151515",
   "color-modal": "#1a1a1a", "color-popover": "#1a1a1a", "color-menu": "#1a1a1a", "color-overlay": "rgba(0, 0, 0, 0.64)",
   "color-border": "#242424", "color-outline": "#4a5c4a", "color-divider": "#1c1c1c", "color-accent": "#6b8f6b", "color-accent-muted": "#1a251a",
+  "color-shadow-source": "#000000", "color-highlight-source": "#ffffff",
 };
 
 export const DEFAULT_HUD_THEME_TOKENS: HudThemeTokens = {
@@ -201,6 +207,7 @@ export const NOCTURNE_THEME_TOKENS: ThemeTokens = {
   "color-surface": "#1c1b1b", "color-surface-secondary": "#353534", "color-elevated": "#201f1f", "color-card": "#201f1f",
   "color-modal": "#2a2a2a", "color-popover": "#2a2a2a", "color-menu": "#2a2a2a", "color-overlay": "rgba(0, 0, 0, 0.68)",
   "color-border": "#2a2733", "color-outline": "#8173d6", "color-divider": "#1b1a20", "color-accent": "#d3c4ff", "color-accent-muted": "rgba(184, 167, 234, 0.12)",
+  "color-shadow-source": "#000000", "color-highlight-source": "#ffffff",
 };
 
 export const NOCTURNE_HUD_THEME_TOKENS: HudThemeTokens = {

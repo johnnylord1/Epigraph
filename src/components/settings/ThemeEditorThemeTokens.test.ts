@@ -91,6 +91,9 @@ describe("ThemeEditor theme tokens", () => {
     expect(source).toContain("createThemeDocumentV4(");
     expect(source).toContain("importThemeDocument(text)");
     expect(source).toContain("serializeThemeDocument(data)");
+    expect(source).toContain('"color-shadow-source": "Shadow source"');
+    expect(source).toContain('"color-highlight-source": "Highlight source"');
+    expect(source).toContain("box-shadow: var(--component-theme-editor-preview-popover-shadow)");
     expect(source).not.toContain("version: 3");
     expect(source).toContain("style=\"background: {tokens[token]};\"");
     expect(source).toContain("style=\"background: {hud[token as keyof HudThemeTokens]};\"");

@@ -49,6 +49,8 @@ export const THEME_PROBE_TOKENS = {
   "color-divider": "#9aaab2",
   "color-accent": "#c2185b",
   "color-accent-muted": "rgba(194, 24, 91, 0.12)",
+  "color-shadow-source": "#003366",
+  "color-highlight-source": "#fff700",
 } satisfies ThemeTokens;
 
 export const THEME_PROBE_HUD_TOKENS = {

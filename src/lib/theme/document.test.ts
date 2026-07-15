@@ -108,6 +108,22 @@ describe("ThemeDocumentV4", () => {
     expect(document).toEqual(before);
   });
 
+  test("round-trips and resolves semantic shadow and highlight sources", () => {
+    const document = validDocument({
+      primitives: {},
+      semanticOverrides: {
+        "color-shadow-source": "#003366",
+        "color-highlight-source": "#fff700",
+      },
+    });
+
+    expect(roundTripThemeDocument(document)).toEqual(document);
+    expect(resolveThemeDocument(document).tokens).toMatchObject({
+      "color-shadow-source": "#003366",
+      "color-highlight-source": "#fff700",
+    });
+  });
+
   test("creates a validated sparse V4 and removes values equal to the base", () => {
     const tokens = {
       ...NOCTURNE_THEME_TOKENS,

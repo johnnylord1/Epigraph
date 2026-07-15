@@ -46,6 +46,8 @@ describe("custom theme provider", () => {
     expect(attributes.get("data-theme")).toBe("nocturne");
     expect(attributes.get("data-custom-theme")).toBe("custom:test");
     expect(style.setProperty).toHaveBeenCalledWith("--accent", "#abcdef");
+    expect(style.setProperty).toHaveBeenCalledWith("--color-shadow-source", "#000000");
+    expect(style.setProperty).toHaveBeenCalledWith("--color-highlight-source", "#ffffff");
     expect(style.setProperty).toHaveBeenCalledWith(
       "--motion-duration-fast",
       THEME_MOTION_VARS.minimal["--motion-duration-fast"],
