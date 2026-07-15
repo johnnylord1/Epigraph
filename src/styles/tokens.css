@@ -522,14 +522,19 @@
   --z-toast: 300;
 
   /* Transitions */
-  --t-fast: 0.08s ease;
-  --t-base: 0.14s ease;
-  --t-slow: 0.22s ease;
-  --duration-fast: 80ms;
-  --duration-normal: 140ms;
-  --duration-slow: 220ms;
-  --easing-standard: ease;
-  --easing-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-duration-fast: 80ms;
+  --motion-duration-normal: 140ms;
+  --motion-duration-slow: 220ms;
+  --motion-easing-standard: ease;
+  --motion-easing-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+  --t-fast: var(--motion-duration-fast) var(--motion-easing-standard);
+  --t-base: var(--motion-duration-normal) var(--motion-easing-standard);
+  --t-slow: var(--motion-duration-slow) var(--motion-easing-standard);
+  --duration-fast: var(--motion-duration-fast);
+  --duration-normal: var(--motion-duration-normal);
+  --duration-slow: var(--motion-duration-slow);
+  --easing-standard: var(--motion-easing-standard);
+  --easing-emphasized: var(--motion-easing-emphasized);
 
   /* Theme system v1: component aliases */
   --component-splash-ink-source: var(--color-splash-ink-source);
@@ -2748,7 +2753,7 @@
   --component-reader-core-resume-z-index: 20;
   --component-reader-core-resume-shadow: 0 18px 48px color-mix(in srgb, var(--color-background-void) 54%, transparent);
   --component-reader-core-resume-blur: blur(24px) saturate(160%);
-  --component-reader-core-resume-in-animation: var(--t-slow) cubic-bezier(0.16, 1, 0.3, 1) both;
+  --component-reader-core-resume-in-animation: var(--motion-duration-slow) cubic-bezier(0.16, 1, 0.3, 1) both;
   --component-reader-core-resume-out-animation: 1s var(--easing-standard) forwards;
   --component-reader-core-resume-jump-padding: 4px 9px;
   --component-reader-core-resume-jump-transition: background var(--t-fast), border-color var(--t-fast), transform var(--t-fast);

@@ -2811,3 +2811,36 @@ Categorias cobertas:
 - Testes browser Chromium: 2 arquivos, **6 testes verdes**.
 - Permanecem para o Marco 40 a ativacao completa dos 15 HudThemeTokens e a unificacao do motion contract. Permanecem para o Marco 41 os SVGs codificados e demais valores visuais embutidos ativos.
 - Syncd, aliases Legacy, componentes Legacy e a camada `--n-*` permanecem preservados.
+
+## Marco 40 - HUD And Motion Contract
+
+### Preflight e classificacao HUD
+
+- Os 15 `HudThemeTokens` sao lidos, migrados e aplicados pelo provider V4, mas a auditoria de consumidores comprovou apenas **4 Ativos** fora do preview: `hud-icon-button-size` como fallback da LibraryToolbar, `hud-popover-radius` no Reader HUD, `hud-toast-radius` no Toaster e `hud-progress-height` no Reader/TTS.
+- `hud-toast-radius` era aplicado na raiz, mas bloqueado pelo literal Nocturne `--component-toast-radius: 12px`; o override agora consome `var(--hud-toast-radius)`, preservando 12px no builtin e respondendo a documentos customizados.
+- Permanecem **11 Legacy de autoria/preview**: `hud-control-height`, `hud-control-radius`, `hud-chip-radius`, `hud-status-radius`, `hud-chapter-row-radius`, `hud-surface-opacity`, `hud-sidebar-width`, `hud-toolbar-gap`, `hud-reader-chrome-opacity`, `hud-selection-bg` e `hud-selection-border`.
+- Esses 11 tokens nao foram removidos, ocultados ou conectados por coincidencia de valor. Sidebar, Reader, chapters e status possuem geometrias especializadas diferentes; forcar aliases alteraria layout/opacidade do Nocturne e violaria o contrato de migracao incremental.
+
+### Contrato de motion
+
+- O provider agora aplica cinco raizes estruturadas allowlisted: `--motion-duration-fast`, `--motion-duration-normal`, `--motion-duration-slow`, `--motion-easing-standard` e `--motion-easing-emphasized`.
+- `--t-fast/base/slow`, `--duration-fast/normal/slow` e `--easing-standard/emphasized` derivam dessas raizes. Assim, os presets `minimal`, `soft` e `expressive` controlam as duas familias de transition sem construir CSS dinamico.
+- O preset `soft` preserva exatamente o baseline Nocturne: **80ms / 140ms / 220ms**, easing standard `ease` e easing emphasized `cubic-bezier(0.16, 1, 0.3, 1)`.
+- O shorthand `--component-reader-core-resume-in-animation` combinava `var(--t-slow)` (que ja continha easing) com um segundo `cubic-bezier`, produzindo uma animacao invalida. Ele agora usa somente `var(--motion-duration-slow)` com o easing especializado existente e resolve para `220ms cubic-bezier(0.16, 1, 0.3, 1) both`.
+- `--t-fast/base/slow` antigos permanecem na lista de limpeza do provider para remover inline styles deixados por sessoes anteriores, mas nao sao mais gravados diretamente.
+- `--n-duration-fast: 140ms`, `--n-duration-normal: 200ms` e `--n-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1)` permanecem Legacy ativos e inalterados.
+
+### Gates e validacao visual
+
+- `hudMotionGate.test.ts` fixa a classificacao **4 Ativos / 11 Legacy**, as pontes reais, as cinco propriedades de cada preset, os aliases de motion e a preservacao da familia `--n-*`.
+- `provider.test.ts` valida aplicacao somente das novas raizes e limpeza das propriedades antigas. `contract.test.ts` exige que os tres presets possuam exatamente a mesma allowlist.
+- O probe browser aplica um documento V4 custom `minimal` e confirma Toast 8px, durations 40/80/140ms e mudanca dos aliases computados; o estado e restaurado em `finally`.
+- App Tauri real em Nocturne builtin, WebView2/CDP `127.0.0.1:9223`, sem tema custom ou dados artificiais. Before imediato: `docs/screenshots/marco39-nocturne-aliases/after-home.png` e `after-settings.png`. After: `docs/screenshots/marco40-hud-motion/after-home.png` e `after-settings.png`.
+- Home e Settings preservaram geometria, surfaces, controls, radius e hierarquia. A lista real `Recently Finished` mudou entre frames por estado de dados, nao por regressao visual.
+
+### Testes e riscos restantes
+
+- Testes unitarios focados: 6 arquivos, **74 testes verdes**.
+- Testes browser Chromium: 2 arquivos, **6 testes verdes**.
+- A autoria dos 11 HUD Legacy continua aceita para compatibilidade de documentos, mas seus efeitos permanecem limitados ao preview ate existir ownership visual coerente. O Marco 43 deve decidir como apresenta-los sem prometer efeito runtime inexistente.
+- Syncd, componentes Legacy e toda a camada `--n-*` permanecem fora do escopo e preservados.

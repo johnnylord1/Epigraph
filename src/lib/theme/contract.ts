@@ -210,13 +210,37 @@ export const NOCTURNE_HUD_THEME_TOKENS: HudThemeTokens = {
   "hud-selection-bg": "#211b3b", "hud-selection-border": "#4c4078", "hud-progress-height": "2px",
 };
 
-export const THEME_MOTION_VARS: Record<ThemeMotionPreset, Record<"--t-fast" | "--t-base" | "--t-slow", string>> = {
-  minimal: { "--t-fast": "0.04s ease", "--t-base": "0.08s ease", "--t-slow": "0.14s ease" },
-  soft: { "--t-fast": "0.08s ease", "--t-base": "0.14s ease", "--t-slow": "0.22s ease" },
+export const THEME_MOTION_PROPERTY_KEYS = [
+  "--motion-duration-fast",
+  "--motion-duration-normal",
+  "--motion-duration-slow",
+  "--motion-easing-standard",
+  "--motion-easing-emphasized",
+] as const;
+
+export type ThemeMotionProperty = (typeof THEME_MOTION_PROPERTY_KEYS)[number];
+
+export const THEME_MOTION_VARS: Record<ThemeMotionPreset, Record<ThemeMotionProperty, string>> = {
+  minimal: {
+    "--motion-duration-fast": "40ms",
+    "--motion-duration-normal": "80ms",
+    "--motion-duration-slow": "140ms",
+    "--motion-easing-standard": "ease",
+    "--motion-easing-emphasized": "ease",
+  },
+  soft: {
+    "--motion-duration-fast": "80ms",
+    "--motion-duration-normal": "140ms",
+    "--motion-duration-slow": "220ms",
+    "--motion-easing-standard": "ease",
+    "--motion-easing-emphasized": "cubic-bezier(0.16, 1, 0.3, 1)",
+  },
   expressive: {
-    "--t-fast": "0.12s cubic-bezier(0.16, 1, 0.3, 1)",
-    "--t-base": "0.2s cubic-bezier(0.16, 1, 0.3, 1)",
-    "--t-slow": "0.32s cubic-bezier(0.16, 1, 0.3, 1)",
+    "--motion-duration-fast": "120ms",
+    "--motion-duration-normal": "200ms",
+    "--motion-duration-slow": "320ms",
+    "--motion-easing-standard": "cubic-bezier(0.16, 1, 0.3, 1)",
+    "--motion-easing-emphasized": "cubic-bezier(0.16, 1, 0.3, 1)",
   },
 };
 

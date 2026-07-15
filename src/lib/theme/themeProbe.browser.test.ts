@@ -185,6 +185,13 @@ describe("test-only theme probe", () => {
         nocturneCompatibilityAliases.map((token) => [token, computedToken(token)]),
       );
       const builtinFocusShadow = computedShadow("--shadow-focus");
+      const builtinToastRadius = computedToken("--component-toast-radius");
+      const builtinMotion = new Map(
+        ["--duration-fast", "--duration-normal", "--duration-slow", "--t-base"].map((token) => [
+          token,
+          computedToken(token),
+        ]),
+      );
 
       const themeDocument = {
         version: 4,
@@ -198,7 +205,7 @@ describe("test-only theme probe", () => {
           THEME_SEMANTIC_TOKEN_KEYS.map((name) => [name, THEME_PROBE_TOKENS[name]]),
         ),
         hud: THEME_PROBE_HUD_TOKENS,
-        motion: "soft",
+        motion: "minimal",
       } as const;
       expect(applyCustomTheme(root, themeDocument)).toBe(true);
       await new Promise(requestAnimationFrame);
@@ -216,6 +223,13 @@ describe("test-only theme probe", () => {
           builtinCompatibility.get(token),
         );
       }
+      expect(computedToken("--component-toast-radius")).toBe(THEME_PROBE_HUD_TOKENS["hud-toast-radius"]);
+      expect(computedToken("--component-toast-radius")).not.toBe(builtinToastRadius);
+      expect(computedToken("--duration-fast")).toBe("40ms");
+      expect(computedToken("--duration-normal")).toBe("80ms");
+      expect(computedToken("--duration-slow")).toBe("140ms");
+      expect(computedToken("--t-base")).toContain("80ms");
+      for (const [token, value] of builtinMotion) expect(computedToken(token)).not.toBe(value);
       expect(computedShadow("--shadow-focus")).not.toBe(builtinFocusShadow);
     } finally {
       restoreRootState(original);

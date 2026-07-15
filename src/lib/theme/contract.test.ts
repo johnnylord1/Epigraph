@@ -10,6 +10,8 @@ import {
   NOCTURNE_HUD_THEME_TOKENS,
   NOCTURNE_THEME_TOKENS,
   THEME_PRIMITIVE_TOKEN_KEYS,
+  THEME_MOTION_PROPERTY_KEYS,
+  THEME_MOTION_VARS,
   THEME_SEMANTIC_TOKEN_KEYS,
   THEME_TOKEN_KEYS,
   getBuiltinThemeMetadata,
@@ -36,6 +38,9 @@ describe("canonical theme contract", () => {
     expect(Object.keys(NOCTURNE_HUD_THEME_TOKENS).sort()).toEqual([...HUD_THEME_TOKEN_KEYS].sort());
     expect([...THEME_PRIMITIVE_TOKEN_KEYS, ...THEME_SEMANTIC_TOKEN_KEYS].sort()).toEqual([...THEME_TOKEN_KEYS].sort());
     expect(new Set([...THEME_PRIMITIVE_TOKEN_KEYS, ...THEME_SEMANTIC_TOKEN_KEYS]).size).toBe(THEME_TOKEN_KEYS.length);
+    for (const preset of Object.values(THEME_MOTION_VARS)) {
+      expect(Object.keys(preset)).toEqual([...THEME_MOTION_PROPERTY_KEYS]);
+    }
   });
 
   test("preserves the store exports while consumers migrate to the contract", () => {

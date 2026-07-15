@@ -2,7 +2,10 @@ import { describe, expect, test, vi } from "vitest";
 import {
   NOCTURNE_HUD_THEME_TOKENS,
   NOCTURNE_THEME_TOKENS,
+  HUD_THEME_TOKEN_KEYS,
+  THEME_MOTION_PROPERTY_KEYS,
   THEME_MOTION_VARS,
+  THEME_TOKEN_KEYS,
 } from "./contract";
 import {
   CUSTOM_THEME_STYLE_PROPERTIES,
@@ -43,9 +46,19 @@ describe("custom theme provider", () => {
     expect(attributes.get("data-theme")).toBe("nocturne");
     expect(attributes.get("data-custom-theme")).toBe("custom:test");
     expect(style.setProperty).toHaveBeenCalledWith("--accent", "#abcdef");
-    expect(style.setProperty).toHaveBeenCalledWith("--t-fast", THEME_MOTION_VARS.minimal["--t-fast"]);
+    expect(style.setProperty).toHaveBeenCalledWith(
+      "--motion-duration-fast",
+      THEME_MOTION_VARS.minimal["--motion-duration-fast"],
+    );
+    expect(style.setProperty).toHaveBeenCalledWith(
+      "--motion-easing-standard",
+      THEME_MOTION_VARS.minimal["--motion-easing-standard"],
+    );
     expect(style.setProperty).toHaveBeenCalledWith("--sidebar-width", "var(--hud-sidebar-width)");
-    expect(style.setProperty).toHaveBeenCalledTimes(CUSTOM_THEME_STYLE_PROPERTIES.length);
+    expect(style.setProperty).toHaveBeenCalledTimes(
+      THEME_TOKEN_KEYS.length + HUD_THEME_TOKEN_KEYS.length + THEME_MOTION_PROPERTY_KEYS.length + 1,
+    );
+    expect(style.setProperty).not.toHaveBeenCalledWith("--t-fast", expect.anything());
   });
 
   test("clears every custom property when returning to a builtin", () => {

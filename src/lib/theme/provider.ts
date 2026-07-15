@@ -5,6 +5,7 @@ import {
   NOCTURNE_HUD_THEME_TOKENS,
   NOCTURNE_THEME_TOKENS,
   THEME_MOTION_VARS,
+  THEME_MOTION_PROPERTY_KEYS,
   THEME_TOKEN_KEYS,
   type BuiltinTheme,
   type HudThemeTokens,
@@ -13,12 +14,13 @@ import {
 } from "./contract";
 import { migrateThemeDocument, resolveThemeDocument } from "./document";
 
-const MOTION_PROPERTIES = ["--t-fast", "--t-base", "--t-slow"] as const;
+const LEGACY_MOTION_PROPERTIES = ["--t-fast", "--t-base", "--t-slow"] as const;
 
 export const CUSTOM_THEME_STYLE_PROPERTIES = [
   ...THEME_TOKEN_KEYS.map((key) => `--${key}` as const),
   ...HUD_THEME_TOKEN_KEYS.map((key) => `--${key}` as const),
-  ...MOTION_PROPERTIES,
+  ...THEME_MOTION_PROPERTY_KEYS,
+  ...LEGACY_MOTION_PROPERTIES,
   "--sidebar-width",
 ] as const;
 

@@ -169,7 +169,7 @@
   --component-toast-border: var(--color-toast-border);
   --component-toast-border-hover: var(--color-toast-border-hover);
   --component-toast-shadow: var(--shadow-toast);
-  --component-toast-radius: 12px;
+  --component-toast-radius: var(--hud-toast-radius);
   --component-toast-offset: 20px;
   --component-toast-blur: blur(18px) saturate(118%);
   --component-toast-focus-ring: color-mix(in srgb, var(--color-accent-interactive) 45%, transparent);
@@ -2192,7 +2192,7 @@
   --component-reader-core-resume-z-index: 20;
   --component-reader-core-resume-shadow: 0 18px 48px color-mix(in srgb, var(--color-shadow-source) 46%, transparent);
   --component-reader-core-resume-blur: blur(24px) saturate(160%);
-  --component-reader-core-resume-in-animation: var(--t-slow) cubic-bezier(0.16, 1, 0.3, 1) both;
+  --component-reader-core-resume-in-animation: var(--motion-duration-slow) cubic-bezier(0.16, 1, 0.3, 1) both;
   --component-reader-core-resume-out-animation: 1s ease forwards;
   --component-reader-core-resume-jump-padding: 4px 9px;
   --component-reader-core-resume-jump-transition: background var(--t-fast), border-color var(--t-fast), transform var(--t-fast);
