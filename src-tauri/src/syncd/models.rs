@@ -249,7 +249,7 @@ pub struct CapabilitiesResponse {
 
 pub const SNAPSHOT_SCHEMA_VERSION: u32 = 1;
 
-pub const SNAPSHOT_ENTITY_TYPES: [&str; 15] = [
+pub const SNAPSHOT_ENTITY_TYPES: [&str; 17] = [
     "book.entry",
     "book.category",
     "book.category_assignment",
@@ -263,6 +263,8 @@ pub const SNAPSHOT_ENTITY_TYPES: [&str; 15] = [
     "novel.bookmark",
     "novel.history",
     "novel.classification",
+    "novel.category",
+    "novel.category_assignment",
     "comic.history",
     "comic.page_bookmark",
 ];
@@ -810,6 +812,10 @@ pub enum MutationEntityType {
     NovelHistory,
     #[serde(rename = "novel.classification")]
     NovelClassification,
+    #[serde(rename = "novel.category")]
+    NovelCategory,
+    #[serde(rename = "novel.category_assignment")]
+    NovelCategoryAssignment,
     #[serde(rename = "comic.history")]
     ComicHistory,
     #[serde(rename = "comic.page_bookmark")]
@@ -832,6 +838,8 @@ impl MutationEntityType {
             Self::NovelBookmark => "novel.bookmark",
             Self::NovelHistory => "novel.history",
             Self::NovelClassification => "novel.classification",
+            Self::NovelCategory => "novel.category",
+            Self::NovelCategoryAssignment => "novel.category_assignment",
             Self::ComicHistory => "comic.history",
             Self::ComicPageBookmark => "comic.page_bookmark",
         }
@@ -945,6 +953,18 @@ pub enum MutationInput {
         base: MutationBase,
         patch: Option<NovelClassificationPatch>,
     },
+    #[serde(rename = "novel.category")]
+    NovelCategory {
+        #[serde(flatten)]
+        base: MutationBase,
+        patch: Option<NovelCategoryPatch>,
+    },
+    #[serde(rename = "novel.category_assignment")]
+    NovelCategoryAssignment {
+        #[serde(flatten)]
+        base: MutationBase,
+        patch: Option<NovelCategoryAssignmentPatch>,
+    },
     #[serde(rename = "comic.history")]
     ComicHistory {
         #[serde(flatten)]
@@ -988,6 +1008,8 @@ impl MutationInput {
             Self::NovelBookmark { .. } => MutationEntityType::NovelBookmark,
             Self::NovelHistory { .. } => MutationEntityType::NovelHistory,
             Self::NovelClassification { .. } => MutationEntityType::NovelClassification,
+            Self::NovelCategory { .. } => MutationEntityType::NovelCategory,
+            Self::NovelCategoryAssignment { .. } => MutationEntityType::NovelCategoryAssignment,
             Self::ComicHistory { .. } => MutationEntityType::ComicHistory,
             Self::ComicPageBookmark { .. } => MutationEntityType::ComicPageBookmark,
         }
@@ -1008,6 +1030,8 @@ impl MutationInput {
             | Self::NovelBookmark { base, .. }
             | Self::NovelHistory { base, .. }
             | Self::NovelClassification { base, .. }
+            | Self::NovelCategory { base, .. }
+            | Self::NovelCategoryAssignment { base, .. }
             | Self::ComicHistory { base, .. }
             | Self::ComicPageBookmark { base, .. } => base,
         }
@@ -1236,6 +1260,36 @@ pub struct NovelClassificationPatch {
     pub filter_keys: Vec<String>,
     pub plugin_settings_keys: Vec<String>,
     pub classified_at_ms: i64,
+}
+
+/// A user-managed category for novels. This is intentionally separate from
+/// `novel.classification`, which describes plugin compatibility evidence.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NovelCategoryPatch {
+    pub category_id: String,
+    pub name: String,
+    pub order: i64,
+}
+
+/// A stable, independently addressable membership edge between one novel and
+/// one user category.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NovelCategoryAssignmentPatch {
+    pub assignment_id: String,
+    pub novel_id: String,
+    pub category_id: String,
+}
+
+/// Cross-client canonical identity for a novel/category membership edge.
+/// NUL is forbidden in both identifiers, so it is an unambiguous separator.
+pub fn canonical_novel_category_assignment_id(novel_id: &str, category_id: &str) -> String {
+    let mut digest = Sha256::new();
+    digest.update(novel_id.as_bytes());
+    digest.update([0]);
+    digest.update(category_id.as_bytes());
+    format!("novel-category-assignment:{:x}", digest.finalize())
 }
 
 /// Latest persisted comic reader position. `comicId` uses the mobile MediaKey
@@ -1485,6 +1539,24 @@ pub struct NovelClassificationRecord {
     pub filter_keys: Vec<String>,
     pub plugin_settings_keys: Vec<String>,
     pub classified_at_ms: i64,
+    pub record_lamport: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NovelCategoryRecord {
+    pub category_id: String,
+    pub name: String,
+    pub order: i64,
+    pub record_lamport: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NovelCategoryAssignmentRecord {
+    pub assignment_id: String,
+    pub novel_id: String,
+    pub category_id: String,
     pub record_lamport: i64,
 }
 
@@ -1757,6 +1829,32 @@ pub struct NovelClassificationRow {
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, FromRow)]
+pub struct NovelCategoryRow {
+    pub scope_id: String,
+    pub category_id: String,
+    pub name: String,
+    pub sort_order: i64,
+    pub record_updated_at_ms: i64,
+    pub record_updated_by_device_id: String,
+    pub record_lamport: i64,
+    pub record_server_version: i64,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, FromRow)]
+pub struct NovelCategoryAssignmentRow {
+    pub scope_id: String,
+    pub assignment_id: String,
+    pub novel_id: String,
+    pub category_id: String,
+    pub record_updated_at_ms: i64,
+    pub record_updated_by_device_id: String,
+    pub record_lamport: i64,
+    pub record_server_version: i64,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, FromRow)]
 pub struct ComicHistoryRow {
     pub scope_id: String,
     pub history_id: String,
@@ -2012,6 +2110,28 @@ impl TryFrom<NovelClassificationRow> for NovelClassificationRecord {
     }
 }
 
+impl From<NovelCategoryRow> for NovelCategoryRecord {
+    fn from(value: NovelCategoryRow) -> Self {
+        Self {
+            category_id: value.category_id,
+            name: value.name,
+            order: value.sort_order,
+            record_lamport: value.record_lamport,
+        }
+    }
+}
+
+impl From<NovelCategoryAssignmentRow> for NovelCategoryAssignmentRecord {
+    fn from(value: NovelCategoryAssignmentRow) -> Self {
+        Self {
+            assignment_id: value.assignment_id,
+            novel_id: value.novel_id,
+            category_id: value.category_id,
+            record_lamport: value.record_lamport,
+        }
+    }
+}
+
 impl From<ComicHistoryRow> for ComicHistoryRecord {
     fn from(value: ComicHistoryRow) -> Self {
         Self {
@@ -2093,6 +2213,18 @@ mod tests {
         assert_eq!(
             canonical_novel_identity_key(&patch).as_deref(),
             Some("novel-2ddcfbbb73a4bc27095ac742d5e3355a7f432b5ecd484525fb59fbbaf8a9b127")
+        );
+    }
+
+    #[test]
+    fn canonical_novel_category_assignment_identity_is_cross_client_stable() {
+        assert_eq!(
+            canonical_novel_category_assignment_id("novel-1", "favorites"),
+            "novel-category-assignment:be1ba0afe73482b338f0d7cdf212703a1a750803397646c1d9ee59fb80cf15f3"
+        );
+        assert_ne!(
+            canonical_novel_category_assignment_id("novel-1", "favorites"),
+            canonical_novel_category_assignment_id("novel-1", "later")
         );
     }
 }

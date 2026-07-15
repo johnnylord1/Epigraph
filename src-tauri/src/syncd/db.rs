@@ -20,11 +20,13 @@ use super::models::{
     ComicHistoryPatch, ComicHistoryRecord, ComicHistoryRow, ComicPageBookmarkPatch,
     ComicPageBookmarkRecord, ComicPageBookmarkRow, MutationOperation, MutationReceiptContext,
     MutationResult, MutationResultStatus, NovelBookmarkPatch, NovelBookmarkRecord,
-    NovelBookmarkRow, NovelChapterPatch, NovelChapterRecord, NovelChapterRow,
-    NovelClassificationPatch, NovelClassificationRecord, NovelClassificationRow, NovelEntryPatch,
-    NovelEntryRecord, NovelEntryRow, NovelHistoryPatch, NovelHistoryRecord, NovelHistoryRow,
-    NovelProgressPatch, NovelProgressRecord, NovelProgressRow, PairingGrantVia, PairingPlatform,
-    ServerRuntimeRow, SnapshotEntity, SnapshotResponse, SnapshotTombstone, SNAPSHOT_SCHEMA_VERSION,
+    NovelBookmarkRow, NovelCategoryAssignmentPatch, NovelCategoryAssignmentRecord,
+    NovelCategoryAssignmentRow, NovelCategoryPatch, NovelCategoryRecord, NovelCategoryRow,
+    NovelChapterPatch, NovelChapterRecord, NovelChapterRow, NovelClassificationPatch,
+    NovelClassificationRecord, NovelClassificationRow, NovelEntryPatch, NovelEntryRecord,
+    NovelEntryRow, NovelHistoryPatch, NovelHistoryRecord, NovelHistoryRow, NovelProgressPatch,
+    NovelProgressRecord, NovelProgressRow, PairingGrantVia, PairingPlatform, ServerRuntimeRow,
+    SnapshotEntity, SnapshotResponse, SnapshotTombstone, SNAPSHOT_SCHEMA_VERSION,
 };
 
 #[derive(Debug, Clone, FromRow, Serialize)]
@@ -588,6 +590,46 @@ pub async fn load_scope_snapshot(
                 server_version,
                 lamport,
                 NovelClassificationRecord::try_from(row)?,
+            )?;
+        }
+
+        let rows = sqlx::query_as::<_, NovelCategoryRow>(
+            "SELECT * FROM novel_categories WHERE scope_id = ? ORDER BY category_id",
+        )
+        .bind(scope_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in rows {
+            let entity_id = row.category_id.clone();
+            let server_version = row.record_server_version;
+            let lamport = row.record_lamport;
+            push_snapshot_entity(
+                &mut entities,
+                "novel.category",
+                entity_id,
+                server_version,
+                lamport,
+                NovelCategoryRecord::from(row),
+            )?;
+        }
+
+        let rows = sqlx::query_as::<_, NovelCategoryAssignmentRow>(
+            "SELECT * FROM novel_category_assignments WHERE scope_id = ? ORDER BY assignment_id",
+        )
+        .bind(scope_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in rows {
+            let entity_id = row.assignment_id.clone();
+            let server_version = row.record_server_version;
+            let lamport = row.record_lamport;
+            push_snapshot_entity(
+                &mut entities,
+                "novel.category_assignment",
+                entity_id,
+                server_version,
+                lamport,
+                NovelCategoryAssignmentRecord::from(row),
             )?;
         }
     } else if scope_id.starts_with("comics:profile:") {
@@ -2167,6 +2209,17 @@ pub async fn delete_novel_entry_mutation(
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
     }
+    let assignment_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM novel_category_assignments WHERE scope_id = ? AND novel_id = ?",
+    )
+    .bind(scope_id)
+    .bind(entity_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    anyhow::ensure!(
+        assignment_count == 0,
+        "novel entry is still referenced by active category assignments"
+    );
     sqlx::query("DELETE FROM novel_library_entries WHERE scope_id = ? AND novel_id = ?")
         .bind(scope_id)
         .bind(entity_id)
@@ -2710,6 +2763,336 @@ pub async fn delete_novel_classification_mutation(
             scope_id: scope_id.to_string(),
             profile_id: Some(session.profile_id.clone()),
             entity_type: "novel.classification".to_string(),
+            entity_id: entity_id.to_string(),
+            op: "delete".to_string(),
+            lamport: applied_lamport,
+            patch: None,
+            applied_at_ms,
+        },
+        record: Value::Null,
+        applied_lamport,
+    })
+}
+
+pub async fn apply_novel_category_mutation(
+    pool: &sqlx::SqlitePool,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_id: &str,
+    patch: &NovelCategoryPatch,
+    client_lamport: i64,
+    retention_window: Duration,
+) -> anyhow::Result<MutationWriteOutcome> {
+    let mut tx = pool.begin().await?;
+    let current = sqlx::query_as::<_, NovelCategoryRow>(
+        "SELECT * FROM novel_categories WHERE scope_id = ? AND category_id = ?",
+    )
+    .bind(scope_id)
+    .bind(entity_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "novel.category", entity_id).await?;
+    if let Some(tombstone) = tombstone.as_ref() {
+        ensure_not_stale_novel_category_against_tombstone(client_lamport, tombstone)?;
+    }
+    let merged = merge_novel_category(current.map(Into::into), entity_id, patch, client_lamport)?;
+    let record = serde_json::to_value(&merged)?;
+    let (server_version, applied_at_ms) = append_change_log_in_tx(
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        "novel.category",
+        entity_id,
+        "merge",
+        merged.record_lamport,
+        session,
+        Some(&record),
+        retention_window,
+    )
+    .await?;
+    sqlx::query(
+        r#"INSERT INTO novel_categories (
+            scope_id, category_id, name, sort_order, record_updated_at_ms,
+            record_updated_by_device_id, record_lamport, record_server_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(scope_id, category_id) DO UPDATE SET
+            name = excluded.name,
+            sort_order = excluded.sort_order,
+            record_updated_at_ms = excluded.record_updated_at_ms,
+            record_updated_by_device_id = excluded.record_updated_by_device_id,
+            record_lamport = excluded.record_lamport,
+            record_server_version = excluded.record_server_version"#,
+    )
+    .bind(scope_id)
+    .bind(entity_id)
+    .bind(&merged.name)
+    .bind(merged.order)
+    .bind(applied_at_ms)
+    .bind(&session.device_id)
+    .bind(merged.record_lamport)
+    .bind(server_version)
+    .execute(&mut *tx)
+    .await?;
+    if tombstone.is_some() {
+        delete_tombstone_in_tx(&mut tx, scope_id, "novel.category", entity_id).await?;
+    }
+    tx.commit().await?;
+    Ok(MutationWriteOutcome {
+        envelope: ChangeEnvelope {
+            server_version,
+            scope_id: scope_id.to_string(),
+            profile_id: Some(session.profile_id.clone()),
+            entity_type: "novel.category".to_string(),
+            entity_id: entity_id.to_string(),
+            op: "merge".to_string(),
+            lamport: merged.record_lamport,
+            patch: Some(record.clone()),
+            applied_at_ms,
+        },
+        record,
+        applied_lamport: merged.record_lamport,
+    })
+}
+
+pub async fn delete_novel_category_mutation(
+    pool: &sqlx::SqlitePool,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_id: &str,
+    client_lamport: i64,
+    retention_window: Duration,
+) -> anyhow::Result<MutationWriteOutcome> {
+    let mut tx = pool.begin().await?;
+    let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "novel.category", entity_id).await?;
+    if let Some(tombstone) = tombstone.as_ref() {
+        ensure_not_stale_novel_category_against_tombstone(client_lamport, tombstone)?;
+    }
+    let assignment_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM novel_category_assignments WHERE scope_id = ? AND category_id = ?",
+    )
+    .bind(scope_id)
+    .bind(entity_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    anyhow::ensure!(
+        assignment_count == 0,
+        "novel category is still referenced by active assignments"
+    );
+    sqlx::query("DELETE FROM novel_categories WHERE scope_id = ? AND category_id = ?")
+        .bind(scope_id)
+        .bind(entity_id)
+        .execute(&mut *tx)
+        .await?;
+    let applied_lamport = tombstone
+        .as_ref()
+        .map(|value| next_lamport(value.lamport, client_lamport))
+        .unwrap_or(client_lamport);
+    let (server_version, applied_at_ms) = append_change_log_in_tx(
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        "novel.category",
+        entity_id,
+        "delete",
+        applied_lamport,
+        session,
+        None,
+        retention_window,
+    )
+    .await?;
+    upsert_tombstone_in_tx(
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        "novel.category",
+        entity_id,
+        &session.device_id,
+        applied_lamport,
+        applied_at_ms,
+        server_version,
+        retention_window,
+        "novel_category_deleted",
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(MutationWriteOutcome {
+        envelope: ChangeEnvelope {
+            server_version,
+            scope_id: scope_id.to_string(),
+            profile_id: Some(session.profile_id.clone()),
+            entity_type: "novel.category".to_string(),
+            entity_id: entity_id.to_string(),
+            op: "delete".to_string(),
+            lamport: applied_lamport,
+            patch: None,
+            applied_at_ms,
+        },
+        record: Value::Null,
+        applied_lamport,
+    })
+}
+
+pub async fn apply_novel_category_assignment_mutation(
+    pool: &sqlx::SqlitePool,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_id: &str,
+    patch: &NovelCategoryAssignmentPatch,
+    client_lamport: i64,
+    retention_window: Duration,
+) -> anyhow::Result<MutationWriteOutcome> {
+    let mut tx = pool.begin().await?;
+    let current = sqlx::query_as::<_, NovelCategoryAssignmentRow>(
+        "SELECT * FROM novel_category_assignments WHERE scope_id = ? AND assignment_id = ?",
+    )
+    .bind(scope_id)
+    .bind(entity_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let tombstone =
+        load_tombstone_in_tx(&mut tx, scope_id, "novel.category_assignment", entity_id).await?;
+    if let Some(tombstone) = tombstone.as_ref() {
+        ensure_not_stale_novel_category_against_tombstone(client_lamport, tombstone)?;
+    }
+    let novel_exists: i64 = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM novel_library_entries WHERE scope_id = ? AND novel_id = ?)",
+    )
+    .bind(scope_id)
+    .bind(&patch.novel_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    anyhow::ensure!(
+        novel_exists == 1,
+        "novel category assignment references missing novel"
+    );
+    let category_exists: i64 = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM novel_categories WHERE scope_id = ? AND category_id = ?)",
+    )
+    .bind(scope_id)
+    .bind(&patch.category_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    anyhow::ensure!(
+        category_exists == 1,
+        "novel category assignment references missing category"
+    );
+    let merged =
+        merge_novel_category_assignment(current.map(Into::into), entity_id, patch, client_lamport)?;
+    let record = serde_json::to_value(&merged)?;
+    let (server_version, applied_at_ms) = append_change_log_in_tx(
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        "novel.category_assignment",
+        entity_id,
+        "merge",
+        merged.record_lamport,
+        session,
+        Some(&record),
+        retention_window,
+    )
+    .await?;
+    sqlx::query(
+        r#"INSERT INTO novel_category_assignments (
+            scope_id, assignment_id, novel_id, category_id, record_updated_at_ms,
+            record_updated_by_device_id, record_lamport, record_server_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(scope_id, assignment_id) DO UPDATE SET
+            novel_id = excluded.novel_id,
+            category_id = excluded.category_id,
+            record_updated_at_ms = excluded.record_updated_at_ms,
+            record_updated_by_device_id = excluded.record_updated_by_device_id,
+            record_lamport = excluded.record_lamport,
+            record_server_version = excluded.record_server_version"#,
+    )
+    .bind(scope_id)
+    .bind(entity_id)
+    .bind(&merged.novel_id)
+    .bind(&merged.category_id)
+    .bind(applied_at_ms)
+    .bind(&session.device_id)
+    .bind(merged.record_lamport)
+    .bind(server_version)
+    .execute(&mut *tx)
+    .await?;
+    if tombstone.is_some() {
+        delete_tombstone_in_tx(&mut tx, scope_id, "novel.category_assignment", entity_id).await?;
+    }
+    tx.commit().await?;
+    Ok(MutationWriteOutcome {
+        envelope: ChangeEnvelope {
+            server_version,
+            scope_id: scope_id.to_string(),
+            profile_id: Some(session.profile_id.clone()),
+            entity_type: "novel.category_assignment".to_string(),
+            entity_id: entity_id.to_string(),
+            op: "merge".to_string(),
+            lamport: merged.record_lamport,
+            patch: Some(record.clone()),
+            applied_at_ms,
+        },
+        record,
+        applied_lamport: merged.record_lamport,
+    })
+}
+
+pub async fn delete_novel_category_assignment_mutation(
+    pool: &sqlx::SqlitePool,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_id: &str,
+    client_lamport: i64,
+    retention_window: Duration,
+) -> anyhow::Result<MutationWriteOutcome> {
+    let mut tx = pool.begin().await?;
+    let tombstone =
+        load_tombstone_in_tx(&mut tx, scope_id, "novel.category_assignment", entity_id).await?;
+    if let Some(tombstone) = tombstone.as_ref() {
+        ensure_not_stale_novel_category_against_tombstone(client_lamport, tombstone)?;
+    }
+    sqlx::query("DELETE FROM novel_category_assignments WHERE scope_id = ? AND assignment_id = ?")
+        .bind(scope_id)
+        .bind(entity_id)
+        .execute(&mut *tx)
+        .await?;
+    let applied_lamport = tombstone
+        .as_ref()
+        .map(|value| next_lamport(value.lamport, client_lamport))
+        .unwrap_or(client_lamport);
+    let (server_version, applied_at_ms) = append_change_log_in_tx(
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        "novel.category_assignment",
+        entity_id,
+        "delete",
+        applied_lamport,
+        session,
+        None,
+        retention_window,
+    )
+    .await?;
+    upsert_tombstone_in_tx(
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        "novel.category_assignment",
+        entity_id,
+        &session.device_id,
+        applied_lamport,
+        applied_at_ms,
+        server_version,
+        retention_window,
+        "novel_category_assignment_deleted",
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(MutationWriteOutcome {
+        envelope: ChangeEnvelope {
+            server_version,
+            scope_id: scope_id.to_string(),
+            profile_id: Some(session.profile_id.clone()),
+            entity_type: "novel.category_assignment".to_string(),
             entity_id: entity_id.to_string(),
             op: "delete".to_string(),
             lamport: applied_lamport,
@@ -4107,6 +4490,19 @@ fn ensure_not_stale_against_tombstone(
     Ok(())
 }
 
+fn ensure_not_stale_novel_category_against_tombstone(
+    client_lamport: i64,
+    tombstone: &TombstoneRow,
+) -> anyhow::Result<()> {
+    if client_lamport <= tombstone.lamport {
+        bail!(
+            "stale novel category mutation rejected by tombstone lamport {}",
+            tombstone.lamport
+        );
+    }
+    Ok(())
+}
+
 const COMIC_BOOKMARK_PARENT_REASON_PREFIX: &str = "comic_page_bookmark_deleted:parent_sha256:";
 
 fn comic_page_bookmark_tombstone_reason(comic_id: &str) -> String {
@@ -4366,6 +4762,56 @@ fn merge_novel_classification(
     Ok(match current {
         None => incoming,
         Some(existing) => NovelClassificationRecord {
+            record_lamport: next_lamport(existing.record_lamport, client_lamport),
+            ..incoming
+        },
+    })
+}
+
+fn merge_novel_category(
+    current: Option<NovelCategoryRecord>,
+    entity_id: &str,
+    patch: &NovelCategoryPatch,
+    client_lamport: i64,
+) -> anyhow::Result<NovelCategoryRecord> {
+    anyhow::ensure!(
+        patch.category_id == entity_id,
+        "novel category patch category_id must match entity_id"
+    );
+    let incoming = NovelCategoryRecord {
+        category_id: entity_id.to_string(),
+        name: patch.name.trim().to_string(),
+        order: patch.order,
+        record_lamport: client_lamport,
+    };
+    Ok(match current {
+        None => incoming,
+        Some(existing) => NovelCategoryRecord {
+            record_lamport: next_lamport(existing.record_lamport, client_lamport),
+            ..incoming
+        },
+    })
+}
+
+fn merge_novel_category_assignment(
+    current: Option<NovelCategoryAssignmentRecord>,
+    entity_id: &str,
+    patch: &NovelCategoryAssignmentPatch,
+    client_lamport: i64,
+) -> anyhow::Result<NovelCategoryAssignmentRecord> {
+    anyhow::ensure!(
+        patch.assignment_id == entity_id,
+        "novel category assignment patch assignment_id must match entity_id"
+    );
+    let incoming = NovelCategoryAssignmentRecord {
+        assignment_id: entity_id.to_string(),
+        novel_id: patch.novel_id.clone(),
+        category_id: patch.category_id.clone(),
+        record_lamport: client_lamport,
+    };
+    Ok(match current {
+        None => incoming,
+        Some(existing) => NovelCategoryAssignmentRecord {
             record_lamport: next_lamport(existing.record_lamport, client_lamport),
             ..incoming
         },
@@ -5087,6 +5533,78 @@ mod tests {
     use std::collections::BTreeSet;
 
     use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn novel_category_migration_upgrades_v9_without_losing_changes() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(":memory:")
+                    .create_if_missing(true)
+                    .foreign_keys(true),
+            )
+            .await
+            .unwrap();
+
+        for migration in MIGRATOR.iter().filter(|migration| migration.version < 10) {
+            sqlx::raw_sql(migration.sql.as_ref())
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query(
+            r#"INSERT INTO change_log (
+                scope_id, profile_id, entity_type, entity_id, op, lamport,
+                changed_by_device_id, applied_at_ms, patch_json, replay_until_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind("novels:profile:main")
+        .bind("main")
+        .bind("novel.entry")
+        .bind("novel-before-v10")
+        .bind("merge")
+        .bind(1_i64)
+        .bind("device-main")
+        .bind(1_i64)
+        .bind(r#"{"novelId":"novel-before-v10"}"#)
+        .bind(60_000_i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let migration = MIGRATOR
+            .iter()
+            .find(|migration| migration.version == 10)
+            .unwrap();
+        sqlx::raw_sql(migration.sql.as_ref())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let preserved: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM change_log WHERE entity_id = 'novel-before-v10'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let category_table: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'novel_categories'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let assignment_table: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'novel_category_assignments'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(preserved, 1);
+        assert_eq!(category_table, 1);
+        assert_eq!(assignment_table, 1);
+    }
 
     use super::*;
     use crate::syncd::config::SyncdConfig;
