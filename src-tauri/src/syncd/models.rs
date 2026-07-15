@@ -249,13 +249,14 @@ pub struct CapabilitiesResponse {
 
 pub const SNAPSHOT_SCHEMA_VERSION: u32 = 1;
 
-pub const SNAPSHOT_ENTITY_TYPES: [&str; 14] = [
+pub const SNAPSHOT_ENTITY_TYPES: [&str; 15] = [
     "book.entry",
     "book.category",
     "book.category_assignment",
     "book.library_ui",
     "book.progress",
     "book.bookmark",
+    "book.history",
     "novel.entry",
     "novel.chapter",
     "novel.progress",
@@ -797,6 +798,8 @@ pub enum MutationEntityType {
     NovelProgress,
     #[serde(rename = "book.bookmark")]
     BookBookmark,
+    #[serde(rename = "book.history")]
+    BookHistory,
     #[serde(rename = "novel.entry")]
     NovelEntry,
     #[serde(rename = "novel.chapter")]
@@ -823,6 +826,7 @@ impl MutationEntityType {
             Self::BookProgress => "book.progress",
             Self::NovelProgress => "novel.progress",
             Self::BookBookmark => "book.bookmark",
+            Self::BookHistory => "book.history",
             Self::NovelEntry => "novel.entry",
             Self::NovelChapter => "novel.chapter",
             Self::NovelBookmark => "novel.bookmark",
@@ -905,6 +909,12 @@ pub enum MutationInput {
         base: MutationBase,
         patch: Option<BookBookmarkPatch>,
     },
+    #[serde(rename = "book.history")]
+    BookHistory {
+        #[serde(flatten)]
+        base: MutationBase,
+        patch: Option<BookHistoryPatch>,
+    },
     #[serde(rename = "novel.entry")]
     NovelEntry {
         #[serde(flatten)]
@@ -972,6 +982,7 @@ impl MutationInput {
             Self::BookProgress { .. } => MutationEntityType::BookProgress,
             Self::NovelProgress { .. } => MutationEntityType::NovelProgress,
             Self::BookBookmark { .. } => MutationEntityType::BookBookmark,
+            Self::BookHistory { .. } => MutationEntityType::BookHistory,
             Self::NovelEntry { .. } => MutationEntityType::NovelEntry,
             Self::NovelChapter { .. } => MutationEntityType::NovelChapter,
             Self::NovelBookmark { .. } => MutationEntityType::NovelBookmark,
@@ -991,6 +1002,7 @@ impl MutationInput {
             | Self::BookProgress { base, .. }
             | Self::NovelProgress { base, .. }
             | Self::BookBookmark { base, .. }
+            | Self::BookHistory { base, .. }
             | Self::NovelEntry { base, .. }
             | Self::NovelChapter { base, .. }
             | Self::NovelBookmark { base, .. }
@@ -1089,6 +1101,22 @@ pub struct BookBookmarkPatch {
     pub progress_percent: f64,
     pub label: Option<String>,
     pub saved_at_ms: i64,
+}
+
+/// A point-in-time book reading event. Unlike `book.progress`, history entries
+/// are independently addressable and may be deleted without resetting progress.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BookHistoryPatch {
+    pub history_id: String,
+    pub book_id: String,
+    pub renderer: Option<String>,
+    pub location: Option<String>,
+    pub href: Option<String>,
+    pub page_index: Option<i64>,
+    pub progress_percent: f64,
+    pub section_label: Option<String>,
+    pub read_at_ms: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1369,6 +1397,21 @@ pub struct BookBookmarkRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct BookHistoryRecord {
+    pub history_id: String,
+    pub book_id: String,
+    pub renderer: Option<String>,
+    pub location: Option<String>,
+    pub href: Option<String>,
+    pub page_index: Option<i64>,
+    pub progress_percent: f64,
+    pub section_label: Option<String>,
+    pub read_at_ms: i64,
+    pub record_lamport: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct NovelBookmarkRecord {
     pub bookmark_id: String,
     pub novel_id: String,
@@ -1594,6 +1637,25 @@ pub struct BookBookmarkRow {
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, FromRow)]
+pub struct BookHistoryRow {
+    pub scope_id: String,
+    pub history_id: String,
+    pub book_id: String,
+    pub renderer: Option<String>,
+    pub location: Option<String>,
+    pub href: Option<String>,
+    pub page_index: Option<i64>,
+    pub progress_percent: f64,
+    pub section_label: Option<String>,
+    pub read_at_ms: i64,
+    pub record_updated_at_ms: i64,
+    pub record_updated_by_device_id: String,
+    pub record_lamport: i64,
+    pub record_server_version: i64,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, FromRow)]
 pub struct NovelBookmarkRow {
     pub scope_id: String,
     pub bookmark_id: String,
@@ -1739,6 +1801,23 @@ impl From<BookProgressRow> for BookProgressRecord {
             page_index: value.page_index,
             total_pages: value.total_pages,
             section_label: value.section_label,
+            record_lamport: value.record_lamport,
+        }
+    }
+}
+
+impl From<BookHistoryRow> for BookHistoryRecord {
+    fn from(value: BookHistoryRow) -> Self {
+        Self {
+            history_id: value.history_id,
+            book_id: value.book_id,
+            renderer: value.renderer,
+            location: value.location,
+            href: value.href,
+            page_index: value.page_index,
+            progress_percent: value.progress_percent,
+            section_label: value.section_label,
+            read_at_ms: value.read_at_ms,
             record_lamport: value.record_lamport,
         }
     }
