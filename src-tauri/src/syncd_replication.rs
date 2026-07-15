@@ -18,13 +18,13 @@ use crate::syncd::middleware::{CLIENT_PROTOCOL_HEADER, CLIENT_VERSION_HEADER};
 use crate::syncd::models::{
     canonical_novel_identity_key, BookBookmarkPatch, BookBookmarkRecord,
     BookCategoryAssignmentPatch, BookCategoryAssignmentRecord, BookCategoryPatch,
-    BookCategoryRecord, BookEntryPatch, BookEntryRecord, BookLibraryUiPatch, BookLibraryUiRecord,
-    BookProgressPatch, BookProgressRecord, ChangeEnvelope, ComicHistoryPatch,
-    ComicPageBookmarkPatch, ErrorBody, MutationOperation, MutationResultStatus, MutationsResponse,
-    NovelBookmarkPatch, NovelBookmarkRecord, NovelChapterPatch, NovelChapterRecord,
-    NovelClassificationPatch, NovelClassificationRecord, NovelEntryPatch, NovelEntryRecord,
-    NovelHistoryPatch, NovelHistoryRecord, NovelProgressPatch, NovelProgressRecord,
-    SnapshotResponse, SyncdEffectiveDiscoverySource, SNAPSHOT_SCHEMA_VERSION,
+    BookCategoryRecord, BookEntryPatch, BookEntryRecord, BookHistoryPatch, BookHistoryRecord,
+    BookLibraryUiPatch, BookLibraryUiRecord, BookProgressPatch, BookProgressRecord, ChangeEnvelope,
+    ComicHistoryPatch, ComicPageBookmarkPatch, ErrorBody, MutationOperation, MutationResultStatus,
+    MutationsResponse, NovelBookmarkPatch, NovelBookmarkRecord, NovelChapterPatch,
+    NovelChapterRecord, NovelClassificationPatch, NovelClassificationRecord, NovelEntryPatch,
+    NovelEntryRecord, NovelHistoryPatch, NovelHistoryRecord, NovelProgressPatch,
+    NovelProgressRecord, SnapshotResponse, SyncdEffectiveDiscoverySource, SNAPSHOT_SCHEMA_VERSION,
 };
 use crate::syncd_desktop::{
     build_pinned_http_client, desktop_state_dir, is_connection_error, is_needs_reauth_error,
@@ -654,6 +654,12 @@ enum SerializableMutationInput {
         base: SerializableMutationBase,
         patch: BookProgressPatch,
     },
+    #[serde(rename = "book.history")]
+    BookHistory {
+        #[serde(flatten)]
+        base: SerializableMutationBase,
+        patch: Option<BookHistoryPatch>,
+    },
     #[serde(rename = "novel.progress")]
     NovelProgress {
         #[serde(flatten)]
@@ -718,6 +724,7 @@ impl SerializableMutationInput {
             Self::BookCategoryAssignment { .. } => "book.category_assignment",
             Self::BookLibraryUi { .. } => "book.library_ui",
             Self::BookProgress { .. } => "book.progress",
+            Self::BookHistory { .. } => "book.history",
             Self::NovelProgress { .. } => "novel.progress",
             Self::BookBookmark { .. } => "book.bookmark",
             Self::NovelEntry { .. } => "novel.entry",
@@ -736,6 +743,7 @@ impl SerializableMutationInput {
             | Self::BookCategory { base, .. }
             | Self::BookCategoryAssignment { base, .. }
             | Self::BookProgress { base, .. }
+            | Self::BookHistory { base, .. }
             | Self::NovelProgress { base, .. }
             | Self::BookBookmark { base, .. }
             | Self::NovelEntry { base, .. }
@@ -759,6 +767,7 @@ impl SerializableMutationInput {
             | Self::BookCategory { base, .. }
             | Self::BookCategoryAssignment { base, .. }
             | Self::BookProgress { base, .. }
+            | Self::BookHistory { base, .. }
             | Self::NovelProgress { base, .. }
             | Self::BookBookmark { base, .. }
             | Self::NovelEntry { base, .. }
@@ -778,6 +787,7 @@ impl SerializableMutationInput {
             | Self::BookCategory { base, .. }
             | Self::BookCategoryAssignment { base, .. }
             | Self::BookProgress { base, .. }
+            | Self::BookHistory { base, .. }
             | Self::NovelProgress { base, .. }
             | Self::BookBookmark { base, .. }
             | Self::NovelEntry { base, .. }
@@ -845,6 +855,10 @@ struct PersistedBookLibraryState {
     books: Vec<Value>,
     book_progress: Vec<LocalBookProgress>,
     book_bookmarks: Vec<LocalBookBookmark>,
+    /// Rust-owned bridge state. The current desktop frontend does not expose
+    /// book reading sessions, so it must survive frontend JSON rewrites.
+    #[serde(default)]
+    book_history: Vec<LocalBookHistory>,
     books_categories: Vec<Value>,
     books_category_assignments: BTreeMap<String, Vec<String>>,
     books_library_ui: Value,
@@ -897,6 +911,20 @@ struct LocalBookBookmark {
     progress_percent: f64,
     label: Option<String>,
     saved_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct LocalBookHistory {
+    history_id: String,
+    book_id: String,
+    renderer: Option<String>,
+    location: Option<String>,
+    href: Option<String>,
+    page_index: Option<i64>,
+    progress_percent: f64,
+    section_label: Option<String>,
+    read_at_ms: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1763,6 +1791,11 @@ fn materialize_book_snapshot(
                 serde_json::from_value::<BookProgressRecord>(entity.record.clone())
                     .map_err(|error| error.to_string())?,
             ),
+            "book.history" => upsert_book_history(
+                &mut next,
+                serde_json::from_value::<BookHistoryRecord>(entity.record.clone())
+                    .map_err(|error| error.to_string())?,
+            ),
             "book.bookmark" => upsert_book_bookmark(
                 &mut next,
                 serde_json::from_value::<BookBookmarkRecord>(entity.record.clone())
@@ -2336,6 +2369,24 @@ async fn apply_remote_envelopes(
                     outcome.books_changed = true;
                 }
             }
+            "book.history" => {
+                replication_log(format!(
+                    "apply_remote_envelope profile_id={} scope={} entity_type=book.history entity_id={} server_version={} op={:?}",
+                    profile_id,
+                    envelope.scope_id,
+                    envelope.entity_id,
+                    envelope.server_version,
+                    envelope.op
+                ));
+                if let Some(patch) = envelope.patch.clone() {
+                    let record = serde_json::from_value::<BookHistoryRecord>(patch)
+                        .map_err(|error| error.to_string())?;
+                    upsert_book_history(&mut books_state, record);
+                } else {
+                    delete_book_history(&mut books_state, &envelope.entity_id);
+                }
+                outcome.books_changed = true;
+            }
             "book.bookmark" => {
                 replication_log(format!(
                     "apply_remote_envelope profile_id={} scope={} entity_type=book.bookmark entity_id={} server_version={} op={:?}",
@@ -2491,15 +2542,30 @@ pub async fn notify_book_state_written(
         .transpose()
         .map_err(|error| error.to_string())?
         .unwrap_or_default();
-    let next = serde_json::from_str::<PersistedBookLibraryState>(next_contents)
+    let next_value =
+        serde_json::from_str::<Value>(next_contents).map_err(|error| error.to_string())?;
+    let frontend_included_history = next_value.get("bookHistory").is_some();
+    let mut next = serde_json::from_value::<PersistedBookLibraryState>(next_value)
         .map_err(|error| error.to_string())?;
+    if !frontend_included_history {
+        next.book_history = previous.book_history.clone();
+    }
+    let projected_history_changed = project_latest_book_history(&previous, &mut next);
+    if !frontend_included_history || projected_history_changed {
+        // Keep the Rust-owned history collection in the canonical JSON even
+        // while the current frontend is unaware of that field. This write does
+        // not call the Tauri command again, so it cannot recurse.
+        write_books_state(&next)?;
+    }
     let diff = diff_book_mutations(&previous, &next);
     replication_log(format!(
-        "notify_book_state_written prev_progress={} next_progress={} prev_bookmarks={} next_bookmarks={} diff_count={} diff=[{}]",
+        "notify_book_state_written prev_progress={} next_progress={} prev_bookmarks={} next_bookmarks={} prev_history={} next_history={} diff_count={} diff=[{}]",
         previous.book_progress.len(),
         next.book_progress.len(),
         previous.book_bookmarks.len(),
         next.book_bookmarks.len(),
+        previous.book_history.len(),
+        next.book_history.len(),
         diff.len(),
         summarize_mutations(&diff)
     ));
@@ -2787,6 +2853,35 @@ fn upsert_book_progress(state: &mut PersistedBookLibraryState, record: BookProgr
     } else {
         state.book_progress.push(next);
     }
+}
+
+fn upsert_book_history(state: &mut PersistedBookLibraryState, record: BookHistoryRecord) {
+    let next = LocalBookHistory {
+        history_id: record.history_id,
+        book_id: record.book_id,
+        renderer: record.renderer,
+        location: record.location,
+        href: record.href,
+        page_index: record.page_index,
+        progress_percent: record.progress_percent,
+        section_label: record.section_label,
+        read_at_ms: record.read_at_ms,
+    };
+    if let Some(index) = state
+        .book_history
+        .iter()
+        .position(|entry| entry.history_id == next.history_id)
+    {
+        state.book_history[index] = next;
+    } else {
+        state.book_history.push(next);
+    }
+}
+
+fn delete_book_history(state: &mut PersistedBookLibraryState, history_id: &str) {
+    state
+        .book_history
+        .retain(|entry| entry.history_id != history_id);
 }
 
 fn upsert_book_entry(state: &mut PersistedBookLibraryState, record: BookEntryRecord) {
@@ -3143,6 +3238,80 @@ fn bookmark_entity_id_for_book(entry: &LocalBookBookmark) -> String {
     )
 }
 
+fn book_history_entity_id(book_id: &str) -> String {
+    format!("book.history::{book_id}")
+}
+
+fn book_renderer_for_progress(
+    state: &PersistedBookLibraryState,
+    progress: &LocalBookProgress,
+) -> Option<String> {
+    progress
+        .renderer
+        .as_deref()
+        .filter(|renderer| matches!(*renderer, "epub" | "pdf"))
+        .map(ToString::to_string)
+        .or_else(|| {
+            state.books.iter().find_map(|book| {
+                (book_entry_entity_id(book).as_deref() == Some(progress.book_id.as_str()))
+                    .then(|| value_string_field(book, "subtype"))
+                    .flatten()
+                    .filter(|renderer| matches!(renderer.as_str(), "epub" | "pdf"))
+            })
+        })
+}
+
+/// The desktop currently exposes only latest progress for imported books. Map
+/// each changed progress record to one independently persisted latest-history
+/// entry, leaving mobile session-level history entries untouched.
+fn project_latest_book_history(
+    previous: &PersistedBookLibraryState,
+    next: &mut PersistedBookLibraryState,
+) -> bool {
+    let previous_progress = previous
+        .book_progress
+        .iter()
+        .map(|entry| (entry.book_id.as_str(), entry))
+        .collect::<HashMap<_, _>>();
+    let changed = next
+        .book_progress
+        .iter()
+        .filter(|entry| previous_progress.get(entry.book_id.as_str()).copied() != Some(*entry))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut projected = false;
+    for progress in changed {
+        let Some(renderer) = book_renderer_for_progress(next, &progress) else {
+            continue;
+        };
+        let history = LocalBookHistory {
+            history_id: book_history_entity_id(&progress.book_id),
+            book_id: progress.book_id,
+            renderer: Some(renderer),
+            location: progress.location,
+            href: progress.href,
+            page_index: progress.page_index,
+            progress_percent: progress.progress_percent,
+            section_label: progress.section_label,
+            read_at_ms: progress.last_read_at,
+        };
+        if let Some(index) = next
+            .book_history
+            .iter()
+            .position(|entry| entry.history_id == history.history_id)
+        {
+            if next.book_history[index] != history {
+                next.book_history[index] = history;
+                projected = true;
+            }
+        } else {
+            next.book_history.push(history);
+            projected = true;
+        }
+    }
+    projected
+}
+
 fn bookmark_entity_id_for_novel(entry: &LocalNovelBookmark) -> String {
     let locator = entry
         .locator
@@ -3382,6 +3551,59 @@ fn diff_book_mutations(
                 section_label: entry.section_label.clone(),
                 reset: false,
             },
+        });
+    }
+
+    let previous_history: BTreeMap<String, LocalBookHistory> = previous
+        .book_history
+        .iter()
+        .cloned()
+        .map(|entry| (entry.history_id.clone(), entry))
+        .collect();
+    let next_history: BTreeMap<String, LocalBookHistory> = next
+        .book_history
+        .iter()
+        .cloned()
+        .map(|entry| (entry.history_id.clone(), entry))
+        .collect();
+    for (history_id, entry) in &next_history {
+        if previous_history.get(history_id) == Some(entry) {
+            continue;
+        }
+        mutations.push(SerializableMutationInput::BookHistory {
+            base: SerializableMutationBase {
+                client_mutation_id: Uuid::now_v7().to_string(),
+                scope_id: BOOKS_SCOPE_ID.to_string(),
+                entity_id: history_id.clone(),
+                op: MutationOperation::Merge,
+                lamport: now_ms(),
+            },
+            patch: Some(BookHistoryPatch {
+                history_id: history_id.clone(),
+                book_id: entry.book_id.clone(),
+                renderer: entry.renderer.clone(),
+                location: entry.location.clone(),
+                href: entry.href.clone(),
+                page_index: entry.page_index,
+                progress_percent: entry.progress_percent,
+                section_label: entry.section_label.clone(),
+                read_at_ms: entry.read_at_ms,
+            }),
+        });
+    }
+    for history_id in previous_history.keys() {
+        if next_history.contains_key(history_id) {
+            continue;
+        }
+        mutations.push(SerializableMutationInput::BookHistory {
+            base: SerializableMutationBase {
+                client_mutation_id: Uuid::now_v7().to_string(),
+                scope_id: BOOKS_SCOPE_ID.to_string(),
+                entity_id: history_id.clone(),
+                op: MutationOperation::Delete,
+                lamport: now_ms(),
+            },
+            patch: None,
         });
     }
 
@@ -3961,6 +4183,74 @@ mod tests {
     }
 
     #[test]
+    fn changed_book_progress_projects_canonical_latest_history() {
+        let previous = PersistedBookLibraryState::default();
+        let mut next = PersistedBookLibraryState {
+            books: vec![json!({
+                "id": "epub-1",
+                "subtype": "epub",
+            })],
+            book_progress: vec![LocalBookProgress {
+                book_id: "epub-1".to_string(),
+                location: Some("epubcfi(/6/2)".to_string()),
+                href: Some("chapter.xhtml".to_string()),
+                progress_percent: 0.4,
+                last_read_at: 1234,
+                page_index: None,
+                total_pages: None,
+                section_label: Some("Chapter 1".to_string()),
+                renderer: None,
+            }],
+            ..PersistedBookLibraryState::default()
+        };
+
+        assert!(project_latest_book_history(&previous, &mut next));
+        assert_eq!(next.book_history.len(), 1);
+        assert_eq!(next.book_history[0].history_id, "book.history::epub-1");
+        assert_eq!(next.book_history[0].renderer.as_deref(), Some("epub"));
+        assert_eq!(next.book_history[0].read_at_ms, 1234);
+
+        let diff = diff_book_mutations(&previous, &next);
+        assert!(diff.iter().any(|mutation| matches!(
+            mutation,
+            SerializableMutationInput::BookHistory {
+                base: SerializableMutationBase {
+                    entity_id,
+                    op: MutationOperation::Merge,
+                    ..
+                },
+                patch: Some(BookHistoryPatch { history_id, .. }),
+            } if entity_id == "book.history::epub-1" && history_id == entity_id
+        )));
+    }
+
+    #[test]
+    fn unchanged_progress_does_not_resurrect_deleted_latest_history() {
+        let progress = LocalBookProgress {
+            book_id: "pdf-1".to_string(),
+            location: Some("0.5".to_string()),
+            href: None,
+            progress_percent: 0.5,
+            last_read_at: 500,
+            page_index: Some(10),
+            total_pages: Some(20),
+            section_label: None,
+            renderer: Some("pdf".to_string()),
+        };
+        let previous = PersistedBookLibraryState {
+            book_progress: vec![progress.clone()],
+            ..PersistedBookLibraryState::default()
+        };
+        let mut next = PersistedBookLibraryState {
+            book_progress: vec![progress],
+            ..PersistedBookLibraryState::default()
+        };
+
+        assert!(!project_latest_book_history(&previous, &mut next));
+        assert!(next.book_history.is_empty());
+    }
+
+    #[test]
     fn diff_book_mutations_ignores_catalog_changes() {
         let previous = PersistedBookLibraryState {
             books: vec![json!({
@@ -4192,6 +4482,56 @@ mod tests {
         let bookmark_id = bookmark_entity_id_for_book(&state.book_bookmarks[0]);
         delete_book_bookmark(&mut state, &bookmark_id);
         assert!(state.book_bookmarks.is_empty());
+    }
+
+    #[test]
+    fn remote_book_history_merge_and_tombstone_preserve_reader_state() {
+        let progress = LocalBookProgress {
+            book_id: "book-1".to_string(),
+            location: Some("epubcfi(/6/2)".to_string()),
+            href: None,
+            progress_percent: 0.4,
+            last_read_at: 100,
+            page_index: None,
+            total_pages: None,
+            section_label: None,
+            renderer: Some("epub".to_string()),
+        };
+        let bookmark = LocalBookBookmark {
+            book_id: "book-1".to_string(),
+            location: Some("epubcfi(/6/4)".to_string()),
+            href: None,
+            page_index: None,
+            progress_percent: 0.5,
+            label: Some("Keep".to_string()),
+            saved_at: 110,
+        };
+        let mut state = PersistedBookLibraryState {
+            book_progress: vec![progress.clone()],
+            book_bookmarks: vec![bookmark.clone()],
+            ..PersistedBookLibraryState::default()
+        };
+
+        upsert_book_history(
+            &mut state,
+            BookHistoryRecord {
+                history_id: "mobile-session-1".to_string(),
+                book_id: "book-1".to_string(),
+                renderer: Some("epub".to_string()),
+                location: Some("epubcfi(/6/6)".to_string()),
+                href: None,
+                page_index: None,
+                progress_percent: 0.6,
+                section_label: Some("Two".to_string()),
+                read_at_ms: 120,
+                record_lamport: 5,
+            },
+        );
+        delete_book_history(&mut state, "mobile-session-1");
+
+        assert!(state.book_history.is_empty());
+        assert_eq!(state.book_progress, vec![progress]);
+        assert_eq!(state.book_bookmarks, vec![bookmark]);
     }
 
     #[test]
@@ -4451,6 +4791,52 @@ mod tests {
         assert_eq!(next.version, Some(7));
         assert_eq!(next.book_progress.len(), 1);
         assert_eq!(next.book_progress[0].book_id, "book-remote");
+    }
+
+    #[test]
+    fn authoritative_book_snapshot_materializes_history_independently() {
+        let history = BookHistoryRecord {
+            history_id: "mobile-session-1".to_string(),
+            book_id: "book-remote".to_string(),
+            renderer: Some("pdf".to_string()),
+            location: Some("0.75".to_string()),
+            href: None,
+            page_index: Some(15),
+            progress_percent: 0.75,
+            section_label: Some("Page 15".to_string()),
+            read_at_ms: 50,
+            record_lamport: 12,
+        };
+        let snapshot = SnapshotResponse {
+            schema_version: SNAPSHOT_SCHEMA_VERSION,
+            scope_id: BOOKS_SCOPE_ID.to_string(),
+            snapshot_version: 60,
+            min_replayable_server_version: 20,
+            entities: vec![SnapshotEntity {
+                entity_type: "book.history".to_string(),
+                entity_id: history.history_id.clone(),
+                server_version: 59,
+                lamport: 12,
+                record: serde_json::to_value(history).unwrap(),
+            }],
+            tombstones: Vec::new(),
+        };
+
+        let next =
+            materialize_book_snapshot(&PersistedBookLibraryState::default(), &snapshot).unwrap();
+        assert_eq!(next.book_history.len(), 1);
+        assert_eq!(next.book_history[0].history_id, "mobile-session-1");
+        assert!(next.book_progress.is_empty());
+        assert!(next.book_bookmarks.is_empty());
+    }
+
+    #[test]
+    fn legacy_book_state_defaults_hidden_history_collection() {
+        let mut value = serde_json::to_value(PersistedBookLibraryState::default()).unwrap();
+        value.as_object_mut().unwrap().remove("bookHistory");
+
+        let state: PersistedBookLibraryState = serde_json::from_value(value).unwrap();
+        assert!(state.book_history.is_empty());
     }
 
     #[test]
