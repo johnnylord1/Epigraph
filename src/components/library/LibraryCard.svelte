@@ -389,7 +389,9 @@
             class="cover-progress-fill anim-liquid-progress"
             class:has-visible-progress={coverProgressWidth > 0}
             style={`--cover-progress-width:${coverProgressWidth}%;`}
-          ></div>
+          >
+            <span class="cover-progress-wave" aria-hidden="true"></span>
+          </div>
         </div>
       {/if}
 
@@ -828,7 +830,8 @@
   }
 
   .cover-progress-fill::before,
-  .cover-progress-fill::after {
+  .cover-progress-fill::after,
+  .cover-progress-wave {
     content: "";
     position: absolute;
     pointer-events: none;
@@ -838,14 +841,30 @@
     inset: 0 -132px 0 0;
     background-image: var(--component-library-card-progress-liquid-bg);
     background-repeat: repeat-x;
-    background-size: 74px 12px, 96px 12px, 132px 100%;
-    background-position: 0 0, 0 0, 0 0;
+    background-size: 74px 12px, 96px 12px;
+    background-position: 0 0, 0 0;
     opacity: 0.6;
     animation: coverProgressLiquidFlow 6.8s steps(96, end) infinite;
     animation-play-state: paused;
   }
 
   .card.library-motion-running .cover-progress-fill::before {
+    animation-play-state: running;
+  }
+
+  .cover-progress-wave {
+    inset: 0 -132px 0 0;
+    background: var(--component-library-card-progress-liquid-wave-bg);
+    mask-image: var(--component-library-card-progress-liquid-wave-mask);
+    mask-repeat: repeat-x;
+    mask-size: 132px 100%;
+    mask-position: 0 0;
+    opacity: 0.6;
+    animation: coverProgressWaveFlow 6.8s steps(96, end) infinite;
+    animation-play-state: paused;
+  }
+
+  .card.library-motion-running .cover-progress-wave {
     animation-play-state: running;
   }
 
@@ -856,13 +875,19 @@
   }
 
   @keyframes coverProgressLiquidFlow {
-    from { background-position: 0 0, 0 0, 0 0; }
-    to { background-position: -132px 0, -132px 0, -132px 0; }
+    from { background-position: 0 0, 0 0; }
+    to { background-position: -132px 0, -132px 0; }
+  }
+
+  @keyframes coverProgressWaveFlow {
+    from { mask-position: 0 0; }
+    to { mask-position: -132px 0; }
   }
 
   :global([data-aethon-idle="true"]) .cover-progress-fill,
   :global([data-aethon-idle="true"]) .cover-progress-fill::before,
-  :global([data-aethon-idle="true"]) .cover-progress-fill::after {
+  :global([data-aethon-idle="true"]) .cover-progress-fill::after,
+  :global([data-aethon-idle="true"]) .cover-progress-wave {
     animation-play-state: paused !important;
   }
 

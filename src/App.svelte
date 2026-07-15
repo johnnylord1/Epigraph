@@ -3241,27 +3241,27 @@
     position: fixed;
     top: 14px;
     right: 14px;
-    z-index: 2147483500;
-    min-height: 34px;
-    padding: 0 12px;
-    border-radius: 999px;
-    border: 1px solid color-mix(in srgb, var(--accent-dim) 42%, var(--border-dim));
-    background: color-mix(in srgb, var(--bg-raised) 82%, transparent);
-    color: var(--accent-fg);
+    z-index: var(--component-app-fullscreen-exit-z-index);
+    min-height: var(--component-app-fullscreen-exit-min-height);
+    padding: var(--component-app-fullscreen-exit-padding);
+    border-radius: var(--component-app-fullscreen-exit-radius);
+    border: var(--component-app-fullscreen-exit-border);
+    background: var(--component-app-fullscreen-exit-bg);
+    color: var(--component-app-fullscreen-exit-fg);
     font-family: var(--font-ui);
     font-size: var(--text-2xs);
     font-weight: var(--weight-bold);
     letter-spacing: var(--tracking-wide);
     text-transform: uppercase;
-    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.34);
+    box-shadow: var(--component-app-fullscreen-exit-shadow);
     cursor: pointer;
   }
 
   .fullscreen-exit-btn:hover,
   .fullscreen-exit-btn:focus-visible {
-    color: var(--text-primary);
-    border-color: var(--accent);
-    background: color-mix(in srgb, var(--accent-muted) 42%, var(--bg-raised));
+    color: var(--component-app-fullscreen-exit-hover-fg);
+    border-color: var(--component-app-fullscreen-exit-hover-border);
+    background: var(--component-app-fullscreen-exit-hover-bg);
   }
 
   :global([data-aethon-motion="idle"] .aethon-app-shell .settings-theme-preview__tile),

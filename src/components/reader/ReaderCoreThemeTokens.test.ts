@@ -48,7 +48,7 @@ describe("Reader core theme tokens", () => {
     const defaultDefined = uniqueMatches(defaultTokens, TOKEN_DEFINITION_PATTERN);
     const nocturneDefined = uniqueMatches(nocturneTokens, TOKEN_DEFINITION_PATTERN);
 
-    expect(consumed).toHaveLength(115);
+    expect(consumed).toHaveLength(116);
     expect(defaultDefined).toEqual(consumed);
     expect(nocturneDefined).toEqual(consumed);
   });
@@ -119,7 +119,7 @@ describe("Reader core theme tokens", () => {
     const novel = readProjectFile("src/components/reader/NovelReader.svelte");
 
     expect(book).toContain('if (proseTheme === "sepia") return { text: "#2b2118", bg: "#efe1c9", surface: "#f6ead4" };');
-    expect(book).toContain('"color": "#c9b5ff"');
+    expect(book).toContain('.getPropertyValue("--component-reader-core-epub-link-fg")');
     expect(book).toContain('style="background:#efe1c9;"');
 
     expect(novel).toContain('if (proseTheme === "sepia") return { text: "#2b2118", bg: "#efe1c9", surface: "#f6ead4" };');

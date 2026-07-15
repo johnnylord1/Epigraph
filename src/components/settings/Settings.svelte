@@ -4253,19 +4253,19 @@
                     <p class="settings-mini-row__label">{$_("settings_inline_customPaletteColors")}</p>
                     <p class="settings-mini-row__hint">{$_("settings_inline_customPaletteColorsHint")}</p>
                   </div>
-                  <div style="display: flex; gap: 8px;">
+                  <div class="prose-color-pickers">
                     <input
                       type="color"
                       value={store.settings.proseReaderTextColor || "#ffffff"}
                       onchange={(e) => updateSettings({ proseReaderTheme: "nocturne", proseReaderTextColor: e.currentTarget.value })}
-                      style="width: 24px; height: 24px; border: 1px solid rgba(255, 255, 255, 0.1); padding: 0; background: transparent; cursor: pointer; border-radius: 9999px; overflow: hidden;"
+                      class="prose-color-picker"
                       title={$_("settings_inline_customTextColor")}
                     />
                     <input
                       type="color"
                       value={store.settings.proseReaderBackgroundColor || "#131316"}
                       onchange={(e) => updateSettings({ proseReaderTheme: "nocturne", proseReaderBackgroundColor: e.currentTarget.value })}
-                      style="width: 24px; height: 24px; border: 1px solid rgba(255, 255, 255, 0.1); padding: 0; background: transparent; cursor: pointer; border-radius: 9999px; overflow: hidden;"
+                      class="prose-color-picker"
                       title={$_("settings_inline_customPaperColor")}
                     />
                   </div>
@@ -6876,6 +6876,22 @@
   .step-btn:disabled { opacity: 0.3; cursor: default; }
   .step-val { font-family: var(--font-ui); font-size: 11px; color: var(--component-settings-text-muted); letter-spacing: 0.08em; min-width: 40px; text-align: center; text-transform: uppercase; }
   .select-wrap { position: relative; flex-shrink: 0; }
+
+  .prose-color-pickers {
+    display: flex;
+    gap: var(--component-settings-color-picker-group-gap);
+  }
+
+  .prose-color-picker {
+    width: var(--component-settings-color-picker-size);
+    height: var(--component-settings-color-picker-size);
+    padding: 0;
+    border: var(--component-settings-color-picker-border);
+    border-radius: var(--component-settings-color-picker-radius);
+    overflow: hidden;
+    background: var(--component-settings-color-picker-bg);
+    cursor: pointer;
+  }
   .select-btn { display: flex; align-items: center; gap: var(--sp-2); min-height: 32px; font-size: 12px; font-weight: 600; color: var(--component-settings-text-primary); background: var(--component-settings-surface-raised); border: 1px solid var(--component-settings-input-border); border-radius: 14px; padding: 0 12px; cursor: pointer; min-width: 130px; transition: border-color 140ms ease, background 140ms ease; }
   .select-btn:hover { border-color: var(--component-settings-border-strong); background: var(--component-settings-surface-overlay); }
   .select-btn--wide { min-width: 190px; }

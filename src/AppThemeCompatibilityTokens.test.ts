@@ -4,6 +4,19 @@ import { describe, expect, it } from "vitest";
 
 const ROOT = process.cwd();
 const APP_LOADING_TOKEN = "--component-app-loading-fg";
+const APP_FULLSCREEN_TOKENS = [
+  "--component-app-fullscreen-exit-z-index",
+  "--component-app-fullscreen-exit-min-height",
+  "--component-app-fullscreen-exit-padding",
+  "--component-app-fullscreen-exit-radius",
+  "--component-app-fullscreen-exit-border",
+  "--component-app-fullscreen-exit-bg",
+  "--component-app-fullscreen-exit-fg",
+  "--component-app-fullscreen-exit-shadow",
+  "--component-app-fullscreen-exit-hover-border",
+  "--component-app-fullscreen-exit-hover-bg",
+  "--component-app-fullscreen-exit-hover-fg",
+] as const;
 const LEGACY_NOCTURNE_TOKENS = [
   "--n-bg",
   "--n-bg-top",
@@ -107,6 +120,18 @@ describe("App theme compatibility contract", () => {
     expect(tokens).toMatch(new RegExp(`${APP_LOADING_TOKEN}\\s*:`));
     expect(nocturne).toMatch(new RegExp(`${APP_LOADING_TOKEN}\\s*:`));
     expect(app).not.toContain("--n-text-muted");
+  });
+
+  it("defines and consumes the fullscreen exit visual contract", () => {
+    const app = readProjectFile("src/App.svelte");
+    const tokens = readProjectFile("src/styles/tokens.css");
+    const nocturne = readProjectFile("src/styles/nocturne-theme.css");
+
+    for (const token of APP_FULLSCREEN_TOKENS) {
+      expect(app, token).toContain(`var(${token})`);
+      expect(tokens, token).toMatch(new RegExp(`${token}\\s*:`));
+      expect(nocturne, token).toMatch(new RegExp(`${token}\\s*:`));
+    }
   });
 
   it("preserves the active HUD scale compatibility publisher", () => {

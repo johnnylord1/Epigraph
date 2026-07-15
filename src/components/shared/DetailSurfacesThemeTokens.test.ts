@@ -91,8 +91,8 @@ describe("detail surfaces theme tokens", () => {
 
     expect(detailDefinitions.size).toBe(274);
     expect(detailConsumed.size).toBe(274);
-    expect(trackingDefinitions.size).toBe(116);
-    expect(trackingConsumed.size).toBe(116);
+    expect(trackingDefinitions.size).toBe(117);
+    expect(trackingConsumed.size).toBe(117);
     expect(detailUnused).toEqual([]);
     expect(trackingUnused).toEqual([]);
     expect(detailUndefined).toEqual([]);

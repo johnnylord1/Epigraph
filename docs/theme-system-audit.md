@@ -2844,3 +2844,42 @@ Categorias cobertas:
 - Testes browser Chromium: 2 arquivos, **6 testes verdes**.
 - A autoria dos 11 HUD Legacy continua aceita para compatibilidade de documentos, mas seus efeitos permanecem limitados ao preview ate existir ownership visual coerente. O Marco 43 deve decidir como apresenta-los sem prometer efeito runtime inexistente.
 - Syncd, componentes Legacy e toda a camada `--n-*` permanecem fora do escopo e preservados.
+
+## Marco 41 - Embedded Visual Values And Global Allowlist
+
+### Escopo e migracoes ativas
+
+- O preflight globalizou a varredura de hex, `rgb/rgba`, `hsl/hsla`, `oklch` e hex percent-encoded fora dos tres arquivos de tema. Valores ativos foram separados de branding/assets, canvas, swatches, documentos de tema, export HTML, Syncd excluido e superficies Legacy.
+- `App.svelte` passou a consumir 11 tokens `--component-app-fullscreen-exit-*`; border, surface, foreground, shadow, radius e z-index preservam os valores Nocturne anteriores sem literais no componente.
+- Os dois color pickers de `Settings.svelte` mantem os defaults funcionais `#ffffff`/`#131316`, mas todo o chrome visual agora consome cinco tokens `--component-settings-color-picker-*`.
+- O link injetado no documento EPUB de `BookReader.svelte` resolve `--component-reader-core-epub-link-fg` por computed style antes de preencher a stylesheet e a API do rendition. O fallback e a paleta de prosa selecionada; o literal independente `#c9b5ff` foi removido.
+- `TrackingPanel.svelte` e `NovelTrackingPanel.svelte` substituem o SVG com stroke `%23888` por um chevron de duas gradients derivadas de `--component-tracking-record-select-indicator-bg`. `Tracking.svelte` permanece Legacy com suas duas ocorrencias intactas.
+- A onda da barra de progresso da Library deixou de carregar `fill='%23d8ccff'`. A geometria SVG sem tinta virou `mask-image`; `--component-library-card-progress-liquid-wave-bg` fornece a cor e `--color-library-progress-wave-source` preserva o Nocturne exato `#d8ccff`.
+- Nenhum token, alias Legacy ou `--n-*` foi removido. Syncd e superficies Legacy nao foram editados.
+
+### Gate global e classificacao
+
+- `directVisualValuesGate.test.ts` percorre producao e exige allowlist exata por arquivo, contagem, status e justificativa. Qualquer arquivo novo, literal novo ou mudanca de quantidade falha o gate.
+- Excecoes Ativas documentadas: assets de marca, cores oficiais de providers em BrowseV3, export HTML standalone, paletas/swatches funcionais de Reader/Settings/ThemeEditor, canvas do splash, fallback de icone e documentos builtin/custom em `contract.ts`.
+- Legacy preservado: `Discover.svelte`, `Extensions.svelte`, `Tracking.svelte`, `NovelSourceCheckModal.svelte` e `NovelSourceStatusDetails.svelte`. Syncd QR permanece Excluded pelo plano atual.
+- O inventario percent-encoded caiu de **5 para 2**, ambas em `Tracking.svelte` Legacy. App, LibraryCard, TrackingPanel e NovelTrackingPanel agora medem zero valor visual direto.
+- O grafo atualizado possui **1.455 component colors / 1.184 editaveis / 260 somente absolutos / 29 editaveis-absolutos / 9 runtime Reader / 11 neutros / 0 unresolved**. O bloco builtin possui **233 sources exatos / 233 fallbacks / 0 sem consumo**.
+
+### Validacao visual real
+
+- App Tauri real em Nocturne, WebView2/CDP `127.0.0.1:9223`, sem fixtures ou alteracao persistida de dados.
+- Evidencias em `docs/screenshots/marco41-embedded-visuals/`: Library Comics before/after, Settings before/after, color pickers, fullscreen exit, Tracking real sem vinculo e BookReader before/after.
+- Library manteve cards, filtros, covers, progressos, spacing e hierarquia. Em computed style, **80** instancias da nova wave mask estavam montadas; a tinta resolveu `rgb(216, 204, 255)` e progressos reais nao-zero preservaram a mascara.
+- Settings preservou rows, cards, toggles e os dois swatches de 24px. O botao de fullscreen manteve geometria, contraste, shadow e posicao. Tracking abriu no estado real `Not tracking this manga yet`; sem registro vinculado, o `<select>` com chevron nao foi reproduzivel visualmente e fica coberto pelo contrato de 117/117 tokens.
+- BookReader abriu o shell real, mas o ambiente continuou exibindo a falha preexistente de import dinamico de `epubjs.js`. O estado before/after e equivalente; a cor de link interna nao foi visualmente reproduzivel e foi validada pelo teste de token/injecao.
+- A revisao das capturas nao encontrou regressao aparente de surface, border, radius, shadow, tipografia, dim, hierarquia ou geometria.
+
+### Testes e riscos restantes
+
+- Gate unitario: `directVisualValuesGate` + `themeGate`, **30/30** verdes.
+- Contratos jsdom: Settings, App, Library, Reader Core e Detail/Tracking, **38/38** verdes.
+- Browser Chromium: theme probe e LibraryCardGrid, **12/12** verdes.
+- `pnpm build`: verde; permanece somente o aviso conhecido de chunks acima de 500 kB.
+- `git diff --check`: verde, com avisos esperados de normalizacao LF/CRLF no Windows.
+- Riscos mantidos: o runtime atual nao expos um tracking record com selects; EPUB nao renderizou conteudo por falha ambiental preexistente. Nenhum dado artificial foi criado para contornar essas limitacoes.
+- Proximo lote recomendado: autoria semantica de shadow/highlight. A camada Legacy, Syncd e `--n-*` continuam explicitamente fora desse escopo.

@@ -580,8 +580,10 @@
     border: var(--component-tracking-record-select-border); background-color: var(--component-tracking-record-select-background-color);
     color: var(--text-secondary); outline: none; cursor: pointer;
     appearance: none; -webkit-appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23888' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
-    background-repeat: no-repeat; background-position: right 8px center;
+    background-image: var(--component-tracking-record-select-indicator-bg);
+    background-repeat: no-repeat;
+    background-position: right 8px center, right 4px center;
+    background-size: 4px 4px, 4px 4px;
     transition: border-color var(--t-base);
   }
   .record-select:hover:not(:disabled) { border-color: var(--component-tracking-record-select-border-color); background-color: var(--component-tracking-record-select-background-color-2); }

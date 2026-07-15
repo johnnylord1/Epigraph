@@ -37,9 +37,6 @@ const encodedHexPattern = /%(?:25)*23[0-9a-f]{3,8}\b/gi;
 const encodedHexInventory = [
   "src/components/pages/Tracking.svelte:%23888",
   "src/components/pages/Tracking.svelte:%23888",
-  "src/components/shared/NovelTrackingPanel.svelte:%23888",
-  "src/components/shared/TrackingPanel.svelte:%23888",
-  "src/styles/nocturne-theme.css:%23d8ccff",
 ] as const;
 const unreferencedLegacyNocturneTokens = [
   "--n-bg",
@@ -221,10 +218,10 @@ describe("final derived theme gate", () => {
 
     expect(selectorStart).toBeGreaterThan(-1);
     expect(selectorEnd).toBeGreaterThan(selectorStart);
-    expect(exactSources).toHaveLength(232);
+    expect(exactSources).toHaveLength(233);
     expect(builtinBlock).toContain("--color-on-accent-strong: #352660;");
     expect(outsideBuiltin).not.toMatch(/--color-on-accent-strong\s*:/);
-    expect(new Set(exactSources.map(({ name }) => name)).size).toBe(232);
+    expect(new Set(exactSources.map(({ name }) => name)).size).toBe(233);
     expect(missingFallback).toEqual([]);
     expect(unreferenced).toEqual([]);
     expect(leaked).toEqual([]);
@@ -347,13 +344,23 @@ describe("final derived theme gate", () => {
       .filter(([name]) => !classified.has(name))
       .map(([name, value]) => `${name}: ${value}`);
 
-    expect(componentColors).toHaveLength(1443);
-    expect(editable).toHaveLength(1175);
-    expect(absolute).toHaveLength(287);
-    expect(absoluteOnly).toHaveLength(258);
-    expect(mixedEditableAbsolute).toHaveLength(29);
-    expect(runtime).toHaveLength(9);
-    expect(neutral).toHaveLength(10);
+    expect({
+      componentColors: componentColors.length,
+      editable: editable.length,
+      absolute: absolute.length,
+      absoluteOnly: absoluteOnly.length,
+      mixedEditableAbsolute: mixedEditableAbsolute.length,
+      runtime: runtime.length,
+      neutral: neutral.length,
+    }).toEqual({
+      componentColors: 1455,
+      editable: 1184,
+      absolute: 289,
+      absoluteOnly: 260,
+      mixedEditableAbsolute: 29,
+      runtime: 9,
+      neutral: 11,
+    });
     expect(unresolved).toEqual([]);
   });
 

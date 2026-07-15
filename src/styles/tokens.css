@@ -190,6 +190,7 @@
   --color-library-progress-dark-source: var(--accent);
   --color-library-progress-mid-source: var(--accent-bright);
   --color-library-progress-light-source: var(--accent-fg);
+  --color-library-progress-wave-source: var(--accent-fg);
   --color-library-modal-deep-source: var(--color-background-void);
   --color-library-modal-raised-source: var(--color-popover);
   --color-library-backdrop-source: var(--color-background-void);
@@ -802,6 +803,17 @@
   --component-app-fg: var(--text-primary);
   --component-app-font: var(--font-sans);
   --component-app-loading-fg: var(--text-tertiary);
+  --component-app-fullscreen-exit-z-index: var(--z-toast);
+  --component-app-fullscreen-exit-min-height: 34px;
+  --component-app-fullscreen-exit-padding: 0 var(--space-sm);
+  --component-app-fullscreen-exit-radius: var(--radius-full);
+  --component-app-fullscreen-exit-border: 1px solid var(--color-border);
+  --component-app-fullscreen-exit-bg: var(--color-elevated);
+  --component-app-fullscreen-exit-fg: var(--color-accent);
+  --component-app-fullscreen-exit-shadow: var(--shadow-md);
+  --component-app-fullscreen-exit-hover-border: var(--color-outline);
+  --component-app-fullscreen-exit-hover-bg: var(--color-accent-muted);
+  --component-app-fullscreen-exit-hover-fg: var(--text-primary);
   --component-detail-layer-bg: var(--color-surface);
   --component-search-dim-bg: var(--component-overlay-bg);
   --component-sidebar-border: var(--color-border);
@@ -1157,6 +1169,11 @@
   --component-settings-meter-critical-bg: var(--color-danger);
   --component-settings-overlay-bg: var(--component-overlay-bg);
   --component-settings-overlay-blur: var(--blur-backdrop);
+  --component-settings-color-picker-group-gap: var(--space-sm);
+  --component-settings-color-picker-size: 24px;
+  --component-settings-color-picker-border: 1px solid var(--color-divider);
+  --component-settings-color-picker-bg: transparent;
+  --component-settings-color-picker-radius: var(--radius-full);
   --component-theme-editor-backdrop-bg: var(--component-overlay-bg);
   --component-theme-editor-backdrop-z-index: var(--z-modal);
   --component-theme-editor-backdrop-animation: var(--duration-fast) var(--easing-standard);
@@ -2144,8 +2161,9 @@
   --component-library-card-progress-fill-shadow: none;
   --component-library-card-progress-liquid-bg:
     radial-gradient(circle at 18px 70%, color-mix(in srgb, var(--text-primary) 46%, transparent) 0 1px, transparent 1.35px),
-    radial-gradient(circle at 56px 38%, color-mix(in srgb, var(--text-primary) 32%, transparent) 0 0.8px, transparent 1.2px),
-    none;
+    radial-gradient(circle at 56px 38%, color-mix(in srgb, var(--text-primary) 32%, transparent) 0 0.8px, transparent 1.2px);
+  --component-library-card-progress-liquid-wave-bg: var(--color-library-progress-wave-source);
+  --component-library-card-progress-liquid-wave-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 132 12' preserveAspectRatio='none'%3E%3Cpath d='M0 5 C16 1 28 1 44 5 S72 9 88 5 S116 1 132 5 V12 H0 Z'/%3E%3C/svg%3E");
   --component-library-card-progress-shine-bg:
     linear-gradient(180deg, color-mix(in srgb, var(--text-primary) 18%, transparent), transparent 52%),
     linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--text-primary) 14%, transparent) 58%, transparent 100%);
@@ -2710,6 +2728,7 @@
   --component-reader-core-action-letter-spacing: 0.055em;
   --component-reader-core-action-transition: background var(--t-base), border-color var(--t-base), color var(--t-base), transform var(--t-base);
   --component-reader-core-action-hover-border: color-mix(in srgb, var(--color-accent) 30%, transparent);
+  --component-reader-core-epub-link-fg: var(--color-accent);
   --component-reader-core-action-hover-bg: color-mix(in srgb, var(--color-accent) 16%, transparent);
   --component-reader-core-action-hover-transform: translateY(-1px);
   --component-reader-core-action-subtle-border: color-mix(in srgb, var(--text-secondary) 10%, transparent);
@@ -3148,6 +3167,9 @@
   --component-tracking-record-select-opacity: 0.4;
   --component-tracking-record-select-option-background: var(--color-tracking-modal-surface-source);
   --component-tracking-record-select-option-color: var(--color-text-emphasis);
+  --component-tracking-record-select-indicator-bg:
+    linear-gradient(45deg, transparent 50%, var(--text-tertiary) 50%),
+    linear-gradient(135deg, var(--text-tertiary) 50%, transparent 50%);
   --component-tracking-record-title-color: var(--color-tracking-title-source);
   --component-tracking-record-title-color-2: var(--color-tracking-title-emphasis);
   --component-tracking-record-title-opacity: 0.9;

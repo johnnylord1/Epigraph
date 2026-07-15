@@ -443,6 +443,9 @@
   function applyEpubTheme() {
     const rendition = currentRendition;
     if (!rendition || activeBook?.subtype !== "epub") return;
+    const epubLinkColor = getComputedStyle(document.documentElement)
+      .getPropertyValue("--component-reader-core-epub-link-fg")
+      .trim() || prosePalette.text;
     const themeCss = `
       html,
       body {
@@ -479,7 +482,7 @@
       }
 
       a {
-        color: #c9b5ff !important;
+        color: ${epubLinkColor} !important;
       }
     `;
     rendition.themes.default({
@@ -505,7 +508,7 @@
         "margin-bottom": `${proseParagraphSpacing}em`,
       },
       a: {
-        "color": "#c9b5ff",
+        "color": epubLinkColor,
       },
     });
     rendition.themes.fontSize(`${zoomPct}%`);

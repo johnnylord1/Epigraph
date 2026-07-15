@@ -274,7 +274,7 @@ describe("test-only theme probe", () => {
       const sourceNames = builtinExactSourceNames();
       const builtin = new Map(sourceNames.map((token) => [token, computedToken(token)]));
 
-      expect(sourceNames).toHaveLength(232);
+      expect(sourceNames).toHaveLength(233);
       applyProbeContract(true);
       await new Promise(requestAnimationFrame);
       const custom = new Map(sourceNames.map((token) => [token, computedToken(token)]));
