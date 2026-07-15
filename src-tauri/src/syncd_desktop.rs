@@ -1505,6 +1505,44 @@ pub(crate) fn desktop_state_dir() -> PathBuf {
         .join("syncd-desktop")
 }
 
+#[cfg(test)]
+static DESKTOP_STATE_DIR_ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Serializes process-wide desktop-state overrides and restores the prior
+/// value even when a test unwinds. Rust tests share one environment, so a
+/// plain set/remove pair can redirect another test between its write and read.
+#[cfg(test)]
+pub(crate) struct DesktopStateDirTestGuard {
+    _lock: std::sync::MutexGuard<'static, ()>,
+    previous: Option<std::ffi::OsString>,
+}
+
+#[cfg(test)]
+impl DesktopStateDirTestGuard {
+    pub(crate) fn override_with(path: &std::path::Path) -> Self {
+        let lock = DESKTOP_STATE_DIR_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous = std::env::var_os("AETHON_SYNCD_DESKTOP_STATE_DIR");
+        std::env::set_var("AETHON_SYNCD_DESKTOP_STATE_DIR", path);
+        Self {
+            _lock: lock,
+            previous,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for DesktopStateDirTestGuard {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.take() {
+            std::env::set_var("AETHON_SYNCD_DESKTOP_STATE_DIR", previous);
+        } else {
+            std::env::remove_var("AETHON_SYNCD_DESKTOP_STATE_DIR");
+        }
+    }
+}
+
 fn automation_log_path() -> PathBuf {
     desktop_state_dir().join("syncd-desktop-automation.log")
 }
@@ -1702,7 +1740,7 @@ mod tests {
     #[test]
     fn persisted_state_roundtrip_uses_override_directory() {
         let temp = tempfile::tempdir().unwrap();
-        std::env::set_var("AETHON_SYNCD_DESKTOP_STATE_DIR", temp.path());
+        let _env = DesktopStateDirTestGuard::override_with(temp.path());
         let session = PersistedSyncSession {
             session_key: "test".to_string(),
             local_profile_id: "main".to_string(),
@@ -1720,6 +1758,5 @@ mod tests {
         upsert_persisted_session(session.clone()).unwrap();
         let persisted = load_persisted_state().unwrap();
         assert_eq!(persisted.sessions, vec![session]);
-        std::env::remove_var("AETHON_SYNCD_DESKTOP_STATE_DIR");
     }
 }
