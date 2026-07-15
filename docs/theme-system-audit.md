@@ -2638,3 +2638,37 @@ Categorias cobertas:
 - Os 44 sources sao papeis semanticos de tema e possuem fallback compartilhado, mas nao fazem parte das 47 chaves editaveis de `ThemeDocumentV4`. Um tema builtin futuro pode implementa-los somente por tokens, sem CSS de componente; um tema custom baseado no ThemeEditor herda os detalhes do tema-base para esses papeis.
 - Antes de afirmar que todo detalhe do port responde somente ao documento V4, o proximo gate deve aplicar o theme probe especificamente a Splash, density/preview de Settings e source metrics e decidir entre derivacao estrita das 47 chaves atuais ou extensao controlada do contrato sem expor component tokens.
 - Os aliases `--n-*` e os seletores Legacy continuam preservados e exigem auditoria separada. Syncd continua adiado por decisao de escopo.
+
+## Marco 35 - Custom Nocturne Port Derivation
+
+### Escopo e correcao
+
+- O gate do Marco 34 confirmou que os 44 sources do port tinham fallback semantico, mas os valores exatos declarados no seletor geral `[data-theme="nocturne"]` continuavam vencendo quando um documento V4 usava `base: nocturne`.
+- Os 44 valores canônicos foram isolados em `[data-theme="nocturne"]:not([data-custom-theme])`. O Nocturne builtin preserva os valores exatos; quando o provider aplica `data-custom-theme`, os mesmos papéis passam a resolver pelos fallbacks de `tokens.css` e pelas 47 chaves editáveis do contrato V4.
+- Tres fallbacks indiretos foram alinhados ao contrato editável: action accent de Splash usa `--accent-bright`, selection ink de Settings usa `--text-inverse` e rating star usa `--color-warning`.
+- Nenhum token foi adicionado/removido, nenhum component token virou campo editável e `ThemeDocumentV4`, provider, ThemeEditor, componentes, `--n-*`, aliases Legacy e Syncd permaneceram inalterados.
+
+### Contagem e gates
+
+- Sources do port: **44 exatos no Nocturne builtin / 44 fallbacks semanticos / 44 component aliases / 0 sem consumo**.
+- O contrato unitário exige que todas as 44 declarações exatas existam somente no seletor builtin sem `data-custom-theme`.
+- O probe browser simula o fluxo real do provider (`data-theme="nocturne"`, `data-custom-theme="custom:probe"` e as 47 variáveis V4 inline). Dezesseis papéis representativos de Splash, controles, Settings e source metrics resolveram por computed style e mudaram em relação ao Nocturne builtin.
+- O teste browser agora restaura atributos e inline properties em `finally`, evitando vazamento do probe entre casos.
+
+### Validacao visual real
+
+- App Tauri real em Nocturne builtin, launcher gerenciado, WebView2/CDP `127.0.0.1:9223`, viewport 1280x800 e dados persistidos reais. Nenhum tema ou fixture foi salvo.
+- Evidencias em `docs/screenshots/marco35-custom-port-derivation/`: `before/after-library.png`, `before/after-search-dim.png`, `before/after-settings.png` e `before/after-splash.png`.
+- Os arquivos `before-*` reutilizam os `after-*` estáveis do Marco 34, imediatamente anteriores a esta alteração. As novas capturas foram feitas na mesma superfície Nocturne após a mudança de seletor.
+- Search manteve a barra acima do dim e `aethon-browse-search-engaged` ativo durante a captura. Settings manteve surfaces, cards, toggles, tipografia, borders e hierarquia. Splash manteve background, logo, aura e estados. Library preservou shell, toolbar, cards e geometria; capas/ordenação e contagem de atividade variaram por dados runtime.
+- A comparação visual não encontrou regressão aparente. Diferenças residuais correspondem a scroll/data loading, badge de atividade e animação/FPS do Splash.
+
+### Testes e riscos restantes
+
+- Testes focados unitários: 4 arquivos, 46 testes verdes (`nocturnePortCompatibility`, derivação de cores, provider e documentos V4).
+- Gate unitário ampliado: 7 arquivos, 70 testes verdes, incluindo `themeGate`, `authoringGate` e contrato público.
+- Testes browser Chromium: 2 arquivos, 3 testes verdes (`themeProbe` e computed compatibility do port).
+- `pnpm build`: verde; permanece apenas o aviso conhecido de chunk acima de 500 kB.
+- `git diff --check`: verde, com avisos esperados de normalização LF/CRLF no Windows.
+- A correção é deliberadamente incremental: a varredura ainda encontra **188** outros `--color-*-source` literais no seletor geral do Nocturne, excluindo os 44 agora condicionados. Eles continuam herdados por documentos custom baseados em Nocturne e devem formar o próximo lote auditável; não foram movidos sem validar fallback e consumidores.
+- A preview interna do ThemeEditor continua usando o contrato V4 já testado, mas não monta todas as superfícies do port. O gate browser cobre a cascata real no elemento raiz, sem persistir um tema de teste.

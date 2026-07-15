@@ -349,50 +349,6 @@
   --color-novel-summary-line-source: #54447d;
   --color-novel-summary-text-source: #e1dbef;
   --color-novel-surface-source: #151519;
-  --color-splash-ink-source: #efeaff;
-  --color-splash-danger-source: #ffb9c7;
-  --color-splash-background-start-source: #0d0c16;
-  --color-splash-background-deep-source: #040408;
-  --color-splash-background-accent-start-source: #2b234c;
-  --color-splash-background-accent-end-source: #7060b0;
-  --color-splash-background-base-source: #030306;
-  --color-splash-ambient-accent-source: #9981e2;
-  --color-splash-star-core-source: #f6f2ff;
-  --color-splash-star-halo-source: #d3c8ff;
-  --color-splash-star-ray-source: #cdc0ff;
-  --color-splash-star-dust-source: #beaef5;
-  --color-splash-aura-near-source: #dad1ff;
-  --color-splash-aura-mid-source: #8b77e0;
-  --color-splash-aura-far-source: #40367d;
-  --color-splash-error-panel-top-source: #18161e;
-  --color-splash-error-panel-bottom-source: #0e0d12;
-  --color-splash-action-accent-source: #c7b1ff;
-  --color-splash-action-ink-source: #14111c;
-  --color-splash-action-gradient-start-source: #d1bdff;
-  --color-splash-action-gradient-end-source: #bfa5ff;
-  --color-soft-control-text-source: #b8b2c5;
-  --color-chip-surface-source: #23232a;
-  --color-settings-density-track-start-source: #735cba;
-  --color-settings-density-track-end-source: #544f68;
-  --color-settings-density-step-source: #c6c2cc;
-  --color-settings-density-step-active-source: #bfaff5;
-  --color-settings-density-shadow-source: #121117;
-  --color-settings-density-readout-source: #16141b;
-  --color-settings-selection-start-source: #bcadf1;
-  --color-settings-selection-end-source: #a18de1;
-  --color-settings-selection-ink-source: #2e2251;
-  --color-settings-selection-shadow-source: #221839;
-  --color-settings-preview-surface-top-source: #222027;
-  --color-settings-preview-surface-bottom-source: #17151a;
-  --color-settings-preview-deep-top-source: #131316;
-  --color-settings-preview-deep-bottom-source: #1a1a1e;
-  --color-settings-preview-raised-top-source: #18181c;
-  --color-settings-preview-raised-bottom-source: #1f1f24;
-  --color-settings-danger-soft-source: #f0b2a8;
-  --color-rating-star-source: #ffb800;
-  --color-recommendation-pill-light-source: #f5f3ff;
-  --color-recommendation-pill-ink-source: #141226;
-  --color-recommendation-pill-dark-source: #0f0c1e;
   --gradient-settings-meter: linear-gradient(
     90deg,
     color-mix(in srgb, var(--color-settings-meter-accent-start) 86%, transparent),
@@ -2553,6 +2509,55 @@
   --hud-selection-bg:          #211b3b;
   --hud-selection-border:      #4c4078;
   --hud-progress-height:       2px;
+}
+
+/* Preserve the exact reference palette for the builtin theme. Custom themes
+   based on Nocturne intentionally resolve these roles from the V4 contract. */
+[data-theme="nocturne"]:not([data-custom-theme]) {
+  --color-splash-ink-source: #efeaff;
+  --color-splash-danger-source: #ffb9c7;
+  --color-splash-background-start-source: #0d0c16;
+  --color-splash-background-deep-source: #040408;
+  --color-splash-background-accent-start-source: #2b234c;
+  --color-splash-background-accent-end-source: #7060b0;
+  --color-splash-background-base-source: #030306;
+  --color-splash-ambient-accent-source: #9981e2;
+  --color-splash-star-core-source: #f6f2ff;
+  --color-splash-star-halo-source: #d3c8ff;
+  --color-splash-star-ray-source: #cdc0ff;
+  --color-splash-star-dust-source: #beaef5;
+  --color-splash-aura-near-source: #dad1ff;
+  --color-splash-aura-mid-source: #8b77e0;
+  --color-splash-aura-far-source: #40367d;
+  --color-splash-error-panel-top-source: #18161e;
+  --color-splash-error-panel-bottom-source: #0e0d12;
+  --color-splash-action-accent-source: #c7b1ff;
+  --color-splash-action-ink-source: #14111c;
+  --color-splash-action-gradient-start-source: #d1bdff;
+  --color-splash-action-gradient-end-source: #bfa5ff;
+  --color-soft-control-text-source: #b8b2c5;
+  --color-chip-surface-source: #23232a;
+  --color-settings-density-track-start-source: #735cba;
+  --color-settings-density-track-end-source: #544f68;
+  --color-settings-density-step-source: #c6c2cc;
+  --color-settings-density-step-active-source: #bfaff5;
+  --color-settings-density-shadow-source: #121117;
+  --color-settings-density-readout-source: #16141b;
+  --color-settings-selection-start-source: #bcadf1;
+  --color-settings-selection-end-source: #a18de1;
+  --color-settings-selection-ink-source: #2e2251;
+  --color-settings-selection-shadow-source: #221839;
+  --color-settings-preview-surface-top-source: #222027;
+  --color-settings-preview-surface-bottom-source: #17151a;
+  --color-settings-preview-deep-top-source: #131316;
+  --color-settings-preview-deep-bottom-source: #1a1a1e;
+  --color-settings-preview-raised-top-source: #18181c;
+  --color-settings-preview-raised-bottom-source: #1f1f24;
+  --color-settings-danger-soft-source: #f0b2a8;
+  --color-rating-star-source: #ffb800;
+  --color-recommendation-pill-light-source: #f5f3ff;
+  --color-recommendation-pill-ink-source: #141226;
+  --color-recommendation-pill-dark-source: #0f0c1e;
 }
 
 [data-theme="nocturne"] :where(.book-viewer, .novel-viewer) {

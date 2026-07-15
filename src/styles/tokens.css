@@ -374,7 +374,7 @@
   --color-splash-aura-far-source: var(--accent-dim);
   --color-splash-error-panel-top-source: var(--color-popover);
   --color-splash-error-panel-bottom-source: var(--color-background-void);
-  --color-splash-action-accent-source: var(--color-accent-interactive);
+  --color-splash-action-accent-source: var(--accent-bright);
   --color-splash-action-ink-source: var(--text-inverse);
   --color-splash-action-gradient-start-source: var(--accent-fg);
   --color-splash-action-gradient-end-source: var(--accent-bright);
@@ -388,7 +388,7 @@
   --color-settings-density-readout-source: var(--color-popover);
   --color-settings-selection-start-source: var(--accent-bright);
   --color-settings-selection-end-source: var(--accent);
-  --color-settings-selection-ink-source: var(--color-on-accent-strong);
+  --color-settings-selection-ink-source: var(--text-inverse);
   --color-settings-selection-shadow-source: var(--color-shadow-source);
   --color-settings-preview-surface-top-source: var(--color-popover);
   --color-settings-preview-surface-bottom-source: var(--color-background-void);
@@ -397,7 +397,7 @@
   --color-settings-preview-raised-top-source: var(--color-surface);
   --color-settings-preview-raised-bottom-source: var(--color-popover);
   --color-settings-danger-soft-source: var(--color-danger);
-  --color-rating-star-source: var(--color-status-warning-vivid-source);
+  --color-rating-star-source: var(--color-warning);
   --color-recommendation-pill-light-source: var(--text-primary);
   --color-recommendation-pill-ink-source: var(--text-inverse);
   --color-recommendation-pill-dark-source: var(--color-background-void);

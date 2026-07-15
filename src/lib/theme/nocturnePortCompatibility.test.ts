@@ -186,4 +186,22 @@ describe("Nocturne port compatibility contract", () => {
       expect(port).toContain(`var(${component})`);
     }
   });
+
+  test("limits exact port colors to the builtin Nocturne document", () => {
+    const nocturne = readProjectFile("src/styles/nocturne-theme.css");
+    const selector = '[data-theme="nocturne"]:not([data-custom-theme]) {';
+    const selectorStart = nocturne.indexOf(selector);
+    const selectorEnd = nocturne.indexOf("\n}", selectorStart);
+    const builtinBlock = nocturne.slice(selectorStart, selectorEnd);
+    const derivedSources = portDerivedSources(readProjectFile("src/styles/tokens.css"));
+
+    expect(selectorStart).toBeGreaterThan(-1);
+    expect(selectorEnd).toBeGreaterThan(selectorStart);
+    expect(derivedSources).toHaveLength(44);
+    for (const token of derivedSources) {
+      expect(builtinBlock).toMatch(new RegExp(`${token}\\s*:`));
+      expect(nocturne.slice(0, selectorStart)).not.toMatch(new RegExp(`${token}\\s*:`));
+      expect(nocturne.slice(selectorEnd + 2)).not.toMatch(new RegExp(`${token}\\s*:`));
+    }
+  });
 });
