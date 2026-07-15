@@ -32,6 +32,7 @@ const directColorPattern = new RegExp(
   `#[0-9a-f]{3,8}\\b|rgba?\\([^)]*\\)|hsla?\\([^)]*\\)|oklch\\([^)]*\\)|(?<![\\w-])(?:${cssNamedColors})(?![\\w-])`,
   "i",
 );
+const malformedSplitHexPattern = /#[0-9a-f]{3,7}\s+[a-f][0-9a-f]{0,4}\b/i;
 const unreferencedLegacyNocturneTokens = [
   "--n-bg",
   "--n-bg-top",
@@ -246,6 +247,14 @@ describe("final derived theme gate", () => {
   test("keeps every non-Syncd component token free of direct colors", () => {
     const offenders = componentDeclarations(`${tokensCss}\n${nocturneCss}`)
       .filter(({ value }) => directColorPattern.test(value))
+      .map(({ name, value }) => `${name}: ${value}`);
+
+    expect(offenders).toEqual([]);
+  });
+
+  test("rejects malformed split hex colors in theme declarations", () => {
+    const offenders = declarations(`${tokensCss}\n${nocturneCss}`)
+      .filter(({ value }) => malformedSplitHexPattern.test(value))
       .map(({ name, value }) => `${name}: ${value}`);
 
     expect(offenders).toEqual([]);

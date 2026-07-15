@@ -2772,5 +2772,12 @@ Categorias cobertas:
 - `pnpm build`: verde; permanece apenas o aviso conhecido de chunk acima de 500 kB.
 - `git diff --check`: verde, com avisos esperados de normalizacao LF/CRLF no Windows.
 - Shadows e highlights absolutos continuam intencionalmente fora da autoria V4; focus shadow agora acompanha o accent. Uma futura decisao de editar as demais tintas absolutas exige ampliar o contrato, migracao de documentos e validacao de contraste.
-- Existe um literal preexistente suspeito em uma paleta builtin de `tokens.css` (`--text-disabled: #b0ac a4`). Ele nao participa da correcao de focus deste gate e deve ser validado em correcao isolada, sem misturar escopos.
+- O literal preexistente suspeito em `tokens.css` (`--text-disabled: #b0ac a4`) foi separado para correcao isolada apos este gate, sem misturar escopos.
 - Syncd, `--n-*`, aliases Legacy e componentes Legacy continuam fora deste marco e preservados para a auditoria futura ja registrada.
+
+## Correcao isolada - Light Contrast split hex
+
+- Escopo: corrigir apenas a declaracao builtin `--text-disabled` de `light-contrast`, que estava escrita como `#b0ac a4` e portanto era invalida.
+- Correcao: o valor passou a `#b0aca4`, alinhado ao token de borda da mesma paleta e sem alterar Nocturne.
+- Gate adicionado: `themeGate.test.ts` agora rejeita hex quebrado por espaco em declaracoes de tema, evitando regressao semelhante.
+- Nenhum token Legacy, `--n-*`, Syncd ou componente visual foi removido ou migrado nesta correcao.
