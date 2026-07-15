@@ -14,12 +14,13 @@ use super::models::{
     canonical_novel_identity_key, canonical_novel_identity_key_from_source, AuthenticatedSession,
     BookBookmarkPatch, BookBookmarkRecord, BookBookmarkRow, BookCategoryAssignmentPatch,
     BookCategoryAssignmentRecord, BookCategoryAssignmentRow, BookCategoryPatch, BookCategoryRecord,
-    BookCategoryRow, BookEntryPatch, BookEntryRecord, BookEntryRow, BookLibraryUiPatch,
-    BookLibraryUiRecord, BookLibraryUiRow, BookProgressPatch, BookProgressRecord, BookProgressRow,
-    ChangeEnvelope, ChangeLogRow, ComicHistoryPatch, ComicHistoryRecord, ComicHistoryRow,
-    ComicPageBookmarkPatch, ComicPageBookmarkRecord, ComicPageBookmarkRow, MutationOperation,
-    MutationReceiptContext, MutationResult, MutationResultStatus, NovelBookmarkPatch,
-    NovelBookmarkRecord, NovelBookmarkRow, NovelChapterPatch, NovelChapterRecord, NovelChapterRow,
+    BookCategoryRow, BookEntryPatch, BookEntryRecord, BookEntryRow, BookHistoryPatch,
+    BookHistoryRecord, BookHistoryRow, BookLibraryUiPatch, BookLibraryUiRecord, BookLibraryUiRow,
+    BookProgressPatch, BookProgressRecord, BookProgressRow, ChangeEnvelope, ChangeLogRow,
+    ComicHistoryPatch, ComicHistoryRecord, ComicHistoryRow, ComicPageBookmarkPatch,
+    ComicPageBookmarkRecord, ComicPageBookmarkRow, MutationOperation, MutationReceiptContext,
+    MutationResult, MutationResultStatus, NovelBookmarkPatch, NovelBookmarkRecord,
+    NovelBookmarkRow, NovelChapterPatch, NovelChapterRecord, NovelChapterRow,
     NovelClassificationPatch, NovelClassificationRecord, NovelClassificationRow, NovelEntryPatch,
     NovelEntryRecord, NovelEntryRow, NovelHistoryPatch, NovelHistoryRecord, NovelHistoryRow,
     NovelProgressPatch, NovelProgressRecord, NovelProgressRow, PairingGrantVia, PairingPlatform,
@@ -447,6 +448,26 @@ pub async fn load_scope_snapshot(
                 server_version,
                 lamport,
                 BookBookmarkRecord::from(row),
+            )?;
+        }
+
+        let rows = sqlx::query_as::<_, BookHistoryRow>(
+            "SELECT * FROM book_history WHERE scope_id = ? ORDER BY history_id",
+        )
+        .bind(scope_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in rows {
+            let entity_id = row.history_id.clone();
+            let server_version = row.record_server_version;
+            let lamport = row.record_lamport;
+            push_snapshot_entity(
+                &mut entities,
+                "book.history",
+                entity_id,
+                server_version,
+                lamport,
+                BookHistoryRecord::from(row),
             )?;
         }
     } else if scope_id.starts_with("novels:profile:") {
@@ -3194,6 +3215,102 @@ pub async fn apply_novel_bookmark_mutation(
     })
 }
 
+pub async fn apply_book_history_mutation(
+    pool: &sqlx::SqlitePool,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_id: &str,
+    patch: &BookHistoryPatch,
+    client_lamport: i64,
+    retention_window: Duration,
+) -> anyhow::Result<MutationWriteOutcome> {
+    let mut tx = pool.begin().await?;
+    let current = sqlx::query_as::<_, BookHistoryRow>(
+        "SELECT * FROM book_history WHERE scope_id = ? AND history_id = ?",
+    )
+    .bind(scope_id)
+    .bind(entity_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "book.history", entity_id).await?;
+    if let Some(tombstone) = tombstone.as_ref() {
+        ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
+    }
+
+    let merged = merge_book_history(current.map(Into::into), entity_id, patch, client_lamport)?;
+    let record = serde_json::to_value(&merged)?;
+    let (server_version, applied_at_ms) = append_change_log_in_tx(
+        &mut tx,
+        scope_id,
+        None,
+        "book.history",
+        entity_id,
+        "merge",
+        merged.record_lamport,
+        session,
+        Some(&record),
+        retention_window,
+    )
+    .await?;
+
+    sqlx::query(
+        r#"INSERT INTO book_history (
+            scope_id, history_id, book_id, renderer, location, href, page_index,
+            progress_percent, section_label, read_at_ms, record_updated_at_ms,
+            record_updated_by_device_id, record_lamport, record_server_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(scope_id, history_id) DO UPDATE SET
+            book_id = excluded.book_id,
+            renderer = excluded.renderer,
+            location = excluded.location,
+            href = excluded.href,
+            page_index = excluded.page_index,
+            progress_percent = excluded.progress_percent,
+            section_label = excluded.section_label,
+            read_at_ms = excluded.read_at_ms,
+            record_updated_at_ms = excluded.record_updated_at_ms,
+            record_updated_by_device_id = excluded.record_updated_by_device_id,
+            record_lamport = excluded.record_lamport,
+            record_server_version = excluded.record_server_version"#,
+    )
+    .bind(scope_id)
+    .bind(entity_id)
+    .bind(&merged.book_id)
+    .bind(merged.renderer.as_deref())
+    .bind(merged.location.as_deref())
+    .bind(merged.href.as_deref())
+    .bind(merged.page_index)
+    .bind(merged.progress_percent)
+    .bind(merged.section_label.as_deref())
+    .bind(merged.read_at_ms)
+    .bind(applied_at_ms)
+    .bind(&session.device_id)
+    .bind(merged.record_lamport)
+    .bind(server_version)
+    .execute(&mut *tx)
+    .await?;
+    if tombstone.is_some() {
+        delete_tombstone_in_tx(&mut tx, scope_id, "book.history", entity_id).await?;
+    }
+    tx.commit().await?;
+
+    Ok(MutationWriteOutcome {
+        envelope: ChangeEnvelope {
+            server_version,
+            scope_id: scope_id.to_string(),
+            profile_id: None,
+            entity_type: "book.history".to_string(),
+            entity_id: entity_id.to_string(),
+            op: "merge".to_string(),
+            lamport: merged.record_lamport,
+            patch: Some(record.clone()),
+            applied_at_ms,
+        },
+        record,
+        applied_lamport: merged.record_lamport,
+    })
+}
+
 pub async fn delete_book_bookmark_mutation(
     pool: &sqlx::SqlitePool,
     session: &AuthenticatedSession,
@@ -3325,6 +3442,74 @@ pub async fn delete_novel_bookmark_mutation(
             scope_id: scope_id.to_string(),
             profile_id: Some(session.profile_id.clone()),
             entity_type: "novel.bookmark".to_string(),
+            entity_id: entity_id.to_string(),
+            op: "delete".to_string(),
+            lamport: applied_lamport,
+            patch: None,
+            applied_at_ms,
+        },
+        record: Value::Null,
+        applied_lamport,
+    })
+}
+
+pub async fn delete_book_history_mutation(
+    pool: &sqlx::SqlitePool,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_id: &str,
+    client_lamport: i64,
+    retention_window: Duration,
+) -> anyhow::Result<MutationWriteOutcome> {
+    let mut tx = pool.begin().await?;
+    let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "book.history", entity_id).await?;
+    if let Some(tombstone) = tombstone.as_ref() {
+        ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
+    }
+    sqlx::query("DELETE FROM book_history WHERE scope_id = ? AND history_id = ?")
+        .bind(scope_id)
+        .bind(entity_id)
+        .execute(&mut *tx)
+        .await?;
+    let applied_lamport = tombstone
+        .as_ref()
+        .map(|value| next_lamport(value.lamport, client_lamport))
+        .unwrap_or(client_lamport);
+    let (server_version, applied_at_ms) = append_change_log_in_tx(
+        &mut tx,
+        scope_id,
+        None,
+        "book.history",
+        entity_id,
+        "delete",
+        applied_lamport,
+        session,
+        None,
+        retention_window,
+    )
+    .await?;
+    upsert_tombstone_in_tx(
+        &mut tx,
+        scope_id,
+        None,
+        "book.history",
+        entity_id,
+        &session.device_id,
+        applied_lamport,
+        applied_at_ms,
+        server_version,
+        retention_window,
+        "book_history_deleted",
+    )
+    .await?;
+    tx.commit().await?;
+
+    Ok(MutationWriteOutcome {
+        envelope: ChangeEnvelope {
+            server_version,
+            scope_id: scope_id.to_string(),
+            profile_id: None,
+            entity_type: "book.history".to_string(),
             entity_id: entity_id.to_string(),
             op: "delete".to_string(),
             lamport: applied_lamport,
@@ -4337,6 +4522,49 @@ fn merge_novel_bookmark(
             NovelBookmarkRecord {
                 record_lamport: applied_lamport,
                 ..winner
+            }
+        }
+    })
+}
+
+fn merge_book_history(
+    current: Option<BookHistoryRecord>,
+    entity_id: &str,
+    patch: &BookHistoryPatch,
+    client_lamport: i64,
+) -> anyhow::Result<BookHistoryRecord> {
+    anyhow::ensure!(
+        patch.history_id == entity_id,
+        "book history patch history_id must match entity_id"
+    );
+    let incoming = BookHistoryRecord {
+        history_id: entity_id.to_string(),
+        book_id: patch.book_id.clone(),
+        renderer: normalize_book_renderer(
+            patch.renderer.as_deref(),
+            patch.location.as_deref(),
+            patch.href.as_deref(),
+            patch.page_index,
+        )?,
+        location: normalize_optional_string(patch.location.as_deref()),
+        href: normalize_optional_string(patch.href.as_deref()),
+        page_index: patch.page_index,
+        progress_percent: patch.progress_percent,
+        section_label: normalize_optional_string(patch.section_label.as_deref()),
+        read_at_ms: patch.read_at_ms,
+        record_lamport: client_lamport,
+    };
+
+    Ok(match current {
+        None => incoming,
+        Some(existing) => {
+            anyhow::ensure!(
+                existing.book_id == incoming.book_id,
+                "book history entries cannot move between books"
+            );
+            BookHistoryRecord {
+                record_lamport: next_lamport(existing.record_lamport, client_lamport),
+                ..incoming
             }
         }
     })

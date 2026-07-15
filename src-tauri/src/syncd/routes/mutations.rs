@@ -8,11 +8,12 @@ use crate::syncd::db;
 use crate::syncd::middleware::validate_scope;
 use crate::syncd::models::{
     AppError, AuthenticatedSession, BookBookmarkPatch, BookCategoryAssignmentPatch,
-    BookCategoryPatch, BookEntryPatch, BookLibraryUiPatch, BookProgressPatch, ComicHistoryPatch,
-    ComicPageBookmarkPatch, ErrorDetail, MutationEntityType, MutationInput, MutationOperation,
-    MutationReceiptContext, MutationResult, MutationResultStatus, MutationsRequest,
-    MutationsResponse, NovelBookmarkPatch, NovelChapterPatch, NovelClassificationPatch,
-    NovelEntryPatch, NovelHistoryPatch, NovelProgressPatch, SharedAppState,
+    BookCategoryPatch, BookEntryPatch, BookHistoryPatch, BookLibraryUiPatch, BookProgressPatch,
+    ComicHistoryPatch, ComicPageBookmarkPatch, ErrorDetail, MutationEntityType, MutationInput,
+    MutationOperation, MutationReceiptContext, MutationResult, MutationResultStatus,
+    MutationsRequest, MutationsResponse, NovelBookmarkPatch, NovelChapterPatch,
+    NovelClassificationPatch, NovelEntryPatch, NovelHistoryPatch, NovelProgressPatch,
+    SharedAppState,
 };
 
 pub async fn post_mutations(
@@ -415,6 +416,67 @@ pub async fn post_mutations(
                             ));
                         }
                     }
+                }
+            },
+            MutationInput::BookHistory { base, patch } => match base.op {
+                MutationOperation::Merge => {
+                    let Some(patch) = patch.as_ref() else {
+                        results.push(rejected_result(
+                            &mutation,
+                            error_detail(
+                                "MISSING_PATCH",
+                                "Book history merge mutations must include a patch.",
+                                None,
+                            ),
+                        ));
+                        continue;
+                    };
+                    if let Some(error) = validate_book_history_patch(&base.entity_id, patch) {
+                        results.push(rejected_result(&mutation, error));
+                        continue;
+                    }
+                    db::apply_book_history_mutation(
+                        &state.pool,
+                        &session,
+                        &base.scope_id,
+                        &base.entity_id,
+                        patch,
+                        base.lamport,
+                        state.config.retention_window,
+                    )
+                    .await
+                    .map_err(|error| {
+                        AppError::Internal(format!(
+                            "Failed to persist book history mutation: {error}"
+                        ))
+                    })?
+                }
+                MutationOperation::Delete => {
+                    if patch.is_some() {
+                        results.push(rejected_result(
+                            &mutation,
+                            error_detail(
+                                "DELETE_PATCH_NOT_ALLOWED",
+                                "Book history delete mutations must not include a patch.",
+                                None,
+                            ),
+                        ));
+                        continue;
+                    }
+                    db::delete_book_history_mutation(
+                        &state.pool,
+                        &session,
+                        &base.scope_id,
+                        &base.entity_id,
+                        base.lamport,
+                        state.config.retention_window,
+                    )
+                    .await
+                    .map_err(|error| {
+                        AppError::Internal(format!(
+                            "Failed to delete book history mutation: {error}"
+                        ))
+                    })?
                 }
             },
             MutationInput::NovelEntry { base, patch } => match base.op {
@@ -1046,7 +1108,8 @@ fn validate_mutation_base(
         | MutationEntityType::BookCategoryAssignment
         | MutationEntityType::BookLibraryUi
         | MutationEntityType::BookProgress
-        | MutationEntityType::BookBookmark => {
+        | MutationEntityType::BookBookmark
+        | MutationEntityType::BookHistory => {
             if scope_id != "books:global" {
                 return Some(error_detail(
                     "INVALID_SCOPE_FOR_ENTITY",
@@ -1263,6 +1326,42 @@ fn validate_book_bookmark_patch(patch: &BookBookmarkPatch) -> Option<ErrorDetail
     }
     validate_progress_value(patch.progress_percent)
         .or_else(|| validate_non_negative_timestamp(patch.saved_at_ms, "savedAtMs"))
+}
+
+fn validate_book_history_patch(entity_id: &str, patch: &BookHistoryPatch) -> Option<ErrorDetail> {
+    if patch.history_id != entity_id {
+        return Some(error_detail(
+            "ENTITY_ID_MISMATCH",
+            "Book history patch historyId must exactly match entityId.",
+            Some(json!({
+                "entityId": entity_id,
+                "historyId": patch.history_id,
+            })),
+        ));
+    }
+    if patch.book_id.trim().is_empty() {
+        return Some(error_detail(
+            "INVALID_BOOK_ID",
+            "Book history patch must include a non-empty bookId.",
+            None,
+        ));
+    }
+    if !matches!(patch.renderer.as_deref(), None | Some("epub") | Some("pdf")) {
+        return Some(error_detail(
+            "INVALID_RENDERER",
+            "Book history renderer must be 'epub' or 'pdf'.",
+            Some(json!({ "receivedRenderer": patch.renderer })),
+        ));
+    }
+    if patch.page_index.is_some_and(|page| page < 0) {
+        return Some(error_detail(
+            "INVALID_PAGE_INDEX",
+            "Book history pageIndex must be zero or greater.",
+            Some(json!({ "receivedPageIndex": patch.page_index })),
+        ));
+    }
+    validate_progress_value(patch.progress_percent)
+        .or_else(|| validate_non_negative_timestamp(patch.read_at_ms, "readAtMs"))
 }
 
 fn validate_novel_bookmark_patch(patch: &NovelBookmarkPatch) -> Option<ErrorDetail> {

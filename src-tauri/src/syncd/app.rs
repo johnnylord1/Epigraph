@@ -564,6 +564,25 @@ mod tests {
                         "label": "Start",
                         "savedAtMs": 2000
                     }
+                },
+                {
+                    "entityType": "book.history",
+                    "clientMutationId": "book-history-1",
+                    "scopeId": "books:global",
+                    "entityId": "history-1",
+                    "op": "merge",
+                    "lamport": 1,
+                    "patch": {
+                        "historyId": "history-1",
+                        "bookId": "book-1",
+                        "renderer": "epub",
+                        "location": "epubcfi(/6/2)",
+                        "href": "chapter-1.xhtml",
+                        "pageIndex": null,
+                        "progressPercent": 0.25,
+                        "sectionLabel": "Chapter 1",
+                        "readAtMs": 2000
+                    }
                 }
             ]
         })
@@ -713,7 +732,7 @@ mod tests {
         assert_eq!(payload["supportsAssets"], true);
         assert_eq!(payload["snapshotSchemaVersion"], 1);
         let entity_types = payload["snapshotEntityTypes"].as_array().unwrap();
-        assert_eq!(entity_types.len(), 14);
+        assert_eq!(entity_types.len(), 15);
         assert!(entity_types.iter().any(|value| value == "comic.history"));
         assert!(entity_types
             .iter()
@@ -841,7 +860,7 @@ mod tests {
         .await;
 
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(payload["snapshotVersion"], 6);
+        assert_eq!(payload["snapshotVersion"], 7);
         let entities = payload["entities"].as_array().unwrap();
         let entity_types = entities
             .iter()
@@ -856,12 +875,103 @@ mod tests {
                 "book.library_ui",
                 "book.progress",
                 "book.bookmark",
+                "book.history",
             ]
         );
         assert_eq!(entities[0]["record"]["title"], "Book One");
         assert!(entities.iter().all(|entity| entity["serverVersion"]
             .as_i64()
-            .is_some_and(|version| version <= 6)));
+            .is_some_and(|version| version <= 7)));
+    }
+
+    #[tokio::test]
+    async fn book_history_delete_replays_and_is_snapshotted_as_tombstone() {
+        let (_temp, state) = build_state_for_http().await;
+        ensure_test_token(
+            &state.pool,
+            "device-a",
+            "main",
+            &token_hash("secret-token"),
+            &["books:global"],
+        )
+        .await
+        .unwrap();
+        let app = build_test_router(state);
+        let (seed_status, seed_payload) = request_json(
+            &app,
+            Method::POST,
+            "/v1/mutations",
+            Some("secret-token"),
+            Some(complete_book_mutations()),
+        )
+        .await;
+        assert_eq!(seed_status, StatusCode::OK);
+        assert_eq!(seed_payload["results"][6]["entityType"], "book.history");
+        assert_eq!(
+            seed_payload["results"][6]["record"]["historyId"],
+            "history-1"
+        );
+
+        let (delete_status, delete_payload) = request_json(
+            &app,
+            Method::POST,
+            "/v1/mutations",
+            Some("secret-token"),
+            Some(serde_json::json!({
+                "requestId": "delete-book-history",
+                "mutations": [{
+                    "entityType": "book.history",
+                    "clientMutationId": "delete-book-history-1",
+                    "scopeId": "books:global",
+                    "entityId": "history-1",
+                    "op": "delete",
+                    "lamport": 2
+                }]
+            })),
+        )
+        .await;
+        assert_eq!(delete_status, StatusCode::OK);
+        assert_eq!(delete_payload["results"][0]["status"], "applied");
+        let delete_version = delete_payload["results"][0]["appliedServerVersion"]
+            .as_i64()
+            .unwrap();
+
+        let (changes_status, changes) = request_json(
+            &app,
+            Method::GET,
+            "/v1/changes?sinceVersion=7&scopeId=books%3Aglobal",
+            Some("secret-token"),
+            None,
+        )
+        .await;
+        assert_eq!(changes_status, StatusCode::OK);
+        assert_eq!(changes["changes"][0]["entityType"], "book.history");
+        assert_eq!(changes["changes"][0]["op"], "delete");
+        assert_eq!(changes["changes"][0]["serverVersion"], delete_version);
+
+        let (snapshot_status, snapshot) = request_json(
+            &app,
+            Method::GET,
+            "/v1/snapshot?scopeId=books%3Aglobal",
+            Some("secret-token"),
+            None,
+        )
+        .await;
+        assert_eq!(snapshot_status, StatusCode::OK);
+        assert!(!snapshot["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entity| {
+                entity["entityType"] == "book.history" && entity["entityId"] == "history-1"
+            }));
+        assert!(snapshot["tombstones"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entity| {
+                entity["entityType"] == "book.history" && entity["entityId"] == "history-1"
+            }));
     }
 
     #[tokio::test]
