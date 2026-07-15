@@ -732,7 +732,11 @@ mod tests {
         assert_eq!(payload["supportsAssets"], true);
         assert_eq!(payload["snapshotSchemaVersion"], 1);
         let entity_types = payload["snapshotEntityTypes"].as_array().unwrap();
-        assert_eq!(entity_types.len(), 15);
+        assert_eq!(entity_types.len(), 17);
+        assert!(entity_types.iter().any(|value| value == "novel.category"));
+        assert!(entity_types
+            .iter()
+            .any(|value| value == "novel.category_assignment"));
         assert!(entity_types.iter().any(|value| value == "comic.history"));
         assert!(entity_types
             .iter()

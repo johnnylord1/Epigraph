@@ -7,13 +7,13 @@ use std::collections::{BTreeMap, HashMap};
 use crate::syncd::db;
 use crate::syncd::middleware::validate_scope;
 use crate::syncd::models::{
-    AppError, AuthenticatedSession, BookBookmarkPatch, BookCategoryAssignmentPatch,
-    BookCategoryPatch, BookEntryPatch, BookHistoryPatch, BookLibraryUiPatch, BookProgressPatch,
-    ComicHistoryPatch, ComicPageBookmarkPatch, ErrorDetail, MutationEntityType, MutationInput,
-    MutationOperation, MutationReceiptContext, MutationResult, MutationResultStatus,
-    MutationsRequest, MutationsResponse, NovelBookmarkPatch, NovelChapterPatch,
-    NovelClassificationPatch, NovelEntryPatch, NovelHistoryPatch, NovelProgressPatch,
-    SharedAppState,
+    canonical_novel_category_assignment_id, AppError, AuthenticatedSession, BookBookmarkPatch,
+    BookCategoryAssignmentPatch, BookCategoryPatch, BookEntryPatch, BookHistoryPatch,
+    BookLibraryUiPatch, BookProgressPatch, ComicHistoryPatch, ComicPageBookmarkPatch, ErrorDetail,
+    MutationEntityType, MutationInput, MutationOperation, MutationReceiptContext, MutationResult,
+    MutationResultStatus, MutationsRequest, MutationsResponse, NovelBookmarkPatch,
+    NovelCategoryAssignmentPatch, NovelCategoryPatch, NovelChapterPatch, NovelClassificationPatch,
+    NovelEntryPatch, NovelHistoryPatch, NovelProgressPatch, SharedAppState,
 };
 
 pub async fn post_mutations(
@@ -539,7 +539,7 @@ pub async fn post_mutations(
                                 ))
                             })?;
                     set_canonical_receipt(&mut session, &base.entity_id, &canonical_entity_id);
-                    db::delete_novel_entry_mutation(
+                    match db::delete_novel_entry_mutation(
                         &state.pool,
                         &session,
                         &base.scope_id,
@@ -548,11 +548,18 @@ pub async fn post_mutations(
                         state.config.retention_window,
                     )
                     .await
-                    .map_err(|error| {
-                        AppError::Internal(format!(
-                            "Failed to delete novel entry mutation: {error}"
-                        ))
-                    })?
+                    {
+                        Ok(outcome) => outcome,
+                        Err(error) => {
+                            if let Some(error) = novel_category_persist_error_detail(error) {
+                                results.push(rejected_result(&mutation, error));
+                                continue;
+                            }
+                            return Err(AppError::Internal(
+                                "Failed to delete novel entry mutation.".to_string(),
+                            ));
+                        }
+                    }
                 }
             },
             MutationInput::NovelChapter { base, patch } => match base.op {
@@ -796,6 +803,196 @@ pub async fn post_mutations(
                         "Failed to delete novel classification mutation: {error}"
                     ))
                 })?,
+            },
+            MutationInput::NovelCategory { base, patch } => match base.op {
+                MutationOperation::Merge => {
+                    let Some(patch) = patch.as_ref() else {
+                        results.push(rejected_result(
+                            &mutation,
+                            error_detail(
+                                "MISSING_PATCH",
+                                "Novel category merge mutations must include a patch.",
+                                None,
+                            ),
+                        ));
+                        continue;
+                    };
+                    if let Some(error) = validate_novel_category_patch(&base.entity_id, patch) {
+                        results.push(rejected_result(&mutation, error));
+                        continue;
+                    }
+                    match db::apply_novel_category_mutation(
+                        &state.pool,
+                        &session,
+                        &base.scope_id,
+                        &base.entity_id,
+                        patch,
+                        base.lamport,
+                        state.config.retention_window,
+                    )
+                    .await
+                    {
+                        Ok(outcome) => outcome,
+                        Err(error) => {
+                            if let Some(error) = novel_category_persist_error_detail(error) {
+                                results.push(rejected_result(&mutation, error));
+                                continue;
+                            }
+                            return Err(AppError::Internal(
+                                "Failed to persist novel category mutation.".to_string(),
+                            ));
+                        }
+                    }
+                }
+                MutationOperation::Delete => {
+                    if patch.is_some() {
+                        results.push(rejected_result(
+                            &mutation,
+                            error_detail(
+                                "DELETE_PATCH_NOT_ALLOWED",
+                                "Novel category delete mutations must not include a patch.",
+                                None,
+                            ),
+                        ));
+                        continue;
+                    }
+                    match db::delete_novel_category_mutation(
+                        &state.pool,
+                        &session,
+                        &base.scope_id,
+                        &base.entity_id,
+                        base.lamport,
+                        state.config.retention_window,
+                    )
+                    .await
+                    {
+                        Ok(outcome) => outcome,
+                        Err(error) => {
+                            if let Some(error) = novel_category_persist_error_detail(error) {
+                                results.push(rejected_result(&mutation, error));
+                                continue;
+                            }
+                            return Err(AppError::Internal(
+                                "Failed to delete novel category mutation.".to_string(),
+                            ));
+                        }
+                    }
+                }
+            },
+            MutationInput::NovelCategoryAssignment { base, patch } => match base.op {
+                MutationOperation::Merge => {
+                    let Some(patch) = patch.as_ref() else {
+                        results.push(rejected_result(
+                            &mutation,
+                            error_detail(
+                                "MISSING_PATCH",
+                                "Novel category assignment merge mutations must include a patch.",
+                                None,
+                            ),
+                        ));
+                        continue;
+                    };
+                    if let Some(error) =
+                        validate_novel_category_assignment_patch(&base.entity_id, patch)
+                    {
+                        results.push(rejected_result(&mutation, error));
+                        continue;
+                    }
+                    let mut canonical_patch = patch.clone();
+                    canonical_patch.novel_id =
+                        db::resolve_novel_entity_id(&state.pool, &base.scope_id, &patch.novel_id)
+                            .await
+                            .map_err(|error| {
+                                AppError::Internal(format!(
+                                    "Failed to resolve novel category assignment owner: {error}"
+                                ))
+                            })?;
+                    let canonical_assignment_id = canonical_novel_category_assignment_id(
+                        &canonical_patch.novel_id,
+                        &canonical_patch.category_id,
+                    );
+                    let requested_assignment_id =
+                        canonical_novel_category_assignment_id(&patch.novel_id, &patch.category_id);
+                    let uses_requested_identity = base.entity_id == requested_assignment_id
+                        && canonical_patch.assignment_id == requested_assignment_id;
+                    let uses_canonical_identity = base.entity_id == canonical_assignment_id
+                        && canonical_patch.assignment_id == canonical_assignment_id;
+                    if !uses_requested_identity && !uses_canonical_identity {
+                        results.push(rejected_result(
+                            &mutation,
+                            error_detail(
+                                "NON_CANONICAL_ASSIGNMENT_ID",
+                                "Novel category assignmentId must be the canonical SHA-256 identity for novelId and categoryId.",
+                                Some(json!({
+                                    "expectedAssignmentId": canonical_assignment_id,
+                                    "receivedEntityId": base.entity_id,
+                                    "receivedAssignmentId": canonical_patch.assignment_id,
+                                    "canonicalNovelId": canonical_patch.novel_id,
+                                    "categoryId": canonical_patch.category_id,
+                                })),
+                            ),
+                        ));
+                        continue;
+                    }
+                    canonical_patch.assignment_id = canonical_assignment_id.clone();
+                    set_canonical_receipt(&mut session, &base.entity_id, &canonical_assignment_id);
+                    match db::apply_novel_category_assignment_mutation(
+                        &state.pool,
+                        &session,
+                        &base.scope_id,
+                        &canonical_assignment_id,
+                        &canonical_patch,
+                        base.lamport,
+                        state.config.retention_window,
+                    )
+                    .await
+                    {
+                        Ok(outcome) => outcome,
+                        Err(error) => {
+                            if let Some(error) = novel_category_persist_error_detail(error) {
+                                results.push(rejected_result(&mutation, error));
+                                continue;
+                            }
+                            return Err(AppError::Internal(
+                                "Failed to persist novel category assignment mutation.".to_string(),
+                            ));
+                        }
+                    }
+                }
+                MutationOperation::Delete => {
+                    if patch.is_some() {
+                        results.push(rejected_result(
+                            &mutation,
+                            error_detail(
+                                "DELETE_PATCH_NOT_ALLOWED",
+                                "Novel category assignment delete mutations must not include a patch.",
+                                None,
+                            ),
+                        ));
+                        continue;
+                    }
+                    match db::delete_novel_category_assignment_mutation(
+                        &state.pool,
+                        &session,
+                        &base.scope_id,
+                        &base.entity_id,
+                        base.lamport,
+                        state.config.retention_window,
+                    )
+                    .await
+                    {
+                        Ok(outcome) => outcome,
+                        Err(error) => {
+                            if let Some(error) = novel_category_persist_error_detail(error) {
+                                results.push(rejected_result(&mutation, error));
+                                continue;
+                            }
+                            return Err(AppError::Internal(
+                                "Failed to delete novel category assignment mutation.".to_string(),
+                            ));
+                        }
+                    }
+                }
             },
             MutationInput::ComicHistory { base, patch } => match base.op {
                 MutationOperation::Merge => {
@@ -1127,7 +1324,9 @@ fn validate_mutation_base(
         | MutationEntityType::NovelHistory
         | MutationEntityType::NovelProgress
         | MutationEntityType::NovelBookmark
-        | MutationEntityType::NovelClassification => {
+        | MutationEntityType::NovelClassification
+        | MutationEntityType::NovelCategory
+        | MutationEntityType::NovelCategoryAssignment => {
             if !scope_id.starts_with("novels:profile:") {
                 return Some(error_detail(
                     "INVALID_SCOPE_FOR_ENTITY",
@@ -1411,6 +1610,69 @@ fn validate_novel_classification_patch(patch: &NovelClassificationPatch) -> Opti
     validate_non_negative_timestamp(patch.classified_at_ms, "classifiedAtMs")
 }
 
+fn validate_novel_category_patch(
+    entity_id: &str,
+    patch: &NovelCategoryPatch,
+) -> Option<ErrorDetail> {
+    validate_stable_id("categoryId", entity_id, &patch.category_id).or_else(|| {
+        if patch.order < 0 {
+            return Some(error_detail(
+                "INVALID_CATEGORY_ORDER",
+                "Novel category order must be zero or greater.",
+                Some(json!({ "receivedOrder": patch.order })),
+            ));
+        }
+        let name = patch.name.trim();
+        if name.is_empty() || name.len() > 256 || name.contains('\0') {
+            Some(error_detail(
+                "INVALID_CATEGORY_NAME",
+                "Novel category name must be non-empty, at most 256 bytes, and contain no NUL.",
+                None,
+            ))
+        } else {
+            None
+        }
+    })
+}
+
+fn validate_novel_category_assignment_patch(
+    entity_id: &str,
+    patch: &NovelCategoryAssignmentPatch,
+) -> Option<ErrorDetail> {
+    validate_stable_id("assignmentId", entity_id, &patch.assignment_id)
+        .or_else(|| validate_identifier("novelId", &patch.novel_id))
+        .or_else(|| validate_identifier("categoryId", &patch.category_id))
+}
+
+fn validate_stable_id(field: &str, entity_id: &str, value: &str) -> Option<ErrorDetail> {
+    if value != entity_id {
+        return Some(error_detail(
+            "ENTITY_ID_MISMATCH",
+            &format!("Novel category mutation {field} must exactly match entityId."),
+            Some(json!({
+                "field": field,
+                "entityId": entity_id,
+                "receivedId": value,
+            })),
+        ));
+    }
+    validate_identifier(field, value)
+}
+
+fn validate_identifier(field: &str, value: &str) -> Option<ErrorDetail> {
+    if value.trim().is_empty() || value != value.trim() || value.len() > 512 || value.contains('\0')
+    {
+        return Some(error_detail(
+            "INVALID_IDENTIFIER",
+            &format!(
+                "Novel category mutation {field} must be non-empty, at most 512 bytes, and contain no NUL."
+            ),
+            Some(json!({ "field": field })),
+        ));
+    }
+    None
+}
+
 fn validate_comic_history_patch(entity_id: &str, patch: &ComicHistoryPatch) -> Option<ErrorDetail> {
     validate_payload_identity("historyId", entity_id, &patch.history_id)
         .or_else(|| validate_comic_media_key(&patch.comic_id))
@@ -1613,6 +1875,43 @@ fn comic_state_persist_error_detail(error: anyhow::Error) -> Option<ErrorDetail>
         Some(error_detail("PARENT_ID_MISMATCH", &message, None))
     } else if message.contains("must match entity_id") {
         Some(error_detail("ENTITY_ID_MISMATCH", &message, None))
+    } else {
+        None
+    }
+}
+
+fn novel_category_persist_error_detail(error: anyhow::Error) -> Option<ErrorDetail> {
+    let message = error.to_string();
+    if message.contains("stale novel category mutation rejected by tombstone lamport") {
+        Some(error_detail(
+            "STALE_NOVEL_CATEGORY_MUTATION",
+            &message,
+            None,
+        ))
+    } else if message.contains("references missing novel") {
+        Some(error_detail("NOVEL_NOT_FOUND", &message, None))
+    } else if message.contains("references missing category") {
+        Some(error_detail("NOVEL_CATEGORY_NOT_FOUND", &message, None))
+    } else if message.contains("still referenced by active") {
+        Some(error_detail(
+            "NOVEL_CATEGORY_ASSIGNMENTS_EXIST",
+            &message,
+            None,
+        ))
+    } else if message.contains("must match entity_id") {
+        Some(error_detail("ENTITY_ID_MISMATCH", &message, None))
+    } else if message.contains("UNIQUE constraint failed") {
+        Some(error_detail(
+            "NOVEL_CATEGORY_ASSIGNMENT_EXISTS",
+            "A novel category assignment already exists for this novel and category.",
+            None,
+        ))
+    } else if message.contains("FOREIGN KEY constraint failed") {
+        Some(error_detail(
+            "NOVEL_CATEGORY_REFERENCE_INVALID",
+            "Novel category assignment references are no longer active.",
+            None,
+        ))
     } else {
         None
     }
@@ -4071,5 +4370,548 @@ mod tests {
                 .current_server_version,
             0
         );
+    }
+
+    #[tokio::test]
+    async fn concurrent_novel_category_assignments_converge_on_canonical_id() {
+        let (_temp, state) = build_state().await;
+        ensure_test_token(
+            &state.pool,
+            "device-secondary",
+            "main",
+            &token_hash("secondary-token"),
+            &["novels:profile:main"],
+        )
+        .await
+        .unwrap();
+        let app = build_test_router(state.clone());
+        let seed = json!({
+            "requestId": "novel-category-concurrent-seed",
+            "mutations": [
+                {
+                    "entityType": "novel.entry",
+                    "clientMutationId": "novel-category-concurrent-entry",
+                    "scopeId": "novels:profile:main",
+                    "entityId": "novel-1",
+                    "lamport": 1,
+                    "patch": {
+                        "identityKey": "novel-1",
+                        "title": "Novel One",
+                        "path": "/novel/1",
+                        "tags": [],
+                        "source": {},
+                        "addedAtMs": 1,
+                        "updatedAtMs": 1
+                    }
+                },
+                {
+                    "entityType": "novel.category",
+                    "clientMutationId": "novel-category-concurrent-category",
+                    "scopeId": "novels:profile:main",
+                    "entityId": "favorites",
+                    "lamport": 1,
+                    "patch": {"categoryId": "favorites", "name": "Favorites", "order": 0}
+                }
+            ]
+        });
+        let response = app
+            .clone()
+            .oneshot(request_with_json("/v1/mutations", "main-token", seed))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let assignment_id = canonical_novel_category_assignment_id("novel-1", "favorites");
+        let assignment = |request_id: &str, mutation_id: &str| {
+            json!({
+                "requestId": request_id,
+                "mutations": [{
+                    "entityType": "novel.category_assignment",
+                    "clientMutationId": mutation_id,
+                    "scopeId": "novels:profile:main",
+                    "entityId": assignment_id,
+                    "lamport": 1,
+                    "patch": {
+                        "assignmentId": assignment_id,
+                        "novelId": "novel-1",
+                        "categoryId": "favorites"
+                    }
+                }]
+            })
+        };
+        let first = app.clone().oneshot(request_with_json(
+            "/v1/mutations",
+            "main-token",
+            assignment("novel-category-concurrent-a", "novel-category-concurrent-a"),
+        ));
+        let second = app.clone().oneshot(request_with_json(
+            "/v1/mutations",
+            "secondary-token",
+            assignment("novel-category-concurrent-b", "novel-category-concurrent-b"),
+        ));
+        let (first, second) = tokio::join!(first, second);
+        let first = json_body(first.unwrap()).await;
+        let second = json_body(second.unwrap()).await;
+        assert_eq!(first["results"][0]["status"], "applied");
+        assert_eq!(second["results"][0]["status"], "applied");
+        assert_eq!(first["results"][0]["entityId"], assignment_id);
+        assert_eq!(second["results"][0]["entityId"], assignment_id);
+
+        let assignment_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM novel_category_assignments WHERE scope_id = ? AND novel_id = ? AND category_id = ?",
+        )
+        .bind("novels:profile:main")
+        .bind("novel-1")
+        .bind("favorites")
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+        assert_eq!(assignment_count, 1);
+
+        let noncanonical = json!({
+            "requestId": "novel-category-noncanonical",
+            "mutations": [{
+                "entityType": "novel.category_assignment",
+                "clientMutationId": "novel-category-noncanonical",
+                "scopeId": "novels:profile:main",
+                "entityId": "arbitrary-id",
+                "lamport": 2,
+                "patch": {
+                    "assignmentId": "arbitrary-id",
+                    "novelId": "novel-1",
+                    "categoryId": "favorites"
+                }
+            }]
+        });
+        let response = app
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                noncanonical,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            json_body(response).await["results"][0]["error"]["code"],
+            "NON_CANONICAL_ASSIGNMENT_ID"
+        );
+    }
+
+    #[tokio::test]
+    async fn novel_categories_are_referential_replayable_and_tombstone_safe() {
+        let (_temp, state) = build_state().await;
+        let app = build_test_router(state.clone());
+        let assignment_id = canonical_novel_category_assignment_id("novel-1", "favorites");
+        let seed = json!({
+            "requestId": "novel-category-seed",
+            "mutations": [
+                {
+                    "entityType": "novel.entry",
+                    "clientMutationId": "novel-category-entry",
+                    "scopeId": "novels:profile:main",
+                    "entityId": "novel-1",
+                    "lamport": 1,
+                    "patch": {
+                        "identityKey": "novel-1",
+                        "title": "Novel One",
+                        "path": "/novel/1",
+                        "tags": [],
+                        "source": {},
+                        "addedAtMs": 1,
+                        "updatedAtMs": 1
+                    }
+                },
+                {
+                    "entityType": "novel.category",
+                    "clientMutationId": "novel-category-create",
+                    "scopeId": "novels:profile:main",
+                    "entityId": "favorites",
+                    "lamport": 1,
+                    "patch": {
+                        "categoryId": "favorites",
+                        "name": "Favorites",
+                        "order": 0
+                    }
+                },
+                {
+                    "entityType": "novel.category_assignment",
+                    "clientMutationId": "novel-category-assign",
+                    "scopeId": "novels:profile:main",
+                    "entityId": assignment_id,
+                    "lamport": 1,
+                    "patch": {
+                        "assignmentId": assignment_id,
+                        "novelId": "novel-1",
+                        "categoryId": "favorites"
+                    }
+                }
+            ]
+        });
+        let response = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                seed.clone(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let seeded = json_body(response).await;
+        assert!(seeded["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|result| result["status"] == "applied"));
+        assert_eq!(seeded["currentServerVersion"], 3);
+
+        let response = app
+            .clone()
+            .oneshot(request_with_json("/v1/mutations", "main-token", seed))
+            .await
+            .unwrap();
+        let replay = json_body(response).await;
+        assert_eq!(replay["currentServerVersion"], 3);
+        assert_eq!(replay["results"][1]["appliedServerVersion"], 2);
+        assert_eq!(replay["results"][2]["appliedServerVersion"], 3);
+
+        let snapshot = app
+            .clone()
+            .oneshot(request_without_body(
+                "/v1/snapshot?scopeId=novels%3Aprofile%3Amain",
+                "main-token",
+                None,
+            ))
+            .await
+            .unwrap();
+        let snapshot = json_body(snapshot).await;
+        assert!(snapshot["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entity| {
+                entity["entityType"] == "novel.category"
+                    && entity["record"]["categoryId"] == "favorites"
+            }));
+        assert!(snapshot["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entity| {
+                entity["entityType"] == "novel.category_assignment"
+                    && entity["record"]["novelId"] == "novel-1"
+                    && entity["record"]["categoryId"] == "favorites"
+            }));
+
+        let changes = app
+            .clone()
+            .oneshot(request_without_body(
+                "/v1/changes?scopeId=novels%3Aprofile%3Amain&sinceVersion=0",
+                "main-token",
+                None,
+            ))
+            .await
+            .unwrap();
+        let changes = json_body(changes).await;
+        assert_eq!(changes["changes"][1]["entityType"], "novel.category");
+        assert_eq!(
+            changes["changes"][2]["entityType"],
+            "novel.category_assignment"
+        );
+
+        let events = app
+            .clone()
+            .oneshot(request_without_body(
+                "/v1/events?scopeId=novels:profile:main",
+                "main-token",
+                Some(0),
+            ))
+            .await
+            .unwrap();
+        let events = collect_sse_change_events(events, 3).await;
+        assert_eq!(events[1]["entityType"], "novel.category");
+        assert_eq!(events[2]["entityType"], "novel.category_assignment");
+
+        let blocked_parent_delete = json!({
+            "requestId": "novel-category-block-parent-delete",
+            "mutations": [{
+                "entityType": "novel.entry",
+                "clientMutationId": "novel-category-block-parent-delete",
+                "scopeId": "novels:profile:main",
+                "entityId": "novel-1",
+                "op": "delete",
+                "lamport": 2
+            }]
+        });
+        let response = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                blocked_parent_delete,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            json_body(response).await["results"][0]["error"]["code"],
+            "NOVEL_CATEGORY_ASSIGNMENTS_EXIST"
+        );
+
+        let blocked_category_delete = json!({
+            "requestId": "novel-category-block-category-delete",
+            "mutations": [{
+                "entityType": "novel.category",
+                "clientMutationId": "novel-category-block-category-delete",
+                "scopeId": "novels:profile:main",
+                "entityId": "favorites",
+                "op": "delete",
+                "lamport": 2
+            }]
+        });
+        let response = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                blocked_category_delete,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            json_body(response).await["results"][0]["error"]["code"],
+            "NOVEL_CATEGORY_ASSIGNMENTS_EXIST"
+        );
+
+        let delete_assignment = json!({
+            "requestId": "novel-category-delete-assignment",
+            "mutations": [{
+                "entityType": "novel.category_assignment",
+                "clientMutationId": "novel-category-delete-assignment",
+                "scopeId": "novels:profile:main",
+                "entityId": assignment_id,
+                "op": "delete",
+                "lamport": 2
+            }]
+        });
+        let response = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                delete_assignment,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(json_body(response).await["results"][0]["status"], "applied");
+
+        let stale_assignment = json!({
+            "requestId": "novel-category-stale-assignment",
+            "mutations": [{
+                "entityType": "novel.category_assignment",
+                "clientMutationId": "novel-category-stale-assignment",
+                "scopeId": "novels:profile:main",
+                "entityId": assignment_id,
+                "lamport": 2,
+                "patch": {
+                    "assignmentId": assignment_id,
+                    "novelId": "novel-1",
+                    "categoryId": "favorites"
+                }
+            }]
+        });
+        let response = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                stale_assignment,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            json_body(response).await["results"][0]["error"]["code"],
+            "STALE_NOVEL_CATEGORY_MUTATION"
+        );
+
+        let missing_assignment_id =
+            canonical_novel_category_assignment_id("missing-novel", "favorites");
+        let missing_parent = json!({
+            "requestId": "novel-category-missing-parent",
+            "mutations": [{
+                "entityType": "novel.category_assignment",
+                "clientMutationId": "novel-category-missing-parent",
+                "scopeId": "novels:profile:main",
+                "entityId": missing_assignment_id,
+                "lamport": 3,
+                "patch": {
+                    "assignmentId": missing_assignment_id,
+                    "novelId": "missing-novel",
+                    "categoryId": "favorites"
+                }
+            }]
+        });
+        let response = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                missing_parent,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            json_body(response).await["results"][0]["error"]["code"],
+            "NOVEL_NOT_FOUND"
+        );
+
+        let missing_category_assignment_id =
+            canonical_novel_category_assignment_id("novel-1", "missing-category");
+        let missing_category = json!({
+            "requestId": "novel-category-missing-category",
+            "mutations": [{
+                "entityType": "novel.category_assignment",
+                "clientMutationId": "novel-category-missing-category",
+                "scopeId": "novels:profile:main",
+                "entityId": missing_category_assignment_id,
+                "lamport": 3,
+                "patch": {
+                    "assignmentId": missing_category_assignment_id,
+                    "novelId": "novel-1",
+                    "categoryId": "missing-category"
+                }
+            }]
+        });
+        let response = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                missing_category,
+            ))
+            .await
+            .unwrap();
+        let missing_category = json_body(response).await;
+        assert_eq!(
+            missing_category["results"][0]["error"]["code"],
+            "NOVEL_CATEGORY_NOT_FOUND"
+        );
+        assert!(!missing_category["results"][0]["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("constraint failed"));
+
+        let invalid_order = json!({
+            "requestId": "novel-category-invalid-order",
+            "mutations": [{
+                "entityType": "novel.category",
+                "clientMutationId": "novel-category-invalid-order",
+                "scopeId": "novels:profile:main",
+                "entityId": "invalid-order",
+                "lamport": 1,
+                "patch": {"categoryId": "invalid-order", "name": "Invalid", "order": -1}
+            }]
+        });
+        let response = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                invalid_order,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            json_body(response).await["results"][0]["error"]["code"],
+            "INVALID_CATEGORY_ORDER"
+        );
+
+        let delete_category = json!({
+            "requestId": "novel-category-delete",
+            "mutations": [{
+                "entityType": "novel.category",
+                "clientMutationId": "novel-category-delete",
+                "scopeId": "novels:profile:main",
+                "entityId": "favorites",
+                "op": "delete",
+                "lamport": 3
+            }]
+        });
+        let response = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                delete_category,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(json_body(response).await["results"][0]["status"], "applied");
+
+        let stale_category = json!({
+            "requestId": "novel-category-stale-resurrection",
+            "mutations": [{
+                "entityType": "novel.category",
+                "clientMutationId": "novel-category-stale-resurrection",
+                "scopeId": "novels:profile:main",
+                "entityId": "favorites",
+                "lamport": 3,
+                "patch": {
+                    "categoryId": "favorites",
+                    "name": "Old Favorites",
+                    "order": 9
+                }
+            }]
+        });
+        let response = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                stale_category,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            json_body(response).await["results"][0]["error"]["code"],
+            "STALE_NOVEL_CATEGORY_MUTATION"
+        );
+
+        let snapshot = app
+            .clone()
+            .oneshot(request_without_body(
+                "/v1/snapshot?scopeId=novels%3Aprofile%3Amain",
+                "main-token",
+                None,
+            ))
+            .await
+            .unwrap();
+        let snapshot = json_body(snapshot).await;
+        assert!(snapshot["tombstones"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entity| {
+                entity["entityType"] == "novel.category" && entity["entityId"] == "favorites"
+            }));
+        assert!(snapshot["tombstones"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entity| {
+                entity["entityType"] == "novel.category_assignment"
+                    && entity["entityId"] == assignment_id
+            }));
+
+        let other_profile = app
+            .oneshot(request_without_body(
+                "/v1/snapshot?scopeId=novels%3Aprofile%3Atest",
+                "test-token",
+                None,
+            ))
+            .await
+            .unwrap();
+        let other_profile = json_body(other_profile).await;
+        assert!(other_profile["entities"].as_array().unwrap().is_empty());
+        assert!(other_profile["tombstones"].as_array().unwrap().is_empty());
     }
 }
