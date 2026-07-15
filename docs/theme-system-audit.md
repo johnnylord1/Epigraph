@@ -2742,3 +2742,35 @@ Categorias cobertas:
 - `git diff --check`: verde, com avisos esperados de normalização LF/CRLF no Windows.
 - O próximo gate deve medir component tokens coloridos em computed style no estado custom Nocturne. Valores imutáveis por geometria, motion, alpha de shadow ou cores absolutas documentadas não devem ser confundidos com falha de derivação.
 - A camada `--n-*`, aliases Legacy e componentes Legacy permanecem preservados; Syncd continua fora do plano atual.
+
+## Marco 38 - Theme Contract Coverage Gate
+
+### Escopo e classificacao global
+
+- O marco adiciona gates de contrato, evidencias visuais e uma unica correcao de infraestrutura: `--shadow-focus` agora deriva de `--accent-bright` com alpha de 18%. O valor renderizado do Nocturne permanece equivalente a `rgba(184, 167, 234, 0.18)`, mas futuros documentos passam a controlar o focus ring pelo accent.
+- O grafo da cascata relevante do custom Nocturne possui **1.443** component colors, excluindo deliberadamente Syncd. A classificacao exclusiva e **1.175 editaveis / 258 somente absolutos / 10 neutros / 0 unresolved**.
+- Entre os 1.175 editaveis, **29** tambem compoem tinta absoluta de shadow/highlight e **6** aceitam override runtime do Reader (`--prose-bg`/`--prose-text`) com fallback tematico. Essas intersecoes sao registradas explicitamente e nao sao contadas como categorias exclusivas.
+- As raizes somente absolutas permitidas sao `--primitive-absolute-black`, `--primitive-absolute-white`, `--color-shadow-source`, `--color-highlight-source`, `--shadow-sm`, `--shadow-md` e `--shadow-lg`. Elas representam tinta absoluta, highlight ou composicao de shadow; `--shadow-focus` deixou essa allowlist.
+- O teste extrai somente os blocos que participam da cascata custom Nocturne, percorre referencias `var()` transitivamente, reconhece a lista completa de CSS named colors e aceita neutral apenas em gramaticas integrais documentadas (`transparent`, `none`, zeros ou border transparente). Novos literals ou dependencias sem classificacao falham o gate.
+- Syncd permanece excluido conforme o plano; a camada `--n-*`, aliases Legacy e componentes Legacy nao foram removidos ou reclassificados.
+
+### Gates de computed style e probe real
+
+- O gate unitario confirma que os 13 tokens representativos sao alcancados por consumidores reais em `src/components` ou `nocturne-port.css`: menu, sidebar, Settings, detail, Home, Activity, Downloads, Library, Browse, Sources, Reader, Migration e Updater.
+- O gate browser usa o provider real `applyCustomTheme` para aplicar um `ThemeDocumentV4` custom baseado em Nocturne e verifica os mesmos 13 grupos por computed style. Todos mudaram em relacao ao Nocturne builtin e resolveram valores validos com o probe.
+- O helper de teste inicialmente aplicava um gradient em `background-color`; ele foi corrigido para testar a propriedade composta `background`. A revisao independente tambem detectou que a primeira versao injetava propriedades diretamente; o teste final passa pelo provider V4 e restaura todas as propriedades administradas pelo provider em `finally`.
+- O probe sintetico tambem foi aplicado temporariamente no app Tauri/WebView2 real, sem salvar tema ou modificar dados do usuario. Library, Browse e Settings responderam a paleta oposta; atributos e inline properties foram restaurados em `finally`, deixando `data-theme="nocturne"` e removendo `data-custom-theme`.
+- Evidencias reais em `docs/screenshots/marco38-theme-contract-gate/`: `probe-library.png`, `probe-browse.png`, `probe-settings.png` e `nocturne-settings-focus.png`. As tres capturas probe comprovam resposta ao contrato customizado; a captura Nocturne confirma Settings com a Search focada acima do dim apos restart do app.
+- A revisao visual nao encontrou surfaces transparentes, quebra de geometria ou perda de hierarquia. Browse estava sem resultados por estado real de dados/runtime, mas shell, filtros, painel lateral, status e controles permaneceram integros.
+- Na captura final real, a raiz estava em `data-theme="nocturne"`, sem `data-custom-theme`, e `--shadow-focus` resolveu para `color-mix(in srgb, #b8a7ea 18%, transparent)`. A Search permaneceu acima do dim, sem reintroduzir a regressao corrigida nos marcos anteriores.
+
+### Testes e riscos restantes
+
+- Testes unitarios focados: 2 arquivos, **31 testes verdes** (`themeGate` e derivacao de component colors).
+- Testes browser Chromium: 2 arquivos, **6 testes verdes** (`themeProbe` e computed compatibility do port).
+- Gate unitario ampliado: 7 arquivos, **80 testes verdes**, incluindo autoria V4, provider, documentos, port e contrato publico.
+- `pnpm build`: verde; permanece apenas o aviso conhecido de chunk acima de 500 kB.
+- `git diff --check`: verde, com avisos esperados de normalizacao LF/CRLF no Windows.
+- Shadows e highlights absolutos continuam intencionalmente fora da autoria V4; focus shadow agora acompanha o accent. Uma futura decisao de editar as demais tintas absolutas exige ampliar o contrato, migracao de documentos e validacao de contraste.
+- Existe um literal preexistente suspeito em uma paleta builtin de `tokens.css` (`--text-disabled: #b0ac a4`). Ele nao participa da correcao de focus deste gate e deve ser validado em correcao isolada, sem misturar escopos.
+- Syncd, `--n-*`, aliases Legacy e componentes Legacy continuam fora deste marco e preservados para a auditoria futura ja registrada.

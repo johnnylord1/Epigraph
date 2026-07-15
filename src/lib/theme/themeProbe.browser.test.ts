@@ -1,8 +1,13 @@
 import { describe, expect, test } from "vitest";
 import { THEME_PROBE_HUD_TOKENS, THEME_PROBE_TOKENS } from "../../test/themeProbe";
+import {
+  THEME_PRIMITIVE_TOKEN_KEYS,
+  THEME_SEMANTIC_TOKEN_KEYS,
+} from "./contract";
+import { CUSTOM_THEME_STYLE_PROPERTIES, applyCustomTheme } from "./provider";
 
 const surfaceTokens = [
-  "--component-card-bg",
+  "--component-menu-bg",
   "--component-sidebar-bg",
   "--component-settings-card-bg",
   "--component-detail-layer-bg",
@@ -40,15 +45,28 @@ const probeProperties = Object.keys({
   ...THEME_PROBE_TOKENS,
   ...THEME_PROBE_HUD_TOKENS,
 }).map((name) => `--${name}`);
+const stateProperties = [...new Set([...probeProperties, ...CUSTOM_THEME_STYLE_PROPERTIES])];
 
 function computedBackground(token: string) {
   const probe = document.createElement("div");
-  probe.style.backgroundColor = `var(${token})`;
+  probe.style.background = `var(${token})`;
   document.body.appendChild(probe);
-  const value = getComputedStyle(probe).backgroundColor;
+  const style = getComputedStyle(probe);
+  const value = `${style.backgroundColor}|${style.backgroundImage}`;
   probe.remove();
   return value;
 }
+
+function computedShadow(token: string) {
+  const probe = document.createElement("div");
+  probe.style.boxShadow = `var(${token})`;
+  document.body.appendChild(probe);
+  const value = getComputedStyle(probe).boxShadow;
+  probe.remove();
+  return value;
+}
+
+const transparentBackground = "rgba(0, 0, 0, 0)|none";
 
 function computedToken(token: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(token).trim();
@@ -59,7 +77,7 @@ function rememberRootState() {
   return {
     theme: root.getAttribute("data-theme"),
     customTheme: root.getAttribute("data-custom-theme"),
-    inline: new Map(probeProperties.map((property) => [property, root.style.getPropertyValue(property)])),
+    inline: new Map(stateProperties.map((property) => [property, root.style.getPropertyValue(property)])),
   };
 }
 
@@ -132,9 +150,51 @@ describe("test-only theme probe", () => {
       for (const token of surfaceTokens) {
         const value = computedBackground(token);
         expect(value, `${token} must resolve in the theme probe`).not.toBe("");
-        expect(value, `${token} must not become transparent`).not.toBe("rgba(0, 0, 0, 0)");
+        expect(value, `${token} must not become transparent`).not.toBe(transparentBackground);
         expect(value, `${token} must respond to the theme probe`).not.toBe(nocturne.get(token));
       }
+    } finally {
+      restoreRootState(original);
+      await new Promise(requestAnimationFrame);
+    }
+  });
+
+  test("changes every representative surface through the custom Nocturne V4 provider", async () => {
+    const original = rememberRootState();
+
+    try {
+      const root = document.documentElement;
+      root.dataset.theme = "nocturne";
+      root.removeAttribute("data-custom-theme");
+      for (const property of probeProperties) root.style.removeProperty(property);
+      await new Promise(requestAnimationFrame);
+      const builtin = new Map(surfaceTokens.map((token) => [token, computedBackground(token)]));
+      const builtinFocusShadow = computedShadow("--shadow-focus");
+
+      const themeDocument = {
+        version: 4,
+        id: "custom:probe-browser",
+        name: "Browser probe",
+        base: "nocturne",
+        primitives: Object.fromEntries(
+          THEME_PRIMITIVE_TOKEN_KEYS.map((name) => [name, THEME_PROBE_TOKENS[name]]),
+        ),
+        semanticOverrides: Object.fromEntries(
+          THEME_SEMANTIC_TOKEN_KEYS.map((name) => [name, THEME_PROBE_TOKENS[name]]),
+        ),
+        hud: THEME_PROBE_HUD_TOKENS,
+        motion: "soft",
+      } as const;
+      expect(applyCustomTheme(root, themeDocument)).toBe(true);
+      await new Promise(requestAnimationFrame);
+
+      for (const token of surfaceTokens) {
+        const value = computedBackground(token);
+        expect(value, `${token} must resolve in a custom Nocturne-based theme`).not.toBe("");
+        expect(value, `${token} must not become transparent`).not.toBe(transparentBackground);
+        expect(value, `${token} must respond to the custom V4 contract`).not.toBe(builtin.get(token));
+      }
+      expect(computedShadow("--shadow-focus")).not.toBe(builtinFocusShadow);
     } finally {
       restoreRootState(original);
       await new Promise(requestAnimationFrame);

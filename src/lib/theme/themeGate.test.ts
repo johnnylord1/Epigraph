@@ -9,8 +9,29 @@ const ROOT = process.cwd();
 const tokensCss = readFileSync(resolve(ROOT, "src/styles/tokens.css"), "utf8");
 const nocturneCss = readFileSync(resolve(ROOT, "src/styles/nocturne-theme.css"), "utf8");
 const nocturnePortCss = readFileSync(resolve(ROOT, "src/styles/nocturne-port.css"), "utf8");
-const directColorPattern =
-  /#[0-9a-f]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)|oklch\([^)]*\)|(?<![\w-])(?:black|white)(?![\w-])/i;
+const cssNamedColors = `
+  aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue
+  blueviolet brown burlywood cadetblue chartreuse chocolate coral cornflowerblue cornsilk
+  crimson cyan darkblue darkcyan darkgoldenrod darkgray darkgreen darkgrey darkkhaki
+  darkmagenta darkolivegreen darkorange darkorchid darkred darksalmon darkseagreen
+  darkslateblue darkslategray darkslategrey darkturquoise darkviolet deeppink deepskyblue
+  dimgray dimgrey dodgerblue firebrick floralwhite forestgreen fuchsia gainsboro ghostwhite
+  gold goldenrod gray green greenyellow grey honeydew hotpink indianred indigo ivory khaki
+  lavender lavenderblush lawngreen lemonchiffon lightblue lightcoral lightcyan
+  lightgoldenrodyellow lightgray lightgreen lightgrey lightpink lightsalmon lightseagreen
+  lightskyblue lightslategray lightslategrey lightsteelblue lightyellow lime limegreen linen
+  magenta maroon mediumaquamarine mediumblue mediumorchid mediumpurple mediumseagreen
+  mediumslateblue mediumspringgreen mediumturquoise mediumvioletred midnightblue mintcream
+  mistyrose moccasin navajowhite navy oldlace olive olivedrab orange orangered orchid
+  palegoldenrod palegreen paleturquoise palevioletred papayawhip peachpuff peru pink plum
+  powderblue purple rebeccapurple red rosybrown royalblue saddlebrown salmon sandybrown
+  seagreen seashell sienna silver skyblue slateblue slategray slategrey snow springgreen
+  steelblue tan teal thistle tomato turquoise violet wheat white whitesmoke yellow yellowgreen
+`.trim().split(/\s+/).join("|");
+const directColorPattern = new RegExp(
+  `#[0-9a-f]{3,8}\\b|rgba?\\([^)]*\\)|hsla?\\([^)]*\\)|oklch\\([^)]*\\)|(?<![\\w-])(?:${cssNamedColors})(?![\\w-])`,
+  "i",
+);
 const unreferencedLegacyNocturneTokens = [
   "--n-bg",
   "--n-bg-top",
@@ -74,6 +95,42 @@ function references(value: string) {
     name: match[1],
     hasFallback: Boolean(match[2]),
   }));
+}
+
+function declarationMap(...sources: string[]) {
+  const result = new Map<string, string>();
+  for (const source of sources) {
+    for (const { name, value } of declarations(source)) result.set(name, value);
+  }
+  return result;
+}
+
+function cssBlock(source: string, selector: string): string {
+  const start = source.indexOf(`${selector} {`);
+  if (start < 0) throw new Error(`Missing CSS block ${selector}`);
+  const bodyStart = source.indexOf("{", start) + 1;
+  let depth = 1;
+  for (let index = bodyStart; index < source.length; index += 1) {
+    if (source[index] === "{") depth += 1;
+    if (source[index] === "}") depth -= 1;
+    if (depth === 0) return source.slice(bodyStart, index);
+  }
+  throw new Error(`Unclosed CSS block ${selector}`);
+}
+
+function reachesAny(
+  name: string,
+  roots: ReadonlySet<string>,
+  definitions: ReadonlyMap<string, string>,
+  seen = new Set<string>(),
+): boolean {
+  if (roots.has(name)) return true;
+  if (seen.has(name)) return false;
+  const nextSeen = new Set(seen);
+  nextSeen.add(name);
+  return references(definitions.get(name) ?? "").some(({ name: reference }) =>
+    reachesAny(reference, roots, definitions, nextSeen),
+  );
 }
 
 function sourceCorpus(path: string): string {
@@ -194,6 +251,99 @@ describe("final derived theme gate", () => {
     expect(offenders).toEqual([]);
   });
 
+  test("classifies every component color dependency in the custom Nocturne cascade", () => {
+    const definitions = declarationMap(
+      cssBlock(tokensCss, ":root"),
+      cssBlock(nocturneCss, '[data-theme="nocturne"]'),
+      cssBlock(tokensCss, ":where(.book-viewer, .novel-viewer)"),
+      cssBlock(nocturneCss, '[data-theme="nocturne"] :where(.book-viewer, .novel-viewer)'),
+      cssBlock(nocturneCss, ":root"),
+    );
+    const editableRoots = new Set(THEME_TOKEN_KEYS.map((name) => `--${name}`));
+    const absoluteRoots = new Set([
+      "--primitive-absolute-black",
+      "--primitive-absolute-white",
+      "--color-shadow-source",
+      "--color-highlight-source",
+      "--shadow-sm",
+      "--shadow-md",
+      "--shadow-lg",
+    ]);
+    const runtimeRoots = new Set(["--prose-bg", "--prose-text"]);
+    const colorName = /(?:^|-)(?:bg|fg|color|background|border|shadow|fill|accent|surface|overlay|ink|gradient)(?:-|$)/i;
+    const geometryName = /(?:^|-)(?:radius|width|height|size|gap|padding|margin|z-index|blur|font|letter|line-height|opacity|duration|transition|transform)(?:-|$)/i;
+    const visualValue = /color-mix\(|gradient\(|var\(--(?:color|bg|text|accent|border|shadow|component-[\w-]*(?:bg|fg|color|background|border|shadow|fill|accent|surface|overlay|ink|gradient))|\btransparent\b/i;
+    const componentColors = [...definitions]
+      .filter(
+        ([name, value]) =>
+          name.startsWith("--component-") &&
+          !name.startsWith("--component-syncd-") &&
+          !geometryName.test(name) &&
+          (colorName.test(name) || visualValue.test(value)),
+      );
+    const editable = componentColors.filter(([name]) => reachesAny(name, editableRoots, definitions));
+    const absolute = componentColors.filter(([name]) => reachesAny(name, absoluteRoots, definitions));
+    const runtime = componentColors.filter(([name]) => reachesAny(name, runtimeRoots, definitions));
+    const neutral = componentColors.filter(
+      ([name, value]) =>
+        !reachesAny(name, editableRoots, definitions) &&
+        !reachesAny(name, absoluteRoots, definitions) &&
+        !reachesAny(name, runtimeRoots, definitions) &&
+        /^(?:transparent|none|0(?:\s+0){0,3}|\d+(?:\.\d+)?(?:px|rem|em)\s+solid\s+transparent)$/i.test(value.trim()),
+    );
+    const mixedEditableAbsolute = editable.filter(([name]) =>
+      reachesAny(name, absoluteRoots, definitions),
+    );
+    const absoluteOnly = absolute.filter(
+      ([name]) =>
+        !reachesAny(name, editableRoots, definitions) &&
+        !reachesAny(name, runtimeRoots, definitions),
+    );
+    const classified = new Set(
+      [...editable, ...absolute, ...runtime, ...neutral].map(([name]) => name),
+    );
+    const unresolved = componentColors
+      .filter(([name]) => !classified.has(name))
+      .map(([name, value]) => `${name}: ${value}`);
+
+    expect(componentColors).toHaveLength(1443);
+    expect(editable).toHaveLength(1175);
+    expect(absolute).toHaveLength(287);
+    expect(absoluteOnly).toHaveLength(258);
+    expect(mixedEditableAbsolute).toHaveLength(29);
+    expect(runtime).toHaveLength(6);
+    expect(neutral).toHaveLength(10);
+    expect(unresolved).toEqual([]);
+  });
+
+  test("keeps representative surface tokens connected to real consumers", () => {
+    const definitions = declarationMap(tokensCss, nocturneCss);
+    const consumed = new Set(
+      references(`${sourceCorpus("src/components")}\n${nocturnePortCss}`).map(({ name }) => name),
+    );
+    const representativeSurfaces = [
+      "--component-menu-bg",
+      "--component-sidebar-bg",
+      "--component-settings-card-bg",
+      "--component-detail-layer-bg",
+      "--component-home-card-bg",
+      "--component-activity-center-bg",
+      "--component-downloads-summary-bg",
+      "--component-library-card-list-bg",
+      "--component-browse-searchbar-background",
+      "--component-sources-root-bg",
+      "--component-reader-bg",
+      "--component-migration-modal-bg",
+      "--component-updater-status-bg",
+    ];
+    const disconnected = representativeSurfaces.filter((name) =>
+      !consumed.has(name) &&
+      ![...consumed].some((root) => reachesAny(root, new Set([name]), definitions)),
+    );
+
+    expect(disconnected).toEqual([]);
+  });
+
   test("resolves component aliases independently in fallback and Nocturne layers", () => {
     const fallbackDefinitions = new Set(declarations(tokensCss).map(({ name }) => name));
     const nocturneDefinitions = new Set(
@@ -241,6 +391,17 @@ describe("final derived theme gate", () => {
       expect(nocturneCss, `${token} must remain defined`).toMatch(new RegExp(`${token}\\s*:`));
       expect(nocturnePortCss, `${token} must remain attached to its Legacy selector`).toContain(`var(${token})`);
     }
+  });
+
+  test.each([
+    ["red", true],
+    ["linear-gradient(red, transparent)", true],
+    ["1px solid rebeccapurple", true],
+    ["transparent", false],
+    ["currentColor", false],
+    ["var(--red)", false],
+  ])("classifies direct named color syntax in %s", (value, expected) => {
+    expect(directColorPattern.test(value)).toBe(expected);
   });
 
   test.each([
