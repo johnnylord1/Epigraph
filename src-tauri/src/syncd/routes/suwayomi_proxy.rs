@@ -442,7 +442,12 @@ fn axum_to_upstream(message: AxumMessage) -> UpstreamMessage {
         AxumMessage::Binary(bytes) => UpstreamMessage::Binary(bytes),
         AxumMessage::Ping(bytes) => UpstreamMessage::Ping(bytes),
         AxumMessage::Pong(bytes) => UpstreamMessage::Pong(bytes),
-        AxumMessage::Close(_) => UpstreamMessage::Close(None),
+        AxumMessage::Close(frame) => UpstreamMessage::Close(frame.map(|frame| {
+            tokio_tungstenite::tungstenite::protocol::CloseFrame {
+                code: frame.code.into(),
+                reason: frame.reason,
+            }
+        })),
     }
 }
 
@@ -452,7 +457,12 @@ fn upstream_to_axum(message: UpstreamMessage) -> Option<AxumMessage> {
         UpstreamMessage::Binary(bytes) => Some(AxumMessage::Binary(bytes)),
         UpstreamMessage::Ping(bytes) => Some(AxumMessage::Ping(bytes)),
         UpstreamMessage::Pong(bytes) => Some(AxumMessage::Pong(bytes)),
-        UpstreamMessage::Close(_) => Some(AxumMessage::Close(None)),
+        UpstreamMessage::Close(frame) => Some(AxumMessage::Close(frame.map(|frame| {
+            axum::extract::ws::CloseFrame {
+                code: frame.code.into(),
+                reason: frame.reason,
+            }
+        }))),
         UpstreamMessage::Frame(_) => None,
     }
 }
@@ -717,6 +727,22 @@ mod tests {
     };
     use crate::syncd::middleware::{CLIENT_PROTOCOL_HEADER, CLIENT_VERSION_HEADER};
     use crate::syncd::models::AppState;
+
+    #[test]
+    fn websocket_bridge_preserves_graphql_close_code_and_reason() {
+        let upstream = axum_to_upstream(AxumMessage::Close(Some(
+            axum::extract::ws::CloseFrame {
+                code: 4401,
+                reason: "Unauthorized".into(),
+            },
+        )));
+        let downstream = upstream_to_axum(upstream).unwrap();
+        let AxumMessage::Close(Some(frame)) = downstream else {
+            panic!("expected a close frame");
+        };
+        assert_eq!(frame.code, 4401);
+        assert_eq!(frame.reason, "Unauthorized");
+    }
 
     #[test]
     fn loopback_policy_rejects_credentials_paths_and_remote_hosts() {
