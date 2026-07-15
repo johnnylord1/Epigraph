@@ -1,15 +1,17 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
+use reqwest::header::{CONTENT_LENGTH, CONTENT_RANGE, ETAG, RANGE};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::Digest;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 use tokio::time::sleep;
 use uuid::Uuid;
@@ -32,7 +34,7 @@ use crate::syncd_desktop::{
     SyncdDesktopConnectionStatus, SyncdDesktopPersistedState, SyncdReconnectStatus,
 };
 use crate::{
-    book_library_state_path, novel_library_state_path_for_target,
+    book_library_state_path, books_data_dir, novel_library_state_path_for_target,
     novel_source_classification_state_path_for_target, LaunchTarget, LaunchTargetInfo,
 };
 
@@ -44,6 +46,28 @@ const EVENT_REPLICATION_ERROR: &str = "syncd-replication-error";
 const EVENT_COMIC_READER_STATE_APPLIED: &str = "syncd-comic-reader-state-applied";
 const COMIC_SERVER_IDENTITY_DOMAIN: &str = "aethon-core-suwayomi-v1";
 const RECONNECT_DELAY: Duration = Duration::from_secs(3);
+const ASSET_STREAM_CHUNK_SIZE: usize = 64 * 1024;
+
+#[derive(Clone)]
+struct BookAssetEndpoint {
+    client: reqwest::Client,
+    origin: String,
+    access_token: String,
+}
+
+impl BookAssetEndpoint {
+    fn new(client: reqwest::Client, origin: &str, access_token: &str) -> Self {
+        Self {
+            client,
+            origin: origin.trim_end_matches('/').to_string(),
+            access_token: access_token.to_string(),
+        }
+    }
+
+    fn asset_url(&self, sha256: &str) -> String {
+        format!("{}/v1/assets/{sha256}", self.origin)
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -315,6 +339,328 @@ fn write_file_atomic(path: &Path, payload: &[u8]) -> Result<(), String> {
         let _ = fs::remove_file(&temp_path);
     }
     result.map_err(|error| error.to_string())
+}
+
+fn sha256_file(path: &Path) -> Result<String, String> {
+    let mut file = fs::File::open(path).map_err(|error| error.to_string())?;
+    let mut hasher = sha2::Sha256::new();
+    let mut buffer = [0_u8; ASSET_STREAM_CHUNK_SIZE];
+    loop {
+        let read = file.read(&mut buffer).map_err(|error| error.to_string())?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+async fn sha256_file_async(path: PathBuf) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || sha256_file(&path))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn validate_asset_sha256(raw: &str) -> Result<String, String> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    if normalized.len() != 64 || !normalized.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("Book asset fingerprint must be a 64-character SHA-256.".to_string());
+    }
+    Ok(normalized)
+}
+
+fn book_asset_extension(subtype: &str) -> Result<&'static str, String> {
+    match subtype.trim().to_ascii_lowercase().as_str() {
+        "epub" => Ok("epub"),
+        "pdf" => Ok("pdf"),
+        other => Err(format!(
+            "Unsupported synchronized book subtype '{other}'; expected epub or pdf."
+        )),
+    }
+}
+
+fn synchronized_book_asset_path(
+    root: &Path,
+    sha256: &str,
+    subtype: &str,
+) -> Result<PathBuf, String> {
+    let extension = book_asset_extension(subtype)?;
+    Ok(root
+        .join("synced")
+        .join(extension)
+        .join(format!("{sha256}.{extension}")))
+}
+
+fn response_error_message(status: reqwest::StatusCode, body: &str, action: &str) -> String {
+    if let Ok(error_body) = serde_json::from_str::<ErrorBody>(body) {
+        if error_body.error.code == "UNAUTHORIZED" {
+            return "needs_reauth".to_string();
+        }
+        return error_body.error.message;
+    }
+    format!("{action} failed with HTTP {status}.")
+}
+
+fn authenticated_asset_request(
+    request: reqwest::RequestBuilder,
+    endpoint: &BookAssetEndpoint,
+) -> reqwest::RequestBuilder {
+    request
+        .query(&[("scopeId", BOOKS_SCOPE_ID)])
+        .header("Authorization", format!("Bearer {}", endpoint.access_token))
+        .header(CLIENT_VERSION_HEADER.as_str(), CLIENT_VERSION)
+        .header(
+            CLIENT_PROTOCOL_HEADER.as_str(),
+            CLIENT_PROTOCOL_VERSION.to_string(),
+        )
+}
+
+async fn remote_asset_size(
+    endpoint: &BookAssetEndpoint,
+    sha256: &str,
+) -> Result<Option<u64>, String> {
+    let response =
+        authenticated_asset_request(endpoint.client.head(endpoint.asset_url(sha256)), endpoint)
+            .send()
+            .await
+            .map_err(|error| error.to_string())?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(response_error_message(status, &body, "Book asset lookup"));
+    }
+    let declared_sha = response
+        .headers()
+        .get("x-aethon-asset-sha256")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    if !declared_sha.eq_ignore_ascii_case(sha256) {
+        return Err("Core returned a mismatched book asset fingerprint.".to_string());
+    }
+    let expected_etag = format!("\"{sha256}\"");
+    let etag = response
+        .headers()
+        .get(ETAG)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    if etag != expected_etag {
+        return Err("Core returned a mismatched book asset ETag.".to_string());
+    }
+    let size = response
+        .headers()
+        .get(CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .ok_or_else(|| "Core omitted the book asset Content-Length.".to_string())?;
+    Ok(Some(size))
+}
+
+async fn upload_book_asset(
+    endpoint: &BookAssetEndpoint,
+    path: &Path,
+    sha256: &str,
+) -> Result<(), String> {
+    let metadata = tokio::fs::metadata(path)
+        .await
+        .map_err(|error| format!("Book asset is unavailable: {error}"))?;
+    if !metadata.is_file() {
+        return Err("Book asset path is not a file.".to_string());
+    }
+    let actual_sha256 = sha256_file_async(path.to_path_buf()).await?;
+    if actual_sha256 != sha256 {
+        return Err(format!(
+            "Book asset changed before upload: expected {sha256}, found {actual_sha256}."
+        ));
+    }
+    if remote_asset_size(endpoint, sha256).await?.is_some() {
+        return Ok(());
+    }
+
+    let file = tokio::fs::File::open(path)
+        .await
+        .map_err(|error| format!("Book asset could not be opened for upload: {error}"))?;
+    let stream = futures_util::stream::try_unfold(file, |mut file| async move {
+        let mut buffer = vec![0_u8; ASSET_STREAM_CHUNK_SIZE];
+        let read = file.read(&mut buffer).await?;
+        if read == 0 {
+            return Ok::<_, io::Error>(None);
+        }
+        buffer.truncate(read);
+        Ok(Some((buffer, file)))
+    });
+    let response = authenticated_asset_request(
+        endpoint
+            .client
+            .put(endpoint.asset_url(sha256))
+            .header(CONTENT_LENGTH, metadata.len())
+            .body(reqwest::Body::wrap_stream(stream)),
+        endpoint,
+    )
+    .send()
+    .await
+    .map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(response_error_message(status, &body, "Book asset upload"));
+    }
+    match remote_asset_size(endpoint, sha256).await? {
+        Some(size) if size == metadata.len() => Ok(()),
+        Some(size) => Err(format!(
+            "Core stored an unexpected book asset size: expected {}, found {size}.",
+            metadata.len()
+        )),
+        None => Err("Core did not publish the uploaded book asset.".to_string()),
+    }
+}
+
+async fn download_book_asset(
+    endpoint: &BookAssetEndpoint,
+    sha256: &str,
+    subtype: &str,
+) -> Result<PathBuf, String> {
+    download_book_asset_to_root(endpoint, sha256, subtype, &books_data_dir()).await
+}
+
+async fn download_book_asset_to_root(
+    endpoint: &BookAssetEndpoint,
+    sha256: &str,
+    subtype: &str,
+    root: &Path,
+) -> Result<PathBuf, String> {
+    let expected_size = remote_asset_size(endpoint, sha256)
+        .await?
+        .ok_or_else(|| format!("Core does not have book asset {sha256}."))?;
+    let destination = synchronized_book_asset_path(root, sha256, subtype)?;
+    if let Ok(metadata) = tokio::fs::metadata(&destination).await {
+        if metadata.is_file()
+            && metadata.len() == expected_size
+            && sha256_file_async(destination.clone()).await? == sha256
+        {
+            return Ok(destination);
+        }
+        return Err(format!(
+            "A different local file already occupies synchronized asset path {}.",
+            destination.display()
+        ));
+    }
+    let parent = destination
+        .parent()
+        .ok_or_else(|| "Synchronized book asset path has no parent.".to_string())?;
+    tokio::fs::create_dir_all(parent)
+        .await
+        .map_err(|error| error.to_string())?;
+    let part_path = destination.with_extension(format!(
+        "{}.part",
+        destination
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("asset")
+    ));
+    let mut downloaded = tokio::fs::metadata(&part_path)
+        .await
+        .map(|metadata| metadata.len())
+        .unwrap_or_default();
+    if downloaded > expected_size {
+        let file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .open(&part_path)
+            .await
+            .map_err(|error| error.to_string())?;
+        file.set_len(0).await.map_err(|error| error.to_string())?;
+        downloaded = 0;
+    }
+
+    if downloaded < expected_size {
+        let mut request =
+            authenticated_asset_request(endpoint.client.get(endpoint.asset_url(sha256)), endpoint);
+        if downloaded > 0 {
+            request = request.header(RANGE, format!("bytes={downloaded}-"));
+        }
+        let response = request.send().await.map_err(|error| error.to_string())?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(response_error_message(status, &body, "Book asset download"));
+        }
+        let append = downloaded > 0 && status == reqwest::StatusCode::PARTIAL_CONTENT;
+        if append {
+            let expected_prefix = format!("bytes {downloaded}-");
+            let content_range = response
+                .headers()
+                .get(CONTENT_RANGE)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default();
+            if !content_range.starts_with(&expected_prefix)
+                || !content_range.ends_with(&format!("/{expected_size}"))
+            {
+                return Err(
+                    "Core returned an invalid Content-Range for book asset resume.".to_string(),
+                );
+            }
+        } else {
+            downloaded = 0;
+        }
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .append(append)
+            .truncate(!append)
+            .open(&part_path)
+            .await
+            .map_err(|error| error.to_string())?;
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|error| error.to_string())?;
+            downloaded = downloaded
+                .checked_add(chunk.len() as u64)
+                .ok_or_else(|| "Book asset download size overflowed.".to_string())?;
+            if downloaded > expected_size {
+                file.set_len(0).await.map_err(|error| error.to_string())?;
+                return Err("Core sent more book asset bytes than declared.".to_string());
+            }
+            file.write_all(&chunk)
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        file.flush().await.map_err(|error| error.to_string())?;
+        file.sync_all().await.map_err(|error| error.to_string())?;
+    }
+
+    if downloaded != expected_size {
+        return Err(format!(
+            "Book asset download is incomplete: expected {expected_size} bytes, received {downloaded}."
+        ));
+    }
+    let actual_sha256 = sha256_file_async(part_path.clone()).await?;
+    if actual_sha256 != sha256 {
+        let file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .open(&part_path)
+            .await
+            .map_err(|error| error.to_string())?;
+        file.set_len(0).await.map_err(|error| error.to_string())?;
+        return Err(format!(
+            "Downloaded book asset failed SHA-256 validation: expected {sha256}, found {actual_sha256}."
+        ));
+    }
+    match tokio::fs::rename(&part_path, &destination).await {
+        Ok(()) => Ok(destination),
+        Err(error) if tokio::fs::try_exists(&destination).await.unwrap_or(false) => {
+            let actual = sha256_file_async(destination.clone()).await?;
+            if actual == sha256 {
+                Ok(destination)
+            } else {
+                Err(format!(
+                    "Synchronized asset appeared concurrently with different bytes: {error}."
+                ))
+            }
+        }
+        Err(error) => Err(format!("Failed to publish book asset atomically: {error}.")),
+    }
 }
 
 #[cfg(windows)]
@@ -1455,6 +1801,11 @@ async fn replay_and_stream_remote(
     novels_profile_id: &str,
 ) -> Result<(), String> {
     let launch_target = app.state::<LaunchTarget>().0.clone();
+    let asset_endpoint = BookAssetEndpoint::new(
+        build_pinned_http_client(&session.tls_cert_sha256)?,
+        connected_origin,
+        &session.access_token,
+    );
     loop {
         let snapshot = profile_snapshot(&load_replication_state()?, profile_id);
         let since_version = [
@@ -1505,6 +1856,7 @@ async fn replay_and_stream_remote(
                 &changes.changes,
                 changes.min_replayable_server_version,
                 SyncdReplicationReplayMode::ChangesBootstrap,
+                &asset_endpoint,
             )
             .await?;
         }
@@ -1521,6 +1873,7 @@ async fn replay_and_stream_remote(
             session,
             connected_origin,
             novels_profile_id,
+            &asset_endpoint,
         )
         .await
         {
@@ -1544,6 +1897,11 @@ async fn replay_and_stream_local_authority(
     authority: &LocalAuthoritySession,
 ) -> Result<(), String> {
     let launch_target = app.state::<LaunchTarget>().0.clone();
+    let asset_endpoint = BookAssetEndpoint::new(
+        insecure_local_syncd_client()?,
+        &authority.local_base_url,
+        &authority.access_token,
+    );
     loop {
         let snapshot = profile_snapshot(&load_replication_state()?, profile_id);
         let since_version = [
@@ -1587,6 +1945,7 @@ async fn replay_and_stream_local_authority(
                 &changes.changes,
                 changes.min_replayable_server_version,
                 SyncdReplicationReplayMode::ChangesBootstrap,
+                &asset_endpoint,
             )
             .await?;
         }
@@ -1596,7 +1955,15 @@ async fn replay_and_stream_local_authority(
             profile.last_error = None;
         });
         let _ = emit_replication_state_for_profile(app, profile_id).await;
-        match stream_live_events_local_authority(app, &launch_target, profile_id, authority).await {
+        match stream_live_events_local_authority(
+            app,
+            &launch_target,
+            profile_id,
+            authority,
+            &asset_endpoint,
+        )
+        .await
+        {
             Ok(StreamExit::ReplayRequired) => continue,
             Ok(StreamExit::Disconnected) => {
                 return Err("Live sync stream disconnected.".to_string())
@@ -1766,11 +2133,18 @@ fn materialize_book_snapshot(
     };
     for entity in &snapshot.entities {
         match entity.entity_type.as_str() {
-            "book.entry" => upsert_book_entry(
-                &mut next,
-                serde_json::from_value::<BookEntryRecord>(entity.record.clone())
-                    .map_err(|error| error.to_string())?,
-            ),
+            "book.entry" => {
+                let record = serde_json::from_value::<BookEntryRecord>(entity.record.clone())
+                    .map_err(|error| error.to_string())?;
+                let local_asset_path = current
+                    .books
+                    .iter()
+                    .find(|entry| {
+                        book_entry_entity_id(entry).as_deref() == Some(record.book_id.as_str())
+                    })
+                    .and_then(|entry| value_string_field(entry, "assetPath"));
+                upsert_book_entry(&mut next, record, local_asset_path);
+            }
             "book.category" => upsert_book_category(
                 &mut next,
                 serde_json::from_value::<BookCategoryRecord>(entity.record.clone())
@@ -2011,12 +2385,14 @@ async fn apply_authoritative_snapshots(
     books_snapshot: SnapshotResponse,
     novels_snapshot: SnapshotResponse,
     comics_snapshot: SnapshotResponse,
+    asset_endpoint: &BookAssetEndpoint,
 ) -> Result<(), String> {
     validate_snapshot(&books_snapshot, BOOKS_SCOPE_ID)?;
     validate_snapshot(&novels_snapshot, &novels_scope_id(remote_profile_id))?;
     validate_snapshot(&comics_snapshot, &comics_scope_id(remote_profile_id))?;
 
-    let books_state = materialize_book_snapshot(&read_books_state()?, &books_snapshot)?;
+    let mut books_state = materialize_book_snapshot(&read_books_state()?, &books_snapshot)?;
+    materialize_snapshot_book_assets(asset_endpoint, &mut books_state, &books_snapshot).await?;
     let (novels_state, classification_state) = materialize_novel_snapshot(
         &read_novels_state(launch_target, local_profile_id)?,
         &read_novel_classification_state(launch_target, local_profile_id)?,
@@ -2071,6 +2447,7 @@ async fn recover_from_snapshots_remote(
     let comics_scope = comics_scope_id(remote_profile_id);
     let comics =
         fetch_authoritative_snapshot(&client, origin, &session.access_token, &comics_scope).await?;
+    let asset_endpoint = BookAssetEndpoint::new(client, origin, &session.access_token);
     apply_authoritative_snapshots(
         app,
         launch_target,
@@ -2079,6 +2456,7 @@ async fn recover_from_snapshots_remote(
         books,
         novels,
         comics,
+        &asset_endpoint,
     )
     .await
 }
@@ -2113,6 +2491,8 @@ async fn recover_from_snapshots_local_authority(
         &comics_scope,
     )
     .await?;
+    let asset_endpoint =
+        BookAssetEndpoint::new(client, &authority.local_base_url, &authority.access_token);
     apply_authoritative_snapshots(
         app,
         launch_target,
@@ -2121,6 +2501,7 @@ async fn recover_from_snapshots_local_authority(
         books,
         novels,
         comics,
+        &asset_endpoint,
     )
     .await
 }
@@ -2132,6 +2513,7 @@ async fn stream_live_events(
     session: &PersistedSyncSession,
     origin: &str,
     novels_profile_id: &str,
+    asset_endpoint: &BookAssetEndpoint,
 ) -> Result<StreamExit, String> {
     let client = build_pinned_http_client(&session.tls_cert_sha256)?;
     let response = client
@@ -2179,6 +2561,7 @@ async fn stream_live_events(
                             &[envelope],
                             0,
                             SyncdReplicationReplayMode::SseLive,
+                            asset_endpoint,
                         )
                         .await?;
                     }
@@ -2204,6 +2587,7 @@ async fn stream_live_events_local_authority(
     launch_target: &LaunchTargetInfo,
     profile_id: &str,
     authority: &LocalAuthoritySession,
+    asset_endpoint: &BookAssetEndpoint,
 ) -> Result<StreamExit, String> {
     let client = insecure_local_syncd_client()?;
     let response = client
@@ -2254,6 +2638,7 @@ async fn stream_live_events_local_authority(
                             &[envelope],
                             0,
                             SyncdReplicationReplayMode::SseLive,
+                            asset_endpoint,
                         )
                         .await?;
                     }
@@ -2282,6 +2667,7 @@ async fn apply_remote_envelopes(
     envelopes: &[ChangeEnvelope],
     min_replayable_seen: i64,
     replay_mode: SyncdReplicationReplayMode,
+    asset_endpoint: &BookAssetEndpoint,
 ) -> Result<(), String> {
     if envelopes.is_empty() {
         return Ok(());
@@ -2319,7 +2705,9 @@ async fn apply_remote_envelopes(
                 if let Some(patch) = envelope.patch.clone() {
                     let record = serde_json::from_value::<BookEntryRecord>(patch)
                         .map_err(|error| error.to_string())?;
-                    upsert_book_entry(&mut books_state, record);
+                    let asset_path =
+                        materialize_book_entry_asset(asset_endpoint, &books_state, &record).await?;
+                    upsert_book_entry(&mut books_state, record, asset_path);
                 } else {
                     delete_book_entry(&mut books_state, &envelope.entity_id);
                 }
@@ -2884,28 +3272,47 @@ fn delete_book_history(state: &mut PersistedBookLibraryState, history_id: &str) 
         .retain(|entry| entry.history_id != history_id);
 }
 
-fn upsert_book_entry(state: &mut PersistedBookLibraryState, record: BookEntryRecord) {
+fn upsert_book_entry(
+    state: &mut PersistedBookLibraryState,
+    record: BookEntryRecord,
+    materialized_asset_path: Option<String>,
+) {
+    let book_id = record.book_id.clone();
+    let existing = state
+        .books
+        .iter()
+        .find(|entry| book_entry_entity_id(entry).as_deref() == Some(book_id.as_str()));
+    let preserved_asset_path = materialized_asset_path
+        .or_else(|| existing.and_then(|entry| value_string_field(entry, "assetPath")));
+    let preserved_import_path = existing
+        .and_then(|entry| value_string_field(entry, "importPath"))
+        .unwrap_or_default();
+    let preserved_cover_path = existing
+        .and_then(|entry| entry.get("coverPath").cloned())
+        .unwrap_or(Value::Null);
+    let preserved_cover_url = existing
+        .and_then(|entry| entry.get("coverUrl").cloned())
+        .unwrap_or(Value::Null);
     let next = json!({
         "id": record.book_id,
         "assetFingerprint": record.asset_fingerprint,
         "title": record.title,
         "author": record.author,
         "description": record.description,
-        "coverPath": Value::Null,
-        "coverUrl": Value::Null,
+        "coverPath": preserved_cover_path,
+        "coverUrl": preserved_cover_url,
         "subtype": record.subtype,
         "pageCount": record.page_count,
         "createdAt": record.created_at_ms,
         "updatedAt": record.book_updated_at_ms,
-        "importPath": "",
-        "assetPath": "",
+        "importPath": preserved_import_path,
+        "assetPath": preserved_asset_path.unwrap_or_default(),
         "tocCount": record.toc_count,
         "spineCount": record.spine_count,
         "sectionsSummary": record.sections_summary_json.unwrap_or_else(|| json!([])),
         "sectionCount": record.section_count,
         "hasCover": record.has_cover,
     });
-    let book_id = value_string_field(&next, "id").unwrap_or_default();
     if let Some(index) = state
         .books
         .iter()
@@ -2915,6 +3322,71 @@ fn upsert_book_entry(state: &mut PersistedBookLibraryState, record: BookEntryRec
     } else {
         state.books.push(next);
     }
+}
+
+async fn matching_local_asset_path(
+    raw_path: Option<String>,
+    expected_sha256: &str,
+) -> Result<Option<String>, String> {
+    let Some(raw_path) = raw_path.filter(|value| !value.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let path = PathBuf::from(&raw_path);
+    let Ok(metadata) = tokio::fs::metadata(&path).await else {
+        return Ok(None);
+    };
+    if !metadata.is_file() {
+        return Ok(None);
+    }
+    if sha256_file_async(path).await? == expected_sha256 {
+        Ok(Some(raw_path))
+    } else {
+        // The path belongs to the user/import library. Never overwrite or
+        // delete it when a remote immutable asset has different bytes.
+        Ok(None)
+    }
+}
+
+async fn materialize_book_entry_asset(
+    endpoint: &BookAssetEndpoint,
+    state: &PersistedBookLibraryState,
+    record: &BookEntryRecord,
+) -> Result<Option<String>, String> {
+    let Some(fingerprint) = record.asset_fingerprint.as_deref() else {
+        return Ok(state
+            .books
+            .iter()
+            .find(|entry| book_entry_entity_id(entry).as_deref() == Some(record.book_id.as_str()))
+            .and_then(|entry| value_string_field(entry, "assetPath")));
+    };
+    let fingerprint = validate_asset_sha256(fingerprint)?;
+    let current_path = state
+        .books
+        .iter()
+        .find(|entry| book_entry_entity_id(entry).as_deref() == Some(record.book_id.as_str()))
+        .and_then(|entry| value_string_field(entry, "assetPath"));
+    if let Some(path) = matching_local_asset_path(current_path, &fingerprint).await? {
+        return Ok(Some(path));
+    }
+    let path = download_book_asset(endpoint, &fingerprint, &record.subtype).await?;
+    Ok(Some(path.to_string_lossy().into_owned()))
+}
+
+async fn materialize_snapshot_book_assets(
+    endpoint: &BookAssetEndpoint,
+    state: &mut PersistedBookLibraryState,
+    snapshot: &SnapshotResponse,
+) -> Result<(), String> {
+    for entity in &snapshot.entities {
+        if entity.entity_type != "book.entry" {
+            continue;
+        }
+        let record = serde_json::from_value::<BookEntryRecord>(entity.record.clone())
+            .map_err(|error| error.to_string())?;
+        let asset_path = materialize_book_entry_asset(endpoint, state, &record).await?;
+        upsert_book_entry(state, record, asset_path);
+    }
+    Ok(())
 }
 
 fn delete_book_entry(state: &mut PersistedBookLibraryState, book_id: &str) {
@@ -3516,6 +3988,49 @@ fn diff_book_mutations(
     next: &PersistedBookLibraryState,
 ) -> Vec<SerializableMutationInput> {
     let mut mutations = Vec::new();
+    let previous_entries: BTreeMap<String, BookEntryPatch> = previous
+        .books
+        .iter()
+        .filter_map(|entry| Some((book_entry_entity_id(entry)?, build_book_entry_patch(entry)?)))
+        .collect();
+    let next_entries: BTreeMap<String, BookEntryPatch> = next
+        .books
+        .iter()
+        .filter_map(|entry| Some((book_entry_entity_id(entry)?, build_book_entry_patch(entry)?)))
+        .collect();
+    for (book_id, patch) in &next_entries {
+        let unchanged = previous_entries.get(book_id).is_some_and(|previous| {
+            serde_json::to_value(previous).ok() == serde_json::to_value(patch).ok()
+        });
+        if unchanged {
+            continue;
+        }
+        mutations.push(SerializableMutationInput::BookEntry {
+            base: SerializableMutationBase {
+                client_mutation_id: Uuid::now_v7().to_string(),
+                scope_id: BOOKS_SCOPE_ID.to_string(),
+                entity_id: book_id.clone(),
+                op: MutationOperation::Merge,
+                lamport: now_ms(),
+            },
+            patch: Some(patch.clone()),
+        });
+    }
+    for book_id in previous_entries.keys() {
+        if next_entries.contains_key(book_id) {
+            continue;
+        }
+        mutations.push(SerializableMutationInput::BookEntry {
+            base: SerializableMutationBase {
+                client_mutation_id: Uuid::now_v7().to_string(),
+                scope_id: BOOKS_SCOPE_ID.to_string(),
+                entity_id: book_id.clone(),
+                op: MutationOperation::Delete,
+                lamport: now_ms(),
+            },
+            patch: None,
+        });
+    }
     let previous_progress: BTreeMap<String, LocalBookProgress> = previous
         .book_progress
         .iter()
@@ -3976,6 +4491,56 @@ fn validate_mutation_receipts(
     Ok(())
 }
 
+async fn ensure_book_assets_uploaded(
+    endpoint: &BookAssetEndpoint,
+    mutations: &[SerializableMutationInput],
+) -> Result<(), String> {
+    let state = read_books_state()?;
+    let mut uploaded = HashSet::new();
+    for mutation in mutations {
+        let SerializableMutationInput::BookEntry {
+            base,
+            patch: Some(patch),
+        } = mutation
+        else {
+            continue;
+        };
+        let fingerprint = patch
+            .asset_fingerprint
+            .as_deref()
+            .ok_or_else(|| {
+                format!(
+                    "Book {} cannot be published without an asset fingerprint.",
+                    base.entity_id
+                )
+            })
+            .and_then(validate_asset_sha256)?;
+        if !uploaded.insert(fingerprint.clone()) {
+            continue;
+        }
+        let local = state
+            .books
+            .iter()
+            .find(|entry| book_entry_entity_id(entry).as_deref() == Some(base.entity_id.as_str()))
+            .ok_or_else(|| {
+                format!(
+                    "Book {} disappeared before its asset could be published.",
+                    base.entity_id
+                )
+            })?;
+        let asset_path = value_string_field(local, "assetPath")
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                format!(
+                    "Book {} cannot be published without local asset bytes.",
+                    base.entity_id
+                )
+            })?;
+        upload_book_asset(endpoint, &PathBuf::from(asset_path), &fingerprint).await?;
+    }
+    Ok(())
+}
+
 async fn post_mutations_for_local_authority(
     authority: &LocalAuthoritySession,
     mutations: &[SerializableMutationInput],
@@ -3985,6 +4550,12 @@ async fn post_mutations_for_local_authority(
         mutations: mutations.to_vec(),
     };
     let client = insecure_local_syncd_client()?;
+    let asset_endpoint = BookAssetEndpoint::new(
+        client.clone(),
+        &authority.local_base_url,
+        &authority.access_token,
+    );
+    ensure_book_assets_uploaded(&asset_endpoint, mutations).await?;
     replication_log(format!(
         "post_mutations_for_local_authority profile_id={} url={}/v1/mutations mutation_count={} mutations=[{}]",
         authority.profile_id,
@@ -4058,6 +4629,14 @@ async fn post_mutations_for_session(
             mutations.len(),
             summarize_mutations(mutations)
         ));
+        let asset_endpoint = BookAssetEndpoint::new(client.clone(), origin, &session.access_token);
+        if let Err(error) = ensure_book_assets_uploaded(&asset_endpoint, mutations).await {
+            if is_connection_error(&error) && index + 1 < origins.len() {
+                last_error = Some(error);
+                continue;
+            }
+            return Err(error);
+        }
         let response = client
             .post(format!("{origin}/v1/mutations"))
             .header("Authorization", format!("Bearer {}", session.access_token))
@@ -4110,6 +4689,127 @@ mod tests {
         MutationEntityType, MutationResult, SnapshotEntity, SnapshotTombstone,
         SyncdEffectiveDiscoverySource,
     };
+    use axum::body::{to_bytes, Body};
+    use axum::extract::{Path as AxumPath, State as AxumState};
+    use axum::http::{HeaderMap, Response, StatusCode};
+    use axum::routing::get;
+    use axum::Router;
+
+    #[derive(Clone, Default)]
+    struct TestAssetState {
+        bytes: Arc<Mutex<Option<Vec<u8>>>>,
+        events: Arc<Mutex<Vec<String>>>,
+    }
+
+    async fn test_asset_head(
+        AxumState(state): AxumState<TestAssetState>,
+        AxumPath(sha256): AxumPath<String>,
+    ) -> Response<Body> {
+        state.events.lock().await.push("HEAD".to_string());
+        let bytes = state.bytes.lock().await.clone();
+        let Some(bytes) = bytes else {
+            return Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(Body::empty())
+                .unwrap();
+        };
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_LENGTH, bytes.len())
+            .header(ETAG, format!("\"{sha256}\""))
+            .header("x-aethon-asset-sha256", sha256)
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    async fn test_asset_get(
+        AxumState(state): AxumState<TestAssetState>,
+        AxumPath(sha256): AxumPath<String>,
+        headers: HeaderMap,
+    ) -> Response<Body> {
+        let bytes = state.bytes.lock().await.clone().unwrap_or_default();
+        let range_start = headers
+            .get(RANGE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("bytes="))
+            .and_then(|value| value.strip_suffix('-'))
+            .and_then(|value| value.parse::<usize>().ok());
+        state.events.lock().await.push(match range_start {
+            Some(start) => format!("GET:{start}"),
+            None => "GET".to_string(),
+        });
+        let start = range_start.unwrap_or_default();
+        let status = if range_start.is_some() {
+            StatusCode::PARTIAL_CONTENT
+        } else {
+            StatusCode::OK
+        };
+        let mut builder = Response::builder()
+            .status(status)
+            .header(CONTENT_LENGTH, bytes.len().saturating_sub(start))
+            .header(ETAG, format!("\"{sha256}\""))
+            .header("x-aethon-asset-sha256", sha256);
+        if range_start.is_some() {
+            builder = builder.header(
+                CONTENT_RANGE,
+                format!("bytes {start}-{}/{}", bytes.len() - 1, bytes.len()),
+            );
+        }
+        builder.body(Body::from(bytes[start..].to_vec())).unwrap()
+    }
+
+    async fn test_asset_put(
+        AxumState(state): AxumState<TestAssetState>,
+        AxumPath(sha256): AxumPath<String>,
+        body: Body,
+    ) -> Response<Body> {
+        state.events.lock().await.push("PUT".to_string());
+        let bytes = to_bytes(body, usize::MAX).await.unwrap().to_vec();
+        assert_eq!(sha256_file_bytes(&bytes), sha256);
+        *state.bytes.lock().await = Some(bytes);
+        Response::builder()
+            .status(StatusCode::CREATED)
+            .header(CONTENT_LENGTH, 0)
+            .header(ETAG, format!("\"{sha256}\""))
+            .header("x-aethon-asset-sha256", sha256)
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    fn sha256_file_bytes(bytes: &[u8]) -> String {
+        format!("{:x}", sha2::Sha256::digest(bytes))
+    }
+
+    async fn spawn_test_asset_server(
+        initial: Option<Vec<u8>>,
+    ) -> (
+        BookAssetEndpoint,
+        TestAssetState,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let state = TestAssetState {
+            bytes: Arc::new(Mutex::new(initial)),
+            events: Arc::new(Mutex::new(Vec::new())),
+        };
+        let app = Router::new()
+            .route(
+                "/v1/assets/:sha256",
+                get(test_asset_get)
+                    .head(test_asset_head)
+                    .put(test_asset_put),
+            )
+            .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (
+            BookAssetEndpoint::new(reqwest::Client::new(), &origin, "test-token"),
+            state,
+            task,
+        )
+    }
 
     fn fixture_session(
         session_key: &str,
@@ -4131,6 +4831,68 @@ mod tests {
             last_validated_at_ms,
             last_known_status,
         }
+    }
+
+    #[tokio::test]
+    async fn desktop_asset_upload_publishes_verified_bytes_before_entry_mutation() {
+        let bytes = b"desktop imported epub bytes".to_vec();
+        let sha256 = sha256_file_bytes(&bytes);
+        let source = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(source.path(), &bytes).unwrap();
+        let (endpoint, state, task) = spawn_test_asset_server(None).await;
+
+        upload_book_asset(&endpoint, source.path(), &sha256)
+            .await
+            .unwrap();
+
+        assert_eq!(state.bytes.lock().await.as_deref(), Some(bytes.as_slice()));
+        assert_eq!(
+            state.events.lock().await.as_slice(),
+            ["HEAD", "PUT", "HEAD"]
+        );
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn remote_asset_download_resumes_validates_and_materializes_atomically() {
+        let bytes = b"mobile uploaded pdf bytes with resumable tail".to_vec();
+        let sha256 = sha256_file_bytes(&bytes);
+        let (endpoint, state, task) = spawn_test_asset_server(Some(bytes.clone())).await;
+        let root = tempfile::tempdir().unwrap();
+        let destination = synchronized_book_asset_path(root.path(), &sha256, "pdf").unwrap();
+        std::fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        let part_path = destination.with_extension("pdf.part");
+        std::fs::write(&part_path, &bytes[..11]).unwrap();
+
+        let materialized = download_book_asset_to_root(&endpoint, &sha256, "pdf", root.path())
+            .await
+            .unwrap();
+
+        assert_eq!(materialized, destination);
+        assert_eq!(std::fs::read(&materialized).unwrap(), bytes);
+        assert!(!part_path.exists());
+        assert_eq!(sha256_file(&materialized).unwrap(), sha256);
+        assert_eq!(state.events.lock().await.as_slice(), ["HEAD", "GET:11"]);
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn mismatched_existing_user_asset_is_preserved() {
+        let root = tempfile::tempdir().unwrap();
+        let user_asset = root.path().join("user-import.epub");
+        std::fs::write(&user_asset, b"user bytes that must remain").unwrap();
+        let expected = sha256_file_bytes(b"different remote bytes");
+
+        assert_eq!(
+            matching_local_asset_path(Some(user_asset.to_string_lossy().into_owned()), &expected,)
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            std::fs::read(&user_asset).unwrap(),
+            b"user bytes that must remain"
+        );
     }
 
     #[test]
@@ -4251,11 +5013,15 @@ mod tests {
     }
 
     #[test]
-    fn diff_book_mutations_ignores_catalog_changes() {
+    fn diff_book_mutations_syncs_entries_but_ignores_other_catalog_changes() {
+        let fingerprint = "a".repeat(64);
         let previous = PersistedBookLibraryState {
             books: vec![json!({
                 "id": "book-1",
+                "assetFingerprint": fingerprint,
                 "title": "Old title",
+                "subtype": "epub",
+                "createdAt": 1,
                 "updatedAt": 1,
             })],
             books_categories: vec![json!({
@@ -4280,7 +5046,10 @@ mod tests {
         let next = PersistedBookLibraryState {
             books: vec![json!({
                 "id": "book-1",
+                "assetFingerprint": "a".repeat(64),
                 "title": "New title",
+                "subtype": "epub",
+                "createdAt": 1,
                 "updatedAt": 2,
             })],
             books_categories: vec![json!({
@@ -4304,7 +5073,18 @@ mod tests {
         };
 
         let diff = diff_book_mutations(&previous, &next);
-        assert!(diff.is_empty());
+        assert_eq!(diff.len(), 1);
+        assert!(matches!(
+            &diff[0],
+            SerializableMutationInput::BookEntry {
+                base: SerializableMutationBase {
+                    entity_id,
+                    op: MutationOperation::Merge,
+                    ..
+                },
+                patch: Some(BookEntryPatch { title, .. }),
+            } if entity_id == "book-1" && title == "New title"
+        ));
     }
 
     #[test]
