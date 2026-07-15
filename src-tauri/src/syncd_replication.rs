@@ -5039,7 +5039,7 @@ mod tests {
     #[test]
     fn replication_state_roundtrip_uses_override_directory() {
         let temp = tempfile::tempdir().unwrap();
-        std::env::set_var("AETHON_SYNCD_DESKTOP_STATE_DIR", temp.path());
+        let _env = crate::syncd_desktop::DesktopStateDirTestGuard::override_with(temp.path());
         let mut state = PersistedReplicationState::default();
         profile_state_mut(&mut state, "local-a").active_session_key = Some("session-a".to_string());
         save_replication_state(&state).unwrap();
@@ -5051,6 +5051,5 @@ mod tests {
                 .and_then(|profile| profile.active_session_key.clone()),
             Some("session-a".to_string())
         );
-        std::env::remove_var("AETHON_SYNCD_DESKTOP_STATE_DIR");
     }
 }
