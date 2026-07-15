@@ -7,14 +7,16 @@ use std::collections::{BTreeMap, HashMap};
 use crate::syncd::db;
 use crate::syncd::middleware::validate_scope;
 use crate::syncd::models::{
-    canonical_novel_category_assignment_id, canonical_novel_chapter_asset_id, AppError,
-    AuthenticatedSession, BookBookmarkPatch, BookCategoryAssignmentPatch, BookCategoryPatch,
-    BookEntryPatch, BookHistoryPatch, BookLibraryUiPatch, BookProgressPatch, ComicHistoryPatch,
-    ComicPageBookmarkPatch, ErrorDetail, MutationEntityType, MutationInput, MutationOperation,
-    MutationReceiptContext, MutationResult, MutationResultStatus, MutationsRequest,
-    MutationsResponse, NovelBookmarkPatch, NovelCategoryAssignmentPatch, NovelCategoryPatch,
-    NovelChapterAssetPatch, NovelChapterPatch, NovelClassificationPatch, NovelEntryPatch,
-    NovelHistoryPatch, NovelProgressPatch, SharedAppState,
+    canonical_novel_category_assignment_id, canonical_novel_chapter_asset_id,
+    canonical_novel_plugin_id, canonical_novel_repository_id, canonicalize_novel_repository_url,
+    AppError, AuthenticatedSession, BookBookmarkPatch, BookCategoryAssignmentPatch,
+    BookCategoryPatch, BookEntryPatch, BookHistoryPatch, BookLibraryUiPatch, BookProgressPatch,
+    ComicHistoryPatch, ComicPageBookmarkPatch, ErrorDetail, MutationEntityType, MutationInput,
+    MutationOperation, MutationReceiptContext, MutationResult, MutationResultStatus,
+    MutationsRequest, MutationsResponse, NovelBookmarkPatch, NovelCategoryAssignmentPatch,
+    NovelCategoryPatch, NovelChapterAssetPatch, NovelChapterPatch, NovelClassificationPatch,
+    NovelEntryPatch, NovelHistoryPatch, NovelPluginPatch, NovelProgressPatch, NovelRepositoryPatch,
+    SharedAppState,
 };
 use crate::syncd::routes::assets::{validate_asset_reference, AssetReferenceError};
 
@@ -945,6 +947,245 @@ pub async fn post_mutations(
                     ))
                 })?,
             },
+            MutationInput::NovelRepository { base, patch } => match base.op {
+                MutationOperation::Merge => {
+                    let Some(patch) = patch.as_ref() else {
+                        results.push(rejected_result(
+                            &mutation,
+                            error_detail(
+                                "MISSING_PATCH",
+                                "Novel repository merge mutations must include a patch.",
+                                None,
+                            ),
+                        ));
+                        continue;
+                    };
+                    let canonical_url = match validate_novel_repository_patch(patch) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            results.push(rejected_result(&mutation, error));
+                            continue;
+                        }
+                    };
+                    let mut canonical_patch = patch.clone();
+                    canonical_patch.canonical_url = canonical_url.clone();
+                    canonical_patch.name = canonical_patch.name.trim().to_string();
+                    let canonical_entity_id = db::resolve_novel_repository_merge_id(
+                        &state.pool,
+                        &base.scope_id,
+                        &base.entity_id,
+                        &canonical_url,
+                    )
+                    .await
+                    .map_err(|_| {
+                        AppError::Internal(
+                            "Failed to resolve novel repository identity.".to_string(),
+                        )
+                    })?;
+                    set_canonical_receipt(&mut session, &base.entity_id, &canonical_entity_id);
+                    match db::apply_novel_repository_mutation(
+                        &state.pool,
+                        &session,
+                        &base.scope_id,
+                        &canonical_entity_id,
+                        &canonical_patch,
+                        base.lamport,
+                        state.config.retention_window,
+                    )
+                    .await
+                    {
+                        Ok(outcome) => outcome,
+                        Err(error) => {
+                            results.push(rejected_result(
+                                &mutation,
+                                novel_plugin_persist_error_detail(error),
+                            ));
+                            continue;
+                        }
+                    }
+                }
+                MutationOperation::Delete => {
+                    if patch.is_some() {
+                        results.push(rejected_result(
+                            &mutation,
+                            error_detail(
+                                "DELETE_PATCH_NOT_ALLOWED",
+                                "Novel repository delete mutations must not include a patch.",
+                                None,
+                            ),
+                        ));
+                        continue;
+                    }
+                    let canonical_entity_id = db::resolve_novel_repository_entity_id(
+                        &state.pool,
+                        &base.scope_id,
+                        &base.entity_id,
+                    )
+                    .await
+                    .map_err(|_| {
+                        AppError::Internal("Failed to resolve novel repository delete.".to_string())
+                    })?;
+                    set_canonical_receipt(&mut session, &base.entity_id, &canonical_entity_id);
+                    match db::delete_novel_repository_mutation(
+                        &state.pool,
+                        &session,
+                        &base.scope_id,
+                        &canonical_entity_id,
+                        base.lamport,
+                        state.config.retention_window,
+                    )
+                    .await
+                    {
+                        Ok(outcome) => outcome,
+                        Err(error) => {
+                            results.push(rejected_result(
+                                &mutation,
+                                novel_plugin_persist_error_detail(error),
+                            ));
+                            continue;
+                        }
+                    }
+                }
+            },
+            MutationInput::NovelPlugin { base, patch } => match base.op {
+                MutationOperation::Merge => {
+                    let Some(patch) = patch.as_ref() else {
+                        results.push(rejected_result(
+                            &mutation,
+                            error_detail(
+                                "MISSING_PATCH",
+                                "Novel plugin merge mutations must include a patch.",
+                                None,
+                            ),
+                        ));
+                        continue;
+                    };
+                    if let Some(error) = validate_novel_plugin_patch(patch) {
+                        results.push(rejected_result(&mutation, error));
+                        continue;
+                    }
+                    let repository_id = db::resolve_novel_repository_entity_id(
+                        &state.pool,
+                        &base.scope_id,
+                        &patch.repository_id,
+                    )
+                    .await
+                    .map_err(|_| {
+                        AppError::Internal("Failed to resolve novel plugin repository.".to_string())
+                    })?;
+                    let canonical_entity_id = db::resolve_novel_plugin_merge_id(
+                        &state.pool,
+                        &base.scope_id,
+                        &base.entity_id,
+                        &repository_id,
+                        patch.plugin_id.trim(),
+                        patch.source_id.trim(),
+                    )
+                    .await
+                    .map_err(|_| {
+                        AppError::Internal("Failed to resolve novel plugin identity.".to_string())
+                    })?;
+                    let expected_id = canonical_novel_plugin_id(
+                        &repository_id,
+                        patch.plugin_id.trim(),
+                        patch.source_id.trim(),
+                    );
+                    if canonical_entity_id != expected_id {
+                        results.push(rejected_result(&mutation, error_detail(
+                            "PLUGIN_IDENTITY_CONFLICT", "Novel plugin alias resolves to another plugin identity.",
+                            Some(json!({"expectedEntityId": expected_id, "resolvedEntityId": canonical_entity_id})),
+                        )));
+                        continue;
+                    }
+                    set_canonical_receipt(&mut session, &base.entity_id, &canonical_entity_id);
+                    let mut canonical_patch = patch.clone();
+                    canonical_patch.repository_id = repository_id;
+                    canonical_patch.plugin_id = canonical_patch.plugin_id.trim().to_string();
+                    canonical_patch.source_id = canonical_patch.source_id.trim().to_string();
+                    canonical_patch.name = canonical_patch.name.trim().to_string();
+                    canonical_patch.version = canonical_patch.version.trim().to_string();
+                    canonical_patch.lang = canonical_patch.lang.trim().to_string();
+                    match validate_asset_reference(
+                        &state.config.data_dir,
+                        &canonical_patch.artifact_sha256,
+                        &base.scope_id,
+                        canonical_patch.artifact_byte_length as u64,
+                    )
+                    .await
+                    {
+                        Ok(()) => {}
+                        Err(error) => {
+                            results.push(rejected_result(
+                                &mutation,
+                                novel_plugin_asset_error_detail(error),
+                            ));
+                            continue;
+                        }
+                    }
+                    match db::apply_novel_plugin_mutation(
+                        &state.pool,
+                        &session,
+                        &base.scope_id,
+                        &canonical_entity_id,
+                        &canonical_patch,
+                        base.lamport,
+                        state.config.retention_window,
+                    )
+                    .await
+                    {
+                        Ok(outcome) => outcome,
+                        Err(error) => {
+                            results.push(rejected_result(
+                                &mutation,
+                                novel_plugin_persist_error_detail(error),
+                            ));
+                            continue;
+                        }
+                    }
+                }
+                MutationOperation::Delete => {
+                    if patch.is_some() {
+                        results.push(rejected_result(
+                            &mutation,
+                            error_detail(
+                                "DELETE_PATCH_NOT_ALLOWED",
+                                "Novel plugin delete mutations must not include a patch.",
+                                None,
+                            ),
+                        ));
+                        continue;
+                    }
+                    let canonical_entity_id = db::resolve_novel_plugin_entity_id(
+                        &state.pool,
+                        &base.scope_id,
+                        &base.entity_id,
+                    )
+                    .await
+                    .map_err(|_| {
+                        AppError::Internal("Failed to resolve novel plugin delete.".to_string())
+                    })?;
+                    set_canonical_receipt(&mut session, &base.entity_id, &canonical_entity_id);
+                    match db::delete_novel_plugin_mutation(
+                        &state.pool,
+                        &session,
+                        &base.scope_id,
+                        &canonical_entity_id,
+                        base.lamport,
+                        state.config.retention_window,
+                    )
+                    .await
+                    {
+                        Ok(outcome) => outcome,
+                        Err(error) => {
+                            results.push(rejected_result(
+                                &mutation,
+                                novel_plugin_persist_error_detail(error),
+                            ));
+                            continue;
+                        }
+                    }
+                }
+            },
             MutationInput::NovelCategory { base, patch } => match base.op {
                 MutationOperation::Merge => {
                     let Some(patch) = patch.as_ref() else {
@@ -1439,6 +1680,17 @@ fn validate_mutation_base(
             Some(json!({ "receivedLamport": lamport })),
         ));
     }
+    if matches!(
+        entity_type,
+        MutationEntityType::NovelRepository | MutationEntityType::NovelPlugin
+    ) && (entity_id != entity_id.trim() || entity_id.len() > 256 || entity_id.contains('\0'))
+    {
+        return Some(error_detail(
+            "INVALID_ENTITY_ALIAS",
+            "Repository and plugin entityId aliases must be trimmed, at most 256 bytes, and contain no NUL.",
+            None,
+        ));
+    }
 
     match entity_type {
         MutationEntityType::BookEntry
@@ -1467,6 +1719,8 @@ fn validate_mutation_base(
         | MutationEntityType::NovelProgress
         | MutationEntityType::NovelBookmark
         | MutationEntityType::NovelClassification
+        | MutationEntityType::NovelRepository
+        | MutationEntityType::NovelPlugin
         | MutationEntityType::NovelCategory
         | MutationEntityType::NovelCategoryAssignment => {
             if !scope_id.starts_with("novels:profile:") {
@@ -1813,6 +2067,207 @@ fn validate_novel_classification_patch(patch: &NovelClassificationPatch) -> Opti
     validate_non_negative_timestamp(patch.classified_at_ms, "classifiedAtMs")
 }
 
+fn validate_novel_repository_patch(patch: &NovelRepositoryPatch) -> Result<String, ErrorDetail> {
+    let Some(canonical_url) = canonicalize_novel_repository_url(&patch.canonical_url) else {
+        return Err(error_detail(
+            "INVALID_REPOSITORY_URL",
+            "Repository URL must be clean HTTPS without userinfo, query, or fragment.",
+            None,
+        ));
+    };
+    if patch.name.trim().is_empty() || patch.name.trim().len() > 200 {
+        return Err(error_detail(
+            "INVALID_REPOSITORY_NAME",
+            "Repository name must contain 1 to 200 bytes after trimming.",
+            None,
+        ));
+    }
+    if patch.created_at_ms < 0 || patch.updated_at_ms < patch.created_at_ms {
+        return Err(error_detail(
+            "INVALID_TIMESTAMP_ORDER",
+            "Repository timestamps are invalid.",
+            None,
+        ));
+    }
+    let _canonical_id = canonical_novel_repository_id(&canonical_url);
+    Ok(canonical_url)
+}
+
+fn validate_novel_plugin_patch(patch: &NovelPluginPatch) -> Option<ErrorDetail> {
+    for (field, value) in [
+        ("repositoryId", patch.repository_id.as_str()),
+        ("pluginId", patch.plugin_id.as_str()),
+        ("sourceId", patch.source_id.as_str()),
+    ] {
+        if value.trim().is_empty()
+            || value != value.trim()
+            || value.len() > 256
+            || value.contains('\0')
+        {
+            return Some(error_detail(
+                "INVALID_PLUGIN_IDENTITY",
+                "Plugin identity fields must be trimmed, non-empty, at most 256 bytes, and contain no NUL.",
+                Some(json!({"field": field})),
+            ));
+        }
+    }
+    for (field, value, limit) in [
+        ("name", patch.name.as_str(), 200usize),
+        ("version", patch.version.as_str(), 100usize),
+        ("lang", patch.lang.as_str(), 35usize),
+    ] {
+        if value.trim().is_empty() || value.trim().len() > limit {
+            return Some(error_detail(
+                "INVALID_PLUGIN_METADATA",
+                "Plugin name, version, and language must be non-empty and within limits.",
+                Some(json!({"field": field, "maxBytes": limit})),
+            ));
+        }
+    }
+    if patch.artifact_sha256.len() != 64
+        || patch
+            .artifact_sha256
+            .bytes()
+            .any(|value| !matches!(value, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        return Some(error_detail(
+            "INVALID_ASSET_SHA256",
+            "Plugin artifactSha256 must be a lowercase SHA-256 digest.",
+            None,
+        ));
+    }
+    if !(1..=2_097_152).contains(&patch.artifact_byte_length) {
+        return Some(error_detail(
+            "INVALID_PLUGIN_ARTIFACT_SIZE",
+            "Plugin artifactByteLength must be between 1 byte and 2 MiB.",
+            None,
+        ));
+    }
+    if patch.created_at_ms < 0 || patch.updated_at_ms < patch.created_at_ms {
+        return Some(error_detail(
+            "INVALID_TIMESTAMP_ORDER",
+            "Plugin timestamps are invalid.",
+            None,
+        ));
+    }
+    validate_public_settings(&patch.public_settings).err()
+}
+
+fn validate_public_settings(value: &Value) -> Result<(), ErrorDetail> {
+    if !value.is_object() {
+        return Err(error_detail(
+            "INVALID_PUBLIC_SETTINGS",
+            "publicSettings must be a JSON object containing only manifest-declared public keys.",
+            None,
+        ));
+    }
+    let encoded = serde_json::to_vec(value).map_err(|_| {
+        error_detail(
+            "INVALID_PUBLIC_SETTINGS",
+            "publicSettings is not valid JSON.",
+            None,
+        )
+    })?;
+    if encoded.len() > 32 * 1024 {
+        return Err(error_detail(
+            "PUBLIC_SETTINGS_TOO_LARGE",
+            "publicSettings must not exceed 32 KiB.",
+            Some(json!({"maxBytes": 32768, "receivedBytes": encoded.len()})),
+        ));
+    }
+    let mut nodes = 0usize;
+    validate_public_settings_node(value, 0, &mut nodes)
+}
+
+fn validate_public_settings_node(
+    value: &Value,
+    depth: usize,
+    nodes: &mut usize,
+) -> Result<(), ErrorDetail> {
+    *nodes += 1;
+    if depth > 8 || *nodes > 256 {
+        return Err(error_detail(
+            "PUBLIC_SETTINGS_COMPLEXITY_LIMIT",
+            "publicSettings exceeds the depth or node limit.",
+            Some(json!({"maxDepth": 8, "maxNodes": 256})),
+        ));
+    }
+    match value {
+        Value::Object(map) => {
+            for (key, value) in map {
+                if key.len() > 128 || public_setting_key_is_secret(key) {
+                    return Err(error_detail(
+                        "SECRET_SETTING_REJECTED",
+                        "Secret-looking publicSettings keys are never synchronized.",
+                        Some(json!({"key": key})),
+                    ));
+                }
+                validate_public_settings_node(value, depth + 1, nodes)?;
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                validate_public_settings_node(value, depth + 1, nodes)?;
+            }
+        }
+        Value::String(value) => {
+            if value.len() > 2048 || public_setting_value_is_secret(value) {
+                return Err(error_detail(
+                    "SECRET_SETTING_REJECTED",
+                    "Secret-looking or oversized publicSettings values are never synchronized.",
+                    None,
+                ));
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn public_setting_key_is_secret(key: &str) -> bool {
+    let normalized = key
+        .chars()
+        .filter(|value| value.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+    [
+        "token",
+        "password",
+        "passwd",
+        "secret",
+        "cookie",
+        "session",
+        "auth",
+        "apikey",
+        "credential",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
+}
+
+fn public_setting_value_is_secret(value: &str) -> bool {
+    let trimmed = value.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.contains("bearer ") || lower.contains("cookie:") || lower.contains("set-cookie:") {
+        return true;
+    }
+    let jwt = trimmed.split('.').collect::<Vec<_>>();
+    if jwt.len() == 3
+        && jwt.iter().all(|part| {
+            part.len() >= 8
+                && part
+                    .bytes()
+                    .all(|value| value.is_ascii_alphanumeric() || matches!(value, b'-' | b'_'))
+        })
+    {
+        return true;
+    }
+    trimmed.len() >= 128
+        && trimmed.bytes().all(|value| {
+            value.is_ascii_alphanumeric() || matches!(value, b'+' | b'/' | b'=' | b'-' | b'_')
+        })
+}
+
 fn validate_novel_category_patch(
     entity_id: &str,
     patch: &NovelCategoryPatch,
@@ -2138,6 +2593,54 @@ fn novel_chapter_asset_persist_error_detail(error: anyhow::Error) -> Option<Erro
     }
 }
 
+fn novel_plugin_asset_error_detail(error: AssetReferenceError) -> ErrorDetail {
+    match error {
+        AssetReferenceError::InvalidSha256 => error_detail(
+            "INVALID_ASSET_SHA256",
+            "Plugin artifactSha256 is invalid.",
+            None,
+        ),
+        AssetReferenceError::NotAvailableForScope => error_detail(
+            "PLUGIN_ASSET_NOT_AVAILABLE_FOR_SCOPE",
+            "Plugin artifact must be uploaded and granted to this novel scope before publication.",
+            None,
+        ),
+        AssetReferenceError::SizeMismatch => error_detail(
+            "PLUGIN_ASSET_SIZE_MISMATCH",
+            "Plugin artifactByteLength does not match the stored blob.",
+            None,
+        ),
+        AssetReferenceError::Storage => error_detail(
+            "ASSET_VALIDATION_UNAVAILABLE",
+            "The Core could not validate the plugin artifact.",
+            None,
+        ),
+    }
+}
+
+fn novel_plugin_persist_error_detail(error: anyhow::Error) -> ErrorDetail {
+    let message = error.to_string();
+    if message.contains("stale") && message.contains("tombstone") {
+        error_detail("STALE_NOVEL_PLUGIN_MUTATION", &message, None)
+    } else if message.contains("repository does not exist") {
+        error_detail("NOVEL_REPOSITORY_NOT_FOUND", &message, None)
+    } else if message.contains("still has active plugins") {
+        error_detail("NOVEL_REPOSITORY_PLUGINS_EXIST", &message, None)
+    } else if message.contains("artifact is immutable") {
+        error_detail("PLUGIN_ARTIFACT_IMMUTABLE", &message, None)
+    } else if message.contains("identity is immutable") {
+        error_detail("PLUGIN_IDENTITY_IMMUTABLE", &message, None)
+    } else if message.contains("alias already belongs") {
+        error_detail("ENTITY_ALIAS_CONFLICT", &message, None)
+    } else if message.contains("UNIQUE constraint failed") {
+        error_detail("NOVEL_PLUGIN_IDENTITY_EXISTS", &message, None)
+    } else if message.contains("FOREIGN KEY constraint failed") {
+        error_detail("NOVEL_PLUGIN_REFERENCE_INVALID", &message, None)
+    } else {
+        error_detail("NOVEL_PLUGIN_MUTATION_REJECTED", &message, None)
+    }
+}
+
 fn comic_state_persist_error_detail(error: anyhow::Error) -> Option<ErrorDetail> {
     let message = error.to_string();
     if message.contains("stale bookmark mutation rejected by tombstone lamport") {
@@ -2211,6 +2714,47 @@ mod tests {
     use tempfile::tempdir;
     use tokio::sync::{broadcast, Mutex, RwLock};
     use tower::ServiceExt;
+
+    #[test]
+    fn public_plugin_settings_reject_secret_keys_and_values() {
+        for settings in [
+            json!({"apiKey": "value"}),
+            json!({"nested": {"session_id": "value"}}),
+            json!({"header": "Bearer abcdef"}),
+            json!({"header": "Cookie: sid=value"}),
+            json!({"header": "abcdefgh.ijklmnop.qrstuvwx"}),
+            json!({"payload": "a".repeat(128)}),
+        ] {
+            assert_eq!(
+                validate_public_settings(&settings).unwrap_err().code,
+                "SECRET_SETTING_REJECTED"
+            );
+        }
+        assert!(validate_public_settings(&json!({
+            "theme": "sepia",
+            "fontSize": 18,
+            "filters": ["completed", "english"]
+        }))
+        .is_ok());
+    }
+
+    #[test]
+    fn public_plugin_settings_enforce_shape_and_complexity_limits() {
+        assert_eq!(
+            validate_public_settings(&json!(["not-an-object"]))
+                .unwrap_err()
+                .code,
+            "INVALID_PUBLIC_SETTINGS"
+        );
+        let mut nested = json!(true);
+        for _ in 0..10 {
+            nested = json!({"public": nested});
+        }
+        assert_eq!(
+            validate_public_settings(&nested).unwrap_err().code,
+            "PUBLIC_SETTINGS_COMPLEXITY_LIMIT"
+        );
+    }
 
     fn token_hash(raw: &str) -> String {
         let digest = Sha256::digest(raw.as_bytes());
@@ -2310,6 +2854,33 @@ mod tests {
         serde_json::from_slice(&bytes).unwrap()
     }
 
+    async fn upload_asset(
+        app: &axum::Router,
+        token: &str,
+        scope_query: &str,
+        bytes: &[u8],
+    ) -> String {
+        let sha256 = format!("{:x}", Sha256::digest(bytes));
+        let mut builder = Request::builder()
+            .method("PUT")
+            .uri(format!("/v1/assets/{sha256}?scopeId={scope_query}"));
+        for (key, value) in auth_headers(token) {
+            builder = builder.header(key, value);
+        }
+        let response = app
+            .clone()
+            .oneshot(
+                builder
+                    .header("content-length", bytes.len().to_string())
+                    .body(Body::from(bytes.to_vec()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        sha256
+    }
+
     fn parse_sse_change_events(text: &str) -> Vec<Value> {
         text.replace("\r\n", "\n")
             .split("\n\n")
@@ -2354,6 +2925,530 @@ mod tests {
         }
 
         panic!("timed out waiting for {expected_changes} SSE change events");
+    }
+
+    #[tokio::test]
+    async fn novel_repository_plugin_alias_receipt_snapshot_and_parent_delete_contract() {
+        let (_temp, state) = build_state().await;
+        let app = build_test_router(state.clone());
+        let artifact = b"module.exports = { id: 'synthetic' };";
+        let artifact_sha =
+            upload_asset(&app, "main-token", "novels%3Aprofile%3Amain", artifact).await;
+
+        let repository_request = json!({
+            "requestId": "req-repository",
+            "mutations": [{
+                "entityType": "novel.repository",
+                "clientMutationId": "repository-merge-1",
+                "scopeId": "novels:profile:main",
+                "entityId": "mobile-repository-alias",
+                "lamport": 1,
+                "patch": {
+                    "canonicalUrl": "HTTPS://Example.COM:443/repository.json",
+                    "name": "  Official repository  ",
+                    "enabled": true,
+                    "createdAtMs": 1000,
+                    "updatedAtMs": 1000
+                }
+            }]
+        });
+        let first_repository = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                repository_request.clone(),
+            ))
+            .await
+            .unwrap();
+        let first_repository = json_body(first_repository).await;
+        assert_eq!(first_repository["results"][0]["status"], "applied");
+        assert_eq!(
+            first_repository["results"][0]["record"]["name"],
+            "Official repository"
+        );
+        let repository_id = first_repository["results"][0]["canonicalEntityId"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(
+            repository_id,
+            canonical_novel_repository_id("https://example.com/repository.json")
+        );
+        let repository_version = first_repository["currentServerVersion"].as_i64().unwrap();
+
+        let replay = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                repository_request,
+            ))
+            .await
+            .unwrap();
+        let replay = json_body(replay).await;
+        assert_eq!(replay["currentServerVersion"], repository_version);
+        assert_eq!(replay["results"][0], first_repository["results"][0]);
+
+        let plugin_request = json!({
+            "requestId": "req-plugin",
+            "mutations": [{
+                "entityType": "novel.plugin",
+                "clientMutationId": "plugin-merge-1",
+                "scopeId": "novels:profile:main",
+                "entityId": "mobile-plugin-alias",
+                "lamport": 1,
+                "patch": {
+                    "repositoryId": "mobile-repository-alias",
+                    "pluginId": "synthetic.plugin",
+                    "sourceId": "synthetic.source",
+                    "name": "  Synthetic plugin  ",
+                    "version": "  1.0.0  ",
+                    "lang": "  en  ",
+                    "enabled": true,
+                    "artifactSha256": artifact_sha,
+                    "artifactByteLength": artifact.len(),
+                    "publicSettings": {"theme": "sepia", "fontSize": 18},
+                    "createdAtMs": 1000,
+                    "updatedAtMs": 1000
+                }
+            }]
+        });
+        let plugin = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                plugin_request,
+            ))
+            .await
+            .unwrap();
+        let plugin = json_body(plugin).await;
+        assert_eq!(plugin["results"][0]["status"], "applied");
+        assert_eq!(plugin["results"][0]["record"]["name"], "Synthetic plugin");
+        assert_eq!(plugin["results"][0]["record"]["version"], "1.0.0");
+        assert_eq!(plugin["results"][0]["record"]["lang"], "en");
+        let plugin_id = plugin["results"][0]["canonicalEntityId"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let plugin_version = plugin["results"][0]["appliedServerVersion"]
+            .as_i64()
+            .unwrap();
+
+        let changes = app
+            .clone()
+            .oneshot(request_without_body(
+                &format!(
+                    "/v1/changes?scopeId=novels%3Aprofile%3Amain&sinceVersion={repository_version}"
+                ),
+                "main-token",
+                None,
+            ))
+            .await
+            .unwrap();
+        let changes = json_body(changes).await;
+        assert!(changes["changes"].as_array().unwrap().iter().any(|change| {
+            change["entityType"] == "novel.plugin" && change["entityId"] == plugin_id
+        }));
+        let events = app
+            .clone()
+            .oneshot(request_without_body(
+                "/v1/events?scopeId=novels%3Aprofile%3Amain",
+                "main-token",
+                Some(plugin_version - 1),
+            ))
+            .await
+            .unwrap();
+        let events = collect_sse_change_events(events, 1).await;
+        assert_eq!(events[0]["entityType"], "novel.plugin");
+        assert_eq!(events[0]["entityId"], plugin_id);
+
+        let snapshot = app
+            .clone()
+            .oneshot(request_without_body(
+                "/v1/snapshot?scopeId=novels%3Aprofile%3Amain",
+                "main-token",
+                None,
+            ))
+            .await
+            .unwrap();
+        let snapshot = json_body(snapshot).await;
+        assert!(snapshot["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entity| {
+                entity["entityType"] == "novel.repository" && entity["entityId"] == repository_id
+            }));
+        assert!(snapshot["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entity| {
+                entity["entityType"] == "novel.plugin" && entity["entityId"] == plugin_id
+            }));
+
+        let blocked_delete = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                json!({
+                    "requestId": "req-delete-repository-blocked",
+                    "mutations": [{
+                        "entityType": "novel.repository",
+                        "clientMutationId": "repository-delete-blocked",
+                        "scopeId": "novels:profile:main",
+                        "entityId": "mobile-repository-alias",
+                        "op": "delete",
+                        "lamport": 2
+                    }]
+                }),
+            ))
+            .await
+            .unwrap();
+        let blocked_delete = json_body(blocked_delete).await;
+        assert_eq!(
+            blocked_delete["results"][0]["error"]["code"],
+            "NOVEL_REPOSITORY_PLUGINS_EXIST"
+        );
+
+        let deleted_plugin = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                json!({
+                    "requestId": "req-delete-plugin",
+                    "mutations": [{
+                        "entityType": "novel.plugin",
+                        "clientMutationId": "plugin-delete-1",
+                        "scopeId": "novels:profile:main",
+                        "entityId": "mobile-plugin-alias",
+                        "op": "delete",
+                        "lamport": 2
+                    }]
+                }),
+            ))
+            .await
+            .unwrap();
+        let deleted_plugin = json_body(deleted_plugin).await;
+        assert_eq!(deleted_plugin["results"][0]["status"], "applied");
+        assert_eq!(deleted_plugin["results"][0]["canonicalEntityId"], plugin_id);
+
+        let stale_restore = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                json!({
+                    "requestId": "req-stale-plugin",
+                    "mutations": [{
+                        "entityType": "novel.plugin",
+                        "clientMutationId": "plugin-stale-restore",
+                        "scopeId": "novels:profile:main",
+                        "entityId": "mobile-plugin-alias",
+                        "lamport": 1,
+                        "patch": {
+                            "repositoryId": "mobile-repository-alias",
+                            "pluginId": "synthetic.plugin",
+                            "sourceId": "synthetic.source",
+                            "name": "Synthetic plugin",
+                            "version": "1.0.0",
+                            "lang": "en",
+                            "enabled": true,
+                            "artifactSha256": artifact_sha,
+                            "artifactByteLength": artifact.len(),
+                            "publicSettings": {},
+                            "createdAtMs": 1000,
+                            "updatedAtMs": 1000
+                        }
+                    }]
+                }),
+            ))
+            .await
+            .unwrap();
+        let stale_restore = json_body(stale_restore).await;
+        assert_eq!(
+            stale_restore["results"][0]["error"]["code"],
+            "STALE_NOVEL_PLUGIN_MUTATION"
+        );
+    }
+
+    #[tokio::test]
+    async fn novel_plugin_artifact_requires_exact_hash_size_and_scope_grant() {
+        let (_temp, state) = build_state().await;
+        let app = build_test_router(state.clone());
+        let repository_id = canonical_novel_repository_id("https://example.com/repository.json");
+        let repository = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                json!({
+                    "requestId": "asset-repository",
+                    "mutations": [{
+                        "entityType": "novel.repository",
+                        "clientMutationId": "asset-repository-merge",
+                        "scopeId": "novels:profile:main",
+                        "entityId": repository_id,
+                        "lamport": 1,
+                        "patch": {
+                            "canonicalUrl": "https://example.com/repository.json",
+                            "name": "Repository",
+                            "enabled": true,
+                            "createdAtMs": 1,
+                            "updatedAtMs": 1
+                        }
+                    }]
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            json_body(repository).await["results"][0]["status"],
+            "applied"
+        );
+
+        let scoped_bytes = b"scoped plugin";
+        let scoped_sha =
+            upload_asset(&app, "main-token", "novels%3Aprofile%3Amain", scoped_bytes).await;
+        let cross_scope_bytes = b"books-only plugin";
+        let cross_scope_sha =
+            upload_asset(&app, "main-token", "books%3Aglobal", cross_scope_bytes).await;
+        let missing_sha = "a".repeat(64);
+        let cases = [
+            (
+                "invalid-hash",
+                "A".repeat(64),
+                1usize,
+                "INVALID_ASSET_SHA256",
+            ),
+            (
+                "missing",
+                missing_sha,
+                1usize,
+                "PLUGIN_ASSET_NOT_AVAILABLE_FOR_SCOPE",
+            ),
+            (
+                "wrong-scope",
+                cross_scope_sha,
+                cross_scope_bytes.len(),
+                "PLUGIN_ASSET_NOT_AVAILABLE_FOR_SCOPE",
+            ),
+            (
+                "wrong-size",
+                scoped_sha.clone(),
+                scoped_bytes.len() + 1,
+                "PLUGIN_ASSET_SIZE_MISMATCH",
+            ),
+        ];
+        for (suffix, sha, size, expected_code) in cases {
+            let response = app
+                .clone()
+                .oneshot(request_with_json(
+                    "/v1/mutations",
+                    "main-token",
+                    json!({
+                        "requestId": format!("asset-{suffix}"),
+                        "mutations": [{
+                            "entityType": "novel.plugin",
+                            "clientMutationId": format!("asset-plugin-{suffix}"),
+                            "scopeId": "novels:profile:main",
+                            "entityId": format!("alias-{suffix}"),
+                            "lamport": 1,
+                            "patch": {
+                                "repositoryId": repository_id,
+                                "pluginId": format!("plugin.{suffix}"),
+                                "sourceId": format!("source.{suffix}"),
+                                "name": "Synthetic",
+                                "version": "1.0.0",
+                                "lang": "en",
+                                "enabled": true,
+                                "artifactSha256": sha,
+                                "artifactByteLength": size,
+                                "publicSettings": {},
+                                "createdAtMs": 1,
+                                "updatedAtMs": 1
+                            }
+                        }]
+                    }),
+                ))
+                .await
+                .unwrap();
+            let response = json_body(response).await;
+            assert_eq!(response["results"][0]["error"]["code"], expected_code);
+        }
+
+        let plugin_id = canonical_novel_plugin_id(&repository_id, "plugin.immutable", "source");
+        let valid_patch = |sha: &str, size: usize, client_id: &str, version: &str, lamport: i64| {
+            json!({
+                "requestId": client_id,
+                "mutations": [{
+                    "entityType": "novel.plugin",
+                    "clientMutationId": client_id,
+                    "scopeId": "novels:profile:main",
+                    "entityId": plugin_id,
+                    "lamport": lamport,
+                    "patch": {
+                        "repositoryId": repository_id,
+                        "pluginId": "plugin.immutable",
+                        "sourceId": "source",
+                        "name": "Immutable",
+                        "version": version,
+                        "lang": "en",
+                        "enabled": true,
+                        "artifactSha256": sha,
+                        "artifactByteLength": size,
+                        "publicSettings": {},
+                        "createdAtMs": 1,
+                        "updatedAtMs": 2
+                    }
+                }]
+            })
+        };
+        let valid = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                valid_patch(
+                    &scoped_sha,
+                    scoped_bytes.len(),
+                    "immutable-first",
+                    "1.0.0",
+                    2,
+                ),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(json_body(valid).await["results"][0]["status"], "applied");
+        let replacement = b"replacement plugin";
+        let replacement_sha =
+            upload_asset(&app, "main-token", "novels%3Aprofile%3Amain", replacement).await;
+        let replaced = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                valid_patch(
+                    &replacement_sha,
+                    replacement.len(),
+                    "immutable-second",
+                    "1.0.0",
+                    3,
+                ),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            json_body(replaced).await["results"][0]["error"]["code"],
+            "PLUGIN_ARTIFACT_IMMUTABLE"
+        );
+
+        let upgraded = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                valid_patch(
+                    &replacement_sha,
+                    replacement.len(),
+                    "immutable-upgrade",
+                    "2.0.0",
+                    4,
+                ),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(json_body(upgraded).await["results"][0]["status"], "applied");
+        let rollback = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                valid_patch(
+                    &scoped_sha,
+                    scoped_bytes.len(),
+                    "immutable-rollback",
+                    "1.0.0",
+                    5,
+                ),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(json_body(rollback).await["results"][0]["status"], "applied");
+
+        let forged = b"forged old version";
+        let forged_sha = upload_asset(&app, "main-token", "novels%3Aprofile%3Amain", forged).await;
+        let forged_old_version = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                valid_patch(
+                    &forged_sha,
+                    forged.len(),
+                    "immutable-forged-old-version",
+                    "1.0.0",
+                    6,
+                ),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            json_body(forged_old_version).await["results"][0]["error"]["code"],
+            "PLUGIN_ARTIFACT_IMMUTABLE"
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_repository_aliases_converge_to_one_canonical_record() {
+        let (_temp, state) = build_state().await;
+        let app = build_test_router(state.clone());
+        let mutation = |alias: &str, client_id: &str, name: &str| {
+            request_with_json(
+                "/v1/mutations",
+                "main-token",
+                json!({
+                    "requestId": format!("request-{client_id}"),
+                    "mutations": [{
+                        "entityType": "novel.repository",
+                        "clientMutationId": client_id,
+                        "scopeId": "novels:profile:main",
+                        "entityId": alias,
+                        "lamport": 1,
+                        "patch": {
+                            "canonicalUrl": "https://example.com/concurrent.json",
+                            "name": name,
+                            "enabled": true,
+                            "createdAtMs": 1,
+                            "updatedAtMs": 1
+                        }
+                    }]
+                }),
+            )
+        };
+        let first = app
+            .clone()
+            .oneshot(mutation("alias-one", "concurrent-one", "One"));
+        let second = app
+            .clone()
+            .oneshot(mutation("alias-two", "concurrent-two", "Two"));
+        let (first, second) = tokio::join!(first, second);
+        let first = json_body(first.unwrap()).await;
+        let second = json_body(second.unwrap()).await;
+        let expected = canonical_novel_repository_id("https://example.com/concurrent.json");
+        assert_eq!(first["results"][0]["canonicalEntityId"], expected);
+        assert_eq!(second["results"][0]["canonicalEntityId"], expected);
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM novel_repositories WHERE scope_id = 'novels:profile:main'",
+        )
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 1);
     }
 
     #[tokio::test]

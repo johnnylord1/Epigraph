@@ -237,6 +237,7 @@ pub struct CapabilitiesResponse {
     pub supports_snapshot: bool,
     pub supports_assets: bool,
     pub supports_novel_chapter_assets: bool,
+    pub supports_novel_plugin_sync: bool,
     pub supports_suwayomi_proxy: bool,
     pub supports_suwayomi_websocket_proxy: bool,
     pub suwayomi_proxy_path_template: String,
@@ -250,7 +251,7 @@ pub struct CapabilitiesResponse {
 
 pub const SNAPSHOT_SCHEMA_VERSION: u32 = 1;
 
-pub const SNAPSHOT_ENTITY_TYPES: [&str; 18] = [
+pub const SNAPSHOT_ENTITY_TYPES: [&str; 20] = [
     "book.entry",
     "book.category",
     "book.category_assignment",
@@ -265,6 +266,8 @@ pub const SNAPSHOT_ENTITY_TYPES: [&str; 18] = [
     "novel.bookmark",
     "novel.history",
     "novel.classification",
+    "novel.repository",
+    "novel.plugin",
     "novel.category",
     "novel.category_assignment",
     "comic.history",
@@ -816,6 +819,10 @@ pub enum MutationEntityType {
     NovelHistory,
     #[serde(rename = "novel.classification")]
     NovelClassification,
+    #[serde(rename = "novel.repository")]
+    NovelRepository,
+    #[serde(rename = "novel.plugin")]
+    NovelPlugin,
     #[serde(rename = "novel.category")]
     NovelCategory,
     #[serde(rename = "novel.category_assignment")]
@@ -843,6 +850,8 @@ impl MutationEntityType {
             Self::NovelBookmark => "novel.bookmark",
             Self::NovelHistory => "novel.history",
             Self::NovelClassification => "novel.classification",
+            Self::NovelRepository => "novel.repository",
+            Self::NovelPlugin => "novel.plugin",
             Self::NovelCategory => "novel.category",
             Self::NovelCategoryAssignment => "novel.category_assignment",
             Self::ComicHistory => "comic.history",
@@ -964,6 +973,18 @@ pub enum MutationInput {
         base: MutationBase,
         patch: Option<NovelClassificationPatch>,
     },
+    #[serde(rename = "novel.repository")]
+    NovelRepository {
+        #[serde(flatten)]
+        base: MutationBase,
+        patch: Option<NovelRepositoryPatch>,
+    },
+    #[serde(rename = "novel.plugin")]
+    NovelPlugin {
+        #[serde(flatten)]
+        base: MutationBase,
+        patch: Option<NovelPluginPatch>,
+    },
     #[serde(rename = "novel.category")]
     NovelCategory {
         #[serde(flatten)]
@@ -1020,6 +1041,8 @@ impl MutationInput {
             Self::NovelBookmark { .. } => MutationEntityType::NovelBookmark,
             Self::NovelHistory { .. } => MutationEntityType::NovelHistory,
             Self::NovelClassification { .. } => MutationEntityType::NovelClassification,
+            Self::NovelRepository { .. } => MutationEntityType::NovelRepository,
+            Self::NovelPlugin { .. } => MutationEntityType::NovelPlugin,
             Self::NovelCategory { .. } => MutationEntityType::NovelCategory,
             Self::NovelCategoryAssignment { .. } => MutationEntityType::NovelCategoryAssignment,
             Self::ComicHistory { .. } => MutationEntityType::ComicHistory,
@@ -1043,6 +1066,8 @@ impl MutationInput {
             | Self::NovelBookmark { base, .. }
             | Self::NovelHistory { base, .. }
             | Self::NovelClassification { base, .. }
+            | Self::NovelRepository { base, .. }
+            | Self::NovelPlugin { base, .. }
             | Self::NovelCategory { base, .. }
             | Self::NovelCategoryAssignment { base, .. }
             | Self::ComicHistory { base, .. }
@@ -1299,6 +1324,75 @@ pub struct NovelClassificationPatch {
     pub filter_keys: Vec<String>,
     pub plugin_settings_keys: Vec<String>,
     pub classified_at_ms: i64,
+}
+
+/// A clean, profile-scoped LNReader repository descriptor. Repository URLs do
+/// not carry credentials or signed query parameters; secrets remain local.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NovelRepositoryPatch {
+    pub canonical_url: String,
+    pub name: String,
+    pub enabled: bool,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+/// Returns the normalized HTTPS repository URL used by every client when
+/// deriving identity. Query, fragment and userinfo are rejected, not removed.
+pub fn canonicalize_novel_repository_url(raw: &str) -> Option<String> {
+    let mut repository = Url::parse(raw.trim()).ok()?;
+    if repository.scheme() != "https"
+        || repository.host_str().is_none()
+        || !repository.username().is_empty()
+        || repository.password().is_some()
+        || repository.query().is_some()
+        || repository.fragment().is_some()
+    {
+        return None;
+    }
+    let path = repository.path().to_string();
+    if path.len() > 1 && path.ends_with('/') {
+        repository.set_path(path.trim_end_matches('/'));
+    }
+    Some(repository.to_string())
+}
+
+pub fn canonical_novel_repository_id(canonical_url: &str) -> String {
+    format!(
+        "novel-repository:{:x}",
+        Sha256::digest(canonical_url.as_bytes())
+    )
+}
+
+/// A locally executable plugin descriptor. `publicSettings` must contain only
+/// keys declared public by the plugin manifest; the Core independently rejects
+/// secret-looking keys and values before persistence.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NovelPluginPatch {
+    pub repository_id: String,
+    pub plugin_id: String,
+    pub source_id: String,
+    pub name: String,
+    pub version: String,
+    pub lang: String,
+    pub enabled: bool,
+    pub artifact_sha256: String,
+    pub artifact_byte_length: i64,
+    pub public_settings: Value,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+pub fn canonical_novel_plugin_id(repository_id: &str, plugin_id: &str, source_id: &str) -> String {
+    let mut digest = Sha256::new();
+    digest.update(repository_id.as_bytes());
+    digest.update([0]);
+    digest.update(plugin_id.as_bytes());
+    digest.update([0]);
+    digest.update(source_id.as_bytes());
+    format!("novel-plugin:{:x}", digest.finalize())
 }
 
 /// A user-managed category for novels. This is intentionally separate from
@@ -1578,6 +1672,37 @@ pub struct NovelClassificationRecord {
     pub filter_keys: Vec<String>,
     pub plugin_settings_keys: Vec<String>,
     pub classified_at_ms: i64,
+    pub record_lamport: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NovelRepositoryRecord {
+    pub repository_id: String,
+    pub canonical_url: String,
+    pub name: String,
+    pub enabled: bool,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+    pub record_lamport: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NovelPluginRecord {
+    pub plugin_entity_id: String,
+    pub repository_id: String,
+    pub plugin_id: String,
+    pub source_id: String,
+    pub name: String,
+    pub version: String,
+    pub lang: String,
+    pub enabled: bool,
+    pub artifact_sha256: String,
+    pub artifact_byte_length: i64,
+    pub public_settings: Value,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
     pub record_lamport: i64,
 }
 
@@ -1875,6 +2000,45 @@ pub struct NovelClassificationRow {
     pub filter_keys_json: String,
     pub plugin_settings_keys_json: String,
     pub classified_at_ms: i64,
+    pub record_updated_at_ms: i64,
+    pub record_updated_by_device_id: String,
+    pub record_lamport: i64,
+    pub record_server_version: i64,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, FromRow)]
+pub struct NovelRepositoryRow {
+    pub scope_id: String,
+    pub repository_id: String,
+    pub canonical_url: String,
+    pub name: String,
+    pub enabled: i64,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+    pub record_updated_at_ms: i64,
+    pub record_updated_by_device_id: String,
+    pub record_lamport: i64,
+    pub record_server_version: i64,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, FromRow)]
+pub struct NovelPluginRow {
+    pub scope_id: String,
+    pub plugin_entity_id: String,
+    pub repository_id: String,
+    pub plugin_id: String,
+    pub source_id: String,
+    pub name: String,
+    pub version: String,
+    pub lang: String,
+    pub enabled: i64,
+    pub artifact_sha256: String,
+    pub artifact_byte_length: i64,
+    pub public_settings_json: String,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
     pub record_updated_at_ms: i64,
     pub record_updated_by_device_id: String,
     pub record_lamport: i64,
@@ -2200,6 +2364,43 @@ impl From<NovelChapterAssetRow> for NovelChapterAssetRecord {
     }
 }
 
+impl From<NovelRepositoryRow> for NovelRepositoryRecord {
+    fn from(value: NovelRepositoryRow) -> Self {
+        Self {
+            repository_id: value.repository_id,
+            canonical_url: value.canonical_url,
+            name: value.name,
+            enabled: value.enabled != 0,
+            created_at_ms: value.created_at_ms,
+            updated_at_ms: value.updated_at_ms,
+            record_lamport: value.record_lamport,
+        }
+    }
+}
+
+impl TryFrom<NovelPluginRow> for NovelPluginRecord {
+    type Error = serde_json::Error;
+
+    fn try_from(value: NovelPluginRow) -> Result<Self, Self::Error> {
+        Ok(Self {
+            plugin_entity_id: value.plugin_entity_id,
+            repository_id: value.repository_id,
+            plugin_id: value.plugin_id,
+            source_id: value.source_id,
+            name: value.name,
+            version: value.version,
+            lang: value.lang,
+            enabled: value.enabled != 0,
+            artifact_sha256: value.artifact_sha256,
+            artifact_byte_length: value.artifact_byte_length,
+            public_settings: serde_json::from_str(&value.public_settings_json)?,
+            created_at_ms: value.created_at_ms,
+            updated_at_ms: value.updated_at_ms,
+            record_lamport: value.record_lamport,
+        })
+    }
+}
+
 impl From<NovelCategoryRow> for NovelCategoryRecord {
     fn from(value: NovelCategoryRow) -> Self {
         Self {
@@ -2304,6 +2505,34 @@ mod tests {
             canonical_novel_identity_key(&patch).as_deref(),
             Some("novel-2ddcfbbb73a4bc27095ac742d5e3355a7f432b5ecd484525fb59fbbaf8a9b127")
         );
+    }
+
+    #[test]
+    fn repository_and_plugin_identity_vectors_are_cross_client_stable() {
+        let url =
+            canonicalize_novel_repository_url(" HTTPS://Example.COM:443/repository.json ").unwrap();
+        assert_eq!(url, "https://example.com/repository.json");
+        let repository_id = canonical_novel_repository_id(&url);
+        assert_eq!(
+            repository_id,
+            "novel-repository:1dae0c9bc42503917273ec8bfd1e4fc3de900db765867042f176cd26fdbff91f"
+        );
+        assert_eq!(
+            canonical_novel_plugin_id(&repository_id, "plugin.test", "source.test"),
+            "novel-plugin:c7f378a0a77a9b38db6595eaf913f71a83541ac80f4c5876a8e7079c69ff0d69"
+        );
+    }
+
+    #[test]
+    fn repository_url_rejects_all_secret_bearing_shapes() {
+        for url in [
+            "http://example.com/repository.json",
+            "https://user@example.com/repository.json",
+            "https://example.com/repository.json?token=signed",
+            "https://example.com/repository.json#fragment",
+        ] {
+            assert_eq!(canonicalize_novel_repository_url(url), None, "{url}");
+        }
     }
 
     #[test]

@@ -11,7 +11,8 @@ use uuid::Uuid;
 
 use super::config::SyncdConfig;
 use super::models::{
-    canonical_novel_identity_key, canonical_novel_identity_key_from_source, AuthenticatedSession,
+    canonical_novel_identity_key, canonical_novel_identity_key_from_source,
+    canonical_novel_plugin_id, canonical_novel_repository_id, AuthenticatedSession,
     BookBookmarkPatch, BookBookmarkRecord, BookBookmarkRow, BookCategoryAssignmentPatch,
     BookCategoryAssignmentRecord, BookCategoryAssignmentRow, BookCategoryPatch, BookCategoryRecord,
     BookCategoryRow, BookEntryPatch, BookEntryRecord, BookEntryRow, BookHistoryPatch,
@@ -25,9 +26,10 @@ use super::models::{
     NovelChapterAssetPatch, NovelChapterAssetRecord, NovelChapterAssetRow, NovelChapterPatch,
     NovelChapterRecord, NovelChapterRow, NovelClassificationPatch, NovelClassificationRecord,
     NovelClassificationRow, NovelEntryPatch, NovelEntryRecord, NovelEntryRow, NovelHistoryPatch,
-    NovelHistoryRecord, NovelHistoryRow, NovelProgressPatch, NovelProgressRecord, NovelProgressRow,
-    PairingGrantVia, PairingPlatform, ServerRuntimeRow, SnapshotEntity, SnapshotResponse,
-    SnapshotTombstone, SNAPSHOT_SCHEMA_VERSION,
+    NovelHistoryRecord, NovelHistoryRow, NovelPluginPatch, NovelPluginRecord, NovelPluginRow,
+    NovelProgressPatch, NovelProgressRecord, NovelProgressRow, NovelRepositoryPatch,
+    NovelRepositoryRecord, NovelRepositoryRow, PairingGrantVia, PairingPlatform, ServerRuntimeRow,
+    SnapshotEntity, SnapshotResponse, SnapshotTombstone, SNAPSHOT_SCHEMA_VERSION,
 };
 
 #[derive(Debug, Clone, FromRow, Serialize)]
@@ -611,6 +613,46 @@ pub async fn load_scope_snapshot(
                 server_version,
                 lamport,
                 NovelClassificationRecord::try_from(row)?,
+            )?;
+        }
+
+        let rows = sqlx::query_as::<_, NovelRepositoryRow>(
+            "SELECT * FROM novel_repositories WHERE scope_id = ? ORDER BY repository_id",
+        )
+        .bind(scope_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in rows {
+            let entity_id = row.repository_id.clone();
+            let server_version = row.record_server_version;
+            let lamport = row.record_lamport;
+            push_snapshot_entity(
+                &mut entities,
+                "novel.repository",
+                entity_id,
+                server_version,
+                lamport,
+                NovelRepositoryRecord::from(row),
+            )?;
+        }
+
+        let rows = sqlx::query_as::<_, NovelPluginRow>(
+            "SELECT * FROM novel_plugins WHERE scope_id = ? ORDER BY plugin_entity_id",
+        )
+        .bind(scope_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in rows {
+            let entity_id = row.plugin_entity_id.clone();
+            let server_version = row.record_server_version;
+            let lamport = row.record_lamport;
+            push_snapshot_entity(
+                &mut entities,
+                "novel.plugin",
+                entity_id,
+                server_version,
+                lamport,
+                NovelPluginRecord::try_from(row)?,
             )?;
         }
 
@@ -2217,6 +2259,80 @@ pub async fn resolve_novel_entity_id(
     Ok(identity_owner.unwrap_or(resolved))
 }
 
+pub async fn resolve_novel_repository_entity_id(
+    pool: &sqlx::SqlitePool,
+    scope_id: &str,
+    requested_entity_id: &str,
+) -> anyhow::Result<String> {
+    let alias = sqlx::query_scalar::<_, String>(
+        "SELECT canonical_entity_id FROM novel_repository_aliases WHERE scope_id = ? AND alias_entity_id = ?",
+    )
+    .bind(scope_id)
+    .bind(requested_entity_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(alias.unwrap_or_else(|| requested_entity_id.to_string()))
+}
+
+pub async fn resolve_novel_repository_merge_id(
+    pool: &sqlx::SqlitePool,
+    scope_id: &str,
+    requested_entity_id: &str,
+    canonical_url: &str,
+) -> anyhow::Result<String> {
+    let resolved = resolve_novel_repository_entity_id(pool, scope_id, requested_entity_id).await?;
+    if resolved != requested_entity_id {
+        return Ok(resolved);
+    }
+    let owner = sqlx::query_scalar::<_, String>(
+        "SELECT repository_id FROM novel_repositories WHERE scope_id = ? AND canonical_url = ?",
+    )
+    .bind(scope_id)
+    .bind(canonical_url)
+    .fetch_optional(pool)
+    .await?;
+    Ok(owner.unwrap_or_else(|| canonical_novel_repository_id(canonical_url)))
+}
+
+pub async fn resolve_novel_plugin_entity_id(
+    pool: &sqlx::SqlitePool,
+    scope_id: &str,
+    requested_entity_id: &str,
+) -> anyhow::Result<String> {
+    let alias = sqlx::query_scalar::<_, String>(
+        "SELECT canonical_entity_id FROM novel_plugin_aliases WHERE scope_id = ? AND alias_entity_id = ?",
+    )
+    .bind(scope_id)
+    .bind(requested_entity_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(alias.unwrap_or_else(|| requested_entity_id.to_string()))
+}
+
+pub async fn resolve_novel_plugin_merge_id(
+    pool: &sqlx::SqlitePool,
+    scope_id: &str,
+    requested_entity_id: &str,
+    repository_id: &str,
+    plugin_id: &str,
+    source_id: &str,
+) -> anyhow::Result<String> {
+    let resolved = resolve_novel_plugin_entity_id(pool, scope_id, requested_entity_id).await?;
+    if resolved != requested_entity_id {
+        return Ok(resolved);
+    }
+    let owner = sqlx::query_scalar::<_, String>(
+        "SELECT plugin_entity_id FROM novel_plugins WHERE scope_id = ? AND repository_id = ? AND plugin_id = ? AND source_id = ?",
+    )
+    .bind(scope_id)
+    .bind(repository_id)
+    .bind(plugin_id)
+    .bind(source_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(owner.unwrap_or_else(|| canonical_novel_plugin_id(repository_id, plugin_id, source_id)))
+}
+
 pub async fn delete_novel_entry_mutation(
     pool: &sqlx::SqlitePool,
     session: &AuthenticatedSession,
@@ -2981,6 +3097,374 @@ pub async fn delete_novel_classification_mutation(
         record: Value::Null,
         applied_lamport,
     })
+}
+
+pub async fn apply_novel_repository_mutation(
+    pool: &sqlx::SqlitePool,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_id: &str,
+    patch: &NovelRepositoryPatch,
+    client_lamport: i64,
+    retention_window: Duration,
+) -> anyhow::Result<MutationWriteOutcome> {
+    let mut tx = pool.begin().await?;
+    let current = sqlx::query_as::<_, NovelRepositoryRow>(
+        "SELECT * FROM novel_repositories WHERE scope_id = ? AND repository_id = ?",
+    )
+    .bind(scope_id)
+    .bind(entity_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .map(NovelRepositoryRecord::from);
+    if let Some(existing) = current.as_ref() {
+        anyhow::ensure!(
+            existing.canonical_url == patch.canonical_url,
+            "novel repository identity is immutable"
+        );
+    }
+    let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "novel.repository", entity_id).await?;
+    if let Some(tombstone) = tombstone.as_ref() {
+        ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
+    }
+    let record = NovelRepositoryRecord {
+        repository_id: entity_id.to_string(),
+        canonical_url: patch.canonical_url.clone(),
+        name: patch.name.trim().to_string(),
+        enabled: patch.enabled,
+        created_at_ms: patch.created_at_ms,
+        updated_at_ms: patch.updated_at_ms,
+        record_lamport: current
+            .as_ref()
+            .map(|value| next_lamport(value.record_lamport, client_lamport))
+            .unwrap_or(client_lamport),
+    };
+    let value = serde_json::to_value(&record)?;
+    let (server_version, applied_at_ms) = append_change_log_in_tx(
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        "novel.repository",
+        entity_id,
+        "merge",
+        record.record_lamport,
+        session,
+        Some(&value),
+        retention_window,
+    )
+    .await?;
+    sqlx::query(
+        r#"INSERT INTO novel_repositories (
+            scope_id, repository_id, canonical_url, name, enabled, created_at_ms, updated_at_ms,
+            record_updated_at_ms, record_updated_by_device_id, record_lamport, record_server_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(scope_id, repository_id) DO UPDATE SET
+            name = excluded.name, enabled = excluded.enabled,
+            created_at_ms = excluded.created_at_ms, updated_at_ms = excluded.updated_at_ms,
+            record_updated_at_ms = excluded.record_updated_at_ms,
+            record_updated_by_device_id = excluded.record_updated_by_device_id,
+            record_lamport = excluded.record_lamport,
+            record_server_version = excluded.record_server_version"#,
+    )
+    .bind(scope_id)
+    .bind(entity_id)
+    .bind(&record.canonical_url)
+    .bind(&record.name)
+    .bind(i64::from(record.enabled))
+    .bind(record.created_at_ms)
+    .bind(record.updated_at_ms)
+    .bind(applied_at_ms)
+    .bind(&session.device_id)
+    .bind(record.record_lamport)
+    .bind(server_version)
+    .execute(&mut *tx)
+    .await?;
+    persist_typed_alias_in_tx(
+        &mut tx,
+        "novel_repository_aliases",
+        scope_id,
+        session,
+        entity_id,
+        applied_at_ms,
+    )
+    .await?;
+    if tombstone.is_some() {
+        delete_tombstone_in_tx(&mut tx, scope_id, "novel.repository", entity_id).await?;
+    }
+    tx.commit().await?;
+    Ok(MutationWriteOutcome {
+        envelope: ChangeEnvelope {
+            server_version,
+            scope_id: scope_id.to_string(),
+            profile_id: Some(session.profile_id.clone()),
+            entity_type: "novel.repository".to_string(),
+            entity_id: entity_id.to_string(),
+            op: "merge".to_string(),
+            lamport: record.record_lamport,
+            patch: Some(value.clone()),
+            applied_at_ms,
+        },
+        record: value,
+        applied_lamport: record.record_lamport,
+    })
+}
+
+pub async fn delete_novel_repository_mutation(
+    pool: &sqlx::SqlitePool,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_id: &str,
+    client_lamport: i64,
+    retention_window: Duration,
+) -> anyhow::Result<MutationWriteOutcome> {
+    let mut tx = pool.begin().await?;
+    let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "novel.repository", entity_id).await?;
+    if let Some(tombstone) = tombstone.as_ref() {
+        ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
+    }
+    let plugin_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM novel_plugins WHERE scope_id = ? AND repository_id = ?",
+    )
+    .bind(scope_id)
+    .bind(entity_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    anyhow::ensure!(
+        plugin_count == 0,
+        "novel repository still has active plugins"
+    );
+    sqlx::query("DELETE FROM novel_repositories WHERE scope_id = ? AND repository_id = ?")
+        .bind(scope_id)
+        .bind(entity_id)
+        .execute(&mut *tx)
+        .await?;
+    let lamport = tombstone
+        .as_ref()
+        .map(|value| next_lamport(value.lamport, client_lamport))
+        .unwrap_or(client_lamport);
+    delete_with_tombstone(
+        tx,
+        session,
+        scope_id,
+        "novel.repository",
+        entity_id,
+        lamport,
+        retention_window,
+        "novel_repository_deleted",
+    )
+    .await
+}
+
+pub async fn apply_novel_plugin_mutation(
+    pool: &sqlx::SqlitePool,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_id: &str,
+    patch: &NovelPluginPatch,
+    client_lamport: i64,
+    retention_window: Duration,
+) -> anyhow::Result<MutationWriteOutcome> {
+    let mut tx = pool.begin().await?;
+    let repository_exists = sqlx::query_scalar::<_, i64>(
+        "SELECT 1 FROM novel_repositories WHERE scope_id = ? AND repository_id = ?",
+    )
+    .bind(scope_id)
+    .bind(&patch.repository_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .is_some();
+    anyhow::ensure!(repository_exists, "novel plugin repository does not exist");
+    let current = sqlx::query_as::<_, NovelPluginRow>(
+        "SELECT * FROM novel_plugins WHERE scope_id = ? AND plugin_entity_id = ?",
+    )
+    .bind(scope_id)
+    .bind(entity_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .map(NovelPluginRecord::try_from)
+    .transpose()?;
+    if let Some(existing) = current.as_ref() {
+        anyhow::ensure!(
+            existing.repository_id == patch.repository_id
+                && existing.plugin_id == patch.plugin_id
+                && existing.source_id == patch.source_id,
+            "novel plugin identity is immutable"
+        );
+        anyhow::ensure!(
+            existing.version != patch.version
+                || (existing.artifact_sha256 == patch.artifact_sha256
+                    && existing.artifact_byte_length == patch.artifact_byte_length),
+            "novel plugin artifact is immutable within a version"
+        );
+    }
+    let historical_artifact = sqlx::query_as::<_, (String, i64)>(
+        r#"SELECT artifact_sha256, artifact_byte_length
+        FROM novel_plugin_artifact_versions
+        WHERE scope_id = ? AND plugin_entity_id = ? AND version = ?"#,
+    )
+    .bind(scope_id)
+    .bind(entity_id)
+    .bind(patch.version.trim())
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some((sha256, byte_length)) = historical_artifact {
+        anyhow::ensure!(
+            sha256 == patch.artifact_sha256 && byte_length == patch.artifact_byte_length,
+            "novel plugin artifact is immutable for every observed version"
+        );
+    }
+    let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "novel.plugin", entity_id).await?;
+    if let Some(tombstone) = tombstone.as_ref() {
+        ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
+    }
+    let record = NovelPluginRecord {
+        plugin_entity_id: entity_id.to_string(),
+        repository_id: patch.repository_id.clone(),
+        plugin_id: patch.plugin_id.trim().to_string(),
+        source_id: patch.source_id.trim().to_string(),
+        name: patch.name.trim().to_string(),
+        version: patch.version.trim().to_string(),
+        lang: patch.lang.trim().to_string(),
+        enabled: patch.enabled,
+        artifact_sha256: patch.artifact_sha256.clone(),
+        artifact_byte_length: patch.artifact_byte_length,
+        public_settings: patch.public_settings.clone(),
+        created_at_ms: patch.created_at_ms,
+        updated_at_ms: patch.updated_at_ms,
+        record_lamport: current
+            .as_ref()
+            .map(|value| next_lamport(value.record_lamport, client_lamport))
+            .unwrap_or(client_lamport),
+    };
+    let value = serde_json::to_value(&record)?;
+    let (server_version, applied_at_ms) = append_change_log_in_tx(
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        "novel.plugin",
+        entity_id,
+        "merge",
+        record.record_lamport,
+        session,
+        Some(&value),
+        retention_window,
+    )
+    .await?;
+    sqlx::query(
+        r#"INSERT INTO novel_plugins (
+            scope_id, plugin_entity_id, repository_id, plugin_id, source_id, name, version, lang,
+            enabled, artifact_sha256, artifact_byte_length, public_settings_json, created_at_ms,
+            updated_at_ms, record_updated_at_ms, record_updated_by_device_id, record_lamport,
+            record_server_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(scope_id, plugin_entity_id) DO UPDATE SET
+            name = excluded.name, version = excluded.version, lang = excluded.lang,
+            enabled = excluded.enabled, artifact_sha256 = excluded.artifact_sha256,
+            artifact_byte_length = excluded.artifact_byte_length,
+            public_settings_json = excluded.public_settings_json,
+            created_at_ms = excluded.created_at_ms, updated_at_ms = excluded.updated_at_ms,
+            record_updated_at_ms = excluded.record_updated_at_ms,
+            record_updated_by_device_id = excluded.record_updated_by_device_id,
+            record_lamport = excluded.record_lamport,
+            record_server_version = excluded.record_server_version"#,
+    )
+    .bind(scope_id)
+    .bind(entity_id)
+    .bind(&record.repository_id)
+    .bind(&record.plugin_id)
+    .bind(&record.source_id)
+    .bind(&record.name)
+    .bind(&record.version)
+    .bind(&record.lang)
+    .bind(i64::from(record.enabled))
+    .bind(&record.artifact_sha256)
+    .bind(record.artifact_byte_length)
+    .bind(serde_json::to_string(&record.public_settings)?)
+    .bind(record.created_at_ms)
+    .bind(record.updated_at_ms)
+    .bind(applied_at_ms)
+    .bind(&session.device_id)
+    .bind(record.record_lamport)
+    .bind(server_version)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        r#"INSERT OR IGNORE INTO novel_plugin_artifact_versions (
+            scope_id, plugin_entity_id, version, artifact_sha256,
+            artifact_byte_length, first_seen_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?)"#,
+    )
+    .bind(scope_id)
+    .bind(entity_id)
+    .bind(&record.version)
+    .bind(&record.artifact_sha256)
+    .bind(record.artifact_byte_length)
+    .bind(applied_at_ms)
+    .execute(&mut *tx)
+    .await?;
+    persist_typed_alias_in_tx(
+        &mut tx,
+        "novel_plugin_aliases",
+        scope_id,
+        session,
+        entity_id,
+        applied_at_ms,
+    )
+    .await?;
+    if tombstone.is_some() {
+        delete_tombstone_in_tx(&mut tx, scope_id, "novel.plugin", entity_id).await?;
+    }
+    tx.commit().await?;
+    Ok(MutationWriteOutcome {
+        envelope: ChangeEnvelope {
+            server_version,
+            scope_id: scope_id.to_string(),
+            profile_id: Some(session.profile_id.clone()),
+            entity_type: "novel.plugin".to_string(),
+            entity_id: entity_id.to_string(),
+            op: "merge".to_string(),
+            lamport: record.record_lamport,
+            patch: Some(value.clone()),
+            applied_at_ms,
+        },
+        record: value,
+        applied_lamport: record.record_lamport,
+    })
+}
+
+pub async fn delete_novel_plugin_mutation(
+    pool: &sqlx::SqlitePool,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_id: &str,
+    client_lamport: i64,
+    retention_window: Duration,
+) -> anyhow::Result<MutationWriteOutcome> {
+    let mut tx = pool.begin().await?;
+    let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "novel.plugin", entity_id).await?;
+    if let Some(tombstone) = tombstone.as_ref() {
+        ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
+    }
+    sqlx::query("DELETE FROM novel_plugins WHERE scope_id = ? AND plugin_entity_id = ?")
+        .bind(scope_id)
+        .bind(entity_id)
+        .execute(&mut *tx)
+        .await?;
+    let lamport = tombstone
+        .as_ref()
+        .map(|value| next_lamport(value.lamport, client_lamport))
+        .unwrap_or(client_lamport);
+    delete_with_tombstone(
+        tx,
+        session,
+        scope_id,
+        "novel.plugin",
+        entity_id,
+        lamport,
+        retention_window,
+        "novel_plugin_deleted",
+    )
+    .await
 }
 
 pub async fn apply_novel_category_mutation(
@@ -4469,6 +4953,104 @@ pub async fn delete_comic_page_bookmark_mutation(
     })
 }
 
+async fn persist_typed_alias_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    table: &str,
+    scope_id: &str,
+    session: &AuthenticatedSession,
+    canonical_entity_id: &str,
+    created_at_ms: i64,
+) -> anyhow::Result<()> {
+    let Some(context) = session.mutation_receipt.as_ref() else {
+        return Ok(());
+    };
+    if context.entity_id == canonical_entity_id {
+        return Ok(());
+    }
+    anyhow::ensure!(
+        matches!(table, "novel_repository_aliases" | "novel_plugin_aliases"),
+        "unsupported alias table"
+    );
+    let query = format!(
+        "SELECT canonical_entity_id FROM {table} WHERE scope_id = ? AND alias_entity_id = ?"
+    );
+    let existing = sqlx::query_scalar::<_, String>(&query)
+        .bind(scope_id)
+        .bind(&context.entity_id)
+        .fetch_optional(&mut **tx)
+        .await?;
+    anyhow::ensure!(
+        existing.as_deref().is_none() || existing.as_deref() == Some(canonical_entity_id),
+        "entity alias already belongs to another canonical identity"
+    );
+    let query = format!(
+        "INSERT OR IGNORE INTO {table} (scope_id, alias_entity_id, canonical_entity_id, created_at_ms) VALUES (?, ?, ?, ?)"
+    );
+    sqlx::query(&query)
+        .bind(scope_id)
+        .bind(&context.entity_id)
+        .bind(canonical_entity_id)
+        .bind(created_at_ms)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+async fn delete_with_tombstone(
+    mut tx: sqlx::Transaction<'_, sqlx::Sqlite>,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_type: &str,
+    entity_id: &str,
+    lamport: i64,
+    retention_window: Duration,
+    reason_code: &str,
+) -> anyhow::Result<MutationWriteOutcome> {
+    let (server_version, applied_at_ms) = append_change_log_in_tx(
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        entity_type,
+        entity_id,
+        "delete",
+        lamport,
+        session,
+        None,
+        retention_window,
+    )
+    .await?;
+    upsert_tombstone_in_tx(
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        entity_type,
+        entity_id,
+        &session.device_id,
+        lamport,
+        applied_at_ms,
+        server_version,
+        retention_window,
+        reason_code,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(MutationWriteOutcome {
+        envelope: ChangeEnvelope {
+            server_version,
+            scope_id: scope_id.to_string(),
+            profile_id: Some(session.profile_id.clone()),
+            entity_type: entity_type.to_string(),
+            entity_id: entity_id.to_string(),
+            op: "delete".to_string(),
+            lamport,
+            patch: None,
+            applied_at_ms,
+        },
+        record: Value::Null,
+        applied_lamport: lamport,
+    })
+}
+
 async fn append_change_log_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     scope_id: &str,
@@ -5787,6 +6369,101 @@ mod tests {
     use std::collections::BTreeSet;
 
     use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn novel_plugin_migration_preserves_v1_rows_without_publishing_them() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(":memory:")
+                    .create_if_missing(true)
+                    .foreign_keys(true),
+            )
+            .await
+            .unwrap();
+
+        for migration in MIGRATOR.iter().filter(|migration| migration.version < 12) {
+            sqlx::raw_sql(migration.sql.as_ref())
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query(
+            r#"INSERT INTO novel_repositories (
+                scope_id, repository_id, url, canonical_url, name, equivalence_group,
+                desired_state, record_updated_at_ms, record_updated_by_device_id,
+                record_lamport, record_server_version
+            ) VALUES (?, ?, ?, ?, ?, NULL, 'enabled', 1, 'legacy-device', 1, 1)"#,
+        )
+        .bind("novels:profile:main")
+        .bind("legacy-repo")
+        .bind("https://legacy.example/repo.json")
+        .bind("https://legacy.example/repo.json")
+        .bind("Legacy")
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            r#"INSERT INTO novel_plugins (
+                scope_id, plugin_instance_id, plugin_id, repository_id, name, version,
+                source_id, source_name, lang, desired_state, record_updated_at_ms,
+                record_updated_by_device_id, record_lamport, record_server_version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'enabled', 1, 'legacy-device', 1, 1)"#,
+        )
+        .bind("novels:profile:main")
+        .bind("legacy-instance")
+        .bind("legacy-plugin")
+        .bind("legacy-repo")
+        .bind("Legacy plugin")
+        .bind("1.0.0")
+        .bind("legacy-source")
+        .bind("Legacy source")
+        .bind("en")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let migration = MIGRATOR
+            .iter()
+            .find(|migration| migration.version == 12)
+            .unwrap();
+        sqlx::raw_sql(migration.sql.as_ref())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let archived_repositories: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM novel_repositories_v1_legacy")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let archived_plugins: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM novel_plugins_v1_legacy")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let active_repositories: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM novel_repositories")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let active_plugins: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM novel_plugins")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let active_artifact_versions: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM novel_plugin_artifact_versions")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        assert_eq!(archived_repositories, 1);
+        assert_eq!(archived_plugins, 1);
+        assert_eq!(active_repositories, 0);
+        assert_eq!(active_plugins, 0);
+        assert_eq!(active_artifact_versions, 0);
+    }
 
     #[tokio::test]
     async fn novel_category_migration_upgrades_v9_without_losing_changes() {

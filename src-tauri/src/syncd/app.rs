@@ -756,13 +756,16 @@ mod tests {
         assert_eq!(payload["supportsSnapshot"], true);
         assert_eq!(payload["supportsAssets"], true);
         assert_eq!(payload["supportsNovelChapterAssets"], true);
+        assert_eq!(payload["supportsNovelPluginSync"], true);
         assert_eq!(payload["snapshotSchemaVersion"], 1);
         let entity_types = payload["snapshotEntityTypes"].as_array().unwrap();
-        assert_eq!(entity_types.len(), 18);
+        assert_eq!(entity_types.len(), 20);
         assert!(entity_types
             .iter()
             .any(|value| value == "novel.chapter_asset"));
         assert!(entity_types.iter().any(|value| value == "novel.category"));
+        assert!(entity_types.iter().any(|value| value == "novel.repository"));
+        assert!(entity_types.iter().any(|value| value == "novel.plugin"));
         assert!(entity_types
             .iter()
             .any(|value| value == "novel.category_assignment"));
