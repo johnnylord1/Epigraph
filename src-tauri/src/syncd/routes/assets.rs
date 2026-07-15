@@ -24,6 +24,35 @@ const ASSET_UPLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const STREAM_CHUNK_SIZE: usize = 64 * 1024;
 static ASSET_UPLOADS: Semaphore = Semaphore::const_new(2);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AssetReferenceError {
+    InvalidSha256,
+    NotAvailableForScope,
+    SizeMismatch,
+    Storage,
+}
+
+pub(crate) async fn validate_asset_reference(
+    data_dir: &FilePath,
+    raw_sha256: &str,
+    scope_id: &str,
+    expected_size: u64,
+) -> Result<(), AssetReferenceError> {
+    let asset_id = AssetId::parse(raw_sha256).map_err(|_| AssetReferenceError::InvalidSha256)?;
+    let store = AssetStore::new(data_dir.join("assets"));
+    let asset = store
+        .authorized_asset(&asset_id, scope_id)
+        .await
+        .map_err(|error| match error {
+            AppError::NotFound(_) => AssetReferenceError::NotAvailableForScope,
+            _ => AssetReferenceError::Storage,
+        })?;
+    if asset.size != expected_size {
+        return Err(AssetReferenceError::SizeMismatch);
+    }
+    Ok(())
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetScopeQuery {
