@@ -2,18 +2,25 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use axum::body::{to_bytes, Body};
+use axum::extract::ws::{Message as AxumMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Request, State};
 use axum::http::header::{
     ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, ACCEPT_RANGES, CACHE_CONTROL, CONTENT_DISPOSITION,
     CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, ETAG, EXPIRES,
     IF_MODIFIED_SINCE, IF_NONE_MATCH, IF_RANGE, LAST_MODIFIED, RANGE, VARY,
 };
-use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
+use axum::http::{
+    header::{CONNECTION, SEC_WEBSOCKET_PROTOCOL, UPGRADE},
+    HeaderMap, HeaderName, HeaderValue, Method, StatusCode,
+};
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
-use futures_util::StreamExt;
+use futures_util::{SinkExt, StreamExt};
 use reqwest::redirect::Policy;
 use serde_json::json;
+use tokio_tungstenite::tungstenite::{
+    client::IntoClientRequest, protocol::WebSocketConfig, Message as UpstreamMessage,
+};
 use url::{Host, Url};
 
 use crate::syncd::models::{AuthenticatedSession, ErrorBody, ErrorDetail, SharedAppState};
@@ -22,6 +29,9 @@ use crate::syncd::suwayomi_process;
 const MAX_PROXY_PATH_BYTES: usize = 2_048;
 const MAX_PROXY_QUERY_BYTES: usize = 16 * 1_024;
 const MAX_GRAPHQL_BODY_BYTES: usize = 2 * 1024 * 1024;
+const MAX_WEBSOCKET_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_WEBSOCKET_FRAME_BYTES: usize = 1024 * 1024;
+const MAX_WEBSOCKET_PROTOCOL_BYTES: usize = 1024;
 
 static PROXY_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
@@ -29,8 +39,20 @@ pub async fn get_or_head(
     State(state): State<SharedAppState>,
     Extension(session): Extension<AuthenticatedSession>,
     Path(path): Path<String>,
+    websocket: Option<WebSocketUpgrade>,
     request: Request,
 ) -> Response {
+    if let Some(websocket) = websocket {
+        return proxy_websocket(state, session, path, websocket, request).await;
+    }
+    if is_websocket_attempt(request.headers()) {
+        return proxy_error(
+            StatusCode::BAD_REQUEST,
+            "SUWAYOMI_WEBSOCKET_HANDSHAKE_INVALID",
+            "The Suwayomi WebSocket upgrade request is invalid.",
+            false,
+        );
+    }
     proxy_http(state, session, path, request, false).await
 }
 
@@ -77,40 +99,9 @@ async fn proxy_http(
     include_body: bool,
 ) -> Response {
     let raw_query = request.uri().query().unwrap_or_default();
-    let (scope_id, upstream_query) = match extract_scope_query(raw_query) {
-        Ok(value) => value,
-        Err(message) => {
-            return proxy_error(StatusCode::BAD_REQUEST, "BAD_REQUEST", &message, false)
-        }
-    };
-    let expected_scope = format!("comics:profile:{}", session.profile_id);
-    if scope_id.as_deref() != Some(expected_scope.as_str())
-        || !session.scopes.contains(&expected_scope)
-    {
-        return proxy_error(
-            StatusCode::FORBIDDEN,
-            "SUWAYOMI_PROXY_SCOPE_FORBIDDEN",
-            "The comics scope is not granted to this token and paired profile.",
-            false,
-        );
-    }
-
-    let upstream_base = match resolve_upstream_base(&state, &session.profile_id) {
+    let upstream_url = match resolve_proxy_target(&state, &session, &path, raw_query) {
         Ok(url) => url,
-        Err(message) => {
-            return proxy_error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "SUWAYOMI_UPSTREAM_UNAVAILABLE",
-                &message,
-                true,
-            )
-        }
-    };
-    let upstream_url = match build_upstream_url(upstream_base, &path, upstream_query.as_deref()) {
-        Ok(url) => url,
-        Err(message) => {
-            return proxy_error(StatusCode::BAD_REQUEST, "BAD_REQUEST", &message, false)
-        }
+        Err(response) => return response,
     };
 
     let (parts, body) = request.into_parts();
@@ -165,6 +156,319 @@ async fn proxy_http(
     }
 
     stream_upstream_response(upstream_response, method == Method::HEAD)
+}
+
+async fn proxy_websocket(
+    state: SharedAppState,
+    session: AuthenticatedSession,
+    path: String,
+    websocket: WebSocketUpgrade,
+    request: Request,
+) -> Response {
+    if path != "api/graphql" {
+        return proxy_error(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "SUWAYOMI_WEBSOCKET_PATH_NOT_ALLOWED",
+            "WebSocket upgrades are only allowed for the Suwayomi GraphQL endpoint.",
+            false,
+        );
+    }
+
+    let offered_protocol = match websocket_protocol_header(request.headers()) {
+        Ok(protocol) => protocol,
+        Err(message) => {
+            return proxy_error(
+                StatusCode::BAD_REQUEST,
+                "SUWAYOMI_WEBSOCKET_PROTOCOL_INVALID",
+                &message,
+                false,
+            )
+        }
+    };
+    let raw_query = request.uri().query().unwrap_or_default();
+    let mut upstream_url = match resolve_proxy_target(&state, &session, &path, raw_query) {
+        Ok(url) => url,
+        Err(response) => return response,
+    };
+    let websocket_scheme = match upstream_url.scheme() {
+        "http" => "ws",
+        "https" => "wss",
+        _ => {
+            return proxy_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "SUWAYOMI_UPSTREAM_UNAVAILABLE",
+                "The owned Suwayomi instance uses an unsupported scheme.",
+                true,
+            )
+        }
+    };
+    if upstream_url.set_scheme(websocket_scheme).is_err() {
+        return proxy_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "SUWAYOMI_UPSTREAM_UNAVAILABLE",
+            "The owned Suwayomi WebSocket URL is invalid.",
+            true,
+        );
+    }
+
+    let mut upstream_request = match upstream_url.as_str().into_client_request() {
+        Ok(request) => request,
+        Err(_) => {
+            return proxy_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "SUWAYOMI_UPSTREAM_UNAVAILABLE",
+                "The owned Suwayomi WebSocket request could not be created.",
+                true,
+            )
+        }
+    };
+    if let Some(protocol) = &offered_protocol {
+        upstream_request
+            .headers_mut()
+            .insert(SEC_WEBSOCKET_PROTOCOL, protocol.clone());
+    }
+
+    let upstream_config = WebSocketConfig {
+        max_message_size: Some(MAX_WEBSOCKET_MESSAGE_BYTES),
+        max_frame_size: Some(MAX_WEBSOCKET_FRAME_BYTES),
+        ..WebSocketConfig::default()
+    };
+    let upstream_connection = tokio::time::timeout(
+        Duration::from_secs(3),
+        tokio_tungstenite::connect_async_with_config(upstream_request, Some(upstream_config), true),
+    )
+    .await;
+    let (upstream_socket, upstream_response) = match upstream_connection {
+        Ok(Ok(connection)) => connection,
+        Ok(Err(error)) => {
+            let (status, code, retryable) = match error {
+                tokio_tungstenite::tungstenite::Error::Http(_) => (
+                    StatusCode::BAD_GATEWAY,
+                    "SUWAYOMI_WEBSOCKET_HANDSHAKE_REJECTED",
+                    false,
+                ),
+                _ => (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "SUWAYOMI_UPSTREAM_UNAVAILABLE",
+                    true,
+                ),
+            };
+            tracing::warn!(
+                profile = session.profile_id,
+                device = session.device_id,
+                error_class = websocket_error_class(&error),
+                "Suwayomi WebSocket upstream handshake failed"
+            );
+            return proxy_error(
+                status,
+                code,
+                "The owned Suwayomi WebSocket handshake failed.",
+                retryable,
+            );
+        }
+        Err(_) => {
+            tracing::warn!(
+                profile = session.profile_id,
+                device = session.device_id,
+                "Suwayomi WebSocket upstream handshake timed out"
+            );
+            return proxy_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "SUWAYOMI_UPSTREAM_UNAVAILABLE",
+                "The owned Suwayomi WebSocket handshake timed out.",
+                true,
+            );
+        }
+    };
+
+    let accepted_protocol = upstream_response
+        .headers()
+        .get(SEC_WEBSOCKET_PROTOCOL)
+        .cloned();
+    if let Some(accepted) = &accepted_protocol {
+        let accepted_text = accepted.to_str().unwrap_or_default();
+        if !offered_protocol
+            .as_ref()
+            .is_some_and(|offered| header_list_contains(offered, accepted_text))
+        {
+            tracing::warn!(
+                profile = session.profile_id,
+                device = session.device_id,
+                "Suwayomi WebSocket selected a protocol not offered by the client"
+            );
+            return proxy_error(
+                StatusCode::BAD_GATEWAY,
+                "SUWAYOMI_WEBSOCKET_PROTOCOL_MISMATCH",
+                "The owned Suwayomi instance selected an unexpected WebSocket protocol.",
+                false,
+            );
+        }
+    }
+
+    let websocket = websocket
+        .max_message_size(MAX_WEBSOCKET_MESSAGE_BYTES)
+        .max_frame_size(MAX_WEBSOCKET_FRAME_BYTES);
+    let websocket = if let Some(protocol) = accepted_protocol {
+        websocket.protocols([protocol.to_str().unwrap_or_default().to_string()])
+    } else {
+        websocket
+    };
+    let profile_id = session.profile_id;
+    let device_id = session.device_id;
+    websocket
+        .on_failed_upgrade(move |error| {
+            tracing::debug!(
+                profile = profile_id,
+                device = device_id,
+                error = %error,
+                "Suwayomi downstream WebSocket upgrade failed"
+            );
+        })
+        .on_upgrade(move |downstream_socket| async move {
+            bridge_websockets(downstream_socket, upstream_socket).await;
+        })
+}
+
+fn resolve_proxy_target(
+    state: &SharedAppState,
+    session: &AuthenticatedSession,
+    path: &str,
+    raw_query: &str,
+) -> Result<Url, Response> {
+    let (scope_id, upstream_query) = extract_scope_query(raw_query)
+        .map_err(|message| proxy_error(StatusCode::BAD_REQUEST, "BAD_REQUEST", &message, false))?;
+    let expected_scope = format!("comics:profile:{}", session.profile_id);
+    if scope_id.as_deref() != Some(expected_scope.as_str())
+        || !session.scopes.contains(&expected_scope)
+    {
+        return Err(proxy_error(
+            StatusCode::FORBIDDEN,
+            "SUWAYOMI_PROXY_SCOPE_FORBIDDEN",
+            "The comics scope is not granted to this token and paired profile.",
+            false,
+        ));
+    }
+
+    let upstream_base = resolve_upstream_base(state, &session.profile_id).map_err(|message| {
+        proxy_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "SUWAYOMI_UPSTREAM_UNAVAILABLE",
+            &message,
+            true,
+        )
+    })?;
+    build_upstream_url(upstream_base, path, upstream_query.as_deref())
+        .map_err(|message| proxy_error(StatusCode::BAD_REQUEST, "BAD_REQUEST", &message, false))
+}
+
+fn is_websocket_attempt(headers: &HeaderMap) -> bool {
+    headers
+        .get(UPGRADE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
+        || headers
+            .get(CONNECTION)
+            .is_some_and(|value| header_list_contains(value, "upgrade"))
+}
+
+fn websocket_protocol_header(headers: &HeaderMap) -> Result<Option<HeaderValue>, String> {
+    let Some(protocol) = headers.get(SEC_WEBSOCKET_PROTOCOL) else {
+        return Ok(None);
+    };
+    if protocol.as_bytes().len() > MAX_WEBSOCKET_PROTOCOL_BYTES {
+        return Err("The WebSocket protocol offer is too long.".to_string());
+    }
+    let text = protocol
+        .to_str()
+        .map_err(|_| "The WebSocket protocol offer is invalid.".to_string())?;
+    if text.split(',').any(|entry| entry.trim().is_empty()) {
+        return Err("The WebSocket protocol offer contains an empty entry.".to_string());
+    }
+    Ok(Some(protocol.clone()))
+}
+
+fn header_list_contains(value: &HeaderValue, expected: &str) -> bool {
+    value
+        .to_str()
+        .ok()
+        .is_some_and(|value| value.split(',').any(|part| part.trim() == expected))
+}
+
+async fn bridge_websockets(
+    mut downstream: WebSocket,
+    mut upstream: tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+) {
+    loop {
+        tokio::select! {
+            downstream_message = downstream.next() => {
+                match downstream_message {
+                    Some(Ok(message)) => {
+                        let is_close = matches!(message, AxumMessage::Close(_));
+                        if upstream.send(axum_to_upstream(message)).await.is_err() || is_close {
+                            break;
+                        }
+                    }
+                    Some(Err(_)) | None => {
+                        let _ = upstream.send(UpstreamMessage::Close(None)).await;
+                        break;
+                    }
+                }
+            }
+            upstream_message = upstream.next() => {
+                match upstream_message {
+                    Some(Ok(message)) => {
+                        let is_close = matches!(message, UpstreamMessage::Close(_));
+                        if let Some(message) = upstream_to_axum(message) {
+                            if downstream.send(message).await.is_err() || is_close {
+                                break;
+                            }
+                        }
+                    }
+                    Some(Err(_)) | None => {
+                        let _ = downstream.send(AxumMessage::Close(None)).await;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn axum_to_upstream(message: AxumMessage) -> UpstreamMessage {
+    match message {
+        AxumMessage::Text(text) => UpstreamMessage::Text(text),
+        AxumMessage::Binary(bytes) => UpstreamMessage::Binary(bytes),
+        AxumMessage::Ping(bytes) => UpstreamMessage::Ping(bytes),
+        AxumMessage::Pong(bytes) => UpstreamMessage::Pong(bytes),
+        AxumMessage::Close(_) => UpstreamMessage::Close(None),
+    }
+}
+
+fn upstream_to_axum(message: UpstreamMessage) -> Option<AxumMessage> {
+    match message {
+        UpstreamMessage::Text(text) => Some(AxumMessage::Text(text)),
+        UpstreamMessage::Binary(bytes) => Some(AxumMessage::Binary(bytes)),
+        UpstreamMessage::Ping(bytes) => Some(AxumMessage::Ping(bytes)),
+        UpstreamMessage::Pong(bytes) => Some(AxumMessage::Pong(bytes)),
+        UpstreamMessage::Close(_) => Some(AxumMessage::Close(None)),
+        UpstreamMessage::Frame(_) => None,
+    }
+}
+
+fn websocket_error_class(error: &tokio_tungstenite::tungstenite::Error) -> &'static str {
+    use tokio_tungstenite::tungstenite::Error;
+    match error {
+        Error::ConnectionClosed | Error::AlreadyClosed => "closed",
+        Error::Io(error) if error.kind() == std::io::ErrorKind::TimedOut => "timeout",
+        Error::Io(_) => "io",
+        Error::Tls(_) => "tls",
+        Error::Http(_) | Error::HttpFormat(_) => "handshake",
+        Error::Capacity(_) => "capacity",
+        Error::Protocol(_) => "protocol",
+        _ => "websocket",
+    }
 }
 
 fn proxy_client() -> &'static reqwest::Client {
@@ -391,10 +695,12 @@ fn proxy_error(status: StatusCode, code: &str, message: &str, retryable: bool) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
     use std::sync::Arc;
 
+    use axum::extract::Query;
     use axum::http::{Request as HttpRequest, StatusCode};
-    use axum::routing::{get, post};
+    use axum::routing::get;
     use axum::Router;
     use http_body_util::BodyExt;
     use serde_json::Value;
@@ -549,8 +855,40 @@ mod tests {
                 .unwrap()
         }
 
+        async fn graphql_websocket(
+            websocket: WebSocketUpgrade,
+            headers: HeaderMap,
+            Query(query): Query<BTreeMap<String, String>>,
+        ) -> Response {
+            let authorization_was_forwarded = headers.contains_key("authorization");
+            let scope_was_forwarded = query.contains_key("scopeId");
+            let client = query.get("client").cloned();
+            websocket
+                .protocols(["graphql-transport-ws"])
+                .on_upgrade(move |mut socket| async move {
+                    let metadata = json!({
+                        "authorizationWasForwarded": authorization_was_forwarded,
+                        "scopeWasForwarded": scope_was_forwarded,
+                        "client": client,
+                    });
+                    if socket
+                        .send(AxumMessage::Text(metadata.to_string()))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                    while let Some(Ok(message)) = socket.next().await {
+                        let is_close = matches!(message, AxumMessage::Close(_));
+                        if socket.send(message).await.is_err() || is_close {
+                            break;
+                        }
+                    }
+                })
+        }
+
         let app = Router::new()
-            .route("/api/graphql", post(graphql))
+            .route("/api/graphql", get(graphql_websocket).post(graphql))
             .route("/api/v1/page", get(page))
             .route("/redirect", get(redirect));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -559,6 +897,37 @@ mod tests {
             axum::serve(listener, app).await.unwrap();
         });
         (format!("http://{address}"), task)
+    }
+
+    async fn spawn_core(state: Arc<AppState>) -> (String, tokio::task::JoinHandle<()>) {
+        let app = crate::syncd::app::build_test_router(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("ws://{address}"), task)
+    }
+
+    fn websocket_request(url: &str, token: Option<&str>) -> axum::http::Request<()> {
+        let mut request = url.into_client_request().unwrap();
+        request
+            .headers_mut()
+            .insert(CLIENT_VERSION_HEADER, HeaderValue::from_static("0.1.0"));
+        request
+            .headers_mut()
+            .insert(CLIENT_PROTOCOL_HEADER, HeaderValue::from_static("1"));
+        request.headers_mut().insert(
+            SEC_WEBSOCKET_PROTOCOL,
+            HeaderValue::from_static("graphql-transport-ws"),
+        );
+        if let Some(token) = token {
+            request.headers_mut().insert(
+                "authorization",
+                HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+            );
+        }
+        request
     }
 
     #[tokio::test]
@@ -621,6 +990,107 @@ mod tests {
         assert_eq!(payload["authorizationWasForwarded"], false);
         assert_eq!(payload["hostWasLoopback"], true);
         assert_eq!(payload["data"]["query"], "query { __typename }");
+        upstream_task.abort();
+    }
+
+    #[tokio::test]
+    async fn authenticated_graphql_websocket_proxy_bridges_and_strips_core_credentials() {
+        let (upstream_url, upstream_task) = spawn_upstream().await;
+        let (_temp, state) = build_test_state(&upstream_url).await;
+        let raw_token = "websocket-token";
+        db::ensure_test_token(
+            &state.pool,
+            "android-ws",
+            "main",
+            &token_hash(raw_token),
+            &["comics:profile:main"],
+        )
+        .await
+        .unwrap();
+        let (core_url, core_task) = spawn_core(state).await;
+        let url = format!(
+            "{core_url}/v1/suwayomi/api/graphql?scopeId=comics%3Aprofile%3Amain&client=mobile"
+        );
+
+        let unauthorized = tokio_tungstenite::connect_async(websocket_request(&url, None))
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            unauthorized,
+            tokio_tungstenite::tungstenite::Error::Http(ref response)
+                if response.status() == StatusCode::UNAUTHORIZED
+        ));
+
+        let (mut socket, response) =
+            tokio_tungstenite::connect_async(websocket_request(&url, Some(raw_token)))
+                .await
+                .unwrap();
+        assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
+        assert_eq!(
+            response.headers().get(SEC_WEBSOCKET_PROTOCOL).unwrap(),
+            "graphql-transport-ws"
+        );
+
+        let metadata = socket.next().await.unwrap().unwrap().into_text().unwrap();
+        let metadata: Value = serde_json::from_str(&metadata).unwrap();
+        assert_eq!(metadata["authorizationWasForwarded"], false);
+        assert_eq!(metadata["scopeWasForwarded"], false);
+        assert_eq!(metadata["client"], "mobile");
+
+        socket
+            .send(UpstreamMessage::Text("connection_init".to_string()))
+            .await
+            .unwrap();
+        assert_eq!(
+            socket.next().await.unwrap().unwrap().into_text().unwrap(),
+            "connection_init"
+        );
+        socket.close(None).await.unwrap();
+        core_task.abort();
+        upstream_task.abort();
+    }
+
+    #[tokio::test]
+    async fn graphql_websocket_proxy_rejects_wrong_scope_and_non_graphql_paths() {
+        let (upstream_url, upstream_task) = spawn_upstream().await;
+        let (_temp, state) = build_test_state(&upstream_url).await;
+        let raw_token = "websocket-policy-token";
+        db::ensure_test_token(
+            &state.pool,
+            "android-ws-policy",
+            "main",
+            &token_hash(raw_token),
+            &["comics:profile:main"],
+        )
+        .await
+        .unwrap();
+        let (core_url, core_task) = spawn_core(state).await;
+
+        let wrong_scope =
+            format!("{core_url}/v1/suwayomi/api/graphql?scopeId=comics%3Aprofile%3Aother");
+        let error =
+            tokio_tungstenite::connect_async(websocket_request(&wrong_scope, Some(raw_token)))
+                .await
+                .unwrap_err();
+        assert!(matches!(
+            error,
+            tokio_tungstenite::tungstenite::Error::Http(ref response)
+                if response.status() == StatusCode::FORBIDDEN
+        ));
+
+        let non_graphql =
+            format!("{core_url}/v1/suwayomi/api/v1/page?scopeId=comics%3Aprofile%3Amain");
+        let error =
+            tokio_tungstenite::connect_async(websocket_request(&non_graphql, Some(raw_token)))
+                .await
+                .unwrap_err();
+        assert!(matches!(
+            error,
+            tokio_tungstenite::tungstenite::Error::Http(ref response)
+                if response.status() == StatusCode::METHOD_NOT_ALLOWED
+        ));
+
+        core_task.abort();
         upstream_task.abort();
     }
 
