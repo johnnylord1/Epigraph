@@ -2672,3 +2672,39 @@ Categorias cobertas:
 - `git diff --check`: verde, com avisos esperados de normalização LF/CRLF no Windows.
 - A correção é deliberadamente incremental: a varredura ainda encontra **188** outros `--color-*-source` literais no seletor geral do Nocturne, excluindo os 44 agora condicionados. Eles continuam herdados por documentos custom baseados em Nocturne e devem formar o próximo lote auditável; não foram movidos sem validar fallback e consumidores.
 - A preview interna do ThemeEditor continua usando o contrato V4 já testado, mas não monta todas as superfícies do port. O gate browser cobre a cascata real no elemento raiz, sem persistir um tema de teste.
+
+## Marco 36 - Custom Nocturne Semantic Source Derivation
+
+### Escopo e arquitetura
+
+- A varredura do Marco 35 identificou 188 `--color-*-source` literais ainda declarados no seletor geral do Nocturne. Todos possuíam fallback em `tokens.css` e referência comprovada no grafo de component tokens/port.
+- As 188 declarações foram movidas mecanicamente, sem alteração de valor ou nome, para o mesmo seletor builtin `[data-theme="nocturne"]:not([data-custom-theme])` que já continha os 44 papéis do port.
+- O bloco builtin agora possui **232 sources exatos / 232 fallbacks compartilhados / 232 consumidos / 0 sem consumo**. Fora desse bloco existem **0 `--color-*-source` com cor literal**.
+- O probe encontrou uma dependência semântica intermediária: `--color-on-accent-strong` ainda fixava três sources em `#352660` para custom themes. O valor também foi condicionado ao Nocturne builtin; o fallback compartilhado continua `var(--text-inverse)`.
+- Nenhum componente, documento V4, provider, store, API, layout, comportamento, `--n-*`, alias Legacy ou Syncd foi alterado.
+
+### Contratos e computed style
+
+- `themeGate.test.ts` exige 232 nomes únicos no bloco builtin, fallback presente para todos, referência de consumo para todos, zero source literal fora do bloco e `--color-on-accent-strong` igualmente restrito ao builtin.
+- `themeProbe.browser.test.ts` descobre os 232 nomes pela CSSOM e compara três estados: Nocturne builtin, custom V4 com `base: nocturne` e o mesmo contrato test-only em `data-theme="probe"`.
+- Para os 232 sources, o custom Nocturne resolveu valor não vazio e exatamente igual ao fallback compartilhado. Pelo menos 220 papéis mudaram materialmente em relação à paleta builtin; papéis absolutos/valores coincidentes continuam permitidos quando o fallback correto é o mesmo.
+- O teste inicialmente revelou os três mismatches de ink (`browse`, `sources`, `migration`) e passou somente após a correção da dependência compartilhada; o gate não foi relaxado.
+
+### Validacao visual real
+
+- App Tauri real em Nocturne builtin, launcher gerenciado, WebView2/CDP `127.0.0.1:9223`, viewport 1280x800, `data-theme="nocturne"` e sem `data-custom-theme`. Nenhuma fixture ou preferência foi persistida.
+- Evidências em `docs/screenshots/marco36-custom-nocturne-sources/`: `before/after-home.png`, `before/after-library.png`, `before/after-browse.png`, `before/after-downloads.png` e `before/after-settings.png`.
+- Browse ficou pixel-equivalente acima da tolerância de 2 níveis RGB (**0,0000%**, média **0,0000**). Settings ficou em **0,0079%**, média **0,0002**.
+- Home ficou em **0,2683%**, média **0,0406**; Downloads em **0,0808%**, média **0,0620**. As diferenças são badges/tooltips/estado temporal do runtime, sem mudança aparente de surfaces, borders, radius, tipografia ou hierarquia.
+- Library ficou em **12,6628%**, média **1,4320**, por carregamento/ordenação real de covers entre capturas. Shell, filtros, cards, spacing e geometria permaneceram visualmente equivalentes.
+- A revisão das cinco superfícies não encontrou regressão aparente. Estados especializados não foram forçados; eles mantêm as evidências dos marcos próprios e agora são cobertos pelo gate computed de todos os sources.
+
+### Testes e riscos restantes
+
+- Testes unitários focados: 3 arquivos, 28 testes verdes (`themeGate`, compatibilidade do port e derivação de component colors).
+- Gate unitário ampliado: 7 arquivos, 71 testes verdes, incluindo autoria V4, provider, documentos e contrato público.
+- Testes browser Chromium: 2 arquivos, 4 testes verdes (`themeProbe` e computed compatibility do port).
+- `pnpm build`: verde; permanece apenas o aviso conhecido de chunk acima de 500 kB.
+- `git diff --check`: verde, com avisos esperados de normalização LF/CRLF no Windows.
+- Os sources agora respondem integralmente ao contrato V4, mas ainda existem papéis semânticos Nocturne sem sufixo `-source` e aliases compostos no seletor geral. O próximo gate deve comparar os component tokens ativos entre custom Nocturne e probe, inventariar apenas os bloqueios reais e condicioná-los sem mover geometria, motion ou component aliases.
+- A camada `--n-*`, aliases Legacy e componentes Legacy continuam preservados; Syncd permanece fora do plano atual.

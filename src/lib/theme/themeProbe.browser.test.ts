@@ -88,6 +88,28 @@ function applyProbeContract(customTheme = false) {
   }
 }
 
+function builtinExactSourceNames(): string[] {
+  const selector = '[data-theme="nocturne"]:not([data-custom-theme])';
+  const pending = Array.from(document.styleSheets).flatMap((sheet) => {
+    try {
+      return Array.from(sheet.cssRules);
+    } catch {
+      return [];
+    }
+  });
+
+  while (pending.length > 0) {
+    const rule = pending.shift()!;
+    if (rule instanceof CSSStyleRule && rule.selectorText === selector) {
+      return Array.from(rule.style).filter(
+        (property) => property.startsWith("--color-") && property.endsWith("-source"),
+      );
+    }
+    if ("cssRules" in rule) pending.push(...Array.from(rule.cssRules));
+  }
+  return [];
+}
+
 describe("test-only theme probe", () => {
   test("changes every representative surface through primitive and semantic tokens", async () => {
     const original = rememberRootState();
@@ -128,6 +150,45 @@ describe("test-only theme probe", () => {
         expect(value, `${token} must resolve for a custom Nocturne-based theme`).not.toBe("");
         expect(value, `${token} must respond to the custom V4 contract`).not.toBe(builtin.get(token));
       }
+    } finally {
+      restoreRootState(original);
+      await new Promise(requestAnimationFrame);
+    }
+  });
+
+  test("derives every exact Nocturne source for custom V4 documents", async () => {
+    const root = document.documentElement;
+    const original = rememberRootState();
+
+    try {
+      root.dataset.theme = "nocturne";
+      root.removeAttribute("data-custom-theme");
+      for (const property of probeProperties) root.style.removeProperty(property);
+      await new Promise(requestAnimationFrame);
+      const sourceNames = builtinExactSourceNames();
+      const builtin = new Map(sourceNames.map((token) => [token, computedToken(token)]));
+
+      expect(sourceNames).toHaveLength(232);
+      applyProbeContract(true);
+      await new Promise(requestAnimationFrame);
+      const custom = new Map(sourceNames.map((token) => [token, computedToken(token)]));
+
+      root.dataset.theme = "probe";
+      root.removeAttribute("data-custom-theme");
+      await new Promise(requestAnimationFrame);
+
+      const fallbackMismatches: string[] = [];
+      for (const token of sourceNames) {
+        const value = custom.get(token);
+        expect(value, `${token} must resolve for a custom Nocturne-based theme`).not.toBe("");
+        const fallback = computedToken(token);
+        if (value !== fallback) fallbackMismatches.push(`${token}: ${value} != ${fallback}`);
+      }
+      expect(fallbackMismatches).toEqual([]);
+      expect(
+        sourceNames.filter((token) => custom.get(token) !== builtin.get(token)).length,
+        "the custom V4 contract must materially change the exact Nocturne source palette",
+      ).toBeGreaterThanOrEqual(220);
     } finally {
       restoreRootState(original);
       await new Promise(requestAnimationFrame);
