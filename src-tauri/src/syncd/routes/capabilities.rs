@@ -31,7 +31,7 @@ pub async fn get_capabilities(
         supports_snapshot: true,
         supports_assets: true,
         supports_suwayomi_proxy: true,
-        supports_suwayomi_websocket_proxy: false,
+        supports_suwayomi_websocket_proxy: true,
         suwayomi_proxy_path_template:
             "/v1/suwayomi/{path}?scopeId=comics%3Aprofile%3A{pairedProfile}".to_string(),
         snapshot_schema_version: SNAPSHOT_SCHEMA_VERSION,
