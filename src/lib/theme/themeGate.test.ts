@@ -33,6 +33,14 @@ const directColorPattern = new RegExp(
   "i",
 );
 const malformedSplitHexPattern = /#[0-9a-f]{3,7}\s+[a-f][0-9a-f]{0,4}\b/i;
+const encodedHexPattern = /%(?:25)*23[0-9a-f]{3,8}\b/gi;
+const encodedHexInventory = [
+  "src/components/pages/Tracking.svelte:%23888",
+  "src/components/pages/Tracking.svelte:%23888",
+  "src/components/shared/NovelTrackingPanel.svelte:%23888",
+  "src/components/shared/TrackingPanel.svelte:%23888",
+  "src/styles/nocturne-theme.css:%23d8ccff",
+] as const;
 const unreferencedLegacyNocturneTokens = [
   "--n-bg",
   "--n-bg-top",
@@ -143,6 +151,15 @@ function sourceCorpus(path: string): string {
       return readFileSync(resolve(ROOT, child), "utf8");
     })
     .join("\n");
+}
+
+function sourceFiles(path: string): string[] {
+  return readdirSync(resolve(ROOT, path), { withFileTypes: true }).flatMap((entry) => {
+    const child = `${path}/${entry.name}`;
+    if (entry.isDirectory()) return sourceFiles(child);
+    if (!/\.(?:css|svelte|ts)$/.test(entry.name) || entry.name.endsWith(".test.ts")) return [];
+    return [child];
+  });
 }
 
 function withoutDefinitions(source: string, token: string): string {
@@ -260,6 +277,16 @@ describe("final derived theme gate", () => {
     expect(offenders).toEqual([]);
   });
 
+  test("keeps percent-encoded embedded colors in an explicit migration inventory", () => {
+    const occurrences = sourceFiles("src").flatMap((path) =>
+      Array.from(readFileSync(resolve(ROOT, path), "utf8").matchAll(encodedHexPattern), (match) =>
+        `${path}:${match[0].toLowerCase()}`,
+      ),
+    ).sort();
+
+    expect(occurrences).toEqual([...encodedHexInventory].sort());
+  });
+
   test("classifies every component color dependency in the custom Nocturne cascade", () => {
     const definitions = declarationMap(
       cssBlock(tokensCss, ":root"),
@@ -278,7 +305,12 @@ describe("final derived theme gate", () => {
       "--shadow-md",
       "--shadow-lg",
     ]);
-    const runtimeRoots = new Set(["--prose-bg", "--prose-text"]);
+    const runtimeRoots = new Set([
+      "--prose-bg",
+      "--prose-page-bg",
+      "--prose-text",
+      "--reader-accent",
+    ]);
     const colorName = /(?:^|-)(?:bg|fg|color|background|border|shadow|fill|accent|surface|overlay|ink|gradient)(?:-|$)/i;
     const geometryName = /(?:^|-)(?:radius|width|height|size|gap|padding|margin|z-index|blur|font|letter|line-height|opacity|duration|transition|transform)(?:-|$)/i;
     const visualValue = /color-mix\(|gradient\(|var\(--(?:color|bg|text|accent|border|shadow|component-[\w-]*(?:bg|fg|color|background|border|shadow|fill|accent|surface|overlay|ink|gradient))|\btransparent\b/i;
@@ -320,7 +352,7 @@ describe("final derived theme gate", () => {
     expect(absolute).toHaveLength(287);
     expect(absoluteOnly).toHaveLength(258);
     expect(mixedEditableAbsolute).toHaveLength(29);
-    expect(runtime).toHaveLength(6);
+    expect(runtime).toHaveLength(9);
     expect(neutral).toHaveLength(10);
     expect(unresolved).toEqual([]);
   });

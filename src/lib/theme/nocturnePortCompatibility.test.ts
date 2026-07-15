@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
+import { THEME_TOKEN_KEYS } from "./contract";
 
 const ROOT = process.cwd();
 const PORT_PATH = "src/styles/nocturne-port.css";
@@ -66,6 +67,16 @@ const PORT_DERIVED_COMPONENT_ALIASES = new Map([
   ["--color-recommendation-pill-light-source", "--component-sources-metric-recommendation-light-source"],
   ["--color-soft-control-text-source", "--component-soft-control-fg-source"],
 ]);
+const PORT_N_COLOR_ALIASES = new Map([
+  ["--n-surface-container-high", "--color-modal"],
+  ["--n-surface-container-highest", "--color-surface-secondary"],
+  ["--n-primary", "--color-accent"],
+  ["--n-primary-container", "--accent-bright"],
+  ["--n-on-primary", "--color-on-accent-strong"],
+  ["--n-on-surface", "--text-primary"],
+  ["--n-on-surface-variant", "--text-secondary"],
+  ["--n-gradient-primary", "--gradient-accent-primary"],
+] as const);
 
 function readProjectFile(path: string) {
   return readFileSync(resolve(ROOT, path), "utf8");
@@ -116,6 +127,28 @@ function componentAliasForSource(source: string): string {
   return PORT_DERIVED_COMPONENT_ALIASES.get(source) ?? source.replace("--color-", "--component-");
 }
 
+function declarationMap(source: string): Map<string, string> {
+  return new Map(
+    Array.from(source.matchAll(/^\s*(--[A-Za-z0-9_-]+)\s*:\s*([\s\S]*?);/gm), (match) => [
+      match[1],
+      match[2].trim(),
+    ]),
+  );
+}
+
+function reachesAny(
+  token: string,
+  roots: ReadonlySet<string>,
+  values: ReadonlyMap<string, string>,
+  seen = new Set<string>(),
+): boolean {
+  if (roots.has(token)) return true;
+  if (seen.has(token)) return false;
+  const nextSeen = new Set(seen).add(token);
+  return Array.from((values.get(token) ?? "").matchAll(/var\((--[A-Za-z0-9_-]+)/g), (match) => match[1])
+    .some((reference) => reachesAny(reference, roots, values, nextSeen));
+}
+
 describe("Nocturne port compatibility contract", () => {
   test("keeps the port last in the active CSS cascade", () => {
     const globalCss = readProjectFile("src/styles/global.css");
@@ -150,6 +183,20 @@ describe("Nocturne port compatibility contract", () => {
 
   test("preserves the exact referenced --n-* compatibility surface", () => {
     expect(references(readProjectFile(PORT_PATH), "--n-")).toEqual(PORT_N_REFERENCES);
+  });
+
+  test("derives every referenced --n-* color alias from the editable theme contract", () => {
+    const tokens = readProjectFile("src/styles/tokens.css");
+    const nocturne = readProjectFile("src/styles/nocturne-theme.css");
+    const fallbackValues = declarationMap(tokens);
+    const nocturneValues = declarationMap(nocturne);
+    const editableRoots = new Set(THEME_TOKEN_KEYS.map((name) => `--${name}`));
+
+    expect(PORT_N_COLOR_ALIASES).toHaveLength(8);
+    for (const [alias, semantic] of PORT_N_COLOR_ALIASES) {
+      expect(nocturneValues.get(alias), `${alias} must be a semantic compatibility alias`).toBe(`var(${semantic})`);
+      expect(reachesAny(semantic, editableRoots, fallbackValues), `${alias} must reach the V4 contract`).toBe(true);
+    }
   });
 
   test("keeps all four port sections attached to active hosts", () => {

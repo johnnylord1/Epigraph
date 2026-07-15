@@ -2781,3 +2781,33 @@ Categorias cobertas:
 - Correcao: o valor passou a `#b0aca4`, alinhado ao token de borda da mesma paleta e sem alterar Nocturne.
 - Gate adicionado: `themeGate.test.ts` agora rejeita hex quebrado por espaco em declaracoes de tema, evitando regressao semelhante.
 - Nenhum token Legacy, `--n-*`, Syncd ou componente visual foi removido ou migrado nesta correcao.
+
+## Marco 39 - Semantic Compatibility Alias Gate
+
+### Escopo e classificacao
+
+- O marco preserva integralmente a camada `--n-*` e troca apenas a origem de oito aliases de cor referenciados pelo `nocturne-port.css`: `--n-surface-container-high`, `--n-surface-container-highest`, `--n-primary`, `--n-primary-container`, `--n-on-primary`, `--n-on-surface`, `--n-on-surface-variant` e `--n-gradient-primary`.
+- Seis aliases participam de hosts ativos. Os dois aliases de surface permanecem **Legacy selector-only**, ligados a `.n-btn-secondary`/Discover Legacy; nao foram removidos nem reclassificados como Mortos.
+- Os oito aliases agora derivam de `--color-modal`, `--color-surface-secondary`, `--color-accent`, `--accent-bright`, `--color-on-accent-strong`, `--text-primary`, `--text-secondary` e `--gradient-accent-primary`. Os **33 usos** no port alcançam transitivamente o contrato V4 sem acessar valores Nocturne diretamente.
+- O Nocturne builtin preserva exatamente os oito valores computados anteriores: `#2a2a2a`, `#353534`, `#d3c4ff`, `#b8a7ea`, `#352660`, `#e5e2e1`, `#cac4d0` e `linear-gradient(135deg, #b8a7ea 0%, #d3c4ff 100%)`.
+
+### Gates corrigidos
+
+- `nocturnePortCompatibility.test.ts` exige o mapa exato dos oito aliases e prova que cada destino alcanca `THEME_TOKEN_KEYS` pelo fallback compartilhado.
+- `themeProbe.browser.test.ts` verifica os oito aliases tanto no probe direto quanto pelo provider real `applyCustomTheme`; todos respondem ao documento V4 customizado.
+- A classificacao do Reader agora inclui `--prose-page-bg` e `--reader-accent` junto de `--prose-bg`/`--prose-text`. A medicao correta e **9 component tokens runtime**, mantendo **1.443 component colors / 1.175 editaveis / 258 somente absolutos / 10 neutros / 0 unresolved**.
+- O gate passou a detectar hex percent-encoded, inclusive duplamente codificado, e fixa o inventario atual em cinco ocorrencias: o SVG de progresso da Library, os selects ativos de `TrackingPanel`/`NovelTrackingPanel` e duas ocorrencias no `Tracking.svelte` Legacy. Elas permanecem documentadas para migracao no Marco 41; nenhuma foi ocultada por uma allowlist generica.
+
+### Validacao visual real
+
+- App Tauri real em Nocturne builtin, WebView2/CDP `127.0.0.1:9223`, viewport `1280x800`, sem `data-custom-theme` e sem alteracao de dados persistidos.
+- Baselines before reutilizados de `docs/screenshots/marco37-custom-nocturne-semantics/after-home.png` e `after-settings.png`; capturas after em `docs/screenshots/marco39-nocturne-aliases/after-home.png` e `after-settings.png`.
+- Home e Settings mantiveram geometria, surfaces, gradients, bordas, controles, tipografia e hierarquia. A unica diferenca de estado foi o contador de atividade real (34 no baseline e 81 na captura atual) e o tooltip de navegacao presente em frames diferentes; nao ha regressao visual aparente.
+- A primeira tentativa de captura ocorreu durante uma transicao e foi sobrescrita pelas duas capturas finais estabilizadas; nenhum screenshot diagnostico foi mantido.
+
+### Validacao e riscos restantes
+
+- Testes unitarios focados: 4 arquivos, **46 testes verdes**.
+- Testes browser Chromium: 2 arquivos, **6 testes verdes**.
+- Permanecem para o Marco 40 a ativacao completa dos 15 HudThemeTokens e a unificacao do motion contract. Permanecem para o Marco 41 os SVGs codificados e demais valores visuais embutidos ativos.
+- Syncd, aliases Legacy, componentes Legacy e a camada `--n-*` permanecem preservados.

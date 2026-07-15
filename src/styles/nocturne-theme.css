@@ -2582,20 +2582,20 @@
   --n-bg-top: #15151a;
   --n-surface-container-low: #1c1b1b;
   --n-surface-container: #201f1f;
-  --n-surface-container-high: #2a2a2a;
-  --n-surface-container-highest: #353534;
+  --n-surface-container-high: var(--color-modal);
+  --n-surface-container-highest: var(--color-surface-secondary);
 
-  --n-primary: #d3c4ff;
-  --n-primary-container: #b8a7ea;
-  --n-on-primary: #352660;
+  --n-primary: var(--color-accent);
+  --n-primary-container: var(--accent-bright);
+  --n-on-primary: var(--color-on-accent-strong);
   --n-on-primary-container: #483a74;
-  --n-on-surface: #e5e2e1;
-  --n-on-surface-variant: #cac4d0;
+  --n-on-surface: var(--text-primary);
+  --n-on-surface-variant: var(--text-secondary);
   --n-outline-variant: #48454f;
   --n-line: rgba(202, 196, 208, 0.08);
   --n-line-strong: rgba(202, 196, 208, 0.14);
 
-  --n-gradient-primary: linear-gradient(135deg, #b8a7ea 0%, #d3c4ff 100%);
+  --n-gradient-primary: var(--gradient-accent-primary);
   --n-gradient-bg:
     radial-gradient(circle at top center, rgba(184, 167, 234, 0.08), transparent 34%),
     linear-gradient(180deg, #15151a 0%, #131313 100%);
