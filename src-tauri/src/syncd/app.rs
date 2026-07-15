@@ -469,6 +469,31 @@ mod tests {
         (status, payload)
     }
 
+    async fn request_bytes(
+        app: &Router,
+        method: Method,
+        uri: &str,
+        token: &str,
+        bytes: Vec<u8>,
+    ) -> StatusCode {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header(CLIENT_VERSION_HEADER, "0.1.0")
+                    .header(CLIENT_PROTOCOL_HEADER, "1")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-length", bytes.len().to_string())
+                    .body(Body::from(bytes))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        response.status()
+    }
+
     fn complete_book_mutations() -> Value {
         serde_json::json!({
             "requestId": "seed-books",
@@ -730,9 +755,13 @@ mod tests {
         assert_eq!(payload["supportsSseReplay"], true);
         assert_eq!(payload["supportsSnapshot"], true);
         assert_eq!(payload["supportsAssets"], true);
+        assert_eq!(payload["supportsNovelChapterAssets"], true);
         assert_eq!(payload["snapshotSchemaVersion"], 1);
         let entity_types = payload["snapshotEntityTypes"].as_array().unwrap();
-        assert_eq!(entity_types.len(), 17);
+        assert_eq!(entity_types.len(), 18);
+        assert!(entity_types
+            .iter()
+            .any(|value| value == "novel.chapter_asset"));
         assert!(entity_types.iter().any(|value| value == "novel.category"));
         assert!(entity_types
             .iter()
@@ -1039,6 +1068,291 @@ mod tests {
         );
         assert_eq!(entities[0]["record"]["title"], "Novel One");
         assert_eq!(entities[5]["record"]["status"], "compatible");
+    }
+
+    #[tokio::test]
+    async fn novel_chapter_asset_requires_scoped_blob_and_is_replayable_and_tombstone_safe() {
+        let (_temp, state) = build_state_for_http().await;
+        ensure_test_token(
+            &state.pool,
+            "device-a",
+            "main",
+            &token_hash("secret-token"),
+            &["books:global", "novels:profile:main"],
+        )
+        .await
+        .unwrap();
+        let app = build_test_router(state.clone());
+        let (seed_status, seed_payload) = request_json(
+            &app,
+            Method::POST,
+            "/v1/mutations",
+            Some("secret-token"),
+            Some(complete_novel_mutations()),
+        )
+        .await;
+        assert_eq!(seed_status, StatusCode::OK);
+        assert!(seed_payload["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|result| result["status"] == "applied"));
+
+        let archive = b"PK\x03\x04synthetic-lnreader-chapter".to_vec();
+        let blob_sha256 = format!("{:x}", Sha256::digest(&archive));
+        let entity_id =
+            crate::syncd::models::canonical_novel_chapter_asset_id("novel-1", "chapter-1");
+        let patch = serde_json::json!({
+            "schemaVersion": 1,
+            "novelId": "novel-1",
+            "chapterId": "chapter-1",
+            "blobSha256": blob_sha256,
+            "byteLength": archive.len(),
+            "archiveFormat": "zip",
+            "createdAtMs": 3000,
+            "updatedAtMs": 3000
+        });
+        let mutation = |request_id: &str,
+                        client_mutation_id: &str,
+                        lamport: i64,
+                        op: &str,
+                        patch: Option<Value>| {
+            serde_json::json!({
+                "requestId": request_id,
+                "mutations": [{
+                    "entityType": "novel.chapter_asset",
+                    "clientMutationId": client_mutation_id,
+                    "scopeId": "novels:profile:main",
+                    "entityId": entity_id,
+                    "op": op,
+                    "lamport": lamport,
+                    "patch": patch
+                }]
+            })
+        };
+
+        let before_upload = mutation(
+            "chapter-asset-before-upload",
+            "chapter-asset-before-upload",
+            1,
+            "merge",
+            Some(patch.clone()),
+        );
+        let (status, payload) = request_json(
+            &app,
+            Method::POST,
+            "/v1/mutations",
+            Some("secret-token"),
+            Some(before_upload.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(payload["results"][0]["status"], "rejected");
+        assert_eq!(
+            payload["results"][0]["error"]["code"],
+            "ASSET_NOT_AVAILABLE_FOR_SCOPE"
+        );
+
+        let books_uri = format!("/v1/assets/{blob_sha256}?scopeId=books%3Aglobal");
+        assert_eq!(
+            request_bytes(
+                &app,
+                Method::PUT,
+                &books_uri,
+                "secret-token",
+                archive.clone(),
+            )
+            .await,
+            StatusCode::CREATED
+        );
+        let wrong_scope = mutation(
+            "chapter-asset-wrong-scope",
+            "chapter-asset-wrong-scope",
+            2,
+            "merge",
+            Some(patch.clone()),
+        );
+        let (_, payload) = request_json(
+            &app,
+            Method::POST,
+            "/v1/mutations",
+            Some("secret-token"),
+            Some(wrong_scope),
+        )
+        .await;
+        assert_eq!(
+            payload["results"][0]["error"]["code"],
+            "ASSET_NOT_AVAILABLE_FOR_SCOPE"
+        );
+
+        let novels_uri = format!("/v1/assets/{blob_sha256}?scopeId=novels%3Aprofile%3Amain");
+        assert_eq!(
+            request_bytes(
+                &app,
+                Method::PUT,
+                &novels_uri,
+                "secret-token",
+                archive.clone(),
+            )
+            .await,
+            StatusCode::NO_CONTENT
+        );
+
+        let (_, replayed_rejection) = request_json(
+            &app,
+            Method::POST,
+            "/v1/mutations",
+            Some("secret-token"),
+            Some(before_upload),
+        )
+        .await;
+        assert_eq!(replayed_rejection["results"][0]["status"], "rejected");
+        assert_eq!(
+            replayed_rejection["results"][0]["error"]["code"],
+            "ASSET_NOT_AVAILABLE_FOR_SCOPE"
+        );
+
+        let mut live_changes = state.change_sender.subscribe();
+        let valid = mutation(
+            "chapter-asset-valid",
+            "chapter-asset-valid",
+            3,
+            "merge",
+            Some(patch.clone()),
+        );
+        let (_, valid_payload) = request_json(
+            &app,
+            Method::POST,
+            "/v1/mutations",
+            Some("secret-token"),
+            Some(valid),
+        )
+        .await;
+        assert_eq!(valid_payload["results"][0]["status"], "applied");
+        assert!(valid_payload["results"][0]["canonicalEntityId"].is_null());
+        assert_eq!(
+            valid_payload["results"][0]["record"]["blobSha256"],
+            blob_sha256
+        );
+        let valid_version = valid_payload["results"][0]["appliedServerVersion"]
+            .as_i64()
+            .unwrap();
+        let live_change =
+            tokio::time::timeout(std::time::Duration::from_secs(1), live_changes.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(live_change.entity_type, "novel.chapter_asset");
+
+        let (_, changes) = request_json(
+            &app,
+            Method::GET,
+            "/v1/changes?sinceVersion=6&scopeId=novels%3Aprofile%3Amain",
+            Some("secret-token"),
+            None,
+        )
+        .await;
+        assert!(changes["changes"].as_array().unwrap().iter().any(|change| {
+            change["entityType"] == "novel.chapter_asset"
+                && change["entityId"] == entity_id
+                && change["op"] == "merge"
+        }));
+        let (_, snapshot) = request_json(
+            &app,
+            Method::GET,
+            "/v1/snapshot?scopeId=novels%3Aprofile%3Amain",
+            Some("secret-token"),
+            None,
+        )
+        .await;
+        assert!(snapshot["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| {
+                entry["entityType"] == "novel.chapter_asset"
+                    && entry["entityId"] == entity_id
+                    && entry["record"]["byteLength"] == archive.len()
+            }));
+
+        let delete = mutation(
+            "chapter-asset-delete",
+            "chapter-asset-delete",
+            10,
+            "delete",
+            None,
+        );
+        let (_, delete_payload) = request_json(
+            &app,
+            Method::POST,
+            "/v1/mutations",
+            Some("secret-token"),
+            Some(delete),
+        )
+        .await;
+        assert_eq!(delete_payload["results"][0]["status"], "applied");
+
+        let (_, delete_changes) = request_json(
+            &app,
+            Method::GET,
+            &format!("/v1/changes?sinceVersion={valid_version}&scopeId=novels%3Aprofile%3Amain"),
+            Some("secret-token"),
+            None,
+        )
+        .await;
+        assert!(delete_changes["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|change| {
+                change["entityType"] == "novel.chapter_asset"
+                    && change["entityId"] == entity_id
+                    && change["op"] == "delete"
+            }));
+
+        let (_, deleted_snapshot) = request_json(
+            &app,
+            Method::GET,
+            "/v1/snapshot?scopeId=novels%3Aprofile%3Amain",
+            Some("secret-token"),
+            None,
+        )
+        .await;
+        assert!(!deleted_snapshot["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| {
+                entry["entityType"] == "novel.chapter_asset" && entry["entityId"] == entity_id
+            }));
+        assert!(deleted_snapshot["tombstones"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| {
+                entry["entityType"] == "novel.chapter_asset" && entry["entityId"] == entity_id
+            }));
+
+        let stale = mutation(
+            "chapter-asset-stale",
+            "chapter-asset-stale",
+            9,
+            "merge",
+            Some(patch),
+        );
+        let (_, stale_payload) = request_json(
+            &app,
+            Method::POST,
+            "/v1/mutations",
+            Some("secret-token"),
+            Some(stale),
+        )
+        .await;
+        assert_eq!(stale_payload["results"][0]["status"], "rejected");
+        assert_eq!(
+            stale_payload["results"][0]["error"]["code"],
+            "STALE_NOVEL_CHAPTER_ASSET_MUTATION"
+        );
     }
 
     #[tokio::test]

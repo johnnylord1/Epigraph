@@ -236,6 +236,7 @@ pub struct CapabilitiesResponse {
     pub supports_owner_transfer: bool,
     pub supports_snapshot: bool,
     pub supports_assets: bool,
+    pub supports_novel_chapter_assets: bool,
     pub supports_suwayomi_proxy: bool,
     pub supports_suwayomi_websocket_proxy: bool,
     pub suwayomi_proxy_path_template: String,
@@ -249,7 +250,7 @@ pub struct CapabilitiesResponse {
 
 pub const SNAPSHOT_SCHEMA_VERSION: u32 = 1;
 
-pub const SNAPSHOT_ENTITY_TYPES: [&str; 17] = [
+pub const SNAPSHOT_ENTITY_TYPES: [&str; 18] = [
     "book.entry",
     "book.category",
     "book.category_assignment",
@@ -259,6 +260,7 @@ pub const SNAPSHOT_ENTITY_TYPES: [&str; 17] = [
     "book.history",
     "novel.entry",
     "novel.chapter",
+    "novel.chapter_asset",
     "novel.progress",
     "novel.bookmark",
     "novel.history",
@@ -806,6 +808,8 @@ pub enum MutationEntityType {
     NovelEntry,
     #[serde(rename = "novel.chapter")]
     NovelChapter,
+    #[serde(rename = "novel.chapter_asset")]
+    NovelChapterAsset,
     #[serde(rename = "novel.bookmark")]
     NovelBookmark,
     #[serde(rename = "novel.history")]
@@ -835,6 +839,7 @@ impl MutationEntityType {
             Self::BookHistory => "book.history",
             Self::NovelEntry => "novel.entry",
             Self::NovelChapter => "novel.chapter",
+            Self::NovelChapterAsset => "novel.chapter_asset",
             Self::NovelBookmark => "novel.bookmark",
             Self::NovelHistory => "novel.history",
             Self::NovelClassification => "novel.classification",
@@ -935,6 +940,12 @@ pub enum MutationInput {
         base: MutationBase,
         patch: Option<NovelChapterPatch>,
     },
+    #[serde(rename = "novel.chapter_asset")]
+    NovelChapterAsset {
+        #[serde(flatten)]
+        base: MutationBase,
+        patch: Option<NovelChapterAssetPatch>,
+    },
     #[serde(rename = "novel.bookmark")]
     NovelBookmark {
         #[serde(flatten)]
@@ -1005,6 +1016,7 @@ impl MutationInput {
             Self::BookHistory { .. } => MutationEntityType::BookHistory,
             Self::NovelEntry { .. } => MutationEntityType::NovelEntry,
             Self::NovelChapter { .. } => MutationEntityType::NovelChapter,
+            Self::NovelChapterAsset { .. } => MutationEntityType::NovelChapterAsset,
             Self::NovelBookmark { .. } => MutationEntityType::NovelBookmark,
             Self::NovelHistory { .. } => MutationEntityType::NovelHistory,
             Self::NovelClassification { .. } => MutationEntityType::NovelClassification,
@@ -1027,6 +1039,7 @@ impl MutationInput {
             | Self::BookHistory { base, .. }
             | Self::NovelEntry { base, .. }
             | Self::NovelChapter { base, .. }
+            | Self::NovelChapterAsset { base, .. }
             | Self::NovelBookmark { base, .. }
             | Self::NovelHistory { base, .. }
             | Self::NovelClassification { base, .. }
@@ -1231,6 +1244,32 @@ pub struct NovelChapterPatch {
     pub chapter_order_key: f64,
     pub release_time_ms: Option<i64>,
     pub unread: bool,
+}
+
+/// Versioned manifest for one explicitly downloaded LNReader chapter archive.
+/// The immutable bytes must already exist in the Core asset store for the same
+/// scope before this record can be published.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NovelChapterAssetPatch {
+    pub schema_version: u32,
+    pub novel_id: String,
+    pub chapter_id: String,
+    pub blob_sha256: String,
+    pub byte_length: i64,
+    pub archive_format: String,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+/// Cross-client identity for a downloaded chapter manifest. NUL is forbidden
+/// in both identifiers, so the hash input is unambiguous.
+pub fn canonical_novel_chapter_asset_id(novel_id: &str, chapter_id: &str) -> String {
+    let mut digest = Sha256::new();
+    digest.update(novel_id.as_bytes());
+    digest.update([0]);
+    digest.update(chapter_id.as_bytes());
+    format!("novel-chapter-asset:{:x}", digest.finalize())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1544,6 +1583,21 @@ pub struct NovelClassificationRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct NovelChapterAssetRecord {
+    pub chapter_asset_id: String,
+    pub schema_version: u32,
+    pub novel_id: String,
+    pub chapter_id: String,
+    pub blob_sha256: String,
+    pub byte_length: i64,
+    pub archive_format: String,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+    pub record_lamport: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct NovelCategoryRecord {
     pub category_id: String,
     pub name: String,
@@ -1821,6 +1875,25 @@ pub struct NovelClassificationRow {
     pub filter_keys_json: String,
     pub plugin_settings_keys_json: String,
     pub classified_at_ms: i64,
+    pub record_updated_at_ms: i64,
+    pub record_updated_by_device_id: String,
+    pub record_lamport: i64,
+    pub record_server_version: i64,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, FromRow)]
+pub struct NovelChapterAssetRow {
+    pub scope_id: String,
+    pub chapter_asset_id: String,
+    pub novel_id: String,
+    pub chapter_id: String,
+    pub schema_version: i64,
+    pub blob_sha256: String,
+    pub byte_length: i64,
+    pub archive_format: String,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
     pub record_updated_at_ms: i64,
     pub record_updated_by_device_id: String,
     pub record_lamport: i64,
@@ -2110,6 +2183,23 @@ impl TryFrom<NovelClassificationRow> for NovelClassificationRecord {
     }
 }
 
+impl From<NovelChapterAssetRow> for NovelChapterAssetRecord {
+    fn from(value: NovelChapterAssetRow) -> Self {
+        Self {
+            chapter_asset_id: value.chapter_asset_id,
+            schema_version: value.schema_version as u32,
+            novel_id: value.novel_id,
+            chapter_id: value.chapter_id,
+            blob_sha256: value.blob_sha256,
+            byte_length: value.byte_length,
+            archive_format: value.archive_format,
+            created_at_ms: value.created_at_ms,
+            updated_at_ms: value.updated_at_ms,
+            record_lamport: value.record_lamport,
+        }
+    }
+}
+
 impl From<NovelCategoryRow> for NovelCategoryRecord {
     fn from(value: NovelCategoryRow) -> Self {
         Self {
@@ -2225,6 +2315,18 @@ mod tests {
         assert_ne!(
             canonical_novel_category_assignment_id("novel-1", "favorites"),
             canonical_novel_category_assignment_id("novel-1", "later")
+        );
+    }
+
+    #[test]
+    fn canonical_novel_chapter_asset_identity_is_cross_client_stable() {
+        assert_eq!(
+            canonical_novel_chapter_asset_id("novel-1", "chapter-1"),
+            "novel-chapter-asset:45f0db7cbdb7a96f8b5a958f365871294d289b3c4ba3cc9fc708e411f471e4c6"
+        );
+        assert_ne!(
+            canonical_novel_chapter_asset_id("novel-1", "chapter-1"),
+            canonical_novel_chapter_asset_id("novel-1", "chapter-2")
         );
     }
 }
