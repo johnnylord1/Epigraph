@@ -2945,3 +2945,29 @@ Categorias cobertas:
 - `pnpm build`: verde; permanece apenas o aviso conhecido de chunks acima de 500 kB.
 - Risco restante: os builtins claros/alternativos ainda dependem dos seus valores computados em CSS para autoria perfeita no ThemeEditor; o fallback puro fora do DOM usa `DEFAULT_THEME_TOKENS` para todos os builtins nao-Nocturne. Promover um novo builtin ainda deve passar pelo gate visual/computed do proximo marco antes de ser considerado autoravel sem CSS extra.
 - Syncd, `--n-*`, componentes Legacy, ThemeEditor UI, documentos salvos e tokens de componente permaneceram preservados.
+
+## Marco 44 - Builtin Theme Matrix Gate
+
+### Escopo
+
+- O marco nao cria temas novos e nao altera tokens de producao. Ele adiciona um gate browser para validar que todo builtin registrado em `BUILTIN_THEMES` tambem possui cascata CSS funcional.
+- A matriz cobre `nocturne`, `dark`, `high-contrast`, `light`, `light-contrast`, `midnight` e `warm`.
+- Syncd, componentes Legacy, camada `--n-*`, ThemeEditor UI e documentos custom permaneceram fora do escopo.
+
+### Gate browser
+
+- `builtinThemeMatrix.browser.test.ts` alterna `documentElement[data-theme]` para cada builtin real e valida por computed style:
+  - surfaces representativas pintadas: `--color-background`, `--color-card`, `--color-modal`, `--component-card-bg`, `--component-menu-bg`, `--component-button-bg`, `--component-input-bg`, `--component-toast-bg`, `--component-settings-card-bg`;
+  - pares de texto WCAG AA `>= 4.5:1`: `text-primary/background`, `text-secondary/background`, `text-primary/card`, `button fg/bg`, `input fg/bg` e `toast title/bg`;
+  - ausencia de `data-custom-theme` durante cada amostra.
+- O teste tambem gera evidencias browser em `docs/screenshots/marco44-builtin-matrix/`: uma captura por builtin usando o mesmo mecanismo real de aplicacao por `data-theme` na raiz.
+
+### Evidencias visuais
+
+- Capturas geradas: `nocturne.png`, `dark.png`, `high-contrast.png`, `light.png`, `light-contrast.png`, `midnight.png` e `warm.png`.
+- A primeira tentativa usou `data-theme` aninhado em uma unica matriz; ela foi descartada porque nao representava fielmente os temas claros. A versao final alterna o tema na raiz antes de cada screenshot.
+
+### Resultados e riscos
+
+- `pnpm test:browser -- src/lib/theme/builtinThemeMatrix.browser.test.ts`: passou com **2/2** testes verdes.
+- O gate confirma que os builtins existentes sao computavelmente saudaveis para superficies base e texto normal, mas nao transforma esses builtins em documentos V4 completos. A promocao futura de um tema novo ainda precisa de documento, metadados, evidencias visuais reais do app e validacao de superficies completas.

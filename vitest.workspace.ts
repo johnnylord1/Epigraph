@@ -90,6 +90,7 @@ export default defineWorkspace([
         "src/components/library/ComicsLibraryBody.test.ts",
         "src/components/library/BooksLibraryBody.test.ts",
         "src/lib/theme/themeProbe.browser.test.ts",
+        "src/lib/theme/builtinThemeMatrix.browser.test.ts",
         "src/lib/theme/nocturnePortCompatibility.browser.test.ts",
       ],
       browser: {
