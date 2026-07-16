@@ -982,6 +982,21 @@ pub async fn post_mutations(
                             "Failed to resolve novel repository identity.".to_string(),
                         )
                     })?;
+                    let expected_entity_id = canonical_novel_repository_id(&canonical_url);
+                    if canonical_entity_id != expected_entity_id {
+                        results.push(rejected_result(
+                            &mutation,
+                            error_detail(
+                                "REPOSITORY_IDENTITY_CONFLICT",
+                                "Novel repository alias resolves to another canonical URL identity.",
+                                Some(json!({
+                                    "expectedEntityId": expected_entity_id,
+                                    "resolvedEntityId": canonical_entity_id,
+                                })),
+                            ),
+                        ));
+                        continue;
+                    }
                     set_canonical_receipt(&mut session, &base.entity_id, &canonical_entity_id);
                     match db::apply_novel_repository_mutation(
                         &state.pool,
@@ -2150,14 +2165,29 @@ fn validate_novel_plugin_patch(patch: &NovelPluginPatch) -> Option<ErrorDetail> 
             None,
         ));
     }
-    validate_public_settings(&patch.public_settings).err()
+    validate_syncable_public_settings(&patch.public_settings).err()
+}
+
+fn validate_syncable_public_settings(value: &Value) -> Result<(), ErrorDetail> {
+    validate_public_settings(value)?;
+    if value
+        .as_object()
+        .is_some_and(|settings| !settings.is_empty())
+    {
+        return Err(error_detail(
+            "PUBLIC_SETTINGS_NOT_SYNCABLE",
+            "publicSettings must be empty until a pre-execution public-key allowlist is available.",
+            None,
+        ));
+    }
+    Ok(())
 }
 
 fn validate_public_settings(value: &Value) -> Result<(), ErrorDetail> {
     if !value.is_object() {
         return Err(error_detail(
             "INVALID_PUBLIC_SETTINGS",
-            "publicSettings must be a JSON object containing only manifest-declared public keys.",
+            "publicSettings must be a JSON object.",
             None,
         ));
     }
@@ -2716,7 +2746,24 @@ mod tests {
     use tower::ServiceExt;
 
     #[test]
-    fn public_plugin_settings_reject_secret_keys_and_values() {
+    fn plugin_sync_v1_rejects_every_non_empty_public_settings_object() {
+        for settings in [
+            json!({"accountPin": "1234"}),
+            json!({"header": "short-public-looking-value"}),
+            json!({"theme": "sepia"}),
+        ] {
+            assert_eq!(
+                validate_syncable_public_settings(&settings)
+                    .unwrap_err()
+                    .code,
+                "PUBLIC_SETTINGS_NOT_SYNCABLE"
+            );
+        }
+        assert!(validate_syncable_public_settings(&json!({})).is_ok());
+    }
+
+    #[test]
+    fn public_plugin_settings_defense_in_depth_rejects_secret_values() {
         for settings in [
             json!({"apiKey": "value"}),
             json!({"nested": {"session_id": "value"}}),
@@ -2730,12 +2777,6 @@ mod tests {
                 "SECRET_SETTING_REJECTED"
             );
         }
-        assert!(validate_public_settings(&json!({
-            "theme": "sepia",
-            "fontSize": 18,
-            "filters": ["completed", "english"]
-        }))
-        .is_ok());
     }
 
     #[test]
@@ -3008,7 +3049,7 @@ mod tests {
                     "enabled": true,
                     "artifactSha256": artifact_sha,
                     "artifactByteLength": artifact.len(),
-                    "publicSettings": {"theme": "sepia", "fontSize": 18},
+                    "publicSettings": {},
                     "createdAtMs": 1000,
                     "updatedAtMs": 1000
                 }
@@ -3449,6 +3490,123 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn deleted_repository_alias_cannot_rebind_to_another_url() {
+        let (_temp, state) = build_state().await;
+        let app = build_test_router(state.clone());
+        let alias = "stable-mobile-alias";
+        let first_url = "https://example.com/first.json";
+        let second_url = "https://example.com/second.json";
+        let first_id = canonical_novel_repository_id(first_url);
+        let second_id = canonical_novel_repository_id(second_url);
+
+        let merged = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                json!({
+                    "requestId": "alias-first-merge",
+                    "mutations": [{
+                        "entityType": "novel.repository",
+                        "clientMutationId": "alias-first-merge",
+                        "scopeId": "novels:profile:main",
+                        "entityId": alias,
+                        "lamport": 1,
+                        "patch": {
+                            "canonicalUrl": first_url,
+                            "name": "First",
+                            "enabled": true,
+                            "createdAtMs": 1,
+                            "updatedAtMs": 1
+                        }
+                    }]
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(json_body(merged).await["results"][0]["status"], "applied");
+
+        let deleted = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                json!({
+                    "requestId": "alias-first-delete",
+                    "mutations": [{
+                        "entityType": "novel.repository",
+                        "clientMutationId": "alias-first-delete",
+                        "scopeId": "novels:profile:main",
+                        "entityId": alias,
+                        "op": "delete",
+                        "lamport": 2
+                    }]
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(json_body(deleted).await["results"][0]["status"], "applied");
+
+        let rebound = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                json!({
+                    "requestId": "alias-rebind",
+                    "mutations": [{
+                        "entityType": "novel.repository",
+                        "clientMutationId": "alias-rebind",
+                        "scopeId": "novels:profile:main",
+                        "entityId": alias,
+                        "lamport": 3,
+                        "patch": {
+                            "canonicalUrl": second_url,
+                            "name": "Second",
+                            "enabled": true,
+                            "createdAtMs": 1,
+                            "updatedAtMs": 3
+                        }
+                    }]
+                }),
+            ))
+            .await
+            .unwrap();
+        let rebound = json_body(rebound).await;
+        assert_eq!(rebound["results"][0]["status"], "rejected");
+        assert_eq!(
+            rebound["results"][0]["error"]["code"],
+            "REPOSITORY_IDENTITY_CONFLICT"
+        );
+
+        let snapshot = app
+            .clone()
+            .oneshot(request_without_body(
+                "/v1/snapshot?scopeId=novels%3Aprofile%3Amain",
+                "main-token",
+                None,
+            ))
+            .await
+            .unwrap();
+        let snapshot = json_body(snapshot).await;
+        assert!(!snapshot["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entity| {
+                entity["entityType"] == "novel.repository"
+                    && (entity["entityId"] == first_id || entity["entityId"] == second_id)
+            }));
+        assert!(snapshot["tombstones"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tombstone| {
+                tombstone["entityType"] == "novel.repository" && tombstone["entityId"] == first_id
+            },));
     }
 
     #[tokio::test]
