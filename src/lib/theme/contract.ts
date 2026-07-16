@@ -11,6 +11,7 @@ export const BUILTIN_THEME_IDS = [
 export type BuiltinTheme = (typeof BUILTIN_THEME_IDS)[number];
 export type Theme = BuiltinTheme | string;
 export type ThemeMotionPreset = "minimal" | "soft" | "expressive";
+export const DEFAULT_BUILTIN_THEME_ID: BuiltinTheme = "nocturne";
 
 export interface ThemeTokens {
   "bg-void": string;
@@ -257,4 +258,23 @@ export function isBuiltinTheme(value: string): value is BuiltinTheme {
 
 export function getBuiltinThemeMetadata(id: string): BuiltinThemeMetadata | undefined {
   return BUILTIN_THEMES.find((theme) => theme.id === id);
+}
+
+export function getBuiltinThemeFallbackContract(
+  base: BuiltinTheme,
+): { tokens: ThemeTokens; hud: HudThemeTokens; motion: ThemeMotionPreset } {
+  return base === DEFAULT_BUILTIN_THEME_ID
+    ? { tokens: NOCTURNE_THEME_TOKENS, hud: NOCTURNE_HUD_THEME_TOKENS, motion: "soft" }
+    : { tokens: DEFAULT_THEME_TOKENS, hud: DEFAULT_HUD_THEME_TOKENS, motion: "soft" };
+}
+
+export function normalizeThemeSelection(
+  value: unknown,
+  customThemes: readonly Pick<CustomTheme, "id">[] = [],
+): Theme {
+  if (typeof value !== "string") return DEFAULT_BUILTIN_THEME_ID;
+  const id = value.trim();
+  if (isBuiltinTheme(id)) return id;
+  if (id.startsWith("custom:") && customThemes.some((theme) => theme.id === id)) return id;
+  return DEFAULT_BUILTIN_THEME_ID;
 }

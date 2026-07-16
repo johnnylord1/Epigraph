@@ -2914,3 +2914,34 @@ Categorias cobertas:
 - Primitives e semantic overrides continuam deliberadamente independentes: mudar uma primitive nao recalcula overrides semanticos ja persistidos. Resolver isso exige politica explicita de ownership/migracao e fica fora deste lote.
 - Os 11 HudThemeTokens Legacy continuam aceitos para compatibilidade e preview, sem prometer efeito runtime inexistente.
 - Syncd, componentes Legacy e a camada `--n-*` permanecem preservados e fora do escopo.
+
+## Marco 43 - Builtin Registry And Theme Selection Contract
+
+### Escopo e consolidacao
+
+- O marco consolidou a selecao de temas builtin/custom sem alterar CSS visual, tokens de componente, layout ou comportamento funcional de leitura/biblioteca.
+- `contract.ts` passou a expor `DEFAULT_BUILTIN_THEME_ID`, `normalizeThemeSelection()` e `getBuiltinThemeFallbackContract()`. Assim, store, App, provider e documentos V4 usam a mesma autoridade para fallback builtin.
+- `App.svelte` deixou de usar `"dark"` como fallback implicito. O app agora normaliza `store.settings.theme` contra builtins e documentos custom salvos; custom theme ausente ou invalido volta explicitamente para Nocturne.
+- `state.svelte.ts` deixou de converter todo tema salvo `"dark"` para Nocturne no boot. `dark` volta a ser tratado como builtin valido; temas desconhecidos e custom themes sem documento continuam caindo para Nocturne.
+- `document.ts` passou a resolver/criar documentos V4 contra o contrato fallback do builtin declarado em `base` quando nenhum contrato computado e fornecido. Isso corrige a materializacao fora do DOM para documentos baseados em builtins nao-Nocturne.
+- `provider.ts` deixou de manter fallbacks locais duplicados e consome o contrato fallback central.
+
+### Gates e testes
+
+- `contract.test.ts` cobre o default Nocturne, normalizacao builtin/custom e contrato fallback compartilhado.
+- `themeSelectionPersistence.test.ts` isola a store no boot e confirma que `dark` persistido permanece `dark`, `custom:*` sem documento cai para Nocturne e custom existente permanece ativo.
+- `document.test.ts` cobre criacao/resolucao V4 com `base: "dark"` fora do DOM.
+- `AppThemeCompatibilityTokens.test.ts` garante que o App consome `normalizeThemeSelection()` e nao reintroduz fallback literal `"dark"`.
+
+### Validacao visual real
+
+- Baselines before reais foram capturadas no app Tauri/WebView2 em Nocturne builtin, `data-theme="nocturne"` e sem `data-custom-theme`: `docs/screenshots/marco43-builtin-registry/before-settings-appearance.png` e `before-theme-editor.png`.
+- A primeira sessao CDP expunha apenas o target `novelRuntimeHost=1`, produzindo tela preta; esses artefatos foram descartados.
+- A sessao principal foi reiniciada com `pnpm tauri:dev:gate` direto e voltou a expor `Aethon [MAIN :4567]`. O DOM confirmou Appearance montado com 29 cards, `data-theme="nocturne"` e `data-custom-theme=null`, mas o compositor do WebView2 nao pintou a area central nas capturas after. Como o build e os testes focados passaram e este marco nao toca CSS de Settings/ThemeEditor, a evidencia after ficou registrada como limitacao ambiental de captura, nao como comparacao visual conclusiva.
+
+### Resultados e riscos restantes
+
+- Testes focados: `pnpm test:unit -- src/lib/theme/contract.test.ts src/lib/theme/document.test.ts src/lib/theme/provider.test.ts src/store/themeSelectionPersistence.test.ts src/AppThemeCompatibilityTokens.test.ts` passou com **55/55** testes verdes.
+- `pnpm build`: verde; permanece apenas o aviso conhecido de chunks acima de 500 kB.
+- Risco restante: os builtins claros/alternativos ainda dependem dos seus valores computados em CSS para autoria perfeita no ThemeEditor; o fallback puro fora do DOM usa `DEFAULT_THEME_TOKENS` para todos os builtins nao-Nocturne. Promover um novo builtin ainda deve passar pelo gate visual/computed do proximo marco antes de ser considerado autoravel sem CSS extra.
+- Syncd, `--n-*`, componentes Legacy, ThemeEditor UI, documentos salvos e tokens de componente permaneceram preservados.

@@ -99,13 +99,14 @@
   import { getImageCacheStats, trimImageCache } from "./lib/imageCache";
   import { refreshSuwayomiUpdateUx } from "./lib/suwayomiUpdateUx.svelte";
   import { _, applyAppLanguage } from "./lib/i18n/runtime";
+  import { DEFAULT_BUILTIN_THEME_ID, normalizeThemeSelection } from "./lib/theme/contract";
   import Toaster      from "./components/layout/Toaster.svelte";
   import SplashScreen from "./components/layout/SplashScreen.svelte";
   import Layout from "./components/layout/Layout.svelte";
   import { NOVEL_RUNTIME_HOST_LABEL } from "./lib/novels/runtimeHost";
 
   $effect(() => {
-    const themeId  = store.settings.theme ?? "dark";
+    const themeId  = normalizeThemeSelection(store.settings.theme, store.settings.customThemes ?? []);
     const isCustom = themeId.startsWith("custom:");
     const root = document.documentElement;
 
@@ -118,7 +119,7 @@
     const custom = store.settings.customThemes?.find(t => t.id === themeId);
     if (!custom || !applyCustomTheme(root, custom)) {
       clearCustomThemeProperties(root);
-      root.setAttribute("data-theme", "dark");
+      root.setAttribute("data-theme", DEFAULT_BUILTIN_THEME_ID);
       return;
     }
   });

@@ -14,8 +14,11 @@ import {
   THEME_MOTION_VARS,
   THEME_SEMANTIC_TOKEN_KEYS,
   THEME_TOKEN_KEYS,
+  DEFAULT_BUILTIN_THEME_ID,
   getBuiltinThemeMetadata,
+  getBuiltinThemeFallbackContract,
   isBuiltinTheme,
+  normalizeThemeSelection,
 } from "./contract";
 import {
   DEFAULT_THEME_TOKENS as STORE_DEFAULT_THEME_TOKENS,
@@ -26,9 +29,31 @@ describe("canonical theme contract", () => {
   test("keeps one unique registry entry for every built-in theme", () => {
     expect(BUILTIN_THEMES.map((theme) => theme.id)).toEqual([...BUILTIN_THEME_IDS]);
     expect(new Set(BUILTIN_THEME_IDS).size).toBe(BUILTIN_THEME_IDS.length);
+    expect(DEFAULT_BUILTIN_THEME_ID).toBe("nocturne");
     expect(getBuiltinThemeMetadata("nocturne")?.label).toBe("Nocturne");
     expect(isBuiltinTheme("light")).toBe(true);
     expect(isBuiltinTheme("custom:test")).toBe(false);
+  });
+
+  test("normalizes active theme selection against builtins and saved custom themes", () => {
+    expect(normalizeThemeSelection(undefined)).toBe(DEFAULT_BUILTIN_THEME_ID);
+    expect(normalizeThemeSelection("dark")).toBe("dark");
+    expect(normalizeThemeSelection(" custom:missing ")).toBe(DEFAULT_BUILTIN_THEME_ID);
+    expect(normalizeThemeSelection("custom:local", [{ id: "custom:local" }])).toBe("custom:local");
+    expect(normalizeThemeSelection("solarized")).toBe(DEFAULT_BUILTIN_THEME_ID);
+  });
+
+  test("exposes the fallback contract used when a builtin cannot be computed from the DOM", () => {
+    expect(getBuiltinThemeFallbackContract("nocturne")).toMatchObject({
+      tokens: NOCTURNE_THEME_TOKENS,
+      hud: NOCTURNE_HUD_THEME_TOKENS,
+      motion: "soft",
+    });
+    expect(getBuiltinThemeFallbackContract("dark")).toMatchObject({
+      tokens: DEFAULT_THEME_TOKENS,
+      hud: DEFAULT_HUD_THEME_TOKENS,
+      motion: "soft",
+    });
   });
 
   test("keeps token key inventories complete and synchronized", () => {

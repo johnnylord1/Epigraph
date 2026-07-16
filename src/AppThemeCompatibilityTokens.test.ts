@@ -140,6 +140,16 @@ describe("App theme compatibility contract", () => {
     );
   });
 
+  it("normalizes app theme application through the canonical registry", () => {
+    const app = readProjectFile("src/App.svelte");
+
+    expect(app).toContain('import { DEFAULT_BUILTIN_THEME_ID, normalizeThemeSelection } from "./lib/theme/contract"');
+    expect(app).toContain("normalizeThemeSelection(store.settings.theme, store.settings.customThemes ?? [])");
+    expect(app).toContain('root.setAttribute("data-theme", DEFAULT_BUILTIN_THEME_ID)');
+    expect(app).not.toContain('store.settings.theme ?? "dark"');
+    expect(app).not.toContain('root.setAttribute("data-theme", "dark")');
+  });
+
   it("keeps audited Legacy surfaces outside the active shell", () => {
     const activeShell = [
       "src/main.ts",

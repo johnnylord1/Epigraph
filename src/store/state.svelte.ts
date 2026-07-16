@@ -31,6 +31,7 @@ import type { ActiveNovelDetailState, ActiveNovelReaderState } from "../lib/nove
 import type { ComicsUpdateNotificationInput } from "../lib/library/comicsChapterSnapshot";
 import { normalizeAppLanguage, type AppLanguageCode } from "../lib/i18n/languages";
 import {
+  normalizeThemeSelection,
   type CustomTheme,
   type Theme,
 } from "../lib/theme/contract";
@@ -890,12 +891,13 @@ function mergeSettings(saved: any): Settings {
   const savedBooksLibraryState = peekBookLibraryState();
   const savedMangaReaderPrefs = saved?.settings?.mangaReaderPrefs ?? {};
   const customLocalProfiles = normalizeCustomLocalProfiles(saved?.settings?.customLocalProfiles);
+  const savedCustomThemes = Array.isArray(saved?.settings?.customThemes) ? saved.settings.customThemes : [];
   const savedDefaultProfileId = normalizeLocalProfileId(saved?.settings?.defaultLocalProfileId);
   const savedServerUrl = normalizeServerUrl(saved?.settings?.serverUrl);
   const coercedDefaultProfileId = getLocalProfileMeta(savedDefaultProfileId, customLocalProfiles)?.id ?? DEFAULT_SETTINGS.defaultLocalProfileId;
   const coercedServerUrl = savedServerUrl ?? DEFAULT_SETTINGS.serverUrl;
   const savedTheme = saved?.settings?.theme;
-  const coercedTheme = savedTheme === undefined || savedTheme === "dark" ? DEFAULT_SETTINGS.theme : savedTheme;
+  const coercedTheme = normalizeThemeSelection(savedTheme, savedCustomThemes);
   const savedFlareSolverrSessionName = saved?.settings?.flareSolverrSessionName;
   const coercedFlareSolverrSessionName =
     savedFlareSolverrSessionName === undefined
@@ -909,7 +911,7 @@ function mergeSettings(saved: any): Settings {
     heroSlots:    saved?.settings?.heroSlots ?? [null, null, null, null],
     mangaLinks:   saved?.settings?.mangaLinks ?? {},
     novelLinks:   saved?.settings?.novelLinks ?? {},
-    customThemes: saved?.settings?.customThemes ?? [],
+    customThemes: savedCustomThemes,
     hiddenCategoryIds: saved?.settings?.hiddenCategoryIds ?? [],
     booksCategories: savedBooksLibraryState.booksCategories,
     booksCategoryAssignments: savedBooksLibraryState.booksCategoryAssignments,

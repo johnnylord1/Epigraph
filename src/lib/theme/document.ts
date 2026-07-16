@@ -6,6 +6,7 @@ import {
   THEME_PRIMITIVE_TOKEN_KEYS,
   THEME_SEMANTIC_TOKEN_KEYS,
   THEME_TOKEN_KEYS,
+  getBuiltinThemeFallbackContract,
   isBuiltinTheme,
   type BuiltinTheme,
   type CustomTheme,
@@ -577,28 +578,31 @@ function validateCreateInput(input: unknown): ThemeDocumentValidationError[] {
 
 export function createThemeDocumentV4(
   input: CreateThemeDocumentV4Input,
-  baseTokens: ThemeTokens = NOCTURNE_THEME_TOKENS,
-  baseHud: HudThemeTokens = NOCTURNE_HUD_THEME_TOKENS,
+  baseTokens?: ThemeTokens,
+  baseHud?: HudThemeTokens,
 ): ThemeDocumentV4 {
   const inputErrors = validateCreateInput(input);
   if (inputErrors.length > 0) {
     throw new ThemeDocumentError("Invalid theme creation input.", inputErrors);
   }
 
+  const baseContract = getBuiltinThemeFallbackContract(input.base ?? "nocturne");
+  const resolvedBaseTokens = baseTokens ?? baseContract.tokens;
+  const resolvedBaseHud = baseHud ?? baseContract.hud;
   const source = input.tokens as unknown as Record<string, unknown>;
   const primitives = copyDifferences(
     source,
-    baseTokens,
+    resolvedBaseTokens,
     THEME_PRIMITIVE_TOKEN_KEYS,
   ) as ThemePrimitiveTokens;
   const semanticOverrides = copyDifferences(
     source,
-    baseTokens,
+    resolvedBaseTokens,
     THEME_SEMANTIC_TOKEN_KEYS,
   ) as Partial<ThemeSemanticTokens>;
   const hud = copyDifferences(
     (input.hud as Record<string, unknown> | undefined) ?? {},
-    baseHud,
+    resolvedBaseHud,
     HUD_THEME_TOKEN_KEYS,
   ) as Partial<HudThemeTokens>;
   const document: ThemeDocumentV4 = {
@@ -621,20 +625,23 @@ export function createThemeDocumentV4(
 
 export function resolveThemeDocument(
   document: ThemeDocumentV4,
-  baseTokens: ThemeTokens = NOCTURNE_THEME_TOKENS,
-  baseHud: HudThemeTokens = NOCTURNE_HUD_THEME_TOKENS,
+  baseTokens?: ThemeTokens,
+  baseHud?: HudThemeTokens,
 ): { tokens: ThemeTokens; hud: HudThemeTokens } {
   const validation = validateThemeDocument(document);
   if (!validation.valid) throw new ThemeDocumentError("Invalid ThemeDocumentV4.", validation.errors);
+  const baseContract = getBuiltinThemeFallbackContract(validation.document.base);
+  const resolvedBaseTokens = baseTokens ?? baseContract.tokens;
+  const resolvedBaseHud = baseHud ?? baseContract.hud;
 
   return {
     tokens: {
-      ...baseTokens,
+      ...resolvedBaseTokens,
       ...validation.document.primitives,
       ...(validation.document.semanticOverrides ?? {}),
     },
     hud: {
-      ...baseHud,
+      ...resolvedBaseHud,
       ...(validation.document.hud ?? {}),
     },
   };

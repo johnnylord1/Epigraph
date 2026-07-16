@@ -1,12 +1,9 @@
 import {
-  DEFAULT_HUD_THEME_TOKENS,
-  DEFAULT_THEME_TOKENS,
   HUD_THEME_TOKEN_KEYS,
-  NOCTURNE_HUD_THEME_TOKENS,
-  NOCTURNE_THEME_TOKENS,
   THEME_MOTION_VARS,
   THEME_MOTION_PROPERTY_KEYS,
   THEME_TOKEN_KEYS,
+  getBuiltinThemeFallbackContract,
   type BuiltinTheme,
   type HudThemeTokens,
   type ThemeMotionPreset,
@@ -24,14 +21,6 @@ export const CUSTOM_THEME_STYLE_PROPERTIES = [
   "--sidebar-width",
 ] as const;
 
-function fallbackThemeTokens(base: BuiltinTheme): ThemeTokens {
-  return base === "nocturne" ? NOCTURNE_THEME_TOKENS : DEFAULT_THEME_TOKENS;
-}
-
-function fallbackHudTokens(base: BuiltinTheme): HudThemeTokens {
-  return base === "nocturne" ? NOCTURNE_HUD_THEME_TOKENS : DEFAULT_HUD_THEME_TOKENS;
-}
-
 export function clearCustomThemeProperties(element: HTMLElement): void {
   for (const property of CUSTOM_THEME_STYLE_PROPERTIES) {
     element.style.removeProperty(property);
@@ -45,20 +34,20 @@ export function readComputedThemeContract(
   readStyle: (element: Element) => CSSStyleDeclaration = getComputedStyle,
 ): { tokens: ThemeTokens; hud: HudThemeTokens } {
   const computed = readStyle(element);
-  const tokenFallback = fallbackThemeTokens(base);
-  const hudFallback = fallbackHudTokens(base);
+  const fallback = getBuiltinThemeFallbackContract(base);
   const tokens = Object.fromEntries(
-    THEME_TOKEN_KEYS.map((key) => [key, computed.getPropertyValue(`--${key}`).trim() || tokenFallback[key]]),
+    THEME_TOKEN_KEYS.map((key) => [key, computed.getPropertyValue(`--${key}`).trim() || fallback.tokens[key]]),
   ) as unknown as ThemeTokens;
   const hud = Object.fromEntries(
-    HUD_THEME_TOKEN_KEYS.map((key) => [key, computed.getPropertyValue(`--${key}`).trim() || hudFallback[key]]),
+    HUD_THEME_TOKEN_KEYS.map((key) => [key, computed.getPropertyValue(`--${key}`).trim() || fallback.hud[key]]),
   ) as unknown as HudThemeTokens;
   return { tokens, hud };
 }
 
 export function readBuiltinThemeContract(base: BuiltinTheme): { tokens: ThemeTokens; hud: HudThemeTokens } {
   if (typeof document === "undefined" || !document.body) {
-    return { tokens: fallbackThemeTokens(base), hud: fallbackHudTokens(base) };
+    const fallback = getBuiltinThemeFallbackContract(base);
+    return { tokens: fallback.tokens, hud: fallback.hud };
   }
   const probe = document.createElement("div");
   probe.setAttribute("data-theme", base);

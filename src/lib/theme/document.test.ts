@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
+  DEFAULT_HUD_THEME_TOKENS,
+  DEFAULT_THEME_TOKENS,
   NOCTURNE_HUD_THEME_TOKENS,
   NOCTURNE_THEME_TOKENS,
   type LegacyCustomTheme,
@@ -181,6 +183,31 @@ describe("ThemeDocumentV4", () => {
       base: "light",
       primitives: { accent: "#123456" },
       motion: "soft",
+    });
+  });
+
+  test("uses the builtin fallback contract when resolving a non-default base outside the DOM", () => {
+    const document = createThemeDocumentV4({
+      id: "custom:dark-child",
+      name: "Dark child",
+      base: "dark",
+      tokens: { ...DEFAULT_THEME_TOKENS, accent: "#123456" },
+      hud: { ...DEFAULT_HUD_THEME_TOKENS, "hud-toolbar-gap": "10px" },
+      motion: "soft",
+    });
+
+    expect(document).toEqual({
+      version: 4,
+      id: "custom:dark-child",
+      name: "Dark child",
+      base: "dark",
+      primitives: { accent: "#123456" },
+      hud: { "hud-toolbar-gap": "10px" },
+      motion: "soft",
+    });
+    expect(resolveThemeDocument(document)).toEqual({
+      tokens: { ...DEFAULT_THEME_TOKENS, accent: "#123456" },
+      hud: { ...DEFAULT_HUD_THEME_TOKENS, "hud-toolbar-gap": "10px" },
     });
   });
 
