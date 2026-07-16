@@ -1365,9 +1365,9 @@ pub fn canonical_novel_repository_id(canonical_url: &str) -> String {
     )
 }
 
-/// A locally executable plugin descriptor. `publicSettings` must contain only
-/// keys declared public by the plugin manifest; the Core independently rejects
-/// secret-looking keys and values before persistence.
+/// A locally executable plugin descriptor. In protocol v1 `publicSettings`
+/// must be empty because the current catalog has no trustworthy pre-execution
+/// allowlist. Secrets and permission grants always remain local.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NovelPluginPatch {
