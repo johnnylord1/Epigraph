@@ -432,6 +432,9 @@
         persistedSnapshot.mangas,
         persistedSnapshot,
       ));
+      // The persisted snapshot is only a warm start. Do not let setCategories()
+      // pin its category list and bypass the live profile reconciliation below.
+      cache.clear(CACHE_KEYS.CATEGORIES);
       setLibraryTrackingSummarySnapshot(persistedSnapshot.trackingSummary as TrackerCompletionTracker[]);
       setLibraryBootstrap("ready", scopeKey, persistedSnapshot.trackingSummary as TrackerCompletionTracker[]);
     }

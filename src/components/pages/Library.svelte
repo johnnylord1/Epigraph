@@ -2073,7 +2073,9 @@
                 {/each}
 
                 {#if activeGenreChips.length}
-                  <div class="chip-divider" aria-hidden="true"></div>
+                  {#if heroUserCollections.length}
+                    <div class="chip-divider" aria-hidden="true"></div>
+                  {/if}
                   <div
                     class="library-genre-frame"
                     class:has-overflow={hasScrollableGenreChips}
@@ -2595,6 +2597,7 @@
     overflow: hidden;
     text-overflow: clip;
     white-space: nowrap;
+    transition-property: background-color, border-color, color, box-shadow, transform, opacity;
   }
 
   .library-genre-chip.fit-sm {
