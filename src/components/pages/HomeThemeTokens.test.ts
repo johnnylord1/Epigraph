@@ -87,4 +87,12 @@ describe("Home theme tokens", () => {
     expect(home).toContain("aethon-home-search-engaged");
     expect(home).toContain("home-continue-grid");
   });
+
+  it("presents book progress as chapter or page position instead of percentage", () => {
+    const home = readProjectFile(HOME_PATH);
+
+    expect(home).toContain("metricValue: presented.progressValueLabel");
+    expect(home).toContain("metricLabel: presented.progressTotalLabel");
+    expect(home).not.toContain("metricValue: presented.readPercentLabel");
+  });
 });

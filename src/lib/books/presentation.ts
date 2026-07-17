@@ -1,5 +1,9 @@
 import { BookAssetResolver } from "./assets";
-import { getBookSectionCount } from "./summary";
+import {
+  findBookSectionIndex,
+  getBookSectionCount,
+  getBookSectionsSummary,
+} from "./summary";
 import type { BookEntry, BookProgress, BookSubtype } from "./types";
 
 export interface PresentedBook {
@@ -16,6 +20,8 @@ export interface PresentedBook {
   readPercent: number;
   readPercentLabel: string;
   readSectionCount: number;
+  progressValueLabel: string;
+  progressTotalLabel: string;
   progressSummary: string;
   showProgress: boolean;
   description: string | null;
@@ -42,18 +48,59 @@ function formatSectionCount(sectionCount: number, subtype: BookSubtype, pageCoun
   return `${sectionCount} ${sectionCount === 1 ? "chapter" : "chapters"}`;
 }
 
+function resolveReadSectionCount(
+  book: BookEntry,
+  progress: BookProgress | null | undefined,
+  sectionCount: number,
+  readPercent: number,
+): number {
+  if (sectionCount <= 0) return 0;
+  if (readPercent >= 1) return sectionCount;
+
+  const sectionIndex = findBookSectionIndex(getBookSectionsSummary(book), progress?.href);
+  if (sectionIndex >= 0) return sectionIndex + 1;
+  if (readPercent <= 0) return 0;
+  return Math.max(1, Math.min(sectionCount, Math.round(readPercent * sectionCount)));
+}
+
+function resolveReadPageCount(
+  progress: BookProgress | null | undefined,
+  pageCount: number,
+  readPercent: number,
+): number {
+  if (pageCount <= 0) return 0;
+  if (typeof progress?.pageIndex === "number" && Number.isFinite(progress.pageIndex)) {
+    return Math.max(1, Math.min(pageCount, Math.round(progress.pageIndex)));
+  }
+  if (readPercent <= 0) return 0;
+  return Math.max(1, Math.min(pageCount, Math.round(readPercent * (pageCount - 1)) + 1));
+}
+
 export function presentBookWithCoverSrc(
   book: BookEntry,
   progress: BookProgress | null | undefined,
   coverSrc: string | null,
 ): PresentedBook {
   const sectionCount = getBookSectionCount(book);
-  const pageCount = Math.max(0, typeof book.pageCount === "number" ? book.pageCount : 0);
+  const pageCount = Math.max(
+    0,
+    typeof book.pageCount === "number" ? book.pageCount : 0,
+    typeof progress?.totalPages === "number" ? progress.totalPages : 0,
+  );
   const readPercent = clampPercent(progress?.progressPercent);
-  const readSectionCount =
-    sectionCount > 0
-      ? Math.min(sectionCount, Math.round(readPercent * sectionCount))
-      : 0;
+  const usesPageProgress = book.subtype === "pdf" && sectionCount <= 0 && pageCount > 0;
+  const readSectionCount = usesPageProgress
+    ? resolveReadPageCount(progress, pageCount, readPercent)
+    : resolveReadSectionCount(book, progress, sectionCount, readPercent);
+  const readPercentLabel = `${Math.round(readPercent * 100)}%`;
+  const progressValueLabel = readSectionCount > 0
+    ? String(readSectionCount)
+    : readPercentLabel;
+  const progressTotalLabel = sectionCount > 0
+    ? `/ ${formatSectionCount(sectionCount, book.subtype, pageCount)}`
+    : usesPageProgress
+      ? `/ ${formatPageCount(pageCount)}`
+      : "progress";
 
   return {
     id: book.id,
@@ -67,12 +114,16 @@ export function presentBookWithCoverSrc(
     sectionCount,
     sectionCountLabel: formatSectionCount(sectionCount, book.subtype, pageCount),
     readPercent,
-    readPercentLabel: `${Math.round(readPercent * 100)}%`,
+    readPercentLabel,
     readSectionCount,
+    progressValueLabel,
+    progressTotalLabel,
     progressSummary:
       sectionCount > 0
         ? `${readSectionCount} / ${sectionCount} read`
-        : (readPercent > 0 ? `${Math.round(readPercent * 100)}% read` : "Unread"),
+        : usesPageProgress && readSectionCount > 0
+          ? `${readSectionCount} / ${pageCount} pages`
+          : (readPercent > 0 ? `${readPercentLabel} read` : "Unread"),
     showProgress: sectionCount > 0 || !!progress,
     description: book.description,
   };

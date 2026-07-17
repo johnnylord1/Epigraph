@@ -777,7 +777,7 @@
         {#if hasFolders}<div class="detail-row"><span class="detail-key">{$_("detail.actions.folders")}</span><span class="detail-val">{assignedBookCategories.map((category) => category.name).join(", ")}</span></div>{/if}
         {#if activeBook.subtype === "pdf"}<div class="detail-row"><span class="detail-key">{$_("bookDetail.pages")}</span><span class="detail-val">{activePresentation?.pageCountLabel ?? $_("bookDetail.pageCount", { count: activeBook.pageCount ?? 0 })}</span></div>{/if}
         {#if activeBook.subtype === "epub"}<div class="detail-row"><span class="detail-key">{$_("bookDetail.spineItems")}</span><span class="detail-val">{activeBook.spineCount ?? activeBook.spine?.length ?? 0}</span></div>{/if}
-        {#if activeProgress}<div class="detail-row"><span class="detail-key">{$_("bookDetail.lastProgress")}</span><span class="detail-val">{activePresentation?.readPercentLabel ?? `${Math.round(readPercent * 100)}%`}</span></div>{/if}
+        {#if activeProgress}<div class="detail-row"><span class="detail-key">{$_("bookDetail.lastProgress")}</span><span class="detail-val">{activePresentation?.progressSummary ?? `${Math.round(readPercent * 100)}%`}</span></div>{/if}
         <div class="detail-file">
           <span class="detail-key">{$_("bookDetail.sourceFile")}</span>
           <p class="detail-path">{activeBook.importPath || $_("bookDetail.metadataOnlyRestore")}</p>

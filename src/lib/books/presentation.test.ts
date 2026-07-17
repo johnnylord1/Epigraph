@@ -35,13 +35,18 @@ const progress: BookProgress = {
 
 describe("presentBookWithCoverSrc", () => {
   it("derives presentation from explicit inputs without resolving assets itself", () => {
-    const presented = presentBookWithCoverSrc(book, progress, "book://cover");
+    const presented = presentBookWithCoverSrc(book, {
+      ...progress,
+      progressPercent: 0.8,
+    }, "book://cover");
 
     expect(presented.id).toBe("epub-demo");
     expect(presented.coverSrc).toBe("book://cover");
     expect(presented.authorLabel).toBe("Author");
     expect(presented.sectionCount).toBe(10);
     expect(presented.progressSummary).toBe("3 / 10 read");
+    expect(presented.progressValueLabel).toBe("3");
+    expect(presented.progressTotalLabel).toBe("/ 10 chapters");
     expect(presented.sectionCountLabel).toBe("10 chapters");
   });
 
@@ -58,10 +63,38 @@ describe("presentBookWithCoverSrc", () => {
     }, {
       ...progress,
       bookId: "pdf-demo",
+      href: null,
+      pageIndex: 12,
+      totalPages: 42,
     }, "book://pdf-cover");
 
     expect(presented.pageCount).toBe(42);
     expect(presented.pageCountLabel).toBe("42 pages");
     expect(presented.sectionCountLabel).toBe("42 pages");
+    expect(presented.readSectionCount).toBe(12);
+    expect(presented.progressValueLabel).toBe("12");
+    expect(presented.progressTotalLabel).toBe("/ 42 pages");
+    expect(presented.progressSummary).toBe("12 / 42 pages");
+  });
+
+  it("uses percentage only when an EPUB has no navigable chapter structure", () => {
+    const presented = presentBookWithCoverSrc({
+      ...book,
+      id: "unstructured-epub",
+      sectionCount: 0,
+      sectionsSummary: [],
+      tocCount: 0,
+      spineCount: 0,
+    }, {
+      ...progress,
+      bookId: "unstructured-epub",
+      href: null,
+      progressPercent: 0.4,
+    }, null);
+
+    expect(presented.readSectionCount).toBe(0);
+    expect(presented.progressValueLabel).toBe("40%");
+    expect(presented.progressTotalLabel).toBe("progress");
+    expect(presented.progressSummary).toBe("40% read");
   });
 });
