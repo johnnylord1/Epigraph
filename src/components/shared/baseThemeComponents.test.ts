@@ -66,6 +66,31 @@ describe("base themed components", () => {
     expect(document.querySelector(".toast-success")).toBeTruthy();
   });
 
+  test("restarts the toast life bar when an existing toast is renewed", async () => {
+    render(Toaster);
+    addToast({
+      id: "renewed-toast",
+      kind: "info",
+      title: "First state",
+      duration: 3500,
+    });
+
+    expect(await screen.findByText("First state")).toBeTruthy();
+    const firstLifeBar = document.querySelector(".toast-life");
+    expect(firstLifeBar).toBeTruthy();
+
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    addToast({
+      id: "renewed-toast",
+      kind: "info",
+      title: "Renewed state",
+      duration: 3500,
+    });
+
+    expect(await screen.findByText("Renewed state")).toBeTruthy();
+    expect(document.querySelector(".toast-life")).not.toBe(firstLifeBar);
+  });
+
   test("renders the tokenized context menu shell", () => {
     const onClose = vi.fn();
     const onOpen = vi.fn();

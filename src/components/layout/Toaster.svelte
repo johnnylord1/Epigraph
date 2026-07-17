@@ -169,6 +169,9 @@
             <path d="M18 6 6 18M6 6l12 12" />
           </svg>
         </button>
+        {#key t.updatedAt}
+          <div class="toast-life" aria-hidden="true"></div>
+        {/key}
       </div>
     {/each}
   </div>
@@ -211,19 +214,18 @@
   .toast:active { transform: translateX(0) scale(0.98); }
   .toast:focus-visible { outline: 2px solid var(--component-toast-focus-ring); outline-offset: 2px; }
 
-  .toast::after {
+  .toast-life {
     position: absolute;
     right: 0;
     bottom: 0;
     left: 0;
     height: 2px;
-    content: "";
     background: var(--component-toast-life-bg);
     transform-origin: left;
     animation: toastLife var(--toast-duration) linear forwards;
   }
 
-  .toast-persistent::after {
+  .toast-persistent .toast-life {
     display: none;
   }
 
