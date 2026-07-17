@@ -3353,8 +3353,18 @@ Categorias cobertas:
 
 ### Marco 57 - Legacy Surface Decision
 
-- Decidir por dominio se `Discover`, `Extensions`, SourceBrowse/SourceList, superficies Novel antigas, `NovelsLibraryBody`, `Tracking`, `GenreDrillPage` e `routes.ts` devem ser reativados ou continuar em quarentena.
-- Componentes que continuarem inativos nao recebem migracao visual. Reativacao exige rota real, acessibilidade, screenshots e testes dedicados; remocao futura exige nova prova de ausencia em bundle, deep links e estado persistido.
+**Status: concluido por decisao de quarentena.**
+
+- `Discover.svelte`, `SourceBrowse.svelte` e `SourceList.svelte` permanecem Legacy. O shell ativo carrega `Search.svelte -> BrowseV3.svelte`, e BrowseV3 renderiza `SourcesView.svelte`; nenhum root ativo importa a cadeia antiga.
+- `Extensions.svelte` permanece Legacy. Seu unico importer e `routes.ts`, que tambem nao possui importer. Extensions/Sources ativos vivem em `BrowseV3` e `SourcesView`.
+- `NovelSources.svelte`, `NovelSourceCheckModal.svelte`, `NovelSourceStatusDetails.svelte` e `NovelRepositoriesPanel.svelte` permanecem Legacy. Os modais antigos sao alcancados apenas por superficies da mesma quarentena; Settings usa o estado/repositorio integrado atual e nao importa o painel antigo.
+- `NovelsLibraryBody.svelte` permanece Legacy. A Library ativa importa apenas `BooksLibraryBody.svelte` e `ComicsLibraryBody.svelte`; novels/books sao apresentadas pelo fluxo Books atual.
+- `Tracking.svelte` permanece Legacy. SeriesDetail usa `TrackingPanel.svelte` e NovelDetail usa `NovelTrackingPanel.svelte`.
+- `GenreDrillPage.svelte` permanece Legacy e sem importer. Os filtros/recomendacoes ativos pertencem a BrowseV3.
+- `routes.ts` permanece Legacy e sem importer. O shell real usa os cinco lazy loaders tipados de `Layout.svelte`: Home, Library, Search, Downloads e Settings.
+- `legacySurfaceDecisionGate.test.ts` congela o grafo completo, incluindo imports dinamicos, e falha se qualquer superficie em quarentena ganhar um importer externo ou se os substitutos ativos forem trocados silenciosamente.
+- Nenhuma superficie foi reativada, removida ou migrada. Nao houve mudanca visual; as capturas reais do Marco 55B continuam a baseline. Uma futura reativacao exige rota real, acessibilidade, screenshots e testes dedicados; remocao exige prova adicional de ausencia em bundle, deep links, plugins e estado persistido.
+- Unit/jsdom: **3 arquivos / 21 testes verdes**, cobrindo grafo Legacy, compatibilidade do shell e allowlist de valores visuais. `pnpm build`: verde com apenas o aviso conhecido de chunk principal; `git diff --check`: verde.
 
 ### Marco 58 - Syncd Runtime Closure (deferred)
 
