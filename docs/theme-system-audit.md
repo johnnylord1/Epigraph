@@ -3268,6 +3268,29 @@ Categorias cobertas:
 - Auditor Node: **1 arquivo / 3 testes verdes**. `pnpm theme:check-builtins`: verde.
 - `pnpm build`: verde, com apenas o aviso conhecido de chunk principal acima de 500 kB. `git diff --check`: verde.
 
+## Marco 55A - Active `--n-*` Color And Motion Decoupling
+
+### Escopo e arquitetura
+
+- Os 17 aliases ativos de cor, surface de popover e motion deixaram de ser consumidos pela camada visual ativa nao-Syncd. Os nomes `--n-*` continuam definidos como bridges de compatibilidade e nenhum alias foi removido.
+- `nocturne-port.css` passou de 41 para 32 referencias `--n-*`; as 32 restantes sao geometria/escala ou seis referencias presas a seletores Legacy. Cor e motion agora usam `--color-*`, `--gradient-*`, `--duration-*` e `--easing-*` canonicos.
+- O popover global passou a consumir sete `--component-popover-*` novos, derivados de cinco semantic roles e cinco sources exatos do builtin Nocturne. Background, border e shadow reutilizam os component tokens ja existentes.
+- `--duration-relaxed` preserva os 200 ms anteriores e `--easing-spring` preserva `cubic-bezier(0.34, 1.56, 0.64, 1)`. Eles evitam mapear os aliases antigos para duracoes/curvas semanticamente diferentes.
+- O inventario passou a reconhecer referencias em seletores globais dos arquivos de tema depois de retirar declaracoes de custom properties. O total agora e 2.729 component tokens: 2.575 Ativos, 94 Legacy e 60 Syncd excluidos. `--component-popover-bg`, border e shadow deixaram de ser falsos Legacy sem consumidor.
+
+### Validacao
+
+- Unit: **4 arquivos / 42 testes verdes**, cobrindo port, gate global, inventario e provider.
+- Browser Chromium: **2 arquivos / 9 testes verdes**, incluindo equivalencia de documento V5 vazio, probe e hosts ativos do port.
+- Auditor nativo WebView2 em Nocturne: **10 superficies reais** em Library, menu de contexto, Search, Discover, Sources, overlay de repositorios, Downloads, Settings e Reader PDF/HUD. As capturas temporarias foram comparadas com `docs/screenshots/marco54-builtin-identity/` e nao apresentaram regressao aparente de cor, surface, shadow, tipografia, hierarquia ou motion.
+- O auditor manteve a limitacao conhecida: nenhum toast real estava ativo e nenhum evento sintetico foi criado. A barra de vida continua coberta pelo teste focado e pela evidencia anterior.
+- Nenhum dado, preferencia ou tema custom foi persistido. Syncd, componentes Legacy, aliases `--activity-*` e geometria `--n-*` permaneceram fora deste lote.
+
+### Risco restante para 55B
+
+- Restam 28 aliases ativos de escala/geometria. `--n-hud-scale` nao pode ser trocado por `--app-resolution-scale`: `App.svelte` calcula `hudScale` e `contentScale` separadamente.
+- Search width/focus, Sidebar, Topbar, Settings e Reader dependem dessa cadeia. O Marco 55B deve preservar `--hud-scale` como origem dinamica, migrar os consumidores para tokens canonicos e repetir o gate nativo, incluindo o dim/focus da Search.
+
 ## Proximos marcos adiados
 
 ### Marco 55 - Active `--n-*` Decoupling

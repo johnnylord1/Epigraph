@@ -218,10 +218,10 @@ describe("final derived theme gate", () => {
 
     expect(selectorStart).toBeGreaterThan(-1);
     expect(selectorEnd).toBeGreaterThan(selectorStart);
-    expect(exactSources).toHaveLength(233);
+    expect(exactSources).toHaveLength(238);
     expect(builtinBlock).toContain("--color-on-accent-strong: #352660;");
     expect(outsideBuiltin).not.toMatch(/--color-on-accent-strong\s*:/);
-    expect(new Set(exactSources.map(({ name }) => name)).size).toBe(233);
+    expect(new Set(exactSources.map(({ name }) => name)).size).toBe(238);
     expect(missingFallback).toEqual([]);
     expect(unreferenced).toEqual([]);
     expect(leaked).toEqual([]);
@@ -348,8 +348,8 @@ describe("final derived theme gate", () => {
       runtime: runtime.length,
       neutral: neutral.length,
     }).toEqual({
-      componentColors: 1456,
-      editable: 1445,
+      componentColors: 1463,
+      editable: 1452,
       absolute: 290,
       absoluteOnly: 0,
       mixedEditableAbsolute: 290,

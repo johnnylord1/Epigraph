@@ -50,7 +50,7 @@ const EXPECTED_FAMILY_COUNTS = {
   "nocturne-state": 126,
   novel: 98,
   overlay: 1,
-  popover: 4,
+  popover: 11,
   reader: 168,
   search: 10,
   settings: 106,
@@ -72,10 +72,7 @@ const EXPECTED_FAMILY_COUNTS = {
 const EXPECTED_UNCONSUMED_LEGACY = [
   "--component-button-fg",
   "--component-card-radius",
-  "--component-popover-bg",
-  "--component-popover-border",
   "--component-popover-radius",
-  "--component-popover-shadow",
   "--component-tab-bg-active",
   "--component-tab-fg-active",
 ] as const;
@@ -131,7 +128,7 @@ function readDefinitions(): Map<string, TokenDefinition> {
   return result;
 }
 
-function directReferences(paths: readonly string[]) {
+function directReferences(paths: readonly string[], stripTokenDefinitions = false) {
   const staticReferences = new Map<string, Set<string>>();
   const dynamicReferences = new Map<string, Set<string>>();
 
@@ -142,7 +139,10 @@ function directReferences(paths: readonly string[]) {
   }
 
   for (const path of paths) {
-    const source = readFileSync(resolve(ROOT, path), "utf8");
+    const rawSource = readFileSync(resolve(ROOT, path), "utf8");
+    const source = stripTokenDefinitions
+      ? rawSource.replace(/^\s*--[\w-]+\s*:\s*[\s\S]*?;/gm, "")
+      : rawSource;
     for (const match of source.matchAll(/var\((--component-[\w-]+)/g)) {
       add(staticReferences, match[1], path);
     }
@@ -153,6 +153,25 @@ function directReferences(paths: readonly string[]) {
     }
   }
   return { staticReferences, dynamicReferences };
+}
+
+function mergeReferences(
+  ...sources: ReturnType<typeof directReferences>[]
+): ReturnType<typeof directReferences> {
+  const result = {
+    staticReferences: new Map<string, Set<string>>(),
+    dynamicReferences: new Map<string, Set<string>>(),
+  };
+  for (const source of sources) {
+    for (const key of ["staticReferences", "dynamicReferences"] as const) {
+      for (const [token, paths] of source[key]) {
+        const merged = result[key].get(token) ?? new Set<string>();
+        for (const path of paths) merged.add(path);
+        result[key].set(token, merged);
+      }
+    }
+  }
+  return result;
 }
 
 function reachableTokens(
@@ -179,7 +198,10 @@ function buildInventory() {
     (path) => !LEGACY_CONSUMER_FILES.has(path) && !SYNCD_CONSUMER_FILES.has(path),
   );
   const legacyFiles = files.filter((path) => LEGACY_CONSUMER_FILES.has(path));
-  const activeDirect = directReferences(activeFiles);
+  const activeDirect = mergeReferences(
+    directReferences(activeFiles),
+    directReferences(THEME_FILES, true),
+  );
   const legacyDirect = directReferences(legacyFiles);
   const activeRoots = new Set([
     ...activeDirect.staticReferences.keys(),
@@ -221,11 +243,11 @@ describe("exhaustive component theme inventory", () => {
   const scoped = inventory.entries.filter(({ status }) => status !== "Excluded");
 
   test("classifies every definition without inferring dead tokens", () => {
-    expect(inventory.entries).toHaveLength(2722);
+    expect(inventory.entries).toHaveLength(2729);
     expect(inventory.entries.filter(({ status }) => status === "Excluded")).toHaveLength(60);
-    expect(scoped).toHaveLength(2662);
-    expect(scoped.filter(({ status }) => status === "Active")).toHaveLength(2565);
-    expect(scoped.filter(({ status }) => status === "Legacy")).toHaveLength(97);
+    expect(scoped).toHaveLength(2669);
+    expect(scoped.filter(({ status }) => status === "Active")).toHaveLength(2575);
+    expect(scoped.filter(({ status }) => status === "Legacy")).toHaveLength(94);
     expect(inventory.entries.every(({ status }) => ["Active", "Legacy", "Excluded"].includes(status))).toBe(true);
     expect(inventory.entries.some(({ status }) => (status as string) === "Dead")).toBe(false);
   });
@@ -238,7 +260,7 @@ describe("exhaustive component theme inventory", () => {
     );
     expect(families).toEqual(EXPECTED_FAMILY_COUNTS);
     expect(scoped.filter(({ layers }) => layers.join("+") === "fallback+nocturne")).toHaveLength(2433);
-    expect(scoped.filter(({ layers }) => layers.join("+") === "fallback")).toHaveLength(229);
+    expect(scoped.filter(({ layers }) => layers.join("+") === "fallback")).toHaveLength(236);
     expect(scoped.filter(({ layers }) => layers.join("+") === "nocturne")).toHaveLength(0);
   });
 
@@ -249,7 +271,7 @@ describe("exhaustive component theme inventory", () => {
     const unconsumed = legacy.filter(({ consumption }) => consumption === "none");
     const dynamic = scoped.filter(({ consumption }) => consumption === "dynamic");
 
-    expect(active.filter(({ consumption }) => consumption === "static")).toHaveLength(2551);
+    expect(active.filter(({ consumption }) => consumption === "static")).toHaveLength(2561);
     expect(active.filter(({ consumption }) => consumption === "dynamic")).toHaveLength(1);
     expect(active.filter(({ consumption }) => consumption === "transitive")).toHaveLength(13);
     expect(legacyOnly).toHaveLength(89);

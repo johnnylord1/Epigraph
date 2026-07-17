@@ -171,7 +171,7 @@ describe("test-only theme probe", () => {
       const builtinShadow = computedShadow("--component-card-shadow");
       const builtinRadius = computedToken("--component-toast-radius");
 
-      expect(exactProperties).toHaveLength(290);
+      expect(exactProperties).toHaveLength(295);
       expect(applyCustomTheme(root, {
         version: 5,
         id: "custom:empty-nocturne-browser",
@@ -393,7 +393,7 @@ describe("test-only theme probe", () => {
       const sourceNames = builtinExactSourceNames();
       const builtin = new Map(sourceNames.map((token) => [token, computedToken(token)]));
 
-      expect(sourceNames).toHaveLength(233);
+      expect(sourceNames).toHaveLength(238);
       applyProbeContract(true);
       await new Promise(requestAnimationFrame);
       const custom = new Map(sourceNames.map((token) => [token, computedToken(token)]));

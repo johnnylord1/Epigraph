@@ -763,9 +763,9 @@ html[data-aethon-motion="idle"] .aethon-port--splash .brand-mark {
   color: var(--component-nav-item-fg);
   cursor: pointer;
   transition:
-    background var(--n-duration-fast) ease,
-    color var(--n-duration-fast) ease,
-    transform var(--n-duration-fast) ease;
+    background var(--duration-normal) ease,
+    color var(--duration-normal) ease,
+    transform var(--duration-normal) ease;
   position: relative;
   isolation: isolate;
 }
@@ -773,8 +773,8 @@ html[data-aethon-motion="idle"] .aethon-port--splash .brand-mark {
 .n-sidebar-btn .n-icon {
   display: inline-block;
   transition:
-    transform var(--n-duration-normal) var(--n-ease-spring),
-    opacity var(--n-duration-normal) ease;
+    transform var(--duration-relaxed) var(--easing-spring),
+    opacity var(--duration-relaxed) ease;
 }
 
 .n-sidebar-btn:hover {
@@ -816,7 +816,7 @@ html[data-aethon-motion="idle"] .aethon-port--splash .brand-mark {
 }
 
 .n-sidebar-btn.is-active .n-icon {
-  animation: n-icon-morph 450ms var(--n-ease-spring) forwards;
+  animation: n-icon-morph 450ms var(--easing-spring) forwards;
   font-variation-settings: "FILL" 1, "wght" 400, "GRAD" 0, "opsz" 24;
   text-shadow: var(--component-nav-item-active-text-shadow);
 }
@@ -845,8 +845,8 @@ html[data-aethon-motion="idle"] .aethon-port--splash .brand-mark {
   pointer-events: none;
   opacity: 0;
   transition:
-    opacity var(--n-duration-fast) ease,
-    transform var(--n-duration-fast) ease;
+    opacity var(--duration-normal) ease,
+    transform var(--duration-normal) ease;
 }
 
 .n-sidebar-btn:hover::after {
@@ -952,8 +952,8 @@ html[data-aethon-motion="idle"] .n-topbar {
   height: var(--n-search-height);
   border-radius: 9999px;
   transition:
-    width 200ms var(--n-ease-spring),
-    transform 200ms var(--n-ease-spring),
+    width 200ms var(--easing-spring),
+    transform 200ms var(--easing-spring),
     box-shadow 160ms ease,
     background 160ms ease;
   z-index: 52;
@@ -1051,10 +1051,10 @@ html[data-aethon-motion="idle"] .n-topbar {
   color: var(--component-toolbar-icon-fg);
   cursor: pointer;
   transition:
-    background var(--n-duration-fast) ease,
-    color var(--n-duration-fast) ease,
-    border-color var(--n-duration-fast) ease,
-    transform var(--n-duration-fast) ease;
+    background var(--duration-normal) ease,
+    color var(--duration-normal) ease,
+    border-color var(--duration-normal) ease,
+    transform var(--duration-normal) ease;
 }
 
 .n-icon-btn .material-symbols-outlined {
@@ -1104,13 +1104,13 @@ html[data-aethon-motion="idle"] .n-topbar {
   text-transform: uppercase;
   cursor: pointer;
   transition:
-    transform var(--n-duration-fast) ease,
-    background var(--n-duration-normal) ease,
-    color var(--n-duration-normal) ease,
-    border-color var(--n-duration-normal) ease,
-    box-shadow var(--n-duration-normal) ease,
-    filter var(--n-duration-normal) ease,
-    opacity var(--n-duration-normal) ease;
+    transform var(--duration-normal) ease,
+    background var(--duration-relaxed) ease,
+    color var(--duration-relaxed) ease,
+    border-color var(--duration-relaxed) ease,
+    box-shadow var(--duration-relaxed) ease,
+    filter var(--duration-relaxed) ease,
+    opacity var(--duration-relaxed) ease;
 }
 
 .n-btn:active:not(:disabled):not([aria-disabled="true"]) {
@@ -1139,8 +1139,8 @@ html[data-aethon-motion="idle"] .n-topbar {
 }
 
 .n-btn-primary {
-  background: var(--n-gradient-primary);
-  color: var(--n-on-primary);
+  background: var(--gradient-accent-primary);
+  color: var(--color-on-accent-strong);
   box-shadow: 0 4px 14px color-mix(in srgb, var(--accent-bright) 15%, transparent);
 }
 
@@ -1151,22 +1151,22 @@ html[data-aethon-motion="idle"] .n-topbar {
 
 .n-btn-secondary {
   background: var(--n-surface-container-high);
-  color: var(--n-on-surface);
+  color: var(--text-primary);
   border: 1px solid color-mix(in srgb, var(--text-secondary) 8%, transparent);
 }
 
 .n-btn-secondary:hover:not(:disabled):not([aria-disabled="true"]) {
   background: var(--n-surface-container-highest);
-  color: var(--n-on-surface);
+  color: var(--text-primary);
 }
 
 .n-btn-ghost {
-  color: var(--n-on-surface-variant);
+  color: var(--text-secondary);
   border: 1px solid transparent;
 }
 
 .n-btn-ghost:hover:not(:disabled):not([aria-disabled="true"]) {
-  color: var(--n-primary);
+  color: var(--color-accent);
   background: color-mix(in srgb, var(--accent-bright) 5%, transparent);
 }
 
@@ -1230,7 +1230,7 @@ html[data-aethon-motion="idle"] .n-topbar {
   height: var(--n-segmented-height);
   padding: 0 calc(20px * var(--n-hud-scale));
   border-radius: 9999px;
-  color: var(--n-on-surface-variant);
+  color: var(--text-secondary);
   font-size: calc(11px * var(--n-hud-scale));
   font-weight: 800;
   letter-spacing: 0.05em;
@@ -1253,7 +1253,7 @@ html[data-aethon-motion="idle"] .n-topbar {
 
 .n-segmented__btn.is-active,
 .n-inline-segment.is-selected {
-  color: var(--n-on-primary);
+  color: var(--color-on-accent-strong);
 }
 
 .n-pill,
@@ -1268,7 +1268,7 @@ html[data-aethon-motion="idle"] .n-topbar {
   background: color-mix(in srgb, var(--color-deep-neutral-surface-source) 60%, transparent);
   backdrop-filter: blur(12px);
   border: 1px solid color-mix(in srgb, var(--color-highlight-source) 4%, transparent);
-  color: var(--n-on-surface-variant);
+  color: var(--text-secondary);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.05em;
@@ -1283,7 +1283,7 @@ html[data-aethon-motion="idle"] .n-topbar {
 .n-genre-chip:hover {
   background: color-mix(in srgb, var(--accent-bright) 8%, transparent);
   border-color: color-mix(in srgb, var(--accent-bright) 20%, transparent);
-  color: var(--n-primary-container);
+  color: var(--accent-bright);
   transform: translateY(-2px);
   box-shadow: 0 4px 12px color-mix(in srgb, var(--color-shadow-source) 20%, transparent);
 }
@@ -1318,7 +1318,7 @@ html[data-aethon-motion="idle"] .n-topbar {
 }
 
 .n-genre-chip:hover {
-  color: var(--n-on-surface);
+  color: var(--text-primary);
   border-color: color-mix(in srgb, var(--accent-bright) 10%, transparent);
   transform: translateY(-1px);
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-highlight-source) 4%, transparent), 0 3px 8px color-mix(in srgb, var(--color-shadow-source) 15%, transparent);
@@ -1331,9 +1331,9 @@ html[data-aethon-motion="idle"] .n-topbar {
   left: 4px;
   width: calc(50% - 4px);
   border-radius: 9999px;
-  background: var(--n-gradient-primary);
+  background: var(--gradient-accent-primary);
   box-shadow: 0 4px 14px color-mix(in srgb, var(--accent-bright) 40%, transparent);
-  transition: transform 350ms var(--n-ease-spring);
+  transition: transform 350ms var(--easing-spring);
   pointer-events: none;
   z-index: 1;
 }
@@ -1376,7 +1376,7 @@ html[data-aethon-motion="idle"] .n-topbar {
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  transition: all 220ms var(--n-ease-spring);
+  transition: all 220ms var(--easing-spring);
   cursor: pointer;
   user-select: none;
 }
@@ -1384,7 +1384,7 @@ html[data-aethon-motion="idle"] .n-topbar {
 .n-density-chip:hover {
   background: color-mix(in srgb, var(--accent-bright) 8%, transparent);
   border-color: color-mix(in srgb, var(--accent-bright) 20%, transparent);
-  color: var(--n-primary-container);
+  color: var(--accent-bright);
   transform: translateY(-1px);
 }
 
@@ -1455,7 +1455,7 @@ html[data-aethon-motion="idle"] .n-topbar {
   border-radius: 9999px;
   background: color-mix(in srgb, var(--color-deep-neutral-surface-source) 90%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-bright) 12%, transparent);
-  color: var(--n-primary);
+  color: var(--color-accent);
   font-family: var(--font-ui);
   font-size: 9px;
   font-weight: 800;
@@ -1509,7 +1509,7 @@ html[data-aethon-motion="idle"] .n-topbar {
 }
 
 .n-eyebrow {
-  color: var(--n-on-surface-variant);
+  color: var(--text-secondary);
   font-size: calc(11px * var(--n-hud-scale));
   font-weight: 700;
   letter-spacing: 0.16em;
@@ -1522,7 +1522,7 @@ html[data-aethon-motion="idle"] .n-topbar {
   font-weight: 800;
   letter-spacing: -0.04em;
   line-height: 1;
-  color: var(--n-on-surface);
+  color: var(--text-primary);
   margin: 0;
 }
 
@@ -1613,7 +1613,7 @@ html[data-aethon-motion="idle"] .n-topbar {
   --text-secondary: var(--component-settings-text-secondary);
   --text-muted: var(--component-settings-text-muted);
   --text-faint: var(--component-settings-text-faint);
-  --color-info: var(--n-primary-container);
+  --color-info: var(--accent-bright);
   --color-info-bg: var(--component-settings-info-bg);
   background: transparent;
   font-family: var(--component-settings-font);
@@ -1753,10 +1753,10 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   background: var(--component-toolbar-icon-bg);
   color: var(--component-toolbar-icon-fg);
   transition:
-    background var(--n-duration-fast) ease,
-    color var(--n-duration-fast) ease,
-    border-color var(--n-duration-fast) ease,
-    transform var(--n-duration-fast) ease;
+    background var(--duration-normal) ease,
+    color var(--duration-normal) ease,
+    border-color var(--duration-normal) ease,
+    transform var(--duration-normal) ease;
   cursor: pointer;
   flex-shrink: 0;
 }
@@ -1824,10 +1824,10 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   letter-spacing: 0.01em;
   text-align: left;
   transition:
-    background var(--n-duration-fast) ease,
-    border-color var(--n-duration-fast) ease,
-    color var(--n-duration-fast) ease,
-    transform var(--n-duration-fast) ease;
+    background var(--duration-normal) ease,
+    border-color var(--duration-normal) ease,
+    color var(--duration-normal) ease,
+    transform var(--duration-normal) ease;
   cursor: pointer;
 }
 
@@ -1913,8 +1913,8 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--n-gradient-primary);
-  color: var(--n-on-primary);
+  background: var(--gradient-accent-primary);
+  color: var(--color-on-accent-strong);
 }
 
 .aethon-port--settings .settings-rail-card__title {
@@ -1951,10 +1951,10 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   letter-spacing: 0.06em;
   text-transform: uppercase;
   transition:
-    border-color var(--n-duration-fast) ease,
-    background var(--n-duration-fast) ease,
-    color var(--n-duration-fast) ease,
-    transform var(--n-duration-fast) ease;
+    border-color var(--duration-normal) ease,
+    background var(--duration-normal) ease,
+    color var(--duration-normal) ease,
+    transform var(--duration-normal) ease;
 }
 
 .aethon-port--settings .n-btn.n-btn-ghost.settings-rail-action:hover {
@@ -2020,9 +2020,9 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   letter-spacing: 0.02em;
   text-align: left;
   transition:
-    background var(--n-duration-fast) ease,
-    border-color var(--n-duration-fast) ease,
-    color var(--n-duration-fast) ease;
+    background var(--duration-normal) ease,
+    border-color var(--duration-normal) ease,
+    color var(--duration-normal) ease;
   cursor: pointer;
 }
 
@@ -2191,10 +2191,10 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   text-decoration: none;
   transition:
     transform 90ms ease,
-    background var(--n-duration-fast) ease,
-    border-color var(--n-duration-fast) ease,
-    color var(--n-duration-fast) ease,
-    box-shadow var(--n-duration-fast) ease;
+    background var(--duration-normal) ease,
+    border-color var(--duration-normal) ease,
+    color var(--duration-normal) ease,
+    box-shadow var(--duration-normal) ease;
 }
 
 .aethon-port--settings .n-btn.n-btn--sm.n-btn-ghost:not(.settings-rail-action):hover:not(:disabled):not([aria-disabled="true"]),
@@ -2248,7 +2248,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   min-height: calc(30px * var(--n-hud-scale));
   padding: 0 calc(18px * var(--n-hud-scale));
   border-radius: 9999px;
-  color: var(--n-on-surface-variant);
+  color: var(--text-secondary);
   font-size: calc(11px * var(--n-hud-scale));
   font-weight: 800;
   letter-spacing: 0.05em;
@@ -2270,8 +2270,8 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings .n-inline-segment.is-selected {
-  color: var(--n-on-primary);
-  background: var(--n-gradient-primary);
+  color: var(--color-on-accent-strong);
+  background: var(--gradient-accent-primary);
   box-shadow:
     0 calc(4px * var(--n-hud-scale)) calc(14px * var(--n-hud-scale)) var(--component-settings-accent-dim);
   transform: none;
@@ -2292,10 +2292,10 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   text-transform: uppercase;
   cursor: pointer;
   transition:
-    border-color var(--n-duration-fast) ease,
-    background var(--n-duration-fast) ease,
-    color var(--n-duration-fast) ease,
-    transform var(--n-duration-fast) ease;
+    border-color var(--duration-normal) ease,
+    background var(--duration-normal) ease,
+    color var(--duration-normal) ease,
+    transform var(--duration-normal) ease;
 }
 
 .aethon-port--settings .settings-rail-action:hover {
@@ -2768,7 +2768,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   height: var(--settings-density-thumb-size);
   border-radius: 999px;
   transform: translate(-50%, -50%);
-  background: var(--n-gradient-primary);
+  background: var(--gradient-accent-primary);
   box-shadow:
     0 calc(3px * var(--n-hud-scale)) calc(10px * var(--n-hud-scale)) color-mix(in srgb, var(--accent-bright) 26%, transparent),
     0 0 0 1px color-mix(in srgb, var(--color-highlight-source) 8%, transparent);
@@ -2867,7 +2867,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   border: 1px solid var(--component-settings-border-dim);
   background: var(--component-settings-surface-raised);
   backdrop-filter: blur(12px);
-  color: var(--n-on-surface-variant);
+  color: var(--text-secondary);
   font-family: var(--component-settings-font);
   font-size: calc(12px * var(--n-hud-scale));
   font-weight: 800;
@@ -2899,9 +2899,9 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings .settings-switch-pill.is-selected {
-  color: var(--n-on-primary);
+  color: var(--color-on-accent-strong);
   border-color: transparent;
-  background: var(--n-gradient-primary);
+  background: var(--gradient-accent-primary);
   box-shadow:
     0 calc(4px * var(--n-hud-scale)) calc(14px * var(--n-hud-scale)) var(--component-settings-accent-dim);
 }
@@ -2975,9 +2975,9 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   letter-spacing: 0.04em;
   transition:
     transform 90ms ease,
-    border-color var(--n-duration-fast) ease,
-    background var(--n-duration-fast) ease,
-    box-shadow var(--n-duration-fast) ease;
+    border-color var(--duration-normal) ease,
+    background var(--duration-normal) ease,
+    box-shadow var(--duration-normal) ease;
 }
 
 .aethon-port--settings .settings-reset-all-btn:hover:not(:disabled) {
@@ -3044,7 +3044,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   appearance: none;
   background: transparent;
   cursor: pointer;
-  accent-color: var(--n-primary-container);
+  accent-color: var(--accent-bright);
 }
 
 .aethon-port--settings .settings-range::-webkit-slider-runnable-track {
@@ -3060,7 +3060,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   margin-top: -3px;
   border: none;
   border-radius: 50%;
-  background: var(--n-primary-container);
+  background: var(--accent-bright);
   box-shadow: var(--component-focus-ring);
 }
 
@@ -3075,7 +3075,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   height: 12px;
   border: none;
   border-radius: 50%;
-  background: var(--n-primary-container);
+  background: var(--accent-bright);
   box-shadow: var(--component-focus-ring);
 }
 
@@ -3203,7 +3203,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   background: transparent;
   position: relative;
   overflow: hidden;
-  transition: border-color var(--n-duration-normal) ease, box-shadow var(--n-duration-normal) ease;
+  transition: border-color var(--duration-relaxed) ease, box-shadow var(--duration-relaxed) ease;
 }
 
 /* Conic gradient rotating outer glow */
@@ -3240,7 +3240,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   border-radius: calc(13px * var(--n-hud-scale));
   z-index: 1;
   pointer-events: none;
-  transition: background var(--n-duration-normal) ease;
+  transition: background var(--duration-relaxed) ease;
 }
 
 .aethon-port--settings .settings-brand-card:hover::after {
@@ -3272,7 +3272,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   background: transparent;
   border: 0;
   box-shadow: none;
-  transition: transform var(--n-duration-fast) var(--n-ease-spring);
+  transition: transform var(--duration-normal) var(--easing-spring);
   position: relative;
   z-index: 2;
 }
@@ -3651,8 +3651,8 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   padding-right: 3cqw;
 }
 .source-metric-unread {
-  background: var(--n-gradient-primary, linear-gradient(135deg, var(--accent-bright) 0%, var(--accent) 100%));
-  color: var(--n-on-primary, var(--bg-void));
+  background: var(--gradient-accent-primary);
+  color: var(--color-on-accent-strong);
   min-width: 18cqw;
   padding-left: 5cqw;
   padding-right: 3cqw;
@@ -3779,7 +3779,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   font-family: var(--font-ui);
   font-size: calc(12px * var(--n-hud-scale));
   box-sizing: border-box;
-  transition: border-color var(--n-duration-fast) ease, background var(--n-duration-fast) ease, box-shadow var(--n-duration-fast) ease;
+  transition: border-color var(--duration-normal) ease, background var(--duration-normal) ease, box-shadow var(--duration-normal) ease;
 }
 
 .aethon-port--settings .settings-text-input--short {

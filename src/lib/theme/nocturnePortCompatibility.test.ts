@@ -10,18 +10,9 @@ const PORT_N_REFERENCES = [
   "--n-brand-offset-bottom",
   "--n-brand-offset-top",
   "--n-brand-size",
-  "--n-duration-fast",
-  "--n-duration-normal",
-  "--n-ease-spring",
-  "--n-gradient-primary",
   "--n-hud-scale",
   "--n-icon-btn-radius",
   "--n-icon-btn-size",
-  "--n-on-primary",
-  "--n-on-surface",
-  "--n-on-surface-variant",
-  "--n-primary",
-  "--n-primary-container",
   "--n-search-height",
   "--n-search-icon-offset",
   "--n-search-icon-size",
@@ -181,8 +172,25 @@ describe("Nocturne port compatibility contract", () => {
     );
   });
 
-  test("preserves the exact referenced --n-* compatibility surface", () => {
+  test("preserves only the audited geometry and Legacy --n-* port surface", () => {
     expect(references(readProjectFile(PORT_PATH), "--n-")).toEqual(PORT_N_REFERENCES);
+  });
+
+  test("keeps active port color and motion consumers on canonical tokens", () => {
+    const port = readProjectFile(PORT_PATH);
+    const migratedAliases = [
+      "--n-duration-fast",
+      "--n-duration-normal",
+      "--n-ease-spring",
+      "--n-gradient-primary",
+      "--n-on-primary",
+      "--n-on-surface",
+      "--n-on-surface-variant",
+      "--n-primary",
+      "--n-primary-container",
+    ];
+
+    for (const token of migratedAliases) expect(port).not.toContain(`var(${token}`);
   });
 
   test("derives every referenced --n-* color alias from the editable theme contract", () => {

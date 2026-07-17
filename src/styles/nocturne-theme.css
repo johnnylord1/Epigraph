@@ -17,6 +17,11 @@
   --shadow-popover:
     0 16px 42px color-mix(in srgb, var(--color-shadow-source) 24%, transparent),
     inset 0 1px 0 color-mix(in srgb, var(--color-highlight-source) 2.5%, transparent);
+  --color-popover-label: color-mix(in srgb, var(--color-popover-label-source) 68%, transparent);
+  --color-popover-text: color-mix(in srgb, var(--color-popover-text-source) 60%, transparent);
+  --color-popover-text-strong: color-mix(in srgb, var(--color-popover-text-strong-source) 92%, transparent);
+  --color-popover-meta: color-mix(in srgb, var(--color-popover-meta-source) 64%, transparent);
+  --color-popover-item-hover: color-mix(in srgb, var(--color-popover-item-hover-source) 6%, transparent);
   --color-toast-surface:
     radial-gradient(circle at 0% 0%, color-mix(in srgb, var(--color-toast-surface-accent) 8%, transparent), transparent 46%),
     color-mix(in srgb, var(--color-toast-surface-base) 96%, transparent);
@@ -2236,6 +2241,11 @@
   --color-status-error-emphasis: #f08f9b;
   --color-popover-surface-top: #1b1924;
   --color-popover-surface-base: #101016;
+  --color-popover-label-source: #cfc7e2;
+  --color-popover-text-source: #e5e2e1;
+  --color-popover-text-strong-source: #eeebf2;
+  --color-popover-meta-source: #dacfff;
+  --color-popover-item-hover-source: #b8a7ea;
   --color-toast-surface-accent: #c9b5ff;
   --color-toast-surface-base: #151419;
   --color-toast-progress-end: #a486ff;
@@ -2552,9 +2562,9 @@
     radial-gradient(circle at top center, rgba(184, 167, 234, 0.08), transparent 34%),
     linear-gradient(180deg, #15151a 0%, #131313 100%);
 
-  --n-duration-fast: 140ms;
-  --n-duration-normal: 200ms;
-  --n-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --n-duration-fast: var(--duration-normal);
+  --n-duration-normal: var(--duration-relaxed);
+  --n-ease-spring: var(--easing-spring);
 
   --n-topbar-height-base: 56px;
   --n-sidebar-width-base: 76px;
@@ -2591,18 +2601,14 @@
   --n-toolbar-divider-height: calc(14px * var(--n-hud-scale));
   --n-segmented-height: calc(32px * var(--n-hud-scale));
 
-  --n-popover-bg:
-    linear-gradient(180deg, rgba(27, 25, 36, 0.96), rgba(16, 16, 22, 0.97)),
-    rgba(16, 16, 22, 0.97);
-  --n-popover-border: rgba(255, 255, 255, 0.055);
-  --n-popover-shadow:
-    0 16px 42px rgba(0, 0, 0, 0.24),
-    inset 0 1px 0 rgba(255, 255, 255, 0.025);
-  --n-popover-label: rgba(207, 199, 226, 0.68);
-  --n-popover-text: rgba(229, 226, 225, 0.6);
-  --n-popover-text-strong: rgba(238, 235, 242, 0.92);
-  --n-popover-meta: rgba(218, 207, 255, 0.64);
-  --n-popover-item-hover: rgba(184, 167, 234, 0.06);
+  --n-popover-bg: var(--component-popover-bg);
+  --n-popover-border: var(--component-popover-border);
+  --n-popover-shadow: var(--component-popover-shadow);
+  --n-popover-label: var(--component-popover-label-fg);
+  --n-popover-text: var(--component-popover-fg);
+  --n-popover-text-strong: var(--component-popover-strong-fg);
+  --n-popover-meta: var(--component-popover-meta-fg);
+  --n-popover-item-hover: var(--component-popover-item-hover-bg);
   --n-popover-control-bg: rgba(255, 255, 255, 0.055);
   --n-popover-control-border: rgba(255, 255, 255, 0.045);
 
@@ -3107,16 +3113,16 @@
 
 .n-popover-surface {
   box-sizing: border-box;
-  border: 1px solid var(--n-popover-border);
+  border: 1px solid var(--component-popover-border);
   border-radius: calc(12px * var(--n-hud-scale));
-  background: var(--n-popover-bg);
-  box-shadow: var(--n-popover-shadow);
-  color: var(--n-popover-text);
+  background: var(--component-popover-bg);
+  box-shadow: var(--component-popover-shadow);
+  color: var(--component-popover-fg);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: geometricPrecision;
   scrollbar-width: thin;
-  scrollbar-color: rgba(184, 167, 234, 0.34) transparent;
+  scrollbar-color: var(--component-popover-scrollbar-color) transparent;
 }
 
 .n-popover-surface::-webkit-scrollbar {
@@ -3129,7 +3135,7 @@
 
 .n-popover-surface::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: rgba(184, 167, 234, 0.28);
+  background: var(--component-popover-scrollbar-thumb-bg);
 }
 
 .n-popover-menu {
@@ -3143,7 +3149,7 @@
 .n-popover-label {
   margin: 0;
   padding: 0 0 calc(10px * var(--n-hud-scale));
-  color: var(--n-popover-label);
+  color: var(--component-popover-label-fg);
   font-family: var(--font-sans);
   font-size: calc(11.5px * var(--n-hud-scale));
   font-weight: 700;
@@ -3162,7 +3168,7 @@
   border: 0;
   border-radius: calc(7px * var(--n-hud-scale));
   background: transparent;
-  color: var(--n-popover-text);
+  color: var(--component-popover-fg);
   font-family: var(--font-sans);
   font-size: calc(13px * var(--n-hud-scale));
   font-weight: 700;
@@ -3180,8 +3186,8 @@
 .n-popover-item:hover:not(:disabled),
 .n-popover-item.is-selected,
 .n-popover-item--active {
-  background: var(--n-popover-item-hover);
-  color: var(--n-popover-text-strong);
+  background: var(--component-popover-item-hover-bg);
+  color: var(--component-popover-strong-fg);
 }
 
 .n-popover-item:active:not(:disabled) {
@@ -3202,7 +3208,7 @@
 .n-popover-item > small,
 .n-popover-item > span:last-child:not(:first-child) {
   flex-shrink: 0;
-  color: var(--n-popover-meta);
+  color: var(--component-popover-meta-fg);
   font-size: calc(10.5px * var(--n-hud-scale));
   font-weight: 720;
   letter-spacing: 0.08em;

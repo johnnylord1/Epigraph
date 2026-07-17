@@ -98,9 +98,19 @@
   --color-status-error-emphasis: var(--color-danger);
   --color-popover-surface-top: var(--color-popover);
   --color-popover-surface-base: var(--color-elevated);
+  --color-popover-label-source: var(--text-secondary);
+  --color-popover-text-source: var(--text-primary);
+  --color-popover-text-strong-source: var(--text-primary);
+  --color-popover-meta-source: var(--accent-bright);
+  --color-popover-item-hover-source: var(--accent-bright);
   --color-popover-surface: var(--color-popover);
   --color-popover-border: var(--color-border);
   --shadow-popover: var(--shadow-md);
+  --color-popover-label: color-mix(in srgb, var(--color-popover-label-source) 68%, transparent);
+  --color-popover-text: color-mix(in srgb, var(--color-popover-text-source) 60%, transparent);
+  --color-popover-text-strong: color-mix(in srgb, var(--color-popover-text-strong-source) 92%, transparent);
+  --color-popover-meta: color-mix(in srgb, var(--color-popover-meta-source) 64%, transparent);
+  --color-popover-item-hover: color-mix(in srgb, var(--color-popover-item-hover-source) 6%, transparent);
   --color-toast-surface-accent: var(--accent-bright);
   --color-toast-surface-base: var(--color-modal);
   --color-toast-surface: var(--color-modal);
@@ -526,16 +536,20 @@
   --motion-duration-fast: 80ms;
   --motion-duration-normal: 140ms;
   --motion-duration-slow: 220ms;
+  --motion-duration-relaxed: 200ms;
   --motion-easing-standard: ease;
   --motion-easing-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-easing-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --t-fast: var(--motion-duration-fast) var(--motion-easing-standard);
   --t-base: var(--motion-duration-normal) var(--motion-easing-standard);
   --t-slow: var(--motion-duration-slow) var(--motion-easing-standard);
   --duration-fast: var(--motion-duration-fast);
   --duration-normal: var(--motion-duration-normal);
   --duration-slow: var(--motion-duration-slow);
+  --duration-relaxed: var(--motion-duration-relaxed);
   --easing-standard: var(--motion-easing-standard);
   --easing-emphasized: var(--motion-easing-emphasized);
+  --easing-spring: var(--motion-easing-spring);
 
   /* Theme system v1: component aliases */
   --component-splash-ink-source: var(--color-splash-ink-source);
@@ -594,6 +608,13 @@
   --component-popover-border: var(--color-border);
   --component-popover-radius: var(--radius-popover);
   --component-popover-shadow: var(--shadow-md);
+  --component-popover-fg: var(--color-popover-text);
+  --component-popover-label-fg: var(--color-popover-label);
+  --component-popover-strong-fg: var(--color-popover-text-strong);
+  --component-popover-meta-fg: var(--color-popover-meta);
+  --component-popover-item-hover-bg: var(--color-popover-item-hover);
+  --component-popover-scrollbar-color: color-mix(in srgb, var(--accent-bright) 34%, transparent);
+  --component-popover-scrollbar-thumb-bg: color-mix(in srgb, var(--accent-bright) 28%, transparent);
   --component-menu-bg: var(--color-menu);
   --component-menu-border: var(--color-border);
   --component-menu-radius: var(--radius-popover);
