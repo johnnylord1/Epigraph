@@ -234,11 +234,6 @@ export interface HistoryEntry {
   chapterId:    number;
   chapterName:  string;
   readAt:       number;
-  /** Invisible Core bridge locator; desktop page numbers remain one-based. */
-  pageNumber?:  number;
-  pageCount?:   number;
-  syncComicId?: string;
-  syncProfileId?: string;
 }
 
 export interface BookmarkEntry {
@@ -251,11 +246,6 @@ export interface BookmarkEntry {
   savedAt:      number;
   /** Optional user label, e.g. "before the fight scene" */
   label?:       string;
-  /** Resume marker maintained by the reader; never published as an explicit bookmark. */
-  isAutomatic?: boolean;
-  /** Stable Core entity id for an explicitly synchronized page bookmark. */
-  syncEntityId?: string;
-  syncProfileId?: string;
 }
 
 /**
@@ -1753,36 +1743,21 @@ class Store {
       bumpContentSetupVersion();
     }
 
-  /** Add or update one explicit page bookmark without collapsing its comic. */
+  /**
+   * Add or update a bookmark for the given chapter/page. Only one bookmark
+   * per chapter is kept — adding a second one replaces the first.
+   */
   addBookmark(entry: Omit<BookmarkEntry, "savedAt">, label?: string) {
     const bookmark: BookmarkEntry = { ...entry, savedAt: Date.now(), label };
     this.bookmarks = [
       bookmark,
-      ...this.bookmarks.filter(b => entry.isAutomatic
-        ? !(b.isAutomatic && b.mangaId === entry.mangaId)
-        : !(
-          !b.isAutomatic
-          && b.mangaId === entry.mangaId
-          && b.chapterId === entry.chapterId
-          && b.pageNumber === entry.pageNumber
-        )),
+      // Keep bookmarks from other manga only — one bookmark per manga at a time
+      ...this.bookmarks.filter(b => b.mangaId !== entry.mangaId),
     ].slice(0, 200);
   }
 
   removeBookmark(chapterId: number) {
     this.bookmarks = this.bookmarks.filter(b => b.chapterId !== chapterId);
-  }
-
-  removePageBookmark(chapterId: number, pageNumber: number, syncEntityId?: string, profileId?: string) {
-    this.bookmarks = this.bookmarks.filter(b => !(
-      (syncEntityId && b.syncEntityId === syncEntityId)
-      || (
-        !b.isAutomatic
-        && b.chapterId === chapterId
-        && b.pageNumber === pageNumber
-        && (!profileId || !b.syncProfileId || b.syncProfileId === profileId)
-      )
-    ));
   }
 
   clearBookmarks() {
@@ -2641,7 +2616,6 @@ export function resetKeybinds()                                          { store
 export function clearDiscoverCache()                                       { store.clearDiscoverCache(); }
 export function addBookmark(entry: Omit<BookmarkEntry, "savedAt">, label?: string) { store.addBookmark(entry, label); }
 export function removeBookmark(chapterId: number)                            { store.removeBookmark(chapterId); }
-export function removePageBookmark(chapterId: number, pageNumber: number, syncEntityId?: string, profileId?: string) { store.removePageBookmark(chapterId, pageNumber, syncEntityId, profileId); }
 export function clearBookmarks()                                             { store.clearBookmarks(); }
 export function getBookmark(chapterId: number)                               { return store.getBookmark(chapterId); }
 export function toggleHiddenCategory(id: number)                           { store.toggleHiddenCategory(id); }
