@@ -3315,6 +3315,29 @@ Categorias cobertas:
 - `pnpm build`: verde, com apenas o aviso conhecido de chunk principal acima de 500 kB. `git diff --check`: verde.
 - Nenhum documento de tema, dado do usuario, layout, comportamento, Syncd ou componente Legacy foi alterado.
 
+## Marco 56 - Legacy Retention Evidence
+
+### Classificacao revalidada
+
+- Apos o Marco 55B, a camada visual ativa nao-Syncd nao consome nenhum alias `--n-*`. A classificacao funcional conservadora global e **1 Ativo / 61 Legacy / 0 Morto**; nenhum pode ser removido nesta etapa.
+- O alias ainda **Ativo** e `--n-on-surface`: ele alimenta `--component-syncd-input-fg`, consumido pelo input real de `SyncdConnectionPanel.svelte`, que continua renderizado em Settings. Syncd esta adiado por decisao de escopo, portanto essa dependencia foi registrada, mas nao migrada.
+- **44 bridges Legacy:** `--n-hud-scale`, `--n-primary`, `--n-primary-container`, `--n-on-primary`, `--n-on-surface-variant`, `--n-gradient-primary`, `--n-duration-fast`, `--n-duration-normal`, `--n-ease-spring`, os 28 aliases de shell/geometry congelados no Marco 55B e os oito aliases `--n-popover-*` de background/border/shadow/label/text/strong/meta/hover. Eles apontam para tokens canonicos, mas nao afetam tela ativa por meio dos nomes antigos.
+- **11 aliases Legacy sem referencia:** `--n-bg`, `--n-bg-top`, `--n-gradient-bg`, `--n-line`, `--n-line-strong`, `--n-on-primary-container`, `--n-outline-variant`, `--n-popover-control-bg`, `--n-popover-control-border`, `--n-surface-container` e `--n-surface-container-low`.
+- **6 aliases Legacy presos a seletores Legacy sem host ativo:** `--n-surface-container-high`, `--n-surface-container-highest`, `--n-toolbar-cluster-padding`, `--n-toolbar-cluster-radius`, `--n-toolbar-divider-height` e `--n-toolbar-icon-btn-size`. Seus unicos consumidores permanecem em `.n-btn-secondary` e toolbar cluster/divider no port.
+- Os **13 aliases `--activity-*`** continuam definidos, sem referencia estatica, dinamica ou computed-style ativa, e classificados como Legacy. O Activity Center real usa `--component-activity-*`.
+- O inventario corrigido possui **5**, nao oito, component tokens sem consumidor: `--component-button-fg`, `--component-card-radius`, `--component-popover-radius`, `--component-tab-bg-active` e `--component-tab-fg-active`. Os outros tres da lista historica, `--component-popover-bg`, `--component-popover-border` e `--component-popover-shadow`, tornaram-se Ativos no Marco 55A e hoje atendem hosts reais em Downloads e LibraryToolbar.
+- As **3 declaracoes locais Legacy do port** sao `--color-info-bg`, `--splash-error` e `--splash-ink-muted`. Elas permanecem declaradas sem consumidor dentro do bloco onde surgem; a role semantica global `--color-info-bg` continua existindo independentemente no contrato de tema.
+
+### Evidencias de retencao
+
+- `legacyRetentionGate.test.ts` congela token a token os inventarios 1 Ativo + 44 bridges Legacy + 11 sem referencia + 6 selector-only, os 13 aliases Activity, os cinco component tokens sem consumo, os tres component tokens promovidos a Ativo e as tres declaracoes locais do port.
+- A busca cobre referencias CSS/Svelte/TypeScript, `style.setProperty`, `getPropertyValue`, `removeProperty`, ThemeEditor, contrato, documentos, provider, presets e stores. Nao foi encontrado acesso dinamico literal aos aliases retidos.
+- A unica dependencia `--n-*` fora das superficies Legacy e `--component-syncd-input-fg: var(--n-on-surface)`. Ela permanece explicitamente excluida da migracao porque Syncd esta adiado, mas mantem `--n-on-surface` classificado como Ativo.
+- Nenhum token foi removido, renomeado ou teve valor alterado. Nenhum codigo Legacy foi limpo e nenhuma superficie visual foi modificada.
+- Como o marco altera somente testes e documentacao, nao houve nova captura. As **10 comparacoes reais before/after do Marco 55B** sao a baseline visual imediata e continuam sem regressao aparente.
+- Unit/jsdom: **6 arquivos / 66 testes verdes**, incluindo o novo gate de retencao e a expectativa de motion Legacy sincronizada com as bridges canonicas introduzidas no Marco 55A.
+- Browser Chromium: **1 arquivo / 2 testes verdes**, preservando a equivalencia computed-style das bridges de geometria. `pnpm build`: verde, com apenas o aviso conhecido de chunk principal acima de 500 kB.
+
 ## Proximos marcos adiados
 
 ### Marco 55 - Active `--n-*` Decoupling (concluido em 55A/55B)
@@ -3323,10 +3346,10 @@ Categorias cobertas:
 - 55A consolidou cores, surfaces e motion; 55B consolidou `--hud-scale` e geometria derivada.
 - Aceite cumprido: zero dependencia `--n-*` em componente ativo nao-Syncd, bridges ainda definidas, Nocturne visualmente equivalente e documentos V1-V5/ThemeEditor preservados.
 
-### Marco 56 - Legacy Retention Evidence
+### Marco 56 - Legacy Retention Evidence (concluido)
 
-- Revalidar token a token os 17 aliases `--n-*` Legacy, 13 `--activity-*`, oito component tokens sem consumidor e tres tokens locais Legacy do port.
-- Executar busca global/dinamica, ThemeEditor, presets, stores, import e upgrade. O marco documenta retencao ou removibilidade; nao remove automaticamente nenhum token.
+- Revalidacao concluida sem remocao: 1 `--n-*` Ativo por Syncd, 61 `--n-*` Legacy, 13 `--activity-*` Legacy, cinco component tokens sem consumidor e tres declaracoes locais Legacy do port.
+- A contagem historica de oito component tokens foi corrigida: cinco permanecem Legacy sem consumidor e tres tokens de popover passaram a Ativos no Marco 55A. As tres declaracoes locais Legacy do port formam uma categoria adicional e independente.
 
 ### Marco 57 - Legacy Surface Decision
 

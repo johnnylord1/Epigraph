@@ -75,8 +75,8 @@ describe("HUD and motion contract gate", () => {
     expect(tokensCss).toContain(
       "--component-reader-core-resume-in-animation: var(--motion-duration-slow) cubic-bezier(0.16, 1, 0.3, 1) both;",
     );
-    expect(nocturneCss).toContain("--n-duration-fast: 140ms;");
-    expect(nocturneCss).toContain("--n-duration-normal: 200ms;");
-    expect(nocturneCss).toContain("--n-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);");
+    expect(nocturneCss).toContain("--n-duration-fast: var(--duration-normal);");
+    expect(nocturneCss).toContain("--n-duration-normal: var(--duration-relaxed);");
+    expect(nocturneCss).toContain("--n-ease-spring: var(--easing-spring);");
   });
 });
