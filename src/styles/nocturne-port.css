@@ -543,7 +543,7 @@ body.aethon-downloads-search-engaged .aethon-search-dim-layer {
   font-family: "Material Symbols Outlined";
   font-weight: 400;
   font-style: normal;
-  font-size: calc(20px * var(--n-hud-scale));
+  font-size: calc(20px * var(--hud-scale));
   line-height: 1;
   letter-spacing: normal;
   text-transform: none;
@@ -556,18 +556,18 @@ body.aethon-downloads-search-engaged .aethon-search-dim-layer {
 
 .n-sidebar {
   position: fixed;
-  left: var(--n-sidebar-edge-x);
-  top: var(--n-sidebar-edge-y);
-  bottom: var(--n-sidebar-edge-y);
-  width: var(--n-sidebar-rail-width);
+  left: var(--shell-sidebar-edge-x);
+  top: var(--shell-sidebar-edge-y);
+  bottom: var(--shell-sidebar-edge-y);
+  width: var(--shell-sidebar-rail-width);
   background: var(--component-sidebar-bg);
   backdrop-filter: var(--component-sidebar-blur);
-  border-radius: var(--n-sidebar-radius);
+  border-radius: var(--shell-sidebar-radius);
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: var(--n-sidebar-padding-y) 0;
-  gap: var(--n-sidebar-gap);
+  padding: var(--shell-sidebar-padding-y) 0;
+  gap: var(--shell-sidebar-gap);
   z-index: var(--component-sidebar-z-index);
   border: 1px solid var(--component-sidebar-border);
   box-shadow: var(--component-sidebar-shadow);
@@ -667,10 +667,10 @@ body.aethon-downloads-search-engaged .n-topbar .n-search {
 
 .n-sidebar__brand {
   position: relative;
-  width: var(--n-brand-size);
-  height: var(--n-brand-size);
-  margin-top: var(--n-brand-offset-top);
-  margin-bottom: var(--n-brand-offset-bottom);
+  width: var(--shell-brand-size);
+  height: var(--shell-brand-size);
+  margin-top: var(--shell-brand-offset-top);
+  margin-bottom: var(--shell-brand-offset-bottom);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -682,10 +682,10 @@ body.aethon-downloads-search-engaged .n-topbar .n-search {
 .n-sidebar__brand::after {
   content: "";
   position: absolute;
-  bottom: calc(8px * var(--n-hud-scale));
+  bottom: calc(8px * var(--hud-scale));
   left: 50%;
-  width: calc(32px * var(--n-hud-scale));
-  height: calc(5px * var(--n-hud-scale));
+  width: calc(32px * var(--hud-scale));
+  height: calc(5px * var(--hud-scale));
   background: transparent;
   border-radius: 50%;
   transform: translateX(-50%);
@@ -740,7 +740,7 @@ html[data-aethon-motion="idle"] .aethon-port--splash .brand-mark {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: calc(4px * var(--n-hud-scale));
+  gap: calc(4px * var(--hud-scale));
 }
 
 .n-sidebar__nav {
@@ -752,12 +752,12 @@ html[data-aethon-motion="idle"] .aethon-port--splash .brand-mark {
 }
 
 .n-sidebar-btn {
-  width: var(--n-sidebar-btn-size);
-  height: var(--n-sidebar-btn-size);
+  width: var(--shell-sidebar-button-size);
+  height: var(--shell-sidebar-button-size);
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--n-sidebar-btn-radius);
+  border-radius: var(--shell-sidebar-button-radius);
   border: none;
   background: transparent;
   color: var(--component-nav-item-fg);
@@ -832,14 +832,14 @@ html[data-aethon-motion="idle"] .aethon-port--splash .brand-mark {
 .n-sidebar-btn::after {
   content: attr(data-tooltip);
   position: absolute;
-  left: calc(100% + calc(10px * var(--n-hud-scale)));
+  left: calc(100% + calc(10px * var(--hud-scale)));
   top: 50%;
-  transform: translateY(-50%) translateX(calc(-4px * var(--n-hud-scale)));
-  padding: calc(4px * var(--n-hud-scale)) calc(10px * var(--n-hud-scale));
-  border-radius: calc(8px * var(--n-hud-scale));
+  transform: translateY(-50%) translateX(calc(-4px * var(--hud-scale)));
+  padding: calc(4px * var(--hud-scale)) calc(10px * var(--hud-scale));
+  border-radius: calc(8px * var(--hud-scale));
   background: var(--component-nav-tooltip-bg);
   color: var(--component-nav-tooltip-fg);
-  font-size: calc(11px * var(--n-hud-scale));
+  font-size: calc(11px * var(--hud-scale));
   font-weight: 600;
   white-space: nowrap;
   pointer-events: none;
@@ -856,13 +856,13 @@ html[data-aethon-motion="idle"] .aethon-port--splash .brand-mark {
 
 .n-sidebar-badge {
   position: absolute;
-  right: calc(5px * var(--n-hud-scale));
-  bottom: calc(5px * var(--n-hud-scale));
-  min-width: calc(14px * var(--n-hud-scale));
-  height: calc(14px * var(--n-hud-scale));
-  padding: 0 calc(4px * var(--n-hud-scale));
+  right: calc(5px * var(--hud-scale));
+  bottom: calc(5px * var(--hud-scale));
+  min-width: calc(14px * var(--hud-scale));
+  height: calc(14px * var(--hud-scale));
+  padding: 0 calc(4px * var(--hud-scale));
   border-radius: 999px;
-  font-size: calc(9px * var(--n-hud-scale));
+  font-size: calc(9px * var(--hud-scale));
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -883,11 +883,11 @@ html[data-aethon-motion="idle"] .aethon-port--splash .brand-mark {
   top: 0;
   right: 0;
   left: 0;
-  height: var(--n-topbar-height);
+  height: var(--shell-topbar-height);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 var(--n-topbar-pad-x) 0 calc(var(--n-sidebar-width) + var(--n-topbar-pad-x));
+  padding: 0 var(--shell-topbar-padding-x) 0 calc(var(--shell-sidebar-width) + var(--shell-topbar-padding-x));
   background: var(--component-topbar-bg);
   backdrop-filter: var(--component-topbar-blur);
   border-bottom: 1px solid var(--component-topbar-border);
@@ -933,7 +933,7 @@ html[data-aethon-motion="idle"] .n-topbar {
 }
 
 .n-topbar__left {
-  gap: var(--n-topbar-gap);
+  gap: var(--shell-topbar-gap);
 }
 
 .n-topbar__center {
@@ -942,14 +942,14 @@ html[data-aethon-motion="idle"] .n-topbar {
 
 .n-topbar__right {
   justify-content: flex-end;
-  gap: calc(6px * var(--n-hud-scale));
+  gap: calc(6px * var(--hud-scale));
   padding-right: 0;
 }
 
 .n-search {
   position: relative;
-  width: var(--n-search-width);
-  height: var(--n-search-height);
+  width: var(--shell-search-width);
+  height: var(--shell-search-height);
   border-radius: 9999px;
   transition:
     width 200ms var(--easing-spring),
@@ -962,23 +962,23 @@ html[data-aethon-motion="idle"] .n-topbar {
 }
 
 .n-search:focus-within {
-  width: var(--n-search-width-focus);
-  transform: translateY(calc(12px * var(--n-hud-scale))) scale(1.03);
+  width: var(--shell-search-width-focus);
+  transform: translateY(calc(12px * var(--hud-scale))) scale(1.03);
   box-shadow: var(--component-search-shadow-focus);
 }
 
 .n-search__icon {
   position: absolute;
-  left: var(--n-search-icon-offset);
+  left: var(--shell-search-icon-offset);
   top: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: var(--n-search-icon-size);
-  height: var(--n-search-icon-size);
+  width: var(--shell-search-icon-size);
+  height: var(--shell-search-icon-size);
   transform: translateY(-50%);
   color: var(--component-search-icon-fg);
-  font-size: var(--n-search-icon-size);
+  font-size: var(--shell-search-icon-size);
   pointer-events: none;
   z-index: 1;
   transition: color 220ms ease, opacity 220ms ease;
@@ -1003,13 +1003,13 @@ html[data-aethon-motion="idle"] .n-topbar {
   appearance: none !important;
   width: 100%;
   height: 100%;
-  padding: 0 var(--n-search-padding-right) 0 var(--n-search-padding-left);
+  padding: 0 var(--shell-search-padding-right) 0 var(--shell-search-padding-left);
   border-radius: 9999px !important;
   border: 1px solid var(--component-search-border) !important;
   background: var(--component-search-bg) !important;
   color: var(--component-search-fg) !important;
   font-family: inherit;
-  font-size: calc(13px * var(--n-hud-scale));
+  font-size: calc(13px * var(--hud-scale));
   font-weight: 500;
   letter-spacing: 0.01em;
   outline: none;
@@ -1040,12 +1040,12 @@ html[data-aethon-motion="idle"] .n-topbar {
 }
 
 .n-icon-btn {
-  width: var(--n-icon-btn-size);
-  height: var(--n-icon-btn-size);
+  width: var(--shell-icon-button-size);
+  height: var(--shell-icon-button-size);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--n-icon-btn-radius);
+  border-radius: var(--shell-icon-button-radius);
   border: 1px solid var(--component-toolbar-icon-border);
   background: var(--component-toolbar-icon-bg);
   color: var(--component-toolbar-icon-fg);
@@ -1058,7 +1058,7 @@ html[data-aethon-motion="idle"] .n-topbar {
 }
 
 .n-icon-btn .material-symbols-outlined {
-  font-size: calc(20px * var(--n-hud-scale));
+  font-size: calc(20px * var(--hud-scale));
 }
 
 .n-icon-btn:hover {
@@ -1093,10 +1093,10 @@ html[data-aethon-motion="idle"] .n-topbar {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: calc(8px * var(--n-hud-scale));
+  gap: calc(8px * var(--hud-scale));
   border: none;
   outline: none;
-  border-radius: calc(12px * var(--n-hud-scale));
+  border-radius: calc(12px * var(--hud-scale));
   background: transparent;
   font-family: inherit;
   font-weight: 700;
@@ -1119,23 +1119,23 @@ html[data-aethon-motion="idle"] .n-topbar {
 }
 
 .n-btn--sm {
-  min-height: calc(32px * var(--n-hud-scale));
-  padding: 0 calc(16px * var(--n-hud-scale));
-  font-size: calc(10px * var(--n-hud-scale));
-  border-radius: calc(8px * var(--n-hud-scale));
+  min-height: calc(32px * var(--hud-scale));
+  padding: 0 calc(16px * var(--hud-scale));
+  font-size: calc(10px * var(--hud-scale));
+  border-radius: calc(8px * var(--hud-scale));
 }
 
 .n-btn--md {
-  min-height: calc(40px * var(--n-hud-scale));
-  padding: 0 calc(20px * var(--n-hud-scale));
-  font-size: calc(11px * var(--n-hud-scale));
+  min-height: calc(40px * var(--hud-scale));
+  padding: 0 calc(20px * var(--hud-scale));
+  font-size: calc(11px * var(--hud-scale));
 }
 
 .n-btn--lg {
-  min-height: calc(48px * var(--n-hud-scale));
-  padding: 0 calc(24px * var(--n-hud-scale));
-  font-size: calc(13px * var(--n-hud-scale));
-  border-radius: calc(14px * var(--n-hud-scale));
+  min-height: calc(48px * var(--hud-scale));
+  padding: 0 calc(24px * var(--hud-scale));
+  font-size: calc(13px * var(--hud-scale));
+  border-radius: calc(14px * var(--hud-scale));
 }
 
 .n-btn-primary {
@@ -1193,13 +1193,13 @@ html[data-aethon-motion="idle"] .n-topbar {
 .n-toolbar-cluster .n-icon-btn {
   width: var(--n-toolbar-icon-btn-size);
   height: var(--n-toolbar-icon-btn-size);
-  border-radius: var(--n-icon-btn-radius);
+  border-radius: var(--shell-icon-button-radius);
   border-color: transparent;
   background: transparent;
 }
 
 .n-toolbar-cluster .n-icon-btn .material-symbols-outlined {
-  font-size: calc(18px * var(--n-hud-scale));
+  font-size: calc(18px * var(--hud-scale));
 }
 
 .n-toolbar-divider {
@@ -1227,11 +1227,11 @@ html[data-aethon-motion="idle"] .n-topbar {
 .n-inline-segment {
   position: relative;
   z-index: 2;
-  height: var(--n-segmented-height);
-  padding: 0 calc(20px * var(--n-hud-scale));
+  height: var(--shell-segmented-height);
+  padding: 0 calc(20px * var(--hud-scale));
   border-radius: 9999px;
   color: var(--text-secondary);
-  font-size: calc(11px * var(--n-hud-scale));
+  font-size: calc(11px * var(--hud-scale));
   font-weight: 800;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -1347,15 +1347,15 @@ html[data-aethon-motion="idle"] .n-topbar {
 .n-soft-pill {
   display: inline-flex;
   align-items: center;
-  gap: calc(6px * var(--n-hud-scale));
-  min-height: calc(30px * var(--n-hud-scale));
-  padding: 0 calc(12px * var(--n-hud-scale));
+  gap: calc(6px * var(--hud-scale));
+  min-height: calc(30px * var(--hud-scale));
+  padding: 0 calc(12px * var(--hud-scale));
   border-radius: 999px;
   background: color-mix(in srgb, var(--color-downloads-pill-surface-source) 60%, transparent);
   backdrop-filter: blur(8px);
   color: var(--component-soft-control-fg-source);
   border: 1px solid color-mix(in srgb, var(--accent-bright) 6%, transparent);
-  font-size: calc(11px * var(--n-hud-scale));
+  font-size: calc(11px * var(--hud-scale));
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1408,7 +1408,7 @@ html[data-aethon-motion="idle"] .n-topbar {
 .n-library-card {
   display: flex;
   flex-direction: column;
-  gap: calc(7px * var(--n-hud-scale));
+  gap: calc(7px * var(--hud-scale));
   background: transparent;
   border: none;
   padding: 0;
@@ -1426,7 +1426,7 @@ html[data-aethon-motion="idle"] .n-topbar {
   position: relative;
   aspect-ratio: 2 / 3;
   overflow: hidden;
-  border-radius: calc(16px * var(--n-hud-scale));
+  border-radius: calc(16px * var(--hud-scale));
   background: color-mix(in srgb, var(--color-highlight-source) 3%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-highlight-source) 5%, transparent);
   box-shadow: 0 2px 8px color-mix(in srgb, var(--color-shadow-source) 24%, transparent);
@@ -1446,12 +1446,12 @@ html[data-aethon-motion="idle"] .n-topbar {
 
 .n-library-card__badge {
   position: absolute;
-  top: calc(8px * var(--n-hud-scale));
-  right: calc(8px * var(--n-hud-scale));
+  top: calc(8px * var(--hud-scale));
+  right: calc(8px * var(--hud-scale));
   display: inline-flex;
   align-items: center;
-  min-height: calc(20px * var(--n-hud-scale));
-  padding: 0 calc(7px * var(--n-hud-scale));
+  min-height: calc(20px * var(--hud-scale));
+  padding: 0 calc(7px * var(--hud-scale));
   border-radius: 9999px;
   background: color-mix(in srgb, var(--color-deep-neutral-surface-source) 90%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-bright) 12%, transparent);
@@ -1510,7 +1510,7 @@ html[data-aethon-motion="idle"] .n-topbar {
 
 .n-eyebrow {
   color: var(--text-secondary);
-  font-size: calc(11px * var(--n-hud-scale));
+  font-size: calc(11px * var(--hud-scale));
   font-weight: 700;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -1527,8 +1527,8 @@ html[data-aethon-motion="idle"] .n-topbar {
 }
 
 .n-content {
-  margin-top: var(--n-topbar-height);
-  height: calc(100% - var(--n-topbar-height));
+  margin-top: var(--shell-topbar-height);
+  height: calc(100% - var(--shell-topbar-height));
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -1579,25 +1579,25 @@ html[data-aethon-motion="idle"] .n-topbar {
 }
 
 .aethon-port--settings {
-  --n-topbar-height: calc(56px * var(--n-hud-scale));
-  --settings-group-rail-width: calc(184px * var(--n-hud-scale));
-  --settings-subnav-width: calc(146px * var(--n-hud-scale));
-  --settings-shell-gap: calc(14px * var(--n-hud-scale));
-  --settings-shell-padding-x: calc(18px * var(--n-hud-scale));
-  --settings-group-rail-padding-y: calc(18px * var(--n-hud-scale));
-  --settings-group-rail-padding-bottom: calc(12px * var(--n-hud-scale));
-  --settings-subnav-padding-y: calc(15px * var(--n-hud-scale));
-  --settings-subnav-gap: calc(10px * var(--n-hud-scale));
-  --settings-pane-header-gap: calc(24px * var(--n-hud-scale));
-  --settings-pane-header-pad-x: calc(24px * var(--n-hud-scale));
-  --settings-pane-header-pad-top: calc(24px * var(--n-hud-scale));
-  --settings-pane-header-pad-bottom: calc(16px * var(--n-hud-scale));
-  --settings-pane-body-pad-top: calc(20px * var(--n-hud-scale));
-  --settings-pane-body-pad-x: calc(24px * var(--n-hud-scale));
-  --settings-pane-body-pad-bottom: calc(28px * var(--n-hud-scale));
-  --settings-grid-gap: calc(18px * var(--n-hud-scale));
-  --settings-card-radius: calc(18px * var(--n-hud-scale));
-  --settings-card-padding: calc(18px * var(--n-hud-scale));
+  --shell-topbar-height: calc(56px * var(--hud-scale));
+  --settings-group-rail-width: calc(184px * var(--hud-scale));
+  --settings-subnav-width: calc(146px * var(--hud-scale));
+  --settings-shell-gap: calc(14px * var(--hud-scale));
+  --settings-shell-padding-x: calc(18px * var(--hud-scale));
+  --settings-group-rail-padding-y: calc(18px * var(--hud-scale));
+  --settings-group-rail-padding-bottom: calc(12px * var(--hud-scale));
+  --settings-subnav-padding-y: calc(15px * var(--hud-scale));
+  --settings-subnav-gap: calc(10px * var(--hud-scale));
+  --settings-pane-header-gap: calc(24px * var(--hud-scale));
+  --settings-pane-header-pad-x: calc(24px * var(--hud-scale));
+  --settings-pane-header-pad-top: calc(24px * var(--hud-scale));
+  --settings-pane-header-pad-bottom: calc(16px * var(--hud-scale));
+  --settings-pane-body-pad-top: calc(20px * var(--hud-scale));
+  --settings-pane-body-pad-x: calc(24px * var(--hud-scale));
+  --settings-pane-body-pad-bottom: calc(28px * var(--hud-scale));
+  --settings-grid-gap: calc(18px * var(--hud-scale));
+  --settings-card-radius: calc(18px * var(--hud-scale));
+  --settings-card-padding: calc(18px * var(--hud-scale));
   --font-ui: var(--component-settings-font);
   --accent-fg: var(--component-settings-accent-fg);
   --accent-bright: var(--component-settings-accent-bright);
@@ -1624,7 +1624,7 @@ html[data-aethon-motion="idle"] .n-topbar {
   font-family: "Material Symbols Outlined";
   font-weight: 400;
   font-style: normal;
-  font-size: calc(20px * var(--n-hud-scale));
+  font-size: calc(20px * var(--hud-scale));
   line-height: 1;
   letter-spacing: normal;
   text-transform: none;
@@ -1660,7 +1660,7 @@ html[data-aethon-motion="idle"] .n-topbar {
 .aethon-port--settings .content-header.n-topbar.settings-modal-topbar {
   position: absolute;
   inset: 0 0 auto 0;
-  height: var(--n-topbar-height);
+  height: var(--shell-topbar-height);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1708,16 +1708,16 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 .aethon-port--settings .n-search.settings-search,
 .aethon-port--settings .n-search--settings {
   position: relative;
-  width: var(--n-search-width);
+  width: var(--shell-search-width);
   margin: 0 auto;
-  max-width: var(--n-search-width-focus);
+  max-width: var(--shell-search-width-focus);
 }
 
 .aethon-port--settings .n-topbar--settings {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(calc(260px * var(--n-hud-scale)), calc(420px * var(--n-hud-scale))) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(calc(260px * var(--hud-scale)), calc(420px * var(--hud-scale))) minmax(0, 1fr);
   align-items: center;
-  gap: calc(16px * var(--n-hud-scale));
+  gap: calc(16px * var(--hud-scale));
   padding: 0 var(--settings-shell-padding-x);
   -webkit-app-region: drag;
 }
@@ -1746,9 +1746,9 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: var(--n-icon-btn-size);
-  height: var(--n-icon-btn-size);
-  border-radius: var(--n-icon-btn-radius);
+  width: var(--shell-icon-button-size);
+  height: var(--shell-icon-button-size);
+  border-radius: var(--shell-icon-button-radius);
   border: 1px solid var(--component-toolbar-icon-border);
   background: var(--component-toolbar-icon-bg);
   color: var(--component-toolbar-icon-fg);
@@ -1773,14 +1773,14 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   display: flex;
   flex: 1;
   min-height: 0;
-  padding-top: var(--n-topbar-height);
+  padding-top: var(--shell-topbar-height);
 }
 
 .aethon-port--settings #settingsGroupRail.sidebar,
 .aethon-port--settings .settings-group-rail {
   width: var(--settings-group-rail-width);
   min-width: var(--settings-group-rail-width);
-  padding: var(--settings-group-rail-padding-y) calc(6px * var(--n-hud-scale)) var(--settings-group-rail-padding-bottom);
+  padding: var(--settings-group-rail-padding-y) calc(6px * var(--hud-scale)) var(--settings-group-rail-padding-bottom);
   display: flex;
   flex-direction: column;
   gap: var(--settings-shell-gap);
@@ -1811,15 +1811,15 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   display: flex;
   align-items: center;
   width: 100%;
-  min-height: calc(44px * var(--n-hud-scale));
-  padding: calc(6px * var(--n-hud-scale)) calc(6px * var(--n-hud-scale));
+  min-height: calc(44px * var(--hud-scale));
+  padding: calc(6px * var(--hud-scale)) calc(6px * var(--hud-scale));
   justify-content: flex-start;
-  gap: calc(7px * var(--n-hud-scale));
+  gap: calc(7px * var(--hud-scale));
   border: 1px solid transparent;
-  border-radius: calc(14px * var(--n-hud-scale));
+  border-radius: calc(14px * var(--hud-scale));
   background: transparent;
   color: var(--component-settings-nav-fg);
-  font-size: calc(13px * var(--n-hud-scale));
+  font-size: calc(13px * var(--hud-scale));
   font-weight: 600;
   letter-spacing: 0.01em;
   text-align: left;
@@ -1855,9 +1855,9 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: calc(16px * var(--n-hud-scale));
-  min-width: calc(16px * var(--n-hud-scale));
-  font-size: calc(17px * var(--n-hud-scale));
+  width: calc(16px * var(--hud-scale));
+  min-width: calc(16px * var(--hud-scale));
+  font-size: calc(17px * var(--hud-scale));
   line-height: 1;
 }
 
@@ -1877,7 +1877,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings .settings-about-btn .material-symbols-outlined {
-  font-size: calc(20px * var(--n-hud-scale));
+  font-size: calc(20px * var(--hud-scale));
   font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 20;
 }
 
@@ -1893,8 +1893,8 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings .settings-rail-card {
-  padding: calc(12px * var(--n-hud-scale));
-  border-radius: calc(16px * var(--n-hud-scale));
+  padding: calc(12px * var(--hud-scale));
+  border-radius: calc(16px * var(--hud-scale));
   border: 1px solid var(--component-settings-border-dim);
   background: var(--component-settings-rail-bg);
 }
@@ -1902,14 +1902,14 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 .aethon-port--settings .settings-rail-card__head {
   display: flex;
   align-items: center;
-  gap: calc(8px * var(--n-hud-scale));
-  margin-bottom: calc(10px * var(--n-hud-scale));
+  gap: calc(8px * var(--hud-scale));
+  margin-bottom: calc(10px * var(--hud-scale));
 }
 
 .aethon-port--settings .settings-rail-card__mark {
-  width: calc(28px * var(--n-hud-scale));
-  height: calc(28px * var(--n-hud-scale));
-  border-radius: calc(10px * var(--n-hud-scale));
+  width: calc(28px * var(--hud-scale));
+  height: calc(28px * var(--hud-scale));
+  border-radius: calc(10px * var(--hud-scale));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1933,20 +1933,20 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 
 .aethon-port--settings .settings-rail-card__actions {
   display: flex;
-  gap: calc(6px * var(--n-hud-scale));
+  gap: calc(6px * var(--hud-scale));
 }
 
 .aethon-port--settings .n-btn.n-btn-ghost.settings-rail-action {
   flex: 1;
   min-height: 0;
-  height: calc(28px * var(--n-hud-scale));
-  padding: 0 calc(10px * var(--n-hud-scale));
-  border-radius: calc(8px * var(--n-hud-scale));
+  height: calc(28px * var(--hud-scale));
+  padding: 0 calc(10px * var(--hud-scale));
+  border-radius: calc(8px * var(--hud-scale));
   border: 1px solid var(--component-settings-button-border);
   background: var(--component-settings-button-bg);
   color: var(--component-settings-button-fg);
   font-family: var(--component-settings-font);
-  font-size: calc(10px * var(--n-hud-scale));
+  font-size: calc(10px * var(--hud-scale));
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1978,7 +1978,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 
 .aethon-port--settings .content-subnav.settings-subnav,
 .aethon-port--settings .settings-subnav {
-  padding: var(--settings-subnav-padding-y) calc(6px * var(--n-hud-scale));
+  padding: var(--settings-subnav-padding-y) calc(6px * var(--hud-scale));
   display: flex;
   flex-direction: column;
   gap: var(--settings-subnav-gap);
@@ -1988,8 +1988,8 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 
 .aethon-port--settings .subnav-label.settings-subnav__eyebrow,
 .aethon-port--settings .settings-subnav__eyebrow {
-  padding: 0 calc(4px * var(--n-hud-scale));
-  font-size: calc(10px * var(--n-hud-scale));
+  padding: 0 calc(4px * var(--hud-scale));
+  font-size: calc(10px * var(--hud-scale));
   font-weight: 800;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -2000,22 +2000,22 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 .aethon-port--settings .settings-subnav__list {
   display: flex;
   flex-direction: column;
-  gap: calc(4px * var(--n-hud-scale));
+  gap: calc(4px * var(--hud-scale));
 }
 
 .aethon-port--settings .subnav-item.settings-subnav-btn,
 .aethon-port--settings .settings-subnav-btn {
   display: flex;
   align-items: center;
-  gap: calc(7px * var(--n-hud-scale));
+  gap: calc(7px * var(--hud-scale));
   width: 100%;
-  min-height: calc(42px * var(--n-hud-scale));
-  padding: 0 calc(6px * var(--n-hud-scale));
-  border-radius: calc(12px * var(--n-hud-scale));
+  min-height: calc(42px * var(--hud-scale));
+  padding: 0 calc(6px * var(--hud-scale));
+  border-radius: calc(12px * var(--hud-scale));
   border: 1px solid transparent;
   background: transparent;
   color: var(--component-settings-text-muted);
-  font-size: calc(12.5px * var(--n-hud-scale));
+  font-size: calc(12.5px * var(--hud-scale));
   font-weight: 600;
   letter-spacing: 0.02em;
   text-align: left;
@@ -2047,9 +2047,9 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 
 .aethon-port--settings .subnav-item.settings-subnav-btn .material-symbols-outlined,
 .aethon-port--settings .settings-subnav-btn__icon {
-  width: calc(17px * var(--n-hud-scale));
-  min-width: calc(17px * var(--n-hud-scale));
-  font-size: calc(17px * var(--n-hud-scale));
+  width: calc(17px * var(--hud-scale));
+  min-width: calc(17px * var(--hud-scale));
+  font-size: calc(17px * var(--hud-scale));
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2074,7 +2074,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   position: relative;
   display: grid;
   grid-template-columns: var(--settings-group-rail-width) minmax(0, 1fr);
-  grid-template-rows: var(--n-topbar-height) minmax(0, 1fr);
+  grid-template-rows: var(--shell-topbar-height) minmax(0, 1fr);
   width: 100%;
   height: 100%;
   min-height: 0;
@@ -2097,7 +2097,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings.settings-page.is-search-engaged .n-search--settings {
-  width: var(--n-search-width-focus);
+  width: var(--shell-search-width-focus);
 }
 
 .aethon-port--settings.settings-page.is-search-engaged > .n-topbar--settings {
@@ -2147,8 +2147,8 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings .settings-pane-header__eyebrow {
-  margin-bottom: calc(6px * var(--n-hud-scale));
-  font-size: calc(10px * var(--n-hud-scale));
+  margin-bottom: calc(6px * var(--hud-scale));
+  font-size: calc(10px * var(--hud-scale));
   font-weight: 800;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -2156,16 +2156,16 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings .settings-pane-header__title {
-  font-size: calc(33px * var(--n-hud-scale));
+  font-size: calc(33px * var(--hud-scale));
   font-weight: 800;
   line-height: 1;
   color: var(--component-settings-text-primary);
 }
 
 .aethon-port--settings .settings-pane-header__desc {
-  margin-top: calc(10px * var(--n-hud-scale));
+  margin-top: calc(10px * var(--hud-scale));
   max-width: 660px;
-  font-size: calc(13.5px * var(--n-hud-scale));
+  font-size: calc(13.5px * var(--hud-scale));
   line-height: 1.45;
   color: var(--component-settings-text-faint);
 }
@@ -2175,16 +2175,16 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: calc(6px * var(--n-hud-scale));
-  min-height: calc(32px * var(--n-hud-scale));
-  padding: 0 calc(14px * var(--n-hud-scale));
-  border-radius: calc(10px * var(--n-hud-scale));
+  gap: calc(6px * var(--hud-scale));
+  min-height: calc(32px * var(--hud-scale));
+  padding: 0 calc(14px * var(--hud-scale));
+  border-radius: calc(10px * var(--hud-scale));
   border: 1px solid transparent;
   background: transparent;
   box-shadow: none;
   color: var(--component-settings-button-fg);
   font-family: var(--component-settings-font);
-  font-size: calc(10.5px * var(--n-hud-scale));
+  font-size: calc(10.5px * var(--hud-scale));
   font-weight: 700;
   letter-spacing: 0.045em;
   text-transform: uppercase;
@@ -2236,8 +2236,8 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings .n-inline-segmented {
-  gap: calc(3px * var(--n-hud-scale));
-  padding: calc(3px * var(--n-hud-scale));
+  gap: calc(3px * var(--hud-scale));
+  padding: calc(3px * var(--hud-scale));
   border-color: var(--component-settings-border-dim);
   background: var(--component-settings-surface-raised);
   backdrop-filter: blur(12px);
@@ -2245,11 +2245,11 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings .n-inline-segment {
-  min-height: calc(30px * var(--n-hud-scale));
-  padding: 0 calc(18px * var(--n-hud-scale));
+  min-height: calc(30px * var(--hud-scale));
+  padding: 0 calc(18px * var(--hud-scale));
   border-radius: 9999px;
   color: var(--text-secondary);
-  font-size: calc(11px * var(--n-hud-scale));
+  font-size: calc(11px * var(--hud-scale));
   font-weight: 800;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -2273,20 +2273,20 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   color: var(--color-on-accent-strong);
   background: var(--gradient-accent-primary);
   box-shadow:
-    0 calc(4px * var(--n-hud-scale)) calc(14px * var(--n-hud-scale)) var(--component-settings-accent-dim);
+    0 calc(4px * var(--hud-scale)) calc(14px * var(--hud-scale)) var(--component-settings-accent-dim);
   transform: none;
 }
 
 .aethon-port--settings .settings-rail-action {
   flex: 1;
-  min-height: calc(28px * var(--n-hud-scale));
-  padding: 0 calc(10px * var(--n-hud-scale));
-  border-radius: calc(8px * var(--n-hud-scale));
+  min-height: calc(28px * var(--hud-scale));
+  padding: 0 calc(10px * var(--hud-scale));
+  border-radius: calc(8px * var(--hud-scale));
   border: 1px solid var(--component-settings-button-border);
   background: var(--component-settings-button-bg);
   color: var(--component-settings-button-fg);
   font-family: var(--component-settings-font);
-  font-size: calc(10px * var(--n-hud-scale));
+  font-size: calc(10px * var(--hud-scale));
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -2317,7 +2317,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 .aethon-port--settings .settings-inline-actions {
   display: inline-flex;
   align-items: center;
-  gap: calc(8px * var(--n-hud-scale));
+  gap: calc(8px * var(--hud-scale));
 }
 
 .aethon-port--settings .settings-pane {
@@ -2362,14 +2362,14 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: calc(12px * var(--n-hud-scale));
+  gap: calc(12px * var(--hud-scale));
 }
 
 .aethon-port--settings .settings-card__title {
   margin: 0;
   padding: 0;
   font-family: var(--component-settings-font);
-  font-size: calc(11px * var(--n-hud-scale));
+  font-size: calc(11px * var(--hud-scale));
   font-weight: 800;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -2379,14 +2379,14 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 .aethon-port--settings .settings-card__intro {
   margin: 0;
   font-family: var(--component-settings-font);
-  font-size: calc(11px * var(--n-hud-scale));
+  font-size: calc(11px * var(--hud-scale));
   font-weight: 600;
   line-height: 1.5;
   color: var(--component-settings-text-faint);
 }
 
 .aethon-port--settings .settings-card__intro--body {
-  font-size: calc(13px * var(--n-hud-scale));
+  font-size: calc(13px * var(--hud-scale));
   line-height: 1.6;
   color: var(--component-settings-text-secondary);
 }
@@ -2400,13 +2400,13 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 .aethon-port--settings .settings-card__footer {
   display: flex;
   flex-wrap: wrap;
-  gap: calc(10px * var(--n-hud-scale));
+  gap: calc(10px * var(--hud-scale));
 }
 
 .aethon-port--settings .settings-card__footer--actions {
   align-items: center;
   justify-content: space-between;
-  gap: calc(14px * var(--n-hud-scale));
+  gap: calc(14px * var(--hud-scale));
 }
 
 .aethon-port--settings .settings-card__footer-status {
@@ -2414,7 +2414,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   flex: 1 1 240px;
   display: flex;
   align-items: center;
-  min-height: calc(30px * var(--n-hud-scale));
+  min-height: calc(30px * var(--hud-scale));
 }
 
 .aethon-port--settings .settings-storage-action-group,
@@ -2422,7 +2422,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: calc(10px * var(--n-hud-scale));
+  gap: calc(10px * var(--hud-scale));
   min-width: 0;
 }
 
@@ -2433,13 +2433,13 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings .settings-storage-meter {
-  margin-bottom: calc(12px * var(--n-hud-scale));
+  margin-bottom: calc(12px * var(--hud-scale));
 }
 
 .aethon-port--settings .settings-card__footer--split {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: calc(12px * var(--n-hud-scale));
+  gap: calc(12px * var(--hud-scale));
 }
 
 .aethon-port--settings .settings-card__embed {
@@ -2449,17 +2449,17 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 .aethon-port--settings .settings-meta-card {
   display: flex;
   flex-direction: column;
-  gap: calc(6px * var(--n-hud-scale));
+  gap: calc(6px * var(--hud-scale));
   min-width: 0;
-  padding: calc(14px * var(--n-hud-scale)) calc(16px * var(--n-hud-scale));
-  border-radius: calc(14px * var(--n-hud-scale));
+  padding: calc(14px * var(--hud-scale)) calc(16px * var(--hud-scale));
+  border-radius: calc(14px * var(--hud-scale));
   border: 1px solid var(--component-settings-border-dim);
   background: var(--component-settings-surface-raised);
 }
 
 .aethon-port--settings .settings-meta-card__label {
   font-family: var(--component-settings-font);
-  font-size: calc(9px * var(--n-hud-scale));
+  font-size: calc(9px * var(--hud-scale));
   font-weight: 800;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -2468,14 +2468,14 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 
 .aethon-port--settings .settings-meta-card__value {
   font-family: var(--component-settings-font);
-  font-size: calc(15px * var(--n-hud-scale));
+  font-size: calc(15px * var(--hud-scale));
   font-weight: 700;
   color: var(--component-settings-text-secondary);
 }
 
 .aethon-port--settings .settings-meta-card__hint {
   font-family: var(--font-mono);
-  font-size: calc(10px * var(--n-hud-scale));
+  font-size: calc(10px * var(--hud-scale));
   line-height: 1.45;
   color: var(--component-settings-text-faint);
   word-break: break-all;
@@ -2486,12 +2486,12 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: calc(16px * var(--n-hud-scale));
-  min-height: calc(56px * var(--n-hud-scale));
-  padding: calc(10px * var(--n-hud-scale)) calc(12px * var(--n-hud-scale));
-  margin: 0 calc(-12px * var(--n-hud-scale));
+  gap: calc(16px * var(--hud-scale));
+  min-height: calc(56px * var(--hud-scale));
+  padding: calc(10px * var(--hud-scale)) calc(12px * var(--hud-scale));
+  margin: 0 calc(-12px * var(--hud-scale));
   border-top: 1px solid var(--component-settings-row-border);
-  border-radius: calc(14px * var(--n-hud-scale));
+  border-radius: calc(14px * var(--hud-scale));
   transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
 }
 
@@ -2528,7 +2528,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 .aethon-port--settings .settings-mini-row--density {
   flex-direction: column;
   align-items: stretch;
-  gap: calc(12px * var(--n-hud-scale));
+  gap: calc(12px * var(--hud-scale));
 }
 
 .aethon-port--settings .settings-mini-row--density .settings-mini-row__body {
@@ -2544,13 +2544,13 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: calc(3px * var(--n-hud-scale));
+  gap: calc(3px * var(--hud-scale));
 }
 
 .aethon-port--settings .settings-mini-row__label {
   margin: 0;
   font-family: var(--component-settings-font);
-  font-size: calc(12.5px * var(--n-hud-scale));
+  font-size: calc(12.5px * var(--hud-scale));
   font-weight: 600;
   color: var(--component-settings-text-primary);
 }
@@ -2558,7 +2558,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 .aethon-port--settings .settings-mini-row__hint {
   margin: 0;
   font-family: var(--component-settings-font);
-  font-size: calc(11px * var(--n-hud-scale));
+  font-size: calc(11px * var(--hud-scale));
   font-weight: 600;
   line-height: 1.45;
   color: var(--component-settings-text-faint);
@@ -2571,13 +2571,13 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings .settings-chip-list--presets {
-  gap: calc(8px * var(--n-hud-scale));
+  gap: calc(8px * var(--hud-scale));
 }
 
 .aethon-port--settings .settings-toggle {
   position: relative;
-  width: calc(40px * var(--n-hud-scale));
-  height: calc(22px * var(--n-hud-scale));
+  width: calc(40px * var(--hud-scale));
+  height: calc(22px * var(--hud-scale));
   border: none;
   border-radius: 999px;
   background: var(--component-settings-toggle-bg);
@@ -2590,10 +2590,10 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 .aethon-port--settings .settings-toggle::after {
   content: "";
   position: absolute;
-  top: calc(2px * var(--n-hud-scale));
-  left: calc(2px * var(--n-hud-scale));
-  width: calc(18px * var(--n-hud-scale));
-  height: calc(18px * var(--n-hud-scale));
+  top: calc(2px * var(--hud-scale));
+  left: calc(2px * var(--hud-scale));
+  width: calc(18px * var(--hud-scale));
+  height: calc(18px * var(--hud-scale));
   border-radius: 999px;
   background: var(--component-settings-toggle-knob-bg);
   transition: transform 180ms ease, background 180ms ease;
@@ -2612,7 +2612,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings .settings-toggle.is-on::after {
-  transform: translateX(calc(18px * var(--n-hud-scale)));
+  transform: translateX(calc(18px * var(--hud-scale)));
   background: var(--component-settings-toggle-on-knob-bg);
 }
 
@@ -2625,20 +2625,20 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 .aethon-port--settings .settings-chip-list {
   display: flex;
   flex-wrap: wrap;
-  gap: calc(8px * var(--n-hud-scale));
+  gap: calc(8px * var(--hud-scale));
 }
 
 .aethon-port--settings .settings-chip {
   display: inline-flex;
   align-items: center;
-  gap: calc(6px * var(--n-hud-scale));
-  min-height: calc(32px * var(--n-hud-scale));
-  padding: 0 calc(12px * var(--n-hud-scale));
+  gap: calc(6px * var(--hud-scale));
+  min-height: calc(32px * var(--hud-scale));
+  padding: 0 calc(12px * var(--hud-scale));
   border-radius: 999px;
   border: 1px solid var(--component-settings-chip-border);
   background: var(--component-settings-chip-bg);
   color: var(--component-settings-chip-fg);
-  font-size: calc(11.5px * var(--n-hud-scale));
+  font-size: calc(11.5px * var(--hud-scale));
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -2674,10 +2674,10 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings .settings-density-slider {
-  --settings-density-thumb-size: calc(16px * var(--n-hud-scale));
+  --settings-density-thumb-size: calc(16px * var(--hud-scale));
   --settings-density-thumb-radius: calc(var(--settings-density-thumb-size) / 2);
-  --settings-density-step-size: calc(6px * var(--n-hud-scale));
-  --settings-density-track-height: calc(3px * var(--n-hud-scale));
+  --settings-density-step-size: calc(6px * var(--hud-scale));
+  --settings-density-track-height: calc(3px * var(--hud-scale));
   --settings-density-step-radius: calc(var(--settings-density-step-size) / 2);
   width: 100%;
   min-width: 0;
@@ -2692,11 +2692,11 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 
 .aethon-port--settings .settings-density-slider__controls {
   min-width: 0;
-  width: min(100%, max(calc(280px * var(--n-hud-scale)), min(calc(376px * var(--n-hud-scale)), 42vw)));
+  width: min(100%, max(calc(280px * var(--hud-scale)), min(calc(376px * var(--hud-scale)), 42vw)));
   justify-content: center;
   flex-wrap: nowrap;
-  gap: calc(10px * var(--n-hud-scale));
-  margin-inline: clamp(calc(-16px * var(--n-hud-scale)), calc(-2vw * var(--n-hud-scale)), calc(-6px * var(--n-hud-scale)));
+  gap: calc(10px * var(--hud-scale));
+  margin-inline: clamp(calc(-16px * var(--hud-scale)), calc(-2vw * var(--hud-scale)), calc(-6px * var(--hud-scale)));
 }
 
 .aethon-port--settings .settings-density-slider__track {
@@ -2770,7 +2770,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   transform: translate(-50%, -50%);
   background: var(--gradient-accent-primary);
   box-shadow:
-    0 calc(3px * var(--n-hud-scale)) calc(10px * var(--n-hud-scale)) color-mix(in srgb, var(--accent-bright) 26%, transparent),
+    0 calc(3px * var(--hud-scale)) calc(10px * var(--hud-scale)) color-mix(in srgb, var(--accent-bright) 26%, transparent),
     0 0 0 1px color-mix(in srgb, var(--color-highlight-source) 8%, transparent);
   pointer-events: none;
   z-index: 2;
@@ -2781,7 +2781,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   z-index: 3;
   width: 100%;
   min-width: 0;
-  height: calc(22px * var(--n-hud-scale));
+  height: calc(22px * var(--hud-scale));
   margin: 0;
   background: transparent;
   opacity: 0;
@@ -2831,26 +2831,26 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 .aethon-port--settings .settings-density-slider__range:focus-visible + .settings-density-slider__readout,
 .aethon-port--settings .settings-density-slider:focus-within .settings-density-slider__knob {
   box-shadow:
-    0 calc(3px * var(--n-hud-scale)) calc(10px * var(--n-hud-scale)) color-mix(in srgb, var(--accent-bright) 26%, transparent),
+    0 calc(3px * var(--hud-scale)) calc(10px * var(--hud-scale)) color-mix(in srgb, var(--accent-bright) 26%, transparent),
     0 0 0 1px color-mix(in srgb, var(--color-highlight-source) 8%, transparent),
     0 0 0 4px color-mix(in srgb, var(--accent-bright) 14%, transparent);
 }
 
 .aethon-port--settings .settings-density-slider__readout {
-  width: calc(56px * var(--n-hud-scale));
-  min-width: calc(56px * var(--n-hud-scale));
-  padding: calc(5px * var(--n-hud-scale)) calc(9px * var(--n-hud-scale));
-  border-radius: calc(9px * var(--n-hud-scale));
+  width: calc(56px * var(--hud-scale));
+  min-width: calc(56px * var(--hud-scale));
+  padding: calc(5px * var(--hud-scale)) calc(9px * var(--hud-scale));
+  border-radius: calc(9px * var(--hud-scale));
   background: color-mix(in srgb, var(--component-settings-density-readout-source) 78%, transparent);
   border: 1px solid color-mix(in srgb, var(--border-strong) 22%, transparent);
   color: color-mix(in srgb, var(--text-primary) 82%, transparent);
   font-family: "Manrope", var(--font-sans);
-  font-size: calc(10px * var(--n-hud-scale));
+  font-size: calc(10px * var(--hud-scale));
   font-weight: 800;
   letter-spacing: 0.08em;
   text-align: center;
   text-transform: uppercase;
-  flex: 0 0 calc(56px * var(--n-hud-scale));
+  flex: 0 0 calc(56px * var(--hud-scale));
 }
 
 .aethon-port--settings .settings-switch-pill {
@@ -2858,10 +2858,10 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: calc(54px * var(--n-hud-scale));
-  min-width: calc(54px * var(--n-hud-scale));
-  height: calc(54px * var(--n-hud-scale));
-  min-height: calc(54px * var(--n-hud-scale));
+  width: calc(54px * var(--hud-scale));
+  min-width: calc(54px * var(--hud-scale));
+  height: calc(54px * var(--hud-scale));
+  min-height: calc(54px * var(--hud-scale));
   padding: 0;
   border-radius: 999px;
   border: 1px solid var(--component-settings-border-dim);
@@ -2869,7 +2869,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   backdrop-filter: blur(12px);
   color: var(--text-secondary);
   font-family: var(--component-settings-font);
-  font-size: calc(12px * var(--n-hud-scale));
+  font-size: calc(12px * var(--hud-scale));
   font-weight: 800;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -2903,7 +2903,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   border-color: transparent;
   background: var(--gradient-accent-primary);
   box-shadow:
-    0 calc(4px * var(--n-hud-scale)) calc(14px * var(--n-hud-scale)) var(--component-settings-accent-dim);
+    0 calc(4px * var(--hud-scale)) calc(14px * var(--hud-scale)) var(--component-settings-accent-dim);
 }
 
 .aethon-port--settings .settings-switch-pill:disabled {
@@ -2931,10 +2931,10 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings .settings-value-pill {
-  min-width: calc(96px * var(--n-hud-scale));
-  padding-inline: calc(14px * var(--n-hud-scale));
+  min-width: calc(96px * var(--hud-scale));
+  padding-inline: calc(14px * var(--hud-scale));
   justify-content: center;
-  border-radius: calc(999px * var(--n-hud-scale));
+  border-radius: calc(999px * var(--hud-scale));
   border-color: var(--component-settings-button-border);
   background: var(--component-settings-surface-raised);
   backdrop-filter: blur(12px);
@@ -2959,18 +2959,18 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings .settings-reset-card__surface {
-  margin-top: calc(6px * var(--n-hud-scale));
+  margin-top: calc(6px * var(--hud-scale));
 }
 
 .aethon-port--settings .settings-reset-all-btn {
-  min-height: calc(36px * var(--n-hud-scale));
-  padding-inline: calc(16px * var(--n-hud-scale));
-  border-radius: calc(16px * var(--n-hud-scale));
+  min-height: calc(36px * var(--hud-scale));
+  padding-inline: calc(16px * var(--hud-scale));
+  border-radius: calc(16px * var(--hud-scale));
   border: 1px solid var(--component-settings-chip-active-border);
   background: var(--component-settings-chip-active-bg);
   color: var(--component-settings-nav-active-fg);
   font-family: var(--component-settings-font);
-  font-size: calc(11px * var(--n-hud-scale));
+  font-size: calc(11px * var(--hud-scale));
   font-weight: 800;
   letter-spacing: 0.04em;
   transition:
@@ -3194,11 +3194,11 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 
 .aethon-port--settings .settings-brand-card {
   width: 100%;
-  max-width: calc(var(--settings-group-rail-width) - (12px * var(--n-hud-scale)));
+  max-width: calc(var(--settings-group-rail-width) - (12px * var(--hud-scale)));
   box-sizing: border-box;
-  margin: 0 auto 0 calc(-6px * var(--n-hud-scale));
-  padding: calc(12px * var(--n-hud-scale));
-  border-radius: calc(14px * var(--n-hud-scale));
+  margin: 0 auto 0 calc(-6px * var(--hud-scale));
+  padding: calc(12px * var(--hud-scale));
+  border-radius: calc(14px * var(--hud-scale));
   border: 1px solid transparent;
   background: transparent;
   position: relative;
@@ -3237,7 +3237,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   position: absolute;
   inset: 1px;
   background: linear-gradient(135deg, var(--component-settings-preview-deep-top-source) 0%, var(--component-settings-preview-deep-bottom-source) 100%);
-  border-radius: calc(13px * var(--n-hud-scale));
+  border-radius: calc(13px * var(--hud-scale));
   z-index: 1;
   pointer-events: none;
   transition: background var(--duration-relaxed) ease;
@@ -3249,15 +3249,15 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 
 .aethon-port--settings .settings-brand-card:hover {
   box-shadow:
-    0 calc(12px * var(--n-hud-scale)) calc(32px * var(--n-hud-scale)) color-mix(in srgb, var(--color-shadow-source) 50%, transparent),
-    0 0 calc(20px * var(--n-hud-scale)) color-mix(in srgb, var(--accent-bright) 8%, transparent);
+    0 calc(12px * var(--hud-scale)) calc(32px * var(--hud-scale)) color-mix(in srgb, var(--color-shadow-source) 50%, transparent),
+    0 0 calc(20px * var(--hud-scale)) color-mix(in srgb, var(--accent-bright) 8%, transparent);
 }
 
 .aethon-port--settings .settings-brand-card__header {
   display: flex;
   align-items: center;
-  gap: calc(10px * var(--n-hud-scale));
-  margin-bottom: calc(10px * var(--n-hud-scale));
+  gap: calc(10px * var(--hud-scale));
+  margin-bottom: calc(10px * var(--hud-scale));
   position: relative;
   z-index: 2;
 }
@@ -3266,8 +3266,8 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: calc(40px * var(--n-hud-scale));
-  height: calc(40px * var(--n-hud-scale));
+  width: calc(40px * var(--hud-scale));
+  height: calc(40px * var(--hud-scale));
   border-radius: 0;
   background: transparent;
   border: 0;
@@ -3282,8 +3282,8 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 }
 
 .aethon-port--settings .settings-brand-card__badge img {
-  width: calc(52px * var(--n-hud-scale));
-  height: calc(52px * var(--n-hud-scale));
+  width: calc(52px * var(--hud-scale));
+  height: calc(52px * var(--hud-scale));
   object-fit: contain;
   display: block;
 }
@@ -3292,13 +3292,13 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: calc(1px * var(--n-hud-scale));
+  gap: calc(1px * var(--hud-scale));
 }
 
 .aethon-port--settings .settings-brand-card__title {
   margin: 0;
   font-family: "Outfit", "Manrope", var(--font-sans);
-  font-size: calc(12px * var(--n-hud-scale));
+  font-size: calc(12px * var(--hud-scale));
   font-weight: 700;
   line-height: 1.25;
   color: var(--text-primary);
@@ -3308,7 +3308,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 .aethon-port--settings .settings-brand-card__meta {
   margin: 0;
   font-family: var(--font-mono);
-  font-size: calc(9.5px * var(--n-hud-scale));
+  font-size: calc(9.5px * var(--hud-scale));
   line-height: 1.2;
   color: var(--text-muted, color-mix(in srgb, var(--text-secondary) 62%, transparent));
   opacity: 0.8;
@@ -3317,7 +3317,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 
 .aethon-port--settings .settings-brand-card__actions {
   display: flex;
-  gap: calc(8px * var(--n-hud-scale));
+  gap: calc(8px * var(--hud-scale));
   position: relative;
   z-index: 2;
 }
@@ -3393,23 +3393,23 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 
 @media (max-width: 760px) {
   .aethon-port--settings {
-    --settings-group-rail-width: calc(64px * var(--n-hud-scale));
-    --settings-subnav-width: calc(112px * var(--n-hud-scale));
-    --settings-shell-padding-x: calc(10px * var(--n-hud-scale));
-    --settings-pane-header-pad-x: calc(16px * var(--n-hud-scale));
-    --settings-pane-body-pad-x: calc(16px * var(--n-hud-scale));
-    --settings-card-padding: calc(15px * var(--n-hud-scale));
+    --settings-group-rail-width: calc(64px * var(--hud-scale));
+    --settings-subnav-width: calc(112px * var(--hud-scale));
+    --settings-shell-padding-x: calc(10px * var(--hud-scale));
+    --settings-pane-header-pad-x: calc(16px * var(--hud-scale));
+    --settings-pane-body-pad-x: calc(16px * var(--hud-scale));
+    --settings-card-padding: calc(15px * var(--hud-scale));
   }
 
   .aethon-port--settings .n-topbar--settings {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) auto;
-    gap: calc(8px * var(--n-hud-scale));
+    gap: calc(8px * var(--hud-scale));
   }
 
   .aethon-port--settings #settingsGroupRail.sidebar,
   .aethon-port--settings .settings-group-rail {
     min-width: var(--settings-group-rail-width);
-    padding-inline: calc(5px * var(--n-hud-scale));
+    padding-inline: calc(5px * var(--hud-scale));
     align-items: center;
   }
 
@@ -3429,7 +3429,7 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   .aethon-port--settings .nav-item.cat-btn,
   .aethon-port--settings .cat-btn {
     justify-content: center;
-    width: calc(42px * var(--n-hud-scale));
+    width: calc(42px * var(--hud-scale));
     padding-inline: 0;
   }
 }
@@ -3447,10 +3447,10 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   .aethon-port--settings .content-subnav.settings-subnav,
   .aethon-port--settings .settings-subnav {
     min-width: 0;
-    padding: calc(10px * var(--n-hud-scale)) calc(12px * var(--n-hud-scale));
+    padding: calc(10px * var(--hud-scale)) calc(12px * var(--hud-scale));
     flex-direction: row;
     align-items: center;
-    gap: calc(8px * var(--n-hud-scale));
+    gap: calc(8px * var(--hud-scale));
     overflow-x: auto;
     overflow-y: hidden;
     border-right: none;
@@ -3482,14 +3482,14 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
     width: auto;
     flex: 0 0 auto;
     white-space: nowrap;
-    padding-inline: calc(10px * var(--n-hud-scale));
+    padding-inline: calc(10px * var(--hud-scale));
   }
 
   .aethon-port--settings {
-    --settings-pane-header-pad-x: calc(12px * var(--n-hud-scale));
-    --settings-pane-body-pad-x: calc(12px * var(--n-hud-scale));
-    --settings-card-padding: calc(13px * var(--n-hud-scale));
-    --settings-grid-gap: calc(12px * var(--n-hud-scale));
+    --settings-pane-header-pad-x: calc(12px * var(--hud-scale));
+    --settings-pane-body-pad-x: calc(12px * var(--hud-scale));
+    --settings-card-padding: calc(13px * var(--hud-scale));
+    --settings-grid-gap: calc(12px * var(--hud-scale));
   }
 
   .aethon-port--settings .settings-pane-header {
@@ -3498,14 +3498,14 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
   }
 
   .aethon-port--settings .settings-pane-header__title {
-    font-size: calc(28px * var(--n-hud-scale));
+    font-size: calc(28px * var(--hud-scale));
   }
 
   .aethon-port--settings .settings-row,
   .aethon-port--settings .settings-mini-row {
     align-items: stretch;
     flex-direction: column;
-    gap: calc(9px * var(--n-hud-scale));
+    gap: calc(9px * var(--hud-scale));
   }
 
   .aethon-port--settings .settings-row > :not(.settings-mini-row__body),
@@ -3770,14 +3770,14 @@ html[data-aethon-motion="idle"] .aethon-port--settings .content-header.n-topbar.
 /* Premium Text Inputs for Nocturne Settings */
 .aethon-port--settings .settings-text-input {
   width: 200px;
-  min-height: calc(34px * var(--n-hud-scale));
-  padding: 0 calc(12px * var(--n-hud-scale));
-  border-radius: calc(10px * var(--n-hud-scale));
+  min-height: calc(34px * var(--hud-scale));
+  padding: 0 calc(12px * var(--hud-scale));
+  border-radius: calc(10px * var(--hud-scale));
   border: 1px solid var(--component-settings-input-border);
   background: var(--component-settings-input-bg);
   color: var(--component-settings-input-fg);
   font-family: var(--font-ui);
-  font-size: calc(12px * var(--n-hud-scale));
+  font-size: calc(12px * var(--hud-scale));
   box-sizing: border-box;
   transition: border-color var(--duration-normal) ease, background var(--duration-normal) ease, box-shadow var(--duration-normal) ease;
 }

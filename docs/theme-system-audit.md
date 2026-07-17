@@ -3291,13 +3291,37 @@ Categorias cobertas:
 - Restam 28 aliases ativos de escala/geometria. `--n-hud-scale` nao pode ser trocado por `--app-resolution-scale`: `App.svelte` calcula `hudScale` e `contentScale` separadamente.
 - Search width/focus, Sidebar, Topbar, Settings e Reader dependem dessa cadeia. O Marco 55B deve preservar `--hud-scale` como origem dinamica, migrar os consumidores para tokens canonicos e repetir o gate nativo, incluindo o dim/focus da Search.
 
+## Marco 55B - Active `--n-*` Geometry Decoupling
+
+### Escopo e arquitetura
+
+- Os 28 aliases ativos de escala/geometria deixaram de ser consumidos pela camada visual ativa nao-Syncd. `--hud-scale` permanece a origem dinamica canonica publicada por `App.svelte`; `--app-resolution-scale` continua independente para escala de conteudo.
+- Foram introduzidos tokens `--shell-*` para topbar, sidebar/rail, search, icon buttons e segmented controls. Os aliases antigos `--n-hud-scale`, `--n-topbar-height`, `--n-sidebar-*`, `--n-search-*`, `--n-icon-button-*` e `--n-segmented-height` permanecem definidos como bridges exatas para os tokens canonicos.
+- `nocturne-port.css`, `nocturne-theme.css` e `global.css` passaram a consumir `--hud-scale` e `--shell-*` diretamente. `App.svelte` nao publica mais `--n-hud-scale` em runtime, evitando duas fontes mutaveis para a mesma escala.
+- A busca global e o gate de contrato confirmam zero `var(--n-*)` em consumidores ativos nao-Syncd. Permanecem somente seis referencias em seletores Legacy sem host ativo do port, uma referencia em Syncd, uma em `Discover.svelte` Legacy e referencias geometricas em `Extensions.svelte` Legacy. Nenhuma foi removida ou migrada neste lote.
+- O inventario de component tokens foi corrigido para **2.730 total / 2.576 Ativos / 94 Legacy / 60 Syncd excluidos** por causa do token de altura do Taste Profile introduzido no marco anterior; o Marco 55B nao adicionou component token.
+
+### Evidencia visual real
+
+- Capturas before/after em `docs/screenshots/marco55b-n-geometry/` cobrem **10 superficies reais**: Library Books, menu de contexto, Search, Discover, Sources, overlay de repositorios, Downloads, Settings, Theme/Settings e Reader PDF/HUD.
+- Search, rail, topbar, Settings e Reader HUD mantiveram largura, altura, radius, espacamento e hierarquia visual equivalentes. A diferenca de texto/pagina nas capturas do Reader corresponde apenas ao capitulo corrente do runtime.
+- Os dois `runtime-audit.json` registram o mesmo viewport `1280x800`, identidade Nocturne, seis pares de contraste e evidencia de foco. Nenhuma regressao aparente foi identificada.
+- Nenhum toast real ocorreu durante a captura e nenhum estado artificial foi criado; a barra de vida permanece coberta pelos testes focados e pela evidencia dos marcos anteriores.
+
+### Gates
+
+- Unit/jsdom: **8 arquivos / 72 testes verdes**, cobrindo App, shell ativo, layout, BrowseV3, Settings, port, gate global e inventario; inclui equivalencia bridge/canonico e zero consumidor ativo `--n-*`.
+- Browser Chromium: **2 arquivos / 10 testes verdes**. `nocturnePortCompatibility.browser.test.ts` valida em computed style a equivalencia dos tokens de Search e rail sob `--hud-scale: 0.8`; `themeProbe.browser.test.ts` confirma a resposta ao tema-probe.
+- `pnpm build`: verde, com apenas o aviso conhecido de chunk principal acima de 500 kB. `git diff --check`: verde.
+- Nenhum documento de tema, dado do usuario, layout, comportamento, Syncd ou componente Legacy foi alterado.
+
 ## Proximos marcos adiados
 
-### Marco 55 - Active `--n-*` Decoupling
+### Marco 55 - Active `--n-*` Decoupling (concluido em 55A/55B)
 
-- Migrar consumidores ativos dos 45 aliases `--n-*` Ativos para tokens canonicos, preservando todos os nomes antigos como bridges Legacy.
-- Dividir em 55A (cores, surfaces, motion e medidas independentes) e 55B (`--n-hud-scale` e geometria derivada) para conter o risco visual.
-- Aceite: zero dependencia `--n-*` em componente ativo, bridges ainda definidas, Nocturne pixel-equivalente, documentos V1-V5 e ThemeEditor preservados.
+- Os 45 aliases antes classificados como Ativos deixaram de ser dependencias da camada visual ativa nao-Syncd e continuam definidos como bridges Legacy.
+- 55A consolidou cores, surfaces e motion; 55B consolidou `--hud-scale` e geometria derivada.
+- Aceite cumprido: zero dependencia `--n-*` em componente ativo nao-Syncd, bridges ainda definidas, Nocturne visualmente equivalente e documentos V1-V5/ThemeEditor preservados.
 
 ### Marco 56 - Legacy Retention Evidence
 

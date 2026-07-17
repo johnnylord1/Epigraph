@@ -14,8 +14,8 @@ html, body, #app { width: 100%; min-height: 100%; overflow: hidden; }
   --app-shell-inline-pad: clamp(18px, calc(28px * var(--app-resolution-scale)), 32px);
   --app-shell-block-pad: clamp(20px, calc(28px * var(--app-resolution-scale)), 36px);
   --app-shell-section-gap: clamp(16px, calc(24px * var(--app-resolution-scale)), 30px);
-  --app-shell-card-max-inline: calc(560px * var(--n-hud-scale, 1));
-  --app-shell-action-max-inline: calc(420px * var(--n-hud-scale, 1));
+  --app-shell-card-max-inline: calc(560px * var(--hud-scale, 1));
+  --app-shell-action-max-inline: calc(420px * var(--hud-scale, 1));
 }
 
 :root[data-app-resolution-tier="cozy"] {
@@ -28,8 +28,8 @@ html, body, #app { width: 100%; min-height: 100%; overflow: hidden; }
   --app-shell-inline-pad: clamp(14px, calc(20px * var(--app-resolution-scale)), 22px);
   --app-shell-block-pad: clamp(16px, calc(20px * var(--app-resolution-scale)), 24px);
   --app-shell-section-gap: clamp(12px, calc(16px * var(--app-resolution-scale)), 18px);
-  --app-shell-card-max-inline: calc(520px * var(--n-hud-scale, 1));
-  --app-shell-action-max-inline: calc(360px * var(--n-hud-scale, 1));
+  --app-shell-card-max-inline: calc(520px * var(--hud-scale, 1));
+  --app-shell-action-max-inline: calc(360px * var(--hud-scale, 1));
 }
 
 body {

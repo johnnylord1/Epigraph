@@ -78,6 +78,23 @@ const legacyActivityTokens = [
   "--activity-accent-line",
   "--activity-danger",
 ] as const;
+const compatibilityConsumerFiles = new Set([
+  "src/styles/nocturne-port.css",
+  "src/components/pages/Discover.svelte",
+  "src/components/pages/Extensions.svelte",
+  "src/components/shared/SourceBrowse.svelte",
+  "src/components/shared/SourceList.svelte",
+  "src/components/pages/NovelSources.svelte",
+  "src/components/novels/NovelSourceCheckModal.svelte",
+  "src/components/novels/NovelSourceStatusDetails.svelte",
+  "src/components/settings/NovelRepositoriesPanel.svelte",
+  "src/components/library/NovelsLibraryBody.svelte",
+  "src/components/pages/Tracking.svelte",
+  "src/components/pages/GenreDrillPage.svelte",
+  "src/components/settings/SyncdConnectionPanel.svelte",
+  "src/components/settings/SyncdSessionDetails.svelte",
+  "src/lib/syncdQr.ts",
+]);
 
 interface CssDeclaration {
   name: string;
@@ -407,19 +424,19 @@ describe("final derived theme gate", () => {
     expect(nocturneMissing).toEqual([]);
   });
 
-  test("preserves the audited active and Legacy compatibility inventories", () => {
+  test("preserves the audited compatibility bridge and Legacy inventories", () => {
     const source = sourceCorpus("src");
     const nocturneTokens = new Set(
       declarations(nocturneCss)
         .map(({ name }) => name)
         .filter((name) => name.startsWith("--n-")),
     );
-    const activeTokens = [...nocturneTokens].filter(
+    const compatibilityBridges = [...nocturneTokens].filter(
       (token) => !legacyNocturneTokens.includes(token as (typeof legacyNocturneTokens)[number]),
     );
 
     expect(nocturneTokens.size).toBe(62);
-    expect(activeTokens).toHaveLength(45);
+    expect(compatibilityBridges).toHaveLength(45);
     expect(legacyNocturneTokens).toHaveLength(17);
     expect(legacyActivityTokens).toHaveLength(13);
 
@@ -434,6 +451,20 @@ describe("final derived theme gate", () => {
       expect(nocturneCss, `${token} must remain defined`).toMatch(new RegExp(`${token}\\s*:`));
       expect(nocturnePortCss, `${token} must remain attached to its Legacy selector`).toContain(`var(${token})`);
     }
+  });
+
+  test("keeps active non-Syncd production consumers independent from --n-*", () => {
+    const activeSources = sourceFiles("src")
+      .filter((path) => !compatibilityConsumerFiles.has(path))
+      .filter((path) => !path.endsWith("src/styles/tokens.css") && !path.endsWith("src/styles/nocturne-theme.css"))
+      .map((path) => readFileSync(resolve(ROOT, path), "utf8"));
+    const activeThemeDefinitions = `${tokensCss}\n${nocturneCss}`
+      .replace(/^\s*--(?:n|activity)-[\w-]+\s*:\s*[\s\S]*?;/gm, "")
+      .replace(/^\s*--component-syncd-[\w-]+\s*:\s*[\s\S]*?;/gm, "");
+    const references = `${activeSources.join("\n")}\n${activeThemeDefinitions}`
+      .match(/var\(--n-[\w-]+/g) ?? [];
+
+    expect(references).toEqual([]);
   });
 
   test.each([

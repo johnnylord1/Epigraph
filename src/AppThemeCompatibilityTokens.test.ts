@@ -134,10 +134,11 @@ describe("App theme compatibility contract", () => {
     }
   });
 
-  it("preserves the active HUD scale compatibility publisher", () => {
-    expect(readProjectFile("src/App.svelte")).toContain(
-      'style.setProperty("--n-hud-scale", hudScale)',
-    );
+  it("publishes HUD scale only through the canonical runtime token", () => {
+    const app = readProjectFile("src/App.svelte");
+
+    expect(app).toContain('style.setProperty("--hud-scale", hudScale)');
+    expect(app).not.toContain('style.setProperty("--n-hud-scale", hudScale)');
   });
 
   it("normalizes app theme application through the canonical registry", () => {

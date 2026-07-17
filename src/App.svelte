@@ -244,7 +244,6 @@
       document.documentElement.style.setProperty("--visual-vw", `${visualWidth}px`);
       document.documentElement.style.setProperty("--app-shell-visual-width", `${shellVisualWidth}px`);
       document.documentElement.style.setProperty("--hud-scale", hudScale);
-      document.documentElement.style.setProperty("--n-hud-scale", hudScale);
       document.documentElement.style.setProperty("--app-resolution-scale", contentScale);
       document.documentElement.setAttribute("data-app-resolution-tier", resolutionTier);
     });

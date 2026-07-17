@@ -396,19 +396,19 @@
   --component-window-control-close-bg-hover: color-mix(in srgb, var(--color-window-control-close-source) 92%, transparent);
   --component-window-control-close-border-hover: color-mix(in srgb, var(--color-window-control-close-border-source) 50%, transparent);
   --component-window-control-close-fg-hover: var(--color-highlight-source);
-  --component-layout-main-sidebar-offset: var(--n-sidebar-width, 74px);
-  --component-window-inline-gap: calc(4px * var(--n-hud-scale, 1));
-  --component-window-inline-button-size: calc(24px * var(--n-hud-scale, 1));
+  --component-layout-main-sidebar-offset: var(--shell-sidebar-width, 74px);
+  --component-window-inline-gap: calc(4px * var(--hud-scale, 1));
+  --component-window-inline-button-size: calc(24px * var(--hud-scale, 1));
   --component-window-inline-button-radius: 8px;
   --component-window-inline-button-transition: background 140ms ease, color 140ms ease, transform 90ms ease;
   --component-window-inline-button-active-transform: scale(0.92);
-  --component-window-inline-icon-size: calc(11px * var(--n-hud-scale, 1));
+  --component-window-inline-icon-size: calc(11px * var(--hud-scale, 1));
   --component-window-inline-focus-ring: var(--component-focus-ring);
   --component-activity-badge-bg: color-mix(in srgb, var(--color-activity-badge-surface-source) 88%, transparent);
   --component-activity-badge-fg: var(--color-activity-badge-text-source);
   --component-activity-badge-text-shadow:
-    0 0 calc(2px * var(--n-hud-scale)) color-mix(in srgb, var(--color-activity-badge-glow-source) 98%, transparent),
-    0 0 calc(7px * var(--n-hud-scale)) color-mix(in srgb, var(--color-activity-glow-source) 72%, transparent);
+    0 0 calc(2px * var(--hud-scale)) color-mix(in srgb, var(--color-activity-badge-glow-source) 98%, transparent),
+    0 0 calc(7px * var(--hud-scale)) color-mix(in srgb, var(--color-activity-glow-source) 72%, transparent);
   --component-activity-overlay-bg:
     radial-gradient(circle at 20% 0%, color-mix(in srgb, var(--color-activity-glow-source) 12%, transparent), transparent 34%),
     color-mix(in srgb, var(--color-activity-overlay-source) 96%, transparent);
@@ -418,7 +418,7 @@
   --component-activity-overlay-back-border: color-mix(in srgb, var(--border-strong) 14%, transparent);
   --component-activity-overlay-back-fg: color-mix(in srgb, var(--text-secondary) 68%, transparent);
   --component-activity-overlay-back-hover-fg: var(--text-primary);
-  --component-activity-scale: var(--n-hud-scale, 1);
+  --component-activity-scale: var(--hud-scale, 1);
   --component-activity-button-size: calc(38px * var(--component-activity-scale));
   --component-activity-badge-offset: calc(2px * var(--component-activity-scale));
   --component-activity-badge-min-size: calc(14px * var(--component-activity-scale));
@@ -426,7 +426,7 @@
   --component-activity-badge-radius: 999px;
   --component-activity-badge-font-size: calc(11px * var(--component-activity-scale));
   --component-activity-overlay-gap: calc(20px * var(--component-activity-scale));
-  --component-activity-overlay-padding: calc((var(--n-topbar-height, 56px) + 24px) * var(--component-activity-scale)) calc(28px * var(--component-activity-scale)) calc(24px * var(--component-activity-scale));
+  --component-activity-overlay-padding: calc((var(--shell-topbar-height, 56px) + 24px) * var(--component-activity-scale)) calc(28px * var(--component-activity-scale)) calc(24px * var(--component-activity-scale));
   --component-activity-overlay-back-gap: calc(8px * var(--component-activity-scale));
   --component-activity-overlay-back-radius: 999px;
   --component-activity-overlay-back-font-size: calc(11px * var(--component-activity-scale));
@@ -482,7 +482,7 @@
   --component-activity-center-dot-border: var(--color-activity-panel-source);
   --component-activity-center-dot-shadow: 0 0 0 1px color-mix(in srgb, var(--color-activity-accent-source) 24%, transparent);
   --component-activity-center-download-dot-bg: color-mix(in srgb, var(--color-activity-muted-source) 62%, transparent);
-  --component-home-scale: var(--n-hud-scale, 1);
+  --component-home-scale: var(--hud-scale, 1);
   --component-home-search-dim-z-index: 61;
   --component-home-search-topbar-z-index: 62;
   --component-home-search-field-z-index: 63;
@@ -661,7 +661,7 @@
   --component-settings-button-fg-hover: color-mix(in srgb, var(--color-settings-button-emphasis) 96%, transparent);
   --component-settings-button-border: color-mix(in srgb, var(--color-highlight-source) 5%, transparent);
   --component-settings-button-border-hover: color-mix(in srgb, var(--accent-bright) 25%, transparent);
-  --component-settings-button-shadow-hover: 0 0 calc(12px * var(--n-hud-scale)) color-mix(in srgb, var(--accent-bright) 4%, transparent);
+  --component-settings-button-shadow-hover: 0 0 calc(12px * var(--hud-scale)) color-mix(in srgb, var(--accent-bright) 4%, transparent);
   --component-settings-danger-fg: color-mix(in srgb, var(--color-settings-danger-text) 88%, transparent);
   --component-settings-danger-fg-hover: var(--color-settings-danger-text-hover);
   --component-settings-danger-bg-hover: color-mix(in srgb, var(--color-settings-danger-surface) 18%, transparent);
@@ -895,8 +895,8 @@
   --component-updater-changelog-font: "Manrope", "Inter", system-ui, sans-serif;
   --component-updater-changelog-font-size: 12px;
   --component-updater-changelog-line-height: 1.6;
-  --component-downloads-scale: var(--n-hud-scale);
-  --component-downloads-topbar-height: var(--n-topbar-height);
+  --component-downloads-scale: var(--hud-scale);
+  --component-downloads-topbar-height: var(--shell-topbar-height);
   --component-downloads-content-z-index: 1;
   --component-downloads-topbar-z-index: 50;
   --component-downloads-topbar-gap: calc(16px * var(--component-downloads-scale));
@@ -1047,15 +1047,15 @@
   --component-browse-browsefield-picker-z-index: 80;
   --component-browse-browseinlinepicker-z-index: 90;
   --component-browse-discoverpanelheader-radius-flat: 0;
-  --component-browse-root-padding-top:  var(--n-topbar-height);
+  --component-browse-root-padding-top:  var(--shell-topbar-height);
   --component-browse-root-browse-topbar-grid-template-columns:
     minmax(0, 1fr)
-    minmax(0, min(calc(640px * var(--n-hud-scale)), 44vw))
+    minmax(0, min(calc(640px * var(--hud-scale)), 44vw))
     minmax(0, 1fr);
-  --component-browse-root-browse-topbar-gap:  calc(16px * var(--n-hud-scale));
-  --component-browse-browse-topbar-right-gap:  calc(8px * var(--n-hud-scale));
-  --component-browse-root-browse-topbar-n-search-width:  min(100%, var(--n-search-width));
-  --component-browse-root-is-search-engaged-browse-topbar-width:  min(100%, var(--n-search-width-focus));
+  --component-browse-root-browse-topbar-gap:  calc(16px * var(--hud-scale));
+  --component-browse-browse-topbar-right-gap:  calc(8px * var(--hud-scale));
+  --component-browse-root-browse-topbar-n-search-width:  min(100%, var(--shell-search-width));
+  --component-browse-root-is-search-engaged-browse-topbar-width:  min(100%, var(--shell-search-width-focus));
   --component-browse-browsesubtabs-gap:  24px;
   --component-browse-browsesubtabs-border-bottom:  1px solid color-mix(in srgb, var(--color-highlight-source) 5%, transparent);
   --component-browse-browsesubtab-font-size:  10px;
@@ -1067,14 +1067,14 @@
   --component-browse-browsesubtabactive-border-bottom:  1px solid var(--accent);
   --component-browse-setup-banner-padding:  12px clamp(28px, 3vw, 56px) 0;
   --component-browse-setup-banner-n-state-max-width:  1120px;
-  --component-browse-catalogsidebar-width:  calc(230px * var(--n-hud-scale));
-  --component-browse-catalogsidebar-gap:  calc(12px * var(--n-hud-scale));
-  --component-browse-catalogsidebar-padding:  calc(16px * var(--n-hud-scale)) calc(12px * var(--n-hud-scale));
+  --component-browse-catalogsidebar-width:  calc(230px * var(--hud-scale));
+  --component-browse-catalogsidebar-gap:  calc(12px * var(--hud-scale));
+  --component-browse-catalogsidebar-padding:  calc(16px * var(--hud-scale)) calc(12px * var(--hud-scale));
   --component-browse-catalogsidebar-border-right:  1px solid color-mix(in srgb, var(--color-highlight-source) 5%, transparent);
   --component-browse-catalogsidebar-background:
     linear-gradient(180deg, color-mix(in srgb, var(--color-deep-panel-source) 58%, transparent), color-mix(in srgb, var(--color-browse-sidebar-deep-source) 18%, transparent)),
     color-mix(in srgb, var(--color-browse-sidebar-surface-source) 38%, transparent);
-  --component-browse-browsefiltersection-gap:  calc(10px * var(--n-hud-scale));
+  --component-browse-browsefiltersection-gap:  calc(10px * var(--hud-scale));
   --component-browse-catalogtaglist-gap:  4px;
   --component-browse-searchbar-min-height:  40px;
   --component-browse-searchbar-background:  color-mix(in srgb, var(--color-browse-search-surface-source) 78%, transparent);
@@ -1290,7 +1290,7 @@
     clamp(10px, 1.1vw, 18px)
     clamp(14px, 1.8vw, 28px)
     clamp(14px, 1.7vw, 26px);
-  --component-browse-catalogshell-border-radius:  calc(24px * var(--n-hud-scale));
+  --component-browse-catalogshell-border-radius:  calc(24px * var(--hud-scale));
   --component-browse-catalogshell-border:  1px solid color-mix(in srgb, var(--color-highlight-source) 5.5%, transparent);
   --component-browse-catalogshell-background:
     radial-gradient(circle at 18% 8%, color-mix(in srgb, var(--accent-bright) 6.5%, transparent), transparent 34%),
@@ -1407,9 +1407,9 @@
   --component-browse-browsesectionbody-transition:
     max-height 220ms ease,
     opacity 170ms ease;
-  --component-browse-splitsourceicon-sourceicon-width:  calc(18px * var(--n-hud-scale));
-  --component-browse-splitsourceicon-sourceicon-height:  calc(18px * var(--n-hud-scale));
-  --component-browse-splitsourceicon-sourceicon-border-radius:  calc(5px * var(--n-hud-scale));
+  --component-browse-splitsourceicon-sourceicon-width:  calc(18px * var(--hud-scale));
+  --component-browse-splitsourceicon-sourceicon-height:  calc(18px * var(--hud-scale));
+  --component-browse-splitsourceicon-sourceicon-border-radius:  calc(5px * var(--hud-scale));
   --component-browse-browsegenressection-margin-bottom:  clamp(12px, 0.75vw, 15px);
   --component-browse-browsegenressection-gap:  4px;
   --component-browse-browsegenressection-browsesectionbody-margin-top:  -5px;
@@ -1434,13 +1434,13 @@
   --component-browse-catalogoptionactive-color:  var(--color-browse-option-text-source) !important;
   --component-browse-catalogoptionactive-border-color:  color-mix(in srgb, var(--accent-bright) 42%, transparent);
   --component-browse-catalogoptionactive-background:  linear-gradient(180deg, color-mix(in srgb, var(--accent-bright) 28%, transparent), color-mix(in srgb, var(--color-browse-option-accent-source) 16%, transparent));
-  --component-browse-catalogsearchwrap-margin:  0 0 calc(7px * var(--n-hud-scale));
-  --component-browse-catalogsearchwrap-min-height:  calc(29px * var(--n-hud-scale));
-  --component-browse-catalogsearchwrap-padding:  0 calc(10px * var(--n-hud-scale));
+  --component-browse-catalogsearchwrap-margin:  0 0 calc(7px * var(--hud-scale));
+  --component-browse-catalogsearchwrap-min-height:  calc(29px * var(--hud-scale));
+  --component-browse-catalogsearchwrap-padding:  0 calc(10px * var(--hud-scale));
   --component-browse-catalogsearchwrap-border:  1px solid color-mix(in srgb, var(--color-highlight-source) 5.5%, transparent);
-  --component-browse-catalogsearchwrap-border-radius:  calc(12px * var(--n-hud-scale));
+  --component-browse-catalogsearchwrap-border-radius:  calc(12px * var(--hud-scale));
   --component-browse-catalogsearchwrap-background:  color-mix(in srgb, var(--color-deepest-panel-source) 42%, transparent);
-  --component-browse-catalogsearchwrap-splitsearchinput-font-size:  calc(11px * var(--n-hud-scale));
+  --component-browse-catalogsearchwrap-splitsearchinput-font-size:  calc(11px * var(--hud-scale));
   --component-browse-catalogsearchwrap-splitsearchinput-color:  color-mix(in srgb, var(--text-primary) 64%, transparent);
   --component-browse-catalogsearchwrap-splitsearchinput-color-2:  color-mix(in srgb, var(--text-primary) 32%, transparent);
   --component-browse-catalogsearchwrap-splitsearchicon-color:  color-mix(in srgb, var(--text-primary) 28%, transparent);
@@ -1450,13 +1450,13 @@
   --component-browse-taggrid-gap:  clamp(14px, 1.05vw, 20px) clamp(12px, 0.9vw, 17px);
   --component-browse-taggrid-padding:  clamp(8px, 0.75vw, 14px) clamp(10px, 0.8vw, 16px) clamp(14px, 1vw, 20px);
   --component-browse-sourcerow-n-library-card-flex:  0 0 clamp(108px, 7.4vw, 136px);
-  --component-browse-sourcesection-margin:  0 calc(22px * var(--n-hud-scale)) calc(12px * var(--n-hud-scale));
-  --component-browse-sourcesection-padding:  calc(10px * var(--n-hud-scale)) calc(14px * var(--n-hud-scale)) calc(14px * var(--n-hud-scale));
+  --component-browse-sourcesection-margin:  0 calc(22px * var(--hud-scale)) calc(12px * var(--hud-scale));
+  --component-browse-sourcesection-padding:  calc(10px * var(--hud-scale)) calc(14px * var(--hud-scale)) calc(14px * var(--hud-scale));
   --component-browse-sourcesection-border:  1px solid color-mix(in srgb, var(--color-highlight-source) 5%, transparent);
-  --component-browse-sourcesection-border-radius:  calc(18px * var(--n-hud-scale));
+  --component-browse-sourcesection-border-radius:  calc(18px * var(--hud-scale));
   --component-browse-sourcesection-background:  color-mix(in srgb, var(--color-browse-catalog-surface-source) 64%, transparent);
-  --component-browse-results-padding-top:  calc(10px * var(--n-hud-scale));
-  --component-browse-sourcebrowsebar-searchbar-min-height:  calc(40px * var(--n-hud-scale));
+  --component-browse-results-padding-top:  calc(10px * var(--hud-scale));
+  --component-browse-sourcebrowsebar-searchbar-min-height:  calc(40px * var(--hud-scale));
   --component-browse-sourcebrowsebar-searchbar-border-color:  color-mix(in srgb, var(--color-highlight-source) 5.5%, transparent);
   --component-browse-sourcebrowsebar-searchbar-background:  color-mix(in srgb, var(--color-browse-source-search-surface-source) 70%, transparent);
   --component-browse-discoverpanel-gap:  clamp(10px, 0.8vw, 14px);
@@ -1515,7 +1515,7 @@
   --component-browse-searchherocopy-font-size-4:  22px;
   --component-library-font: "Manrope", var(--font-sans);
   --component-library-scale: var(--hud-scale, 1);
-  --component-library-topbar-height: var(--n-topbar-height);
+  --component-library-topbar-height: var(--shell-topbar-height);
   --component-library-surface: color-mix(in srgb, var(--bg-surface) 72%, transparent);
   --component-library-surface-raised: color-mix(in srgb, var(--bg-raised) 76%, transparent);
   --component-library-border-dim: color-mix(in srgb, var(--text-secondary) 8%, transparent);
@@ -1659,7 +1659,7 @@
     radial-gradient(circle at 50% -8%, color-mix(in srgb, var(--accent-bright) 10%, transparent), transparent 34%),
     color-mix(in srgb, var(--color-deep-scrim-source) 70%, transparent);
   --component-sources-overlay-blur: blur(8px) saturate(0.82);
-  --component-sources-sidebar-width: var(--n-sidebar-width, 76px);
+  --component-sources-sidebar-width: var(--shell-sidebar-width, 76px);
   --component-sources-sidebar-scrim-z-index: 3;
   --component-sources-sidebar-scrim-bg:
     radial-gradient(circle at 50% 7%, color-mix(in srgb, var(--accent-bright) 8%, transparent), transparent 44%),
@@ -2567,40 +2567,40 @@
   --n-duration-normal: var(--duration-relaxed);
   --n-ease-spring: var(--easing-spring);
 
-  --n-topbar-height-base: 56px;
-  --n-sidebar-width-base: 76px;
-  --n-topbar-height: calc(var(--n-topbar-height-base) * var(--n-hud-scale));
-  --n-sidebar-width: calc(var(--n-sidebar-width-base) * var(--n-hud-scale));
-  --n-sidebar-rail-width: calc(62px * var(--n-hud-scale));
-  --n-sidebar-edge-x: calc(6px * var(--n-hud-scale));
-  --n-sidebar-edge-y: calc(14px * var(--n-hud-scale));
-  --n-sidebar-radius: calc(24px * var(--n-hud-scale));
-  --n-sidebar-padding-y: calc(24px * var(--n-hud-scale));
-  --n-sidebar-gap: calc(8px * var(--n-hud-scale));
-  --n-sidebar-btn-size: calc(44px * var(--n-hud-scale));
-  --n-sidebar-btn-radius: calc(14px * var(--n-hud-scale));
+  --n-topbar-height-base: var(--shell-topbar-height-base);
+  --n-sidebar-width-base: var(--shell-sidebar-width-base);
+  --n-topbar-height: var(--shell-topbar-height);
+  --n-sidebar-width: var(--shell-sidebar-width);
+  --n-sidebar-rail-width: var(--shell-sidebar-rail-width);
+  --n-sidebar-edge-x: var(--shell-sidebar-edge-x);
+  --n-sidebar-edge-y: var(--shell-sidebar-edge-y);
+  --n-sidebar-radius: var(--shell-sidebar-radius);
+  --n-sidebar-padding-y: var(--shell-sidebar-padding-y);
+  --n-sidebar-gap: var(--shell-sidebar-gap);
+  --n-sidebar-btn-size: var(--shell-sidebar-button-size);
+  --n-sidebar-btn-radius: var(--shell-sidebar-button-radius);
 
-  --n-brand-size: calc(62px * var(--n-hud-scale));
-  --n-brand-offset-top: calc(-12px * var(--n-hud-scale));
-  --n-brand-offset-bottom: calc(28px * var(--n-hud-scale));
+  --n-brand-size: var(--shell-brand-size);
+  --n-brand-offset-top: var(--shell-brand-offset-top);
+  --n-brand-offset-bottom: var(--shell-brand-offset-bottom);
 
-  --n-topbar-pad-x: calc(28px * var(--n-hud-scale));
-  --n-topbar-gap: calc(20px * var(--n-hud-scale));
-  --n-search-width: calc(300px * var(--n-hud-scale));
-  --n-search-width-focus: calc(380px * var(--n-hud-scale));
-  --n-search-height: calc(44px * var(--n-hud-scale));
-  --n-search-icon-offset: calc(14px * var(--n-hud-scale));
-  --n-search-icon-size: calc(17px * var(--n-hud-scale));
-  --n-search-padding-right: calc(16px * var(--n-hud-scale));
-  --n-search-padding-left: calc(42px * var(--n-hud-scale));
+  --n-topbar-pad-x: var(--shell-topbar-padding-x);
+  --n-topbar-gap: var(--shell-topbar-gap);
+  --n-search-width: var(--shell-search-width);
+  --n-search-width-focus: var(--shell-search-width-focus);
+  --n-search-height: var(--shell-search-height);
+  --n-search-icon-offset: var(--shell-search-icon-offset);
+  --n-search-icon-size: var(--shell-search-icon-size);
+  --n-search-padding-right: var(--shell-search-padding-right);
+  --n-search-padding-left: var(--shell-search-padding-left);
 
-  --n-icon-btn-size: calc(36px * var(--n-hud-scale));
-  --n-icon-btn-radius: calc(10px * var(--n-hud-scale));
-  --n-toolbar-cluster-radius: calc(14px * var(--n-hud-scale));
-  --n-toolbar-cluster-padding: calc(3px * var(--n-hud-scale));
-  --n-toolbar-icon-btn-size: calc(18px * var(--n-hud-scale));
-  --n-toolbar-divider-height: calc(14px * var(--n-hud-scale));
-  --n-segmented-height: calc(32px * var(--n-hud-scale));
+  --n-icon-btn-size: var(--shell-icon-button-size);
+  --n-icon-btn-radius: var(--shell-icon-button-radius);
+  --n-toolbar-cluster-radius: calc(14px * var(--hud-scale));
+  --n-toolbar-cluster-padding: calc(3px * var(--hud-scale));
+  --n-toolbar-icon-btn-size: calc(18px * var(--hud-scale));
+  --n-toolbar-divider-height: calc(14px * var(--hud-scale));
+  --n-segmented-height: var(--shell-segmented-height);
 
   --n-popover-bg: var(--component-popover-bg);
   --n-popover-border: var(--component-popover-border);
@@ -2628,16 +2628,16 @@
   --activity-danger:      #f09aaa;
   /* Marco 17 - Detail surfaces */
   --component-detail-dl-danger-zone-empty-border-top-color: color-mix(in srgb, var(--text-secondary) 4.5%, transparent);
-  --component-detail-hud-action-font-size: calc(11px * var(--n-hud-scale, 1));
-  --component-detail-hud-action-min-height: calc(36px * var(--n-hud-scale, 1));
-  --component-detail-hud-action-padding-inline: calc(14px * var(--n-hud-scale, 1));
-  --component-detail-hud-control-size: calc(40px * var(--n-hud-scale, 1));
-  --component-detail-hud-icon-size: calc(18px * var(--n-hud-scale, 1));
+  --component-detail-hud-action-font-size: calc(11px * var(--hud-scale, 1));
+  --component-detail-hud-action-min-height: calc(36px * var(--hud-scale, 1));
+  --component-detail-hud-action-padding-inline: calc(14px * var(--hud-scale, 1));
+  --component-detail-hud-control-size: calc(40px * var(--hud-scale, 1));
+  --component-detail-hud-icon-size: calc(18px * var(--hud-scale, 1));
   --component-detail-link-backdrop-blur: blur(14px) saturate(118%);
   --component-detail-n-topbar-blur: blur(32px) saturate(140%);
   --component-detail-novel-link-backdrop-blur: blur(7px);
   --component-detail-popover-blur: blur(18px) saturate(120%);
-  --component-detail-topbar-height: var(--n-topbar-height, 56px);
+  --component-detail-topbar-height: var(--shell-topbar-height, 56px);
   --component-tracking-backdrop-blur: blur(14px) saturate(118%);
   --component-detail-action-band-background: radial-gradient(circle at 12% 0%, color-mix(in srgb, var(--accent-bright) 3.5%, transparent), transparent 30%), linear-gradient(180deg, color-mix(in srgb, var(--color-detail-hero-surface-source) 76%, transparent), color-mix(in srgb, var(--color-detail-action-surface-source) 88%, transparent));
   --component-detail-action-band-box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-secondary) 2.8%, transparent), inset 0 -1px 0 color-mix(in srgb, var(--text-secondary) 2%, transparent);
@@ -2858,7 +2858,7 @@
   --component-detail-series-v3-root-grid-cell-border-radius: 12px;
   --component-detail-series-v3-root-grid-cell-read-opacity: 0.46;
   --component-detail-series-v3-root-icon-btn-v3-icon-action-border-radius: 12px;
-  --component-detail-series-v3-root-n-topbar-right-series-icon-border-radius: calc(10px * var(--n-hud-scale, 1));
+  --component-detail-series-v3-root-n-topbar-right-series-icon-border-radius: calc(10px * var(--hud-scale, 1));
   --component-detail-series-v3-root-page-btn-background: color-mix(in srgb, var(--accent-bright) 5%, transparent);
   --component-detail-series-v3-root-page-btn-border-radius: 8px;
   --component-detail-series-v3-root-page-btn-font: 700 11px/1 "Manrope", "Inter", system-ui, sans-serif;
@@ -3115,7 +3115,7 @@
 .n-popover-surface {
   box-sizing: border-box;
   border: 1px solid var(--component-popover-border);
-  border-radius: calc(12px * var(--n-hud-scale));
+  border-radius: calc(12px * var(--hud-scale));
   background: var(--component-popover-bg);
   box-shadow: var(--component-popover-shadow);
   color: var(--component-popover-fg);
@@ -3143,16 +3143,16 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
-  padding: calc(14px * var(--n-hud-scale));
+  padding: calc(14px * var(--hud-scale));
   animation: n-popover-in 130ms ease both;
 }
 
 .n-popover-label {
   margin: 0;
-  padding: 0 0 calc(10px * var(--n-hud-scale));
+  padding: 0 0 calc(10px * var(--hud-scale));
   color: var(--component-popover-label-fg);
   font-family: var(--font-sans);
-  font-size: calc(11.5px * var(--n-hud-scale));
+  font-size: calc(11.5px * var(--hud-scale));
   font-weight: 700;
   letter-spacing: 0.09em;
   text-transform: uppercase;
@@ -3164,14 +3164,14 @@
   justify-content: space-between;
   gap: 10px;
   width: 100%;
-  min-height: calc(34px * var(--n-hud-scale));
-  padding: 0 calc(10px * var(--n-hud-scale));
+  min-height: calc(34px * var(--hud-scale));
+  padding: 0 calc(10px * var(--hud-scale));
   border: 0;
-  border-radius: calc(7px * var(--n-hud-scale));
+  border-radius: calc(7px * var(--hud-scale));
   background: transparent;
   color: var(--component-popover-fg);
   font-family: var(--font-sans);
-  font-size: calc(13px * var(--n-hud-scale));
+  font-size: calc(13px * var(--hud-scale));
   font-weight: 700;
   text-align: left;
   cursor: pointer;
@@ -3210,7 +3210,7 @@
 .n-popover-item > span:last-child:not(:first-child) {
   flex-shrink: 0;
   color: var(--component-popover-meta-fg);
-  font-size: calc(10.5px * var(--n-hud-scale));
+  font-size: calc(10.5px * var(--hud-scale));
   font-weight: 720;
   letter-spacing: 0.08em;
   text-transform: uppercase;

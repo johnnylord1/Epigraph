@@ -7,39 +7,43 @@ const ROOT = process.cwd();
 const PORT_PATH = "src/styles/nocturne-port.css";
 const PORT_LEGACY_TOKENS = ["--color-info-bg", "--splash-error", "--splash-ink-muted"];
 const PORT_N_REFERENCES = [
-  "--n-brand-offset-bottom",
-  "--n-brand-offset-top",
-  "--n-brand-size",
-  "--n-hud-scale",
-  "--n-icon-btn-radius",
-  "--n-icon-btn-size",
-  "--n-search-height",
-  "--n-search-icon-offset",
-  "--n-search-icon-size",
-  "--n-search-padding-left",
-  "--n-search-padding-right",
-  "--n-search-width",
-  "--n-search-width-focus",
-  "--n-segmented-height",
-  "--n-sidebar-btn-radius",
-  "--n-sidebar-btn-size",
-  "--n-sidebar-edge-x",
-  "--n-sidebar-edge-y",
-  "--n-sidebar-gap",
-  "--n-sidebar-padding-y",
-  "--n-sidebar-radius",
-  "--n-sidebar-rail-width",
-  "--n-sidebar-width",
   "--n-surface-container-high",
   "--n-surface-container-highest",
   "--n-toolbar-cluster-padding",
   "--n-toolbar-cluster-radius",
   "--n-toolbar-divider-height",
   "--n-toolbar-icon-btn-size",
-  "--n-topbar-gap",
-  "--n-topbar-height",
-  "--n-topbar-pad-x",
 ];
+const ACTIVE_GEOMETRY_BRIDGES = new Map([
+  ["--n-hud-scale", "--hud-scale"],
+  ["--n-topbar-height-base", "--shell-topbar-height-base"],
+  ["--n-sidebar-width-base", "--shell-sidebar-width-base"],
+  ["--n-topbar-height", "--shell-topbar-height"],
+  ["--n-sidebar-width", "--shell-sidebar-width"],
+  ["--n-sidebar-rail-width", "--shell-sidebar-rail-width"],
+  ["--n-sidebar-edge-x", "--shell-sidebar-edge-x"],
+  ["--n-sidebar-edge-y", "--shell-sidebar-edge-y"],
+  ["--n-sidebar-radius", "--shell-sidebar-radius"],
+  ["--n-sidebar-padding-y", "--shell-sidebar-padding-y"],
+  ["--n-sidebar-gap", "--shell-sidebar-gap"],
+  ["--n-sidebar-btn-size", "--shell-sidebar-button-size"],
+  ["--n-sidebar-btn-radius", "--shell-sidebar-button-radius"],
+  ["--n-brand-size", "--shell-brand-size"],
+  ["--n-brand-offset-top", "--shell-brand-offset-top"],
+  ["--n-brand-offset-bottom", "--shell-brand-offset-bottom"],
+  ["--n-topbar-pad-x", "--shell-topbar-padding-x"],
+  ["--n-topbar-gap", "--shell-topbar-gap"],
+  ["--n-search-width", "--shell-search-width"],
+  ["--n-search-width-focus", "--shell-search-width-focus"],
+  ["--n-search-height", "--shell-search-height"],
+  ["--n-search-icon-offset", "--shell-search-icon-offset"],
+  ["--n-search-icon-size", "--shell-search-icon-size"],
+  ["--n-search-padding-right", "--shell-search-padding-right"],
+  ["--n-search-padding-left", "--shell-search-padding-left"],
+  ["--n-icon-btn-size", "--shell-icon-button-size"],
+  ["--n-icon-btn-radius", "--shell-icon-button-radius"],
+  ["--n-segmented-height", "--shell-segmented-height"],
+] as const);
 const DIRECT_COLOR_PATTERN = /#[0-9A-Fa-f]{3,8}\b|rgba?\(|hsla?\(|oklch\(|(?<![-\w])(?:white|black)(?![-\w])/g;
 const PORT_DERIVED_SINGLE_SOURCES = [
   "--color-chip-surface-source",
@@ -172,8 +176,21 @@ describe("Nocturne port compatibility contract", () => {
     );
   });
 
-  test("preserves only the audited geometry and Legacy --n-* port surface", () => {
+  test("keeps only audited Legacy --n-* references in the active port", () => {
     expect(references(readProjectFile(PORT_PATH), "--n-")).toEqual(PORT_N_REFERENCES);
+  });
+
+  test("derives all 28 former active geometry aliases from canonical shell tokens", () => {
+    const port = readProjectFile(PORT_PATH);
+    const fallbackValues = declarationMap(readProjectFile("src/styles/tokens.css"));
+    const nocturneValues = declarationMap(readProjectFile("src/styles/nocturne-theme.css"));
+
+    expect(ACTIVE_GEOMETRY_BRIDGES).toHaveLength(28);
+    for (const [alias, canonical] of ACTIVE_GEOMETRY_BRIDGES) {
+      expect(fallbackValues.get(alias), `${alias} fallback bridge`).toBe(`var(${canonical})`);
+      expect(nocturneValues.get(alias), `${alias} Nocturne bridge`).toBe(`var(${canonical})`);
+      expect(port, `${alias} active port consumer`).not.toContain(`var(${alias}`);
+    }
   });
 
   test("keeps active port color and motion consumers on canonical tokens", () => {
