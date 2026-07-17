@@ -11,6 +11,8 @@
     "test:unit": "vitest run --project unit --project shell-jsdom",
     "test:browser": "vitest run --project browser-components",
     "test:suwayomi-certification": "node --test scripts/certify-suwayomi-release.test.mjs",
+    "theme:generate-builtins": "node scripts/generate-builtin-themes.mjs",
+    "theme:check-builtins": "node scripts/generate-builtin-themes.mjs --check",
     "theme:validate-promotion": "node scripts/validate-theme-promotion.mjs",
     "certify:suwayomi": "node scripts/certify-suwayomi-release.mjs",
     "syncd:prepare-sidecar": "node ./scripts/prepare-syncd-sidecar.mjs",

@@ -5,6 +5,7 @@ import { describe, expect, test } from "vitest";
 const ROOT = process.cwd();
 const EXCLUDED_THEME_FILES = new Set([
   "src/styles/tokens.css",
+  "src/styles/builtin-themes.generated.css",
   "src/styles/nocturne-theme.css",
   "src/styles/nocturne-port.css",
 ]);

@@ -3125,3 +3125,35 @@ Categorias cobertas:
 - A implementacao CSS e os contratos TypeScript dos builtins continuam duplicados e protegidos apenas por paridade browser. O proximo marco deve criar uma fonte unica verificavel sem alterar a ordem da cascata.
 - O provider consulta as stylesheets quando o tema muda. A lista e pequena e a operacao nao ocorre por frame, mas deve permanecer coberta por teste de troca repetida.
 - HUD Legacy, Syncd, `--n-*`, `--activity-*` e superficies Legacy permanecem intactos.
+
+## Marco 50 - Generated Builtin Theme Contracts
+
+### Fonte unica e geracao
+
+- `src/lib/theme/contract.ts` passa a ser a autoridade unica para os sete builtins existentes. `builtinCss.ts` gera deterministicamente **490 declaracoes**: 7 temas x (50 ThemeTokens + 15 HudThemeTokens + 5 propriedades de motion).
+- `src/styles/builtin-themes.generated.css` e importado entre o fallback `tokens.css` e as recipes `nocturne-theme.css`. O comando `pnpm theme:generate-builtins` atualiza o artefato e `pnpm theme:check-builtins` falha quando ele estiver desatualizado.
+- Os cinco blocos builtin parciais foram removidos de `tokens.css`; o contrato e HUD Nocturne deixaram de ser repetidos em `nocturne-theme.css`. Recipes semanticas/componentes e as 290 propriedades exatas de `:not([data-custom-theme])` permaneceram no mesmo nivel de cascata.
+- Nenhum builtin novo, component token, alias Legacy ou `--n-*` foi criado, removido ou reclassificado. Syncd permaneceu fora do escopo.
+
+### Gates e paridade
+
+- O teste `builtinCss.test.ts` exige igualdade byte a byte do artefato, uma declaracao de cada propriedade por builtin e ausencia dos antigos contratos manuais.
+- Os gates browser validaram os sete builtins, documentos V5 vazios, primitive/semantic/component response e ownership HUD: **3 arquivos / 14 testes verdes**.
+- No WebView2 real, Nocturne e Light apresentaram **70/70 propriedades computadas identicas** aos respectivos contratos gerados. A troca ocorreu apenas em `documentElement[data-theme]` e o tema Nocturne do usuario foi restaurado sem persistencia.
+
+### Evidencias visuais e limitacoes
+
+- Capturas after reais: `docs/screenshots/marco50-generated-builtins/after-nocturne-settings.png` e `after-light-settings.png`, ambas na tela Settings/Appearance completa.
+- Baseline Nocturne anterior: `docs/screenshots/marco49-custom-base/before-settings-appearance.png`. Nao houve mudanca aparente em geometria, surfaces, borders, shadows, radius, tipografia ou hierarquia.
+- As primeiras capturas before deste marco ocorreram durante composicao incompleta/ThemeEditor aberto e foram descartadas como diagnosticas. Para Light, a baseline anterior disponivel permanece a matriz browser do Marco 44; a captura real after confirma a cascata clara, mas nao constitui comparacao pixel a pixel contra um runtime Light anterior.
+
+### Regressao paralela corrigida
+
+- Durante a auditoria real foi reproduzido que renovar um toast com o mesmo `id` reiniciava seu timer, mas nao a barra visual. `Toaster.svelte` agora recria apenas a barra keyed por `updatedAt`; a animacao real voltou de ~1106 ms para ~177 ms depois da renovacao, sem reiniciar o shell do toast.
+- O fix foi isolado no commit `e0c4522` e coberto por teste jsdom. Ele nao altera tokens, API, duracao ou layout.
+
+### Riscos restantes
+
+- O artefato gerado precisa permanecer versionado; o check deterministico deve fazer parte dos gates de autoria/promocao finais.
+- Builtins alternativos continuam com validacao real menos extensa que Nocturne. O marco de harness nativo deve capturar a matriz completa de superficies antes de declarar cobertura final.
+- HUD Legacy, Syncd, componentes Legacy, `--n-*` e `--activity-*` permanecem preservados.
