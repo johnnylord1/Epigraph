@@ -4,7 +4,12 @@ import {
   THEME_PRIMITIVE_TOKEN_KEYS,
   THEME_SEMANTIC_TOKEN_KEYS,
 } from "./contract";
-import { CUSTOM_THEME_STYLE_PROPERTIES, applyCustomTheme } from "./provider";
+import {
+  CUSTOM_THEME_STYLE_PROPERTIES,
+  applyCustomTheme,
+  clearCustomThemeProperties,
+  getBuiltinExactThemePropertyNames,
+} from "./provider";
 
 const surfaceTokens = [
   "--component-menu-bg",
@@ -95,6 +100,7 @@ function rememberRootState() {
 
 function restoreRootState(state: ReturnType<typeof rememberRootState>) {
   const root = document.documentElement;
+  clearCustomThemeProperties(root);
   if (state.theme === null) root.removeAttribute("data-theme");
   else root.setAttribute("data-theme", state.theme);
   if (state.customTheme === null) root.removeAttribute("data-custom-theme");
@@ -151,6 +157,46 @@ function builtinExactDerivedColorNames(): string[] {
 }
 
 describe("test-only theme probe", () => {
+  test("keeps an empty custom V5 computed-equivalent to its Nocturne base", async () => {
+    const root = document.documentElement;
+    const original = rememberRootState();
+
+    try {
+      clearCustomThemeProperties(root);
+      root.dataset.theme = "nocturne";
+      await new Promise(requestAnimationFrame);
+      const exactProperties = getBuiltinExactThemePropertyNames(root);
+      const builtinExact = new Map(exactProperties.map((token) => [token, computedToken(token)]));
+      const builtinSurfaces = new Map(surfaceTokens.map((token) => [token, computedBackground(token)]));
+      const builtinShadow = computedShadow("--component-card-shadow");
+      const builtinRadius = computedToken("--component-toast-radius");
+
+      expect(exactProperties).toHaveLength(290);
+      expect(applyCustomTheme(root, {
+        version: 5,
+        id: "custom:empty-nocturne-browser",
+        name: "Empty Nocturne browser",
+        base: "nocturne",
+        primitives: {},
+        motion: "soft",
+      })).toBe(true);
+      await new Promise(requestAnimationFrame);
+
+      expect(root.dataset.customTheme).toBe("custom:empty-nocturne-browser");
+      for (const [token, value] of builtinExact) {
+        expect(computedToken(token), token).toBe(value);
+      }
+      for (const [token, value] of builtinSurfaces) {
+        expect(computedBackground(token), token).toBe(value);
+      }
+      expect(computedShadow("--component-card-shadow")).toBe(builtinShadow);
+      expect(computedToken("--component-toast-radius")).toBe(builtinRadius);
+    } finally {
+      restoreRootState(original);
+      await new Promise(requestAnimationFrame);
+    }
+  });
+
   test("changes every representative surface through primitive and semantic tokens", async () => {
     const original = rememberRootState();
     const nocturne = new Map(surfaceTokens.map((token) => [token, computedBackground(token)]));

@@ -12,6 +12,7 @@ import {
   CUSTOM_THEME_STYLE_PROPERTIES,
   applyCustomTheme,
   clearCustomThemeProperties,
+  getBuiltinExactThemePropertyNames,
   readBuiltinThemeContract,
 } from "./provider";
 
@@ -29,6 +30,10 @@ describe("custom theme provider", () => {
       tokens: BUILTIN_THEME_CONTRACTS.warm.tokens,
       hud: BUILTIN_THEME_CONTRACTS.warm.hud,
     });
+  });
+
+  test("does not infer exact CSS properties without a document-owned stylesheet", () => {
+    expect(getBuiltinExactThemePropertyNames({} as HTMLElement)).toEqual([]);
   });
 
   test("applies only allowlisted properties through setProperty", () => {

@@ -113,5 +113,11 @@ is narrower: popover radius, toast radius, and progress height affect active
 production surfaces; icon-button size is a masked fallback; the remaining 11
 fields are preview-only or contract-only Legacy. Promotion does not treat a
 Legacy-only HUD edit as a distinct production theme.
+
+An empty V5 document is computed-equivalent to its declared built-in base. The
+provider preserves exact built-in properties that are unaffected by authored
+overrides and releases only the properties whose fallback derivation changes.
+This prevents unrelated surfaces from drifting when one primitive or semantic
+role is edited.
 - Syncd remains outside this consolidation plan.
 - Preserve layout, behavior, data, and domain logic while adding or validating themes.

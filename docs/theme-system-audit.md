@@ -3096,3 +3096,32 @@ Categorias cobertas:
 - O Nocturne ainda possui fontes exatas que nao participam do seletor custom e exige gate de fidelidade do builtin-base no proximo marco.
 - Os oito aliases `--n-popover-*` ativos continuam dependentes da camada de compatibilidade; devem ser derivados sem remover os nomes antigos.
 - Syncd, superficies Legacy, aliases `--activity-*` e toda a camada `--n-*` permanecem preservados.
+
+## Marco 49 - Custom Builtin Base Fidelity
+
+### Problema e correcao
+
+- O Nocturne builtin possui **290 propriedades exatas** no seletor `:not([data-custom-theme])`. Antes deste marco, um documento V5 vazio desativava esse seletor e herdava derivacoes fallback, podendo mudar superficies sem nenhum override autorado.
+- O provider agora descobre as propriedades exatas na cascata CSS, captura o valor do builtin, mede o fallback do contrato-base e o fallback do documento resolvido e fixa inline somente as propriedades que nao foram afetadas pelo override.
+- Propriedades cuja derivacao muda permanecem livres para responder aos primitive/semantic tokens. Assim, um documento vazio preserva o builtin e um override isolado nao congela dependencias relacionadas.
+- `clearCustomThemeProperties()` remove tambem as propriedades exatas aplicadas pelo provider. Trocar de tema custom para builtin nao deixa inline state residual.
+- A descoberta e generica para os sete builtins e nao adiciona component tokens, campos de autoria ou CSS por tema.
+
+### Validacao automatizada
+
+- Unit: **4 arquivos / 50 testes verdes**, cobrindo provider, migracao V1-V5, contrato e promocao.
+- Browser Chromium: **2 arquivos / 12 testes verdes**. Documentos V5 vazios foram comparados contra os sete builtins em todas as propriedades exatas e superficies representativas.
+- O probe Nocturne continua confirmando que primitive-only, semantic source, HUD e motion overrides alteram as dependencias esperadas. As **233 source properties** e **57 semantic roles** continuam respondendo ao contrato custom.
+- `pnpm build`: verde, com apenas o aviso conhecido de chunk principal acima de 500 kB.
+
+### Validacao visual real
+
+- App Tauri/WebView2 real, Nocturne, viewport 1280x800 e Settings/Appearance. O documento `custom:runtime-empty-nocturne` foi aplicado somente em memoria e removido em `finally`; nenhuma preferencia ou dado do usuario foi salvo.
+- `docs/screenshots/marco49-custom-base/before-settings-appearance.png` e `after-empty-custom-settings-appearance.png` preservam geometria, surfaces, borders, shadows, radius, tipografia e hierarquia sem regressao aparente.
+- O computed style real confirmou **290/290 propriedades iguais**. Uma captura inicial de pagina apresentou tiles vazios do compositor WebView2; ela foi substituida por capturas estaveis do elemento Settings e nao foi preservada como evidencia.
+
+### Riscos restantes
+
+- A implementacao CSS e os contratos TypeScript dos builtins continuam duplicados e protegidos apenas por paridade browser. O proximo marco deve criar uma fonte unica verificavel sem alterar a ordem da cascata.
+- O provider consulta as stylesheets quando o tema muda. A lista e pequena e a operacao nao ocorre por frame, mas deve permanecer coberta por teste de troca repetida.
+- HUD Legacy, Syncd, `--n-*`, `--activity-*` e superficies Legacy permanecem intactos.

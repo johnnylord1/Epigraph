@@ -8,6 +8,11 @@ import {
   THEME_TOKEN_KEYS,
   type HudThemeTokens,
 } from "./contract";
+import {
+  applyCustomTheme,
+  clearCustomThemeProperties,
+  getBuiltinExactThemePropertyNames,
+} from "./provider";
 
 type Rgba = [number, number, number, number];
 
@@ -85,6 +90,16 @@ function isPainted(token: string): boolean {
   return painted;
 }
 
+function computedPaint(token: string): string {
+  const probe = document.createElement("div");
+  probe.style.background = `var(${token})`;
+  document.body.appendChild(probe);
+  const style = getComputedStyle(probe);
+  const value = `${style.backgroundColor}|${style.backgroundImage}`;
+  probe.remove();
+  return value;
+}
+
 function normalizedColor(value: string): string {
   const probe = document.createElement("div");
   probe.style.color = value;
@@ -120,6 +135,40 @@ function normalizedHudValue(token: keyof HudThemeTokens, value: string): string 
 }
 
 describe("builtin theme matrix", () => {
+  test("keeps empty custom V5 documents computed-equivalent to every builtin base", async () => {
+    const root = document.documentElement;
+
+    try {
+      for (const theme of BUILTIN_THEMES) {
+        clearCustomThemeProperties(root);
+        root.dataset.theme = theme.id;
+        await new Promise(requestAnimationFrame);
+        const exactProperties = getBuiltinExactThemePropertyNames(root);
+        const builtinExact = new Map(exactProperties.map((token) => [token, getComputedStyle(root).getPropertyValue(token).trim()]));
+        const builtinSurfaces = new Map(surfaceTokens.map((token) => [token, computedPaint(token)]));
+
+        expect(applyCustomTheme(root, {
+          version: 5,
+          id: `custom:empty-${theme.id}`,
+          name: `Empty ${theme.label}`,
+          base: theme.id,
+          primitives: {},
+          motion: BUILTIN_THEME_CONTRACTS[theme.id].motion,
+        })).toBe(true);
+        await new Promise(requestAnimationFrame);
+
+        for (const [token, value] of builtinExact) {
+          expect(getComputedStyle(root).getPropertyValue(token).trim(), `${theme.id} ${token}`).toBe(value);
+        }
+        for (const [token, value] of builtinSurfaces) {
+          expect(computedPaint(token), `${theme.id} ${token}`).toBe(value);
+        }
+      }
+    } finally {
+      clearCustomThemeProperties(root);
+    }
+  });
+
   test("matches every authored builtin contract to the computed CSS cascade", async () => {
     const root = document.documentElement;
 
