@@ -3040,3 +3040,28 @@ Categorias cobertas:
 - A derivacao cobre somente relacoes semanticamente inequivocas. Papeis independentes como overlay, warning, info, success e fontes de shadow/highlight continuam autoraveis diretamente, sem aliases artificiais.
 - Os contratos builtin ainda possuem implementacao CSS e espelho TypeScript, protegidos pelo gate de paridade do Marco 45; unificar a geracao build-time continua sendo trabalho futuro.
 - HUD Legacy, Syncd, componentes Legacy e a camada `--n-*` permanecem deliberadamente fora deste marco.
+
+## Marco 47 - Theme Promotion Pipeline
+
+### Escopo e contrato
+
+- Foi criado um gate de promocao para transformar um `ThemeDocumentV5` exportado, metadados e evidencias reais em um pacote deterministico de revisao.
+- O candidato exige id builtin futuro, label, descricao, quatro swatches do contrato resolvido e screenshots distintos de Library, Browse, Settings, Reader, modal, popover e toast.
+- O gate rejeita V1-V4, documento identico ao base, id ja registrado, chaves desconhecidas, swatches arbitrarios/duplicados, paths inseguros, screenshots ausentes e todo erro herdado do validador V5.
+- O pacote contem documento V5 canonico, contrato completo de ThemeTokens/HudThemeTokens/motion, metadados normalizados e paths de evidencia. Ele nao registra, ativa ou persiste tema.
+
+### Ferramentas e documentacao
+
+- `pnpm theme:validate-promotion -- <candidate.json>` valida e imprime o pacote; `--out <package.json>` grava uma saida somente quando solicitado.
+- `promotion.node.ts` restringe candidato/evidencias ao repositorio e confirma arquivos reais. `promotion.ts` permanece puro e reutilizavel pelos gates.
+- `docs/theme-promotion.md` documenta formato, comando, limites e revisao. `docs/theme-authoring.md` aponta o fluxo oficial para esse gate.
+- O comando foi exercitado com candidato temporario baseado no probe e sete arquivos existentes. Produziu `schemaVersion: 1` e contrato completo; o candidato temporario foi removido e nenhum artefato foi mantido.
+
+### Validacao e riscos
+
+- Testes focados: **5 arquivos / 77 testes verdes**, incluindo quatro cenarios novos de pacote valido, V4/tema vazio, metadados/evidencias invalidos e leitura com arquivos reais.
+- Testes browser Chromium: **2 arquivos / 10 testes verdes**, cobrindo resposta do probe por computed style, paridade dos sete builtins, contraste AA representativo e evidencias da matriz.
+- `pnpm build`: verde, com apenas o aviso conhecido de chunks acima de 500 kB.
+- Nenhum CSS, componente Svelte, token, builtin, `--n-*`, alias Legacy ou estado do usuario foi alterado. Por isso nao houve nova captura visual; as evidencias reais estaveis do Marco 46 continuam a baseline imediata.
+- A geracao do pacote nao promove automaticamente o candidato. Registro, computed CSS parity, WCAG AA e comparacao visual completa continuam gates obrigatorios da revisao futura.
+- Syncd, HUD Legacy, componentes Legacy e a camada `--n-*` permanecem fora do escopo.

@@ -74,10 +74,15 @@ describe("theme authoring gate", () => {
 
   test("documents the no-component-CSS promotion contract", () => {
     const guide = readFileSync(resolve(ROOT, "docs/theme-authoring.md"), "utf8");
+    const promotion = readFileSync(resolve(ROOT, "docs/theme-promotion.md"), "utf8");
+    const packageJson = JSON.parse(readFileSync(resolve(ROOT, "package.json"), "utf8"));
 
     expect(guide).toContain("ThemeDocumentV5");
     expect(guide).toContain("ThemeEditor -> export -> validation -> promotion");
     expect(guide).toContain("Component tokens are never authored");
     expect(guide).toContain("No component CSS");
+    expect(promotion).toContain("The command never edits");
+    expect(promotion).toContain("All seven evidence paths");
+    expect(packageJson.scripts["theme:validate-promotion"]).toBe("node scripts/validate-theme-promotion.mjs");
   });
 });

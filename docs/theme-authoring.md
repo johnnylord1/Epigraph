@@ -56,6 +56,10 @@ ThemeEditor -> export -> validation -> promotion
 6. Export the V5 JSON document.
 7. Run the authoring and visual gates before proposing promotion.
 
+The machine-checkable candidate format and command are documented in
+`docs/theme-promotion.md`. Package generation validates the candidate but never
+registers or activates it.
+
 When the editor is opened for a new theme, it starts from the active built-in
 theme. Editing or importing an existing document preserves its declared
 `base`. Reset restores that base contract rather than silently switching the
@@ -92,6 +96,7 @@ No component CSS should be added for a theme. If a proposed palette cannot rende
 ```powershell
 pnpm test:unit -- src/lib/theme/authoringGate.test.ts src/lib/theme/document.test.ts src/lib/theme/provider.test.ts src/lib/theme/themeGate.test.ts
 pnpm exec vitest run --project browser-components src/lib/theme/themeProbe.browser.test.ts
+pnpm theme:validate-promotion -- path/to/candidate.json
 pnpm build
 git diff --check
 ```
