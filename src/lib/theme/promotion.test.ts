@@ -89,6 +89,14 @@ describe("theme promotion pipeline", () => {
       ...empty,
       primitives: { "bg-base": NOCTURNE_THEME_TOKENS["bg-base"] },
     };
+    const legacyHudOnly = {
+      ...empty,
+      hud: { "hud-control-radius": "15px" },
+    };
+    const activeHud = {
+      ...empty,
+      hud: { "hud-popover-radius": "13px" },
+    };
 
     expect(validateThemePromotionCandidate({ ...candidate(), document: legacy })).toMatchObject({
       ok: false,
@@ -102,6 +110,17 @@ describe("theme promotion pipeline", () => {
       ok: false,
       errors: expect.arrayContaining([expect.objectContaining({ code: "empty-theme" })]),
     });
+    expect(validateThemePromotionCandidate(candidate({ document: legacyHudOnly }))).toMatchObject({
+      ok: false,
+      errors: expect.arrayContaining([expect.objectContaining({ code: "empty-theme" })]),
+    });
+    expect(validateThemePromotionCandidate(candidate({
+      document: activeHud,
+      metadata: {
+        ...candidate().metadata,
+        swatches: ["#131313", "#1c1b1b", "#e5e2e1", "#d3c4ff"],
+      },
+    })).ok).toBe(true);
   });
 
   test("rejects registered ids, arbitrary swatches, duplicate evidence, and missing files", () => {

@@ -7,6 +7,7 @@ import {
   type ThemeDocumentV5,
 } from "./contract";
 import { resolveThemeDocument, validateThemeDocument } from "./document";
+import { HUD_RUNTIME_ACTIVE_TOKEN_KEYS } from "./hudOwnership";
 
 export const THEME_PROMOTION_EVIDENCE_KEYS = [
   "library",
@@ -208,7 +209,7 @@ function hasResolvedDifference(
   const base = getBuiltinThemeFallbackContract(document.base);
   return document.motion !== base.motion
     || THEME_TOKEN_KEYS.some((token) => resolved.tokens[token] !== base.tokens[token])
-    || HUD_THEME_TOKEN_KEYS.some((token) => resolved.hud[token] !== base.hud[token]);
+    || HUD_RUNTIME_ACTIVE_TOKEN_KEYS.some((token) => resolved.hud[token] !== base.hud[token]);
 }
 
 export function validateThemePromotionCandidate(

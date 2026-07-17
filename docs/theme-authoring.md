@@ -107,5 +107,11 @@ The synthetic theme probe is test-only. It proves that active surfaces respond t
 
 - Keep the `--n-*` compatibility layer until its separate removal audit is complete.
 - Keep Legacy components and aliases documented; do not activate or delete them as part of theme authoring.
+
+HUD authoring remains backward compatible with all 15 fields. Runtime ownership
+is narrower: popover radius, toast radius, and progress height affect active
+production surfaces; icon-button size is a masked fallback; the remaining 11
+fields are preview-only or contract-only Legacy. Promotion does not treat a
+Legacy-only HUD edit as a distinct production theme.
 - Syncd remains outside this consolidation plan.
 - Preserve layout, behavior, data, and domain logic while adding or validating themes.

@@ -6,6 +6,13 @@ import {
   THEME_MOTION_PROPERTY_KEYS,
   THEME_MOTION_VARS,
 } from "./contract";
+import {
+  HUD_CONTRACT_ONLY_TOKEN_KEYS,
+  HUD_LEGACY_TOKEN_KEYS,
+  HUD_MASKED_FALLBACK_TOKEN_KEYS,
+  HUD_PREVIEW_ONLY_TOKEN_KEYS,
+  HUD_RUNTIME_ACTIVE_TOKEN_KEYS,
+} from "./hudOwnership";
 
 const ROOT = process.cwd();
 const tokensCss = readFileSync(resolve(ROOT, "src/styles/tokens.css"), "utf8");
@@ -15,41 +22,33 @@ const libraryToolbar = readFileSync(
   "utf8",
 );
 
-const activeHudTokens = [
-  "hud-icon-button-size",
-  "hud-popover-radius",
-  "hud-toast-radius",
-  "hud-progress-height",
-] as const;
-
-const authoringLegacyHudTokens = [
-  "hud-control-height",
-  "hud-control-radius",
-  "hud-chip-radius",
-  "hud-status-radius",
-  "hud-chapter-row-radius",
-  "hud-surface-opacity",
-  "hud-sidebar-width",
-  "hud-toolbar-gap",
-  "hud-reader-chrome-opacity",
-  "hud-selection-bg",
-  "hud-selection-border",
-] as const;
-
 describe("HUD and motion contract gate", () => {
-  test("classifies every HUD authoring token without removing Legacy fields", () => {
-    expect([...activeHudTokens, ...authoringLegacyHudTokens].sort()).toEqual(
+  test("classifies every HUD authoring token by real runtime ownership", () => {
+    expect([
+      ...HUD_RUNTIME_ACTIVE_TOKEN_KEYS,
+      ...HUD_MASKED_FALLBACK_TOKEN_KEYS,
+      ...HUD_LEGACY_TOKEN_KEYS,
+    ].sort()).toEqual(
       [...HUD_THEME_TOKEN_KEYS].sort(),
     );
-    expect(activeHudTokens).toHaveLength(4);
-    expect(authoringLegacyHudTokens).toHaveLength(11);
+    expect(HUD_RUNTIME_ACTIVE_TOKEN_KEYS).toHaveLength(3);
+    expect(HUD_MASKED_FALLBACK_TOKEN_KEYS).toHaveLength(1);
+    expect(HUD_PREVIEW_ONLY_TOKEN_KEYS).toHaveLength(9);
+    expect(HUD_CONTRACT_ONLY_TOKEN_KEYS).toHaveLength(2);
+    expect(HUD_LEGACY_TOKEN_KEYS).toHaveLength(11);
   });
 
-  test("keeps every active HUD token connected to a production component alias", () => {
+  test("keeps every runtime-active HUD token connected to a production component alias", () => {
     expect(tokensCss).toContain("--component-reader-popover-radius: var(--hud-popover-radius);");
     expect(tokensCss).toContain("--component-reader-range-track-height: var(--hud-progress-height);");
-    expect(libraryToolbar).toContain("var(--library-icon-btn-size, var(--hud-icon-button-size))");
     expect(nocturneCss).toContain("--component-toast-radius: var(--hud-toast-radius);");
+  });
+
+  test("keeps the icon size as a masked fallback without claiming direct ownership", () => {
+    expect(libraryToolbar).toContain("var(--library-icon-btn-size, var(--hud-icon-button-size))");
+    expect(readFileSync(resolve(ROOT, "src/components/library/LibraryShell.svelte"), "utf8")).toContain(
+      "--library-icon-btn-size",
+    );
   });
 
   test("derives both transition families from the structured motion roots", () => {

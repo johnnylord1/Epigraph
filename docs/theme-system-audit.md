@@ -3065,3 +3065,34 @@ Categorias cobertas:
 - Nenhum CSS, componente Svelte, token, builtin, `--n-*`, alias Legacy ou estado do usuario foi alterado. Por isso nao houve nova captura visual; as evidencias reais estaveis do Marco 46 continuam a baseline imediata.
 - A geracao do pacote nao promove automaticamente o candidato. Registro, computed CSS parity, WCAG AA e comparacao visual completa continuam gates obrigatorios da revisao futura.
 - Syncd, HUD Legacy, componentes Legacy e a camada `--n-*` permanecem fora do escopo.
+
+## Marco 48 - Exhaustive Inventory And Runtime Ownership
+
+### Inventario completo
+
+- O gate automatico encontrou **2.703** nomes `--component-*` definidos em `tokens.css`/`nocturne-theme.css`.
+- **60 Syncd** permanecem explicitamente excluidos conforme o plano. Dos **2.643** tokens no escopo, **2.546 sao Ativos** e **97 Legacy**; nenhum foi classificado como Morto.
+- Os Ativos se dividem em **2.532 consumos estaticos diretos**, **1 acesso dinamico conhecido** (`--component-reader-core-epub-link-fg`) e **13 dependencias transitivas**.
+- Os Legacy se dividem em **89 tokens** consumidos apenas por `NovelRepositoriesPanel.svelte`, superficie Legacy preparada, e **8 aliases sem consumidor comprovado**. Todos permanecem definidos e nenhum foi removido.
+- O inventario cobre **39 familias** sem token ou familia nao classificada: **2.433** nomes existem em fallback e Nocturne, **210** somente no fallback e **0** somente no Nocturne.
+
+### Ownership HUD e compatibilidade
+
+- Dos 15 HudThemeTokens, **3 possuem efeito runtime direto comprovado**: `hud-popover-radius`, `hud-toast-radius` e `hud-progress-height`.
+- `hud-icon-button-size` e fallback mascarado pelo `--library-icon-btn-size` publicado pelo fluxo ativo da Library.
+- **9 sao preview-only** no ThemeEditor e **2 contract-only** (`hud-chip-radius`, `hud-sidebar-width`). Os 11 continuam aceitos em V1-V5, persistencia, import/export e CSSOM e permanecem classificados como Legacy.
+- O pipeline de promocao agora exige diferenca em ThemeTokens, motion ou HUD runtime-ativo. Um documento que muda apenas HUD Legacy continua valido para round-trip, mas nao pode promover um tema visualmente identico ao base.
+- A classificacao vigente da camada `--n-*` permanece **45 Ativos / 17 Legacy / 0 Mortos**. A contagem historica 53/9 em marcos anteriores foi refinada por evidencia de host/computed style; nenhum alias foi removido.
+
+### Gates e validacao
+
+- Unit: **6 arquivos / 49 testes verdes**, incluindo o inventario 3/3 e cobrindo ownership HUD, promocao, autoria, allowlist visual e inventario `--n-*`.
+- Browser Chromium: **2 arquivos / 9 testes verdes**. O computed style confirma os tres efeitos runtime, demonstra que o fallback de icon button permanece mascarado e preserva o probe completo de primitive/semantic/component tokens.
+- `pnpm build`: verde, com apenas o aviso conhecido de chunk principal acima de 500 kB.
+- Nenhum CSS, componente Svelte, builtin, token, layout ou estado do usuario foi alterado. Nao foram geradas screenshots novas porque este marco apenas torna a classificacao e o gate mais precisos.
+
+### Riscos restantes
+
+- O Nocturne ainda possui fontes exatas que nao participam do seletor custom e exige gate de fidelidade do builtin-base no proximo marco.
+- Os oito aliases `--n-popover-*` ativos continuam dependentes da camada de compatibilidade; devem ser derivados sem remover os nomes antigos.
+- Syncd, superficies Legacy, aliases `--activity-*` e toda a camada `--n-*` permanecem preservados.

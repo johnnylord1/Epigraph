@@ -45,6 +45,9 @@ Create a repository-local JSON file with this shape:
 Rules:
 
 - `document` must already be V5 and must differ from its declared base.
+- A HUD-only difference is substantial only when it changes a token with proven
+  runtime ownership. Preview-only and contract-only Legacy HUD fields remain
+  valid for compatibility, but cannot promote an otherwise unchanged theme.
 - The future built-in id must be lowercase kebab-case and must not already be registered.
 - Four unique six-digit hex swatches are required and must come from the resolved theme contract.
 - All seven evidence paths must be distinct repository-relative PNG files under `docs/screenshots/`.
