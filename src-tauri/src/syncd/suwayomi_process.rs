@@ -47,7 +47,10 @@ fn attach_owned_instance(root: &Path) -> Option<AttachedSuwayomi> {
         return None;
     }
 
-    let mut system = System::new();
+    // `System::new()` does not request command-line metadata on Windows.
+    // Ownership verification depends on the exact Suwayomi rootDir argument,
+    // so use a complete snapshot before accepting the recorded PID.
+    let mut system = System::new_all();
     let pid = Pid::from_u32(owner.java_pid);
     system.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
     let process = system.process(pid)?;
@@ -66,7 +69,10 @@ fn attach_owned_instance(root: &Path) -> Option<AttachedSuwayomi> {
 
 async fn stop_owned_instance(instance: &AttachedSuwayomi, timeout: Duration) -> Result<(), String> {
     let pid = Pid::from_u32(instance.java_pid);
-    let mut system = System::new();
+    // Keep the same command-line-aware snapshot used while attaching. Without
+    // it Windows reports an empty `Process::cmd()` and a valid owned process
+    // can neither be verified nor stopped safely.
+    let mut system = System::new_all();
     system.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
     let Some(process) = system.process(pid) else {
         remove_owner_files(&instance.root_dir);
