@@ -604,6 +604,8 @@
   --component-menu-item-hover-fg: var(--text-primary);
   --component-menu-item-danger-fg: var(--color-danger);
   --component-menu-item-danger-hover-bg: var(--color-danger-bg);
+  --component-menu-item-radius: 10px;
+  --component-menu-icon-radius: 6px;
   --component-menu-icon-fg: var(--text-faint);
   --component-menu-divider: var(--color-divider);
   --component-overlay-bg: var(--color-overlay);
@@ -646,6 +648,10 @@
   --component-toast-close-fg-hover: var(--text-primary);
   --component-toast-close-border: var(--component-button-border);
   --component-toast-close-border-hover: var(--component-toast-border-hover);
+  --component-toast-accent-radius: 0 2px 2px 0;
+  --component-toast-progress-radius: var(--radius-full);
+  --component-toast-action-radius: 9px;
+  --component-toast-close-radius: 8px;
   --component-nocturne-state-fg: var(--text-muted);
   --component-nocturne-state-gap: var(--sp-3);
   --component-nocturne-state-panel-padding: var(--sp-4) var(--sp-5);
@@ -814,6 +820,7 @@
   --component-app-fullscreen-exit-hover-border: var(--color-outline);
   --component-app-fullscreen-exit-hover-bg: var(--color-accent-muted);
   --component-app-fullscreen-exit-hover-fg: var(--text-primary);
+  --component-app-keepalive-hidden-z-index: -1;
   --component-detail-layer-bg: var(--color-surface);
   --component-search-dim-bg: var(--component-overlay-bg);
   --component-sidebar-border: var(--color-border);
@@ -883,6 +890,7 @@
   --component-window-control-close-bg-hover: var(--color-danger-bg);
   --component-window-control-close-border-hover: var(--color-danger);
   --component-window-control-close-fg-hover: var(--text-primary);
+  --component-window-control-radius: 10px;
   --component-layout-main-sidebar-offset: var(--n-sidebar-width, 74px);
   --component-window-inline-gap: calc(4px * var(--app-resolution-scale));
   --component-window-inline-button-size: calc(24px * var(--app-resolution-scale));
@@ -1162,6 +1170,12 @@
   --component-settings-select-menu-bg: var(--component-menu-bg);
   --component-settings-select-menu-border: var(--component-menu-border);
   --component-settings-select-menu-shadow: var(--component-menu-shadow);
+  --component-settings-step-button-radius: 12px;
+  --component-settings-select-button-radius: 14px;
+  --component-settings-select-menu-z-index: 1200;
+  --component-settings-mini-action-radius: 10px;
+  --component-settings-storage-overlay-z-index: 1100;
+  --component-settings-scrollbar-radius: 2px;
   --component-settings-meter-track-bg: var(--color-surface-secondary);
   --component-settings-meter-track-shadow: none;
   --component-settings-meter-fill-bg: var(--color-accent);
@@ -2160,6 +2174,8 @@
   --component-library-card-progress-track-shadow: none;
   --component-library-card-progress-fill-bg: linear-gradient(90deg, var(--color-accent), var(--accent-bright));
   --component-library-card-progress-fill-shadow: none;
+  --component-library-card-shell-radius: 0;
+  --component-library-card-progress-fill-radius: 0 var(--radius-full) var(--radius-full) 0;
   --component-library-card-progress-liquid-bg:
     radial-gradient(circle at 18px 70%, color-mix(in srgb, var(--text-primary) 46%, transparent) 0 1px, transparent 1.35px),
     radial-gradient(circle at 56px 38%, color-mix(in srgb, var(--text-primary) 32%, transparent) 0 0.8px, transparent 1.2px);
@@ -2296,6 +2312,7 @@
   --component-sources-repo-row-bg: var(--component-card-bg);
   --component-sources-repo-row-border: var(--component-card-border);
   --component-sources-repo-action-radius: var(--radius-md);
+  --component-sources-novel-repo-action-radius: 7px;
   --component-sources-repo-action-bg: var(--component-button-bg);
   --component-sources-table-head-radius: var(--radius-md) var(--radius-md) 0 0;
   --component-sources-table-head-bg: var(--color-surface-secondary);
@@ -2700,6 +2717,8 @@
   --component-reader-popover-radius: var(--hud-popover-radius);
   --component-reader-pill-radius: var(--radius-full);
   --component-reader-toggle-radius: var(--radius-md);
+  --component-reader-slider-input-z-index: 2;
+  --component-reader-slider-checkpoint-z-index: 1;
   --component-reader-overlay-padding-bottom: var(--space-lg);
   --component-reader-capsule-width: 680px;
   --component-reader-capsule-height: 52px;

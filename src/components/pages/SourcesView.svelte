@@ -2043,7 +2043,7 @@
     min-width: 58px;
     height: 25px;
     padding: 0 8px;
-    border-radius: 7px;
+    border-radius: var(--component-sources-novel-repo-action-radius);
     font-size: 9.5px;
     font-weight: 900;
     background: var(--component-sources-repo-action-bg);

@@ -153,7 +153,7 @@ describe("ReaderHud", () => {
     const defaultDefined = uniqueMatches(defaultTokens, READER_HUD_TOKEN_DEFINITION_PATTERN);
     const nocturneDefined = uniqueMatches(nocturneTokens, READER_HUD_TOKEN_DEFINITION_PATTERN);
 
-    expect(consumed).toHaveLength(50);
+    expect(consumed).toHaveLength(52);
     expect(defaultDefined).toEqual(consumed);
     expect(nocturneDefined).toHaveLength(29);
     expect(nocturneDefined.filter((token) => !consumed.includes(token))).toEqual([]);

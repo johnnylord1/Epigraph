@@ -524,7 +524,7 @@
 
   .card.n-library-card {
     gap: var(--library-card-info-gap, calc(7px * var(--component-library-scale, 1)));
-    border-radius: 0;
+    border-radius: var(--component-library-card-shell-radius);
     transition: transform 160ms ease, filter 160ms ease;
     contain: layout style;
   }
@@ -818,7 +818,7 @@
     height: 100%;
     min-width: 0;
     overflow: hidden;
-    border-radius: 0 999px 999px 0;
+    border-radius: var(--component-library-card-progress-fill-radius);
     background: var(--component-library-card-progress-fill-bg);
     box-shadow: var(--component-library-card-progress-fill-shadow);
     clip-path: polygon(0 0, calc(100% - 3px) 0, 100% 20%, calc(100% - 1px) 48%, 100% 76%, calc(100% - 3px) 100%, 0 100%);

@@ -70,7 +70,7 @@
     justify-content: center;
     width: 30px;
     height: 28px;
-    border-radius: 10px;
+    border-radius: var(--component-window-control-radius);
     border: 1px solid var(--component-window-control-border);
     background: var(--component-window-control-bg);
     color: var(--component-window-control-fg);

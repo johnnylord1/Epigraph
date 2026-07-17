@@ -6874,7 +6874,7 @@
 </script>
 <style>
   .step-controls { display: flex; align-items: center; gap: var(--sp-1); flex-shrink: 0; }
-  .step-btn { font-family: var(--font-ui); font-size: 12px; font-weight: 700; width: 30px; height: 30px; border-radius: 12px; border: 1px solid var(--component-settings-input-border); background: var(--component-settings-button-bg); color: var(--component-settings-text-secondary); cursor: pointer; transition: color var(--t-base), border-color var(--t-base), background var(--t-base), transform 100ms ease; display: flex; align-items: center; justify-content: center; }
+  .step-btn { font-family: var(--font-ui); font-size: 12px; font-weight: 700; width: 30px; height: 30px; border-radius: var(--component-settings-step-button-radius); border: 1px solid var(--component-settings-input-border); background: var(--component-settings-button-bg); color: var(--component-settings-text-secondary); cursor: pointer; transition: color var(--t-base), border-color var(--t-base), background var(--t-base), transform 100ms ease; display: flex; align-items: center; justify-content: center; }
   .step-btn:hover:not(:disabled) { color: var(--component-settings-text-primary); border-color: var(--component-settings-border-strong); background: var(--component-settings-button-bg-hover); }
   .step-btn:active:not(:disabled) { transform: scale(0.97); }
   .step-btn:disabled { opacity: 0.3; cursor: default; }
@@ -6896,13 +6896,13 @@
     background: var(--component-settings-color-picker-bg);
     cursor: pointer;
   }
-  .select-btn { display: flex; align-items: center; gap: var(--sp-2); min-height: 32px; font-size: 12px; font-weight: 600; color: var(--component-settings-text-primary); background: var(--component-settings-surface-raised); border: 1px solid var(--component-settings-input-border); border-radius: 14px; padding: 0 12px; cursor: pointer; min-width: 130px; transition: border-color 140ms ease, background 140ms ease; }
+  .select-btn { display: flex; align-items: center; gap: var(--sp-2); min-height: 32px; font-size: 12px; font-weight: 600; color: var(--component-settings-text-primary); background: var(--component-settings-surface-raised); border: 1px solid var(--component-settings-input-border); border-radius: var(--component-settings-select-button-radius); padding: 0 12px; cursor: pointer; min-width: 130px; transition: border-color 140ms ease, background 140ms ease; }
   .select-btn:hover { border-color: var(--component-settings-border-strong); background: var(--component-settings-surface-overlay); }
   .select-btn--wide { min-width: 190px; }
   .select-menu--scroll { max-height: min(320px, calc(var(--visual-vh, 100vh) - 160px)); overflow-y: auto; overscroll-behavior: contain; }
   .select-caret { color: var(--text-faint); transition: transform var(--t-base); flex-shrink: 0; margin-left: auto; }
   .select-caret.open { transform: rotate(180deg); }
-  .select-menu { position: absolute; top: calc(100% + 4px); right: 0; min-width: 100%; background: var(--component-settings-select-menu-bg); border: 1px solid var(--component-settings-select-menu-border); border-radius: var(--radius-md); padding: var(--sp-1); z-index: 1200; box-shadow: var(--component-settings-select-menu-shadow); animation: scaleIn 0.1s ease both; transform-origin: top right; }
+  .select-menu { position: absolute; top: calc(100% + 4px); right: 0; min-width: 100%; background: var(--component-settings-select-menu-bg); border: 1px solid var(--component-settings-select-menu-border); border-radius: var(--radius-md); padding: var(--sp-1); z-index: var(--component-settings-select-menu-z-index); box-shadow: var(--component-settings-select-menu-shadow); animation: scaleIn 0.1s ease both; transform-origin: top right; }
   .select-option { display: block; width: 100%; padding: 6px var(--sp-3); border-radius: var(--radius-sm); font-size: var(--text-sm); color: var(--text-secondary); background: none; border: none; cursor: pointer; text-align: left; transition: background var(--t-fast), color var(--t-fast); }
   .select-option:hover { background: var(--bg-overlay); color: var(--text-primary); }
   .select-option.active { color: var(--accent-fg); background: var(--accent-muted); }
@@ -6925,7 +6925,7 @@
   .settings-folder-action {
     min-height: 28px;
     padding: 0 10px;
-    border-radius: 10px;
+    border-radius: var(--component-settings-mini-action-radius);
     font-size: 11px;
     line-height: 1;
   }
@@ -7021,7 +7021,7 @@
   .release-list-scroll { max-height: 336px; overflow-y: auto; padding: 0 var(--sp-1); scrollbar-width: thin; scrollbar-color: var(--border-base) transparent; }
   .release-list-scroll::-webkit-scrollbar { width: 4px; }
   .release-list-scroll::-webkit-scrollbar-track { background: transparent; }
-  .release-list-scroll::-webkit-scrollbar-thumb { background: var(--border-base); border-radius: 2px; }
+  .release-list-scroll::-webkit-scrollbar-thumb { background: var(--border-base); border-radius: var(--component-settings-scrollbar-radius); }
   .folder-delete:hover:not(:disabled) { color: var(--color-error) !important; }
   .folder-hidden { opacity: 0.35; }
   .folder-default-active { color: var(--accent-fg) !important; }
@@ -7132,7 +7132,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 1100;
+    z-index: var(--component-settings-storage-overlay-z-index);
     animation: fadeIn 0.15s ease both;
   }
   .storage-backup-panel {

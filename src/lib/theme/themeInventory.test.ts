@@ -29,7 +29,7 @@ const SYNCD_CONSUMER_FILES = new Set([
 
 const EXPECTED_FAMILY_COUNTS = {
   activity: 74,
-  app: 15,
+  app: 16,
   browse: 443,
   button: 4,
   card: 4,
@@ -40,9 +40,9 @@ const EXPECTED_FAMILY_COUNTS = {
   home: 74,
   input: 4,
   layout: 1,
-  library: 96,
+  library: 98,
   manga: 191,
-  menu: 12,
+  menu: 14,
   migrate: 19,
   migration: 88,
   modal: 4,
@@ -51,22 +51,22 @@ const EXPECTED_FAMILY_COUNTS = {
   novel: 98,
   overlay: 1,
   popover: 4,
-  reader: 166,
+  reader: 168,
   search: 10,
-  settings: 100,
+  settings: 106,
   sidebar: 8,
   soft: 1,
-  sources: 137,
+  sources: 138,
   splash: 21,
   tab: 2,
   taste: 51,
   "theme-editor": 221,
-  toast: 29,
+  toast: 33,
   toolbar: 11,
   topbar: 12,
   tracking: 117,
   updater: 49,
-  window: 21,
+  window: 22,
 } as const;
 
 const EXPECTED_UNCONSUMED_LEGACY = [
@@ -221,10 +221,10 @@ describe("exhaustive component theme inventory", () => {
   const scoped = inventory.entries.filter(({ status }) => status !== "Excluded");
 
   test("classifies every definition without inferring dead tokens", () => {
-    expect(inventory.entries).toHaveLength(2703);
+    expect(inventory.entries).toHaveLength(2722);
     expect(inventory.entries.filter(({ status }) => status === "Excluded")).toHaveLength(60);
-    expect(scoped).toHaveLength(2643);
-    expect(scoped.filter(({ status }) => status === "Active")).toHaveLength(2546);
+    expect(scoped).toHaveLength(2662);
+    expect(scoped.filter(({ status }) => status === "Active")).toHaveLength(2565);
     expect(scoped.filter(({ status }) => status === "Legacy")).toHaveLength(97);
     expect(inventory.entries.every(({ status }) => ["Active", "Legacy", "Excluded"].includes(status))).toBe(true);
     expect(inventory.entries.some(({ status }) => (status as string) === "Dead")).toBe(false);
@@ -238,7 +238,7 @@ describe("exhaustive component theme inventory", () => {
     );
     expect(families).toEqual(EXPECTED_FAMILY_COUNTS);
     expect(scoped.filter(({ layers }) => layers.join("+") === "fallback+nocturne")).toHaveLength(2433);
-    expect(scoped.filter(({ layers }) => layers.join("+") === "fallback")).toHaveLength(210);
+    expect(scoped.filter(({ layers }) => layers.join("+") === "fallback")).toHaveLength(229);
     expect(scoped.filter(({ layers }) => layers.join("+") === "nocturne")).toHaveLength(0);
   });
 
@@ -249,7 +249,7 @@ describe("exhaustive component theme inventory", () => {
     const unconsumed = legacy.filter(({ consumption }) => consumption === "none");
     const dynamic = scoped.filter(({ consumption }) => consumption === "dynamic");
 
-    expect(active.filter(({ consumption }) => consumption === "static")).toHaveLength(2532);
+    expect(active.filter(({ consumption }) => consumption === "static")).toHaveLength(2551);
     expect(active.filter(({ consumption }) => consumption === "dynamic")).toHaveLength(1);
     expect(active.filter(({ consumption }) => consumption === "transitive")).toHaveLength(13);
     expect(legacyOnly).toHaveLength(89);

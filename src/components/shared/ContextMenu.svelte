@@ -119,7 +119,7 @@
   .item {
     display: flex; align-items: center; gap: 9px;
     width: 100%; min-height: 34px; padding: 0 10px;
-    border-radius: 10px;
+    border-radius: var(--component-menu-item-radius);
     color: var(--component-menu-item-fg);
     font: var(--weight-bold) 11px/1 "Manrope", var(--font-sans);
     letter-spacing: 0.03em;
@@ -135,7 +135,7 @@
   .icon {
     display: flex; align-items: center; justify-content: center;
     width: 18px; height: 18px; flex-shrink: 0;
-    color: var(--component-menu-icon-fg); border-radius: 6px;
+    color: var(--component-menu-icon-fg); border-radius: var(--component-menu-icon-radius);
   }
   .icon-danger { color: var(--component-menu-item-danger-fg); opacity: 0.78; }
   .label { flex: 1; line-height: 1.3; }

@@ -3180,3 +3180,26 @@ Categorias cobertas:
 - Testes focados: **4 arquivos / 21 testes verdes**, cobrindo registry, resolucao custom, swatches, Reader Core, Settings e allowlist global.
 - O registry funcional nao e exportado pelo ThemeEditor e nao se torna component/semantic token: isso preserva a escolha de pagina do leitor separada da identidade do shell.
 - Ainda existem valores nao-cor locais (radius e z-index) em superficies ativas. Eles formam o proximo lote 51.2; Legacy, Syncd e `--n-*` continuam fora do escopo.
+
+## Marco 51.2 - Active Non-Color Visual Values
+
+### Escopo e tokens
+
+- Foram migrados **19 valores visuais diretos ativos** de radius e z-index em Layout, TitleBar, Toaster, ContextMenu, LibraryCard, Settings, Sources e ReaderHud.
+- Os 19 nomes `--component-*` foram definidos no fallback e possuem consumidor estatico comprovado. Nenhum override Nocturne foi criado porque os valores preservam geometria/empilhamento neutros ao tema, e nao uma decisao de paleta.
+- O inventario passa a registrar **2.722** component tokens: 60 Syncd excluidos, **2.565 Ativos** e **97 Legacy**. Os Ativos possuem 2.551 consumos estaticos, 1 dinamico e 13 transitivos; nenhum token foi classificado como Morto.
+- Valores estruturais `border-radius: inherit` e `border-radius: 0 0 inherit inherit` permanecem locais por dependerem da geometria do pai. Legacy, Syncd e a camada `--n-*` nao foram alterados.
+- O contrato de Sources agora inclui `nocturne-port.css` como consumidor efetivo de quatro metric tokens compartilhados. O arquivo e importado por `global.css`; nenhum componente Legacy foi ativado.
+
+### Validacao real
+
+- Capturas WebView2 reais em Nocturne: `docs/screenshots/marco51-non-color-values/after-library-books.png`, `after-context-menu.png`, `after-settings.png`, `after-sources.png`, `after-sources-novel-repositories.png` e `after-reader-pdf-hud.png`.
+- Baselines comparadas: Library/Toaster do Marco 28C.2, Settings do Marco 50, Sources do Marco 28C.3, Reader do Marco 51.1 e contratos visuais de menu do Marco 2. Nao houve regressao aparente de layout, surfaces, shadows, blur, tipografia, hierarquia, hover/focus ou empilhamento.
+- Computed style confirmou menu `14px`, item `10px` e icone `6px`; Settings step/select `12px`/`14px`; acao do repositorio novel `7px`; input do slider do Reader HUD em z-index `2`. A captura da Library tambem registrou o toast real de atualizacao com barra e controles integros.
+- A primeira captura de Settings ocorreu durante o estado transitorio `Opening page` e foi substituida pela captura final carregada. Nenhum dado artificial ou preferencia do usuario foi criado.
+
+### Gates e riscos
+
+- Testes focados: **7 arquivos / 28 testes verdes**, incluindo inventario, consumo integral, ausencia de radius/blur/z-index numericos nas superficies migradas e render dos componentes afetados.
+- `pnpm build`: verde, com apenas o aviso conhecido do chunk principal acima de 500 kB. `git diff --check`: verde.
+- Os valores nao-cor restantes pertencem a regras estruturais, superficies Legacy ou areas deliberadamente fora deste lote. A proxima etapa deve congelar/documentar a compatibilidade Legacy antes do gate nativo final, sem remover aliases nem `--n-*`.

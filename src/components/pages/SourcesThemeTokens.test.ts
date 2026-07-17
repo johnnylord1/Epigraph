@@ -6,6 +6,11 @@ const ACTIVE_SOURCES_FILES = [
   "src/components/pages/ExtensionSettingsPanel.svelte",
 ] as const;
 
+const SOURCES_TOKEN_CONSUMER_FILES = [
+  ...ACTIVE_SOURCES_FILES,
+  "src/styles/nocturne-port.css",
+] as const;
+
 const TOKEN_SOURCE_FILES = [
   "src/styles/tokens.css",
   "src/styles/nocturne-theme.css",
@@ -39,7 +44,7 @@ describe("Sources theme token contract", () => {
       }
     }
 
-    const componentContents = ACTIVE_SOURCES_FILES.map(read).join("\n");
+    const componentContents = SOURCES_TOKEN_CONSUMER_FILES.map(read).join("\n");
     const unused = [...definitions].filter((token) => {
       const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       return !new RegExp(`var\\(${escaped}(?:[,)]|\\s)`).test(componentContents);

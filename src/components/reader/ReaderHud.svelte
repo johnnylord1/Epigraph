@@ -531,7 +531,7 @@
   .capsule-slider-input {
     position: absolute;
     inset: 0;
-    z-index: 2;
+    z-index: var(--component-reader-slider-input-z-index);
     width: 100%;
     height: 100%;
     margin: 0;
@@ -542,7 +542,7 @@
   .capsule-slider-checkpoint {
     position: absolute;
     top: 50%;
-    z-index: 1;
+    z-index: var(--component-reader-slider-checkpoint-z-index);
     width: var(--component-reader-checkpoint-width);
     height: var(--component-reader-checkpoint-height);
     border-radius: var(--component-reader-pill-radius);

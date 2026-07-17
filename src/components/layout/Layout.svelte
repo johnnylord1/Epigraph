@@ -361,7 +361,7 @@
   .page-keepalive:not(.is-active) {
     position: absolute;
     inset: 0;
-    z-index: -1;
+    z-index: var(--component-app-keepalive-hidden-z-index);
     visibility: hidden;
     opacity: 0;
     pointer-events: none;

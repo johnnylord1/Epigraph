@@ -243,7 +243,7 @@
     width: 3px;
     align-self: stretch;
     flex-shrink: 0;
-    border-radius: 0 2px 2px 0;
+    border-radius: var(--component-toast-accent-radius);
     margin-right: 2px;
   }
 
@@ -300,7 +300,7 @@
   .library-progress-track {
     width: 100%;
     height: 3px;
-    border-radius: 999px;
+    border-radius: var(--component-toast-progress-radius);
     overflow: hidden;
     background: var(--component-toast-progress-track);
     box-shadow: inset 0 0 0 1px var(--component-toast-border);
@@ -322,7 +322,7 @@
     color: var(--component-toast-action-fg);
     background: var(--component-toast-action-bg);
     border: 1px solid var(--component-toast-action-border);
-    border-radius: 9px;
+    border-radius: var(--component-toast-action-radius);
     padding: 5px 8px;
     cursor: pointer;
   }
@@ -390,7 +390,7 @@
     width: 24px;
     height: 24px;
     border: 1px solid var(--component-toast-close-border);
-    border-radius: 8px;
+    border-radius: var(--component-toast-close-radius);
     color: var(--component-toast-close-fg);
     background: var(--component-toast-close-bg);
     cursor: pointer;
