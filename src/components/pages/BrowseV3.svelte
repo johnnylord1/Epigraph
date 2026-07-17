@@ -6228,6 +6228,7 @@
   .searchLanding {
     flex: 1;
     min-height: 0;
+    container-type: size;
     overflow-y: auto;
     padding: var(--component-browse-searchlanding-padding);
     background: var(--component-browse-searchlanding-background);
@@ -6462,6 +6463,14 @@
     justify-self: center;
     width: var(--search-panel-width);
     min-width: 0;
+    height: var(--component-browse-searchinsightpanel-max-height);
+    max-height: var(--component-browse-searchinsightpanel-max-height);
+  }
+  .searchTasteCard {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    height: 100%;
   }
   .searchInsightCard {
     min-width: 0;

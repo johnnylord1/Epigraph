@@ -67,4 +67,16 @@ describe("BrowseV3 theme token contract", () => {
     expect(setupStatusStart).toBeGreaterThan(emptyStateStart);
     expect(searchStyles.match(/\.setup-banner\s*\{([\s\S]*?)\}/)?.[1] ?? "").not.toMatch(/position\s*:\s*(?:fixed|absolute)/);
   });
+
+  test("keeps the taste profile inside the visible Search viewport", () => {
+    const source = readRepoFile("src/components/pages/BrowseV3.svelte");
+    const styles = styleBlock(source);
+    const landingRule = styles.match(/\.searchLanding\s*\{([\s\S]*?)\}/)?.[1] ?? "";
+    const panelRule = styles.match(/\.searchInsightPanel\s*\{([\s\S]*?)\}/)?.[1] ?? "";
+
+    expect(landingRule).toContain("container-type: size");
+    expect(panelRule).toContain("height: var(--component-browse-searchinsightpanel-max-height)");
+    expect(panelRule).toContain("max-height: var(--component-browse-searchinsightpanel-max-height)");
+    expect(panelRule).not.toMatch(/overflow(?:-y)?\s*:\s*(?:auto|scroll)/);
+  });
 });
