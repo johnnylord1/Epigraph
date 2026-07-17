@@ -1,0 +1,437 @@
+{
+  "schemaVersion": 1,
+  "cdp": "http://127.0.0.1:9223",
+  "viewport": {
+    "width": 1280,
+    "height": 800
+  },
+  "surfaces": [
+    "nocturne-library-books.png",
+    "nocturne-context-menu.png",
+    "nocturne-browse-search.png",
+    "nocturne-browse-discover.png",
+    "nocturne-browse-sources.png",
+    "nocturne-source-overlay.png",
+    "nocturne-downloads.png",
+    "nocturne-settings.png",
+    "theme-nocturne-settings.png",
+    "theme-dark-settings.png",
+    "theme-high-contrast-settings.png",
+    "theme-light-settings.png",
+    "theme-light-contrast-settings.png",
+    "theme-midnight-settings.png",
+    "theme-warm-settings.png",
+    "nocturne-reader-pdf-hud.png"
+  ],
+  "limitations": [
+    "nocturne-toast-runtime: no real toast event was active; no synthetic toast was created."
+  ],
+  "themes": [
+    {
+      "theme": "nocturne",
+      "appliedTheme": "nocturne",
+      "customTheme": null,
+      "pairs": [
+        {
+          "label": "text-primary/background",
+          "foreground": "rgb(229, 226, 225)",
+          "background": "rgb(19, 19, 19)",
+          "canvas": "rgb(19, 19, 19)",
+          "ratio": 14.419
+        },
+        {
+          "label": "text-secondary/background",
+          "foreground": "rgb(202, 196, 208)",
+          "background": "rgb(19, 19, 19)",
+          "canvas": "rgb(19, 19, 19)",
+          "ratio": 10.899
+        },
+        {
+          "label": "text-primary/card",
+          "foreground": "rgb(229, 226, 225)",
+          "background": "rgb(32, 31, 31)",
+          "canvas": "rgb(19, 19, 19)",
+          "ratio": 12.76
+        },
+        {
+          "label": "button",
+          "foreground": "rgb(229, 226, 225)",
+          "background": "rgba(255, 255, 255, 0.035)",
+          "canvas": "rgb(19, 19, 19)",
+          "ratio": 13.331
+        },
+        {
+          "label": "input",
+          "foreground": "rgb(229, 226, 225)",
+          "background": "rgba(20, 19, 24, 0.72)",
+          "canvas": "rgb(19, 19, 19)",
+          "ratio": 14.367
+        },
+        {
+          "label": "toast",
+          "foreground": "rgb(232, 228, 235)",
+          "background": "rgba(0, 0, 0, 0)",
+          "canvas": "rgb(19, 19, 19)",
+          "ratio": 14.801
+        }
+      ],
+      "focus": {
+        "tag": "BUTTON",
+        "className": "n-sidebar-btn is-active",
+        "outline": "rgb(129, 115, 214) solid 1px",
+        "outlineStyle": "solid",
+        "outlineWidth": "1px",
+        "boxShadow": "none",
+        "borderColor": "rgb(211, 196, 255)"
+      }
+    },
+    {
+      "theme": "dark",
+      "appliedTheme": "dark",
+      "customTheme": null,
+      "pairs": [
+        {
+          "label": "text-primary/background",
+          "foreground": "rgb(240, 239, 236)",
+          "background": "rgb(12, 12, 12)",
+          "canvas": "rgb(12, 12, 12)",
+          "ratio": 17.012
+        },
+        {
+          "label": "text-secondary/background",
+          "foreground": "rgb(200, 198, 192)",
+          "background": "rgb(12, 12, 12)",
+          "canvas": "rgb(12, 12, 12)",
+          "ratio": 11.453
+        },
+        {
+          "label": "text-primary/card",
+          "foreground": "rgb(240, 239, 236)",
+          "background": "rgb(21, 21, 21)",
+          "canvas": "rgb(12, 12, 12)",
+          "ratio": 15.881
+        },
+        {
+          "label": "button",
+          "foreground": "rgb(240, 239, 236)",
+          "background": "rgb(21, 21, 21)",
+          "canvas": "rgb(12, 12, 12)",
+          "ratio": 15.881
+        },
+        {
+          "label": "input",
+          "foreground": "rgb(240, 239, 236)",
+          "background": "rgb(21, 21, 21)",
+          "canvas": "rgb(12, 12, 12)",
+          "ratio": 15.881
+        },
+        {
+          "label": "toast",
+          "foreground": "rgb(240, 239, 236)",
+          "background": "rgb(26, 26, 26)",
+          "canvas": "rgb(12, 12, 12)",
+          "ratio": 15.136
+        }
+      ],
+      "focus": {
+        "tag": "INPUT",
+        "className": "n-search__input s-2ckRRjO5Xah_",
+        "outline": "rgb(74, 92, 74) solid 1px",
+        "outlineStyle": "solid",
+        "outlineWidth": "1px",
+        "boxShadow": "oklab(0.999994 0.0000455678 0.0000200868 / 0.00395405) 0px 0.197703px 0px 0px inset",
+        "borderColor": "oklab(0.282225 0.000436156 -0.000531879 / 0.692944)"
+      }
+    },
+    {
+      "theme": "high-contrast",
+      "appliedTheme": "high-contrast",
+      "customTheme": null,
+      "pairs": [
+        {
+          "label": "text-primary/background",
+          "foreground": "rgb(255, 255, 255)",
+          "background": "rgb(8, 8, 8)",
+          "canvas": "rgb(8, 8, 8)",
+          "ratio": 20.027
+        },
+        {
+          "label": "text-secondary/background",
+          "foreground": "rgb(232, 230, 224)",
+          "background": "rgb(8, 8, 8)",
+          "canvas": "rgb(8, 8, 8)",
+          "ratio": 16.047
+        },
+        {
+          "label": "text-primary/card",
+          "foreground": "rgb(255, 255, 255)",
+          "background": "rgb(17, 17, 17)",
+          "canvas": "rgb(8, 8, 8)",
+          "ratio": 18.883
+        },
+        {
+          "label": "button",
+          "foreground": "rgb(255, 255, 255)",
+          "background": "rgb(17, 17, 17)",
+          "canvas": "rgb(8, 8, 8)",
+          "ratio": 18.883
+        },
+        {
+          "label": "input",
+          "foreground": "rgb(255, 255, 255)",
+          "background": "rgb(17, 17, 17)",
+          "canvas": "rgb(8, 8, 8)",
+          "ratio": 18.883
+        },
+        {
+          "label": "toast",
+          "foreground": "rgb(255, 255, 255)",
+          "background": "rgb(23, 23, 23)",
+          "canvas": "rgb(8, 8, 8)",
+          "ratio": 17.928
+        }
+      ],
+      "focus": {
+        "tag": "BUTTON",
+        "className": "n-icon-btn activity-btn s-ItLS4TuY7a9v has-new-activity",
+        "outline": "rgb(90, 122, 90) solid 1px",
+        "outlineStyle": "solid",
+        "outlineWidth": "1px",
+        "boxShadow": "none",
+        "borderColor": "rgb(48, 48, 48)"
+      }
+    },
+    {
+      "theme": "light",
+      "appliedTheme": "light",
+      "customTheme": null,
+      "pairs": [
+        {
+          "label": "text-primary/background",
+          "foreground": "rgb(26, 25, 22)",
+          "background": "rgb(238, 236, 232)",
+          "canvas": "rgb(238, 236, 232)",
+          "ratio": 14.9
+        },
+        {
+          "label": "text-secondary/background",
+          "foreground": "rgb(46, 44, 40)",
+          "background": "rgb(238, 236, 232)",
+          "canvas": "rgb(238, 236, 232)",
+          "ratio": 11.81
+        },
+        {
+          "label": "text-primary/card",
+          "foreground": "rgb(26, 25, 22)",
+          "background": "rgb(250, 248, 244)",
+          "canvas": "rgb(238, 236, 232)",
+          "ratio": 16.574
+        },
+        {
+          "label": "button",
+          "foreground": "rgb(26, 25, 22)",
+          "background": "rgb(250, 248, 244)",
+          "canvas": "rgb(238, 236, 232)",
+          "ratio": 16.574
+        },
+        {
+          "label": "input",
+          "foreground": "rgb(26, 25, 22)",
+          "background": "rgb(250, 248, 244)",
+          "canvas": "rgb(238, 236, 232)",
+          "ratio": 16.574
+        },
+        {
+          "label": "toast",
+          "foreground": "rgb(26, 25, 22)",
+          "background": "rgb(255, 255, 255)",
+          "canvas": "rgb(238, 236, 232)",
+          "ratio": 17.58
+        }
+      ],
+      "focus": {
+        "tag": "BUTTON",
+        "className": "n-icon-btn s-2ckRRjO5Xah_",
+        "outline": "rgb(90, 122, 90) solid 1px",
+        "outlineStyle": "solid",
+        "outlineWidth": "1px",
+        "boxShadow": "none",
+        "borderColor": "rgb(208, 204, 198)"
+      }
+    },
+    {
+      "theme": "light-contrast",
+      "appliedTheme": "light-contrast",
+      "customTheme": null,
+      "pairs": [
+        {
+          "label": "text-primary/background",
+          "foreground": "rgb(8, 8, 6)",
+          "background": "rgb(226, 222, 218)",
+          "canvas": "rgb(226, 222, 218)",
+          "ratio": 14.98
+        },
+        {
+          "label": "text-secondary/background",
+          "foreground": "rgb(24, 22, 18)",
+          "background": "rgb(226, 222, 218)",
+          "canvas": "rgb(226, 222, 218)",
+          "ratio": 13.503
+        },
+        {
+          "label": "text-primary/card",
+          "foreground": "rgb(8, 8, 6)",
+          "background": "rgb(245, 242, 236)",
+          "canvas": "rgb(226, 222, 218)",
+          "ratio": 17.939
+        },
+        {
+          "label": "button",
+          "foreground": "rgb(8, 8, 6)",
+          "background": "rgb(245, 242, 236)",
+          "canvas": "rgb(226, 222, 218)",
+          "ratio": 17.939
+        },
+        {
+          "label": "input",
+          "foreground": "rgb(8, 8, 6)",
+          "background": "rgb(245, 242, 236)",
+          "canvas": "rgb(226, 222, 218)",
+          "ratio": 17.939
+        },
+        {
+          "label": "toast",
+          "foreground": "rgb(8, 8, 6)",
+          "background": "rgb(255, 255, 255)",
+          "canvas": "rgb(226, 222, 218)",
+          "ratio": 20.044
+        }
+      ],
+      "focus": {
+        "tag": "BUTTON",
+        "className": "window-controls-inline__btn s-b5UVb5G8prfs",
+        "outline": "rgb(56, 52, 46) none 3px",
+        "outlineStyle": "none",
+        "outlineWidth": "3px",
+        "boxShadow": "color(srgb 0.117647 0.305882 0.117647 / 0.18) 0px 0px 0px 3px",
+        "borderColor": "rgb(56, 52, 46)"
+      }
+    },
+    {
+      "theme": "midnight",
+      "appliedTheme": "midnight",
+      "customTheme": null,
+      "pairs": [
+        {
+          "label": "text-primary/background",
+          "foreground": "rgb(238, 238, 248)",
+          "background": "rgb(8, 12, 24)",
+          "canvas": "rgb(8, 12, 24)",
+          "ratio": 16.932
+        },
+        {
+          "label": "text-secondary/background",
+          "foreground": "rgb(192, 196, 216)",
+          "background": "rgb(8, 12, 24)",
+          "canvas": "rgb(8, 12, 24)",
+          "ratio": 11.271
+        },
+        {
+          "label": "text-primary/card",
+          "foreground": "rgb(238, 238, 248)",
+          "background": "rgb(16, 20, 40)",
+          "canvas": "rgb(8, 12, 24)",
+          "ratio": 15.807
+        },
+        {
+          "label": "button",
+          "foreground": "rgb(238, 238, 248)",
+          "background": "rgb(16, 20, 40)",
+          "canvas": "rgb(8, 12, 24)",
+          "ratio": 15.807
+        },
+        {
+          "label": "input",
+          "foreground": "rgb(238, 238, 248)",
+          "background": "rgb(16, 20, 40)",
+          "canvas": "rgb(8, 12, 24)",
+          "ratio": 15.807
+        },
+        {
+          "label": "toast",
+          "foreground": "rgb(238, 238, 248)",
+          "background": "rgb(21, 26, 48)",
+          "canvas": "rgb(8, 12, 24)",
+          "ratio": 14.907
+        }
+      ],
+      "focus": {
+        "tag": "BUTTON",
+        "className": "window-controls-inline__btn s-b5UVb5G8prfs",
+        "outline": "rgb(128, 132, 152) none 3px",
+        "outlineStyle": "none",
+        "outlineWidth": "3px",
+        "boxShadow": "color(srgb 0.533333 0.588235 0.815686 / 0.18) 0px 0px 0px 3px",
+        "borderColor": "rgb(128, 132, 152)"
+      }
+    },
+    {
+      "theme": "warm",
+      "appliedTheme": "warm",
+      "customTheme": null,
+      "pairs": [
+        {
+          "label": "text-primary/background",
+          "foreground": "rgb(245, 240, 224)",
+          "background": "rgb(16, 14, 8)",
+          "canvas": "rgb(16, 14, 8)",
+          "ratio": 16.927
+        },
+        {
+          "label": "text-secondary/background",
+          "foreground": "rgb(216, 208, 176)",
+          "background": "rgb(16, 14, 8)",
+          "canvas": "rgb(16, 14, 8)",
+          "ratio": 12.468
+        },
+        {
+          "label": "text-primary/card",
+          "foreground": "rgb(245, 240, 224)",
+          "background": "rgb(28, 24, 16)",
+          "canvas": "rgb(16, 14, 8)",
+          "ratio": 15.514
+        },
+        {
+          "label": "button",
+          "foreground": "rgb(245, 240, 224)",
+          "background": "rgb(28, 24, 16)",
+          "canvas": "rgb(16, 14, 8)",
+          "ratio": 15.514
+        },
+        {
+          "label": "input",
+          "foreground": "rgb(245, 240, 224)",
+          "background": "rgb(28, 24, 16)",
+          "canvas": "rgb(16, 14, 8)",
+          "ratio": 15.514
+        },
+        {
+          "label": "toast",
+          "foreground": "rgb(245, 240, 224)",
+          "background": "rgb(34, 30, 20)",
+          "canvas": "rgb(16, 14, 8)",
+          "ratio": 14.577
+        }
+      ],
+      "focus": {
+        "tag": "BUTTON",
+        "className": "window-controls-inline__btn window-controls-inline__btn--close s-b5UVb5G8prfs",
+        "outline": "rgb(152, 140, 96) none 3px",
+        "outlineStyle": "none",
+        "outlineWidth": "3px",
+        "boxShadow": "color(srgb 0.815686 0.627451 0.25098 / 0.18) 0px 0px 0px 3px",
+        "borderColor": "rgb(152, 140, 96)"
+      }
+    }
+  ]
+}

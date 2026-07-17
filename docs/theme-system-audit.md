@@ -3203,3 +3203,36 @@ Categorias cobertas:
 - Testes focados: **7 arquivos / 28 testes verdes**, incluindo inventario, consumo integral, ausencia de radius/blur/z-index numericos nas superficies migradas e render dos componentes afetados.
 - `pnpm build`: verde, com apenas o aviso conhecido do chunk principal acima de 500 kB. `git diff --check`: verde.
 - Os valores nao-cor restantes pertencem a regras estruturais, superficies Legacy ou areas deliberadamente fora deste lote. A proxima etapa deve congelar/documentar a compatibilidade Legacy antes do gate nativo final, sem remover aliases nem `--n-*`.
+
+## Marco 52 - Legacy Compatibility Freeze Confirmation
+
+### Decisao
+
+- O congelamento proposto para Legacy ja possui contrato mais forte nos Marcos 31 e 32. `AppThemeCompatibilityTokens.test.ts`, `themeInventory.test.ts` e a auditoria de entrypoints cobrem aliases, hosts, bundle e classificacao sem ativar ou remover codigo antigo.
+- Repetir a migracao criaria documentacao e gates concorrentes sem aumentar evidencia. Este marco confirma o ownership existente: **97 component tokens Legacy**, **45 aliases `--n-*` Ativos / 17 Legacy / 0 Mortos**, 13 aliases `--activity-*` Legacy e 60 tokens Syncd excluidos.
+- Nenhum token, seletor, componente, rota ou arquivo Legacy foi alterado. A remocao continua proibida sem nova busca global, prova de ausencia em entrypoints/runtime e marco dedicado.
+
+## Marco 53 - Native Runtime Visual Gate
+
+### Harness e escopo
+
+- `pnpm theme:audit-runtime` inicia o launcher desktop gerenciado, aguarda a porta CDP 9223 e executa uma auditoria Playwright contra o WebView2 real. O harness recusa tema custom ativo, restaura tema/navegacao em `finally` e nao persiste preferencias nem cria dados artificiais.
+- Foram capturadas **16 screenshots reais** em 1280x800: Library Books, context menu, Search, Discover, Sources, overlay de repositorios, Downloads, Settings e Reader PDF/HUD em Nocturne, mais Settings para os sete builtins.
+- Evidencias e computed styles ficam em `docs/screenshots/marco53-runtime-audit/`; `runtime-audit.json` registra viewport, superficies, temas, contraste, foco e limitacoes.
+- Nenhum componente, token, builtin, documento, store, layout ou comportamento do app foi alterado neste marco.
+
+### Acessibilidade e revisao visual
+
+- Os sete builtins (`nocturne`, `dark`, `high-contrast`, `light`, `light-contrast`, `midnight` e `warm`) passaram **42/42 pares WCAG AA**. Os menores ratios por tema foram, respectivamente: **10,899**, **11,453**, **16,047**, **11,810**, **13,503**, **11,271** e **12,468**.
+- Navegacao por teclado produziu foco visivel em **7/7 temas**, por outline ou focus shadow computado.
+- A revisao das capturas nao encontrou tiles pretos, clipping, sobreposicao incoerente, mudanca de geometria ou perda de hierarquia. Sources carregou a lista real; Downloads preservou o empty state; Discover foi registrado em loading real; Reader exibiu PDF refluido com HUD e popover reais.
+- Nenhum toast real estava ativo na sessao final, e o harness nao fabricou um. A evidencia real mais recente permanece em `docs/screenshots/marco51-non-color-values/after-library-books.png`; o reinicio da barra em renovacao continua coberto pelo teste e pelo commit `e0c4522`.
+
+### Gates e riscos restantes
+
+- Teste Node do harness: **1 arquivo / 3 testes verdes**.
+- Testes unit/jsdom de contratos: **5 arquivos / 45 testes verdes**.
+- Testes browser Chromium: **3 arquivos / 13 testes verdes**, incluindo matriz builtin, probe e compatibilidade Nocturne port.
+- `pnpm theme:check-builtins`: verde. `pnpm build`: verde, com apenas o aviso conhecido de chunk principal acima de 500 kB. `git diff --check`: verde.
+- O harness depende do launcher gerenciado, de CDP 9223 e dos dados reais disponiveis. Estados event-driven como toast e estados de erro/pausa continuam exigindo uma ocorrencia natural ou cobertura automatizada focada.
+- Syncd, componentes Legacy, aliases `--activity-*` e a camada `--n-*` permanecem preservados e fora do escopo. O sistema de temas esta apto para autoria e promocao por contrato; nenhum tema novo foi criado neste ciclo.

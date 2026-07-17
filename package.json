@@ -13,6 +13,8 @@
     "test:suwayomi-certification": "node --test scripts/certify-suwayomi-release.test.mjs",
     "theme:generate-builtins": "node scripts/generate-builtin-themes.mjs",
     "theme:check-builtins": "node scripts/generate-builtin-themes.mjs --check",
+    "theme:audit-runtime": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-theme-runtime-audit.ps1",
+    "theme:test-runtime-audit": "node --test scripts/theme-runtime-audit.test.mjs",
     "theme:validate-promotion": "node scripts/validate-theme-promotion.mjs",
     "certify:suwayomi": "node scripts/certify-suwayomi-release.mjs",
     "syncd:prepare-sidecar": "node ./scripts/prepare-syncd-sidecar.mjs",
