@@ -1,6 +1,13 @@
 import { commands, page } from "@vitest/browser/context";
 import { describe, expect, test } from "vitest";
-import { BUILTIN_THEMES } from "./contract";
+import {
+  BUILTIN_THEMES,
+  BUILTIN_THEME_CONTRACTS,
+  HUD_THEME_TOKEN_KEYS,
+  THEME_MOTION_VARS,
+  THEME_TOKEN_KEYS,
+  type HudThemeTokens,
+} from "./contract";
 
 type Rgba = [number, number, number, number];
 
@@ -78,7 +85,69 @@ function isPainted(token: string): boolean {
   return painted;
 }
 
+function normalizedColor(value: string): string {
+  const probe = document.createElement("div");
+  probe.style.color = value;
+  document.body.appendChild(probe);
+  const computed = getComputedStyle(probe).color;
+  probe.remove();
+  return computed;
+}
+
+const hudColorTokens = new Set<keyof HudThemeTokens>([
+  "hud-selection-bg",
+  "hud-selection-border",
+]);
+const hudOpacityTokens = new Set<keyof HudThemeTokens>([
+  "hud-surface-opacity",
+  "hud-reader-chrome-opacity",
+]);
+
+function normalizedHudValue(token: keyof HudThemeTokens, value: string): string {
+  const probe = document.createElement("div");
+  if (hudColorTokens.has(token)) probe.style.color = value;
+  else if (hudOpacityTokens.has(token)) probe.style.opacity = value;
+  else probe.style.width = value;
+  document.body.appendChild(probe);
+  const computed = getComputedStyle(probe);
+  const result = hudColorTokens.has(token)
+    ? computed.color
+    : hudOpacityTokens.has(token)
+      ? computed.opacity
+      : computed.width;
+  probe.remove();
+  return result;
+}
+
 describe("builtin theme matrix", () => {
+  test("matches every authored builtin contract to the computed CSS cascade", async () => {
+    const root = document.documentElement;
+
+    for (const theme of BUILTIN_THEMES) {
+      root.dataset.theme = theme.id;
+      root.removeAttribute("data-custom-theme");
+      await new Promise(requestAnimationFrame);
+      const contract = BUILTIN_THEME_CONTRACTS[theme.id];
+
+      for (const token of THEME_TOKEN_KEYS) {
+        expect(
+          normalizedColor(`var(--${token})`),
+          `${theme.id} --${token}`,
+        ).toBe(normalizedColor(contract.tokens[token]));
+      }
+      for (const token of HUD_THEME_TOKEN_KEYS) {
+        expect(
+          normalizedHudValue(token, `var(--${token})`),
+          `${theme.id} --${token}`,
+        ).toBe(normalizedHudValue(token, contract.hud[token]));
+      }
+      const rootStyle = getComputedStyle(root);
+      for (const [property, value] of Object.entries(THEME_MOTION_VARS[contract.motion])) {
+        expect(rootStyle.getPropertyValue(property).trim(), `${theme.id} ${property}`).toBe(value);
+      }
+    }
+  });
+
   test("resolves representative surfaces and AA text pairs for every registered builtin", async () => {
     const root = document.documentElement;
 

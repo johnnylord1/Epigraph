@@ -27,6 +27,13 @@ interface ThemeDocumentV4 {
 
 Primitive and semantic maps are sparse. Values equal to the selected base are omitted when the document is saved or exported. Component tokens are never authored, persisted, imported, exported, or promoted. They remain derived by the shared design system.
 
+Every registered built-in has one complete authoring contract in
+`BUILTIN_THEME_CONTRACTS`: 50 theme colors, 15 HUD values, and one motion
+preset. Document creation, resolution, reset, and export read this registry;
+they do not infer a base contract from the currently active DOM. A browser gate
+compares every registry value with the real computed CSS cascade for all
+registered built-ins.
+
 Shadow and highlight tint are semantic roles (`color-shadow-source` and
 `color-highlight-source`). Authors may override their color, while elevation
 geometry, alpha and component composition remain owned by the shared design
@@ -49,6 +56,11 @@ ThemeEditor -> export -> validation -> promotion
 6. Export the V4 JSON document.
 7. Run the authoring and visual gates before proposing promotion.
 
+When the editor is opened for a new theme, it starts from the active built-in
+theme. Editing or importing an existing V4 document preserves its declared
+`base`. Reset restores that base contract rather than silently switching the
+document to Nocturne.
+
 The ThemeEditor is the official UI. Editing component CSS is not part of theme authoring.
 
 ## Import And Compatibility
@@ -67,9 +79,10 @@ A future built-in theme requires only:
 
 1. A valid V4 theme document.
 2. Registry metadata: stable id, label, description, and four representative swatches.
-3. Nocturne-comparable screenshots for Library, Browse, Settings, Reader, modal, popover, and toast.
-4. WCAG AA evidence for the required text and control pairs.
-5. Green contract, browser, build, and whitespace gates.
+3. A complete registry contract matching the built-in CSS cascade.
+4. Nocturne-comparable screenshots for Library, Browse, Settings, Reader, modal, popover, and toast.
+5. WCAG AA evidence for the required text and control pairs.
+6. Green contract, browser, build, and whitespace gates.
 
 No component CSS should be added for a theme. If a proposed palette cannot render an active component through the existing primitive and semantic contract, the missing semantic role must be added to the shared design system first and validated for every theme.
 

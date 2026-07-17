@@ -45,19 +45,8 @@ export function readComputedThemeContract(
 }
 
 export function readBuiltinThemeContract(base: BuiltinTheme): { tokens: ThemeTokens; hud: HudThemeTokens } {
-  if (typeof document === "undefined" || !document.body) {
-    const fallback = getBuiltinThemeFallbackContract(base);
-    return { tokens: fallback.tokens, hud: fallback.hud };
-  }
-  const probe = document.createElement("div");
-  probe.setAttribute("data-theme", base);
-  probe.hidden = true;
-  document.body.appendChild(probe);
-  try {
-    return readComputedThemeContract(probe, base);
-  } finally {
-    probe.remove();
-  }
+  const contract = getBuiltinThemeFallbackContract(base);
+  return { tokens: contract.tokens, hud: contract.hud };
 }
 
 export function applyThemeContract(

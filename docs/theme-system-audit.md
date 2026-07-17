@@ -2971,3 +2971,40 @@ Categorias cobertas:
 
 - `pnpm test:browser -- src/lib/theme/builtinThemeMatrix.browser.test.ts`: passou com **2/2** testes verdes.
 - O gate confirma que os builtins existentes sao computavelmente saudaveis para superficies base e texto normal, mas nao transforma esses builtins em documentos V4 completos. A promocao futura de um tema novo ainda precisa de documento, metadados, evidencias visuais reais do app e validacao de superficies completas.
+
+## Marco 45 - Exact Builtin Authoring Contracts
+
+### Escopo e arquitetura
+
+- O registry agora expoe `BUILTIN_THEME_CONTRACTS` para os sete builtins existentes: `nocturne`, `dark`, `high-contrast`, `light`, `light-contrast`, `midnight` e `warm`.
+- Cada entrada possui contrato completo de **50 ThemeTokens / 15 HudThemeTokens / 1 motion preset**. No total, o gate cobre **350 cores / 105 valores HUD / 35 propriedades de motion**, sem criar tema novo ou component token.
+- Os contratos alternativos derivam aliases semanticos das primitives reais do respectivo builtin. Status explicitamente sobrescritos pelo CSS de `light` e `light-contrast` permanecem overrides semanticos; valores compartilhados nao foram duplicados.
+- `getBuiltinThemeFallbackContract()`, `createThemeDocumentV4()`, `resolveThemeDocument()`, provider e ThemeEditor passam a usar o mesmo registry puro. `readBuiltinThemeContract()` nao cria mais probe DOM suscetivel a herdar inline properties do tema custom ativo.
+- O provider runtime continua lendo a cascata computada depois de limpar as propriedades custom e selecionar o builtin-base. Assim, aplicacao visual e autoria pura possuem responsabilidades separadas e verificadas entre si.
+
+### ThemeEditor e documentos V4
+
+- Um editor novo parte do builtin ativo quando `store.settings.theme` e um builtin valido; Nocturne permanece o fallback canonico para selecoes custom/invalidas.
+- Edicao e import preservam o `base` declarado pelo documento. Reset restaura tokens, HUD e motion do mesmo base em vez de converter silenciosamente o documento para Nocturne.
+- Criar um V4 com exatamente o contrato de qualquer builtin produz documento esparso: **0 primitive overrides / 0 semantic overrides / 0 HUD overrides**. O round-trip fora do DOM resolve novamente o contrato completo correto.
+- Nenhum documento persistido foi migrado ou salvo durante este marco. V1-V3, `--n-*`, aliases Legacy, Syncd e component tokens permaneceram intactos.
+
+### Divergencia encontrada pelo novo gate
+
+- A primeira execucao integral encontrou que `hud-selection-bg` e `hud-selection-border` dos cinco temas alternativos derivavam de `accent-muted`/`accent-dim` no CSS, enquanto o fallback TypeScript reutilizava as cores Dark.
+- O registry agora deriva esses dois HUD tokens por builtin. A correcao nao altera CSS ou Nocturne; ela faz documentos e previews fora do DOM reproduzirem o valor que o app ja renderizava.
+- O inventario global de valores diretos classifica `contract.ts` com **237 ocorrencias** como excecao ativa: contratos builtin autoraveis e swatches do registry. Qualquer drift de quantidade continua falhando `directVisualValuesGate.test.ts`.
+
+### Validacao visual real
+
+- App Tauri/WebView2 real em Nocturne builtin, viewport 1280x800, `data-theme="nocturne"`, sem `data-custom-theme` e sem salvar tema.
+- Evidencias after em `docs/screenshots/marco45-builtin-authoring/after-settings-appearance.png` e `after-theme-editor.png`. Baselines reais anteriores: `docs/screenshots/marco43-builtin-registry/before-settings-appearance.png` e `before-theme-editor.png`.
+- Appearance e ThemeEditor preservaram geometria, surfaces, borders, shadows, spacing, tipografia e hierarquia. O editor abriu com os valores canonicos Nocturne do registry (`bg-void: #08080b`, `bg-base: #131313`, `bg-surface: #1c1b1b`). Nao houve regressao visual aparente.
+
+### Gates e riscos restantes
+
+- Testes unit/jsdom focados: **6 arquivos / 57 testes verdes**, cobrindo registry, documentos V4, provider, autoria, allowlist global e contrato do ThemeEditor.
+- Testes browser Chromium: **2 arquivos / 9 testes verdes**, cobrindo paridade integral dos sete builtins, WCAG AA representativo e probe custom.
+- `pnpm build`: verde; permanece apenas o aviso conhecido de chunk principal acima de 500 kB.
+- Risco residual: os valores builtin existem como implementacao CSS e contrato de autoria TypeScript; o gate browser passa a impedir drift, mas uma futura promocao deve atualizar registry, CSS e evidencias no mesmo lote ate existir geracao build-time unica.
+- Os 11 HudThemeTokens Legacy continuam aceitos para compatibilidade/preview. Syncd, componentes Legacy e a camada `--n-*` permanecem preservados e fora deste marco.

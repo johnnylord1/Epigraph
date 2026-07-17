@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
+  BUILTIN_THEME_CONTRACTS,
+  BUILTIN_THEME_IDS,
   DEFAULT_HUD_THEME_TOKENS,
   DEFAULT_THEME_TOKENS,
   NOCTURNE_HUD_THEME_TOKENS,
@@ -209,6 +211,28 @@ describe("ThemeDocumentV4", () => {
       tokens: { ...DEFAULT_THEME_TOKENS, accent: "#123456" },
       hud: { ...DEFAULT_HUD_THEME_TOKENS, "hud-toolbar-gap": "10px" },
     });
+  });
+
+  test("creates sparse documents against every exact builtin contract outside the DOM", () => {
+    for (const base of BUILTIN_THEME_IDS) {
+      const contract = BUILTIN_THEME_CONTRACTS[base];
+      const document = createThemeDocumentV4({
+        id: `custom:${base}`,
+        name: `${base} child`,
+        base,
+        tokens: { ...contract.tokens },
+        hud: { ...contract.hud },
+        motion: contract.motion,
+      });
+
+      expect(document.primitives, `${base} primitives`).toEqual({});
+      expect(document.semanticOverrides, `${base} semantic overrides`).toBeUndefined();
+      expect(document.hud, `${base} HUD overrides`).toBeUndefined();
+      expect(resolveThemeDocument(document)).toEqual({
+        tokens: contract.tokens,
+        hud: contract.hud,
+      });
+    }
   });
 
   test("serializes, parses, and adapts the current legacy type explicitly", () => {

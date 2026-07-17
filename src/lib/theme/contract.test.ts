@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
   BUILTIN_THEME_IDS,
+  BUILTIN_THEME_CONTRACTS,
   BUILTIN_THEMES,
   DEFAULT_HUD_THEME_TOKENS,
   DEFAULT_THEME_TOKENS,
@@ -49,10 +50,15 @@ describe("canonical theme contract", () => {
       hud: NOCTURNE_HUD_THEME_TOKENS,
       motion: "soft",
     });
-    expect(getBuiltinThemeFallbackContract("dark")).toMatchObject({
-      tokens: DEFAULT_THEME_TOKENS,
-      hud: DEFAULT_HUD_THEME_TOKENS,
-      motion: "soft",
+    for (const id of BUILTIN_THEME_IDS) {
+      expect(getBuiltinThemeFallbackContract(id)).toBe(BUILTIN_THEME_CONTRACTS[id]);
+    }
+    expect(getBuiltinThemeFallbackContract("dark")).toMatchObject({ tokens: DEFAULT_THEME_TOKENS });
+    expect(getBuiltinThemeFallbackContract("light").tokens).toMatchObject({
+      "bg-base": "#eeece8",
+      "text-primary": "#1a1916",
+      "color-background": "#eeece8",
+      "color-danger": "#a03030",
     });
   });
 
@@ -61,6 +67,12 @@ describe("canonical theme contract", () => {
     expect(Object.keys(NOCTURNE_THEME_TOKENS).sort()).toEqual([...THEME_TOKEN_KEYS].sort());
     expect([...HUD_THEME_TOKEN_KEYS].sort()).toEqual(Object.keys(DEFAULT_HUD_THEME_TOKENS).sort());
     expect(Object.keys(NOCTURNE_HUD_THEME_TOKENS).sort()).toEqual([...HUD_THEME_TOKEN_KEYS].sort());
+    expect(Object.keys(BUILTIN_THEME_CONTRACTS)).toEqual([...BUILTIN_THEME_IDS]);
+    for (const contract of Object.values(BUILTIN_THEME_CONTRACTS)) {
+      expect(Object.keys(contract.tokens).sort()).toEqual([...THEME_TOKEN_KEYS].sort());
+      expect(Object.keys(contract.hud).sort()).toEqual([...HUD_THEME_TOKEN_KEYS].sort());
+      expect(THEME_MOTION_VARS[contract.motion]).toBeDefined();
+    }
     expect([...THEME_PRIMITIVE_TOKEN_KEYS, ...THEME_SEMANTIC_TOKEN_KEYS].sort()).toEqual([...THEME_TOKEN_KEYS].sort());
     expect(new Set([...THEME_PRIMITIVE_TOKEN_KEYS, ...THEME_SEMANTIC_TOKEN_KEYS]).size).toBe(THEME_TOKEN_KEYS.length);
     for (const preset of Object.values(THEME_MOTION_VARS)) {

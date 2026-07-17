@@ -20,7 +20,12 @@
     serializeThemeDocument,
   } from "../../lib/theme/document";
   import { applyThemeContract, readBuiltinThemeContract } from "../../lib/theme/provider";
-  import type { BuiltinTheme } from "../../lib/theme/contract";
+  import {
+    DEFAULT_BUILTIN_THEME_ID,
+    getBuiltinThemeFallbackContract,
+    isBuiltinTheme,
+    type BuiltinTheme,
+  } from "../../lib/theme/contract";
 
   interface Props {
     editingId?: string | null;
@@ -215,12 +220,16 @@
         }
       }
     }
+    const selectedBase = isBuiltinTheme(store.settings.theme)
+      ? store.settings.theme
+      : DEFAULT_BUILTIN_THEME_ID;
+    const baseContract = readBuiltinThemeContract(selectedBase);
     return {
       name: "My Theme",
-      base: "nocturne",
-      tokens: { ...NOCTURNE_THEME_TOKENS },
-      hud: { ...NOCTURNE_HUD_THEME_TOKENS },
-      motion: "soft",
+      base: selectedBase,
+      tokens: { ...baseContract.tokens },
+      hud: { ...baseContract.hud },
+      motion: getBuiltinThemeFallbackContract(selectedBase).motion,
     };
   }
 
@@ -264,7 +273,8 @@
   }
 
   function parseHudNumber(token: keyof HudThemeTokens): number {
-    return Number.parseFloat(String(hud[token]).replace("px", "")) || Number.parseFloat(NOCTURNE_HUD_THEME_TOKENS[token]) || 0;
+    const baseHudValue = getBuiltinThemeFallbackContract(base).hud[token];
+    return Number.parseFloat(String(hud[token]).replace("px", "")) || Number.parseFloat(baseHudValue) || 0;
   }
 
   function setHudNumeric(token: keyof HudThemeTokens, value: number, unit: "px" | "") {
@@ -365,10 +375,10 @@
   }
 
   function resetToDefaults() {
-    base = "nocturne";
-    tokens = { ...NOCTURNE_THEME_TOKENS };
-    hud = { ...NOCTURNE_HUD_THEME_TOKENS };
-    motion = "soft";
+    const baseContract = readBuiltinThemeContract(base);
+    tokens = { ...baseContract.tokens };
+    hud = { ...baseContract.hud };
+    motion = getBuiltinThemeFallbackContract(base).motion;
   }
 
   function onKey(e: KeyboardEvent) {
@@ -416,7 +426,7 @@
           <DownloadSimple size={13} />
           <span>{$_("ui_export")}</span>
         </button>
-        <button class="te-action-btn te-ghost" onclick={resetToDefaults} title={$_("ui_resetAllToNocturneDefaults")}>
+        <button class="te-action-btn te-ghost" onclick={resetToDefaults} title={$_("ui_reset")}>
           {$_("ui_reset")}
         </button>
         {#if editingId}

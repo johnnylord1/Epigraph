@@ -89,6 +89,11 @@ describe("ThemeEditor theme tokens", () => {
     expect(source).toContain("use:themePreview={{ tokens, hud, motion }}");
     expect(source).toContain("applyThemeContract(node, draft.tokens, draft.hud, draft.motion)");
     expect(source).toContain("createThemeDocumentV4(");
+    expect(source).toContain("isBuiltinTheme(store.settings.theme)");
+    expect(source).toContain("readBuiltinThemeContract(selectedBase)");
+    expect(source).toContain("getBuiltinThemeFallbackContract(base).motion");
+    expect(source).toContain("getBuiltinThemeFallbackContract(base).hud[token]");
+    expect(source).not.toContain('base = "nocturne"');
     expect(source).toContain("importThemeDocument(text)");
     expect(source).toContain("serializeThemeDocument(data)");
     expect(source).toContain('"color-shadow-source": "Shadow source"');

@@ -189,6 +189,31 @@ export const DEFAULT_THEME_TOKENS: ThemeTokens = {
   "color-shadow-source": "#000000", "color-highlight-source": "#ffffff",
 };
 
+function deriveBuiltinThemeTokens(overrides: Partial<ThemeTokens>): ThemeTokens {
+  const merged = { ...DEFAULT_THEME_TOKENS, ...overrides };
+  return {
+    ...merged,
+    "text-tertiary": overrides["text-tertiary"] ?? merged["text-muted"],
+    "text-inverse": overrides["text-inverse"] ?? merged["bg-void"],
+    "color-background": overrides["color-background"] ?? merged["bg-base"],
+    "color-background-void": overrides["color-background-void"] ?? merged["bg-void"],
+    "color-surface": overrides["color-surface"] ?? merged["bg-surface"],
+    "color-surface-secondary": overrides["color-surface-secondary"] ?? merged["bg-subtle"],
+    "color-elevated": overrides["color-elevated"] ?? merged["bg-raised"],
+    "color-card": overrides["color-card"] ?? merged["bg-raised"],
+    "color-modal": overrides["color-modal"] ?? merged["bg-overlay"],
+    "color-popover": overrides["color-popover"] ?? merged["bg-overlay"],
+    "color-menu": overrides["color-menu"] ?? merged["bg-overlay"],
+    "color-border": overrides["color-border"] ?? merged["border-base"],
+    "color-outline": overrides["color-outline"] ?? merged["border-focus"],
+    "color-divider": overrides["color-divider"] ?? merged["border-dim"],
+    "color-accent": overrides["color-accent"] ?? merged.accent,
+    "color-accent-muted": overrides["color-accent-muted"] ?? merged["accent-muted"],
+    "color-danger": overrides["color-danger"] ?? merged["color-error"],
+    "color-danger-bg": overrides["color-danger-bg"] ?? merged["color-error-bg"],
+  };
+}
+
 export const DEFAULT_HUD_THEME_TOKENS: HudThemeTokens = {
   "hud-control-height": "30px", "hud-icon-button-size": "30px", "hud-control-radius": "5px", "hud-chip-radius": "9999px",
   "hud-popover-radius": "5px", "hud-status-radius": "3px", "hud-toast-radius": "7px", "hud-chapter-row-radius": "5px",
@@ -216,6 +241,67 @@ export const NOCTURNE_HUD_THEME_TOKENS: HudThemeTokens = {
   "hud-popover-radius": "12px", "hud-status-radius": "9999px", "hud-toast-radius": "12px", "hud-chapter-row-radius": "9px",
   "hud-surface-opacity": "0.96", "hud-sidebar-width": "56px", "hud-toolbar-gap": "6px", "hud-reader-chrome-opacity": "0.92",
   "hud-selection-bg": "#211b3b", "hud-selection-border": "#4c4078", "hud-progress-height": "2px",
+};
+
+function deriveBuiltinHudThemeTokens(tokens: ThemeTokens): HudThemeTokens {
+  return {
+    ...DEFAULT_HUD_THEME_TOKENS,
+    "hud-selection-bg": tokens["accent-muted"],
+    "hud-selection-border": tokens["accent-dim"],
+  };
+}
+
+export interface BuiltinThemeContract {
+  tokens: ThemeTokens;
+  hud: HudThemeTokens;
+  motion: ThemeMotionPreset;
+}
+
+const HIGH_CONTRAST_THEME_TOKENS = deriveBuiltinThemeTokens({
+  "bg-void": "#000000", "bg-base": "#080808", "bg-surface": "#0d0d0d", "bg-raised": "#111111", "bg-overlay": "#171717", "bg-subtle": "#1e1e1e",
+  "border-dim": "#252525", "border-base": "#303030", "border-strong": "#3e3e3e", "border-focus": "#5a7a5a",
+  "text-primary": "#ffffff", "text-secondary": "#e8e6e0", "text-muted": "#b0aea8", "text-faint": "#6e6c68", "text-disabled": "#303030",
+  "accent": "#7aaa7a", "accent-dim": "#2e4a2e", "accent-muted": "#1e2e1e", "accent-fg": "#bcd8bc", "accent-bright": "#9fcf9f",
+});
+
+const LIGHT_THEME_TOKENS = deriveBuiltinThemeTokens({
+  "bg-void": "#e8e6e2", "bg-base": "#eeece8", "bg-surface": "#f4f2ee", "bg-raised": "#faf8f4", "bg-overlay": "#ffffff", "bg-subtle": "#f0ede8",
+  "border-dim": "#dedad4", "border-base": "#d0ccc6", "border-strong": "#bbb6ae", "border-focus": "#5a7a5a",
+  "text-primary": "#1a1916", "text-secondary": "#2e2c28", "text-muted": "#5a5750", "text-faint": "#9a9890", "text-disabled": "#c8c4bc",
+  "accent": "#4a724a", "accent-dim": "#c8dcc8", "accent-muted": "#deeade", "accent-fg": "#2a5a2a", "accent-bright": "#3a6a3a",
+  "color-error": "#a03030", "color-error-bg": "#fce8e8", "color-success": "#2a6a2a", "color-info": "#2a4a7a", "color-info-bg": "#e8eef8",
+});
+
+const LIGHT_CONTRAST_THEME_TOKENS = deriveBuiltinThemeTokens({
+  "bg-void": "#d8d4ce", "bg-base": "#e2deda", "bg-surface": "#ece8e2", "bg-raised": "#f5f2ec", "bg-overlay": "#ffffff", "bg-subtle": "#e4e0d8",
+  "border-dim": "#c4c0b8", "border-base": "#b0aca4", "border-strong": "#989490", "border-focus": "#3a5a3a",
+  "text-primary": "#080806", "text-secondary": "#181612", "text-muted": "#38342e", "text-faint": "#706c64", "text-disabled": "#b0aca4",
+  "accent": "#2a5a2a", "accent-dim": "#b0ccb0", "accent-muted": "#c8dcc8", "accent-fg": "#183818", "accent-bright": "#1e4e1e",
+  "color-error": "#8a1a1a", "color-error-bg": "#f8e0e0",
+});
+
+const MIDNIGHT_THEME_TOKENS = deriveBuiltinThemeTokens({
+  "bg-void": "#050810", "bg-base": "#080c18", "bg-surface": "#0c1020", "bg-raised": "#101428", "bg-overlay": "#151a30", "bg-subtle": "#1a2038",
+  "border-dim": "#1a2035", "border-base": "#222840", "border-strong": "#2c3450", "border-focus": "#4a5c8a",
+  "text-primary": "#eeeef8", "text-secondary": "#c0c4d8", "text-muted": "#808498", "text-faint": "#404860", "text-disabled": "#202840",
+  "accent": "#6a7ab8", "accent-dim": "#252d50", "accent-muted": "#181e38", "accent-fg": "#a8b4e8", "accent-bright": "#8896d0",
+});
+
+const WARM_THEME_TOKENS = deriveBuiltinThemeTokens({
+  "bg-void": "#0c0a06", "bg-base": "#100e08", "bg-surface": "#16130c", "bg-raised": "#1c1810", "bg-overlay": "#221e14", "bg-subtle": "#28241a",
+  "border-dim": "#201c10", "border-base": "#2c2818", "border-strong": "#3a3420", "border-focus": "#6a5a30",
+  "text-primary": "#f5f0e0", "text-secondary": "#d8d0b0", "text-muted": "#988c60", "text-faint": "#584e30", "text-disabled": "#302a18",
+  "accent": "#c0902a", "accent-dim": "#3a2c10", "accent-muted": "#261e0c", "accent-fg": "#e0b860", "accent-bright": "#d0a040",
+});
+
+export const BUILTIN_THEME_CONTRACTS: Readonly<Record<BuiltinTheme, BuiltinThemeContract>> = {
+  nocturne: { tokens: NOCTURNE_THEME_TOKENS, hud: NOCTURNE_HUD_THEME_TOKENS, motion: "soft" },
+  dark: { tokens: DEFAULT_THEME_TOKENS, hud: DEFAULT_HUD_THEME_TOKENS, motion: "soft" },
+  "high-contrast": { tokens: HIGH_CONTRAST_THEME_TOKENS, hud: deriveBuiltinHudThemeTokens(HIGH_CONTRAST_THEME_TOKENS), motion: "soft" },
+  light: { tokens: LIGHT_THEME_TOKENS, hud: deriveBuiltinHudThemeTokens(LIGHT_THEME_TOKENS), motion: "soft" },
+  "light-contrast": { tokens: LIGHT_CONTRAST_THEME_TOKENS, hud: deriveBuiltinHudThemeTokens(LIGHT_CONTRAST_THEME_TOKENS), motion: "soft" },
+  midnight: { tokens: MIDNIGHT_THEME_TOKENS, hud: deriveBuiltinHudThemeTokens(MIDNIGHT_THEME_TOKENS), motion: "soft" },
+  warm: { tokens: WARM_THEME_TOKENS, hud: deriveBuiltinHudThemeTokens(WARM_THEME_TOKENS), motion: "soft" },
 };
 
 export const THEME_MOTION_PROPERTY_KEYS = [
@@ -262,10 +348,8 @@ export function getBuiltinThemeMetadata(id: string): BuiltinThemeMetadata | unde
 
 export function getBuiltinThemeFallbackContract(
   base: BuiltinTheme,
-): { tokens: ThemeTokens; hud: HudThemeTokens; motion: ThemeMotionPreset } {
-  return base === DEFAULT_BUILTIN_THEME_ID
-    ? { tokens: NOCTURNE_THEME_TOKENS, hud: NOCTURNE_HUD_THEME_TOKENS, motion: "soft" }
-    : { tokens: DEFAULT_THEME_TOKENS, hud: DEFAULT_HUD_THEME_TOKENS, motion: "soft" };
+): BuiltinThemeContract {
+  return BUILTIN_THEME_CONTRACTS[base];
 }
 
 export function normalizeThemeSelection(

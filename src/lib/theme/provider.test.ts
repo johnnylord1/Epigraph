@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import {
+  BUILTIN_THEME_CONTRACTS,
   NOCTURNE_HUD_THEME_TOKENS,
   NOCTURNE_THEME_TOKENS,
   HUD_THEME_TOKEN_KEYS,
@@ -11,6 +12,7 @@ import {
   CUSTOM_THEME_STYLE_PROPERTIES,
   applyCustomTheme,
   clearCustomThemeProperties,
+  readBuiltinThemeContract,
 } from "./provider";
 
 function computedStyle(values: Record<string, string>): CSSStyleDeclaration {
@@ -18,6 +20,17 @@ function computedStyle(values: Record<string, string>): CSSStyleDeclaration {
 }
 
 describe("custom theme provider", () => {
+  test("uses exact registry contracts independently from DOM state", () => {
+    expect(readBuiltinThemeContract("light")).toEqual({
+      tokens: BUILTIN_THEME_CONTRACTS.light.tokens,
+      hud: BUILTIN_THEME_CONTRACTS.light.hud,
+    });
+    expect(readBuiltinThemeContract("warm")).toEqual({
+      tokens: BUILTIN_THEME_CONTRACTS.warm.tokens,
+      hud: BUILTIN_THEME_CONTRACTS.warm.hud,
+    });
+  });
+
   test("applies only allowlisted properties through setProperty", () => {
     const style = {
       setProperty: vi.fn(),
