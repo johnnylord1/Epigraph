@@ -65,6 +65,10 @@
   import { BOOKS_FILTER_OPTIONS } from "../../lib/library/booksSection";
   import { BUILTIN_THEMES } from "../../lib/theme/contract";
   import {
+    DEFAULT_PROSE_READER_BACKGROUND_COLOR,
+    DEFAULT_PROSE_READER_TEXT_COLOR,
+  } from "../../lib/reader/prosePalette";
+  import {
     countBooksForCategory,
     createBooksCategory,
     deleteBooksCategory,
@@ -4256,14 +4260,14 @@
                   <div class="prose-color-pickers">
                     <input
                       type="color"
-                      value={store.settings.proseReaderTextColor || "#ffffff"}
+                      value={store.settings.proseReaderTextColor || DEFAULT_PROSE_READER_TEXT_COLOR}
                       onchange={(e) => updateSettings({ proseReaderTheme: "nocturne", proseReaderTextColor: e.currentTarget.value })}
                       class="prose-color-picker"
                       title={$_("settings_inline_customTextColor")}
                     />
                     <input
                       type="color"
-                      value={store.settings.proseReaderBackgroundColor || "#131316"}
+                      value={store.settings.proseReaderBackgroundColor || DEFAULT_PROSE_READER_BACKGROUND_COLOR}
                       onchange={(e) => updateSettings({ proseReaderTheme: "nocturne", proseReaderBackgroundColor: e.currentTarget.value })}
                       class="prose-color-picker"
                       title={$_("settings_inline_customPaperColor")}

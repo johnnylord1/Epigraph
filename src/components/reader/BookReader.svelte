@@ -66,6 +66,12 @@
   import { createHardcoverBookDiscordTrackerKey, resolveHardcoverBookDiscordCover } from "../../lib/discord/trackerCoverResolver";
   import { isEditableKeyboardTarget } from "../../lib/keybinds";
   import TtsControls from "./TtsControls.svelte";
+  import {
+    DEFAULT_PROSE_READER_BACKGROUND_COLOR,
+    DEFAULT_PROSE_READER_TEXT_COLOR,
+    proseReaderThemeSwatch,
+    resolveProseReaderPalette,
+  } from "../../lib/reader/prosePalette";
 
   const ZOOM_STEP = 0.1;
   const ZOOM_MIN = 0.5;
@@ -125,19 +131,11 @@
     return Array.from(new Set([...loaded, ...loading])).sort((left, right) => left - right);
   });
   const prosePalette = $derived.by(() => {
-    if (proseTheme === "light") return { text: "#19151d", bg: "#f5f1ea", surface: "#f8f4ec" };
-    if (proseTheme === "sepia") return { text: "#2b2118", bg: "#efe1c9", surface: "#f6ead4" };
-    if (proseTheme === "oled") return { text: "#e8e2f4", bg: "#000000", surface: "#050507" };
-    if (proseTheme === "dark") return { text: "#ece7f5", bg: "#09080d", surface: "#111019" };
-    if (proseTheme === "slate") return { text: "#f8fafc", bg: "#1e293b", surface: "#151d2a" };
-    if (proseTheme === "forest") return { text: "#e2ebd9", bg: "#142217", surface: "#0f1a12" };
-    if (proseTheme === "nord") return { text: "#e5e9f0", bg: "#2e3440", surface: "#242933" };
-    if (proseTheme === "warm") return { text: "#433422", bg: "#fbf5e6", surface: "#f3ebd8" };
-    return {
-      text: store.settings.proseReaderTextColor ?? "#ffffff",
-      bg: store.settings.proseReaderBackgroundColor ?? "#131316",
-      surface: store.settings.proseReaderBackgroundColor ?? "#131316",
-    };
+    return resolveProseReaderPalette(
+      proseTheme,
+      store.settings.proseReaderTextColor ?? DEFAULT_PROSE_READER_TEXT_COLOR,
+      store.settings.proseReaderBackgroundColor ?? DEFAULT_PROSE_READER_BACKGROUND_COLOR,
+    );
   });
   const pdfSections = $derived(
     activeBook?.subtype === "pdf" ? getBookSectionsSummary(activeBook) : [],
@@ -1798,15 +1796,15 @@
             <dt>{$_("ui_theme")}</dt>
             <dd>
               <div class="popover-color-swatches" style="display: flex; flex-wrap: wrap; gap: 4px; max-width: 150px;">
-                <button class="popover-swatch" style="background:#efe1c9;" class:active={proseTheme === "sepia"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "sepia" }) : updateSettings({ proseReaderTheme: "sepia" })} title={$_("ui_sepia")}></button>
-                <button class="popover-swatch" style="background:#000000;" class:active={proseTheme === "oled"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "oled" }) : updateSettings({ proseReaderTheme: "oled" })} title={$_("ui_oled")}></button>
-                <button class="popover-swatch" style="background:#09080d;" class:active={proseTheme === "dark"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "dark" }) : updateSettings({ proseReaderTheme: "dark" })} title={$_("ui_dark")}></button>
-                <button class="popover-swatch" style="background:#f5f1ea;" class:active={proseTheme === "light"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "light" }) : updateSettings({ proseReaderTheme: "light" })} title={$_("ui_light")}></button>
-                <button class="popover-swatch" style="background:#131316;" class:active={proseTheme === "nocturne"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "nocturne" }) : updateSettings({ proseReaderTheme: "nocturne" })} title={$_("ui_nocturne")}></button>
-                <button class="popover-swatch" style="background:#1e293b;" class:active={proseTheme === "slate"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "slate" }) : updateSettings({ proseReaderTheme: "slate" })} title={$_("ui_slate")}></button>
-                <button class="popover-swatch" style="background:#142217;" class:active={proseTheme === "forest"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "forest" }) : updateSettings({ proseReaderTheme: "forest" })} title={$_("ui_forest")}></button>
-                <button class="popover-swatch" style="background:#2e3440;" class:active={proseTheme === "nord"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "nord" }) : updateSettings({ proseReaderTheme: "nord" })} title={$_("ui_nord")}></button>
-                <button class="popover-swatch" style="background:#fbf5e6;" class:active={proseTheme === "warm"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "warm" }) : updateSettings({ proseReaderTheme: "warm" })} title={$_("ui_warm")}></button>
+                <button class="popover-swatch" style:background={proseReaderThemeSwatch("sepia")} class:active={proseTheme === "sepia"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "sepia" }) : updateSettings({ proseReaderTheme: "sepia" })} title={$_("ui_sepia")}></button>
+                <button class="popover-swatch" style:background={proseReaderThemeSwatch("oled")} class:active={proseTheme === "oled"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "oled" }) : updateSettings({ proseReaderTheme: "oled" })} title={$_("ui_oled")}></button>
+                <button class="popover-swatch" style:background={proseReaderThemeSwatch("dark")} class:active={proseTheme === "dark"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "dark" }) : updateSettings({ proseReaderTheme: "dark" })} title={$_("ui_dark")}></button>
+                <button class="popover-swatch" style:background={proseReaderThemeSwatch("light")} class:active={proseTheme === "light"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "light" }) : updateSettings({ proseReaderTheme: "light" })} title={$_("ui_light")}></button>
+                <button class="popover-swatch" style:background={proseReaderThemeSwatch("nocturne")} class:active={proseTheme === "nocturne"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "nocturne" }) : updateSettings({ proseReaderTheme: "nocturne" })} title={$_("ui_nocturne")}></button>
+                <button class="popover-swatch" style:background={proseReaderThemeSwatch("slate")} class:active={proseTheme === "slate"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "slate" }) : updateSettings({ proseReaderTheme: "slate" })} title={$_("ui_slate")}></button>
+                <button class="popover-swatch" style:background={proseReaderThemeSwatch("forest")} class:active={proseTheme === "forest"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "forest" }) : updateSettings({ proseReaderTheme: "forest" })} title={$_("ui_forest")}></button>
+                <button class="popover-swatch" style:background={proseReaderThemeSwatch("nord")} class:active={proseTheme === "nord"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "nord" }) : updateSettings({ proseReaderTheme: "nord" })} title={$_("ui_nord")}></button>
+                <button class="popover-swatch" style:background={proseReaderThemeSwatch("warm")} class:active={proseTheme === "warm"} onclick={() => activeBook?.subtype === "pdf" ? updateAnchoredReaderSettings({ proseReaderTheme: "warm" }) : updateSettings({ proseReaderTheme: "warm" })} title={$_("ui_warm")}></button>
               </div>
             </dd>
           </div>
@@ -1952,15 +1950,15 @@
           <dt>{$_("ui_theme")}</dt>
           <dd>
             <div class="popover-color-swatches" style="display: flex; flex-wrap: wrap; gap: 4px; max-width: 150px;">
-              <button class="popover-swatch" style="background:#efe1c9;" class:active={proseTheme === "sepia"} onclick={() => updateSettings({ proseReaderTheme: "sepia" })} title={$_("ui_sepia")}></button>
-              <button class="popover-swatch" style="background:#000000;" class:active={proseTheme === "oled"} onclick={() => updateSettings({ proseReaderTheme: "oled" })} title={$_("ui_oled")}></button>
-              <button class="popover-swatch" style="background:#09080d;" class:active={proseTheme === "dark"} onclick={() => updateSettings({ proseReaderTheme: "dark" })} title={$_("ui_dark")}></button>
-              <button class="popover-swatch" style="background:#f5f1ea;" class:active={proseTheme === "light"} onclick={() => updateSettings({ proseReaderTheme: "light" })} title={$_("ui_light")}></button>
-              <button class="popover-swatch" style="background:#131316;" class:active={proseTheme === "nocturne"} onclick={() => updateSettings({ proseReaderTheme: "nocturne" })} title={$_("ui_nocturne")}></button>
-              <button class="popover-swatch" style="background:#1e293b;" class:active={proseTheme === "slate"} onclick={() => updateSettings({ proseReaderTheme: "slate" })} title={$_("ui_slate")}></button>
-              <button class="popover-swatch" style="background:#142217;" class:active={proseTheme === "forest"} onclick={() => updateSettings({ proseReaderTheme: "forest" })} title={$_("ui_forest")}></button>
-              <button class="popover-swatch" style="background:#2e3440;" class:active={proseTheme === "nord"} onclick={() => updateSettings({ proseReaderTheme: "nord" })} title={$_("ui_nord")}></button>
-              <button class="popover-swatch" style="background:#fbf5e6;" class:active={proseTheme === "warm"} onclick={() => updateSettings({ proseReaderTheme: "warm" })} title={$_("ui_warm")}></button>
+              <button class="popover-swatch" style:background={proseReaderThemeSwatch("sepia")} class:active={proseTheme === "sepia"} onclick={() => updateSettings({ proseReaderTheme: "sepia" })} title={$_("ui_sepia")}></button>
+              <button class="popover-swatch" style:background={proseReaderThemeSwatch("oled")} class:active={proseTheme === "oled"} onclick={() => updateSettings({ proseReaderTheme: "oled" })} title={$_("ui_oled")}></button>
+              <button class="popover-swatch" style:background={proseReaderThemeSwatch("dark")} class:active={proseTheme === "dark"} onclick={() => updateSettings({ proseReaderTheme: "dark" })} title={$_("ui_dark")}></button>
+              <button class="popover-swatch" style:background={proseReaderThemeSwatch("light")} class:active={proseTheme === "light"} onclick={() => updateSettings({ proseReaderTheme: "light" })} title={$_("ui_light")}></button>
+              <button class="popover-swatch" style:background={proseReaderThemeSwatch("nocturne")} class:active={proseTheme === "nocturne"} onclick={() => updateSettings({ proseReaderTheme: "nocturne" })} title={$_("ui_nocturne")}></button>
+              <button class="popover-swatch" style:background={proseReaderThemeSwatch("slate")} class:active={proseTheme === "slate"} onclick={() => updateSettings({ proseReaderTheme: "slate" })} title={$_("ui_slate")}></button>
+              <button class="popover-swatch" style:background={proseReaderThemeSwatch("forest")} class:active={proseTheme === "forest"} onclick={() => updateSettings({ proseReaderTheme: "forest" })} title={$_("ui_forest")}></button>
+              <button class="popover-swatch" style:background={proseReaderThemeSwatch("nord")} class:active={proseTheme === "nord"} onclick={() => updateSettings({ proseReaderTheme: "nord" })} title={$_("ui_nord")}></button>
+              <button class="popover-swatch" style:background={proseReaderThemeSwatch("warm")} class:active={proseTheme === "warm"} onclick={() => updateSettings({ proseReaderTheme: "warm" })} title={$_("ui_warm")}></button>
             </div>
           </dd>
         </div>
@@ -2129,15 +2127,15 @@
             <dt>{$_("ui_theme")}</dt>
             <dd>
               <div class="popover-color-swatches" style="display: flex; flex-wrap: wrap; gap: 4px; max-width: 150px;">
-                <button class="popover-swatch" style="background:#efe1c9;" class:active={proseTheme === "sepia"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "sepia" })} title={$_("ui_sepia")}></button>
-                <button class="popover-swatch" style="background:#000000;" class:active={proseTheme === "oled"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "oled" })} title={$_("ui_oled")}></button>
-                <button class="popover-swatch" style="background:#09080d;" class:active={proseTheme === "dark"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "dark" })} title={$_("ui_dark")}></button>
-                <button class="popover-swatch" style="background:#f5f1ea;" class:active={proseTheme === "light"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "light" })} title={$_("ui_light")}></button>
-                <button class="popover-swatch" style="background:#131316;" class:active={proseTheme === "nocturne"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "nocturne" })} title={$_("ui_nocturne")}></button>
-                <button class="popover-swatch" style="background:#1e293b;" class:active={proseTheme === "slate"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "slate" })} title={$_("ui_slate")}></button>
-                <button class="popover-swatch" style="background:#142217;" class:active={proseTheme === "forest"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "forest" })} title={$_("ui_forest")}></button>
-                <button class="popover-swatch" style="background:#2e3440;" class:active={proseTheme === "nord"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "nord" })} title={$_("ui_nord")}></button>
-                <button class="popover-swatch" style="background:#fbf5e6;" class:active={proseTheme === "warm"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "warm" })} title={$_("ui_warm")}></button>
+                <button class="popover-swatch" style:background={proseReaderThemeSwatch("sepia")} class:active={proseTheme === "sepia"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "sepia" })} title={$_("ui_sepia")}></button>
+                <button class="popover-swatch" style:background={proseReaderThemeSwatch("oled")} class:active={proseTheme === "oled"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "oled" })} title={$_("ui_oled")}></button>
+                <button class="popover-swatch" style:background={proseReaderThemeSwatch("dark")} class:active={proseTheme === "dark"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "dark" })} title={$_("ui_dark")}></button>
+                <button class="popover-swatch" style:background={proseReaderThemeSwatch("light")} class:active={proseTheme === "light"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "light" })} title={$_("ui_light")}></button>
+                <button class="popover-swatch" style:background={proseReaderThemeSwatch("nocturne")} class:active={proseTheme === "nocturne"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "nocturne" })} title={$_("ui_nocturne")}></button>
+                <button class="popover-swatch" style:background={proseReaderThemeSwatch("slate")} class:active={proseTheme === "slate"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "slate" })} title={$_("ui_slate")}></button>
+                <button class="popover-swatch" style:background={proseReaderThemeSwatch("forest")} class:active={proseTheme === "forest"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "forest" })} title={$_("ui_forest")}></button>
+                <button class="popover-swatch" style:background={proseReaderThemeSwatch("nord")} class:active={proseTheme === "nord"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "nord" })} title={$_("ui_nord")}></button>
+                <button class="popover-swatch" style:background={proseReaderThemeSwatch("warm")} class:active={proseTheme === "warm"} onclick={() => updateAnchoredReaderSettings({ proseReaderTheme: "warm" })} title={$_("ui_warm")}></button>
               </div>
             </dd>
           </div>

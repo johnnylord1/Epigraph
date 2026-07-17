@@ -3157,3 +3157,26 @@ Categorias cobertas:
 - O artefato gerado precisa permanecer versionado; o check deterministico deve fazer parte dos gates de autoria/promocao finais.
 - Builtins alternativos continuam com validacao real menos extensa que Nocturne. O marco de harness nativo deve capturar a matriz completa de superficies antes de declarar cobertura final.
 - HUD Legacy, Syncd, componentes Legacy, `--n-*` e `--activity-*` permanecem preservados.
+
+## Marco 51.1 - Shared Prose Palette Registry
+
+### Escopo e ownership
+
+- As nove paletas funcionais do leitor (`nocturne`, `light`, `sepia`, `oled`, `dark`, `slate`, `forest`, `nord`, `warm`) agora possuem uma unica fonte em `src/lib/reader/prosePalette.ts`.
+- BookReader e NovelReader consomem `resolveProseReaderPalette()` e `proseReaderThemeSwatch()`. Settings e defaults persistidos consomem as mesmas constantes Nocturne.
+- Foram removidas **101 ocorrencias diretas duplicadas** dos dois leitores, Settings e store. As **27 entradas reais** (9 x text/background/surface) permanecem classificadas como excecao Ativa porque sao paletas de pagina escolhidas pelo usuario, independentes do tema do shell.
+- Nenhuma chave de settings, valor, id de paleta, API, fluxo de PDF/EPUB/novel ou dado persistido mudou. A selecao `nocturne` continua usando as cores customizaveis do usuario; os swatches continuam mostrando os backgrounds canonicos.
+
+### Validacao real
+
+- PDF real importado: `docs/screenshots/marco51-prose-palette/after-book-reader-pdf.png` e subpainel Appearance em `after-book-reader-palette.png`.
+- Novel real: `docs/screenshots/marco51-prose-palette/after-novel-reader.png` com capitulo local renderizado.
+- Computed style confirmou Nocturne `--prose-page-bg: #131316` e `--prose-text: #ffffff`. Os nove swatches resolveram para os mesmos nove RGBs anteriores.
+- Baselines anteriores: `docs/screenshots/marco28d1-reader/after-book-reader-pdf.png`, `after-book-reader-epub.png` e `after-novel-reader.png`. Nao houve regressao aparente de geometria, reader chrome, pagina, tipografia, HUD ou hierarquia.
+- Uma sessao inicialmente ficou com chunk EPUB obsoleto apos a reotimizacao do Vite pelos testes browser. O launcher gerenciado foi reiniciado; a repeticao em PDF e Novel passou. As capturas diagnosticas foram removidas.
+
+### Gates e riscos
+
+- Testes focados: **4 arquivos / 21 testes verdes**, cobrindo registry, resolucao custom, swatches, Reader Core, Settings e allowlist global.
+- O registry funcional nao e exportado pelo ThemeEditor e nao se torna component/semantic token: isso preserva a escolha de pagina do leitor separada da identidade do shell.
+- Ainda existem valores nao-cor locais (radius e z-index) em superficies ativas. Eles formam o proximo lote 51.2; Legacy, Syncd e `--n-*` continuam fora do escopo.

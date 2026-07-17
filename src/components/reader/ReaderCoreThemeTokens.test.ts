@@ -114,15 +114,17 @@ describe("Reader core theme tokens", () => {
     expect(uniqueMatches(nocturne, TOKEN_DEFINITION_PATTERN)).toEqual(dynamicTokens.sort());
   });
 
-  it("documents functional prose palette exceptions that must stay outside theme tokens", () => {
+  it("uses the shared functional prose palette registry outside theme tokens", () => {
     const book = readProjectFile("src/components/reader/BookReader.svelte");
     const novel = readProjectFile("src/components/reader/NovelReader.svelte");
 
-    expect(book).toContain('if (proseTheme === "sepia") return { text: "#2b2118", bg: "#efe1c9", surface: "#f6ead4" };');
+    expect(book).toContain("resolveProseReaderPalette(");
+    expect(book).not.toMatch(/#[0-9a-f]{3,8}\b/i);
     expect(book).toContain('.getPropertyValue("--component-reader-core-epub-link-fg")');
-    expect(book).toContain('style="background:#efe1c9;"');
+    expect(book).toContain('style:background={proseReaderThemeSwatch("sepia")}');
 
-    expect(novel).toContain('if (proseTheme === "sepia") return { text: "#2b2118", bg: "#efe1c9", surface: "#f6ead4" };');
-    expect(novel).toContain('style="background:#efe1c9;"');
+    expect(novel).toContain("resolveProseReaderPalette(");
+    expect(novel).not.toMatch(/#[0-9a-f]{3,8}\b/i);
+    expect(novel).toContain('style:background={proseReaderThemeSwatch("sepia")}');
   });
 });

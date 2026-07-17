@@ -35,6 +35,10 @@ import {
   type CustomTheme,
   type Theme,
 } from "../lib/theme/contract";
+import {
+  DEFAULT_PROSE_READER_BACKGROUND_COLOR,
+  DEFAULT_PROSE_READER_TEXT_COLOR,
+} from "../lib/reader/prosePalette";
 
 export {
   DEFAULT_HUD_THEME_TOKENS,
@@ -539,8 +543,8 @@ export const DEFAULT_SETTINGS: Settings = {
   proseReaderLineHeight:  1.75,
   proseReaderParagraphSpacing: 1.1,
   proseReaderContentWidth: 760,
-  proseReaderTextColor:   "#ffffff",
-  proseReaderBackgroundColor: "#131316",
+  proseReaderTextColor: DEFAULT_PROSE_READER_TEXT_COLOR,
+  proseReaderBackgroundColor: DEFAULT_PROSE_READER_BACKGROUND_COLOR,
   proseReaderTheme:       "nocturne",
   proseReaderTextAlign:   "left",
   bookReaderFlow:         "paginated",

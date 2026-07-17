@@ -29,15 +29,12 @@ const ALLOWLIST: Record<string, AllowlistEntry> = {
   "src/components/pages/Extensions.svelte": { count: 21, status: "Legacy", reason: "Inactive route retained for compatibility." },
   "src/components/pages/NovelDetail.svelte": { count: 5, status: "Active exception", reason: "Standalone exported HTML document palette." },
   "src/components/pages/Tracking.svelte": { count: 2, status: "Legacy", reason: "Inactive tracking page retained for compatibility." },
-  "src/components/reader/BookReader.svelte": { count: 54, status: "Active exception", reason: "Independent prose palettes, swatches, and generated document styles." },
-  "src/components/reader/NovelReader.svelte": { count: 45, status: "Active exception", reason: "Independent prose palettes, swatches, and generated document styles." },
-  "src/components/settings/Settings.svelte": { count: 2, status: "Active exception", reason: "Default values for user-editable prose color swatches." },
+  "src/lib/reader/prosePalette.ts": { count: 27, status: "Active exception", reason: "Independent user-selectable prose palettes and swatches." },
   "src/components/settings/ThemeEditor.svelte": { count: 3, status: "Active exception", reason: "Color-input normalization fallback." },
   "src/lib/assets/serviceIconResolver.ts": { count: 3, status: "Active exception", reason: "Generated fallback service asset." },
   "src/lib/splashBackground.ts": { count: 11, status: "Active exception", reason: "Canvas-rendered splash asset." },
   "src/lib/syncdQr.ts": { count: 2, status: "Excluded", reason: "Syncd QR asset is outside the current theme consolidation scope." },
   "src/lib/theme/contract.ts": { count: 237, status: "Active exception", reason: "Exact builtin authoring contracts and registry swatches." },
-  "src/store/state.svelte.ts": { count: 2, status: "Active exception", reason: "Persisted prose palette defaults." },
 };
 
 const MIGRATED_TOKEN_CONSUMERS: Record<string, string> = {
