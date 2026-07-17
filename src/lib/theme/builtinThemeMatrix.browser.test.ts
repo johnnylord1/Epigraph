@@ -218,6 +218,14 @@ describe("builtin theme matrix", () => {
           `${theme.id} ${foregroundToken} on ${backgroundToken} should meet WCAG AA`,
         ).toBeGreaterThanOrEqual(4.5);
       }
+
+      if (theme.id === "amoled") {
+        const background = computedTokenColor("--color-background", "backgroundColor");
+        const controlBorder = computedTokenColor("--color-border", "backgroundColor");
+        const focusBorder = computedTokenColor("--color-outline", "backgroundColor");
+        expect(contrast(controlBorder, background), "AMOLED control boundaries").toBeGreaterThanOrEqual(3);
+        expect(contrast(focusBorder, background), "AMOLED visible focus").toBeGreaterThanOrEqual(3);
+      }
     }
   });
 
@@ -281,6 +289,6 @@ describe("builtin theme matrix", () => {
         "base64",
       );
     }
-    expect(BUILTIN_THEMES).toHaveLength(7);
+    expect(BUILTIN_THEMES).toHaveLength(8);
   });
 });

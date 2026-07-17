@@ -353,6 +353,23 @@ describe("Settings", () => {
     expect(screen.getByRole("heading", { name: "About" })).toBeTruthy();
   });
 
+  test("switches the OLED control to the AMOLED builtin and restores the previous theme", async () => {
+    store.settings.theme = "dark";
+    renderSettings();
+    await fireEvent.click(screen.getByRole("button", { name: "Appearance" }));
+
+    const oled = screen.getByRole("switch", { name: "OLED dark mode" });
+    expect(oled.getAttribute("aria-checked")).toBe("false");
+
+    await fireEvent.click(oled);
+    expect(store.settings.theme).toBe("amoled");
+    expect(oled.getAttribute("aria-checked")).toBe("true");
+
+    await fireEvent.click(oled);
+    expect(store.settings.theme).toBe("dark");
+    expect(oled.getAttribute("aria-checked")).toBe("false");
+  });
+
   test("keeps section search out of the pane header and resets all settings from the dedicated advanced card", async () => {
     renderSettings();
 

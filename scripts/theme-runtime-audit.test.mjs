@@ -11,6 +11,8 @@ test("runtime audit arguments default to the complete builtin matrix", () => {
   const options = parseRuntimeAuditArgs([]);
   assert.equal(options.cdp, "http://127.0.0.1:9223");
   assert.deepEqual(options.themes, BUILTIN_THEME_IDS);
+  assert.equal(options.themes.length, 8);
+  assert.ok(options.themes.includes("amoled"));
 });
 
 test("runtime audit arguments accept an explicit output and theme subset", () => {

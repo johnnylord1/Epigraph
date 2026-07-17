@@ -33,6 +33,7 @@ describe("canonical theme contract", () => {
     expect(DEFAULT_BUILTIN_THEME_ID).toBe("nocturne");
     expect(getBuiltinThemeMetadata("nocturne")?.label).toBe("Nocturne");
     expect(isBuiltinTheme("light")).toBe(true);
+    expect(isBuiltinTheme("amoled")).toBe(true);
     expect(isBuiltinTheme("custom:test")).toBe(false);
   });
 
@@ -59,6 +60,29 @@ describe("canonical theme contract", () => {
       "text-primary": "#1a1916",
       "color-background": "#eeece8",
       "color-danger": "#a03030",
+    });
+  });
+
+  test("keeps Aethon accents violet and AMOLED surfaces truly black", () => {
+    expect(BUILTIN_THEME_CONTRACTS.dark.tokens).toMatchObject({
+      "bg-base": "#0a0a0b",
+      "bg-surface": "#111113",
+      "accent": "#9d7cff",
+      "border-focus": "#9d7cff",
+    });
+    expect(BUILTIN_THEME_CONTRACTS["high-contrast"].tokens["accent"]).toBe("#b89cff");
+    expect(BUILTIN_THEME_CONTRACTS.light.tokens["accent"]).toBe("#6d3bd1");
+    expect(BUILTIN_THEME_CONTRACTS["light-contrast"].tokens["accent"]).toBe("#4d158f");
+
+    const amoled = BUILTIN_THEME_CONTRACTS.amoled.tokens;
+    for (const token of ["bg-void", "bg-base", "bg-surface", "bg-raised"] as const) {
+      expect(amoled[token], `AMOLED ${token}`).toBe("#000000");
+    }
+    expect(amoled).toMatchObject({
+      "color-background": "#000000",
+      "color-surface": "#000000",
+      "color-card": "#000000",
+      "accent": "#b36dff",
     });
   });
 

@@ -6,6 +6,7 @@ import { chromium } from "playwright";
 export const BUILTIN_THEME_IDS = [
   "nocturne",
   "dark",
+  "amoled",
   "high-contrast",
   "light",
   "light-contrast",
@@ -154,6 +155,17 @@ async function restoreRuntime(page, snapshot) {
 
   const audit = await page.evaluate(() => Boolean(globalThis.__aethonAudit));
   if (!audit) return;
+  const currentState = await page.evaluate(() => globalThis.__aethonAudit.getState());
+  const auditOpenedReader = !snapshot.state.activeBookReaderId
+    && !snapshot.state.activeChapterId
+    && (currentState.activeBookReaderId || currentState.activeChapterId);
+  if (auditOpenedReader) {
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => {
+      const state = globalThis.__aethonAudit.getState();
+      return !state.activeBookReaderId && !state.activeChapterId;
+    }, undefined, { timeout: 5_000 });
+  }
   if (snapshot.state.activeBookReaderId) {
     await page.evaluate((id) => globalThis.__aethonAudit.openFirstBookReader(id), snapshot.state.activeBookReaderId);
     return;
@@ -171,8 +183,8 @@ async function restoreRuntime(page, snapshot) {
     if (snapshot.state.librarySection === "books") await page.evaluate(() => globalThis.__aethonAudit.openBooksLibrary());
     else await page.evaluate(() => globalThis.__aethonAudit.openLibrary());
   } else {
-    const navIndex = { home: 0, library: 1, search: 2, downloads: 3, settings: 4 }[snapshot.state.navPage];
-    if (navIndex !== undefined) await page.locator(".n-sidebar-btn").nth(navIndex).click();
+    const navLabel = { home: "Home", search: "Browse", downloads: "Downloads" }[snapshot.state.navPage];
+    if (navLabel) await page.getByRole("button", { name: navLabel, exact: true }).click();
   }
 }
 
@@ -230,7 +242,7 @@ export async function runThemeRuntimeAudit(options) {
     await capture("nocturne-context-menu");
     await page.keyboard.press("Escape");
 
-    await page.locator(".n-sidebar-btn").nth(2).click();
+    await page.getByRole("button", { name: "Browse", exact: true }).click();
     await page.locator(".browseSubtab").first().waitFor({ state: "visible", timeout: 25_000 });
     await page.locator(".browseSubtab").nth(0).click();
     await capture("nocturne-browse-search");
@@ -255,7 +267,7 @@ export async function runThemeRuntimeAudit(options) {
       report.limitations.push("nocturne-source-overlay: no real repository action was available.");
     }
 
-    await page.locator(".n-sidebar-btn").nth(3).click();
+    await page.getByRole("button", { name: "Downloads", exact: true }).click();
     await page.locator(".aethon-port--downloads").waitFor({ state: "visible", timeout: 20_000 });
     await capture("nocturne-downloads");
 
@@ -266,9 +278,11 @@ export async function runThemeRuntimeAudit(options) {
     for (const theme of options.themes) {
       await setRuntimeTheme(page, theme);
       await page.evaluate(() => {
-        if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+        document.body.tabIndex = -1;
+        document.body.focus();
       });
       await page.keyboard.press("Tab");
+      await page.evaluate(() => document.body.removeAttribute("tabindex"));
       const evidence = await readThemeEvidence(page, theme);
       evidence.pairs = evidence.pairs.map((pair) => ({
         ...pair,

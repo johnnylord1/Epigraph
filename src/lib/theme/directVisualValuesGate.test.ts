@@ -34,7 +34,7 @@ const ALLOWLIST: Record<string, AllowlistEntry> = {
   "src/lib/assets/serviceIconResolver.ts": { count: 3, status: "Active exception", reason: "Generated fallback service asset." },
   "src/lib/splashBackground.ts": { count: 11, status: "Active exception", reason: "Canvas-rendered splash asset." },
   "src/lib/syncdQr.ts": { count: 2, status: "Excluded", reason: "Syncd QR asset is outside the current theme consolidation scope." },
-  "src/lib/theme/contract.ts": { count: 237, status: "Active exception", reason: "Exact builtin authoring contracts and registry swatches." },
+  "src/lib/theme/contract.ts": { count: 262, status: "Active exception", reason: "Exact builtin authoring contracts and registry swatches." },
 };
 
 const MIGRATED_TOKEN_CONSUMERS: Record<string, string> = {

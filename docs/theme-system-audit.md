@@ -3236,3 +3236,57 @@ Categorias cobertas:
 - `pnpm theme:check-builtins`: verde. `pnpm build`: verde, com apenas o aviso conhecido de chunk principal acima de 500 kB. `git diff --check`: verde.
 - O harness depende do launcher gerenciado, de CDP 9223 e dos dados reais disponiveis. Estados event-driven como toast e estados de erro/pausa continuam exigindo uma ocorrencia natural ou cobertura automatizada focada.
 - Syncd, componentes Legacy, aliases `--activity-*` e a camada `--n-*` permanecem preservados e fora do escopo. O sistema de temas esta apto para autoria e promocao por contrato; nenhum tema novo foi criado neste ciclo.
+
+## Marco 54 - Builtin Theme Identity And AMOLED
+
+### Problema e contrato corrigido
+
+- O contrato Dark/fallback e os builtins High Contrast, Light e Light Contrast ainda usavam verde como `accent`, focus, outline e selecao HUD. Esses valores propagavam verde para toggles, navegacao, progresso e controles ativos, contrariando a identidade violeta do Aethon.
+- Os quatro contratos agora usam acentos violetas. Dark foi neutralizado para uma escala de grafite/preto (`#050505` a `#242429`) e reserva o violeta neon para foco, selecao e acoes ativas.
+- Verde permanece somente em papeis semanticos de sucesso/online. Error, warning e info preservam suas identidades; Midnight continua azul e Warm continua ambar por serem paletas intencionalmente especializadas.
+- O inventario de valores autoraveis em `contract.ts` passou de **237 para 262** ocorrencias, todas classificadas como excecao Ativa de contratos builtin/swatches. Nenhum component token, alias Legacy ou `--n-*` foi removido.
+
+### AMOLED e Settings
+
+- `amoled` foi adicionado como oitavo builtin, separado de Dark, High Contrast e Midnight. `bg-void`, `bg-base`, `bg-surface`, `bg-raised`, `color-background`, `color-surface` e `color-card` resolvem para **`#000000`**.
+- Modal/popover permanecem quase pretos para comunicar elevacao. Bordas de controle usam cinza neutro com contraste **3,045:1** contra preto; foco violeta mede **6,548:1**.
+- O controle `OLED dark mode` de Settings deixou de ser mockup inerte. Ele seleciona AMOLED, expõe `role="switch"`/`aria-checked` e restaura o tema anterior quando desligado. O seletor de preset permanece sincronizado pelo mesmo `store.settings.theme`.
+- Documentos V1-V5, temas custom existentes, provider, import/export e pipeline de promocao continuam usando o registry compartilhado; nenhum documento do usuario foi regravado.
+
+### Validacao visual real
+
+- Foram revisadas **19 screenshots WebView2 reais** em `docs/screenshots/marco54-builtin-identity/`: nove superficies Nocturne, Settings dos oito builtins e o fluxo Appearance Nocturne -> AMOLED.
+- O fluxo real confirmou `theme="amoled"`, switch marcado e computed style `background/surface/card: #000000`, `accent: #b36dff`; desligar restaurou o tema original.
+- Os oito builtins passaram **48/48 pares WCAG AA**. Menores ratios: Nocturne **10,899**, Dark **11,824**, AMOLED **13,965**, High Contrast **16,047**, Light **11,810**, Light Contrast **13,503**, Midnight **11,271** e Warm **12,468**.
+- A primeira matriz Dark apareceu sob o dim porque o auditor continuava a sequencia de Tab e focava `Search settings`. O foco agora parte deterministicamente do inicio do documento; a recaptura confirma Dark sem dim. O auditor tambem fecha o Reader aberto por ele antes de restaurar a navegacao original.
+- Nenhum toast real ocorreu na sessao final; o harness nao criou um artificial. A evidencia e o teste da barra renovada permanecem nos marcos anteriores.
+
+### Gates
+
+- Contratos/unit/jsdom: **8 arquivos / 71 testes verdes**.
+- Browser Chromium: **3 arquivos / 18 testes verdes**, incluindo matriz de oito builtins, probe, Settings e contraste nao textual AMOLED.
+- Auditor Node: **1 arquivo / 3 testes verdes**. `pnpm theme:check-builtins`: verde.
+- `pnpm build`: verde, com apenas o aviso conhecido de chunk principal acima de 500 kB. `git diff --check`: verde.
+
+## Proximos marcos adiados
+
+### Marco 55 - Active `--n-*` Decoupling
+
+- Migrar consumidores ativos dos 45 aliases `--n-*` Ativos para tokens canonicos, preservando todos os nomes antigos como bridges Legacy.
+- Dividir em 55A (cores, surfaces, motion e medidas independentes) e 55B (`--n-hud-scale` e geometria derivada) para conter o risco visual.
+- Aceite: zero dependencia `--n-*` em componente ativo, bridges ainda definidas, Nocturne pixel-equivalente, documentos V1-V5 e ThemeEditor preservados.
+
+### Marco 56 - Legacy Retention Evidence
+
+- Revalidar token a token os 17 aliases `--n-*` Legacy, 13 `--activity-*`, oito component tokens sem consumidor e tres tokens locais Legacy do port.
+- Executar busca global/dinamica, ThemeEditor, presets, stores, import e upgrade. O marco documenta retencao ou removibilidade; nao remove automaticamente nenhum token.
+
+### Marco 57 - Legacy Surface Decision
+
+- Decidir por dominio se `Discover`, `Extensions`, SourceBrowse/SourceList, superficies Novel antigas, `NovelsLibraryBody`, `Tracking`, `GenreDrillPage` e `routes.ts` devem ser reativados ou continuar em quarentena.
+- Componentes que continuarem inativos nao recebem migracao visual. Reativacao exige rota real, acessibilidade, screenshots e testes dedicados; remocao futura exige nova prova de ausencia em bundle, deep links e estado persistido.
+
+### Marco 58 - Syncd Runtime Closure (deferred)
+
+- Syncd permanece adiado ate existir sessao persistida real reproduzivel. Seus 60 tokens ja estao definidos e consumidos; o trabalho restante e validar pairing, sessao e popovers em runtime real e entao inclui-los no inventario global Ativo.
+- Nao alterar replication, reconnect, persistencia ou QR apenas para produzir evidencia visual.

@@ -1,6 +1,7 @@
 export const BUILTIN_THEME_IDS = [
   "nocturne",
   "dark",
+  "amoled",
   "high-contrast",
   "light",
   "light-contrast",
@@ -144,10 +145,11 @@ export interface BuiltinThemeMetadata {
 
 export const BUILTIN_THEMES: readonly BuiltinThemeMetadata[] = [
   { id: "nocturne", label: "Nocturne", description: "Default lunar graphite HUD", swatches: ["#080813", "#0d0d1b", "#8f82e6", "#f1eefc"] },
-  { id: "dark", label: "Dark", description: "Classic near-black", swatches: ["#101010", "#151515", "#a8c4a8", "#f0efec"] },
-  { id: "high-contrast", label: "High Contrast", description: "Darker base, sharper text", swatches: ["#080808", "#111111", "#bcd8bc", "#ffffff"] },
-  { id: "light", label: "Light", description: "Warm off-white", swatches: ["#f4f2ee", "#faf8f4", "#2a5a2a", "#1a1916"] },
-  { id: "light-contrast", label: "Light Contrast", description: "Light with maximum contrast", swatches: ["#ece8e2", "#f5f2ec", "#183818", "#080806"] },
+  { id: "dark", label: "Dark", description: "Neutral graphite with neon violet accents", swatches: ["#0a0a0b", "#17171a", "#9d7cff", "#f2eff7"] },
+  { id: "amoled", label: "AMOLED", description: "True black with neon violet accents", swatches: ["#000000", "#000000", "#b36dff", "#f7f2ff"] },
+  { id: "high-contrast", label: "High Contrast", description: "True black, sharper text and violet focus", swatches: ["#080808", "#111111", "#b89cff", "#ffffff"] },
+  { id: "light", label: "Light", description: "Warm off-white with violet accents", swatches: ["#f4f2ee", "#faf8f4", "#6d3bd1", "#1a1916"] },
+  { id: "light-contrast", label: "Light Contrast", description: "Light with maximum contrast and violet focus", swatches: ["#ece8e2", "#f5f2ec", "#4d158f", "#080806"] },
   { id: "midnight", label: "Midnight", description: "Deep blue-black tint", swatches: ["#0c1020", "#101428", "#a8b4e8", "#eeeef8"] },
   { id: "warm", label: "Warm", description: "Amber and sepia tones", swatches: ["#16130c", "#1c1810", "#e0b860", "#f5f0e0"] },
 ] as const;
@@ -187,16 +189,16 @@ export const HUD_THEME_TOKEN_KEYS = [
 ] as const satisfies readonly (keyof HudThemeTokens)[];
 
 export const DEFAULT_THEME_TOKENS: ThemeTokens = {
-  "bg-void": "#080808", "bg-base": "#0c0c0c", "bg-surface": "#101010", "bg-raised": "#151515", "bg-overlay": "#1a1a1a", "bg-subtle": "#202020",
-  "border-dim": "#1c1c1c", "border-base": "#242424", "border-strong": "#2e2e2e", "border-focus": "#4a5c4a",
-  "text-primary": "#f0efec", "text-secondary": "#c8c6c0", "text-muted": "#8a8880", "text-faint": "#4e4d4a", "text-disabled": "#2a2a28", "text-tertiary": "#8a8880", "text-inverse": "#080808",
-  "accent": "#6b8f6b", "accent-dim": "#2a3d2a", "accent-muted": "#1a251a", "accent-fg": "#a8c4a8", "accent-bright": "#8fb88f",
+  "bg-void": "#050505", "bg-base": "#0a0a0b", "bg-surface": "#111113", "bg-raised": "#17171a", "bg-overlay": "#1d1d21", "bg-subtle": "#242429",
+  "border-dim": "#1d1d22", "border-base": "#292930", "border-strong": "#3b3a45", "border-focus": "#9d7cff",
+  "text-primary": "#f2eff7", "text-secondary": "#cbc6d2", "text-muted": "#918a9c", "text-faint": "#55505e", "text-disabled": "#302d36", "text-tertiary": "#918a9c", "text-inverse": "#050505",
+  "accent": "#9d7cff", "accent-dim": "#4d357f", "accent-muted": "rgba(157, 124, 255, 0.14)", "accent-fg": "#efe9ff", "accent-bright": "#b79cff",
   "color-error": "#c47a7a", "color-error-bg": "#1f1212", "color-success": "#7aab7a", "color-success-bg": "rgba(122, 171, 122, 0.12)",
   "color-warning": "#c0a66a", "color-warning-bg": "rgba(192, 166, 106, 0.12)", "color-danger": "#c47a7a", "color-danger-bg": "#1f1212",
-  "color-info": "#7a9ec4", "color-info-bg": "#121a1f", "color-background": "#0c0c0c", "color-background-void": "#080808",
-  "color-surface": "#101010", "color-surface-secondary": "#202020", "color-elevated": "#151515", "color-card": "#151515",
-  "color-modal": "#1a1a1a", "color-popover": "#1a1a1a", "color-menu": "#1a1a1a", "color-overlay": "rgba(0, 0, 0, 0.64)",
-  "color-border": "#242424", "color-outline": "#4a5c4a", "color-divider": "#1c1c1c", "color-accent": "#6b8f6b", "color-accent-muted": "#1a251a",
+  "color-info": "#7a9ec4", "color-info-bg": "#121a1f", "color-background": "#0a0a0b", "color-background-void": "#050505",
+  "color-surface": "#111113", "color-surface-secondary": "#242429", "color-elevated": "#17171a", "color-card": "#17171a",
+  "color-modal": "#1d1d21", "color-popover": "#1d1d21", "color-menu": "#1d1d21", "color-overlay": "rgba(0, 0, 0, 0.68)",
+  "color-border": "#292930", "color-outline": "#9d7cff", "color-divider": "#1d1d22", "color-accent": "#9d7cff", "color-accent-muted": "rgba(157, 124, 255, 0.14)",
   "color-shadow-source": "#000000", "color-highlight-source": "#ffffff",
 };
 
@@ -273,7 +275,7 @@ export const DEFAULT_HUD_THEME_TOKENS: HudThemeTokens = {
   "hud-control-height": "30px", "hud-icon-button-size": "30px", "hud-control-radius": "5px", "hud-chip-radius": "9999px",
   "hud-popover-radius": "5px", "hud-status-radius": "3px", "hud-toast-radius": "7px", "hud-chapter-row-radius": "5px",
   "hud-surface-opacity": "1", "hud-sidebar-width": "52px", "hud-toolbar-gap": "8px", "hud-reader-chrome-opacity": "1",
-  "hud-selection-bg": "#1a251a", "hud-selection-border": "#2a3d2a", "hud-progress-height": "3px",
+  "hud-selection-bg": "rgba(157, 124, 255, 0.14)", "hud-selection-border": "#4d357f", "hud-progress-height": "3px",
 };
 
 export const NOCTURNE_THEME_TOKENS: ThemeTokens = {
@@ -314,24 +316,32 @@ export interface BuiltinThemeContract {
 
 const HIGH_CONTRAST_THEME_TOKENS = deriveBuiltinThemeTokens({
   "bg-void": "#000000", "bg-base": "#080808", "bg-surface": "#0d0d0d", "bg-raised": "#111111", "bg-overlay": "#171717", "bg-subtle": "#1e1e1e",
-  "border-dim": "#252525", "border-base": "#303030", "border-strong": "#3e3e3e", "border-focus": "#5a7a5a",
+  "border-dim": "#252525", "border-base": "#303030", "border-strong": "#3e3e3e", "border-focus": "#a986ff",
   "text-primary": "#ffffff", "text-secondary": "#e8e6e0", "text-muted": "#b0aea8", "text-faint": "#6e6c68", "text-disabled": "#303030",
-  "accent": "#7aaa7a", "accent-dim": "#2e4a2e", "accent-muted": "#1e2e1e", "accent-fg": "#bcd8bc", "accent-bright": "#9fcf9f",
+  "accent": "#b89cff", "accent-dim": "#5b3f91", "accent-muted": "#2a1f3f", "accent-fg": "#f0e9ff", "accent-bright": "#d0beff",
+});
+
+const AMOLED_THEME_TOKENS = deriveBuiltinThemeTokens({
+  "bg-void": "#000000", "bg-base": "#000000", "bg-surface": "#000000", "bg-raised": "#000000", "bg-overlay": "#08080c", "bg-subtle": "#111117",
+  "border-dim": "#242424", "border-base": "#5a5a5a", "border-strong": "#737373", "border-focus": "#b36dff",
+  "text-primary": "#f7f2ff", "text-secondary": "#d8cfe4", "text-muted": "#9f94ad", "text-faint": "#7d7487", "text-disabled": "#51485b",
+  "accent": "#b36dff", "accent-dim": "#623595", "accent-muted": "#241334", "accent-fg": "#f5e9ff", "accent-bright": "#d09cff",
+  "color-overlay": "rgba(0, 0, 0, 0.82)",
 });
 
 const LIGHT_THEME_TOKENS = deriveBuiltinThemeTokens({
   "bg-void": "#e8e6e2", "bg-base": "#eeece8", "bg-surface": "#f4f2ee", "bg-raised": "#faf8f4", "bg-overlay": "#ffffff", "bg-subtle": "#f0ede8",
-  "border-dim": "#dedad4", "border-base": "#d0ccc6", "border-strong": "#bbb6ae", "border-focus": "#5a7a5a",
+  "border-dim": "#dedad4", "border-base": "#d0ccc6", "border-strong": "#bbb6ae", "border-focus": "#7845dc",
   "text-primary": "#1a1916", "text-secondary": "#2e2c28", "text-muted": "#5a5750", "text-faint": "#9a9890", "text-disabled": "#c8c4bc",
-  "accent": "#4a724a", "accent-dim": "#c8dcc8", "accent-muted": "#deeade", "accent-fg": "#2a5a2a", "accent-bright": "#3a6a3a",
+  "accent": "#6d3bd1", "accent-dim": "#d9c9fa", "accent-muted": "#eee7ff", "accent-fg": "#4e1aa8", "accent-bright": "#7c45e8",
   "color-error": "#a03030", "color-error-bg": "#fce8e8", "color-success": "#2a6a2a", "color-info": "#2a4a7a", "color-info-bg": "#e8eef8",
 });
 
 const LIGHT_CONTRAST_THEME_TOKENS = deriveBuiltinThemeTokens({
   "bg-void": "#d8d4ce", "bg-base": "#e2deda", "bg-surface": "#ece8e2", "bg-raised": "#f5f2ec", "bg-overlay": "#ffffff", "bg-subtle": "#e4e0d8",
-  "border-dim": "#c4c0b8", "border-base": "#b0aca4", "border-strong": "#989490", "border-focus": "#3a5a3a",
+  "border-dim": "#c4c0b8", "border-base": "#b0aca4", "border-strong": "#989490", "border-focus": "#57209c",
   "text-primary": "#080806", "text-secondary": "#181612", "text-muted": "#38342e", "text-faint": "#706c64", "text-disabled": "#b0aca4",
-  "accent": "#2a5a2a", "accent-dim": "#b0ccb0", "accent-muted": "#c8dcc8", "accent-fg": "#183818", "accent-bright": "#1e4e1e",
+  "accent": "#4d158f", "accent-dim": "#cbb2ef", "accent-muted": "#dfd0f6", "accent-fg": "#351061", "accent-bright": "#5b1eaa",
   "color-error": "#8a1a1a", "color-error-bg": "#f8e0e0",
 });
 
@@ -352,6 +362,7 @@ const WARM_THEME_TOKENS = deriveBuiltinThemeTokens({
 export const BUILTIN_THEME_CONTRACTS: Readonly<Record<BuiltinTheme, BuiltinThemeContract>> = {
   nocturne: { tokens: NOCTURNE_THEME_TOKENS, hud: NOCTURNE_HUD_THEME_TOKENS, motion: "soft" },
   dark: { tokens: DEFAULT_THEME_TOKENS, hud: DEFAULT_HUD_THEME_TOKENS, motion: "soft" },
+  amoled: { tokens: AMOLED_THEME_TOKENS, hud: deriveBuiltinHudThemeTokens(AMOLED_THEME_TOKENS), motion: "soft" },
   "high-contrast": { tokens: HIGH_CONTRAST_THEME_TOKENS, hud: deriveBuiltinHudThemeTokens(HIGH_CONTRAST_THEME_TOKENS), motion: "soft" },
   light: { tokens: LIGHT_THEME_TOKENS, hud: deriveBuiltinHudThemeTokens(LIGHT_THEME_TOKENS), motion: "soft" },
   "light-contrast": { tokens: LIGHT_CONTRAST_THEME_TOKENS, hud: deriveBuiltinHudThemeTokens(LIGHT_CONTRAST_THEME_TOKENS), motion: "soft" },

@@ -383,6 +383,18 @@
     const custom = (store.settings.customThemes ?? []).find((theme) => theme.id === normalized);
     return custom?.name ?? "Nocturne";
   }
+  let previousNonAmoledTheme = $state(
+    store.settings.theme === "amoled" ? "nocturne" : (store.settings.theme ?? "nocturne"),
+  );
+  function toggleAmoledTheme() {
+    const currentTheme = store.settings.theme ?? "nocturne";
+    if (currentTheme === "amoled") {
+      updateSettings({ theme: previousNonAmoledTheme });
+      return;
+    }
+    previousNonAmoledTheme = currentTheme;
+    updateSettings({ theme: "amoled" });
+  }
   let tab: Tab          = $state("general");
   let activeGroup: SettingsGroupId = $state("app");
   let contentBodyEl: HTMLDivElement;
@@ -3949,14 +3961,22 @@
                     {/if}
                   </div>
                 </div>
-                <!-- Mockup-only controls preserved until dedicated appearance behaviors exist. -->
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
                     <p class="settings-mini-row__label">{$_("settings_inline_oledDarkMode")}</p>
                     <p class="settings-mini-row__hint">{$_("settings_inline_oledDarkModeHint")}</p>
                   </div>
-                  <button class="settings-toggle is-on" type="button" aria-disabled="true" aria-label={$_("settings_inline_oledDarkMode")} data-inert-control="settings-oled-mode"></button>
+                  <button
+                    role="switch"
+                    aria-checked={store.settings.theme === "amoled"}
+                    aria-label={$_("settings_inline_oledDarkMode")}
+                    class="settings-toggle"
+                    class:is-on={store.settings.theme === "amoled"}
+                    type="button"
+                    onclick={toggleAmoledTheme}
+                  ></button>
                 </div>
+                <!-- Mockup-only control preserved until accent intensity becomes a first-class theme override. -->
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
                     <p class="settings-mini-row__label">{$_("settings_inline_accentIntensity")}</p>
