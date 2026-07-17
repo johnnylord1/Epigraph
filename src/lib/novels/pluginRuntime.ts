@@ -129,6 +129,7 @@ interface NovelPluginLike extends Record<string, unknown> {
     headers?: Record<string, string>;
     [key: string]: unknown;
   };
+  headers?: Headers | Record<string, string>;
   webStorageUtilized?: boolean;
   resolveUrl?: (path: string, isNovel?: boolean) => Promise<string> | string;
   popularNovels?: (pageNo: number, options?: Record<string, unknown>) => Promise<unknown> | unknown;
@@ -194,6 +195,43 @@ function normalizeText(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
+}
+
+function isDefaultNovelCover(value: string | null): boolean {
+  return value?.toLowerCase() === "about:blank";
+}
+
+function resolveNovelDocumentUrl(plugin: NovelPluginLike, novelPath: string): string | null {
+  const site = normalizeText(plugin.site);
+  if (!site) return null;
+
+  try {
+    const baseUrl = site.endsWith("/") ? site : `${site}/`;
+    return new URL(novelPath, baseUrl).toString();
+  } catch {
+    return null;
+  }
+}
+
+async function recoverDefaultNovelCover(plugin: NovelPluginLike, novelPath: string): Promise<string | null> {
+  const documentUrl = resolveNovelDocumentUrl(plugin, novelPath);
+  if (!documentUrl) return null;
+
+  try {
+    const html = await createFetchShim().fetchText(documentUrl, { headers: plugin.headers });
+    if (!html) return null;
+    const $ = cheerio.load(html);
+    const candidate = normalizeText(
+      $("meta[property='og:image']").first().attr("content")
+        ?? $("meta[name='twitter:image']").first().attr("content")
+        ?? $("link[rel='image_src']").first().attr("href")
+        ?? $("link[rel='preload'][as='image']").first().attr("href"),
+    );
+    if (!candidate || isDefaultNovelCover(candidate)) return null;
+    return new URL(candidate, documentUrl).toString();
+  } catch {
+    return null;
+  }
 }
 
 function normalizeNumberish(value: unknown): number | string | null {
@@ -1103,6 +1141,10 @@ export async function readNovelPluginDetails(input: NovelPluginDetailsSmokeInput
   const detailRecord = details as Record<string, unknown>;
   const chapters = Array.isArray(detailRecord.chapters) ? detailRecord.chapters : [];
   const summary = normalizeText(detailRecord.summary);
+  const rawCover = normalizeText(detailRecord.cover);
+  const cover = isDefaultNovelCover(rawCover)
+    ? await recoverDefaultNovelCover(loaded.plugin, input.novelPath)
+    : rawCover;
 
   return {
     pluginId: loaded.summary.pluginId,
@@ -1114,7 +1156,7 @@ export async function readNovelPluginDetails(input: NovelPluginDetailsSmokeInput
       : null,
     hasSummary: Boolean(summary),
     author: normalizeText(detailRecord.author),
-    cover: normalizeText(detailRecord.cover),
+    cover,
     summary,
     status: normalizeText(detailRecord.status),
     tags: normalizeDetailTagList(detailRecord),

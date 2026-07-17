@@ -16,6 +16,7 @@ import {
 import {
   createNovelChapterId,
   createNovelLibraryId,
+  normalizeNovelCoverUrl,
   normalizeStringArray,
   normalizeText,
   type NovelDetailRecord,
@@ -149,7 +150,7 @@ function normalizeLibraryEntry(value: unknown): PersistedNovelLibraryEntry | nul
     title,
     author: normalizeText(record.author),
     description: normalizeText(record.description),
-    coverUrl: normalizeText(record.coverUrl),
+    coverUrl: normalizeNovelCoverUrl(record.coverUrl),
     path,
     status: normalizeText(record.status),
     tags: normalizeStringArray(Array.isArray(record.tags) ? record.tags : []),

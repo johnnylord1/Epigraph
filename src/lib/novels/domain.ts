@@ -112,6 +112,13 @@ export function normalizeText(value: unknown): string | null {
   return trimmed ? trimmed : null;
 }
 
+export function normalizeNovelCoverUrl(value: unknown): string | null {
+  const normalized = normalizeText(value);
+  if (!normalized) return null;
+  if (/^(?:about:blank|javascript:|data:text\/html)/i.test(normalized)) return null;
+  return normalized;
+}
+
 export function normalizeStringArray(values: readonly unknown[] | null | undefined): string[] {
   return [...new Set(
     (values ?? [])

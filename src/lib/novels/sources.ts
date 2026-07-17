@@ -7,6 +7,7 @@ import type { NovelCatalogEntry, NovelRepositoryRecord } from "./contracts";
 import {
   createNovelChapterId,
   createNovelLibraryId,
+  normalizeNovelCoverUrl,
   normalizeStringArray,
   normalizeText,
   type InstalledNovelSourceDescriptor,
@@ -216,7 +217,7 @@ export async function searchInstalledNovelSource(
           sourceId: source.pluginId,
           title,
           path,
-          coverUrl: normalizeText(entry.cover),
+          coverUrl: normalizeNovelCoverUrl(entry.cover),
           ...extractNovelSourceRating(entry),
         } satisfies NovelSourceSearchResult;
       })
@@ -254,7 +255,7 @@ export async function browseInstalledNovelSource(
         sourceId: source.pluginId,
         title,
         path,
-        coverUrl: normalizeText(entry.cover),
+        coverUrl: normalizeNovelCoverUrl(entry.cover),
         ...extractNovelSourceRating(entry),
       } satisfies NovelSourceSearchResult;
     })
@@ -324,7 +325,7 @@ export async function readInstalledNovelDetails(
     sourceId: source.pluginId,
     title,
     path: details.novelPath || novelPath,
-    coverUrl: normalizeText(details.cover) ?? normalizeText(fallback.coverUrl),
+    coverUrl: normalizeNovelCoverUrl(details.cover) ?? normalizeNovelCoverUrl(fallback.coverUrl),
     author: normalizeText(details.author),
     description: normalizeText(details.summary),
     status: normalizeText(details.status),

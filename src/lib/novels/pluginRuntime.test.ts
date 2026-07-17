@@ -567,6 +567,45 @@ exports.default = new IllusiaLikePlugin();
     expect(details.chapters[0]?.title).toBe("O homem mais confi\u00e1vel da Lua");
   });
 
+  it("recovers an LNReader default cover from standard page metadata", async () => {
+    const html = `
+      <html>
+        <head><meta property="og:image" content="/covers/recovered.webp" /></head>
+      </html>
+    `;
+    const bytes = new TextEncoder().encode(html);
+    tauriFetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "text/html; charset=UTF-8" }),
+      text: async () => html,
+      arrayBuffer: async () => bytes.buffer,
+      json: async () => ({}),
+    });
+
+    const details = await readNovelPluginDetails({
+      pluginId: "default-cover",
+      artifactUrl: "https://example.com/default-cover.js",
+      pluginSource: `
+Object.defineProperty(exports, "__esModule", { value: true });
+class DefaultCoverPlugin {
+  constructor() {
+    this.id = "default-cover";
+    this.name = "Default Cover";
+    this.site = "https://novels.example/";
+  }
+  async parseNovel(path) {
+    return { path, name: "Recovered", cover: "about:blank", chapters: [] };
+  }
+}
+exports.default = new DefaultCoverPlugin();
+`,
+      novelPath: "story/recovered",
+    });
+
+    expect(details.cover).toBe("https://novels.example/covers/recovered.webp");
+  });
+
   it("uses FlareSolverr for LNReader source challenge responses when enabled", async () => {
     tauriFetchMock.mockReset();
     vi.stubGlobal("localStorage", {

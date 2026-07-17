@@ -118,6 +118,16 @@ describe("novel library state storage", () => {
     expect(peekNovelLibraryState(SCOPE).entries[0]?.title).toBe("MANACLED");
   });
 
+  it("sanitizes default-cover sentinels from persisted source novels", async () => {
+    const persisted = createState();
+    persisted.entries[0] = { ...persisted.entries[0]!, coverUrl: "about:blank" };
+    invokeMock.mockResolvedValueOnce(JSON.stringify(persisted));
+
+    const state = await loadNovelLibraryState(SCOPE);
+
+    expect(state.entries[0]?.coverUrl).toBeNull();
+  });
+
   it("uses the main local profile for empty desktop scopes", async () => {
     invokeMock.mockResolvedValueOnce(JSON.stringify({
       ...createState(),

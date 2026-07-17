@@ -8,6 +8,7 @@ import { readInstalledNovelChapter, readInstalledNovelDetails } from "./sources"
 import { classifySourceAccessError, sourceAccessErrorMessage } from "../sourceAccess";
 import {
   createNovelChapterId,
+  normalizeNovelCoverUrl,
   type NovelDetailRecord,
   type PersistedNovelChapterEntry,
   type PersistedNovelLibraryEntry,
@@ -189,7 +190,7 @@ export function mergeNovelDetailIntoLibraryState(
       novelTitle: detail.title,
       sourceId: detail.source?.sourceId ?? detail.source?.pluginId ?? detail.sourceId,
       sourceName: detail.source?.sourceName ?? detail.source?.pluginName ?? "Novels",
-      coverUrl: detail.coverUrl,
+      coverUrl: normalizeNovelCoverUrl(detail.coverUrl) ?? normalizeNovelCoverUrl(previousEntry.coverUrl),
       chapterId: chapter.id,
       chapterPath: chapter.path,
       chapterTitle: chapter.title,
@@ -204,7 +205,7 @@ export function mergeNovelDetailIntoLibraryState(
     title: detail.title,
     author: detail.author,
     description: detail.description,
-    coverUrl: detail.coverUrl,
+    coverUrl: normalizeNovelCoverUrl(detail.coverUrl) ?? normalizeNovelCoverUrl(previousEntry.coverUrl),
     path: detail.path,
     status: detail.status,
     tags: detail.tags,

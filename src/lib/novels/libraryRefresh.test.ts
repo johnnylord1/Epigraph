@@ -142,6 +142,15 @@ describe("novel library refresh", () => {
     }]);
   });
 
+  it("preserves a valid stored cover when a source returns its default-cover sentinel", () => {
+    const nextDetail = { ...detail(), coverUrl: "about:blank" };
+
+    const merged = mergeNovelDetailIntoLibraryState(state(), entry(), nextDetail, 1234);
+
+    expect(merged.state.entries[0]?.coverUrl).toBe("https://example.com/cover.jpg");
+    expect(merged.newChapters[0]?.coverUrl).toBe("https://example.com/cover.jpg");
+  });
+
   it("filters only ongoing novels when requested", () => {
     expect(shouldRefreshNovelEntry(entry("Ongoing"), { onlyOngoing: true })).toBe(true);
     expect(shouldRefreshNovelEntry(entry("Releasing"), { onlyOngoing: true })).toBe(true);
