@@ -3370,3 +3370,60 @@ Categorias cobertas:
 
 - Syncd permanece adiado ate existir sessao persistida real reproduzivel. Seus 60 tokens ja estao definidos e consumidos; o trabalho restante e validar pairing, sessao e popovers em runtime real e entao inclui-los no inventario global Ativo.
 - Nao alterar replication, reconnect, persistencia ou QR apenas para produzir evidencia visual.
+
+### Marco 59 - Legacy Surface Removal
+
+**Objetivo:** remover apenas os clusters de superficies cuja quarentena foi provada no Marco 57, sem alterar seus substitutos ativos e sem remover CSS/tokens Legacy no mesmo diff.
+
+#### Escopo de remocao
+
+- Cluster Discover antigo: `Discover.svelte` e `SourceBrowse.svelte`.
+- Cluster Extensions/rotas antigo: `Extensions.svelte` e `routes.ts`.
+- Superficie Source isolada: `SourceList.svelte`.
+- Cluster Novel Sources antigo: `NovelSources.svelte`, `NovelSourceCheckModal.svelte`, `NovelSourceStatusDetails.svelte` e `NovelRepositoriesPanel.svelte`.
+- Library/Tracking antigos: `NovelsLibraryBody.svelte`, `Tracking.svelte` e `GenreDrillPage.svelte`.
+- Atualizar exclusivamente gates, allowlists e documentacao que referenciam esses arquivos. Nao remover tokens ou seletores CSS neste marco.
+
+#### Preflight e aceite
+
+- Reexecutar busca de imports estaticos/dinamicos, `routes`, flags, stores, deep links, plugins e referencias por string antes de cada cluster.
+- Provar que `Layout -> Search -> BrowseV3/SourcesView`, `Library -> BooksLibraryBody/ComicsLibraryBody`, SeriesDetail/NovelDetail tracking e Settings repositorios permanecem os caminhos ativos.
+- Remover cada cluster de forma atomica; nunca apagar somente um arquivo deixando import quebrado dentro da cadeia antiga.
+- Exigir zero referencia aos arquivos removidos, zero chunk correspondente no bundle e parser/deep links atuais inalterados.
+- Executar testes do shell, Search/Browse/Sources, Library, Settings e Details; `pnpm build`; `git diff --check`.
+- Validar no app real em Nocturne: Search, Discover ativo, Sources, Library Comics/Books, Settings repositorios, SeriesDetail e NovelDetail. Capturar screenshots apenas dos substitutos ativos; nenhuma tela Legacy deve ser reativada para gerar evidencia.
+- Commit recomendado: `refactor(legacy): remove quarantined surfaces`.
+
+### Marco 60 - Legacy CSS And Token Removal
+
+**Objetivo:** depois do Marco 59, recalcular o inventario e remover somente CSS/tokens Legacy com prova global de ausencia. A limpeza sera dividida automaticamente em lotes para evitar misturar categorias e para preservar ThemeEditor, V1-V5 e todos os builtins.
+
+#### Marco 60A - Removed-surface CSS
+
+- Recalcular os component tokens que pertenciam exclusivamente aos arquivos removidos no Marco 59. A contagem atual de 94 Legacy nao deve ser reutilizada sem nova auditoria.
+- Remover definicoes fallback/Nocturne apenas quando nenhum componente ativo, ThemeEditor, provider, documento, preset, store, teste browser ou acesso dinamico consumir o token.
+- Remover seletores do port ligados exclusivamente aos hosts eliminados, incluindo `.n-btn-secondary`, toolbar cluster/divider e regras especializadas antigas, somente apos busca de hosts reais e computed style.
+- Preservar todos os semantic/primitive tokens compartilhados, mesmo que uma declaracao local antiga seja removida.
+- Commit recomendado: `refactor(theme): remove quarantined surface css`.
+
+#### Marco 60B - Unconsumed Legacy aliases
+
+- Auditar e, quando comprovado, remover os 13 aliases `--activity-*`, os cinco component tokens atualmente sem consumidor e as tres declaracoes locais Legacy do port (`--color-info-bg` local, `--splash-error`, `--splash-ink-muted`).
+- `--color-info-bg` global continua semantico e Ativo; somente o override local do port pode ser candidato a remocao.
+- Estados raros de Splash devem ser reproduzidos ou cobertos por computed style antes de remover aliases locais. Na duvida, manter como Legacy.
+- Commit recomendado: `refactor(theme): remove unconsumed legacy aliases`.
+
+#### Marco 60C - `--n-*` compatibility layer
+
+- Revalidar os 62 aliases individualmente apos 60A/60B. Hoje existem **1 Ativo por Syncd / 61 Legacy / 0 Morto**.
+- A remocao completa depende do Marco 58 ou de uma migracao Syncd isolada que substitua `--component-syncd-input-fg: var(--n-on-surface)` por token canonico. Enquanto isso, `--n-on-surface` nao pode ser removido.
+- Remover bridges apenas depois de confirmar ausencia em CSS/Svelte/JS, `setProperty`, computed style, ThemeEditor, documentos V1-V5, import/export, presets, stores, templates, deep links e plugins suportados.
+- Nao considerar um alias Morto por ausencia textual isolada; compatibilidade incerta permanece Legacy.
+- Commit recomendado: `refactor(theme): retire nocturne compatibility aliases`.
+
+#### Gate final do Marco 60
+
+- Atualizar `legacyRetentionGate`, `themeGate`, `themeInventory`, gates de port/motion e `docs/theme-system-audit.md` com as novas contagens comprovadas.
+- Executar suite completa de tema, browser computed-style, `pnpm theme:check-builtins`, `pnpm build` e `git diff --check`.
+- Repetir auditoria real em todos os builtins para Library, Browse, Sources, Settings, Reader, Details, modal, popover, toast e Splash. Nocturne deve permanecer visualmente equivalente; Dark deve continuar cinza/preto com roxo neon e AMOLED deve preservar preto real.
+- Nenhum tema novo sera criado durante o Marco 60. A remocao e considerada concluida somente quando nenhum alias removido for necessario para documentos existentes ou superficies ativas.
