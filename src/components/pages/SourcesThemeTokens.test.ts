@@ -52,4 +52,15 @@ describe("Sources theme token contract", () => {
 
     expect(unused).toEqual([]);
   });
+
+  it("keeps repository setup inside the Sources empty state", () => {
+    const source = read("src/components/pages/SourcesView.svelte");
+    const emptyStateStart = source.indexOf('{:else if groups.length === 0}');
+    const setupStatusStart = source.indexOf('<div class="setupWrap">');
+    const setupStyles = source.match(/\.setupWrap\s*\{([\s\S]*?)\}/)?.[1] ?? "";
+
+    expect(emptyStateStart).toBeGreaterThan(-1);
+    expect(setupStatusStart).toBeGreaterThan(emptyStateStart);
+    expect(setupStyles).not.toMatch(/position\s*:\s*(?:fixed|absolute)/);
+  });
 });

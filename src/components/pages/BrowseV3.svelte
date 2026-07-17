@@ -5049,20 +5049,6 @@
     </button>
   </div>
 
-  {#if activeBrowseTab !== "source" && setupState && setupState.kind !== "ready"}
-    <div class="setup-banner">
-      <SetupStatusCard
-        state={setupState}
-        surface="search"
-        actionBusy={setupActionBusy}
-        onAddRecommendedRepo={addRecommendedRepo}
-        onAddManually={openRepoManagerFlow}
-        onOpenExtensions={() => { activeBrowseTab = "source"; }}
-        onRetry={refreshSetupState}
-      />
-    </div>
-  {/if}
-
   {#if activeBrowseTab === "keyword"}
     {#if !kw_submitted}
       <section class="searchLanding">
@@ -5084,14 +5070,28 @@
               body={searchHeroStatusText}
             />
           {:else if searchEmptyStateMessage}
-            <NocturneState
-              layout="compact"
-              tone={setupState?.kind === "server_offline" ? "danger" : "info"}
-              icon={setupState?.kind === "server_offline" ? "plug" : "info"}
-              eyebrow={$_("browse.search.statusEyebrow")}
-              title={$_("browse.search.recommendationsUnavailable")}
-              body={searchEmptyStateMessage}
-            />
+            {#if setupState && setupState.kind !== "ready"}
+              <div class="setup-banner">
+                <SetupStatusCard
+                  state={setupState}
+                  surface="search"
+                  actionBusy={setupActionBusy}
+                  onAddRecommendedRepo={addRecommendedRepo}
+                  onAddManually={openRepoManagerFlow}
+                  onOpenExtensions={() => { activeBrowseTab = "source"; }}
+                  onRetry={refreshSetupState}
+                />
+              </div>
+            {:else}
+              <NocturneState
+                layout="compact"
+                tone="info"
+                icon="info"
+                eyebrow={$_("browse.search.statusEyebrow")}
+                title={$_("browse.search.recommendationsUnavailable")}
+                body={searchEmptyStateMessage}
+              />
+            {/if}
           {:else}
             {#each searchRecommendationSections as section (section.key)}
               <section class="searchRecommendationSection">
@@ -6121,12 +6121,12 @@
     border-bottom: var(--component-browse-browsesubtabactive-border-bottom);
   }
   .setup-banner {
+    width: 100%;
     padding: var(--component-browse-setup-banner-padding);
-    flex-shrink: 0;
   }
   .setup-banner :global(.n-state) {
     max-width: var(--component-browse-setup-banner-n-state-max-width);
-    margin: 0 auto;
+    margin: 0;
   }
   .catalogSidebar {
     width: var(--component-browse-catalogsidebar-width);

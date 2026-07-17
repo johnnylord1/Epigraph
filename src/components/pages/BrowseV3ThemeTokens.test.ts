@@ -56,4 +56,15 @@ describe("BrowseV3 theme token contract", () => {
     expect(unused, "all --component-browse-* tokens should be consumed").toEqual([]);
     expect(undefinedTokens, "all consumed --component-browse-* tokens should be defined").toEqual([]);
   });
+
+  test("keeps the setup status inside the Search empty-state slot", () => {
+    const source = readRepoFile("src/components/pages/BrowseV3.svelte");
+    const emptyStateStart = source.indexOf('{:else if searchEmptyStateMessage}');
+    const setupStatusStart = source.indexOf('<div class="setup-banner">');
+    const searchStyles = styleBlock(source);
+
+    expect(emptyStateStart).toBeGreaterThan(-1);
+    expect(setupStatusStart).toBeGreaterThan(emptyStateStart);
+    expect(searchStyles.match(/\.setup-banner\s*\{([\s\S]*?)\}/)?.[1] ?? "").not.toMatch(/position\s*:\s*(?:fixed|absolute)/);
+  });
 });

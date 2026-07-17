@@ -1194,21 +1194,6 @@
       </div>
     </div>
 
-    {#if !isNovelMode && setupState && setupState.kind !== "ready"}
-      <div class="setupWrap">
-        <SetupStatusCard
-          state={setupState}
-          surface="extensions"
-          actionBusy={setupActionBusy || savingRepos || refreshing}
-          onAddRecommendedRepo={addRecommendedRepo}
-          onAddManually={() => openUtilityPanel("repos")}
-          onBrowseAvailableExtensions={browseAvailableExtensions}
-          onOpenRepoManager={() => openUtilityPanel("repos")}
-          onRetry={refreshSetupState}
-        />
-      </div>
-    {/if}
-
     {#if isNovelMode && utilityPanel === "novelRepos"}
       <div class="repoOverlay" role="presentation">
         <button class="repoOverlayBackdrop" type="button" aria-label={$_("sources.repositories.closePanel")} onclick={() => (utilityPanel = null)}></button>
@@ -1412,14 +1397,29 @@
       </div>
     {:else if groups.length === 0}
       <div class="emptyState emptyState--panel">
-        <NocturneState
-          layout="center"
-          tone="info"
-          icon="search"
-          eyebrow={$_("sources.eyebrow")}
-          title={isNovelMode ? $_("sources.empty.noNovelSources") : $_("sources.empty.noExtensions")}
-          body={isNovelMode ? $_("sources.empty.novelBody") : $_("sources.empty.mangaBody")}
-        />
+        {#if !isNovelMode && setupState && setupState.kind !== "ready"}
+          <div class="setupWrap">
+            <SetupStatusCard
+              state={setupState}
+              surface="extensions"
+              actionBusy={setupActionBusy || savingRepos || refreshing}
+              onAddRecommendedRepo={addRecommendedRepo}
+              onAddManually={() => openUtilityPanel("repos")}
+              onBrowseAvailableExtensions={browseAvailableExtensions}
+              onOpenRepoManager={() => openUtilityPanel("repos")}
+              onRetry={refreshSetupState}
+            />
+          </div>
+        {:else}
+          <NocturneState
+            layout="center"
+            tone="info"
+            icon="search"
+            eyebrow={$_("sources.eyebrow")}
+            title={isNovelMode ? $_("sources.empty.noNovelSources") : $_("sources.empty.noExtensions")}
+            body={isNovelMode ? $_("sources.empty.novelBody") : $_("sources.empty.mangaBody")}
+          />
+        {/if}
       </div>
     {:else}
       <div class="extensionList">
@@ -1740,19 +1740,14 @@
   }
 
   .setupWrap {
-    position: fixed;
-    top: 68px;
-    left: 50%;
-    transform: translateX(-50%);
+    position: relative;
     z-index: var(--component-sources-setup-z-index);
-    width: min(1000px, calc(100% - 48px));
+    width: min(100%, 760px);
     margin: 0;
-    pointer-events: none;
   }
   .setupWrap :global(.n-state) {
     width: 100%;
     margin: 0;
-    pointer-events: auto;
   }
 
   .utilityPanel {
