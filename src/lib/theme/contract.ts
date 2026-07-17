@@ -122,7 +122,18 @@ export interface ThemeDocumentV4 {
   motion: ThemeMotionPreset;
 }
 
-export type CustomTheme = LegacyCustomTheme | ThemeDocumentV4;
+export interface ThemeDocumentV5 {
+  version: 5;
+  id: `custom:${string}`;
+  name: string;
+  base: BuiltinTheme;
+  primitives: ThemePrimitiveTokens;
+  semanticOverrides?: Partial<ThemeSemanticTokens>;
+  hud?: Partial<HudThemeTokens>;
+  motion: ThemeMotionPreset;
+}
+
+export type CustomTheme = LegacyCustomTheme | ThemeDocumentV4 | ThemeDocumentV5;
 
 export interface BuiltinThemeMetadata {
   id: BuiltinTheme;
@@ -189,29 +200,73 @@ export const DEFAULT_THEME_TOKENS: ThemeTokens = {
   "color-shadow-source": "#000000", "color-highlight-source": "#ffffff",
 };
 
+export const THEME_PRIMITIVE_DERIVATIONS = {
+  "text-tertiary": "text-muted",
+  "text-inverse": "bg-void",
+} as const satisfies Partial<Record<keyof ThemePrimitiveTokens, keyof ThemeTokens>>;
+
+export const THEME_SEMANTIC_DERIVATIONS = {
+  "color-background": "bg-base",
+  "color-background-void": "bg-void",
+  "color-surface": "bg-surface",
+  "color-surface-secondary": "bg-subtle",
+  "color-elevated": "bg-raised",
+  "color-card": "bg-raised",
+  "color-modal": "bg-overlay",
+  "color-popover": "bg-overlay",
+  "color-menu": "bg-overlay",
+  "color-border": "border-base",
+  "color-outline": "border-focus",
+  "color-divider": "border-dim",
+  "color-accent": "accent",
+  "color-accent-muted": "accent-muted",
+} as const satisfies Partial<Record<keyof ThemeSemanticTokens, keyof ThemePrimitiveTokens>>;
+
+export const THEME_SEMANTIC_DEPENDENCIES = {
+  "color-danger": "color-error",
+  "color-danger-bg": "color-error-bg",
+} as const satisfies Partial<Record<keyof ThemeSemanticTokens, keyof ThemeSemanticTokens>>;
+
+function hasOwnToken(object: object, key: PropertyKey): boolean {
+  return Object.prototype.hasOwnProperty.call(object, key);
+}
+
+export function resolveThemeTokenLayers(
+  base: ThemeTokens,
+  primitives: ThemePrimitiveTokens = {},
+  semanticOverrides: Partial<ThemeSemanticTokens> = {},
+): ThemeTokens {
+  const resolved: ThemeTokens = { ...base, ...primitives };
+
+  for (const [target, source] of Object.entries(THEME_PRIMITIVE_DERIVATIONS) as [keyof ThemePrimitiveTokens, keyof ThemeTokens][]) {
+    if (hasOwnToken(primitives, target)) continue;
+    if (hasOwnToken(primitives, source)) resolved[target] = resolved[source];
+  }
+  for (const [target, source] of Object.entries(THEME_SEMANTIC_DERIVATIONS) as [keyof ThemeSemanticTokens, keyof ThemePrimitiveTokens][]) {
+    if (hasOwnToken(primitives, source)) resolved[target] = resolved[source];
+  }
+
+  Object.assign(resolved, semanticOverrides);
+
+  for (const [target, source] of Object.entries(THEME_SEMANTIC_DEPENDENCIES) as [keyof ThemeSemanticTokens, keyof ThemeSemanticTokens][]) {
+    if (hasOwnToken(semanticOverrides, target)) continue;
+    if (hasOwnToken(semanticOverrides, source)) resolved[target] = resolved[source];
+  }
+  return resolved;
+}
+
 function deriveBuiltinThemeTokens(overrides: Partial<ThemeTokens>): ThemeTokens {
-  const merged = { ...DEFAULT_THEME_TOKENS, ...overrides };
-  return {
-    ...merged,
-    "text-tertiary": overrides["text-tertiary"] ?? merged["text-muted"],
-    "text-inverse": overrides["text-inverse"] ?? merged["bg-void"],
-    "color-background": overrides["color-background"] ?? merged["bg-base"],
-    "color-background-void": overrides["color-background-void"] ?? merged["bg-void"],
-    "color-surface": overrides["color-surface"] ?? merged["bg-surface"],
-    "color-surface-secondary": overrides["color-surface-secondary"] ?? merged["bg-subtle"],
-    "color-elevated": overrides["color-elevated"] ?? merged["bg-raised"],
-    "color-card": overrides["color-card"] ?? merged["bg-raised"],
-    "color-modal": overrides["color-modal"] ?? merged["bg-overlay"],
-    "color-popover": overrides["color-popover"] ?? merged["bg-overlay"],
-    "color-menu": overrides["color-menu"] ?? merged["bg-overlay"],
-    "color-border": overrides["color-border"] ?? merged["border-base"],
-    "color-outline": overrides["color-outline"] ?? merged["border-focus"],
-    "color-divider": overrides["color-divider"] ?? merged["border-dim"],
-    "color-accent": overrides["color-accent"] ?? merged.accent,
-    "color-accent-muted": overrides["color-accent-muted"] ?? merged["accent-muted"],
-    "color-danger": overrides["color-danger"] ?? merged["color-error"],
-    "color-danger-bg": overrides["color-danger-bg"] ?? merged["color-error-bg"],
-  };
+  const primitives = Object.fromEntries(
+    THEME_PRIMITIVE_TOKEN_KEYS
+      .filter((key) => hasOwnToken(overrides, key))
+      .map((key) => [key, overrides[key]]),
+  ) as ThemePrimitiveTokens;
+  const semanticOverrides = Object.fromEntries(
+    THEME_SEMANTIC_TOKEN_KEYS
+      .filter((key) => hasOwnToken(overrides, key))
+      .map((key) => [key, overrides[key]]),
+  ) as Partial<ThemeSemanticTokens>;
+  return resolveThemeTokenLayers(DEFAULT_THEME_TOKENS, primitives, semanticOverrides);
 }
 
 export const DEFAULT_HUD_THEME_TOKENS: HudThemeTokens = {

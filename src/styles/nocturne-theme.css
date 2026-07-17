@@ -2286,7 +2286,7 @@
 }
 
 /* Preserve the exact reference palette for the builtin theme. Custom themes
-   based on Nocturne intentionally resolve these roles from the V4 contract. */
+   based on Nocturne intentionally resolve these roles from the authoring contract. */
 [data-theme="nocturne"]:not([data-custom-theme]) {
   --color-control-border-subtle: rgba(72, 69, 79, 0.18);
   --color-control-border-elevated: rgba(72, 69, 79, 0.42);

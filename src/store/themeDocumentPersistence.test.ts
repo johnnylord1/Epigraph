@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import type { ThemeDocumentV4 } from "../lib/theme/contract";
+import type { ThemeDocumentV5 } from "../lib/theme/contract";
 import { saveCustomTheme, store } from "./state.svelte";
 
-const document: ThemeDocumentV4 = {
-  version: 4,
+const document: ThemeDocumentV5 = {
+  version: 5,
   id: "custom:persistence-test",
   name: "Persistence Test",
   base: "nocturne",
@@ -33,7 +33,7 @@ describe("custom theme persistence", () => {
     expect(store.settings.customThemes.some((theme) => theme.id === document.id)).toBe(false);
   });
 
-  test("persists V4 before activating it in memory", () => {
+  test("persists V5 before activating it in memory", () => {
     let persisted = "";
     vi.stubGlobal("localStorage", {
       getItem: () => null,
@@ -45,6 +45,6 @@ describe("custom theme persistence", () => {
     expect(store.settings.customThemes.find((theme) => theme.id === document.id)).toEqual(document);
     const written = JSON.parse(persisted);
     expect(written.settings.theme).toBe(document.id);
-    expect(written.settings.customThemes.find((theme: ThemeDocumentV4) => theme.id === document.id)).toEqual(document);
+    expect(written.settings.customThemes.find((theme: ThemeDocumentV5) => theme.id === document.id)).toEqual(document);
   });
 });

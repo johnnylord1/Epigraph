@@ -10,11 +10,11 @@ Primitive tokens
         -> Component tokens
 ```
 
-`ThemeDocumentV4` is the persisted and exported authoring format. It contains only:
+`ThemeDocumentV5` is the persisted and exported authoring format. It contains only:
 
 ```ts
-interface ThemeDocumentV4 {
-  version: 4;
+interface ThemeDocumentV5 {
+  version: 5;
   id: `custom:${string}`;
   name: string;
   base: BuiltinTheme;
@@ -25,7 +25,7 @@ interface ThemeDocumentV4 {
 }
 ```
 
-Primitive and semantic maps are sparse. Values equal to the selected base are omitted when the document is saved or exported. Component tokens are never authored, persisted, imported, exported, or promoted. They remain derived by the shared design system.
+Primitive and semantic maps are sparse. Primitive changes automatically update linked semantic roles. A semantic value is persisted only when it deliberately differs from that derivation. Values equal to the selected base are omitted when the document is saved or exported. Component tokens are never authored, persisted, imported, exported, or promoted. They remain derived by the shared design system.
 
 Every registered built-in has one complete authoring contract in
 `BUILTIN_THEME_CONTRACTS`: 50 theme colors, 15 HUD values, and one motion
@@ -53,11 +53,11 @@ ThemeEditor -> export -> validation -> promotion
 3. Use Semantic for deliberate role overrides only.
 4. Adjust HUD geometry, HUD colors, and motion when needed.
 5. Verify the live preview and save the custom theme.
-6. Export the V4 JSON document.
+6. Export the V5 JSON document.
 7. Run the authoring and visual gates before proposing promotion.
 
 When the editor is opened for a new theme, it starts from the active built-in
-theme. Editing or importing an existing V4 document preserves its declared
+theme. Editing or importing an existing document preserves its declared
 `base`. Reset restores that base contract rather than silently switching the
 document to Nocturne.
 
@@ -65,10 +65,11 @@ The ThemeEditor is the official UI. Editing component CSS is not part of theme a
 
 ## Import And Compatibility
 
-- V1, V2, and V3 documents are accepted and migrated in memory.
+- V1, V2, V3, and V4 documents are accepted and migrated in memory.
 - Legacy documents remain unchanged in storage until the user explicitly saves.
-- An explicit save writes V4 first and activates it only after persistence succeeds.
-- V4 import is validated before it reaches the preview.
+- V4 migration materializes semantic overrides only where necessary to preserve its previous resolved appearance.
+- An explicit save writes V5 first and activates it only after persistence succeeds.
+- V5 import is validated before it reaches the preview.
 - Invalid imports do not modify the active theme or stored documents.
 
 Validation rejects unknown keys, component tokens, CSS rules, `url()`, comments, injection characters, unknown variable references, variable cycles, invalid color expressions, and invalid HUD units.
@@ -77,7 +78,7 @@ Validation rejects unknown keys, component tokens, CSS rules, `url()`, comments,
 
 A future built-in theme requires only:
 
-1. A valid V4 theme document.
+1. A valid V5 theme document.
 2. Registry metadata: stable id, label, description, and four representative swatches.
 3. A complete registry contract matching the built-in CSS cascade.
 4. Nocturne-comparable screenshots for Library, Browse, Settings, Reader, modal, popover, and toast.

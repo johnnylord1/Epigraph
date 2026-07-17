@@ -12,7 +12,7 @@
     NOCTURNE_THEME_TOKENS,
   } from "../../store/state.svelte";
   import {
-    createThemeDocumentV4,
+    createThemeDocumentV5,
     importThemeDocument,
     isValidThemeTokenValue,
     migrateThemeDocument,
@@ -22,9 +22,13 @@
   import { applyThemeContract, readBuiltinThemeContract } from "../../lib/theme/provider";
   import {
     DEFAULT_BUILTIN_THEME_ID,
+    THEME_PRIMITIVE_TOKEN_KEYS,
     getBuiltinThemeFallbackContract,
     isBuiltinTheme,
+    resolveThemeTokenLayers,
     type BuiltinTheme,
+    type ThemePrimitiveTokens,
+    type ThemeSemanticTokens,
   } from "../../lib/theme/contract";
 
   interface Props {
@@ -202,7 +206,19 @@
 
   // ── State ─────────────────────────────────────────────────────────────────
 
-  function loadInitial(): { name: string; base: BuiltinTheme; tokens: ThemeTokens; hud: HudThemeTokens; motion: ThemeMotionPreset } {
+  type InitialThemeState = {
+    name: string;
+    base: BuiltinTheme;
+    primitives: ThemePrimitiveTokens;
+    semanticOverrides: Partial<ThemeSemanticTokens>;
+    tokens: ThemeTokens;
+    hud: HudThemeTokens;
+    motion: ThemeMotionPreset;
+  };
+
+  const PRIMITIVE_TOKEN_SET = new Set<keyof ThemeTokens>(THEME_PRIMITIVE_TOKEN_KEYS);
+
+  function loadInitial(): InitialThemeState {
     if (editingId) {
       const existing = store.settings.customThemes.find(t => t.id === editingId);
       if (existing) {
@@ -213,6 +229,8 @@
           return {
             name: migrated.document.name,
             base: migrated.document.base,
+            primitives: { ...migrated.document.primitives },
+            semanticOverrides: { ...(migrated.document.semanticOverrides ?? {}) },
             tokens: resolved.tokens,
             hud: resolved.hud,
             motion: migrated.document.motion,
@@ -227,6 +245,8 @@
     return {
       name: "My Theme",
       base: selectedBase,
+      primitives: {},
+      semanticOverrides: {},
       tokens: { ...baseContract.tokens },
       hud: { ...baseContract.hud },
       motion: getBuiltinThemeFallbackContract(selectedBase).motion,
@@ -236,6 +256,8 @@
   const initial = loadInitial();
   let themeName: string   = $state(initial.name);
   let base: BuiltinTheme  = $state(initial.base);
+  let primitiveOverrides: ThemePrimitiveTokens = $state(initial.primitives);
+  let semanticOverrides: Partial<ThemeSemanticTokens> = $state(initial.semanticOverrides);
   let tokens: ThemeTokens = $state(initial.tokens);
   let hud: HudThemeTokens = $state(initial.hud);
   let motion: ThemeMotionPreset = $state(initial.motion);
@@ -281,12 +303,60 @@
     hud = { ...hud, [token]: unit ? `${value}${unit}` : String(value) };
   }
 
+  function refreshResolvedTokens() {
+    const baseContract = readBuiltinThemeContract(base);
+    tokens = resolveThemeTokenLayers(baseContract.tokens, primitiveOverrides, semanticOverrides);
+  }
+
+  function setThemeToken(token: keyof ThemeTokens, value: string) {
+    const baseContract = readBuiltinThemeContract(base);
+    if (PRIMITIVE_TOKEN_SET.has(token)) {
+      const next = { ...primitiveOverrides } as Partial<Record<keyof ThemeTokens, string>>;
+      delete next[token];
+      const natural = resolveThemeTokenLayers(
+        baseContract.tokens,
+        next as ThemePrimitiveTokens,
+        semanticOverrides,
+      );
+      if (value !== natural[token]) next[token] = value;
+      primitiveOverrides = next as ThemePrimitiveTokens;
+    } else {
+      const next = { ...semanticOverrides } as Partial<Record<keyof ThemeTokens, string>>;
+      delete next[token];
+      const natural = resolveThemeTokenLayers(
+        baseContract.tokens,
+        primitiveOverrides,
+        next as Partial<ThemeSemanticTokens>,
+      );
+      if (value !== natural[token]) next[token] = value;
+      semanticOverrides = next as Partial<ThemeSemanticTokens>;
+    }
+    refreshResolvedTokens();
+  }
+
   function applyHudPreset(id: "default" | "nocturne") {
     const preset = HUD_PRESETS.find((entry) => entry.id === id);
     if (!preset) return;
     hud = { ...preset.hud };
     motion = preset.motion;
-    if (preset.tokens) tokens = { ...preset.tokens };
+    if (preset.tokens) {
+      const baseContract = readBuiltinThemeContract(base);
+      const draft = createThemeDocumentV5(
+        {
+          id: "custom:hud-preset",
+          name: "HUD preset",
+          base,
+          tokens: preset.tokens,
+          hud: preset.hud,
+          motion: preset.motion,
+        },
+        baseContract.tokens,
+        baseContract.hud,
+      );
+      primitiveOverrides = { ...draft.primitives };
+      semanticOverrides = { ...(draft.semanticOverrides ?? {}) };
+      refreshResolvedTokens();
+    }
   }
 
   // ── Actions ───────────────────────────────────────────────────────────────
@@ -296,7 +366,7 @@
     const id   = editingId ?? `custom:${Math.random().toString(36).slice(2, 10)}`;
     try {
       const baseContract = readBuiltinThemeContract(base);
-      const theme = createThemeDocumentV4(
+      const theme = createThemeDocumentV5(
         { id, name, base, tokens: { ...tokens }, hud: { ...hud }, motion },
         baseContract.tokens,
         baseContract.hud,
@@ -322,7 +392,7 @@
   function handleExport() {
     try {
       const baseContract = readBuiltinThemeContract(base);
-      const data = createThemeDocumentV4(
+      const data = createThemeDocumentV5(
         {
           id: editingId ?? "custom:export",
           name: themeName.trim() || "Untitled Theme",
@@ -362,6 +432,8 @@
         const resolved = resolveThemeDocument(imported.document, baseContract.tokens, baseContract.hud);
         themeName   = imported.document.name;
         base        = imported.document.base;
+        primitiveOverrides = { ...imported.document.primitives };
+        semanticOverrides = { ...(imported.document.semanticOverrides ?? {}) };
         tokens      = resolved.tokens;
         hud         = resolved.hud;
         motion      = imported.document.motion;
@@ -376,6 +448,8 @@
 
   function resetToDefaults() {
     const baseContract = readBuiltinThemeContract(base);
+    primitiveOverrides = {};
+    semanticOverrides = {};
     tokens = { ...baseContract.tokens };
     hud = { ...baseContract.hud };
     motion = getBuiltinThemeFallbackContract(base).motion;
@@ -546,7 +620,7 @@
                         value={toValidColorPickerValue(tokens[token])}
                         oninput={(e) => {
                           const v = (e.target as HTMLInputElement).value;
-                          tokens = { ...tokens, [token]: v };
+                          setThemeToken(token, v);
                         }}
                         class="te-color-picker-input"
                         title={$_("ui_chooseColorVisually")}
@@ -561,7 +635,7 @@
                       spellcheck={false}
                       oninput={(e) => {
                         const v = (e.target as HTMLInputElement).value.trim();
-                        if (isValidThemeTokenValue(v)) tokens = { ...tokens, [token]: v };
+                        if (isValidThemeTokenValue(v)) setThemeToken(token, v);
                       }}
                       onblur={(e) => {
                         const v = (e.target as HTMLInputElement).value.trim();

@@ -3008,3 +3008,35 @@ Categorias cobertas:
 - `pnpm build`: verde; permanece apenas o aviso conhecido de chunk principal acima de 500 kB.
 - Risco residual: os valores builtin existem como implementacao CSS e contrato de autoria TypeScript; o gate browser passa a impedir drift, mas uma futura promocao deve atualizar registry, CSS e evidencias no mesmo lote ate existir geracao build-time unica.
 - Os 11 HudThemeTokens Legacy continuam aceitos para compatibilidade/preview. Syncd, componentes Legacy e a camada `--n-*` permanecem preservados e fora deste marco.
+
+## Marco 46 - Primitive To Semantic Ownership
+
+### Escopo e arquitetura
+
+- `ThemeDocumentV5` passa a ser o formato atual de autoria, persistencia e export. A estrutura continua esparsa (`primitives`, `semanticOverrides`, HUD parcial e motion), sem expor component tokens.
+- `resolveThemeTokenLayers()` centraliza a direcao `Primitive -> Semantic -> Component`. Backgrounds, surfaces, border/outline/divider, accent e danger derivam de suas raizes quando o documento nao declara override semantico intencional.
+- `text-tertiary` e `text-inverse` permanecem no inventario primitive por compatibilidade, mas acompanham `text-muted` e `bg-void` quando nao foram fixados explicitamente.
+- O ThemeEditor separa overrides primitive/semantic no estado de autoria. Alterar uma primitive atualiza o preview e os papeis semanticos relacionados; editar um papel semanticamente remove a duplicacao quando o valor volta a coincidir com a derivacao.
+- Nenhum token, alias Legacy, `--n-*`, component token, tema builtin ou regra visual foi removido. Syncd permanece fora do escopo.
+
+### Compatibilidade e persistencia
+
+- V1, V2, V3 e V4 continuam aceitos. A migracao ocorre em memoria e retorna V5 sem modificar o objeto original.
+- A migracao V4 primeiro reproduz a resolucao independente antiga e materializa apenas os semantic overrides necessarios para conservar os mesmos pixels. Exemplo coberto: `accent` custom com `color-accent` antigo permanece visualmente igual depois da migracao.
+- Documentos antigos continuam intactos em storage ate um save explicito. O save atual escreve V5 e so ativa o documento depois que a persistencia conclui; falha de storage preserva o estado anterior.
+- Import, export, preview e provider continuam aplicando propriedades individualmente por CSSOM allowlist. Regras CSS, component tokens, URLs, referencias desconhecidas, ciclos e unidades HUD invalidas continuam rejeitados.
+
+### Gates e validacao visual
+
+- Testes unit/jsdom focados: **11 arquivos / 106 testes verdes**, cobrindo derivacao global, migracao V1-V4, round-trip V5, provider, persistencia, autoria, allowlist e inventarios Legacy.
+- Testes browser Chromium: **2 arquivos / 10 testes verdes**. O novo gate aplica somente `bg-raised` e `accent` em um V5 e confirma por computed style `color-card`, `color-accent` e `component-card-bg` derivados.
+- App Tauri/WebView2 real em Nocturne builtin, `data-theme="nocturne"`, sem `data-custom-theme` e sem salvar documento. Evidencias: `docs/screenshots/marco46-semantic-ownership/after-settings-appearance.png`, `after-theme-editor.png` e `after-derived-preview.png`.
+- Baselines: `docs/screenshots/marco45-builtin-authoring/after-settings-appearance.png` e `after-theme-editor.png`. Appearance e editor preservaram layout, surfaces, border, shadow, radius, spacing, tipografia e hierarquia sem regressao aparente.
+- No preview real, alterar temporariamente `bg-raised` de `#201f1f` para `#345678` atualizou `color-card` e seu computed style para `#345678`; o valor foi restaurado para `#201f1f` sem salvar. Uma captura feita durante a composicao inicial ficou translucida, mas computed style confirmou shell `rgb(19, 19, 19)`/opacity 1 e a recaptura estavel substituiu o artefato.
+- `pnpm build`: verde, com apenas o aviso conhecido de chunks acima de 500 kB. O primeiro gate browser foi bloqueado pela revisao Chromium ausente; apos instalar o runtime Playwright correspondente, a repeticao passou integralmente.
+
+### Riscos restantes
+
+- A derivacao cobre somente relacoes semanticamente inequivocas. Papeis independentes como overlay, warning, info, success e fontes de shadow/highlight continuam autoraveis diretamente, sem aliases artificiais.
+- Os contratos builtin ainda possuem implementacao CSS e espelho TypeScript, protegidos pelo gate de paridade do Marco 45; unificar a geracao build-time continua sendo trabalho futuro.
+- HUD Legacy, Syncd, componentes Legacy e a camada `--n-*` permanecem deliberadamente fora deste marco.

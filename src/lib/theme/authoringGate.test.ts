@@ -8,7 +8,7 @@ import {
   THEME_TOKEN_KEYS,
 } from "./contract";
 import {
-  createThemeDocumentV4,
+  createThemeDocumentV5,
   migrateThemeDocument,
   resolveThemeDocument,
   roundTripThemeDocument,
@@ -19,8 +19,8 @@ import {
 const ROOT = process.cwd();
 
 describe("theme authoring gate", () => {
-  test("authors the test probe as V4 without component tokens and resolves the complete contract", () => {
-    const document = createThemeDocumentV4({
+  test("authors the test probe as V5 without component tokens and resolves the complete contract", () => {
+    const document = createThemeDocumentV5({
       id: "custom:authoring-probe",
       name: "Authoring Probe",
       base: "nocturne",
@@ -53,7 +53,7 @@ describe("theme authoring gate", () => {
 
     expect(migrateThemeDocument(legacy)).toMatchObject({
       ok: true,
-      document: { version: 4, primitives: { accent: "#abcdef" } },
+      document: { version: 5, primitives: { accent: "#abcdef" } },
     });
     expect(legacy).toEqual(before);
   });
@@ -75,7 +75,7 @@ describe("theme authoring gate", () => {
   test("documents the no-component-CSS promotion contract", () => {
     const guide = readFileSync(resolve(ROOT, "docs/theme-authoring.md"), "utf8");
 
-    expect(guide).toContain("ThemeDocumentV4");
+    expect(guide).toContain("ThemeDocumentV5");
     expect(guide).toContain("ThemeEditor -> export -> validation -> promotion");
     expect(guide).toContain("Component tokens are never authored");
     expect(guide).toContain("No component CSS");

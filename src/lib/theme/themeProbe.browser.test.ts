@@ -171,7 +171,7 @@ describe("test-only theme probe", () => {
     }
   });
 
-  test("changes every representative surface through the custom Nocturne V4 provider", async () => {
+  test("changes every representative surface through the custom Nocturne V5 provider", async () => {
     const original = rememberRootState();
 
     try {
@@ -194,7 +194,7 @@ describe("test-only theme probe", () => {
       );
 
       const themeDocument = {
-        version: 4,
+        version: 5,
         id: "custom:probe-browser",
         name: "Browser probe",
         base: "nocturne",
@@ -214,12 +214,12 @@ describe("test-only theme probe", () => {
         const value = computedBackground(token);
         expect(value, `${token} must resolve in a custom Nocturne-based theme`).not.toBe("");
         expect(value, `${token} must not become transparent`).not.toBe(transparentBackground);
-        expect(value, `${token} must respond to the custom V4 contract`).not.toBe(builtin.get(token));
+        expect(value, `${token} must respond to the custom V5 contract`).not.toBe(builtin.get(token));
       }
       for (const token of nocturneCompatibilityAliases) {
         const value = computedToken(token);
-        expect(value, `${token} must resolve through the custom V4 provider`).not.toBe("");
-        expect(value, `${token} must respond to the custom V4 provider`).not.toBe(
+        expect(value, `${token} must resolve through the custom V5 provider`).not.toBe("");
+        expect(value, `${token} must respond to the custom V5 provider`).not.toBe(
           builtinCompatibility.get(token),
         );
       }
@@ -231,6 +231,39 @@ describe("test-only theme probe", () => {
       expect(computedToken("--t-base")).toContain("80ms");
       for (const [token, value] of builtinMotion) expect(computedToken(token)).not.toBe(value);
       expect(computedShadow("--shadow-focus")).not.toBe(builtinFocusShadow);
+    } finally {
+      restoreRootState(original);
+      await new Promise(requestAnimationFrame);
+    }
+  });
+
+  test("propagates primitive-only V5 overrides into semantic and component surfaces", async () => {
+    const root = document.documentElement;
+    const original = rememberRootState();
+
+    try {
+      root.dataset.theme = "nocturne";
+      root.removeAttribute("data-custom-theme");
+      for (const property of probeProperties) root.style.removeProperty(property);
+      await new Promise(requestAnimationFrame);
+      const builtinBackground = computedBackground("--component-card-bg");
+
+      expect(applyCustomTheme(root, {
+        version: 5,
+        id: "custom:primitive-ownership",
+        name: "Primitive ownership",
+        base: "nocturne",
+        primitives: {
+          "bg-raised": THEME_PROBE_TOKENS["bg-raised"],
+          accent: THEME_PROBE_TOKENS.accent,
+        },
+        motion: "soft",
+      })).toBe(true);
+      await new Promise(requestAnimationFrame);
+
+      expect(computedToken("--color-card")).toBe(THEME_PROBE_TOKENS["bg-raised"]);
+      expect(computedToken("--color-accent")).toBe(THEME_PROBE_TOKENS.accent);
+      expect(computedBackground("--component-card-bg")).not.toBe(builtinBackground);
     } finally {
       restoreRootState(original);
       await new Promise(requestAnimationFrame);
@@ -251,7 +284,7 @@ describe("test-only theme probe", () => {
           .map((token) => [token, computedShadow(token)]),
       );
       const document = {
-        version: 4,
+        version: 5,
         id: "custom:effect-source-probe",
         name: "Effect source probe",
         base: "nocturne",
@@ -277,7 +310,7 @@ describe("test-only theme probe", () => {
     }
   });
 
-  test("derives Nocturne port roles from a custom V4 contract", async () => {
+  test("derives Nocturne port roles from a custom V5 contract", async () => {
     const root = document.documentElement;
     const original = rememberRootState();
 
@@ -294,7 +327,7 @@ describe("test-only theme probe", () => {
       for (const token of nocturnePortTokens) {
         const value = computedToken(token);
         expect(value, `${token} must resolve for a custom Nocturne-based theme`).not.toBe("");
-        expect(value, `${token} must respond to the custom V4 contract`).not.toBe(builtin.get(token));
+        expect(value, `${token} must respond to the custom V5 contract`).not.toBe(builtin.get(token));
       }
     } finally {
       restoreRootState(original);
@@ -302,7 +335,7 @@ describe("test-only theme probe", () => {
     }
   });
 
-  test("derives every exact Nocturne source for custom V4 documents", async () => {
+  test("derives every exact Nocturne source for custom V5 documents", async () => {
     const root = document.documentElement;
     const original = rememberRootState();
 
@@ -333,7 +366,7 @@ describe("test-only theme probe", () => {
       expect(fallbackMismatches).toEqual([]);
       expect(
         sourceNames.filter((token) => custom.get(token) !== builtin.get(token)).length,
-        "the custom V4 contract must materially change the exact Nocturne source palette",
+        "the custom V5 contract must materially change the exact Nocturne source palette",
       ).toBeGreaterThanOrEqual(220);
     } finally {
       restoreRootState(original);
@@ -341,7 +374,7 @@ describe("test-only theme probe", () => {
     }
   });
 
-  test("derives every exact Nocturne semantic color for custom V4 documents", async () => {
+  test("derives every exact Nocturne semantic color for custom V5 documents", async () => {
     const root = document.documentElement;
     const original = rememberRootState();
 
@@ -368,7 +401,7 @@ describe("test-only theme probe", () => {
       expect(fallbackMismatches).toEqual([]);
       expect(
         roleNames.filter((token) => custom.get(token) !== builtin.get(token)).length,
-        "the custom V4 contract must materially change the exact Nocturne semantic palette",
+        "the custom V5 contract must materially change the exact Nocturne semantic palette",
       ).toBeGreaterThanOrEqual(50);
     } finally {
       restoreRootState(original);

@@ -8,10 +8,11 @@ import {
   NOCTURNE_THEME_TOKENS,
   type LegacyCustomTheme,
   type ThemeDocumentV4,
+  type ThemeDocumentV5,
 } from "./contract";
 import {
   ThemeDocumentError,
-  createThemeDocumentV4,
+  createThemeDocumentV5,
   customThemeToThemeDocument,
   importThemeDocument,
   migrateThemeDocument,
@@ -23,9 +24,9 @@ import {
   validateThemeDocument,
 } from "./document";
 
-function validDocument(overrides: Partial<ThemeDocumentV4> = {}): ThemeDocumentV4 {
+function validDocument(overrides: Partial<ThemeDocumentV5> = {}): ThemeDocumentV5 {
   return {
-    version: 4,
+    version: 5,
     id: "custom:test",
     name: "Test theme",
     base: "nocturne",
@@ -41,8 +42,8 @@ function expectRejected(document: unknown, code: string): void {
   if (!result.valid) expect(result.errors.map((error) => error.code)).toContain(code);
 }
 
-describe("ThemeDocumentV4", () => {
-  test.each([1, 2, 3] as const)("migrates v%s to a sparse V4 in memory", (version) => {
+describe("ThemeDocumentV5", () => {
+  test.each([1, 2, 3] as const)("migrates v%s to a sparse V5 in memory", (version) => {
     const legacy = {
       version,
       id: `custom:legacy-${version}`,
@@ -65,12 +66,12 @@ describe("ThemeDocumentV4", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.document).toEqual({
-      version: 4,
+      version: 5,
       id: `custom:legacy-${version}`,
       name: `Legacy ${version}`,
       base: "nocturne",
       primitives: { accent: "#abcdef" },
-      semanticOverrides: { "color-warning": "#fedcba" },
+      semanticOverrides: { "color-accent": NOCTURNE_THEME_TOKENS["color-accent"], "color-warning": "#fedcba" },
       hud: { "hud-toolbar-gap": "10px" },
       motion: "minimal",
     });
@@ -87,7 +88,7 @@ describe("ThemeDocumentV4", () => {
     expect(result).toEqual({
       ok: true,
       document: {
-        version: 4,
+        version: 5,
         id: "custom:v1",
         name: "Version one",
         base: "nocturne",
@@ -97,7 +98,43 @@ describe("ThemeDocumentV4", () => {
     });
   });
 
-  test("validates, imports, and round-trips V4 without mutating it", () => {
+  test("migrates V4 without changing its previously resolved appearance", () => {
+    const v4: ThemeDocumentV4 = {
+      version: 4,
+      id: "custom:v4-compatible",
+      name: "V4 compatible",
+      base: "nocturne",
+      primitives: { accent: "#abcdef" },
+      motion: "soft",
+    };
+
+    const result = migrateThemeDocument(v4);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.document).toMatchObject({
+      version: 5,
+      primitives: { accent: "#abcdef" },
+      semanticOverrides: { "color-accent": NOCTURNE_THEME_TOKENS["color-accent"] },
+    });
+    expect(resolveThemeDocument(result.document).tokens).toEqual({
+      ...NOCTURNE_THEME_TOKENS,
+      accent: "#abcdef",
+    });
+  });
+
+  test("propagates V5 primitive changes unless a semantic override is explicit", () => {
+    const derived = validDocument({ primitives: { accent: "#abcdef" } });
+    const pinned = validDocument({
+      primitives: { accent: "#abcdef" },
+      semanticOverrides: { "color-accent": "#123456" },
+    });
+
+    expect(resolveThemeDocument(derived).tokens["color-accent"]).toBe("#abcdef");
+    expect(resolveThemeDocument(pinned).tokens["color-accent"]).toBe("#123456");
+  });
+
+  test("validates, imports, and round-trips V5 without mutating it", () => {
     const document = validDocument({
       semanticOverrides: { "color-accent": "var(--accent-bright)" },
       hud: { "hud-sidebar-width": "60px", "hud-surface-opacity": "0.94" },
@@ -128,10 +165,11 @@ describe("ThemeDocumentV4", () => {
     });
   });
 
-  test("creates a validated sparse V4 and removes values equal to the base", () => {
+  test("creates a validated sparse V5 and derives semantic aliases from primitives", () => {
     const tokens = {
       ...NOCTURNE_THEME_TOKENS,
       accent: "#abcdef",
+      "color-accent": "#abcdef",
       "color-warning": "#fedcba",
     };
     const hud = {
@@ -139,7 +177,7 @@ describe("ThemeDocumentV4", () => {
       "hud-toolbar-gap": "10px",
     };
 
-    const document = createThemeDocumentV4({
+    const document = createThemeDocumentV5({
       id: "custom:created",
       name: "Created",
       tokens,
@@ -148,7 +186,7 @@ describe("ThemeDocumentV4", () => {
     });
 
     expect(document).toEqual({
-      version: 4,
+      version: 5,
       id: "custom:created",
       name: "Created",
       base: "nocturne",
@@ -166,12 +204,12 @@ describe("ThemeDocumentV4", () => {
       "bg-base": "#eeece8",
       "color-background": "#eeece8",
     };
-    const document = createThemeDocumentV4(
+    const document = createThemeDocumentV5(
       {
         id: "custom:light-child",
         name: "Light child",
         base: "light",
-        tokens: { ...lightBase, accent: "#123456" },
+        tokens: { ...lightBase, accent: "#123456", "color-accent": "#123456" },
         motion: "soft",
       },
       lightBase,
@@ -179,7 +217,7 @@ describe("ThemeDocumentV4", () => {
     );
 
     expect(document).toEqual({
-      version: 4,
+      version: 5,
       id: "custom:light-child",
       name: "Light child",
       base: "light",
@@ -189,17 +227,17 @@ describe("ThemeDocumentV4", () => {
   });
 
   test("uses the builtin fallback contract when resolving a non-default base outside the DOM", () => {
-    const document = createThemeDocumentV4({
+    const document = createThemeDocumentV5({
       id: "custom:dark-child",
       name: "Dark child",
       base: "dark",
-      tokens: { ...DEFAULT_THEME_TOKENS, accent: "#123456" },
+      tokens: { ...DEFAULT_THEME_TOKENS, accent: "#123456", "color-accent": "#123456" },
       hud: { ...DEFAULT_HUD_THEME_TOKENS, "hud-toolbar-gap": "10px" },
       motion: "soft",
     });
 
     expect(document).toEqual({
-      version: 4,
+      version: 5,
       id: "custom:dark-child",
       name: "Dark child",
       base: "dark",
@@ -208,7 +246,7 @@ describe("ThemeDocumentV4", () => {
       motion: "soft",
     });
     expect(resolveThemeDocument(document)).toEqual({
-      tokens: { ...DEFAULT_THEME_TOKENS, accent: "#123456" },
+      tokens: { ...DEFAULT_THEME_TOKENS, accent: "#123456", "color-accent": "#123456" },
       hud: { ...DEFAULT_HUD_THEME_TOKENS, "hud-toolbar-gap": "10px" },
     });
   });
@@ -216,7 +254,7 @@ describe("ThemeDocumentV4", () => {
   test("creates sparse documents against every exact builtin contract outside the DOM", () => {
     for (const base of BUILTIN_THEME_IDS) {
       const contract = BUILTIN_THEME_CONTRACTS[base];
-      const document = createThemeDocumentV4({
+      const document = createThemeDocumentV5({
         id: `custom:${base}`,
         name: `${base} child`,
         base,
@@ -253,7 +291,7 @@ describe("ThemeDocumentV4", () => {
     expect(materialized.hud).toEqual(NOCTURNE_HUD_THEME_TOKENS);
   });
 
-  test("resolves sparse V4 maps into complete token and HUD contracts", () => {
+  test("resolves sparse V5 maps into complete token and HUD contracts", () => {
     const document = validDocument({
       semanticOverrides: { "color-warning": "#fedcba" },
       hud: { "hud-toolbar-gap": "10px" },
@@ -264,6 +302,7 @@ describe("ThemeDocumentV4", () => {
     expect(resolved.tokens).toEqual({
       ...NOCTURNE_THEME_TOKENS,
       accent: "#abcdef",
+      "color-accent": "#abcdef",
       "color-warning": "#fedcba",
     });
     expect(resolved.hud).toEqual({
@@ -338,7 +377,7 @@ describe("ThemeDocumentV4", () => {
       name: "Bad",
       tokens: { accent: "red; } body { color: red" },
     })).toMatchObject({ ok: false });
-    expect(() => createThemeDocumentV4({
+    expect(() => createThemeDocumentV5({
       id: "bad",
       name: "Bad",
       tokens: NOCTURNE_THEME_TOKENS,

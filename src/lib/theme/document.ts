@@ -8,20 +8,23 @@ import {
   THEME_TOKEN_KEYS,
   getBuiltinThemeFallbackContract,
   isBuiltinTheme,
+  resolveThemeTokenLayers,
   type BuiltinTheme,
   type CustomTheme,
   type HudThemeTokens,
   type LegacyCustomTheme,
   type ThemeDocumentV4,
+  type ThemeDocumentV5,
   type ThemeMotionPreset,
   type ThemePrimitiveTokens,
   type ThemeSemanticTokens,
   type ThemeTokens,
 } from "./contract";
 
-export const THEME_DOCUMENT_VERSION = 4 as const;
+export const THEME_DOCUMENT_VERSION = 5 as const;
+const LEGACY_SPARSE_THEME_DOCUMENT_VERSION = 4 as const;
 
-export interface CreateThemeDocumentV4Input {
+export interface CreateThemeDocumentV5Input {
   id: string;
   name: string;
   base?: BuiltinTheme;
@@ -29,6 +32,8 @@ export interface CreateThemeDocumentV4Input {
   hud?: Partial<HudThemeTokens>;
   motion: ThemeMotionPreset;
 }
+
+export type CreateThemeDocumentV4Input = CreateThemeDocumentV5Input;
 
 export type ThemeDocumentValidationErrorCode =
   | "invalid-type"
@@ -58,8 +63,8 @@ export type ThemeDocumentValidationResult =
   | {
       valid: true;
       ok: true;
-      value: ThemeDocumentV4;
-      document: ThemeDocumentV4;
+      value: ThemeDocumentV5;
+      document: ThemeDocumentV5;
       errors: [];
     }
   | {
@@ -69,7 +74,7 @@ export type ThemeDocumentValidationResult =
     };
 
 export type ThemeDocumentMigrationResult =
-  | { ok: true; document: ThemeDocumentV4 }
+  | { ok: true; document: ThemeDocumentV5 }
   | { ok: false; error: string };
 
 export class ThemeDocumentError extends Error {
@@ -88,7 +93,7 @@ const SEMANTIC_KEYS = new Set<string>(THEME_SEMANTIC_TOKEN_KEYS);
 const THEME_KEYS = new Set<string>(THEME_TOKEN_KEYS);
 const HUD_KEYS = new Set<string>(HUD_THEME_TOKEN_KEYS);
 
-const V4_TOP_LEVEL_KEYS = new Set([
+const SPARSE_TOP_LEVEL_KEYS = new Set([
   "version",
   "id",
   "name",
@@ -407,9 +412,20 @@ function copyDifferences<Key extends string>(
   return result;
 }
 
-function canonicalizeV4(value: Record<string, unknown>): ThemeDocumentV4 {
-  const document: ThemeDocumentV4 = {
-    version: THEME_DOCUMENT_VERSION,
+function canonicalizeSparseDocument(
+  value: Record<string, unknown>,
+  version: 4,
+): ThemeDocumentV4;
+function canonicalizeSparseDocument(
+  value: Record<string, unknown>,
+  version: 5,
+): ThemeDocumentV5;
+function canonicalizeSparseDocument(
+  value: Record<string, unknown>,
+  version: 4 | 5,
+): ThemeDocumentV4 | ThemeDocumentV5 {
+  const document = {
+    version,
     id: value.id as `custom:${string}`,
     name: value.name as string,
     base: value.base as BuiltinTheme,
@@ -418,7 +434,7 @@ function canonicalizeV4(value: Record<string, unknown>): ThemeDocumentV4 {
       THEME_PRIMITIVE_TOKEN_KEYS,
     ) as ThemePrimitiveTokens,
     motion: value.motion as ThemeMotionPreset,
-  };
+  } as ThemeDocumentV4 | ThemeDocumentV5;
   if (value.semanticOverrides !== undefined) {
     document.semanticOverrides = copyKnownValues(
       value.semanticOverrides as Record<string, unknown>,
@@ -434,17 +450,28 @@ function canonicalizeV4(value: Record<string, unknown>): ThemeDocumentV4 {
   return document;
 }
 
-export function validateThemeDocument(input: unknown): ThemeDocumentValidationResult {
+function validateSparseThemeDocument(
+  input: unknown,
+  version: 4,
+): { valid: true; document: ThemeDocumentV4 } | { valid: false; errors: ThemeDocumentValidationError[] };
+function validateSparseThemeDocument(
+  input: unknown,
+  version: 5,
+): { valid: true; document: ThemeDocumentV5 } | { valid: false; errors: ThemeDocumentValidationError[] };
+function validateSparseThemeDocument(
+  input: unknown,
+  version: 4 | 5,
+): { valid: true; document: ThemeDocumentV4 | ThemeDocumentV5 } | { valid: false; errors: ThemeDocumentValidationError[] } {
   const errors: ThemeDocumentValidationError[] = [];
   const graph = new Map<string, string[]>();
   if (!isRecord(input)) {
     addError(errors, "invalid-type", "$", "Theme document must be an object.");
-    return { valid: false, ok: false, errors };
+    return { valid: false, errors };
   }
 
-  validateKnownKeys(input, V4_TOP_LEVEL_KEYS, "$", errors);
-  if (input.version !== THEME_DOCUMENT_VERSION) {
-    addError(errors, "invalid-version", "$.version", "Theme document version must be 4.");
+  validateKnownKeys(input, SPARSE_TOP_LEVEL_KEYS, "$", errors);
+  if (input.version !== version) {
+    addError(errors, "invalid-version", "$.version", `Theme document version must be ${version}.`);
   }
   validateIdentity(input, errors, true);
   validateMotion(input.motion, "$.motion", errors, false);
@@ -455,18 +482,33 @@ export function validateThemeDocument(input: unknown): ThemeDocumentValidationRe
   if (input.hud !== undefined) validateHudMap(input.hud, "$.hud", errors, graph);
   validateCycles(graph, errors);
 
-  if (errors.length > 0) return { valid: false, ok: false, errors };
-  const document = canonicalizeV4(input);
+  if (errors.length > 0) return { valid: false, errors };
+  return { valid: true, document: canonicalizeSparseDocument(input, version) };
+}
+
+export function validateThemeDocument(input: unknown): ThemeDocumentValidationResult {
+  const validation = validateSparseThemeDocument(input, THEME_DOCUMENT_VERSION);
+  if (!validation.valid) return { valid: false, ok: false, errors: validation.errors };
+  const document = validation.document;
   return { valid: true, ok: true, value: document, document, errors: [] };
 }
 
 export function isThemeDocumentV4(input: unknown): input is ThemeDocumentV4 {
-  return validateThemeDocument(input).valid;
+  return validateSparseThemeDocument(input, LEGACY_SPARSE_THEME_DOCUMENT_VERSION).valid;
 }
 
 export function assertThemeDocumentV4(input: unknown): asserts input is ThemeDocumentV4 {
-  const result = validateThemeDocument(input);
+  const result = validateSparseThemeDocument(input, LEGACY_SPARSE_THEME_DOCUMENT_VERSION);
   if (!result.valid) throw new ThemeDocumentError("Invalid ThemeDocumentV4.", result.errors);
+}
+
+export function isThemeDocumentV5(input: unknown): input is ThemeDocumentV5 {
+  return validateThemeDocument(input).valid;
+}
+
+export function assertThemeDocumentV5(input: unknown): asserts input is ThemeDocumentV5 {
+  const result = validateThemeDocument(input);
+  if (!result.valid) throw new ThemeDocumentError("Invalid ThemeDocumentV5.", result.errors);
 }
 
 function validateLegacyThemeDocument(input: unknown): ThemeDocumentValidationError[] {
@@ -508,41 +550,67 @@ export function migrateThemeDocument(input: unknown): ThemeDocumentMigrationResu
       : { ok: false, error: errorMessage(validation.errors) };
   }
 
+  if (isRecord(input) && input.version === LEGACY_SPARSE_THEME_DOCUMENT_VERSION) {
+    const validation = validateSparseThemeDocument(input, LEGACY_SPARSE_THEME_DOCUMENT_VERSION);
+    if (!validation.valid) return { ok: false, error: errorMessage(validation.errors) };
+    const baseContract = getBuiltinThemeFallbackContract(validation.document.base);
+    const legacyTokens: ThemeTokens = {
+      ...baseContract.tokens,
+      ...validation.document.primitives,
+      ...(validation.document.semanticOverrides ?? {}),
+    };
+    const legacyHud: HudThemeTokens = {
+      ...baseContract.hud,
+      ...(validation.document.hud ?? {}),
+    };
+    return {
+      ok: true,
+      document: createThemeDocumentV5(
+        {
+          id: validation.document.id,
+          name: validation.document.name,
+          base: validation.document.base,
+          tokens: legacyTokens,
+          hud: legacyHud,
+          motion: validation.document.motion,
+        },
+        baseContract.tokens,
+        baseContract.hud,
+      ),
+    };
+  }
+
   const errors = validateLegacyThemeDocument(input);
   if (errors.length > 0 || !isRecord(input) || !isRecord(input.tokens)) {
     return { ok: false, error: errorMessage(errors) || "Invalid legacy theme document." };
   }
 
-  const primitives = copyDifferences(
-    input.tokens,
-    NOCTURNE_THEME_TOKENS,
-    THEME_PRIMITIVE_TOKEN_KEYS,
-  ) as ThemePrimitiveTokens;
-  const semanticOverrides = copyDifferences(
-    input.tokens,
-    NOCTURNE_THEME_TOKENS,
-    THEME_SEMANTIC_TOKEN_KEYS,
-  ) as Partial<ThemeSemanticTokens>;
-  const hud = copyDifferences(
-    (input.hud as Record<string, unknown> | undefined) ?? {},
-    NOCTURNE_HUD_THEME_TOKENS,
-    HUD_THEME_TOKEN_KEYS,
-  ) as Partial<HudThemeTokens>;
-  const candidate: ThemeDocumentV4 = {
-    version: THEME_DOCUMENT_VERSION,
-    id: input.id as `custom:${string}`,
-    name: input.name as string,
-    base: "nocturne",
-    primitives,
-    motion: (input.motion ?? "soft") as ThemeMotionPreset,
-  };
-  if (Object.keys(semanticOverrides).length > 0) candidate.semanticOverrides = semanticOverrides;
-  if (Object.keys(hud).length > 0) candidate.hud = hud;
-
-  const validation = validateThemeDocument(candidate);
-  return validation.valid
-    ? { ok: true, document: validation.document }
-    : { ok: false, error: errorMessage(validation.errors) };
+  const tokens = {
+    ...NOCTURNE_THEME_TOKENS,
+    ...copyKnownValues(input.tokens, THEME_TOKEN_KEYS),
+  } as ThemeTokens;
+  const hud = {
+    ...NOCTURNE_HUD_THEME_TOKENS,
+    ...copyKnownValues(
+      (input.hud as Record<string, unknown> | undefined) ?? {},
+      HUD_THEME_TOKEN_KEYS,
+    ),
+  } as HudThemeTokens;
+  try {
+    return {
+      ok: true,
+      document: createThemeDocumentV5({
+        id: input.id as string,
+        name: input.name as string,
+        base: "nocturne",
+        tokens,
+        hud,
+        motion: (input.motion ?? "soft") as ThemeMotionPreset,
+      }),
+    };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 export function importThemeDocument(serialized: string): ThemeDocumentMigrationResult {
@@ -576,11 +644,11 @@ function validateCreateInput(input: unknown): ThemeDocumentValidationError[] {
   return errors;
 }
 
-export function createThemeDocumentV4(
-  input: CreateThemeDocumentV4Input,
+export function createThemeDocumentV5(
+  input: CreateThemeDocumentV5Input,
   baseTokens?: ThemeTokens,
   baseHud?: HudThemeTokens,
-): ThemeDocumentV4 {
+): ThemeDocumentV5 {
   const inputErrors = validateCreateInput(input);
   if (inputErrors.length > 0) {
     throw new ThemeDocumentError("Invalid theme creation input.", inputErrors);
@@ -595,9 +663,17 @@ export function createThemeDocumentV4(
     resolvedBaseTokens,
     THEME_PRIMITIVE_TOKEN_KEYS,
   ) as ThemePrimitiveTokens;
+  let derivedTokens = resolveThemeTokenLayers(resolvedBaseTokens, primitives);
+
+  // V4 classified these aliases as primitives. Pin them only when their authored
+  // value intentionally differs from the natural primitive derivation.
+  for (const key of ["text-tertiary", "text-inverse"] as const) {
+    if (input.tokens[key] !== derivedTokens[key]) primitives[key] = input.tokens[key];
+  }
+  derivedTokens = resolveThemeTokenLayers(resolvedBaseTokens, primitives);
   const semanticOverrides = copyDifferences(
     source,
-    resolvedBaseTokens,
+    derivedTokens,
     THEME_SEMANTIC_TOKEN_KEYS,
   ) as Partial<ThemeSemanticTokens>;
   const hud = copyDifferences(
@@ -605,7 +681,7 @@ export function createThemeDocumentV4(
     resolvedBaseHud,
     HUD_THEME_TOKEN_KEYS,
   ) as Partial<HudThemeTokens>;
-  const document: ThemeDocumentV4 = {
+  const document: ThemeDocumentV5 = {
     version: THEME_DOCUMENT_VERSION,
     id: input.id as `custom:${string}`,
     name: input.name,
@@ -618,69 +694,75 @@ export function createThemeDocumentV4(
 
   const validation = validateThemeDocument(document);
   if (!validation.valid) {
-    throw new ThemeDocumentError("Created ThemeDocumentV4 is invalid.", validation.errors);
+    throw new ThemeDocumentError("Created ThemeDocumentV5 is invalid.", validation.errors);
   }
   return validation.document;
 }
 
+/** @deprecated Use createThemeDocumentV5 for new authoring flows. */
+export const createThemeDocumentV4 = createThemeDocumentV5;
+
 export function resolveThemeDocument(
-  document: ThemeDocumentV4,
+  document: ThemeDocumentV4 | ThemeDocumentV5,
   baseTokens?: ThemeTokens,
   baseHud?: HudThemeTokens,
 ): { tokens: ThemeTokens; hud: HudThemeTokens } {
-  const validation = validateThemeDocument(document);
-  if (!validation.valid) throw new ThemeDocumentError("Invalid ThemeDocumentV4.", validation.errors);
-  const baseContract = getBuiltinThemeFallbackContract(validation.document.base);
+  const migration = migrateThemeDocument(document);
+  if (!migration.ok) throw new ThemeDocumentError(migration.error);
+  const current = migration.document;
+  const baseContract = getBuiltinThemeFallbackContract(current.base);
   const resolvedBaseTokens = baseTokens ?? baseContract.tokens;
   const resolvedBaseHud = baseHud ?? baseContract.hud;
 
   return {
-    tokens: {
-      ...resolvedBaseTokens,
-      ...validation.document.primitives,
-      ...(validation.document.semanticOverrides ?? {}),
-    },
+    tokens: resolveThemeTokenLayers(
+      resolvedBaseTokens,
+      current.primitives,
+      current.semanticOverrides,
+    ),
     hud: {
       ...resolvedBaseHud,
-      ...(validation.document.hud ?? {}),
+      ...(current.hud ?? {}),
     },
   };
 }
 
-export function customThemeToThemeDocument(theme: CustomTheme): ThemeDocumentV4 {
+export function customThemeToThemeDocument(theme: CustomTheme): ThemeDocumentV5 {
   const result = migrateThemeDocument(theme);
   if (!result.ok) throw new ThemeDocumentError(result.error);
   return result.document;
 }
 
-export function themeDocumentToCustomTheme(document: ThemeDocumentV4): LegacyCustomTheme {
+export function themeDocumentToCustomTheme(document: ThemeDocumentV4 | ThemeDocumentV5): LegacyCustomTheme {
+  const migration = migrateThemeDocument(document);
+  if (!migration.ok) throw new ThemeDocumentError(migration.error);
   const resolved = resolveThemeDocument(document);
   return {
     version: 3,
-    id: document.id,
-    name: document.name,
+    id: migration.document.id,
+    name: migration.document.name,
     tokens: resolved.tokens,
     hud: resolved.hud,
-    motion: document.motion,
+    motion: migration.document.motion,
   };
 }
 
 export const themeDocumentFromCustomTheme = customThemeToThemeDocument;
 export const themeDocumentToLegacyCustomTheme = themeDocumentToCustomTheme;
 
-export function parseThemeDocument(serialized: string): ThemeDocumentV4 {
+export function parseThemeDocument(serialized: string): ThemeDocumentV5 {
   const result = importThemeDocument(serialized);
   if (!result.ok) throw new ThemeDocumentError(result.error);
   return result.document;
 }
 
-export function serializeThemeDocument(document: ThemeDocumentV4, space = 2): string {
-  const validation = validateThemeDocument(document);
-  if (!validation.valid) throw new ThemeDocumentError("Invalid ThemeDocumentV4.", validation.errors);
+export function serializeThemeDocument(document: ThemeDocumentV4 | ThemeDocumentV5, space = 2): string {
+  const migration = migrateThemeDocument(document);
+  if (!migration.ok) throw new ThemeDocumentError(migration.error);
   const indentation = Number.isInteger(space) ? Math.min(10, Math.max(0, space)) : 2;
-  return JSON.stringify(validation.document, null, indentation);
+  return JSON.stringify(migration.document, null, indentation);
 }
 
-export function roundTripThemeDocument(document: ThemeDocumentV4): ThemeDocumentV4 {
+export function roundTripThemeDocument(document: ThemeDocumentV4 | ThemeDocumentV5): ThemeDocumentV5 {
   return parseThemeDocument(serializeThemeDocument(document));
 }

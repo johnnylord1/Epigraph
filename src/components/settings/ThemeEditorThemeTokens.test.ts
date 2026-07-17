@@ -88,7 +88,10 @@ describe("ThemeEditor theme tokens", () => {
     expect(source).not.toContain("toCssVars");
     expect(source).toContain("use:themePreview={{ tokens, hud, motion }}");
     expect(source).toContain("applyThemeContract(node, draft.tokens, draft.hud, draft.motion)");
-    expect(source).toContain("createThemeDocumentV4(");
+    expect(source).toContain("createThemeDocumentV5(");
+    expect(source).toContain("resolveThemeTokenLayers(");
+    expect(source).toContain("primitiveOverrides");
+    expect(source).toContain("semanticOverrides");
     expect(source).toContain("isBuiltinTheme(store.settings.theme)");
     expect(source).toContain("readBuiltinThemeContract(selectedBase)");
     expect(source).toContain("getBuiltinThemeFallbackContract(base).motion");
