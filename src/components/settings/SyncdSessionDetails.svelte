@@ -361,7 +361,7 @@
 
   .syncd-session-popover {
     position: absolute;
-    top: calc(100% + var(--component-syncd-session-popover-offset));
+    bottom: calc(100% + var(--component-syncd-session-popover-offset));
     right: 0;
     z-index: var(--component-syncd-session-popover-z-index);
     width: var(--component-syncd-session-popover-width);

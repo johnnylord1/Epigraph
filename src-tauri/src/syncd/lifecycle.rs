@@ -15,7 +15,9 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 
 use super::config::SyncdConfig;
-use super::middleware::{CLIENT_PROTOCOL_HEADER, CLIENT_VERSION_HEADER};
+use super::middleware::{
+    CLIENT_PROTOCOL_HEADER, CLIENT_VERSION_HEADER, CURRENT_CLIENT_VERSION,
+};
 use super::models::{
     AppError, AuthenticatedSession, ErrorBody, PairingTokenResponse, SharedAppState,
     SyncdDiscoveryDescriptor,
@@ -24,7 +26,6 @@ use super::runtime_manifest::{read_runtime_manifest, runtime_manifest_path, Sync
 
 const SHUTDOWN_RESPONSE_DELAY: Duration = Duration::from_millis(100);
 const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
-const MAINTENANCE_CLIENT_VERSION: &str = "0.1.0";
 const LOCAL_AUTHORITY_DEVICE_ID: &str = "aethon-core-maintenance";
 const LOCAL_AUTHORITY_PROFILE_ID: &str = "main";
 
@@ -298,7 +299,7 @@ pub async fn request_persistent_shutdown(
     let response = client
         .post(url)
         .header("authorization", format!("Bearer {}", token.access_token))
-        .header(CLIENT_VERSION_HEADER, MAINTENANCE_CLIENT_VERSION)
+        .header(CLIENT_VERSION_HEADER, CURRENT_CLIENT_VERSION)
         .header(CLIENT_PROTOCOL_HEADER, "1")
         .json(&ShutdownRequest {
             server_id: manifest.server_id.clone(),
@@ -591,7 +592,7 @@ mod tests {
         Request::post("/v1/local/shutdown")
             .header("content-type", "application/json")
             .header("authorization", format!("Bearer {token}"))
-            .header(CLIENT_VERSION_HEADER, MAINTENANCE_CLIENT_VERSION)
+            .header(CLIENT_VERSION_HEADER, CURRENT_CLIENT_VERSION)
             .header(CLIENT_PROTOCOL_HEADER, "1")
             .extension(ConnectInfo(remote.parse::<SocketAddr>().unwrap()))
             .body(Body::from(

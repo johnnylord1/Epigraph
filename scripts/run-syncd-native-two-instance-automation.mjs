@@ -323,7 +323,11 @@ async function waitForAuditShellReady(driver, timeout = DEFAULT_TIMEOUT_MS, labe
 
 async function waitForPanelSubscriptionsReady(driver, timeout = DEFAULT_TIMEOUT_MS) {
   await waitForTestId(driver, "syncd-host-start", timeout);
-  await waitForTestId(driver, "syncd-connect-refresh-peers", timeout);
+  await driver.wait(
+    until.elementLocated(testId("syncd-connect-refresh-peers")),
+    timeout,
+    "Timed out locating the Syncd options controls.",
+  );
 
   try {
     await driver.wait(async () => {
@@ -342,6 +346,18 @@ async function waitForPanelSubscriptionsReady(driver, timeout = DEFAULT_TIMEOUT_
       throw new Error(`Syncd panel reported an error before subscriptions were ready: ${panelError}`);
     }
   }
+}
+
+async function openSyncdModalView(instance, view, timeout = DEFAULT_TIMEOUT_MS) {
+  const trigger = await waitForTestId(instance.driver, `syncd-modal-${view}`, timeout);
+  if ((await trigger.getAttribute("aria-pressed")) !== "true") {
+    await instance.driver.executeScript("arguments[0].click();", trigger);
+  }
+  await instance.driver.wait(
+    async () => (await trigger.getAttribute("aria-pressed")) === "true",
+    timeout,
+    `Timed out opening the Syncd ${view} view.`,
+  );
 }
 
 async function openSecuritySettings(driver, timeout = DEFAULT_TIMEOUT_MS) {
@@ -419,7 +435,9 @@ async function getText(driver, id, timeout = DEFAULT_TIMEOUT_MS) {
 }
 
 async function getValue(driver, id, timeout = DEFAULT_TIMEOUT_MS) {
-  const element = await waitForTestId(driver, id, timeout);
+  const locator = testId(id);
+  await driver.wait(until.elementLocated(locator), timeout, `Timed out waiting for ${id}.`);
+  const element = await driver.findElement(locator);
   return driver.executeScript("return arguments[0].value;", element);
 }
 
@@ -580,6 +598,7 @@ async function captureJoinerDiagnostics(joiner, name) {
 }
 
 async function waitForPeerCount(instance, minimum, timeout = DEFAULT_TIMEOUT_MS) {
+  await openSyncdModalView(instance, "options", timeout);
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     const items = await instance.driver.findElements(testId("syncd-peer-item"));
@@ -622,6 +641,7 @@ async function startHostPairing(host, screenshotName) {
 }
 
 async function connectJoiner(joiner, { bundleRaw, manualOrigin = null, useQrPath = null, useQrDataUrl = null }) {
+  await openSyncdModalView(joiner, "options");
   if (manualOrigin !== null) {
     await setInputValue(joiner.driver, "syncd-manual-origin", manualOrigin);
   } else {
@@ -838,6 +858,7 @@ function sessionRowSelector(sessionKey) {
 }
 
 async function clickSessionAction(instance, testIdValue, sessionKey, timeout = DEFAULT_TIMEOUT_MS) {
+  await openSyncdModalView(instance, "details", timeout);
   const locator = sessionActionSelector(testIdValue, sessionKey);
   const rowLocator = sessionRowSelector(sessionKey);
   await instance.driver.wait(until.elementLocated(rowLocator), timeout, `Timed out waiting for session row ${sessionKey}.`);
@@ -863,6 +884,7 @@ async function clickSessionAction(instance, testIdValue, sessionKey, timeout = D
 }
 
 async function openSessionPopover(instance, sessionKey, timeout = DEFAULT_TIMEOUT_MS) {
+  await openSyncdModalView(instance, "details", timeout);
   const rowLocator = sessionRowSelector(sessionKey);
   await instance.driver.wait(until.elementLocated(rowLocator), timeout, `Timed out waiting for session row ${sessionKey}.`);
   const row = await instance.driver.findElement(rowLocator);
@@ -999,10 +1021,12 @@ async function decideHost(host, decision) {
 }
 
 async function revalidateSessions(joiner) {
+  await openSyncdModalView(joiner, "options");
   await clickTestId(joiner.driver, "syncd-revalidate-sessions");
 }
 
 async function waitForPersistedStatusText(joiner, expected, timeout = DEFAULT_TIMEOUT_MS) {
+  await openSyncdModalView(joiner, "details", timeout);
   const normalizedExpected = normalizeVisibleText(expected);
   await joiner.driver.wait(async () => {
     const items = await joiner.driver.findElements(testId("syncd-persisted-session-item"));
@@ -1013,10 +1037,12 @@ async function waitForPersistedStatusText(joiner, expected, timeout = DEFAULT_TI
 }
 
 async function waitForReplicationStatus(instance, expected, timeout = DEFAULT_TIMEOUT_MS) {
+  await openSyncdModalView(instance, "pairing", timeout);
   await waitForText(instance.driver, "syncd-replication-status", expected, timeout);
 }
 
 async function waitForActiveSessionKey(instance, expectedSessionKey, timeout = DEFAULT_TIMEOUT_MS) {
+  await openSyncdModalView(instance, "pairing", timeout);
   await waitForValueContaining(instance.driver, "syncd-replication-active-session", expectedSessionKey, timeout)
     .catch(async () => {
       await instance.driver.wait(async () => {
@@ -1047,6 +1073,7 @@ async function runScenario() {
       localAppDataDir: path.join(tmpRoot, "host", "LocalAppData"),
       syncdPort: 4877,
       localServerPort: 4668,
+      bootstrapTtlSeconds: 900,
     });
 
     step("Host smoke: bootstrap readiness");
@@ -1063,9 +1090,12 @@ async function runScenario() {
     });
 
     step("Scenario 1: host-ready launch + mDNS discovery + approval + replication");
-    const hostState = smokeHostState;
+    // The two WebView subscription waits can outlive the short-lived smoke
+    // package. Refresh only after both desktops are ready for the scenario.
+    const hostState = await startHostPairing(host, "scenario1-host-pending");
     step("  - host pairing is pending");
     try {
+      await openSyncdModalView(joiner, "options");
       await clickTestId(joiner.driver, "syncd-connect-refresh-peers");
     } catch (error) {
       await captureJoinerDiagnostics(joiner, "scenario1-joiner-refresh-timeout");
@@ -1074,6 +1104,7 @@ async function runScenario() {
     step("  - joiner refresh requested");
     await useFirstPeerOrigin(joiner);
     step("  - joiner selected first discovered origin");
+    await saveScreenshot(joiner, "scenario1-joiner-options");
     await connectJoiner(joiner, { bundleRaw: hostState.bootstrapBundleRaw });
     step("  - joiner submitted bootstrap bundle");
     try {
@@ -1175,6 +1206,7 @@ async function runScenario() {
       "scenario2-joiner-restarted-live-popover",
       restartedSession.sessionKey,
     );
+    await openSyncdModalView(joiner, "pairing");
     await clickTestId(joiner.driver, "syncd-replication-toggle");
     await waitForReplicationStatus(joiner, "Paused", DEFAULT_TIMEOUT_MS);
     const pausedVisual = await captureSessionVisualState(
@@ -1183,6 +1215,7 @@ async function runScenario() {
       restartedSession.sessionKey,
     );
     step("  - replication paused");
+    await openSyncdModalView(joiner, "pairing");
     await clickTestId(joiner.driver, "syncd-replication-toggle");
     await waitForReplicationStatus(joiner, "Live", DEFAULT_TIMEOUT_MS);
     const resumedVisual = await captureSessionVisualState(
@@ -1191,6 +1224,7 @@ async function runScenario() {
       restartedSession.sessionKey,
     );
     step("  - replication resumed");
+    await openSyncdModalView(joiner, "pairing");
     await clickTestId(joiner.driver, "syncd-replication-reconnect");
     await waitForReplicationStatus(joiner, "Live", DEFAULT_TIMEOUT_MS);
     const reconnectedVisual = await captureSessionVisualState(
@@ -1210,6 +1244,7 @@ async function runScenario() {
       localAppDataDir: path.join(tmpRoot, "host-alt", "LocalAppData"),
       syncdPort: 5177,
       localServerPort: 4968,
+      bootstrapTtlSeconds: 900,
     });
     const altHostState = await startHostPairing(hostAlt, "scenario3-host-alt-pending");
     await connectJoiner(joiner, {
@@ -1318,6 +1353,7 @@ async function runScenario() {
       localAppDataDir: path.join(tmpRoot, "host-qr", "LocalAppData"),
       syncdPort: 5277,
       localServerPort: 5068,
+      bootstrapTtlSeconds: 900,
     });
     const qrHostState = await startHostPairing(host, "scenario7-host-pending");
     await snapshotJson("scenario7-host-bootstrap", {

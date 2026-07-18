@@ -2,6 +2,7 @@
   import { translate } from "../../lib/i18n/runtime";
   import { _ } from "../../lib/i18n/runtime";
   import { onMount } from "svelte";
+  import { ArrowsClockwise, CheckCircle, CircleNotch, Gear, Info, ShieldCheck, X } from "phosphor-svelte";
   import { addToast } from "../../store/state.svelte";
   import { buildSyncdQrDataUrl, decodeSyncdQrDataUrl, decodeSyncdQrFile } from "../../lib/syncdQr";
   import NocturneState from "../shared/NocturneState.svelte";
@@ -40,9 +41,12 @@
   interface Props {
     profileId?: string | null;
     scopeLabel: string;
+    onClose?: () => void;
   }
 
-  let { profileId = null, scopeLabel }: Props = $props();
+  let { profileId = null, scopeLabel, onClose = () => {} }: Props = $props();
+
+  type SyncdModalView = "pairing" | "details" | "options";
 
   let host = $state<SyncdHostPairingState | null>(null);
   let connect = $state<SyncdConnectState | null>(null);
@@ -75,10 +79,103 @@
   let manualOriginInput = $state<HTMLInputElement | null>(null);
   let bootstrapBundleTextarea = $state<HTMLTextAreaElement | null>(null);
   let panelSubscriptionsReady = $state(false);
+  let modalView = $state<SyncdModalView>("pairing");
+  let modalElement = $state<HTMLElement | null>(null);
 
   const activeProfileId = $derived.by(
     () => (typeof profileId === "string" && profileId.trim().length > 0 ? profileId : null),
   );
+
+  const operationBusy = $derived(
+    loadingHost
+      || connectBusy
+      || hostDecisionBusy !== null
+      || replicationActionBusy !== null
+      || host?.status === "pending"
+      || host?.status === "claimed"
+      || connect?.status === "pending"
+      || connect?.status === "claimed"
+      || replicationSnapshot?.replicationStatus === "connecting"
+      || replicationSnapshot?.replicationStatus === "replaying",
+  );
+
+  const overviewStatus = $derived.by(() => {
+    if (panelError) return { tone: "danger", label: "Action required", title: "Sync needs attention", body: panelError };
+    if (connect?.status === "connected") {
+      return { tone: "success", label: "Connected", title: "Desktop sync is active", body: "This device is paired and changes can replicate automatically." };
+    }
+    if (connect?.status === "approved") {
+      return { tone: "info", label: "Approved", title: "Finishing the secure connection", body: "The host approved this device. Aethon is establishing the sync session." };
+    }
+    if (connect?.status === "claimed" || connect?.status === "pending") {
+      return { tone: "info", label: statusLabel(connect.status), title: "Waiting for host approval", body: "Keep both Aethon windows open while the host reviews this request." };
+    }
+    if (host?.status === "claimed") {
+      return { tone: "info", label: "Approval needed", title: "A desktop wants to connect", body: "Review the request and approve it to finish pairing." };
+    }
+    if (host?.status === "approved") {
+      return { tone: "success", label: "Approved", title: "Pairing approved", body: "The other desktop can now complete its secure connection." };
+    }
+    if (host?.status === "pending") {
+      return { tone: "info", label: "Waiting", title: "Ready to pair", body: "Scan the QR code on the other desktop or copy the pairing package." };
+    }
+    if (replicationSnapshot?.activeSessionKey) {
+      const paused = replicationSnapshot.paused;
+      return {
+        tone: paused ? "neutral" : replicationStatusTone(replicationSnapshot.replicationStatus),
+        label: paused ? "Paused" : statusLabel(replicationSnapshot.replicationStatus),
+        title: paused ? "Desktop sync is paused" : "Desktop sync is configured",
+        body: paused ? "Resume when you want this device to exchange reading activity again." : "A trusted desktop session is ready for automatic replication.",
+      };
+    }
+    if (loadingHost || connectBusy) {
+      return { tone: "info", label: "Working", title: "Preparing secure pairing", body: "Aethon is creating the encrypted session. This usually takes a few seconds." };
+    }
+    return { tone: "neutral", label: "Ready", title: "Pair another desktop", body: "Use a short-lived QR code or connect with a pairing package from another Aethon desktop." };
+  });
+
+  function portal(node: HTMLElement) {
+    document.body.appendChild(node);
+    return {
+      destroy() {
+        node.remove();
+      },
+    };
+  }
+
+  function showView(view: SyncdModalView) {
+    modalView = view;
+  }
+
+  function closeModal() {
+    onClose();
+  }
+
+  function handleModalKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeModal();
+      return;
+    }
+    if (event.key !== "Tab" || !modalElement) return;
+
+    const focusable = Array.from(
+      modalElement.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ).filter((element) => !element.closest("[hidden]"));
+    if (focusable.length === 0) return;
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
 
   function hasProfile(): boolean {
     return activeProfileId !== null;
@@ -282,6 +379,7 @@
   }
 
   async function startHostPairing() {
+    modalView = "pairing";
     if (!activeProfileId) {
       panelError = "A local profile must be active before hosting sync pairing.";
       hostStartStage = "error";
@@ -311,6 +409,7 @@
   }
 
   async function connectToRemote() {
+    modalView = "pairing";
     if (!activeProfileId) {
       panelError = "A local profile must be active before connecting to another desktop.";
       return;
@@ -594,6 +693,10 @@
   });
 
   onMount(() => {
+    queueMicrotask(() => {
+      modalElement?.focus();
+    });
+
     void loadHostState();
     void refreshDiscoveryCandidates();
     if (activeProfileId) {
@@ -669,343 +772,526 @@
   });
 </script>
 
+<div class="syncd-modal-backdrop" role="presentation" use:portal>
 <div
-  class="syncd-panel-grid"
-  data-testid="syncd-panel-grid"
-  data-panel-ready={panelSubscriptionsReady ? "ready" : "loading"}
+  bind:this={modalElement}
+  class="syncd-modal"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="syncd-modal-title"
+  tabindex="-1"
+  onkeydown={handleModalKeydown}
 >
-  <div class="syncd-card" data-testid="syncd-host-card">
-    <div class="syncd-card__head">
-      <div>
-        <p class="syncd-card__title">{$_("ui_syncHost")}</p>
-        <p class="syncd-card__intro">{$_("ui_createOneShortLivedBootstrapBundleForThe")}</p>
-      </div>
-      <span class={"syncd-pill syncd-pill--" + connectStatusTone(host?.status ?? "pending")} data-testid="syncd-host-status">
-        {host ? statusLabel(host.status) : "Idle"}
-      </span>
-    </div>
-
-    <div class="syncd-stack">
-      <div class="syncd-row">
+  <div
+    class="syncd-panel-grid"
+    data-testid="syncd-panel-grid"
+    data-panel-ready={panelSubscriptionsReady ? "ready" : "loading"}
+  >
+    <header class="syncd-modal__header">
+      <div class="syncd-modal__heading">
+        <span class="syncd-modal__heading-icon" aria-hidden="true"><ShieldCheck size={18} weight="duotone" /></span>
         <div>
-          <p class="syncd-row__label">{$_("ui_scope")}</p>
-          <p class="syncd-row__hint">{scopeLabel}</p>
+          <p class="syncd-card__title">Secure sync</p>
+          <h2 id="syncd-modal-title">{$_("settings_inline_desktopSyncPairing")}</h2>
+          <p class="syncd-card__intro">{scopeLabel}</p>
         </div>
-        <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-host-start" onclick={startHostPairing} disabled={!hasProfile() || loadingHost}>
-          {loadingHost ? "Starting..." : host ? $_("ui_refreshBundle") : $_("ui_startHostPairing")}
-        </button>
       </div>
-      <p class="syncd-row__hint" data-testid="syncd-host-start-stage">{$_("ui_hostStartStage")} {hostStartStage}</p>
+      <button class="n-icon-btn syncd-modal__close" type="button" aria-label={$_("common_close")} onclick={closeModal}>
+        <X size={16} weight="bold" />
+      </button>
+    </header>
 
-      {#if host}
-        <div class="syncd-surface">
-          <div class="syncd-row">
-            <div>
-              <p class="syncd-row__label">{$_("ui_advertisedOrigin")}</p>
-              <p class="syncd-row__hint">{host.advertisedBaseUrl}</p>
-            </div>
-            <span class={"syncd-pill syncd-pill--" + connectStatusTone(host.status)} data-testid="syncd-host-status-live">{statusLabel(host.status)}</span>
-          </div>
-          <div class="syncd-meta-grid">
-            <div>
-              <span class="syncd-meta__label">{$_("ui_pairingCode")}</span>
-              <span class="syncd-meta__value">{host.pairingCode}</span>
-            </div>
-            <div>
-              <span class="syncd-meta__label">{$_("ui_expires")}</span>
-              <span class="syncd-meta__value">{formatWhen(host.expiresAtMs)}</span>
-            </div>
-            <div>
-              <span class="syncd-meta__label">{$_("ui_tlsFingerprint")}</span>
-              <span class="syncd-meta__value syncd-meta__value--mono">{host.tlsCertSha256}</span>
-            </div>
-            <div>
-              <span class="syncd-meta__label">{$_("ui_claimedDevice")}</span>
-              <span class="syncd-meta__value">{host.claimedDeviceId ?? "Waiting"}</span>
-            </div>
-          </div>
-          <label class="syncd-field">
-            <span class="syncd-row__label">{$_("ui_bootstrapBundle")}</span>
-            <textarea class="syncd-textarea" data-testid="syncd-bootstrap-bundle-host" readonly value={host.bootstrapBundle}></textarea>
-          </label>
-          <div class="syncd-field">
-            <span class="syncd-row__label">{$_("ui_bootstrapQr")}</span>
-            <div class="syncd-qr-surface" data-testid="syncd-host-qr-surface">
-              {#if qrCodeDataUrl}
-                <img
-                  class="syncd-qr-image"
-                  data-testid="syncd-host-qr-image"
-                  data-session-id={host.sessionId}
-                  data-origin={host.advertisedBaseUrl}
-                  src={qrCodeDataUrl}
-                  alt={$_("ui_syncBootstrapQrCode")}
-                />
-              {:else if qrBusy}
-                <NocturneState layout="compact" tone="info" icon="retry" eyebrow="Pairing" title={$_("ui_renderingQr")} />
-              {:else}
-                <NocturneState layout="compact" tone="info" icon="info" eyebrow="Pairing" title={$_("ui_qrWaiting")} body="The QR payload will appear here once the host bundle is ready." />
-              {/if}
-            </div>
-          </div>
-          <div class="syncd-actions">
-            <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-host-copy-bundle" onclick={copyBootstrapBundle}>
-              {copiedBundle ? "Copied" : $_("ui_copyBundle")}
-            </button>
-            <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-host-save-qr" onclick={saveBootstrapQrCode} disabled={!qrCodeDataUrl}>
-              {$_("ui_saveQrImage")}
-            </button>
-            {#if host.status === "claimed"}
-              <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-host-approve" onclick={() => decideHostPairing("approve")} disabled={hostDecisionBusy !== null}>
-                {hostDecisionBusy === "approve" ? "Approving..." : "Approve"}
-              </button>
-              <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger" type="button" data-testid="syncd-host-reject" onclick={() => decideHostPairing("reject")} disabled={hostDecisionBusy !== null}>
-                {hostDecisionBusy === "reject" ? "Rejecting..." : "Reject"}
-              </button>
+    <div class="syncd-modal__body">
+      <section class="syncd-view" hidden={modalView !== "pairing"} aria-hidden={modalView !== "pairing"} data-testid="syncd-pairing-view">
+        <div class={`syncd-status syncd-status--${overviewStatus.tone}`} aria-live="polite">
+          <div class="syncd-status__icon" aria-hidden="true">
+            {#if operationBusy}
+              <CircleNotch size={26} weight="bold" class="syncd-status__spinner" />
+            {:else if overviewStatus.tone === "success"}
+              <CheckCircle size={26} weight="duotone" />
+            {:else}
+              <ShieldCheck size={26} weight="duotone" />
             {/if}
           </div>
-          {#if host.error}
-            <div data-testid="syncd-host-error">
-              <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Host" title={$_("ui_hostPairingFailed")} body={host.error} />
+          <div class="syncd-status__copy">
+            <div class="syncd-status__line">
+              <p class="syncd-card__title">Live status</p>
+              <span class={`syncd-pill syncd-pill--${overviewStatus.tone}`}>{overviewStatus.label}</span>
             </div>
-          {/if}
-        </div>
-      {:else}
-        <NocturneState layout="compact" tone="info" icon="info" eyebrow="Host" title={$_("ui_hostModeIsIdle")} body="Start one pairing session to generate a bundle and wait for the second desktop to claim it." />
-      {/if}
-    </div>
-  </div>
-
-  <div class="syncd-card" data-testid="syncd-connect-card">
-    <div class="syncd-card__head">
-      <div>
-        <p class="syncd-card__title">{$_("ui_syncConnect")}</p>
-        <p class="syncd-card__intro">{$_("ui_discoverARemoteDesktopPasteItsBootstrapBundle")}</p>
-      </div>
-      <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-connect-refresh-peers" onclick={refreshDiscoveryCandidates} disabled={loadingCandidates}>
-        {loadingCandidates ? "Refreshing..." : $_("ui_refreshPeers")}
-      </button>
-    </div>
-
-    <div class="syncd-stack">
-      <div class="syncd-surface">
-        <div class="syncd-row">
-          <div>
-            <p class="syncd-row__label">{$_("ui_discoveredPeers")}</p>
-            <p class="syncd-row__hint">{$_("ui_mdnsCandidatesAlreadyResolveThroughTheSyncdClient")}</p>
+            <h3>{overviewStatus.title}</h3>
+            <p>{overviewStatus.body}</p>
+            <div class="syncd-progress" aria-hidden="true">
+              <span class:syncd-progress__fill--busy={operationBusy} class:syncd-progress__fill--complete={overviewStatus.tone === "success"}></span>
+            </div>
           </div>
-          <span class="syncd-pill syncd-pill--neutral">{candidates.length}</span>
         </div>
-        {#if candidates.length > 0}
-          <div class="syncd-list" data-testid="syncd-discovered-peers">
-            {#each candidates as candidate}
-              <div class="syncd-list__item" data-testid="syncd-peer-item">
-                <div class="syncd-list__body">
-                  <p class="syncd-list__title">{candidate.instanceName}</p>
-                  <p class="syncd-list__hint">{candidate.effectiveOrigin}</p>
-                  <p class="syncd-list__meta">{sourceLabel(candidate.effectiveSource)} {$_("ui_livePairing")} {candidate.supportsLivePairingStatus ? $_("common.on") : $_("common.off")}</p>
-                </div>
-                <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-peer-use-origin" onclick={() => (manualOrigin = candidate.discoveryOrigin)}>
-                  {$_("ui_useOrigin")}
-                </button>
-              </div>
-            {/each}
+
+        <div class="syncd-card" data-testid="syncd-host-card">
+          <div class="syncd-card__head">
+            <div>
+              <p class="syncd-card__title">Pair a desktop</p>
+              <p class="syncd-card__intro">Create a short-lived QR code for the other Aethon desktop.</p>
+            </div>
+            <span class={"syncd-pill syncd-pill--" + connectStatusTone(host?.status ?? "pending")} data-testid="syncd-host-status">
+              {host ? statusLabel(host.status) : "Idle"}
+            </span>
           </div>
-        {:else}
-          <NocturneState layout="compact" tone="info" icon="search" eyebrow={$_("ui_discoverySource")} title={$_("ui_noLanPeersVisible")} body={$_("ui_manualOriginFallbackReady")} />
-        {/if}
-      </div>
 
-      <label class="syncd-field">
-        <span class="syncd-row__label">{$_("ui_manualOriginFallback")}</span>
-        <input
-          bind:this={manualOriginInput}
-          class="syncd-input"
-          data-testid="syncd-manual-origin"
-          bind:value={manualOrigin}
-          placeholder={$_("ui_https1921681254777")}
-          spellcheck="false"
-        />
-      </label>
-
-      <label class="syncd-field">
-        <span class="syncd-row__label">{$_("ui_bootstrapBundle")}</span>
-        <textarea
-          bind:this={bootstrapBundleTextarea}
-          class="syncd-textarea"
-          data-testid="syncd-bootstrap-bundle-input"
-          bind:value={bootstrapBundleInput}
-          placeholder={$_("ui_pasteTheHostBundleJsonHere")}
-        ></textarea>
-      </label>
-      <input
-        bind:this={qrFileInput}
-        class="syncd-hidden-input"
-        data-testid="syncd-qr-file-input"
-        type="file"
-        accept="image/png,image/jpeg,image/webp,image/gif"
-        onchange={handleQrFilePicked}
-      />
-
-      <div class="syncd-actions">
-        <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-connect-submit" onclick={connectToRemote} disabled={!hasProfile() || connectBusy || !bootstrapBundleInput.trim()}>
-          {connectBusy ? "Connecting..." : $_("ui_connectToHost")}
-        </button>
-        <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-connect-load-qr" onclick={openQrImagePicker} disabled={qrDecodeBusy}>
-          {qrDecodeBusy ? $_("ui_readingQr") : $_("ui_loadQrImage")}
-        </button>
-        <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-revalidate-sessions" onclick={revalidatePersisted} disabled={!hasProfile() || revalidateBusy}>
-          {revalidateBusy ? "Revalidating..." : $_("ui_revalidateSavedSessions")}
-        </button>
-      </div>
-
-      {#if connect}
-        <div class="syncd-surface" data-testid="syncd-connect-state">
           <div class="syncd-row">
             <div>
-              <p class="syncd-row__label">{$_("ui_currentConnection")}</p>
-              <p class="syncd-row__hint">{connect.remoteOrigin}</p>
+              <p class="syncd-row__label">Current device</p>
+              <p class="syncd-row__hint">{scopeLabel}</p>
             </div>
-            <span class={"syncd-pill syncd-pill--" + connectStatusTone(connect.status)} data-testid="syncd-connect-status">{statusLabel(connect.status)}</span>
+            <button class="n-btn n-btn--sm n-btn-primary" type="button" data-testid="syncd-host-start" onclick={startHostPairing} disabled={!hasProfile() || loadingHost}>
+              {loadingHost ? "Preparing..." : host ? $_("ui_refreshBundle") : "Create pairing QR"}
+            </button>
           </div>
-          <div class="syncd-meta-grid">
-            <div>
-              <span class="syncd-meta__label">{$_("ui_attemptedOrigin")}</span>
-              <span class="syncd-meta__value">{connect.attemptedOrigin}</span>
+          <p class="syncd-row__hint" data-testid="syncd-host-start-stage">{$_("ui_hostStartStage")} {hostStartStage}</p>
+
+          {#if host}
+            <div class="syncd-pairing-live">
+              <div class="syncd-qr-surface" data-testid="syncd-host-qr-surface">
+                {#if qrCodeDataUrl}
+                  <img
+                    class="syncd-qr-image"
+                    data-testid="syncd-host-qr-image"
+                    data-session-id={host.sessionId}
+                    data-origin={host.advertisedBaseUrl}
+                    src={qrCodeDataUrl}
+                    alt={$_("ui_syncBootstrapQrCode")}
+                  />
+                {:else if qrBusy}
+                  <CircleNotch size={28} weight="bold" class="syncd-status__spinner" />
+                {:else}
+                  <NocturneState layout="compact" tone="info" icon="info" eyebrow="Pairing" title={$_("ui_qrWaiting")} />
+                {/if}
+              </div>
+              <div class="syncd-pairing-live__copy">
+                <span class={"syncd-pill syncd-pill--" + connectStatusTone(host.status)} data-testid="syncd-host-status-live">{statusLabel(host.status)}</span>
+                <div>
+                  <p class="syncd-row__label">{$_("ui_pairingCode")}</p>
+                  <p class="syncd-pairing-code">{host.pairingCode}</p>
+                </div>
+                <p class="syncd-row__hint">Expires {formatWhen(host.expiresAtMs)}</p>
+                <div class="syncd-actions">
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-host-copy-bundle" onclick={copyBootstrapBundle}>
+                    {copiedBundle ? "Copied" : $_("ui_copyBundle")}
+                  </button>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-host-save-qr" onclick={saveBootstrapQrCode} disabled={!qrCodeDataUrl}>
+                    {$_("ui_saveQrImage")}
+                  </button>
+                </div>
+              </div>
             </div>
-            <div>
-              <span class="syncd-meta__label">{$_("ui_remoteProfile")}</span>
-              <span class="syncd-meta__value">{connect.remoteProfileId || "Waiting"}</span>
-            </div>
-            <div>
-              <span class="syncd-meta__label">{$_("ui_fallbacks")}</span>
-              <span class="syncd-meta__value">{connect.fallbackOrigins.length}</span>
-            </div>
-            <div>
-              <span class="syncd-meta__label">{$_("ui_claimedDevice")}</span>
-              <span class="syncd-meta__value">{connect.claimedDeviceId ?? "Waiting"}</span>
-            </div>
-          </div>
-          {#if connect.error}
-            <div data-testid="syncd-connect-error">
-              <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Connect" title={$_("ui_pairingFailed")} body={connect.error} />
-            </div>
+            {#if host.status === "claimed"}
+              <div class="syncd-approval">
+                <div>
+                  <p class="syncd-row__label">Connection request</p>
+                  <p class="syncd-row__hint">Approve only if you started pairing on the other desktop.</p>
+                </div>
+                <div class="syncd-actions">
+                  <button class="n-btn n-btn--sm n-btn-primary" type="button" data-testid="syncd-host-approve" onclick={() => decideHostPairing("approve")} disabled={hostDecisionBusy !== null}>
+                    {hostDecisionBusy === "approve" ? "Approving..." : "Approve"}
+                  </button>
+                  <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger" type="button" data-testid="syncd-host-reject" onclick={() => decideHostPairing("reject")} disabled={hostDecisionBusy !== null}>
+                    {hostDecisionBusy === "reject" ? "Rejecting..." : "Reject"}
+                  </button>
+                </div>
+              </div>
+            {/if}
+            {#if host.error}
+              <div data-testid="syncd-host-error">
+                <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Host" title={$_("ui_hostPairingFailed")} body={host.error} />
+              </div>
+            {/if}
           {/if}
         </div>
-      {/if}
 
-      <div class="syncd-surface">
-        <div class="syncd-row">
-          <div>
-            <p class="syncd-row__label">{$_("ui_replication")}</p>
-            <p class="syncd-row__hint">{$_("ui_oneApprovedSessionCanStayActiveForContinuous")}</p>
-          </div>
-          <span class={"syncd-pill syncd-pill--" + replicationStatusTone(replicationSnapshot?.replicationStatus ?? "idle")} data-testid="syncd-replication-status">
-            {statusLabel(replicationSnapshot?.replicationStatus ?? "idle")}
-          </span>
-        </div>
-        <div class="syncd-meta-grid">
-          <div>
-            <span class="syncd-meta__label">{$_("ui_activeSession")}</span>
-                <span class="syncd-meta__value" data-testid="syncd-replication-active-session">{replicationSnapshot?.activeSessionKey ?? $_("ui_noneSelected")}</span>
-          </div>
-          <div>
-            <span class="syncd-meta__label">{$_("ui_lastConnected")}</span>
-            <span class="syncd-meta__value">{formatWhen(replicationSnapshot?.lastConnectedAtMs)}</span>
-          </div>
-          <div>
-            <span class="syncd-meta__label">{$_("ui_booksCheckpoint")}</span>
-            <span class="syncd-meta__value">{replicationSnapshot?.booksScopeCheckpoint?.lastAppliedServerVersion ?? 0}</span>
-          </div>
-          <div>
-            <span class="syncd-meta__label">{$_("ui_novelsCheckpoint")}</span>
-            <span class="syncd-meta__value">{replicationSnapshot?.novelsScopeCheckpoint?.lastAppliedServerVersion ?? 0}</span>
-          </div>
-        </div>
-        {#if replicationSnapshot?.lastError}
-          <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Replication" title={$_("ui_syncReplayFailed")} body={replicationSnapshot.lastError} />
-        {/if}
-        <div class="syncd-actions">
-          <button
-            class="n-btn n-btn--sm n-btn-ghost"
-            type="button"
-            data-testid="syncd-replication-toggle"
-            onclick={replicationSnapshot?.paused ? resumeReplication : pauseReplication}
-            disabled={!replicationSnapshot?.activeSessionKey || replicationActionBusy !== null}
-          >
-            {#if replicationActionBusy === "pause"}{$_("ui_pausing")}{:else if replicationActionBusy === "resume"}{$_("ui_resuming")}{:else}{replicationSnapshot?.paused ? $_("ui_resumeReplication") : $_("ui_pauseReplication")}{/if}
-          </button>
-          <button
-            class="n-btn n-btn--sm n-btn-ghost"
-            type="button"
-            data-testid="syncd-replication-reconnect"
-            onclick={reconnectReplication}
-            disabled={!replicationSnapshot?.activeSessionKey || replicationActionBusy !== null}
-          >
-            {replicationActionBusy === "reconnect" ? "Reconnecting..." : $_("ui_reconnectNow")}
-          </button>
-        </div>
-      </div>
-
-      <div class="syncd-surface">
-        <div class="syncd-row">
-          <div>
-            <p class="syncd-row__label">{$_("ui_sessions")}</p>
-            <p class="syncd-row__hint">{$_("ui_approvedProfileBoundTokensStayLocalAndOne")}</p>
-          </div>
-          <span class="syncd-pill syncd-pill--neutral">{loadingPersisted ? "..." : persistedSessions.length}</span>
-        </div>
-        {#if persistedSessions.length > 0}
-          <div class="syncd-list" data-testid="syncd-persisted-sessions">
-            {#each persistedSessions as session}
-              <div class="syncd-list__item" data-testid="syncd-persisted-session-item" data-session-key={session.sessionKey}>
-                <SyncdSessionDetails
-                  session={session}
-                  summary={sessionStatusSummary(session)}
-                  statusLabel={statusLabel(effectiveSessionConnectionStatus(session))}
-                  statusTone={connectStatusTone(effectiveSessionConnectionStatus(session))}
-                  lastValidatedLabel={lastReconnectStatuses[session.sessionKey] ? "Just revalidated" : formatWhen(session.lastValidatedAtMs)}
-                  replicationLabel={statusLabel((session.isActiveForSync ? replicationSnapshot?.replicationStatus : session.replicationStatus) ?? "idle")}
-                  reconnectError={lastReconnectStatuses[session.sessionKey]?.error ?? null}
-                  isReplicationPaused={replicationSnapshot?.paused ?? false}
-                  setActiveBusy={activeSessionBusyKey === session.sessionKey}
-                  revalidateBusy={singleRevalidateBusyKey === session.sessionKey}
-                  pauseResumeBusy={replicationActionBusy !== null}
-                  disconnectBusy={disconnectBusyKey === session.sessionKey}
-                  forgetBusy={forgetBusyKey === session.sessionKey}
-                  onSetActive={() => setActiveSession(session.sessionKey)}
-                  onRevalidate={() => revalidateSessionEntry(session.sessionKey)}
-                  onPauseResume={session.isActiveForSync ? (replicationSnapshot?.paused ? resumeReplication : pauseReplication) : undefined}
-                  onDisconnect={() => disconnectSession(session.sessionKey)}
-                  onForget={() => forgetSession(session.sessionKey)}
-                />
+        {#if connect}
+          <div class="syncd-surface" data-testid="syncd-connect-state">
+            <div class="syncd-row">
+              <div>
+                <p class="syncd-row__label">{$_("ui_currentConnection")}</p>
+                <p class="syncd-row__hint">{connect.remoteOrigin}</p>
               </div>
-            {/each}
+              <span class={"syncd-pill syncd-pill--" + connectStatusTone(connect.status)} data-testid="syncd-connect-status">{statusLabel(connect.status)}</span>
+            </div>
+            {#if connect.error}
+              <div data-testid="syncd-connect-error">
+                <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Connect" title={$_("ui_pairingFailed")} body={connect.error} />
+              </div>
+            {/if}
           </div>
-        {:else}
-          <NocturneState layout="compact" tone="info" icon="info" eyebrow="Sessions" title={$_("ui_noApprovedSessions")} body="Pair another desktop to start continuous sync for this profile." />
         {/if}
-      </div>
+
+        <div class="syncd-surface syncd-replication-summary">
+          <div class="syncd-row">
+            <div>
+              <p class="syncd-row__label">{$_("ui_replication")}</p>
+              <p class="syncd-row__hint">{replicationSnapshot?.activeSessionKey ? "Your trusted desktop session updates automatically." : "No desktop is active for sync yet."}</p>
+            </div>
+            <span class={"syncd-pill syncd-pill--" + replicationStatusTone(replicationSnapshot?.replicationStatus ?? "idle")} data-testid="syncd-replication-status">
+              {statusLabel(replicationSnapshot?.replicationStatus ?? "idle")}
+            </span>
+          </div>
+          <span class="syncd-hidden-value" data-testid="syncd-replication-active-session">{replicationSnapshot?.activeSessionKey ?? $_("ui_noneSelected")}</span>
+          <div class="syncd-actions">
+            <button
+              class="n-btn n-btn--sm n-btn-ghost"
+              type="button"
+              data-testid="syncd-replication-toggle"
+              onclick={replicationSnapshot?.paused ? resumeReplication : pauseReplication}
+              disabled={!replicationSnapshot?.activeSessionKey || replicationActionBusy !== null}
+            >
+              {#if replicationActionBusy === "pause"}{$_("ui_pausing")}{:else if replicationActionBusy === "resume"}{$_("ui_resuming")}{:else}{replicationSnapshot?.paused ? $_("ui_resumeReplication") : $_("ui_pauseReplication")}{/if}
+            </button>
+            <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-replication-reconnect" onclick={reconnectReplication} disabled={!replicationSnapshot?.activeSessionKey || replicationActionBusy !== null}>
+              {replicationActionBusy === "reconnect" ? "Reconnecting..." : $_("ui_reconnectNow")}
+            </button>
+          </div>
+        </div>
+
+        {#if panelError}
+          <div data-testid="syncd-panel-error">
+            <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Sync" title={$_("ui_syncActionFailed")} body={panelError} />
+          </div>
+        {/if}
+      </section>
+
+      <section class="syncd-view" hidden={modalView !== "details"} aria-hidden={modalView !== "details"} data-testid="syncd-details-view">
+        <div class="syncd-view__intro">
+          <Info size={18} weight="duotone" />
+          <div>
+            <h3>Connection details</h3>
+            <p>Technical information for diagnostics and trusted-session review.</p>
+          </div>
+        </div>
+
+        {#if host}
+          <div class="syncd-surface">
+            <div class="syncd-row">
+              <p class="syncd-row__label">Host session</p>
+              <span class={"syncd-pill syncd-pill--" + connectStatusTone(host.status)}>{statusLabel(host.status)}</span>
+            </div>
+            <div class="syncd-meta-grid">
+              <div><span class="syncd-meta__label">{$_("ui_advertisedOrigin")}</span><span class="syncd-meta__value">{host.advertisedBaseUrl}</span></div>
+              <div><span class="syncd-meta__label">{$_("ui_claimedDevice")}</span><span class="syncd-meta__value">{host.claimedDeviceId ?? "Waiting"}</span></div>
+              <div><span class="syncd-meta__label">{$_("ui_expires")}</span><span class="syncd-meta__value">{formatWhen(host.expiresAtMs)}</span></div>
+              <div><span class="syncd-meta__label">{$_("ui_tlsFingerprint")}</span><span class="syncd-meta__value syncd-meta__value--mono">{host.tlsCertSha256}</span></div>
+            </div>
+            <label class="syncd-field">
+              <span class="syncd-row__label">{$_("ui_bootstrapBundle")}</span>
+              <textarea class="syncd-textarea" data-testid="syncd-bootstrap-bundle-host" readonly value={host.bootstrapBundle}></textarea>
+            </label>
+          </div>
+        {/if}
+
+        {#if connect}
+          <div class="syncd-surface">
+            <div class="syncd-row"><p class="syncd-row__label">Connection attempt</p><span class={"syncd-pill syncd-pill--" + connectStatusTone(connect.status)}>{statusLabel(connect.status)}</span></div>
+            <div class="syncd-meta-grid">
+              <div><span class="syncd-meta__label">{$_("ui_attemptedOrigin")}</span><span class="syncd-meta__value">{connect.attemptedOrigin}</span></div>
+              <div><span class="syncd-meta__label">{$_("ui_remoteProfile")}</span><span class="syncd-meta__value">{connect.remoteProfileId || "Waiting"}</span></div>
+              <div><span class="syncd-meta__label">{$_("ui_fallbacks")}</span><span class="syncd-meta__value">{connect.fallbackOrigins.length}</span></div>
+              <div><span class="syncd-meta__label">{$_("ui_claimedDevice")}</span><span class="syncd-meta__value">{connect.claimedDeviceId ?? "Waiting"}</span></div>
+            </div>
+          </div>
+        {/if}
+
+        <div class="syncd-surface">
+          <div class="syncd-row"><p class="syncd-row__label">Replication diagnostics</p><span class={"syncd-pill syncd-pill--" + replicationStatusTone(replicationSnapshot?.replicationStatus ?? "idle")}>{statusLabel(replicationSnapshot?.replicationStatus ?? "idle")}</span></div>
+          <div class="syncd-meta-grid">
+            <div><span class="syncd-meta__label">{$_("ui_activeSession")}</span><span class="syncd-meta__value">{replicationSnapshot?.activeSessionKey ?? $_("ui_noneSelected")}</span></div>
+            <div><span class="syncd-meta__label">{$_("ui_lastConnected")}</span><span class="syncd-meta__value">{formatWhen(replicationSnapshot?.lastConnectedAtMs)}</span></div>
+            <div><span class="syncd-meta__label">{$_("ui_booksCheckpoint")}</span><span class="syncd-meta__value">{replicationSnapshot?.booksScopeCheckpoint?.lastAppliedServerVersion ?? 0}</span></div>
+            <div><span class="syncd-meta__label">{$_("ui_novelsCheckpoint")}</span><span class="syncd-meta__value">{replicationSnapshot?.novelsScopeCheckpoint?.lastAppliedServerVersion ?? 0}</span></div>
+          </div>
+          {#if replicationSnapshot?.lastError}
+            <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Replication" title={$_("ui_syncReplayFailed")} body={replicationSnapshot.lastError} />
+          {/if}
+        </div>
+
+        <div class="syncd-surface">
+          <div class="syncd-row">
+            <div><p class="syncd-row__label">{$_("ui_sessions")}</p><p class="syncd-row__hint">Trusted desktops stored for this profile.</p></div>
+            <span class="syncd-pill syncd-pill--neutral">{loadingPersisted ? "..." : persistedSessions.length}</span>
+          </div>
+          {#if persistedSessions.length > 0}
+            <div class="syncd-list" data-testid="syncd-persisted-sessions">
+              {#each persistedSessions as session}
+                <div class="syncd-list__item" data-testid="syncd-persisted-session-item" data-session-key={session.sessionKey}>
+                  <SyncdSessionDetails
+                    session={session}
+                    summary={sessionStatusSummary(session)}
+                    statusLabel={statusLabel(effectiveSessionConnectionStatus(session))}
+                    statusTone={connectStatusTone(effectiveSessionConnectionStatus(session))}
+                    lastValidatedLabel={lastReconnectStatuses[session.sessionKey] ? "Just revalidated" : formatWhen(session.lastValidatedAtMs)}
+                    replicationLabel={statusLabel((session.isActiveForSync ? replicationSnapshot?.replicationStatus : session.replicationStatus) ?? "idle")}
+                    reconnectError={lastReconnectStatuses[session.sessionKey]?.error ?? null}
+                    isReplicationPaused={replicationSnapshot?.paused ?? false}
+                    setActiveBusy={activeSessionBusyKey === session.sessionKey}
+                    revalidateBusy={singleRevalidateBusyKey === session.sessionKey}
+                    pauseResumeBusy={replicationActionBusy !== null}
+                    disconnectBusy={disconnectBusyKey === session.sessionKey}
+                    forgetBusy={forgetBusyKey === session.sessionKey}
+                    onSetActive={() => setActiveSession(session.sessionKey)}
+                    onRevalidate={() => revalidateSessionEntry(session.sessionKey)}
+                    onPauseResume={session.isActiveForSync ? (replicationSnapshot?.paused ? resumeReplication : pauseReplication) : undefined}
+                    onDisconnect={() => disconnectSession(session.sessionKey)}
+                    onForget={() => forgetSession(session.sessionKey)}
+                  />
+                </div>
+              {/each}
+            </div>
+          {:else}
+            <NocturneState layout="compact" tone="info" icon="info" eyebrow="Sessions" title={$_("ui_noApprovedSessions")} body="Pair another desktop to start continuous sync for this profile." />
+          {/if}
+        </div>
+      </section>
+
+      <section class="syncd-view" hidden={modalView !== "options"} aria-hidden={modalView !== "options"} data-testid="syncd-options-view">
+        <div class="syncd-view__intro">
+          <Gear size={18} weight="duotone" />
+          <div><h3>Pairing options</h3><p>Connect with a QR image, discovered desktop, or manual pairing package.</p></div>
+        </div>
+
+        <div class="syncd-card" data-testid="syncd-connect-card">
+          <div class="syncd-card__head">
+            <div><p class="syncd-card__title">{$_("ui_syncConnect")}</p><p class="syncd-card__intro">Use the pairing package created on the host desktop.</p></div>
+            <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-connect-refresh-peers" onclick={refreshDiscoveryCandidates} disabled={loadingCandidates}>
+              <ArrowsClockwise size={14} weight="bold" /> {loadingCandidates ? "Refreshing..." : $_("ui_refreshPeers")}
+            </button>
+          </div>
+
+          <div class="syncd-stack">
+            <div class="syncd-surface">
+              <div class="syncd-row"><div><p class="syncd-row__label">{$_("ui_discoveredPeers")}</p><p class="syncd-row__hint">Nearby Aethon desktops on this network.</p></div><span class="syncd-pill syncd-pill--neutral">{candidates.length}</span></div>
+              {#if candidates.length > 0}
+                <div class="syncd-list" data-testid="syncd-discovered-peers">
+                  {#each candidates as candidate}
+                    <div class="syncd-list__item" data-testid="syncd-peer-item">
+                      <div class="syncd-list__body"><p class="syncd-list__title">{candidate.instanceName}</p><p class="syncd-list__hint">{candidate.effectiveOrigin}</p><p class="syncd-list__meta">{sourceLabel(candidate.effectiveSource)}</p></div>
+                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-peer-use-origin" onclick={() => (manualOrigin = candidate.discoveryOrigin)}>{$_("ui_useOrigin")}</button>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+
+            <label class="syncd-field"><span class="syncd-row__label">{$_("ui_manualOriginFallback")}</span><input bind:this={manualOriginInput} class="syncd-input" data-testid="syncd-manual-origin" bind:value={manualOrigin} placeholder={$_("ui_https1921681254777")} spellcheck="false" /></label>
+            <label class="syncd-field"><span class="syncd-row__label">{$_("ui_bootstrapBundle")}</span><textarea bind:this={bootstrapBundleTextarea} class="syncd-textarea" data-testid="syncd-bootstrap-bundle-input" bind:value={bootstrapBundleInput} placeholder={$_("ui_pasteTheHostBundleJsonHere")}></textarea></label>
+            <input bind:this={qrFileInput} class="syncd-hidden-input" data-testid="syncd-qr-file-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onchange={handleQrFilePicked} />
+            <div class="syncd-actions">
+              <button class="n-btn n-btn--sm n-btn-primary" type="button" data-testid="syncd-connect-submit" onclick={connectToRemote} disabled={!hasProfile() || connectBusy || !bootstrapBundleInput.trim()}>{connectBusy ? "Connecting..." : $_("ui_connectToHost")}</button>
+              <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-connect-load-qr" onclick={openQrImagePicker} disabled={qrDecodeBusy}>{qrDecodeBusy ? $_("ui_readingQr") : $_("ui_loadQrImage")}</button>
+              <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-revalidate-sessions" onclick={revalidatePersisted} disabled={!hasProfile() || revalidateBusy}>{revalidateBusy ? "Revalidating..." : $_("ui_revalidateSavedSessions")}</button>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
 
-    {#if panelError}
-      <NocturneState
-        layout="compact"
-        tone="danger"
-        icon="warning"
-        eyebrow="Sync"
-        title={$_("ui_syncActionFailed")}
-        body={panelError}
-      />
-    {/if}
+    <footer class="syncd-modal__footer">
+      <div class="syncd-modal__views" aria-label="Sync pairing views">
+        <button class="n-btn n-btn--sm n-btn-ghost" class:is-active={modalView === "pairing"} type="button" data-testid="syncd-modal-pairing" aria-pressed={modalView === "pairing"} onclick={() => showView("pairing")}><ShieldCheck size={14} weight="duotone" /> Pairing</button>
+        <button class="n-btn n-btn--sm n-btn-ghost" class:is-active={modalView === "details"} type="button" data-testid="syncd-modal-details" aria-pressed={modalView === "details"} onclick={() => showView("details")}><Info size={14} weight="duotone" /> Details</button>
+        <button class="n-btn n-btn--sm n-btn-ghost" class:is-active={modalView === "options"} type="button" data-testid="syncd-modal-options" aria-pressed={modalView === "options"} onclick={() => showView("options")}><Gear size={14} weight="duotone" /> Options</button>
+      </div>
+      <button class="n-btn n-btn--sm" type="button" onclick={closeModal}>{$_("common_close")}</button>
+    </footer>
   </div>
+</div>
 </div>
 
 <style>
+  .syncd-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: var(--component-syncd-modal-z-index);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--component-syncd-modal-backdrop-padding);
+    background: var(--component-syncd-modal-backdrop-bg);
+    backdrop-filter: var(--component-syncd-modal-backdrop-blur);
+  }
+
+  .syncd-modal {
+    width: var(--component-syncd-modal-width);
+    max-width: var(--component-syncd-modal-width);
+    height: var(--component-syncd-modal-height);
+    max-height: var(--component-syncd-modal-height);
+    padding: 0;
+    overflow: hidden;
+    border: 1px solid var(--component-syncd-modal-border);
+    border-radius: var(--component-syncd-modal-radius);
+    background: var(--component-syncd-modal-bg);
+    color: var(--text-primary);
+    box-shadow: var(--component-syncd-modal-shadow);
+    animation: syncdModalIn var(--component-syncd-modal-animation) both;
+  }
+
   .syncd-panel-grid {
-    grid-column: 1 / -1;
+    width: 100%;
+    height: 100%;
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    gap: 0;
+  }
+
+  .syncd-modal__header,
+  .syncd-modal__footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--component-syncd-control-gap);
+    padding: var(--component-syncd-modal-chrome-padding);
+    background: var(--component-syncd-modal-chrome-bg);
+  }
+
+  .syncd-modal__header {
+    border-bottom: 1px solid var(--component-syncd-modal-divider);
+  }
+
+  .syncd-modal__footer {
+    border-top: 1px solid var(--component-syncd-modal-divider);
+  }
+
+  .syncd-modal__heading,
+  .syncd-modal__views,
+  .syncd-view__intro,
+  .syncd-status,
+  .syncd-status__line,
+  .syncd-pairing-live,
+  .syncd-approval {
+    display: flex;
+    align-items: center;
+    gap: var(--component-syncd-control-gap);
+  }
+
+  .syncd-modal__heading-icon,
+  .syncd-status__icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    color: var(--component-syncd-status-icon-fg);
+    background: var(--component-syncd-status-icon-bg);
+    border: 1px solid var(--component-syncd-status-icon-border);
+    border-radius: var(--component-syncd-status-icon-radius);
+  }
+
+  .syncd-modal__heading-icon {
+    width: var(--component-syncd-heading-icon-size);
+    height: var(--component-syncd-heading-icon-size);
+  }
+
+  .syncd-modal__heading h2,
+  .syncd-status h3,
+  .syncd-view__intro h3 {
+    margin: 0;
+    color: var(--text-primary);
+    font-family: var(--font-ui);
+    letter-spacing: 0;
+  }
+
+  .syncd-modal__heading h2 {
+    font-size: var(--text-lg);
+    line-height: var(--leading-tight);
+  }
+
+  .syncd-modal__close {
+    flex: 0 0 auto;
+  }
+
+  .syncd-modal__body {
+    min-height: 0;
+    overflow: auto;
+    padding: var(--component-syncd-modal-body-padding);
+  }
+
+  .syncd-view {
+    display: flex;
+    flex-direction: column;
     gap: var(--component-syncd-grid-gap);
+  }
+
+  .syncd-view[hidden] {
+    display: none;
+  }
+
+  .syncd-view__intro {
+    align-items: flex-start;
+    color: var(--component-syncd-status-icon-fg);
+  }
+
+  .syncd-view__intro h3 {
+    font-size: var(--text-base);
+  }
+
+  .syncd-view__intro p,
+  .syncd-status__copy > p {
+    margin: var(--space-xs) 0 0;
+    color: var(--component-syncd-muted-fg);
+    font-size: var(--text-xs);
+    line-height: var(--leading-normal);
+  }
+
+  .syncd-status {
+    align-items: flex-start;
+    padding: var(--component-syncd-status-padding);
+    border: 1px solid var(--component-syncd-status-border);
+    border-radius: var(--component-syncd-status-radius);
+    background: var(--component-syncd-status-bg);
+  }
+
+  .syncd-status__icon {
+    width: var(--component-syncd-status-icon-size);
+    height: var(--component-syncd-status-icon-size);
+  }
+
+  .syncd-status__copy {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .syncd-status__line {
+    justify-content: space-between;
+  }
+
+  .syncd-status h3 {
+    margin-top: var(--space-xs);
+    font-size: var(--text-xl);
+  }
+
+  .syncd-progress {
+    height: var(--component-syncd-progress-height);
+    margin-top: var(--component-syncd-stack-gap);
+    overflow: hidden;
+    border-radius: var(--component-syncd-pill-radius);
+    background: var(--component-syncd-progress-track-bg);
+  }
+
+  .syncd-progress span {
+    display: block;
+    width: var(--component-syncd-progress-idle-width);
+    height: 100%;
+    border-radius: inherit;
+    background: var(--component-syncd-progress-fill-bg);
+    transition: width var(--component-syncd-progress-transition);
+  }
+
+  .syncd-progress .syncd-progress__fill--complete {
+    width: 100%;
+  }
+
+  .syncd-progress .syncd-progress__fill--busy {
+    width: var(--component-syncd-progress-busy-width);
+    animation: syncdProgress var(--component-syncd-progress-animation) infinite;
+  }
+
+  :global(.syncd-status__spinner) {
+    animation: syncdSpin var(--component-syncd-spinner-animation) infinite;
   }
 
   .syncd-card {
@@ -1034,9 +1320,9 @@
   .syncd-list__title,
   .syncd-meta__label {
     margin: 0;
-    font-size: 11px;
-    font-weight: 800;
-    letter-spacing: 0.18em;
+    font-size: var(--component-syncd-pill-font-size);
+    font-weight: var(--weight-bold);
+    letter-spacing: var(--tracking-wide);
     text-transform: uppercase;
     color: var(--component-syncd-label-fg);
   }
@@ -1047,8 +1333,8 @@
   .syncd-list__meta,
   .syncd-meta__value {
     margin: 0;
-    font-size: 12px;
-    line-height: 1.45;
+    font-size: var(--component-syncd-input-font-size);
+    line-height: var(--leading-normal);
     color: var(--component-syncd-muted-fg);
   }
 
@@ -1061,6 +1347,7 @@
 
   .syncd-actions {
     flex-wrap: wrap;
+    justify-content: flex-start;
   }
 
   .syncd-actions--stack {
@@ -1192,17 +1479,99 @@
     display: none;
   }
 
-  @media (max-width: 880px) {
-    .syncd-panel-grid {
-      grid-template-columns: 1fr;
-    }
+  .syncd-hidden-value {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
 
+  .syncd-pairing-live {
+    align-items: stretch;
+  }
+
+  .syncd-pairing-live .syncd-qr-surface {
+    width: var(--component-syncd-qr-column-width);
+    min-height: 0;
+    flex: 0 0 auto;
+  }
+
+  .syncd-pairing-live__copy {
+    min-width: 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: var(--component-syncd-stack-gap);
+  }
+
+  .syncd-pairing-code {
+    margin: var(--space-xs) 0 0;
+    color: var(--text-primary);
+    font-family: var(--font-mono, "Cascadia Mono", monospace);
+    font-size: var(--text-2xl);
+    font-weight: var(--weight-bold);
+    letter-spacing: var(--tracking-wide);
+  }
+
+  .syncd-approval {
+    justify-content: space-between;
+    padding: var(--component-syncd-surface-padding);
+    border: 1px solid var(--component-syncd-pill-info-border);
+    border-radius: var(--component-syncd-surface-radius);
+    background: var(--component-syncd-status-bg);
+  }
+
+  .syncd-modal__views .is-active {
+    color: var(--component-syncd-status-icon-fg);
+    border-color: var(--component-syncd-input-border-focus);
+    background: var(--component-syncd-status-icon-bg);
+  }
+
+  @keyframes syncdSpin {
+    to { transform: rotate(360deg); }
+  }
+
+  @keyframes syncdProgress {
+    0% { transform: translateX(-110%); }
+    100% { transform: translateX(240%); }
+  }
+
+  @keyframes syncdModalIn {
+    from { opacity: 0; transform: translateY(var(--component-syncd-modal-enter-offset)) scale(var(--component-syncd-modal-enter-scale)); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  @media (max-width: 880px) {
     .syncd-card__head,
     .syncd-row,
     .syncd-list__item,
-    .syncd-actions {
+    .syncd-approval {
       align-items: stretch;
       flex-direction: column;
+    }
+
+    .syncd-modal__header,
+    .syncd-modal__footer {
+      padding: var(--component-syncd-modal-chrome-padding-compact);
+    }
+
+    .syncd-modal__body {
+      padding: var(--component-syncd-modal-body-padding-compact);
+    }
+
+    .syncd-modal__views {
+      min-width: 0;
+      overflow-x: auto;
+    }
+
+    .syncd-pairing-live {
+      flex-direction: column;
+    }
+
+    .syncd-pairing-live .syncd-qr-surface {
+      width: 100%;
     }
   }
 </style>

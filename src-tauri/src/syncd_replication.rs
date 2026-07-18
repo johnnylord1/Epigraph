@@ -16,7 +16,9 @@ use tokio::sync::Mutex;
 use tokio::time::sleep;
 use uuid::Uuid;
 
-use crate::syncd::middleware::{CLIENT_PROTOCOL_HEADER, CLIENT_VERSION_HEADER};
+use crate::syncd::middleware::{
+    CLIENT_PROTOCOL_HEADER, CLIENT_VERSION_HEADER, CURRENT_CLIENT_VERSION,
+};
 use crate::syncd::models::{
     canonical_novel_identity_key, BookBookmarkPatch, BookBookmarkRecord,
     BookCategoryAssignmentPatch, BookCategoryAssignmentRecord, BookCategoryPatch,
@@ -38,7 +40,6 @@ use crate::{
     novel_source_classification_state_path_for_target, LaunchTarget, LaunchTargetInfo,
 };
 
-const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const CLIENT_PROTOCOL_VERSION: u32 = 1;
 const BOOKS_SCOPE_ID: &str = "books:global";
 const EVENT_REPLICATION_STATE: &str = "syncd-replication-state";
@@ -408,7 +409,7 @@ fn authenticated_asset_request(
     request
         .query(&[("scopeId", BOOKS_SCOPE_ID)])
         .header("Authorization", format!("Bearer {}", endpoint.access_token))
-        .header(CLIENT_VERSION_HEADER.as_str(), CLIENT_VERSION)
+        .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
         .header(
             CLIENT_PROTOCOL_HEADER.as_str(),
             CLIENT_PROTOCOL_VERSION.to_string(),
@@ -732,6 +733,20 @@ fn choose_default_session(sessions: &[PersistedSyncSession], profile_id: &str) -
         .filter(|session| session.local_profile_id == profile_id)
         .max_by_key(|session| session.last_validated_at_ms.unwrap_or_default())
         .map(|session| session.session_key.clone())
+}
+
+fn reconcile_profile_sessions(
+    profile: &mut PersistedReplicationProfileState,
+    sessions: &[PersistedSyncSession],
+    profile_id: &str,
+) {
+    if profile.active_session_key.is_none() {
+        profile.active_session_key = choose_default_session(sessions, profile_id);
+    }
+    if profile.active_session_key.is_none() && !profile.paused {
+        profile.replication_status = SyncdReplicationStatus::Idle;
+        profile.last_error = None;
+    }
 }
 
 fn build_session_catalog(
@@ -1409,9 +1424,7 @@ pub async fn bootstrap_runtime(app: AppHandle, state: SyncdReplicationState) -> 
 
     for profile_id in known_profiles.iter().cloned() {
         let profile = profile_state_mut(&mut replication, &profile_id);
-        if profile.active_session_key.is_none() {
-            profile.active_session_key = choose_default_session(&desktop.sessions, &profile_id);
-        }
+        reconcile_profile_sessions(profile, &desktop.sessions, &profile_id);
     }
     save_replication_state(&replication)?;
 
@@ -1983,7 +1996,7 @@ async fn fetch_changes_remote(
         .get(format!("{origin}/v1/changes"))
         .query(&[("sinceVersion", since_version)])
         .header("Authorization", format!("Bearer {}", session.access_token))
-        .header(CLIENT_VERSION_HEADER.as_str(), CLIENT_VERSION)
+        .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
         .header(
             CLIENT_PROTOCOL_HEADER.as_str(),
             CLIENT_PROTOCOL_VERSION.to_string(),
@@ -2027,7 +2040,7 @@ async fn fetch_changes_local_authority(
             "Authorization",
             format!("Bearer {}", authority.access_token),
         )
-        .header(CLIENT_VERSION_HEADER.as_str(), CLIENT_VERSION)
+        .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
         .header(
             CLIENT_PROTOCOL_HEADER.as_str(),
             CLIENT_PROTOCOL_VERSION.to_string(),
@@ -2069,7 +2082,7 @@ async fn fetch_authoritative_snapshot(
         .get(format!("{origin}/v1/snapshot"))
         .query(&[("scopeId", scope_id)])
         .header("Authorization", format!("Bearer {access_token}"))
-        .header(CLIENT_VERSION_HEADER.as_str(), CLIENT_VERSION)
+        .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
         .header(
             CLIENT_PROTOCOL_HEADER.as_str(),
             CLIENT_PROTOCOL_VERSION.to_string(),
@@ -2519,7 +2532,7 @@ async fn stream_live_events(
     let response = client
         .get(format!("{origin}/v1/events"))
         .header("Authorization", format!("Bearer {}", session.access_token))
-        .header(CLIENT_VERSION_HEADER.as_str(), CLIENT_VERSION)
+        .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
         .header(
             CLIENT_PROTOCOL_HEADER.as_str(),
             CLIENT_PROTOCOL_VERSION.to_string(),
@@ -2596,7 +2609,7 @@ async fn stream_live_events_local_authority(
             "Authorization",
             format!("Bearer {}", authority.access_token),
         )
-        .header(CLIENT_VERSION_HEADER.as_str(), CLIENT_VERSION)
+        .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
         .header(
             CLIENT_PROTOCOL_HEADER.as_str(),
             CLIENT_PROTOCOL_VERSION.to_string(),
@@ -4569,7 +4582,7 @@ async fn post_mutations_for_local_authority(
             "Authorization",
             format!("Bearer {}", authority.access_token),
         )
-        .header(CLIENT_VERSION_HEADER.as_str(), CLIENT_VERSION)
+        .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
         .header(
             CLIENT_PROTOCOL_HEADER.as_str(),
             CLIENT_PROTOCOL_VERSION.to_string(),
@@ -4640,7 +4653,7 @@ async fn post_mutations_for_session(
         let response = client
             .post(format!("{origin}/v1/mutations"))
             .header("Authorization", format!("Bearer {}", session.access_token))
-            .header(CLIENT_VERSION_HEADER.as_str(), CLIENT_VERSION)
+            .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
             .header(
                 CLIENT_PROTOCOL_HEADER.as_str(),
                 CLIENT_PROTOCOL_VERSION.to_string(),
@@ -5389,6 +5402,35 @@ mod tests {
             choose_default_session(&sessions, "local-a"),
             Some("session-new".to_string())
         );
+    }
+
+    #[test]
+    fn reconcile_profile_clears_stale_error_without_sessions() {
+        let mut profile = PersistedReplicationProfileState {
+            replication_status: SyncdReplicationStatus::Degraded,
+            last_error: Some("stale error".to_string()),
+            ..PersistedReplicationProfileState::default()
+        };
+
+        reconcile_profile_sessions(&mut profile, &[], "local-a");
+
+        assert_eq!(profile.replication_status, SyncdReplicationStatus::Idle);
+        assert_eq!(profile.last_error, None);
+    }
+
+    #[test]
+    fn reconcile_profile_preserves_explicit_pause_without_sessions() {
+        let mut profile = PersistedReplicationProfileState {
+            replication_status: SyncdReplicationStatus::Paused,
+            last_error: None,
+            paused: true,
+            ..PersistedReplicationProfileState::default()
+        };
+
+        reconcile_profile_sessions(&mut profile, &[], "local-a");
+
+        assert_eq!(profile.replication_status, SyncdReplicationStatus::Paused);
+        assert!(profile.paused);
     }
 
     #[test]

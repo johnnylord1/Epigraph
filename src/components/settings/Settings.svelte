@@ -5423,19 +5423,11 @@
                 </div>
               </div>
               {#if trackingSyncdOpen}
-                <div class="settings-card__surface" style="margin-top:16px">
-                  <div class="settings-card__head">
-                    <p class="settings-card__title">{$_("settings_inline_desktopSyncPairing")}</p>
-                    <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (trackingSyncdOpen = false)}>{$_("common_close")}</button>
-                  </div>
-                  <p class="settings-card__intro">{$_("settings_inline_syncRuntimeHint")}</p>
-                  <div class="settings-card__embed">
-                    <SyncdConnectionPanel
-                      profileId={currentRuntimeProfileId}
-                      scopeLabel={currentSessionProfileSummary}
-                    />
-                  </div>
-                </div>
+                <SyncdConnectionPanel
+                  profileId={currentRuntimeProfileId}
+                  scopeLabel={currentSessionProfileSummary}
+                  onClose={() => (trackingSyncdOpen = false)}
+                />
               {/if}
             </div>
           </div>
@@ -5570,19 +5562,11 @@
             </div>
 
             {#if securityDetailPane === "syncd"}
-              <div class="settings-card settings-card--wide">
-                <div class="settings-card__head">
-                  <p class="settings-card__title">{$_("settings_inline_desktopSyncPairing")}</p>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (securityDetailPane = null)}>{$_("common_close")}</button>
-                </div>
-                <p class="settings-card__intro">{$_("settings_inline_trustedPairingHint")}</p>
-                <div class="settings-card__embed">
-                  <SyncdConnectionPanel
-                    profileId={currentRuntimeProfileId}
-                    scopeLabel={currentSessionProfileSummary}
-                  />
-                </div>
-              </div>
+              <SyncdConnectionPanel
+                profileId={currentRuntimeProfileId}
+                scopeLabel={currentSessionProfileSummary}
+                onClose={() => (securityDetailPane = null)}
+              />
             {/if}
 
             {#if securityDetailPane === "auth"}

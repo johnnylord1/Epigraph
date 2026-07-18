@@ -58,6 +58,7 @@ export default defineWorkspace([
         "src/components/shared/SeriesDetailV3Shell.test.ts",
         "src/components/shared/DetailSurfacesThemeTokens.test.ts",
         "src/components/settings/SyncdConnectionThemeTokens.test.ts",
+        "src/components/settings/SyncdConnectionPanel.test.ts",
         "src/components/settings/ThemeEditorThemeTokens.test.ts",
         "src/components/settings/SyncdSessionDetails.test.ts",
         "src/components/settings/SuwayomiUpdatePanel.test.ts",

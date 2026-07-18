@@ -21,7 +21,9 @@ use tokio_tungstenite::{connect_async_tls_with_config, Connector};
 use url::Url;
 use uuid::Uuid;
 
-use crate::syncd::middleware::{CLIENT_PROTOCOL_HEADER, CLIENT_VERSION_HEADER};
+use crate::syncd::middleware::{
+    CLIENT_PROTOCOL_HEADER, CLIENT_VERSION_HEADER, CURRENT_CLIENT_VERSION,
+};
 use crate::syncd::models::{
     BootstrapPayloadResponse, ErrorBody, PairingClaimRequest, PairingClaimResponse,
     PairingClaimStatus, PairingHostDecision, PairingHostDecisionRequest,
@@ -32,7 +34,6 @@ use crate::syncd::models::{
 use crate::syncd_sidecar;
 
 const SYNCD_DISCOVERY_SERVICE_NAME: &str = "_aethon-sync._tcp.local.";
-const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const CLIENT_PROTOCOL_VERSION: u32 = 1;
 const EVENT_DESKTOP_STATE: &str = "syncd-desktop-state";
 const EVENT_PAIRING_STATUS: &str = "syncd-pairing-status";
@@ -1097,7 +1098,7 @@ async fn claim_once(
             device_id: device_id.to_string(),
             device_name: device_name.to_string(),
             platform: PairingPlatform::Desktop,
-            client_version: CLIENT_VERSION.to_string(),
+            client_version: CURRENT_CLIENT_VERSION.to_string(),
             client_protocol_version: CLIENT_PROTOCOL_VERSION,
         },
     )
@@ -1191,7 +1192,7 @@ async fn validate_token(origin: &str, session: &PersistedSyncSession) -> Result<
         .get(format!("{origin}/v1/changes"))
         .query(&[("scopeId", "books:global"), ("sinceVersion", "0")])
         .header("Authorization", format!("Bearer {}", session.access_token))
-        .header(CLIENT_VERSION_HEADER.as_str(), CLIENT_VERSION)
+        .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
         .header(
             CLIENT_PROTOCOL_HEADER.as_str(),
             CLIENT_PROTOCOL_VERSION.to_string(),
@@ -1656,6 +1657,18 @@ mod tests {
     use crate::syncd::models::{
         SyncdClientDiscoveryAttemptGuidance, SyncdClientDiscoveryBehaviorGuidance,
     };
+
+    #[test]
+    fn desktop_client_version_satisfies_syncd_default() {
+        let config = crate::syncd::config::SyncdConfig::for_test(PathBuf::from(
+            "C:\\temp\\syncd-client-version",
+        ));
+
+        assert!(
+            semver::Version::parse(CURRENT_CLIENT_VERSION).unwrap()
+                >= semver::Version::parse(&config.min_client_version).unwrap()
+        );
+    }
 
     #[test]
     fn parses_and_normalizes_bootstrap_bundle() {

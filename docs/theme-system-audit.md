@@ -3491,3 +3491,42 @@ Categorias cobertas:
 - Os 48 pares de contraste runtime ficaram acima de WCAG AA; Nocturne variou de **10,899:1 a 14,801:1**. Todos os builtins exibiram foco por teclado. Nenhum toast real ocorreu durante a sessao e nenhum toast sintetico foi criado.
 - Tres capturas adicionais validam o Search dim em Library -> Home -> Library. Em todos os ciclos: dim `z-index: 500`, topbar `520`, search/center `540`, `isolation: isolate`; ao perder foco a opacidade retornou a `0` antes da navegacao seguinte.
 - Resultado final do Marco 60: **0 `--n-*`, 0 `--activity-*`, 0 component tokens Legacy, 2.637/2.637 component tokens Ativos**. Nenhum tema novo, schema, layout, comportamento ou dado do usuario foi alterado.
+
+## Marco 61 - Syncd Pairing Modal
+
+### Escopo e UX
+
+- O painel tecnico inline de Settings > System > Security foi substituido por um modal controlado. Settings mantem somente a acao de gerenciamento e deixa de ser empurrado pelo conteudo de pairing, QR, replication e sessoes.
+- A vista inicial **Pairing** concentra status em tempo real, loading/progress animado, QR, codigo de pareamento, aprovacao/rejeicao e controles essenciais de replication.
+- **Details** concentra tentativa de conexao, fingerprint/pacote do host, checkpoints e sessoes persistidas. O popover de uma sessao abre acima da linha para nao ser coberto pelo rodape do modal.
+- **Options**, ao lado de Details, concentra descoberta mDNS, origem manual, pacote bootstrap, importacao de QR e revalidacao. Nenhuma regra de pairing, replication, reconnect ou persistencia foi alterada.
+- O modal e fechado somente por X, botao Close ou Escape; possui `role="dialog"`, `aria-modal`, foco inicial e focus trap. A troca de vistas nao fecha nem recria o componente.
+
+### Tokens e contrato
+
+- Foram adicionados 38 tokens para backdrop, z-index, largura/altura responsiva, chrome, status, progress, QR e espacamento do modal. O contrato Syncd passou a **98 definidos / 98 consumidos / 0 sem consumo / 0 indefinidos** nas camadas fallback e Nocturne.
+- `SyncdConnectionPanel.svelte` e `SyncdSessionDetails.svelte` continuam sem hex, rgb/rgba, hsl/hsla, oklch, `color-mix()`, gradients, blur, shadows ou aliases de tema diretos em seus styles.
+- O componente consome somente semantic/component tokens; os valores especificos do Nocturne permanecem em `nocturne-theme.css`.
+
+### Validacao
+
+- Unit/jsdom: **4 arquivos / 17 testes verdes**, incluindo o gate estrutural que exige o popover acima do rodape.
+- Build frontend: verde. Build Tauri de automacao: verde. Builtins gerados: sincronizados. `git diff --check`: verde.
+- O harness WebView2 de duas instancias concluiu **7/7 cenarios** com o novo modal: mDNS, claim/aprovacao, replication bidirecional, restart/persistencia, pause/resume/reconnect, segunda sessao, rejeicao, host indisponivel, expiracao e QR.
+- A automacao foi atualizada para abrir Pairing/Details/Options antes de interagir com controles agora ocultos e para renovar/ampliar o TTL apenas nos perfis temporarios do harness. Defaults do produto permanecem inalterados.
+- A revisao das capturas nativas confirmou Pairing centralizado sem deslocar Settings, QR legivel, Details organizado e estados Connected/Live/Rejected/Unreachable. O popover inicialmente apareceu sob o rodape em uma captura e foi corrigido para abrir para cima.
+- A validacao final usou a build desktop recompilada, perfil MAIN real, Nocturne e navegacao comum por `Settings -> System -> Security -> Manage`. O portal do backdrop foi validado diretamente sob `document.body`; o dialog permaneceu em `760 x 736 px`, entre `y=32` e `y=768`, dentro do viewport `1280 x 800`.
+- `docs/screenshots/marco61-syncd-pairing/pairing.png`, `details.png` e `options.png` sao capturas reais dessa sessao final. Pairing e Details exibem replication `IDLE`, sem erro de versao; Options preserva descoberta, origem manual, bundle e QR sem overflow. Foco por teclado apresentou outline visivel e Escape removeu o dialog.
+- A sessao final comecou e terminou com zero desktops persistidos. Nenhum QR foi criado, nenhum pairing foi iniciado e nenhum dado do usuario foi alterado.
+
+### Compatibilidade e recuperacao
+
+- O fluxo real revelou que dois clientes internos ainda enviavam `CARGO_PKG_VERSION` (`0.0.1`), enquanto o contrato Syncd exige cliente `0.1.0`. Pairing, replication e maintenance agora consomem uma unica constante `CURRENT_CLIENT_VERSION`, sem alterar a versao do aplicativo ou o updater.
+- Um erro de versao antigo podia permanecer persistido depois que todas as sessoes eram removidas. O bootstrap agora reconcilia perfis sem sessao ativa para `Idle` e limpa apenas o erro obsoleto, preservando explicitamente o estado pausado. A build final recuperou o perfil MAIN de `degraded` para `idle` sem edicao manual do arquivo e sem remocao de dados.
+- Tres testes Rust focados cobrem a compatibilidade da versao atual, a limpeza do erro sem sessoes e a preservacao de pause.
+- A matriz nativa foi repetida com os binarios release finais. Na primeira execucao, cenarios 1-5 passaram novamente e o `tauri-driver` encerrou a porta local antes do cenario de expiracao. Depois da atualizacao do EdgeDriver 146 para 150 e limpeza gerenciada, a repeticao confirmou novamente pairing, aprovacao e replication bidirecional `Live`, mas o WebView2 falhou ao recriar o perfil do joiner com `failed to write prefs file`. Esses bloqueios sao do driver/perfil temporario; nenhuma resposta funcional do Aethon falhou. Expiracao e QR permanecem cobertos pela execucao 7/7 anterior e nao tiveram sua logica alterada neste lote.
+
+### Riscos restantes
+
+- Parte dos rotulos tecnicos herdados do Syncd e parte dos novos textos de orientacao ainda misturam mensagens traduzidas com strings em ingles. A internacionalizacao deve ser consolidada em lote proprio para nao misturar o redesenho visual com alteracoes amplas de catalogo.
+- Estados com uma sessao remota real continuam representados pelas capturas e pelo harness isolado 7/7; a sessao normal final nao criou um novo pareamento para preservar os dados do usuario.

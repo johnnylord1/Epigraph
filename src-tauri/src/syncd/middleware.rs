@@ -14,6 +14,7 @@ use super::models::{AppError, AuthenticatedSession, SharedAppState};
 pub const CLIENT_VERSION_HEADER: HeaderName = HeaderName::from_static("x-aethon-client-version");
 pub const CLIENT_PROTOCOL_HEADER: HeaderName =
     HeaderName::from_static("x-aethon-client-protocol-version");
+pub const CURRENT_CLIENT_VERSION: &str = "0.1.0";
 
 pub async fn require_authenticated_session(
     State(state): State<SharedAppState>,
