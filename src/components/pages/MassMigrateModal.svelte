@@ -96,17 +96,18 @@
     sources.filter((source) => source.extension?.pkgName === extension.pkgName && isInstalledExtensionSource(source)),
     preferredSourceLang,
   ));
-  const targetSources = $derived.by(() => {
-    if (!originSource) return [];
-    const originPkg = sourcePackageName(originSource);
+  const targetSources = $derived.by<Source[]>(() => {
+    const origin = originSource;
+    if (!origin) return [];
+    const originPkg = sourcePackageName(origin);
     return pickBestSourcesByExtension(
       sources.filter((source) => (
         isInstalledExtensionSource(source)
-        && source.id !== originSource.id
+        && source.id !== origin.id
         && sourcePackageName(source) !== originPkg
       )),
       preferredSourceLang,
-      originSource.lang,
+      origin.lang,
     );
   });
   const targetSourceGroups = $derived.by(() => {
@@ -122,9 +123,12 @@
     }
     return [...groups.values()].sort((left, right) => left.name.localeCompare(right.name));
   });
-  const selectedMigratableCount = $derived(
-    preview?.items.filter((item) => selectedIds.has(item.currentManga.id) && canSelect(item)).length ?? 0,
-  );
+  const selectedMigratableCount = $derived.by<number>(() => {
+    const currentPreview = preview;
+    return currentPreview
+      ? currentPreview.items.filter((item) => selectedIds.has(item.currentManga.id) && canSelect(item)).length
+      : 0;
+  });
   const visiblePreviewItems = $derived.by(() => {
     const query = searchFilter.trim().toLowerCase();
     const items = preview?.items ?? [];
@@ -256,7 +260,7 @@
   }
 
   async function attemptWakeWithDeadline(timeoutMs = 3500) {
-    const wake = ensureServerAwakeFor("sources", {
+    const wake = ensureServerAwakeFor("browse", {
       serverUrl: store.runtimeServerUrl ?? store.settings.serverUrl,
       binary: store.settings.serverBinary,
       updateIntensity: store.settings.libraryUpdateIntensity,
@@ -421,6 +425,7 @@
 
   function sourceSearchCapabilityMessage(capability: SourceMangaSearchCapability, source = targetSource) {
     const name = source?.displayName ?? translate("massMigration.targetSource");
+    if (capability.status === "ok") return "";
     if (capability.status === "unavailable") {
       return translate("massMigration.targetCannotSearch", { name });
     }
@@ -681,7 +686,10 @@
     error = null;
     void setMigrationPresence(true, store.settings, "library");
     activeActionsMenuId = null;
-    runtimeStatuses = new Map([...runtimeStatuses, ...[...selectedMigrationIds].map((id) => [id, "migrating" as const])]);
+    runtimeStatuses = new Map([
+      ...runtimeStatuses,
+      ...[...selectedMigrationIds].map((id) => [id, "migrating"] satisfies [number, RuntimeStatus]),
+    ]);
     try {
       const result = await applyMassMangaMigrationWithJournal({
         preview,
@@ -739,7 +747,10 @@
     } catch (migrationError) {
       const message = migrationError instanceof Error ? migrationError.message : String(migrationError);
       error = message;
-      runtimeStatuses = new Map([...runtimeStatuses, ...[...selectedMigrationIds].map((id) => [id, "failed" as const])]);
+      runtimeStatuses = new Map([
+        ...runtimeStatuses,
+        ...[...selectedMigrationIds].map((id) => [id, "failed"] satisfies [number, RuntimeStatus]),
+      ]);
       const nextErrors = new Map(runtimeErrors);
       for (const id of selectedMigrationIds) nextErrors.set(id, message);
       runtimeErrors = nextErrors;
@@ -1089,7 +1100,7 @@
   .libraryLikeCard:first-child { grid-column: 1; justify-self: start; }
   .libraryLikeCard:last-child { grid-column: 5; justify-self: end; }
   .cardCopy { min-width: 0; display: grid; gap: 5px; }
-  .cardCopy strong { color: var(--component-migration-strong-fg); font-size: 13px; line-height: 1.2; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .cardCopy strong { color: var(--component-migration-strong-fg); font-size: 13px; line-height: 1.2; display: -webkit-box; line-clamp: 2; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .cardCopy span { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-family: var(--font-ui); font-size: 10px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--component-migration-muted-fg); }
   .cardCopy b, .cardCopy em { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: normal; }
   .cardCopy b { flex: 1; }
@@ -1122,7 +1133,7 @@
   .manualResultCard { min-width: 0; display: grid; gap: 8px; text-align: left; padding: 0; border: 0; background: transparent; color: var(--component-migration-result-fg); }
   .manualResultCard .cover { transition: border-color var(--component-migration-transition-normal), box-shadow var(--component-migration-transition-normal), transform var(--component-migration-transition-normal); }
   .manualResultCard:hover .cover { transform: translateY(-1px); border-color: var(--component-migration-result-cover-hover-border); box-shadow: var(--component-migration-result-cover-hover-shadow); }
-  .manualResultCard span { min-width: 0; color: var(--component-migration-strong-fg); font-size: 12px; font-weight: 850; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .manualResultCard span { min-width: 0; color: var(--component-migration-strong-fg); font-size: 12px; font-weight: 850; line-height: 1.25; display: -webkit-box; line-clamp: 2; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .manualResultCard small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-ui); font-size: 10px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--component-migration-muted-fg); }
   .manualEmpty { grid-column: 1 / -1; min-height: 220px; display: grid; place-items: center; align-content: center; gap: 10px; color: var(--component-migration-muted-fg); text-align: center; }
   .itemActions { position: absolute; right: 10px; top: 10px; z-index: var(--component-migration-select-z-index); }

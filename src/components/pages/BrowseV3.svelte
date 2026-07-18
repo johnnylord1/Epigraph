@@ -88,6 +88,77 @@
     novelSource?: InstalledNovelSourceDescriptor;
   }
 
+  interface AniListTrackerMedia {
+    id: number | string;
+    title?: {
+      romaji?: string | null;
+      english?: string | null;
+      native?: string | null;
+    } | null;
+    coverImage?: {
+      large?: string | null;
+      extraLarge?: string | null;
+    } | null;
+    siteUrl?: string | null;
+    status?: string | null;
+    format?: string | null;
+    countryOfOrigin?: string | null;
+    chapters?: number | null;
+    averageScore?: number | null;
+    meanScore?: number | null;
+    popularity?: number | null;
+    trending?: number | null;
+    genres?: string[] | null;
+    startDate?: {
+      year?: number | null;
+      month?: number | null;
+      day?: number | null;
+    } | null;
+  }
+
+  interface MalTrackerMedia {
+    mal_id: number;
+    type?: string | null;
+    title?: string | null;
+    title_english?: string | null;
+    title_japanese?: string | null;
+    images?: {
+      webp?: { large_image_url?: string | null } | null;
+      jpg?: {
+        large_image_url?: string | null;
+        image_url?: string | null;
+      } | null;
+    } | null;
+    synopsis?: string | null;
+    status?: string | null;
+    score?: number | null;
+    rank?: number | null;
+    members?: number | null;
+    scored_by?: number | null;
+    genres?: Array<{ name?: string | null }> | null;
+    themes?: Array<{ name?: string | null }> | null;
+    demographics?: Array<{ name?: string | null }> | null;
+    published?: { from?: string | null } | null;
+    chapters?: number | null;
+    url?: string | null;
+  }
+
+  interface AniListTrackerResponse {
+    data?: {
+      Page?: {
+        media?: AniListTrackerMedia[];
+      };
+    };
+  }
+
+  interface AniListTrackerBatchResponse {
+    data?: Record<string, { media?: AniListTrackerMedia[] }>;
+  }
+
+  interface MalTrackerResponse {
+    data?: MalTrackerMedia[];
+  }
+
   type BrowseTrackerEntry = Tracker;
 
   const loggedSearchRecommendationSourceIssues = new Set<string>();
@@ -1092,7 +1163,7 @@
     try {
       const data = await gql<{ mangas?: { nodes?: Manga[] } }>(GET_LIBRARY_SEARCH_SNAPSHOT);
       const previousChapterCountById = new Map(snapshot.map((manga) => [manga.id, manga.chapterCount]));
-      searchLibraryManga = (data.mangas?.nodes ?? []).map((manga: any) => ({
+      searchLibraryManga = (data.mangas?.nodes ?? []).map((manga) => ({
         ...manga,
         chapterCount: manga.chapters?.totalCount ?? manga.chapterCount ?? previousChapterCountById.get(manga.id) ?? 0,
       }));
@@ -1137,8 +1208,9 @@
           next.push(normalizedRecord);
           byMangaId.set(mangaId, next);
 
-          if (!record.manga?.inLibrary) {
-            candidateByMangaId.set(mangaId, trackerRecordToRecommendationCandidate(normalizedRecord, record.manga, tracker));
+          const manga = record.manga;
+          if (manga && !manga.inLibrary) {
+            candidateByMangaId.set(mangaId, trackerRecordToRecommendationCandidate(normalizedRecord, manga, tracker));
           }
         }
       }
@@ -2712,7 +2784,7 @@
       setActiveNovelDetail({
         novel: {
           ...novel,
-          sourceId: novel.source.id,
+          sourceId: novel.source.sourceId ?? novel.source.pluginId ?? "unknown",
           chapters,
         },
         inLibrary: true,
@@ -3039,7 +3111,7 @@
   let src_abortCtrl: AbortController | null = null;
   let src_openingNovelPath: string | null = $state(null);
 
-  const src_mangaSources = $derived.by(() =>
+  const src_mangaSources = $derived.by<BrowseSourceEntry[]>(() =>
     allSources.map((source) => ({
       id: source.id,
       name: source.name,
@@ -3060,7 +3132,7 @@
       : "This source needs FlareSolverr for Cloudflare or anti-bot protection.";
   }
 
-  const src_novelSources = $derived.by(() =>
+  const src_novelSources = $derived.by<BrowseSourceEntry[]>(() =>
     [
       ...allNovelSources.filter((source) => source.enabled).map((source) => ({
       id: source.pluginId,
@@ -3084,7 +3156,7 @@
     ],
   );
 
-  const src_catalogSources = $derived(
+  const src_catalogSources = $derived<BrowseSourceEntry[]>(
     activeContentType === "novels" ? src_novelSources : src_mangaSources,
   );
 
@@ -3100,7 +3172,7 @@
     }
   });
 
-  const src_visibleSources = $derived.by(() => {
+  const src_visibleSources = $derived.by<BrowseSourceEntry[]>(() => {
     let sources = activeContentType === "novels"
       ? src_novelSources.filter((entry) => entry.contentKind === "novels" || entry.contentKind === "hardcover")
       : src_mangaSources.filter((entry) =>
@@ -3130,7 +3202,7 @@
   const discoverFocusedTracker = $derived(
     trackingFilterOptions.find((tracker) => tracker.id === discoverSelectedTracker),
   );
-  const discoverFeedSources = $derived.by(() => {
+  const discoverFeedSources = $derived.by<BrowseSourceEntry[]>(() => {
     const limit = activeContentType === "novels" ? 4 : 12;
     if (!discoverFocusedSource) return src_visibleSources.slice(0, limit);
     return [
@@ -3138,7 +3210,7 @@
       ...src_visibleSources.filter((source) => source.id !== discoverFocusedSource.id),
     ].slice(0, limit);
   });
-  const searchRecommendationSourcePool = $derived.by(() => {
+  const searchRecommendationSourcePool = $derived.by<BrowseSourceEntry[]>(() => {
     if (activeBrowseTab === "keyword" && activeContentType === "novels") {
       const sources = src_novelSources.filter((source) =>
         source.contentKind === "novels"
@@ -3917,7 +3989,7 @@
       .sort((a, b) => b.score - a.score)[0]?.result ?? null;
   }
 
-  function mapAniListMediaToTrackSearch(item: any, tracker: BrowseTrackerEntry, sourceTitle?: string, forceNovel = false): TrackSearch {
+  function mapAniListMediaToTrackSearch(item: AniListTrackerMedia, tracker: BrowseTrackerEntry, sourceTitle?: string, forceNovel = false): TrackSearch {
     return {
       id: Number(item.id),
       trackerId: tracker.id,
@@ -3940,15 +4012,15 @@
     };
   }
 
-  function inferAniListPublishingType(item: any) {
-    const country = String(item?.countryOfOrigin ?? "").toUpperCase();
+  function inferAniListPublishingType(item: AniListTrackerMedia) {
+    const country = String(item.countryOfOrigin ?? "").toUpperCase();
     if (country === "KR") return "MANHWA";
     if (country === "CN") return "MANHUA";
     if (country === "JP") return "MANGA";
-    return item?.format ?? null;
+    return item.format ?? null;
   }
 
-  function mapMalMediaToTrackSearch(item: any, tracker: BrowseTrackerEntry, sourceTitle?: string, forceNovel = false): TrackSearch {
+  function mapMalMediaToTrackSearch(item: MalTrackerMedia, tracker: BrowseTrackerEntry, sourceTitle?: string, forceNovel = false): TrackSearch {
     return {
       id: Number(item.mal_id),
       trackerId: tracker.id,
@@ -3964,8 +4036,8 @@
       popularity: item.members ?? item.scored_by ?? null,
       trending: item.scored_by ?? null,
       genres: [...(item.genres ?? []), ...(item.themes ?? []), ...(item.demographics ?? [])]
-        .map((entry: any) => entry?.name)
-        .filter(Boolean),
+        .map((entry) => entry.name)
+        .filter((name): name is string => Boolean(name)),
       startDate: item.published?.from ?? null,
       totalChapters: item.chapters ?? 0,
       trackingUrl: item.url ?? `https://myanimelist.net/manga/${item.mal_id}`,
@@ -4009,9 +4081,9 @@
       }),
     });
     if (!response.ok) throw new Error(`AniList catalog failed (${response.status})`);
-    const data = await response.json();
+    const data: AniListTrackerResponse = await response.json();
     const media = data?.data?.Page?.media ?? [];
-    return media.map((item: any) => mapAniListMediaToTrackSearch(item, tracker)) as TrackSearch[];
+    return media.map((item) => mapAniListMediaToTrackSearch(item, tracker));
   }
 
   async function fetchMalTrackerCatalog(tracker: BrowseTrackerEntry, page: number) {
@@ -4025,9 +4097,9 @@
       return [];
     }
     if (!response.ok) throw new Error(`MyAnimeList catalog failed (${response.status})`);
-    const data = await response.json();
-    const items = (data?.data ?? []).filter((item: any) => item.mal_id && item.type !== "Anime");
-    return items.map((item: any) => mapMalMediaToTrackSearch(item, tracker)) as TrackSearch[];
+    const data: MalTrackerResponse = await response.json();
+    const items = (data.data ?? []).filter((item) => item.mal_id && item.type !== "Anime");
+    return items.map((item) => mapMalMediaToTrackSearch(item, tracker));
   }
 
   async function fetchSearchTrendingAniListCatalog(tracker: BrowseTrackerEntry, page: number) {
@@ -4066,9 +4138,9 @@
       }),
     });
     if (!response.ok) throw new Error(`AniList trending catalog failed (${response.status})`);
-    const data = await response.json();
+    const data: AniListTrackerResponse = await response.json();
     const media = data?.data?.Page?.media ?? [];
-    return media.map((item: any) => mapAniListMediaToTrackSearch(item, tracker)) as TrackSearch[];
+    return media.map((item) => mapAniListMediaToTrackSearch(item, tracker));
   }
 
   async function fetchSearchTrendingMalCatalog(tracker: BrowseTrackerEntry, page: number) {
@@ -4080,9 +4152,9 @@
       return [];
     }
     if (!response.ok) throw new Error(`MyAnimeList trending catalog failed (${response.status})`);
-    const data = await response.json();
-    const items = (data?.data ?? []).filter((item: any) => item.mal_id && item.type !== "Anime");
-    return items.map((item: any) => mapMalMediaToTrackSearch(item, tracker)) as TrackSearch[];
+    const data: MalTrackerResponse = await response.json();
+    const items = (data.data ?? []).filter((item) => item.mal_id && item.type !== "Anime");
+    return items.map((item) => mapMalMediaToTrackSearch(item, tracker));
   }
 
   async function fetchSearchTrendingTrackerCatalog(tracker: BrowseTrackerEntry, page: number) {
@@ -4132,9 +4204,9 @@
       signal,
     });
     if (!response.ok) return [];
-    const data = await response.json();
+    const data: AniListTrackerResponse = await response.json();
     const media = data?.data?.Page?.media ?? [];
-    const candidates = media.map((item: any) => ({
+    const candidates = media.map((item) => ({
       item,
       title: item.title?.english ?? item.title?.romaji ?? item.title?.native ?? "",
     }));
@@ -4192,10 +4264,10 @@
           for (const title of chunk) trackerScoreSearchCache.set(trackerScoreSearchKey(tracker, title, contentType), []);
           continue;
         }
-        const data = await response.json();
+        const data: AniListTrackerBatchResponse = await response.json();
         chunk.forEach((title, index) => {
           const media = data?.data?.[`q${index}`]?.media ?? [];
-          const candidates = media.map((item: any) => ({
+          const candidates = media.map((item) => ({
             item,
             title: item.title?.english ?? item.title?.romaji ?? item.title?.native ?? "",
           }));
@@ -4227,9 +4299,9 @@
       return [];
     }
     if (!response.ok) return [];
-    const data = await response.json();
-    const items = (data?.data ?? []).filter((item: any) => item.mal_id && item.type !== "Anime");
-    const candidates = items.map((item: any) => ({
+    const data: MalTrackerResponse = await response.json();
+    const items = (data.data ?? []).filter((item) => item.mal_id && item.type !== "Anime");
+    const candidates = items.map((item) => ({
       item,
       title: item.title_english ?? item.title ?? item.title_japanese ?? "",
     }));
@@ -5315,8 +5387,8 @@
               <div class="sourceHeader">
                 {#if source.iconUrl}
                   <img
-                    src={resolveServiceIconUrl(source.iconUrl, { kind: source.contentKind === "novels" ? "extension" : "source" })}
-                    onerror={(event) => applyServiceIconFallback(event, source.contentKind === "novels" ? "extension" : "source")}
+                    src={resolveServiceIconUrl(source.iconUrl, { kind: "extension" })}
+                    onerror={(event) => applyServiceIconFallback(event, "extension")}
                     alt={source.name}
                     class="sourceIcon"
                     loading="lazy"
@@ -5386,8 +5458,8 @@
           <div class="sourceSection">
             <div class="sourceHeader">
               <img
-                src={resolveServiceIconUrl(source.iconUrl, { kind: source.contentKind === "novels" ? "extension" : "source" })}
-                onerror={(event) => applyServiceIconFallback(event, source.contentKind === "novels" ? "extension" : "source")}
+                src={resolveServiceIconUrl(source.iconUrl, { kind: "source" })}
+                onerror={(event) => applyServiceIconFallback(event, "source")}
                 alt={source.displayName}
                 class="sourceIcon"
                 loading="lazy"
@@ -6445,6 +6517,7 @@
     position: relative;
     z-index: var(--component-browse-searchcoverplaceholder-span-z-index);
     display: -webkit-box;
+    line-clamp: 4;
     -webkit-line-clamp: 4;
     -webkit-box-orient: vertical;
     overflow: hidden;

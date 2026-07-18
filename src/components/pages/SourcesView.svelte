@@ -117,8 +117,14 @@
   const activeFilters = $derived(FILTERS.map((item) => ({ ...item, label: $_(item.labelKey) })));
   const searchPlaceholder = $derived(isNovelMode ? $_("sources.search.novelSources") : $_("sources.search.extensions"));
   const sourceTitle = $derived(isNovelMode ? $_("sources.title.novelSources") : $_("sources.title.extensions"));
-  const novelRepositoryCount = $derived(novelRepositoryState?.repositories.length ?? 0);
-  const novelCatalogCount = $derived(novelRepositoryState?.catalogEntries.length ?? 0);
+  const novelRepositoryCount = $derived.by<number>(() => {
+    const state = novelRepositoryState;
+    return state ? state.repositories.length : 0;
+  });
+  const novelCatalogCount = $derived.by<number>(() => {
+    const state = novelRepositoryState;
+    return state ? state.catalogEntries.length : 0;
+  });
   const novelRepositorySummary = $derived($_("sources.repositories.novelSummary", {
     feeds: novelRepositoryCount,
     plugins: novelCatalogCount,
@@ -736,11 +742,7 @@
 
     if (!installedExtension) return;
 
-    mockSettingsStore.refreshConfig(extension.pkgName, {
-      ...installedExtension,
-      isInstalled: true,
-      hasUpdate: false,
-    });
+    mockSettingsStore.refreshConfig(extension.pkgName, installedExtension);
     selectedPkgName = extension.pkgName;
     addToast({
       kind: "success",
@@ -990,10 +992,7 @@
           try {
             await gql(UPDATE_EXTENSION, { id: extension.pkgName, update: true }, undefined, 60000);
             updatedPkgNames.add(extension.pkgName);
-            mockSettingsStore.refreshConfig(extension.pkgName, {
-              ...extension,
-              hasUpdate: false,
-            });
+            mockSettingsStore.refreshConfig(extension.pkgName, extension);
           } catch (error) {
             failedUpdateCount += 1;
             console.error(error);
