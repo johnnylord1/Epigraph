@@ -30,7 +30,7 @@ const LEGACY_NOCTURNE_TOKENS = [
   "--n-surface-container",
   "--n-surface-container-low",
 ];
-const LEGACY_ACTIVITY_TOKENS = [
+const REMOVED_ACTIVITY_TOKENS = [
   "--activity-panel",
   "--activity-panel-soft",
   "--activity-line",
@@ -231,12 +231,18 @@ describe("App theme compatibility contract", () => {
     }
   });
 
-  it("keeps unreferenced compatibility aliases classified as Legacy", () => {
+  it("keeps retained Nocturne aliases Legacy and removed activity aliases absent", () => {
     const source = sourceCorpus("src");
     const nocturne = readProjectFile("src/styles/nocturne-theme.css");
 
-    for (const token of [...LEGACY_NOCTURNE_TOKENS, ...LEGACY_ACTIVITY_TOKENS]) {
+    for (const token of LEGACY_NOCTURNE_TOKENS) {
       expect(nocturne, `${token} must remain defined`).toMatch(new RegExp(`${token}\\s*:`));
+      expect(withoutDefinitions(source, token), `${token} gained an active reference`).not.toMatch(
+        new RegExp(`${token}(?![A-Za-z0-9_-])`),
+      );
+    }
+    for (const token of REMOVED_ACTIVITY_TOKENS) {
+      expect(nocturne, `${token} must be removed`).not.toMatch(new RegExp(`${token}\\s*:`));
       expect(withoutDefinitions(source, token), `${token} gained an active reference`).not.toMatch(
         new RegExp(`${token}(?![A-Za-z0-9_-])`),
       );

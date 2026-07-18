@@ -1,8 +1,6 @@
 .aethon-port--splash {
   --splash-ink: color-mix(in srgb, var(--component-splash-ink-source) 88%, transparent);
-  --splash-ink-muted: color-mix(in srgb, var(--component-splash-ink-source) 58%, transparent);
   --splash-ink-soft: color-mix(in srgb, var(--component-splash-ink-source) 34%, transparent);
-  --splash-error: var(--component-splash-danger-source);
   position: fixed;
   inset: 0;
   z-index: 9999;
@@ -1167,38 +1165,6 @@ html[data-aethon-motion="idle"] .n-topbar {
   filter: none;
 }
 
-.n-toolbar-cluster {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  padding: var(--n-toolbar-cluster-padding);
-  border-radius: var(--n-toolbar-cluster-radius);
-  background: color-mix(in srgb, var(--color-highlight-source) 2%, transparent);
-  border: 1px solid color-mix(in srgb, var(--text-secondary) 4%, transparent);
-  position: relative;
-  z-index: 30;
-}
-
-.n-toolbar-cluster .n-icon-btn {
-  width: var(--n-toolbar-icon-btn-size);
-  height: var(--n-toolbar-icon-btn-size);
-  border-radius: var(--shell-icon-button-radius);
-  border-color: transparent;
-  background: transparent;
-}
-
-.n-toolbar-cluster .n-icon-btn .material-symbols-outlined {
-  font-size: calc(18px * var(--hud-scale));
-}
-
-.n-toolbar-divider {
-  width: 1px;
-  height: var(--n-toolbar-divider-height);
-  margin: 0 2px;
-  background: color-mix(in srgb, var(--text-secondary) 6%, transparent);
-  flex: 0 0 auto;
-}
-
 .n-segmented,
 .n-inline-segmented {
   position: relative;
@@ -1603,7 +1569,6 @@ html[data-aethon-motion="idle"] .n-topbar {
   --text-muted: var(--component-settings-text-muted);
   --text-faint: var(--component-settings-text-faint);
   --color-info: var(--accent-bright);
-  --color-info-bg: var(--component-settings-info-bg);
   background: transparent;
   font-family: var(--component-settings-font);
   color: var(--component-settings-fg);

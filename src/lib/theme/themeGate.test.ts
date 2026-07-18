@@ -49,18 +49,17 @@ const unreferencedLegacyNocturneTokens = [
   "--n-surface-container-low",
   "--n-surface-container-high",
   "--n-surface-container-highest",
-] as const;
-const selectorOnlyLegacyNocturneTokens = [
   "--n-toolbar-cluster-padding",
   "--n-toolbar-cluster-radius",
   "--n-toolbar-divider-height",
   "--n-toolbar-icon-btn-size",
 ] as const;
+const selectorOnlyLegacyNocturneTokens = [] as const;
 const legacyNocturneTokens = [
   ...unreferencedLegacyNocturneTokens,
   ...selectorOnlyLegacyNocturneTokens,
 ] as const;
-const legacyActivityTokens = [
+const removedActivityTokens = [
   "--activity-panel",
   "--activity-panel-soft",
   "--activity-line",
@@ -347,8 +346,8 @@ describe("final derived theme gate", () => {
       runtime: runtime.length,
       neutral: neutral.length,
     }).toEqual({
-      componentColors: 1462,
-      editable: 1451,
+      componentColors: 1459,
+      editable: 1448,
       absolute: 291,
       absoluteOnly: 0,
       mixedEditableAbsolute: 291,
@@ -420,10 +419,16 @@ describe("final derived theme gate", () => {
     expect(nocturneTokens.size).toBe(62);
     expect(compatibilityBridges).toHaveLength(45);
     expect(legacyNocturneTokens).toHaveLength(17);
-    expect(legacyActivityTokens).toHaveLength(13);
+    expect(removedActivityTokens).toHaveLength(13);
 
-    for (const token of [...unreferencedLegacyNocturneTokens, ...legacyActivityTokens]) {
+    for (const token of unreferencedLegacyNocturneTokens) {
       expect(nocturneCss, `${token} must remain defined`).toMatch(new RegExp(`${token}\\s*:`));
+      expect(withoutDefinitions(source, token), `${token} gained an active reference`).not.toMatch(
+        new RegExp(`${token}(?![A-Za-z0-9_-])`),
+      );
+    }
+    for (const token of removedActivityTokens) {
+      expect(nocturneCss, `${token} must remain removed`).not.toMatch(new RegExp(`${token}\\s*:`));
       expect(withoutDefinitions(source, token), `${token} gained an active reference`).not.toMatch(
         new RegExp(`${token}(?![A-Za-z0-9_-])`),
       );
@@ -463,7 +468,7 @@ describe("final derived theme gate", () => {
     ["primary text", "--text-primary", "--color-background"],
     ["secondary text", "--text-secondary", "--color-background"],
     ["tertiary text", "--text-tertiary", "--color-background"],
-    ["button text", "--component-button-fg", "--component-button-bg"],
+    ["button text", "--text-primary", "--component-button-bg"],
     ["input text", "--component-input-fg", "--component-input-bg"],
     ["Reader muted text", "--component-reader-muted-fg", "--component-reader-panel-bg"],
     ["Migration eyebrow", "--component-migration-eyebrow-fg", "--component-migration-modal-bg"],

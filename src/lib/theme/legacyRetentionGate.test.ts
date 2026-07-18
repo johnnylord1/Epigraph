@@ -68,16 +68,15 @@ const UNREFERENCED_LEGACY_ALIASES = [
   "--n-surface-container-low",
   "--n-surface-container-high",
   "--n-surface-container-highest",
-] as const;
-
-const SELECTOR_ONLY_LEGACY_ALIASES = [
   "--n-toolbar-cluster-padding",
   "--n-toolbar-cluster-radius",
   "--n-toolbar-divider-height",
   "--n-toolbar-icon-btn-size",
 ] as const;
 
-const LEGACY_ACTIVITY_ALIASES = [
+const SELECTOR_ONLY_LEGACY_ALIASES = [] as const;
+
+const REMOVED_ACTIVITY_ALIASES = [
   "--activity-panel",
   "--activity-panel-soft",
   "--activity-line",
@@ -93,10 +92,9 @@ const LEGACY_ACTIVITY_ALIASES = [
   "--activity-danger",
 ] as const;
 
-const UNCONSUMED_COMPONENT_TOKENS = [
+const REMOVED_COMPONENT_TOKENS = [
   "--component-button-fg",
   "--component-card-radius",
-  "--component-popover-radius",
   "--component-tab-bg-active",
   "--component-tab-fg-active",
 ] as const;
@@ -104,10 +102,11 @@ const UNCONSUMED_COMPONENT_TOKENS = [
 const PROMOTED_COMPONENT_TOKENS = [
   "--component-popover-bg",
   "--component-popover-border",
+  "--component-popover-radius",
   "--component-popover-shadow",
 ] as const;
 
-const PORT_LOCAL_LEGACY_DECLARATIONS = [
+const REMOVED_PORT_LOCAL_DECLARATIONS = [
   "--color-info-bg",
   "--splash-error",
   "--splash-ink-muted",
@@ -172,8 +171,8 @@ describe("Legacy theme retention evidence", () => {
 
     expect(declarations(nocturne, "--n-")).toEqual(expected);
     expect(LEGACY_BRIDGES).toHaveLength(45);
-    expect(UNREFERENCED_LEGACY_ALIASES).toHaveLength(13);
-    expect(SELECTOR_ONLY_LEGACY_ALIASES).toHaveLength(4);
+    expect(UNREFERENCED_LEGACY_ALIASES).toHaveLength(17);
+    expect(SELECTOR_ONLY_LEGACY_ALIASES).toHaveLength(0);
   });
 
   test("keeps active production independent from retained --n-* aliases", () => {
@@ -207,19 +206,21 @@ describe("Legacy theme retention evidence", () => {
     }
   });
 
-  test("keeps all 13 --activity-* aliases defined and unreferenced", () => {
-    expect(declarations(nocturne, "--activity-")).toEqual([...LEGACY_ACTIVITY_ALIASES].sort());
-    for (const token of LEGACY_ACTIVITY_ALIASES) {
+  test("removes all 13 unreferenced --activity-* aliases", () => {
+    expect(declarations(nocturne, "--activity-")).toEqual([]);
+    for (const token of REMOVED_ACTIVITY_ALIASES) {
       expect(files.reduce((count, path) => count + referencesIn(path, token), 0), token).toBe(0);
     }
   });
 
-  test("retains exactly five unconsumed component tokens for compatibility", () => {
+  test("removes four unconsumed component tokens and activates the popover radius", () => {
     const themeDefinitions = `${read("src/styles/tokens.css")}\n${nocturne}`;
-    for (const token of UNCONSUMED_COMPONENT_TOKENS) {
-      expect(themeDefinitions, `${token} must remain defined`).toMatch(new RegExp(`${escapeRegExp(token)}\\s*:`));
+    for (const token of REMOVED_COMPONENT_TOKENS) {
+      expect(themeDefinitions, `${token} must remain removed`).not.toMatch(new RegExp(`${escapeRegExp(token)}\\s*:`));
       expect(files.reduce((count, path) => count + referencesIn(path, token), 0), token).toBe(0);
     }
+    expect(nocturne).toContain("border-radius: var(--component-popover-radius);");
+    expect(files.reduce((count, path) => count + referencesIn(path, "--component-popover-radius"), 0)).toBeGreaterThan(0);
   });
 
   test("removes the 89 tokens exclusive to the quarantined repository surface", () => {
@@ -231,7 +232,7 @@ describe("Legacy theme retention evidence", () => {
     expect(definitions).toEqual(new Set());
   });
 
-  test("keeps the other three historical component tokens classified Active", () => {
+  test("keeps the four promoted popover tokens classified Active", () => {
     for (const token of PROMOTED_COMPONENT_TOKENS) {
       expect(referencesIn(NOCTURNE_PATH, token), token).toBeGreaterThan(0);
     }
@@ -239,9 +240,9 @@ describe("Legacy theme retention evidence", () => {
     expect(read("src/components/library/LibraryToolbar.svelte")).toContain("n-popover-menu");
   });
 
-  test("retains the three port-local declarations without local consumers", () => {
-    for (const token of PORT_LOCAL_LEGACY_DECLARATIONS) {
-      expect(port, `${token} must remain declared`).toMatch(new RegExp(`${escapeRegExp(token)}\\s*:`));
+  test("removes the three port-local declarations without consumers", () => {
+    for (const token of REMOVED_PORT_LOCAL_DECLARATIONS) {
+      expect(port, `${token} must remain removed`).not.toMatch(new RegExp(`${escapeRegExp(token)}\\s*:`));
       expect(referencesIn(PORT_PATH, token), token).toBe(0);
     }
   });
@@ -255,8 +256,9 @@ describe("Legacy theme retention evidence", () => {
       ...LEGACY_BRIDGES,
       ...UNREFERENCED_LEGACY_ALIASES,
       ...SELECTOR_ONLY_LEGACY_ALIASES,
-      ...LEGACY_ACTIVITY_ALIASES,
-      ...UNCONSUMED_COMPONENT_TOKENS,
+      ...REMOVED_ACTIVITY_ALIASES,
+      ...REMOVED_COMPONENT_TOKENS,
+      ...REMOVED_PORT_LOCAL_DECLARATIONS,
     ]);
 
     expect(dynamicTokens.filter((entry) => retained.has(entry.slice(entry.indexOf(":") + 1)))).toEqual([]);
@@ -267,8 +269,9 @@ describe("Legacy theme retention evidence", () => {
       ...LEGACY_BRIDGES,
       ...UNREFERENCED_LEGACY_ALIASES,
       ...SELECTOR_ONLY_LEGACY_ALIASES,
-      ...LEGACY_ACTIVITY_ALIASES,
-      ...UNCONSUMED_COMPONENT_TOKENS,
+      ...REMOVED_ACTIVITY_ALIASES,
+      ...REMOVED_COMPONENT_TOKENS,
+      ...REMOVED_PORT_LOCAL_DECLARATIONS,
     ];
     const references = AUTHORING_AND_STORE_FILES.flatMap((path) =>
       retained

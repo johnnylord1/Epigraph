@@ -5,13 +5,8 @@ import { THEME_TOKEN_KEYS } from "./contract";
 
 const ROOT = process.cwd();
 const PORT_PATH = "src/styles/nocturne-port.css";
-const PORT_LEGACY_TOKENS = ["--color-info-bg", "--splash-error", "--splash-ink-muted"];
-const PORT_N_REFERENCES = [
-  "--n-toolbar-cluster-padding",
-  "--n-toolbar-cluster-radius",
-  "--n-toolbar-divider-height",
-  "--n-toolbar-icon-btn-size",
-];
+const PORT_LEGACY_TOKENS: string[] = [];
+const PORT_N_REFERENCES: string[] = [];
 const ACTIVE_GEOMETRY_BRIDGES = new Map([
   ["--n-hud-scale", "--hud-scale"],
   ["--n-topbar-height-base", "--shell-topbar-height-base"],
@@ -165,10 +160,11 @@ describe("Nocturne port compatibility contract", () => {
     });
     const legacy = defined.filter((token) => !active.includes(token));
 
-    expect(defined).toHaveLength(46);
+    expect(defined).toHaveLength(43);
     expect(active).toHaveLength(43);
     expect(legacy).toEqual(PORT_LEGACY_TOKENS);
-    expect(port).toContain("--color-info-bg: var(--component-settings-info-bg);");
+    expect(port).not.toMatch(/^\s*--color-info-bg\s*:/m);
+    expect(port).not.toMatch(/^\s*--splash-(?:error|ink-muted)\s*:/m);
     expect(readProjectFile("src/styles/tokens.css")).toContain(
       "--component-settings-info-bg: var(--color-info-bg);",
     );

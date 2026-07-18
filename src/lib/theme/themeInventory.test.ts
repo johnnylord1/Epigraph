@@ -11,8 +11,8 @@ const EXPECTED_FAMILY_COUNTS = {
   activity: 74,
   app: 16,
   browse: 444,
-  button: 4,
-  card: 4,
+  button: 3,
+  card: 3,
   chip: 1,
   detail: 275,
   downloads: 137,
@@ -39,7 +39,6 @@ const EXPECTED_FAMILY_COUNTS = {
   sources: 138,
   splash: 21,
   syncd: 60,
-  tab: 2,
   taste: 51,
   "theme-editor": 221,
   toast: 33,
@@ -49,14 +48,6 @@ const EXPECTED_FAMILY_COUNTS = {
   updater: 49,
   window: 22,
 } as const;
-
-const EXPECTED_UNCONSUMED_LEGACY = [
-  "--component-button-fg",
-  "--component-card-radius",
-  "--component-popover-radius",
-  "--component-tab-bg-active",
-  "--component-tab-fg-active",
-] as const;
 
 type DefinitionLayer = "fallback" | "nocturne";
 type InventoryStatus = "Active" | "Legacy";
@@ -221,10 +212,10 @@ describe("exhaustive component theme inventory", () => {
   const scoped = inventory.entries;
 
   test("classifies every definition without inferring dead tokens", () => {
-    expect(inventory.entries).toHaveLength(2641);
-    expect(scoped).toHaveLength(2641);
-    expect(scoped.filter(({ status }) => status === "Active")).toHaveLength(2636);
-    expect(scoped.filter(({ status }) => status === "Legacy")).toHaveLength(5);
+    expect(inventory.entries).toHaveLength(2637);
+    expect(scoped).toHaveLength(2637);
+    expect(scoped.filter(({ status }) => status === "Active")).toHaveLength(2637);
+    expect(scoped.filter(({ status }) => status === "Legacy")).toHaveLength(0);
     expect(inventory.entries.every(({ status }) => ["Active", "Legacy"].includes(status))).toBe(true);
     expect(inventory.entries.some(({ status }) => (status as string) === "Dead")).toBe(false);
   });
@@ -236,7 +227,7 @@ describe("exhaustive component theme inventory", () => {
         .map(([family, entries]) => [family, entries.length]),
     );
     expect(families).toEqual(EXPECTED_FAMILY_COUNTS);
-    expect(scoped.filter(({ layers }) => layers.join("+") === "fallback+nocturne")).toHaveLength(2405);
+    expect(scoped.filter(({ layers }) => layers.join("+") === "fallback+nocturne")).toHaveLength(2401);
     expect(scoped.filter(({ layers }) => layers.join("+") === "fallback")).toHaveLength(236);
     expect(scoped.filter(({ layers }) => layers.join("+") === "nocturne")).toHaveLength(0);
   });
@@ -248,12 +239,11 @@ describe("exhaustive component theme inventory", () => {
     const unconsumed = legacy.filter(({ consumption }) => consumption === "none");
     const dynamic = scoped.filter(({ consumption }) => consumption === "dynamic");
 
-    expect(active.filter(({ consumption }) => consumption === "static")).toHaveLength(2622);
+    expect(active.filter(({ consumption }) => consumption === "static")).toHaveLength(2623);
     expect(active.filter(({ consumption }) => consumption === "dynamic")).toHaveLength(1);
     expect(active.filter(({ consumption }) => consumption === "transitive")).toHaveLength(13);
     expect(legacyOnly).toHaveLength(0);
-    expect(unconsumed).toHaveLength(5);
-    expect(unconsumed.map(({ token }) => token).sort()).toEqual([...EXPECTED_UNCONSUMED_LEGACY]);
+    expect(unconsumed).toHaveLength(0);
     expect(dynamic.map(({ token }) => token)).toEqual(["--component-reader-core-epub-link-fg"]);
     expect(inventory.activeDirect.dynamicReferences.get("--component-reader-core-epub-link-fg")).toEqual(
       new Set(["src/components/reader/BookReader.svelte"]),

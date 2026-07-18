@@ -636,7 +636,6 @@
   --component-sources-metric-recommendation-dark-source: var(--color-recommendation-pill-dark-source);
   --component-card-bg: var(--color-card);
   --component-card-border: var(--color-border);
-  --component-card-radius: var(--radius-card);
   --component-card-shadow: var(--shadow-sm);
   --component-modal-bg: var(--color-modal);
   --component-modal-border: var(--border-strong);
@@ -644,7 +643,7 @@
   --component-modal-shadow: var(--shadow-lg);
   --component-popover-bg: var(--color-popover);
   --component-popover-border: var(--color-border);
-  --component-popover-radius: var(--radius-popover);
+  --component-popover-radius: calc(12px * var(--hud-scale));
   --component-popover-shadow: var(--shadow-md);
   --component-popover-fg: var(--color-popover-text);
   --component-popover-label-fg: var(--color-popover-label);
@@ -670,14 +669,11 @@
   --component-overlay-bg: var(--color-overlay);
   --component-button-bg: var(--bg-raised);
   --component-button-bg-hover: var(--bg-overlay);
-  --component-button-fg: var(--text-primary);
   --component-button-border: var(--border-base);
   --component-input-bg: var(--bg-raised);
   --component-input-fg: var(--text-primary);
   --component-input-border: var(--border-base);
   --component-input-placeholder: var(--text-faint);
-  --component-tab-bg-active: var(--accent-muted);
-  --component-tab-fg-active: var(--color-text-tab-active);
   --component-toast-bg: var(--bg-overlay);
   --component-toast-bg-hover: var(--color-elevated);
   --component-toast-border: var(--border-base);

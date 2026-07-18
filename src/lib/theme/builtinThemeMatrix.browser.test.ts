@@ -32,7 +32,7 @@ const textPairs = [
   ["--text-primary", "--color-background"],
   ["--text-secondary", "--color-background"],
   ["--text-primary", "--color-card"],
-  ["--component-button-fg", "--component-button-bg"],
+  ["--text-primary", "--component-button-bg"],
   ["--component-input-fg", "--component-input-bg"],
   ["--component-toast-title-fg", "--component-toast-bg"],
 ] as const;

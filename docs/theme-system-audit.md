@@ -3446,9 +3446,21 @@ Categorias cobertas:
 
 #### Marco 60B - Unconsumed Legacy aliases
 
-- Auditar e, quando comprovado, remover os 13 aliases `--activity-*`, os cinco component tokens atualmente sem consumidor e as tres declaracoes locais Legacy do port (`--color-info-bg` local, `--splash-error`, `--splash-ink-muted`).
-- `--color-info-bg` global continua semantico e Ativo; somente o override local do port pode ser candidato a remocao.
-- Estados raros de Splash devem ser reproduzidos ou cobertos por computed style antes de remover aliases locais. Na duvida, manter como Legacy.
+**Status: concluido.** A busca global, o inventario e os estados browser confirmaram que os candidatos nao possuiam consumidor estatico, dinamico, transitive, ThemeEditor, documento V1-V5, preset, store ou computed style ativo.
+
+- Removidos os **13 aliases `--activity-*`** do Nocturne. O Activity Center real continua consumindo exclusivamente `--component-activity-*`.
+- Removidos quatro component tokens sem consumidor em fallback e Nocturne: `--component-button-fg`, `--component-card-radius`, `--component-tab-bg-active` e `--component-tab-fg-active`.
+- `--component-popover-radius` foi preservado, definido nas duas camadas com a expressao computada existente e ativado em `.n-popover-surface`. No WebView2 real, o valor permaneceu `calc(12px * 0.8889)` / **10.6668px**, sem mudanca de geometria, fundo, borda ou shadow.
+- Removidos os seletores sem host `.n-toolbar-cluster`, seus descendentes e `.n-toolbar-divider`. Os quatro aliases `--n-toolbar-*` permanecem definidos como Legacy sem referencia para o Marco 60C.
+- Removidas as declaracoes locais `--color-info-bg`, `--splash-error` e `--splash-ink-muted` do port. O semantic global `--color-info-bg` e `--component-settings-info-bg` permanecem Ativos; nenhuma cor semantica foi retirada.
+- Inventario final: **2.637 component tokens / 2.637 Ativos / 0 Legacy / 0 Mortos**; **2.401** definidos em fallback+Nocturne e **236** somente no fallback. O gate visual possui **1.459 dependencias de cor**, sendo 1.448 editaveis, todas classificadas.
+
+#### Evidencia visual e gates do 60B
+
+- Pares before/after em `docs/screenshots/marco60b-legacy-aliases/` cobrem Activity Center, Library display popover e Splash em loading, erro e failsafe/not-configured. Nao ha regressao aparente de layout, superficies, bordas, tipografia, hierarquia ou estados.
+- O PNG da marca do Splash apresenta pequenas variacoes de rasterizacao/drop-shadow entre processos Chromium: 0,0715% dos pixels no loading e cerca de 0,6% nos estados de erro, apesar de geometria e CSS computado identicos. Por isso o matcher global de delta maximo 1 nao foi afrouxado nem usado como falso gate; as capturas reais foram preservadas e os tres estados continuam cobertos no browser test.
+- Tema/gates: **5 arquivos / 54 testes verdes**. App/base/Activity/Splash: **4 arquivos / 23 testes verdes**. Browser Splash+builtin matrix: **2 arquivos / 7 testes verdes**.
+- `pnpm theme:check-builtins`: verde. `pnpm build`: verde. `git diff --check`: verde. Nenhum componente ou comportamento de producao foi alterado.
 - Commit recomendado: `refactor(theme): remove unconsumed legacy aliases`.
 
 #### Marco 60C - `--n-*` compatibility layer

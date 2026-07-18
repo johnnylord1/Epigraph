@@ -81,7 +81,6 @@
 
   --component-card-bg: var(--color-card);
   --component-card-border: var(--color-control-border-subtle);
-  --component-card-radius: var(--radius-lg);
   --component-card-shadow: var(--shadow-sm);
   --component-modal-bg: var(--color-modal);
   --component-modal-border: var(--color-control-border-elevated);
@@ -89,7 +88,7 @@
   --component-modal-shadow: var(--shadow-lg);
   --component-popover-bg: var(--color-popover-surface);
   --component-popover-border: var(--color-popover-border);
-  --component-popover-radius: var(--hud-popover-radius);
+  --component-popover-radius: calc(12px * var(--hud-scale));
   --component-popover-shadow: var(--shadow-popover);
   --component-menu-bg: var(--color-popover-surface);
   --component-menu-border: var(--color-popover-border);
@@ -108,14 +107,11 @@
   --component-overlay-bg: var(--color-overlay);
   --component-button-bg: var(--color-control-surface);
   --component-button-bg-hover: var(--color-control-surface-hover);
-  --component-button-fg: var(--text-primary);
   --component-button-border: var(--color-control-border-subtle);
   --component-input-bg: var(--color-control-field-surface);
   --component-input-fg: var(--text-primary);
   --component-input-border: color-mix(in srgb, var(--color-highlight-source) 8%, transparent);
   --component-input-placeholder: var(--color-control-placeholder);
-  --component-tab-bg-active: var(--color-control-surface-hover);
-  --component-tab-fg-active: var(--color-text-tab-active);
   --component-toast-bg: var(--color-toast-surface);
   --component-toast-bg-hover: var(--color-toast-surface-hover);
   --component-toast-border: var(--color-toast-border);
@@ -2599,19 +2595,6 @@
   --n-popover-control-bg: rgba(255, 255, 255, 0.055);
   --n-popover-control-border: rgba(255, 255, 255, 0.045);
 
-  --activity-panel:       rgba(18, 17, 22, 0.86);
-  --activity-panel-soft:  rgba(255, 255, 255, 0.035);
-  --activity-line:        rgba(255, 255, 255, 0.07);
-  --activity-line-soft:   rgba(255, 255, 255, 0.045);
-  --activity-text:        rgba(244, 241, 247, 0.94);
-  --activity-title:       rgba(242, 238, 247, 0.9);
-  --activity-muted:       rgba(204, 198, 216, 0.58);
-  --activity-subtle:      rgba(214, 208, 224, 0.54);
-  --activity-faint:       rgba(204, 198, 216, 0.38);
-  --activity-accent:      #c5b0ff;
-  --activity-accent-soft: rgba(197, 176, 255, 0.12);
-  --activity-accent-line: rgba(197, 176, 255, 0.24);
-  --activity-danger:      #f09aaa;
   /* Marco 17 - Detail surfaces */
   --component-detail-dl-danger-zone-empty-border-top-color: color-mix(in srgb, var(--text-secondary) 4.5%, transparent);
   --component-detail-hud-action-font-size: calc(11px * var(--hud-scale, 1));
@@ -3011,7 +2994,7 @@
 .n-popover-surface {
   box-sizing: border-box;
   border: 1px solid var(--component-popover-border);
-  border-radius: calc(12px * var(--hud-scale));
+  border-radius: var(--component-popover-radius);
   background: var(--component-popover-bg);
   box-shadow: var(--component-popover-shadow);
   color: var(--component-popover-fg);

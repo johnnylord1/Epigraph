@@ -37,4 +37,19 @@ describe("SplashScreen (browser)", () => {
     await expect.element(page.getByRole("button", { name: "Retry" })).toBeVisible();
     await expect.element(page.getByRole("button", { name: "Enter app" })).toBeVisible();
   });
+
+  test("renders the not-configured failsafe without changing its visual contract", async () => {
+    render(SplashScreen, {
+      props: {
+        mode: "loading",
+        notConfigured: true,
+        failureTitle: "Server not configured",
+        failureDetail: "Choose a profile before retrying.",
+        showCards: false,
+      },
+    });
+
+    await expect.element(page.getByRole("button", { name: "Retry" })).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Enter app" })).toBeVisible();
+  });
 });
