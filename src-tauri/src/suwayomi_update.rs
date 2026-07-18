@@ -1679,8 +1679,7 @@ fn certified_release_checksum(
     }
     if !allowed.sha256.eq_ignore_ascii_case(published_sha256) {
         return Err(
-            "Published Suwayomi checksum does not match Aethon's certified SHA-256."
-                .to_string(),
+            "Published Suwayomi checksum does not match Aethon's certified SHA-256.".to_string(),
         );
     }
     Ok(allowed.sha256.to_ascii_lowercase())
@@ -2029,7 +2028,10 @@ fn validate_staging_dir(
         .allowed_version(&staging_manifest.version)
         .map(|allowed| allowed.sha256.as_str())
         .ok_or_else(|| "Staged Suwayomi version is not in Aethon's allowlist.".to_string())?;
-    if !staging_manifest.sha256.eq_ignore_ascii_case(certified_sha256) {
+    if !staging_manifest
+        .sha256
+        .eq_ignore_ascii_case(certified_sha256)
+    {
         return Err("Staged Suwayomi JAR does not match Aethon's certified SHA-256.".to_string());
     }
     validate_staged_jar(
@@ -3082,17 +3084,12 @@ mod tests {
         let asset = "Suwayomi-Server-v2.2.2100.jar";
 
         assert_eq!(
-            certified_release_checksum(&manifest, "v2.2.2100", asset, &"A".repeat(64))
-                .unwrap(),
+            certified_release_checksum(&manifest, "v2.2.2100", asset, &"A".repeat(64)).unwrap(),
             "a".repeat(64),
         );
-        assert!(certified_release_checksum(
-            &manifest,
-            "v2.2.2100",
-            asset,
-            &"b".repeat(64),
-        )
-        .is_err());
+        assert!(
+            certified_release_checksum(&manifest, "v2.2.2100", asset, &"b".repeat(64),).is_err()
+        );
     }
 
     #[test]

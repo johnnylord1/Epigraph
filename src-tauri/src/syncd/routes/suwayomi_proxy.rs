@@ -730,12 +730,10 @@ mod tests {
 
     #[test]
     fn websocket_bridge_preserves_graphql_close_code_and_reason() {
-        let upstream = axum_to_upstream(AxumMessage::Close(Some(
-            axum::extract::ws::CloseFrame {
-                code: 4401,
-                reason: "Unauthorized".into(),
-            },
-        )));
+        let upstream = axum_to_upstream(AxumMessage::Close(Some(axum::extract::ws::CloseFrame {
+            code: 4401,
+            reason: "Unauthorized".into(),
+        })));
         let downstream = upstream_to_axum(upstream).unwrap();
         let AxumMessage::Close(Some(frame)) = downstream else {
             panic!("expected a close frame");

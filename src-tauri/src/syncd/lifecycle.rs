@@ -15,9 +15,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 
 use super::config::SyncdConfig;
-use super::middleware::{
-    CLIENT_PROTOCOL_HEADER, CLIENT_VERSION_HEADER, CURRENT_CLIENT_VERSION,
-};
+use super::middleware::{CLIENT_PROTOCOL_HEADER, CLIENT_VERSION_HEADER, CURRENT_CLIENT_VERSION};
 use super::models::{
     AppError, AuthenticatedSession, ErrorBody, PairingTokenResponse, SharedAppState,
     SyncdDiscoveryDescriptor,

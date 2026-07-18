@@ -81,6 +81,13 @@ function Assert-NoStoreHeaders {
   }
 }
 
+function Normalize-MdnsServiceType {
+  param([AllowNull()][string]$Value)
+
+  if ([string]::IsNullOrWhiteSpace($Value)) { return "" }
+  return $Value.Trim().TrimEnd(".").ToLowerInvariant()
+}
+
 function Wait-ForHealthy {
   param([string]$Endpoint, [int]$TimeoutSeconds = 30)
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
@@ -364,8 +371,10 @@ try {
   if ($discoveryStatus.Json.publication.providerKind -ne "lan-publication") {
     throw "discovery provider did not report lan publication metadata"
   }
-  if ($discoveryStatus.Json.publication.serviceType -ne "_aethon-sync._tcp.local") {
-    throw "discovery provider reported an unexpected service type"
+  $expectedServiceType = Normalize-MdnsServiceType "_aethon-sync._tcp.local."
+  $actualServiceType = Normalize-MdnsServiceType ([string]$discoveryStatus.Json.publication.serviceType)
+  if ($actualServiceType -ne $expectedServiceType) {
+    throw "discovery provider reported an unexpected service type: $($discoveryStatus.Json.publication.serviceType)"
   }
   if ($discoveryStatus.Json.publication.port -ne [int]$port) {
     throw "discovery provider reported an unexpected publication port"
