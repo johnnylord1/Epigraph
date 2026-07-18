@@ -1,26 +1,22 @@
-import { readFileSync, readdirSync } from "node:fs";
-import { dirname, extname, posix, resolve } from "node:path";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 
 const ROOT = process.cwd();
-
-const LEGACY_SURFACE_IMPORTERS = new Map<string, string[]>([
-  ["src/components/pages/Discover.svelte", []],
-  ["src/components/pages/Extensions.svelte", ["src/routes.ts"]],
-  ["src/components/shared/SourceBrowse.svelte", ["src/components/pages/Discover.svelte"]],
-  ["src/components/shared/SourceList.svelte", []],
-  ["src/components/pages/NovelSources.svelte", []],
-  ["src/components/novels/NovelSourceCheckModal.svelte", ["src/components/settings/NovelRepositoriesPanel.svelte"]],
-  ["src/components/novels/NovelSourceStatusDetails.svelte", [
-    "src/components/pages/NovelSources.svelte",
-    "src/components/settings/NovelRepositoriesPanel.svelte",
-  ]],
-  ["src/components/settings/NovelRepositoriesPanel.svelte", []],
-  ["src/components/library/NovelsLibraryBody.svelte", []],
-  ["src/components/pages/Tracking.svelte", []],
-  ["src/components/pages/GenreDrillPage.svelte", []],
-  ["src/routes.ts", []],
-]);
+const REMOVED_SURFACES = [
+  "src/components/pages/Discover.svelte",
+  "src/components/pages/Extensions.svelte",
+  "src/components/shared/SourceBrowse.svelte",
+  "src/components/shared/SourceList.svelte",
+  "src/components/pages/NovelSources.svelte",
+  "src/components/novels/NovelSourceCheckModal.svelte",
+  "src/components/novels/NovelSourceStatusDetails.svelte",
+  "src/components/settings/NovelRepositoriesPanel.svelte",
+  "src/components/library/NovelsLibraryBody.svelte",
+  "src/components/pages/Tracking.svelte",
+  "src/components/pages/GenreDrillPage.svelte",
+  "src/routes.ts",
+] as const;
 
 function projectFiles(path: string): string[] {
   return readdirSync(resolve(ROOT, path), { withFileTypes: true }).flatMap((entry) => {
@@ -35,60 +31,21 @@ function read(path: string): string {
   return readFileSync(resolve(ROOT, path), "utf8");
 }
 
-function normalize(path: string): string {
-  return path.replaceAll("\\", "/");
-}
-
-function resolveSpecifier(importer: string, specifier: string): string | null {
-  if (!specifier.startsWith(".")) return null;
-  const candidate = normalize(posix.normalize(posix.join(dirname(normalize(importer)), specifier)));
-  if (extname(candidate)) return candidate;
-  for (const suffix of [".svelte", ".ts"]) {
-    const resolved = `${candidate}${suffix}`;
-    try {
-      read(resolved);
-      return resolved;
-    } catch {
-      // Try the next supported source extension.
-    }
-  }
-  return candidate;
-}
-
-function importedTargets(path: string): string[] {
-  const source = read(path);
-  const specifiers = [
-    ...source.matchAll(/\bfrom\s*["']([^"']+)["']/g),
-    ...source.matchAll(/\bimport\s*\(\s*["']([^"']+)["']\s*\)/g),
-    ...source.matchAll(/\bimport\s*["']([^"']+)["']/g),
-  ].map((match) => match[1]);
-  return specifiers
-    .map((specifier) => resolveSpecifier(path, specifier))
-    .filter((target): target is string => target !== null);
-}
-
-describe("Legacy surface decision gate", () => {
-  const files = projectFiles("src");
-  const importGraph = new Map(files.map((path) => [path, importedTargets(path)]));
-
-  test("freezes the complete quarantined import graph", () => {
-    for (const [target, expectedImporters] of LEGACY_SURFACE_IMPORTERS) {
-      const importers = files
-        .filter((path) => path !== target && importGraph.get(path)?.includes(target))
-        .sort();
-      expect(importers, target).toEqual([...expectedImporters].sort());
+describe("removed Legacy surface gate", () => {
+  test("keeps every quarantined source physically absent", () => {
+    for (const path of REMOVED_SURFACES) {
+      expect(existsSync(resolve(ROOT, path)), path).toBe(false);
     }
   });
 
-  test("keeps every quarantine chain unreachable from a non-Legacy root", () => {
-    const legacy = new Set(LEGACY_SURFACE_IMPORTERS.keys());
-    const externalImporters = [...legacy].flatMap((target) =>
-      files
-        .filter((path) => !legacy.has(path) && importGraph.get(path)?.includes(target))
-        .map((path) => `${path} -> ${target}`),
+  test("keeps production imports free of removed surface names", () => {
+    const references = projectFiles("src").flatMap((path) =>
+      REMOVED_SURFACES
+        .filter((removed) => read(path).includes(removed.split("/").at(-1)!))
+        .map((removed) => `${path} -> ${removed}`),
     );
 
-    expect(externalImporters).toEqual([]);
+    expect(references).toEqual([]);
   });
 
   test("keeps the active shell on the modern page loaders", () => {
@@ -104,27 +61,27 @@ describe("Legacy surface decision gate", () => {
     expect(read("src/components/pages/Search.svelte")).toContain('import BrowseV3 from "./BrowseV3.svelte"');
     const browse = read("src/components/pages/BrowseV3.svelte");
     expect(browse).toContain('import SourcesView from "./SourcesView.svelte"');
-    expect(browse).not.toContain("Discover.svelte");
-    expect(browse).not.toContain("Extensions.svelte");
   });
 
-  test("keeps the current Library and tracking surfaces independent from Legacy pages", () => {
+  test("keeps the current Library and tracking surfaces active", () => {
     const library = read("src/components/pages/Library.svelte");
     expect(library).toContain('import BooksLibraryBody from "../library/BooksLibraryBody.svelte"');
     expect(library).toContain('import ComicsLibraryBody from "../library/ComicsLibraryBody.svelte"');
-    expect(library).not.toContain("NovelsLibraryBody.svelte");
-
     expect(read("src/components/pages/SeriesDetail.svelte")).toContain(
       'import TrackingPanel from "../shared/TrackingPanel.svelte"',
     );
     expect(read("src/components/pages/NovelDetail.svelte")).toContain(
       'import NovelTrackingPanel from "../shared/NovelTrackingPanel.svelte"',
     );
+    expect(read("src/components/pages/BookDetail.svelte")).toContain(
+      'import NovelTrackingPanel from "../shared/NovelTrackingPanel.svelte"',
+    );
   });
 
-  test("keeps the old novel repository panel outside active Settings", () => {
-    const settings = read("src/components/settings/Settings.svelte");
-    expect(settings).not.toContain("NovelRepositoriesPanel.svelte");
-    expect(settings).toContain("novelRepositoryState");
+  test("keeps repository management in active SourcesView", () => {
+    const sources = read("src/components/pages/SourcesView.svelte");
+    expect(sources).toContain("novelRepositoryState");
+    expect(sources).toContain("refreshNovelRepositoryCatalog");
+    expect(read("src/components/settings/Settings.svelte")).not.toContain("NovelRepositoriesPanel");
   });
 });

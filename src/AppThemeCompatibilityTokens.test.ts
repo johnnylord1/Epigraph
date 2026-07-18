@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -45,31 +45,20 @@ const LEGACY_ACTIVITY_TOKENS = [
   "--activity-accent-line",
   "--activity-danger",
 ];
-const LEGACY_SURFACES = [
-  "Discover.svelte",
-  "Extensions.svelte",
-  "NovelSources.svelte",
-  "NovelsLibraryBody.svelte",
-  "Tracking.svelte",
-  "GenreDrillPage.svelte",
-  "NovelRepositoriesPanel.svelte",
-];
-const LEGACY_SURFACE_IMPORTERS = new Map<string, string[]>([
-  ["Discover.svelte", []],
-  ["Extensions.svelte", ["src/routes.ts"]],
-  ["SourceBrowse.svelte", ["src/components/pages/Discover.svelte"]],
-  ["SourceList.svelte", []],
-  ["NovelSources.svelte", []],
-  ["NovelSourceCheckModal.svelte", ["src/components/settings/NovelRepositoriesPanel.svelte"]],
-  ["NovelSourceStatusDetails.svelte", [
-    "src/components/pages/NovelSources.svelte",
-    "src/components/settings/NovelRepositoriesPanel.svelte",
-  ]],
-  ["NovelRepositoriesPanel.svelte", []],
-  ["NovelsLibraryBody.svelte", []],
-  ["Tracking.svelte", []],
-  ["GenreDrillPage.svelte", []],
-]);
+const REMOVED_LEGACY_SURFACES = [
+  "src/components/pages/Discover.svelte",
+  "src/components/pages/Extensions.svelte",
+  "src/components/shared/SourceBrowse.svelte",
+  "src/components/shared/SourceList.svelte",
+  "src/components/pages/NovelSources.svelte",
+  "src/components/novels/NovelSourceCheckModal.svelte",
+  "src/components/novels/NovelSourceStatusDetails.svelte",
+  "src/components/settings/NovelRepositoriesPanel.svelte",
+  "src/components/library/NovelsLibraryBody.svelte",
+  "src/components/pages/Tracking.svelte",
+  "src/components/pages/GenreDrillPage.svelte",
+  "src/routes.ts",
+] as const;
 
 function readProjectFile(path: string) {
   return readFileSync(resolve(ROOT, path), "utf8");
@@ -84,16 +73,6 @@ function sourceCorpus(path: string): string {
       return readProjectFile(child);
     })
     .join("\n");
-}
-
-function productionSourceFiles(path: string): Array<{ path: string; source: string }> {
-  return readdirSync(resolve(ROOT, path), { withFileTypes: true })
-    .flatMap((entry) => {
-      const child = `${path}/${entry.name}`;
-      if (entry.isDirectory()) return productionSourceFiles(child);
-      if (!/\.(?:svelte|ts)$/.test(entry.name) || entry.name.endsWith(".test.ts")) return [];
-      return [{ path: child, source: readProjectFile(child) }];
-    });
 }
 
 function rustCorpus(path: string): string {
@@ -151,7 +130,7 @@ describe("App theme compatibility contract", () => {
     expect(app).not.toContain('root.setAttribute("data-theme", "dark")');
   });
 
-  it("keeps audited Legacy surfaces outside the active shell", () => {
+  it("keeps removed Legacy surfaces absent from the active source tree", () => {
     const activeShell = [
       "src/main.ts",
       "src/App.svelte",
@@ -161,13 +140,10 @@ describe("App theme compatibility contract", () => {
       "src/components/pages/Library.svelte",
     ].map(readProjectFile).join("\n");
 
-    for (const legacySurface of LEGACY_SURFACES) {
-      expect(activeShell, legacySurface).not.toContain(legacySurface);
+    for (const path of REMOVED_LEGACY_SURFACES) {
+      expect(existsSync(resolve(ROOT, path)), path).toBe(false);
+      expect(activeShell, path.split("/").at(-1)).not.toContain(path.split("/").at(-1));
     }
-
-    expect(readProjectFile("src/routes.ts")).toContain(
-      'import Extensions from "./components/pages/Extensions.svelte"',
-    );
     expect(readProjectFile("src/main.ts")).not.toContain("./routes");
   });
 
@@ -186,35 +162,16 @@ describe("App theme compatibility contract", () => {
     expect(search).not.toContain("Extensions.svelte");
   });
 
-  it("keeps legacy diagnostic hosts explicit until runtime evidence changes", () => {
-    const discover = readProjectFile("src/components/pages/Discover.svelte");
-    const routes = readProjectFile("src/routes.ts");
-    const novelSources = readProjectFile("src/components/pages/NovelSources.svelte");
-    const novelRepositories = readProjectFile("src/components/settings/NovelRepositoriesPanel.svelte");
-    const settings = readProjectFile("src/components/settings/Settings.svelte");
-
-    expect(discover).toContain('import SourceBrowse from "../shared/SourceBrowse.svelte"');
-    expect(routes).toContain('import Extensions from "./components/pages/Extensions.svelte"');
-    expect(novelSources).toContain('import NovelSourceStatusDetails from "../novels/NovelSourceStatusDetails.svelte"');
-    expect(novelRepositories).toContain('import NovelSourceCheckModal');
-    expect(novelRepositories).toContain('import NovelSourceStatusDetails');
-    expect(settings).not.toContain("NovelRepositoriesPanel");
-  });
-
-  it("locks the audited importer graph for every quarantined surface", () => {
-    const files = productionSourceFiles("src");
-
-    for (const [surface, expectedImporters] of LEGACY_SURFACE_IMPORTERS) {
-      const importers = files
-        .filter(({ source }) => source.includes(surface))
-        .map(({ path }) => path)
-        .sort();
-
-      expect(importers, surface).toEqual([...expectedImporters].sort());
-    }
+  it("keeps modern repository and tracking hosts explicit", () => {
+    expect(readProjectFile("src/components/pages/SourcesView.svelte")).toContain("novelRepositoryState");
+    expect(readProjectFile("src/components/settings/Settings.svelte")).not.toContain("NovelRepositoriesPanel");
+    expect(readProjectFile("src/components/pages/SeriesDetail.svelte")).toContain("TrackingPanel");
+    expect(readProjectFile("src/components/pages/NovelDetail.svelte")).toContain("NovelTrackingPanel");
+    expect(readProjectFile("src/components/pages/BookDetail.svelte")).toContain("NovelTrackingPanel");
   });
 
   it("keeps the obsolete route map outside every application entrypoint", () => {
+    expect(existsSync(resolve(ROOT, "src/routes.ts"))).toBe(false);
     const webEntrypoints = [
       "index.html",
       "src/main.ts",

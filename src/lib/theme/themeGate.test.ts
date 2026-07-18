@@ -34,10 +34,7 @@ const directColorPattern = new RegExp(
 );
 const malformedSplitHexPattern = /#[0-9a-f]{3,7}\s+[a-f][0-9a-f]{0,4}\b/i;
 const encodedHexPattern = /%(?:25)*23[0-9a-f]{3,8}\b/gi;
-const encodedHexInventory = [
-  "src/components/pages/Tracking.svelte:%23888",
-  "src/components/pages/Tracking.svelte:%23888",
-] as const;
+const encodedHexInventory = [] as const;
 const unreferencedLegacyNocturneTokens = [
   "--n-bg",
   "--n-bg-top",
@@ -80,17 +77,6 @@ const legacyActivityTokens = [
 ] as const;
 const compatibilityConsumerFiles = new Set([
   "src/styles/nocturne-port.css",
-  "src/components/pages/Discover.svelte",
-  "src/components/pages/Extensions.svelte",
-  "src/components/shared/SourceBrowse.svelte",
-  "src/components/shared/SourceList.svelte",
-  "src/components/pages/NovelSources.svelte",
-  "src/components/novels/NovelSourceCheckModal.svelte",
-  "src/components/novels/NovelSourceStatusDetails.svelte",
-  "src/components/settings/NovelRepositoriesPanel.svelte",
-  "src/components/library/NovelsLibraryBody.svelte",
-  "src/components/pages/Tracking.svelte",
-  "src/components/pages/GenreDrillPage.svelte",
 ]);
 
 interface CssDeclaration {
@@ -449,7 +435,7 @@ describe("final derived theme gate", () => {
     }
   });
 
-  test("keeps active non-Syncd production consumers independent from --n-*", () => {
+  test("keeps active production consumers independent from --n-*", () => {
     const activeSources = sourceFiles("src")
       .filter((path) => !compatibilityConsumerFiles.has(path))
       .filter((path) => !path.endsWith("src/styles/tokens.css") && !path.endsWith("src/styles/nocturne-theme.css"))

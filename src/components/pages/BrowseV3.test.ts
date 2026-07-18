@@ -488,7 +488,6 @@ vi.mock("../../lib/novels/libraryState", () => ({
   peekNovelLibraryState: vi.fn(() => null),
 }));
 
-vi.mock("./Extensions.svelte", () => ({ default: class ExtensionsStub {} }));
 vi.mock("../shared/SetupStatusCard.svelte", () => ({ default: class SetupStatusCardStub {} }));
 
 import BrowseV3 from "./BrowseV3.svelte";

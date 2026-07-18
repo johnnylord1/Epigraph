@@ -124,8 +124,6 @@ const AUTHORING_AND_STORE_FILES = [
 
 const COMPATIBILITY_CONSUMER_FILES = new Set([
   "src/styles/nocturne-port.css",
-  "src/components/pages/Discover.svelte",
-  "src/components/pages/Extensions.svelte",
 ]);
 
 function projectFiles(path: string): string[] {
@@ -220,6 +218,18 @@ describe("Legacy theme retention evidence", () => {
     const themeDefinitions = `${read("src/styles/tokens.css")}\n${nocturne}`;
     for (const token of UNCONSUMED_COMPONENT_TOKENS) {
       expect(themeDefinitions, `${token} must remain defined`).toMatch(new RegExp(`${escapeRegExp(token)}\\s*:`));
+      expect(files.reduce((count, path) => count + referencesIn(path, token), 0), token).toBe(0);
+    }
+  });
+
+  test("retains the 89 removed-surface tokens until the dedicated CSS cleanup", () => {
+    const definitions = new Set(
+      [...`${read("src/styles/tokens.css")}\n${nocturne}`.matchAll(/(--component-novel-repositories-[\w-]+)\s*:/g)]
+        .map((match) => match[1]),
+    );
+
+    expect(definitions).toHaveLength(89);
+    for (const token of definitions) {
       expect(files.reduce((count, path) => count + referencesIn(path, token), 0), token).toBe(0);
     }
   });

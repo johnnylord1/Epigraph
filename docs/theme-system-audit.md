@@ -3399,26 +3399,28 @@ Categorias cobertas:
 
 ### Marco 59 - Legacy Surface Removal
 
-**Objetivo:** remover apenas os clusters de superficies cuja quarentena foi provada no Marco 57, sem alterar seus substitutos ativos e sem remover CSS/tokens Legacy no mesmo diff.
+**Status: concluido.** Os clusters cuja quarentena foi provada no Marco 57 foram removidos sem alterar seus substitutos ativos e sem remover CSS/tokens Legacy no mesmo diff.
 
 #### Escopo de remocao
 
-- Cluster Discover antigo: `Discover.svelte` e `SourceBrowse.svelte`.
-- Cluster Extensions/rotas antigo: `Extensions.svelte` e `routes.ts`.
-- Superficie Source isolada: `SourceList.svelte`.
-- Cluster Novel Sources antigo: `NovelSources.svelte`, `NovelSourceCheckModal.svelte`, `NovelSourceStatusDetails.svelte` e `NovelRepositoriesPanel.svelte`.
-- Library/Tracking antigos: `NovelsLibraryBody.svelte`, `Tracking.svelte` e `GenreDrillPage.svelte`.
-- Atualizar exclusivamente gates, allowlists e documentacao que referenciam esses arquivos. Nao remover tokens ou seletores CSS neste marco.
+- Removidos 12 modulos de producao: `Discover.svelte`, `SourceBrowse.svelte`, `Extensions.svelte`, `routes.ts`, `SourceList.svelte`, `NovelSources.svelte`, `NovelSourceCheckModal.svelte`, `NovelSourceStatusDetails.svelte`, `NovelRepositoriesPanel.svelte`, `NovelsLibraryBody.svelte`, `Tracking.svelte` e `GenreDrillPage.svelte`.
+- Removidos os quatro testes exclusivos dessas superficies e seus registros do workspace Vitest. O mock obsoleto de `Extensions.svelte` em `BrowseV3.test.ts` tambem foi retirado.
+- Nenhum primitive, semantic, component token ou seletor CSS foi removido. Os **94 component tokens Legacy** permanecem definidos e agora estao explicitamente sem consumidor: 89 `--component-novel-repositories-*` e os cinco aliases historicos.
 
-#### Preflight e aceite
+#### Grafo e substitutos ativos
 
-- Reexecutar busca de imports estaticos/dinamicos, `routes`, flags, stores, deep links, plugins e referencias por string antes de cada cluster.
-- Provar que `Layout -> Search -> BrowseV3/SourcesView`, `Library -> BooksLibraryBody/ComicsLibraryBody`, SeriesDetail/NovelDetail tracking e Settings repositorios permanecem os caminhos ativos.
-- Remover cada cluster de forma atomica; nunca apagar somente um arquivo deixando import quebrado dentro da cadeia antiga.
-- Exigir zero referencia aos arquivos removidos, zero chunk correspondente no bundle e parser/deep links atuais inalterados.
-- Executar testes do shell, Search/Browse/Sources, Library, Settings e Details; `pnpm build`; `git diff --check`.
-- Validar no app real em Nocturne: Search, Discover ativo, Sources, Library Comics/Books, Settings repositorios, SeriesDetail e NovelDetail. Capturar screenshots apenas dos substitutos ativos; nenhuma tela Legacy deve ser reativada para gerar evidencia.
-- Commit recomendado: `refactor(legacy): remove quarantined surfaces`.
+- A busca estatica final confirma zero import estatico, dinamico ou referencia runtime aos arquivos removidos. O gate antigo de quarentena passou a exigir ausencia fisica dos 12 caminhos e ausencia dos nomes no grafo de producao.
+- `Layout -> Search -> BrowseV3 -> SourcesView` permanece o caminho de Search, Discover e Sources. O estado persistido antigo `explore/extensions/sources` continua normalizado para `search` pelo store atual.
+- `Library -> BooksLibraryBody/ComicsLibraryBody`, `SeriesDetail -> TrackingPanel` e `NovelDetail/BookDetail -> NovelTrackingPanel` permanecem os caminhos ativos.
+- O gerenciamento atual de repositories permanece em `SourcesView`; `Settings.svelte` continua independente do painel antigo.
+
+#### Evidencia visual e gates
+
+- Seis pares reais em `docs/screenshots/marco59-legacy-surface-removal/` cobrem Library Books, Search, Discover atual, Sources atual, Settings e BookDetail. A comparacao com as baselines estaveis dos Marcos 55B/28C1 nao mostra regressao aparente de layout, superficies, controles, tipografia ou hierarquia.
+- SeriesDetail foi acionado com uma obra real, mas o conteudo permaneceu em loading vazio no runtime atual; NovelDetail nao possuia novel local elegivel. Nenhum dado artificial foi criado. Ambos permanecem cobertos pelos gates de imports e pelos testes dos paineis modernos.
+- A auditoria runtime ampla excedeu o limite externo durante uma etapa fora do escopo; a captura CDP focada permaneceu estavel e concluiu as seis superficies do marco.
+- Unit/gates: **5 arquivos / 51 testes verdes**. Shell/Browse: **2 arquivos / 22 testes verdes**. `pnpm build`: verde, sem chunks das superficies removidas. `git diff --check`: verde.
+- Nenhuma rota ativa, parser de startup, deep link, store, API, dado do usuario, layout ou comportamento foi alterado.
 
 ### Marco 60 - Legacy CSS And Token Removal
 
@@ -3441,8 +3443,8 @@ Categorias cobertas:
 
 #### Marco 60C - `--n-*` compatibility layer
 
-- Revalidar os 62 aliases individualmente apos 60A/60B. Hoje existem **1 Ativo por Syncd / 61 Legacy / 0 Morto**.
-- A remocao completa depende do Marco 58 ou de uma migracao Syncd isolada que substitua `--component-syncd-input-fg: var(--n-on-surface)` por token canonico. Enquanto isso, `--n-on-surface` nao pode ser removido.
+- Revalidar os 62 aliases individualmente apos 60A/60B. Apos o Marco 58 existem **0 Ativos / 62 Legacy / 0 Mortos**.
+- A dependencia Syncd foi encerrada: `--component-syncd-input-fg` usa `--text-primary`, e `--n-on-surface` nao possui consumidor ativo.
 - Remover bridges apenas depois de confirmar ausencia em CSS/Svelte/JS, `setProperty`, computed style, ThemeEditor, documentos V1-V5, import/export, presets, stores, templates, deep links e plugins suportados.
 - Nao considerar um alias Morto por ausencia textual isolada; compatibilidade incerta permanece Legacy.
 - Commit recomendado: `refactor(theme): retire nocturne compatibility aliases`.

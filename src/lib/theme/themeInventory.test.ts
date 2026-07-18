@@ -7,20 +7,6 @@ const THEME_FILES = [
   "src/styles/tokens.css",
   "src/styles/nocturne-theme.css",
 ] as const;
-const LEGACY_CONSUMER_FILES = new Set([
-  "src/routes.ts",
-  "src/components/pages/Discover.svelte",
-  "src/components/pages/Extensions.svelte",
-  "src/components/shared/SourceBrowse.svelte",
-  "src/components/shared/SourceList.svelte",
-  "src/components/pages/NovelSources.svelte",
-  "src/components/novels/NovelSourceCheckModal.svelte",
-  "src/components/novels/NovelSourceStatusDetails.svelte",
-  "src/components/settings/NovelRepositoriesPanel.svelte",
-  "src/components/library/NovelsLibraryBody.svelte",
-  "src/components/pages/Tracking.svelte",
-  "src/components/pages/GenreDrillPage.svelte",
-]);
 const EXPECTED_FAMILY_COUNTS = {
   activity: 74,
   app: 16,
@@ -189,8 +175,8 @@ function reachableTokens(
 function buildInventory() {
   const definitions = readDefinitions();
   const files = projectFiles("src").filter((path) => !THEME_FILES.includes(path as never));
-  const activeFiles = files.filter((path) => !LEGACY_CONSUMER_FILES.has(path));
-  const legacyFiles = files.filter((path) => LEGACY_CONSUMER_FILES.has(path));
+  const activeFiles = files;
+  const legacyFiles: string[] = [];
   const activeDirect = mergeReferences(
     directReferences(activeFiles),
     directReferences(THEME_FILES, true),
@@ -265,10 +251,10 @@ describe("exhaustive component theme inventory", () => {
     expect(active.filter(({ consumption }) => consumption === "static")).toHaveLength(2622);
     expect(active.filter(({ consumption }) => consumption === "dynamic")).toHaveLength(1);
     expect(active.filter(({ consumption }) => consumption === "transitive")).toHaveLength(13);
-    expect(legacyOnly).toHaveLength(89);
-    expect(legacyOnly.every(({ consumption }) => consumption === "static")).toBe(true);
-    expect(legacyOnly.every(({ token }) => token.startsWith("--component-novel-repositories-"))).toBe(true);
-    expect(unconsumed.map(({ token }) => token).sort()).toEqual([...EXPECTED_UNCONSUMED_LEGACY]);
+    expect(legacyOnly).toHaveLength(0);
+    expect(unconsumed).toHaveLength(94);
+    expect(unconsumed.filter(({ token }) => token.startsWith("--component-novel-repositories-"))).toHaveLength(89);
+    expect(unconsumed.filter(({ token }) => !token.startsWith("--component-novel-repositories-")).map(({ token }) => token).sort()).toEqual([...EXPECTED_UNCONSUMED_LEGACY]);
     expect(dynamic.map(({ token }) => token)).toEqual(["--component-reader-core-epub-link-fg"]);
     expect(inventory.activeDirect.dynamicReferences.get("--component-reader-core-epub-link-fg")).toEqual(
       new Set(["src/components/reader/BookReader.svelte"]),
