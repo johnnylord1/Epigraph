@@ -1150,6 +1150,10 @@ function loadPersistedLibraryUpdateIssues(value: unknown) {
   );
 }
 
+function isPresent<T>(value: T | null | undefined): value is T {
+  return value !== null && value !== undefined;
+}
+
 function normalizeLoadedSystemNotification(entry: any): SystemNotification | null {
   if (!entry || typeof entry !== "object") return null;
   const profileId = normalizeLocalProfileId(entry.profileId);
@@ -1198,7 +1202,7 @@ function buildLibraryUpdateNotifications(
         createdAt,
       };
     })
-    .filter((entry): entry is LibraryUpdateNotification => Boolean(entry))
+    .filter(isPresent)
     .sort((left, right) => right.chapterDelta - left.chapterDelta || left.mangaTitle.localeCompare(right.mangaTitle));
 }
 
@@ -1230,7 +1234,7 @@ function buildComicsUpdateNotificationEntries(
         chapterTitles: chapterTitles.length > 0 ? chapterTitles : undefined,
       };
     })
-    .filter((entry): entry is LibraryUpdateNotification => Boolean(entry))
+    .filter(isPresent)
     .sort((left, right) => right.chapterDelta - left.chapterDelta || left.mangaTitle.localeCompare(right.mangaTitle));
 }
 
@@ -1268,7 +1272,7 @@ function buildNovelUpdateNotificationEntries(
         chapterTitles,
       };
     })
-    .filter((entry): entry is LibraryUpdateNotification => Boolean(entry))
+    .filter(isPresent)
     .sort((left, right) => right.chapterDelta - left.chapterDelta || left.mangaTitle.localeCompare(right.mangaTitle));
 }
 

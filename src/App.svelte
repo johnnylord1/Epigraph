@@ -3,7 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { getVersion } from "@tauri-apps/api/app";
-  import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { getCurrentWindow, type Window as TauriWindow } from "@tauri-apps/api/window";
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
   import { getServerAuthHeader, gql, gqlUpload } from "./lib/client";
   import { getServerTargetInfo } from "./lib/serverTarget";
@@ -89,9 +89,9 @@
   import {
     listenSyncdReplicationError,
     listenSyncdReplicationState,
-    type TrackerCompletionTracker,
     type SyncdReplicationSnapshot,
   } from "./lib/syncdDesktop";
+  import type { TrackerCompletionTracker } from "./lib/library/completion";
   import { createBooksCategory, getBooksUpdateExcludedBookIds, sortBooksCategories } from "./lib/library/domainCategories";
   import type { Category, Chapter, DownloadStatus, DownloadQueueItem, Manga, Tracker } from "./lib/types";
   import type { ActiveDownload } from "./store/state.svelte";
@@ -177,7 +177,7 @@
 
   const MAX_ATTEMPTS = 10;
   const STARTUP_FAILSAFE_MS = 18_000;
-  let win: Window | null = null;
+  let win: TauriWindow | null = null;
   let isNovelRuntimeHostWindow = $state(false);
 
 
@@ -191,7 +191,7 @@
   let startupFailureDetail = $state("Aethon couldn't reach the selected local profile.");
   let startupStatusText = $state("Initializing profile");
   let startupHealthWatchInFlight = false;
-  let startupFailsafeTimer: ReturnType<typeof window.setTimeout> | null = null;
+  let startupFailsafeTimer: number | null = null;
   let idle          = $state(false);
   let uiMotionActive = $state(true);
   let prefersReducedMotion = $state(false);
@@ -213,7 +213,7 @@
   let platformScale = $state(1.0);
   let _appliedZoom = -1;
   let _vhRafId: number | null = null;
-  let uiMotionIdleTimer: ReturnType<typeof window.setTimeout> | null = null;
+  let uiMotionIdleTimer: number | null = null;
   const HUD_BASE_WIDTH = 1440;
   const HUD_BASE_HEIGHT = 900;
   const HUD_MIN_SCALE = 0.82;
@@ -347,6 +347,46 @@
   let automaticLibraryUpdateInFlight: Promise<void> | null = null;
   let standbyInFlight = false;
   let staleLibraryUpdateCheckTimer: ReturnType<typeof setTimeout> | null = null;
+
+  async function handleReplicationState(payload: SyncdReplicationSnapshot) {
+    if (!payload.lastAppliedAtMs || payload.lastAppliedScopes.length === 0) return;
+    if (syncdAppliedMarks.get(payload.localProfileId) === payload.lastAppliedAtMs) return;
+    syncdAppliedMarks.set(payload.localProfileId, payload.lastAppliedAtMs);
+
+    if (payload.lastAppliedScopes.includes("books:global")) {
+      try {
+        const { reloadBookLibraryState } = await import("./lib/books/libraryState");
+        const next = await reloadBookLibraryState({ profileId: store.runtimeResolvedLocalProfileId });
+        replaceBooksState({
+          books: next.books,
+          bookProgress: next.bookProgress,
+          bookBookmarks: next.bookBookmarks,
+          booksCategories: next.booksCategories,
+          booksCategoryAssignments: next.booksCategoryAssignments,
+          booksLibraryUi: next.booksLibraryUi,
+        });
+      } catch (error) {
+        console.warn("Failed to refresh books after syncd replication apply:", error);
+      }
+    }
+
+    if (payload.lastAppliedScopes.some((scope) => scope.startsWith("novels:profile:"))) {
+      const currentProfileId =
+        normalizeLocalProfileIdFromSession(store.runtimeResolvedLocalProfileId)
+        ?? normalizeLocalProfileIdFromSession(store.settings.defaultLocalProfileId);
+      if (currentProfileId && payload.localProfileId === currentProfileId) {
+        try {
+          const { reloadNovelLibraryState } = await import("./lib/novels/libraryState");
+          await reloadNovelLibraryState({ profileId: currentProfileId });
+          const { reloadNovelSourceClassificationState } = await import("./lib/novels/sourceClassificationState");
+          await reloadNovelSourceClassificationState({ profileId: currentProfileId });
+        } catch (error) {
+          console.warn("Failed to refresh novels after syncd replication apply:", error);
+        }
+        store.bumpContentSetupVersion();
+      }
+    }
+  }
 
   const AUTOMATIC_LIBRARY_UPDATE_SETTLE_MS = 3 * 60 * 1000;
 
@@ -849,6 +889,8 @@
     openFirstReader: () => Promise<void>;
     openFirstBook: () => Promise<void>;
     openFirstBookReader: () => Promise<void>;
+    openFirstPdfBook: () => Promise<void>;
+    openFirstNovel: () => Promise<void>;
     getState: () => {
       navPage: string;
       librarySection: string;
@@ -916,7 +958,7 @@
     disableMediaAudit: () => void;
   };
 
-  type AethonAuditWindow = Window & {
+  type AethonAuditWindow = globalThis.Window & {
     __aethonShowSplash?: () => void;
     __aethonAudit?: AethonAuditBridge;
     __aethonMediaAudit?: boolean;
@@ -2573,45 +2615,6 @@
     let unlistenScale = () => {};
     let unlistenFocus = () => {};
     let probeStarted = false;
-    async function handleReplicationState(payload: SyncdReplicationSnapshot) {
-      if (!payload.lastAppliedAtMs || payload.lastAppliedScopes.length === 0) return;
-      if (syncdAppliedMarks.get(payload.localProfileId) === payload.lastAppliedAtMs) return;
-      syncdAppliedMarks.set(payload.localProfileId, payload.lastAppliedAtMs);
-
-      if (payload.lastAppliedScopes.includes("books:global")) {
-        try {
-          const { reloadBookLibraryState } = await import("./lib/books/libraryState");
-          const next = await reloadBookLibraryState({ profileId: store.runtimeResolvedLocalProfileId });
-          replaceBooksState({
-            books: next.books,
-            bookProgress: next.bookProgress,
-            bookBookmarks: next.bookBookmarks,
-            booksCategories: next.booksCategories,
-            booksCategoryAssignments: next.booksCategoryAssignments,
-            booksLibraryUi: next.booksLibraryUi,
-          });
-        } catch (error) {
-          console.warn("Failed to refresh books after syncd replication apply:", error);
-        }
-      }
-
-      if (payload.lastAppliedScopes.some((scope) => scope.startsWith("novels:profile:"))) {
-        const currentProfileId =
-          normalizeLocalProfileIdFromSession(store.runtimeResolvedLocalProfileId)
-          ?? normalizeLocalProfileIdFromSession(store.settings.defaultLocalProfileId);
-        if (currentProfileId && payload.localProfileId === currentProfileId) {
-          try {
-            const { reloadNovelLibraryState } = await import("./lib/novels/libraryState");
-            await reloadNovelLibraryState({ profileId: currentProfileId });
-            const { reloadNovelSourceClassificationState } = await import("./lib/novels/sourceClassificationState");
-            await reloadNovelSourceClassificationState({ profileId: currentProfileId });
-          } catch (error) {
-            console.warn("Failed to refresh novels after syncd replication apply:", error);
-          }
-          store.bumpContentSetupVersion();
-        }
-      }
-    }
     const ensureProbeStarted = () => {
       if (probeStarted || cancelled) return;
       probeStarted = true;
