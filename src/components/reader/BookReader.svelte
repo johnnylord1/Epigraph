@@ -131,10 +131,12 @@
     return Array.from(new Set([...loaded, ...loading])).sort((left, right) => left - right);
   });
   const prosePalette = $derived.by(() => {
+    const textColor: string = store.settings.proseReaderTextColor ?? DEFAULT_PROSE_READER_TEXT_COLOR;
+    const backgroundColor: string = store.settings.proseReaderBackgroundColor ?? DEFAULT_PROSE_READER_BACKGROUND_COLOR;
     return resolveProseReaderPalette(
       proseTheme,
-      store.settings.proseReaderTextColor ?? DEFAULT_PROSE_READER_TEXT_COLOR,
-      store.settings.proseReaderBackgroundColor ?? DEFAULT_PROSE_READER_BACKGROUND_COLOR,
+      textColor,
+      backgroundColor,
     );
   });
   const pdfSections = $derived(
@@ -525,7 +527,7 @@
 
   function cycleProseTheme() {
     const themes = ["nocturne", "dark", "sepia", "light", "oled", "slate", "forest", "nord", "warm"] as const;
-    const current = themes.indexOf(proseTheme as any);
+    const current = themes.findIndex((theme) => theme === proseTheme);
     updateSettings({ proseReaderTheme: themes[(current + 1) % themes.length] });
   }
 
@@ -554,7 +556,7 @@
   }
 
   function updateProseColor(key: "text" | "background", value: string) {
-    const patch = key === "text"
+    const patch: Partial<typeof store.settings> = key === "text"
       ? { proseReaderTheme: "nocturne", proseReaderTextColor: value }
       : { proseReaderTheme: "nocturne", proseReaderBackgroundColor: value };
     if (activeBook?.subtype === "pdf" && pdfReflowMode) updateAnchoredReaderSettings(patch);

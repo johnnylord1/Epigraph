@@ -27,7 +27,7 @@
   let catsLoading:    boolean    = $state(false);
   let queueingAll              = $state(false);
   let fetchError: string|null  = $state(null);
-  let folderRef: HTMLDivElement = $state() as HTMLDivElement;
+  let folderRef: HTMLDivElement | undefined = $state();
 
   let linkPickerOpen  = $state(false);
   let linkSearch      = $state("");
@@ -81,13 +81,17 @@
   const unreadCount     = $derived(totalCount - readCount);
   const downloadedCount = $derived(chapters.filter((c) => c.isDownloaded).length);
   const bookmarkCount   = $derived(chapters.filter((c) => c.isBookmarked).length);
-  const inLibrary       = $derived(manga?.inLibrary ?? store.previewManga?.inLibrary ?? false);
+  const inLibrary       = $derived(resolveLibraryMembership(manga, store.previewManga));
   const scanlators      = $derived([...new Set(chapters.map((c) => c.scanlator).filter((s): s is string => !!s?.trim()))]);
   const uploadDates     = $derived(chapters.map((c) => c.uploadDate ? new Date(c.uploadDate).getTime() : null).filter((d): d is number => d !== null && !isNaN(d)));
   const firstUpload     = $derived(uploadDates.length ? new Date(Math.min(...uploadDates)) : null);
   const lastUpload      = $derived(uploadDates.length ? new Date(Math.max(...uploadDates)) : null);
   const statusLabel     = $derived(displayManga?.status ? displayManga.status.charAt(0) + displayManga.status.slice(1).toLowerCase() : null);
   const assignedFolders = $derived(normalizeCategories(mangaCategories).filter(c => c.id !== 0));
+
+  function resolveLibraryMembership(loadedManga: Manga | null, previewManga: Manga | null): boolean {
+    return loadedManga?.inLibrary ?? previewManga?.inLibrary ?? false;
+  }
 
   const continueChapter = $derived.by(() => {
     if (!chapters.length) return null;
@@ -548,8 +552,8 @@
   .read-btn { display: flex; align-items: center; gap: var(--component-manga-preview-read-gap); padding: var(--component-manga-preview-read-padding); border-radius: var(--component-manga-preview-read-radius); font-family: var(--component-manga-preview-font-ui); font-size: var(--component-manga-preview-action-font-size); letter-spacing: var(--component-manga-preview-action-letter-spacing); background: var(--component-manga-preview-read-bg); border: 1px solid var(--component-manga-preview-read-border); color: var(--component-manga-preview-read-fg); cursor: pointer; align-self: flex-start; transition: filter var(--component-manga-preview-transition-normal); }
   .read-btn:hover { filter: var(--component-manga-preview-read-hover-filter); }
   .desc-block { display: flex; flex-direction: column; gap: var(--component-manga-preview-desc-gap); border-top: 1px solid var(--component-manga-preview-divider); padding-top: var(--component-manga-preview-desc-padding-top); }
-  .desc { font-size: var(--component-manga-preview-body-font-size); color: var(--component-manga-preview-action-fg); line-height: var(--component-manga-preview-description-line-height); display: -webkit-box; -webkit-line-clamp: var(--component-manga-preview-description-line-clamp); -webkit-box-orient: vertical; overflow: hidden; }
-  .desc.desc-open { display: block; -webkit-line-clamp: unset; overflow: visible; }
+  .desc { font-size: var(--component-manga-preview-body-font-size); color: var(--component-manga-preview-action-fg); line-height: var(--component-manga-preview-description-line-height); display: -webkit-box; line-clamp: var(--component-manga-preview-description-line-clamp); -webkit-line-clamp: var(--component-manga-preview-description-line-clamp); -webkit-box-orient: vertical; overflow: hidden; }
+  .desc.desc-open { display: block; line-clamp: unset; -webkit-line-clamp: unset; overflow: visible; }
   .desc-toggle { display: flex; align-items: center; gap: var(--component-manga-preview-desc-toggle-gap); font-family: var(--component-manga-preview-font-ui); font-size: var(--component-manga-preview-action-font-size); color: var(--component-manga-preview-muted-fg); background: transparent; border: none; cursor: pointer; padding: 0; align-self: flex-start; transition: color var(--component-manga-preview-transition-normal); }
   .desc-toggle:hover { color: var(--component-manga-preview-accent-fg); }
   .desc-caret { display: inline-flex; transition: transform var(--component-manga-preview-transition-normal); }

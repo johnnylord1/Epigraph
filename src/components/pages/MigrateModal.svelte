@@ -100,9 +100,13 @@
   let error: string | null  = $state(null);
   const readCount   = $derived(currentChapters.filter((c) => c.isRead).length);
   const totalCount  = $derived(currentChapters.length);
-  const chapterDiff = $derived(selectedMatch ? selectedMatch.chapters.length - totalCount : 0);
+  const chapterDiff = $derived(chapterDifference(selectedMatch, totalCount));
   const currentSteps = ["source", "search", "confirm"] as const satisfies Step[];
   const stepIdx = $derived(currentSteps.indexOf(step));
+
+  function chapterDifference(match: Match | null, currentTotal: number): number {
+    return match ? match.chapters.length - currentTotal : 0;
+  }
 
   async function attemptWakeWithDeadline(timeoutMs = 3500) {
     const wake = ensureServerAwakeFor("series-detail", {
@@ -573,7 +577,7 @@
   .confirm-manga { display: flex; flex-direction: column; align-items: center; gap: var(--sp-2); flex: 1; max-width: 160px; }
   .confirm-cover-wrap { width: 100%; aspect-ratio: 2/3; border-radius: var(--radius-md); overflow: hidden; background: var(--bg-raised); border: 1px solid var(--border-dim); }
   .confirm-cover { width: 100%; height: 100%; object-fit: cover; }
-  .confirm-title { font-size: var(--text-xs); color: var(--text-secondary); text-align: center; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: var(--leading-snug); }
+  .confirm-title { font-size: var(--text-xs); color: var(--text-secondary); text-align: center; display: -webkit-box; line-clamp: 2; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: var(--leading-snug); }
   .confirm-source { font-family: var(--font-ui); font-size: var(--text-2xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); text-align: center; }
   .confirm-divider { display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
   :global(.confirm-arrow) { color: var(--text-faint); }

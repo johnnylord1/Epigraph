@@ -203,7 +203,7 @@
       .join(" ");
   }
 
-  function effectiveSessionConnectionStatus(session: PersistedSyncSessionView): string {
+  function effectiveSessionConnectionStatus(session: PersistedSyncSessionView): SyncdDesktopConnectionStatus {
     return lastReconnectStatuses[session.sessionKey]?.status ?? session.lastKnownStatus;
   }
 
@@ -218,7 +218,9 @@
     return parts.join(" | ");
   }
 
-  function connectStatusTone(status: SyncdDesktopConnectionStatus | SyncdHostPairingState["status"]): string {
+  function connectStatusTone(
+    status: SyncdDesktopConnectionStatus | SyncdHostPairingState["status"],
+  ): "success" | "info" | "danger" | "neutral" {
     if (status === "approved" || status === "connected") return "success";
     if (status === "claimed" || status === "pending") return "info";
     if (
@@ -392,10 +394,12 @@
     hostStartStage = "requesting";
     panelError = null;
     try {
-      host = mergeHostState(host, await syncdStartHostPairing(activeProfileId));
+      const startedHost = await syncdStartHostPairing(activeProfileId);
+      const nextHost = mergeHostState(host, startedHost) ?? startedHost;
+      host = nextHost;
       hostStartStage = "bootstrap_ready";
-      bootstrapBundleInput = host.bootstrapBundle;
-      qrCodeDataUrl = await buildSyncdQrDataUrl(host.bootstrapBundle);
+      bootstrapBundleInput = nextHost.bootstrapBundle;
+      qrCodeDataUrl = await buildSyncdQrDataUrl(nextHost.bootstrapBundle);
       hostStartStage = "complete";
       copiedBundle = false;
       addToast({

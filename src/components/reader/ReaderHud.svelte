@@ -25,6 +25,7 @@
     onnext?: () => void;
     onjump?: (val: number) => void;
     onbookmark?: () => void;
+    toolsOpen?: boolean;
     settingsPopover?: Snippet;
     children?: Snippet;
   };
@@ -470,6 +471,7 @@
     border-radius: var(--component-reader-pill-radius);
     background: var(--reader-track-bg);
     outline: none;
+    appearance: none;
     -webkit-appearance: none;
     cursor: pointer;
     transition: background var(--component-reader-transition-fast);

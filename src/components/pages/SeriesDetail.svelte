@@ -313,7 +313,8 @@
   let sortMenuOpen     = $state(false);
   let scanlatorMenuOpen = $state(false);
 
-  const sourceScanlatorFallback = $derived(manga?.source?.displayName ?? store.activeManga?.source?.displayName ?? "");
+  const displayedManga = $derived(resolveDisplayedManga(manga, store.activeManga));
+  const sourceScanlatorFallback = $derived(displayedManga?.source?.displayName ?? "");
   const scanlatorOptions = $derived(listScanlators(chapters, sourceScanlatorFallback));
   const mangaReaderPrefs = $derived.by(() => {
     const activeMangaId = store.activeManga?.id;
@@ -360,9 +361,13 @@
     return Number.isFinite(value) && Number(value) >= 0 ? Number(value) : null;
   }
 
-  const summaryChapterCount = $derived(countValue(manga?.chapterCount ?? store.activeManga?.chapterCount));
-  const summaryUnreadCount = $derived(optionalCountValue(manga?.unreadCount ?? store.activeManga?.unreadCount));
-  const summaryDownloadedCount = $derived(countValue(manga?.downloadCount ?? store.activeManga?.downloadCount));
+  function resolveDisplayedManga(loadedManga: Manga | null, activeManga: Manga | null): Manga | null {
+    return loadedManga ?? activeManga;
+  }
+
+  const summaryChapterCount = $derived(countValue(displayedManga?.chapterCount));
+  const summaryUnreadCount = $derived(optionalCountValue(displayedManga?.unreadCount));
+  const summaryDownloadedCount = $derived(countValue(displayedManga?.downloadCount));
   const totalCount     = $derived(chapters.length > 0 ? chapters.length : summaryChapterCount);
   const unreadCount    = $derived(chapters.length > 0 ? chapters.filter(c => !c.isRead).length : Math.min(summaryUnreadCount ?? totalCount, totalCount));
   const readCount      = $derived(Math.max(0, totalCount - unreadCount));

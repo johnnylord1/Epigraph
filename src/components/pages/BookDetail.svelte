@@ -104,8 +104,10 @@
   const booksLibraryReady = $derived(store.booksLibraryHydrated);
 
   const activeBook = $derived(
-    (store.activeBookId && store.books.find((book) => book.id === store.activeBookId))
-    ?? (store.activeBookId ? peekPersistedBookEntry(store.activeBookId) : null),
+    store.activeBookId
+      ? store.books.find((book) => book.id === store.activeBookId)
+        ?? peekPersistedBookEntry(store.activeBookId)
+      : null,
   );
   const activeProgress = $derived(
     activeBook
@@ -594,7 +596,7 @@
       await removeBookAssets(removed.assetPath, removed.coverPath);
       addToast({
         kind: "info",
-        title: translate("ui_removedFromLibrary"),
+        title: t("ui_removedFromLibrary"),
         body: removed.title,
       });
     } catch (error) {
@@ -602,7 +604,7 @@
         error instanceof Error ? error.message : "Book files could not be fully removed.";
       addToast({
         kind: "info",
-        title: translate("ui_removedFromLibrary"),
+        title: t("ui_removedFromLibrary"),
         body: `${removed.title} (${message})`,
       });
     }

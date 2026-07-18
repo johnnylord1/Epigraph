@@ -265,10 +265,12 @@
   const proseFontFamily = $derived(store.settings.proseReaderFontFamily || "Georgia, serif");
   const proseTextAlign = $derived(store.settings.proseReaderTextAlign ?? "left");
   const prosePalette = $derived.by(() => {
+    const textColor: string = store.settings.proseReaderTextColor ?? DEFAULT_PROSE_READER_TEXT_COLOR;
+    const backgroundColor: string = store.settings.proseReaderBackgroundColor ?? DEFAULT_PROSE_READER_BACKGROUND_COLOR;
     return resolveProseReaderPalette(
       proseTheme,
-      store.settings.proseReaderTextColor ?? DEFAULT_PROSE_READER_TEXT_COLOR,
-      store.settings.proseReaderBackgroundColor ?? DEFAULT_PROSE_READER_BACKGROUND_COLOR,
+      textColor,
+      backgroundColor,
     );
   });
   const readerErrorIsSourceChallenge = $derived(error ? isSourceChallengeMessage(error) : false);
@@ -301,7 +303,7 @@
 
   function cycleProseTheme() {
     const themes = ["nocturne", "dark", "sepia", "light", "oled", "slate", "forest", "nord", "warm"] as const;
-    const current = themes.indexOf(proseTheme as any);
+    const current = themes.findIndex((theme) => theme === proseTheme);
     updateSettings({ proseReaderTheme: themes[(current + 1) % themes.length] });
   }
 

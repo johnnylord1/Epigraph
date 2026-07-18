@@ -42,7 +42,7 @@
     serverUrl: store.runtimeServerUrl,
   });
   let activeTab: TabId = $state("records");
-  let state: HardcoverTrackingState = $state(loadHardcoverState());
+  let trackingState: HardcoverTrackingState = $state(loadHardcoverState());
   let searchQuery = $state("");
   let searchResults: HardcoverBookSearchResult[] = $state([]);
   let brokenCoverIds: Set<number> = $state(new Set());
@@ -55,18 +55,18 @@
   let error: string | null = $state(null);
   let searchInited = $state(false);
 
-  const record = $derived(findHardcoverRecordForNovel(state.records, {
+  const record = $derived(findHardcoverRecordForNovel(trackingState.records, {
     novelId: sourceNovelId,
     title,
   }));
-  const loggedIn = $derived(state.auth.connected && Boolean(state.auth.token));
+  const loggedIn = $derived(trackingState.auth.connected && Boolean(trackingState.auth.token));
   const scoreOptions = ["", "0.5", "1.0", "1.5", "2.0", "2.5", "3.0", "3.5", "4.0", "4.5", "5.0"];
   const statusOptions = ["Want to Read", "Currently Reading", "Read", "Did Not Finish"];
 
   $effect(() => {
     sourceNovelId;
     title;
-    state = loadHardcoverState(scopeInput);
+    trackingState = loadHardcoverState(scopeInput);
     searchQuery = title;
     searchResults = [];
     brokenCoverIds = new Set();
@@ -134,7 +134,7 @@
         hardcoverBookId: book.id,
         hardcoverCoverUrl: book.coverUrl,
       });
-      state = loadHardcoverState(scopeInput);
+      trackingState = loadHardcoverState(scopeInput);
       searchResults = [];
       activeTab = "records";
       addToast({ kind: "success", title: translate("ui_nowTracking"), body: book.title });
@@ -157,7 +157,7 @@
         rating: patch.rating ?? record.rating,
         progress: record.progress,
       });
-      state = loadHardcoverState(scopeInput);
+      trackingState = loadHardcoverState(scopeInput);
     } catch (err: any) {
       error = err?.message ?? "Hardcover update failed";
     } finally {
@@ -166,7 +166,7 @@
   }
 
   function unbind(record: HardcoverNovelTrackRecord) {
-    state = unlinkHardcoverRecord(scopeInput, sourceNovelId, record.bookId);
+    trackingState = unlinkHardcoverRecord(scopeInput, sourceNovelId, record.bookId);
     void onHardcoverLinkChanged?.({
       hardcoverBookId: null,
       hardcoverCoverUrl: null,

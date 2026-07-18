@@ -18,8 +18,8 @@ export const DEFAULT_PROSE_READER_BACKGROUND_COLOR = PROSE_READER_PALETTES.noctu
 
 export function resolveProseReaderPalette(
   theme: string,
-  customText = DEFAULT_PROSE_READER_TEXT_COLOR,
-  customBackground = DEFAULT_PROSE_READER_BACKGROUND_COLOR,
+  customText: string = DEFAULT_PROSE_READER_TEXT_COLOR,
+  customBackground: string = DEFAULT_PROSE_READER_BACKGROUND_COLOR,
 ): ProseReaderPalette {
   if (theme !== "nocturne" && theme in PROSE_READER_PALETTES) {
     return PROSE_READER_PALETTES[theme as ProseReaderThemeId];

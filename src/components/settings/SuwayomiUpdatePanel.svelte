@@ -29,10 +29,10 @@
     | "userManagedBinary"
     | "blocked";
 
-  let runtime: SuwayomiRuntimeStatus | null = $state(null);
-  let checkResult: SuwayomiUpdateCheckResult | null = $state(null);
-  let staged: SuwayomiUpdateStageResult | null = $state(null);
-  let state: UpdateUiState = $state("checking");
+  let runtime = $state<SuwayomiRuntimeStatus | null>(null);
+  let checkResult = $state<SuwayomiUpdateCheckResult | null>(null);
+  let staged = $state<SuwayomiUpdateStageResult | null>(null);
+  let uiState = $state<UpdateUiState>("checking");
   let message = $state("");
   let detailsOpen = $state(false);
   let changelogOpen = $state(false);
@@ -41,10 +41,10 @@
   let closeButton: HTMLButtonElement | null = $state(null);
   let operationSerial = 0;
 
-  const busy = $derived(["checking", "downloading", "installing", "restarting", "rollingBack"].includes(state));
+  const busy = $derived(["checking", "downloading", "installing", "restarting", "rollingBack"].includes(uiState));
   const canCheck = $derived(Boolean(runtime?.updateAllowed) && !busy);
   const canDownload = $derived(checkResult?.status === "updateAvailable" && !staged && !busy);
-  const canInstall = $derived(Boolean(staged) && state === "readyToInstall" && !busy);
+  const canInstall = $derived(Boolean(staged) && uiState === "readyToInstall" && !busy);
   const releaseNotes = $derived((checkResult?.releaseNotes ?? "").trim());
   const hasChangelog = $derived(Boolean(releaseNotes));
   const currentVersion = $derived(checkResult?.currentVersion ?? runtime?.version ?? $_("suwayomi.update.unknown"));
@@ -54,21 +54,21 @@
   function applyRuntimeStatus(status: SuwayomiRuntimeStatus) {
     runtime = status;
     if (status.mode === "external") {
-      state = "external";
+      uiState = "external";
       message = status.blockReason ?? $_("suwayomi.update.externalBlocked");
       return;
     }
     if (status.mode === "managed-user-binary") {
-      state = "userManagedBinary";
+      uiState = "userManagedBinary";
       message = status.blockReason ?? $_("suwayomi.update.userBinaryBlocked");
       return;
     }
     if (!status.updateAllowed) {
-      state = "blocked";
+      uiState = "blocked";
       message = status.blockReason ?? $_("suwayomi.update.runtimeBlocked");
       return;
     }
-    state = "upToDate";
+    uiState = "upToDate";
     message = status.version
       ? $_("suwayomi.update.currentRuntime", { version: status.version })
       : $_("suwayomi.update.managedRuntimeDetected");
@@ -95,11 +95,11 @@
   }
 
   function fail(error: unknown) {
-    state = String(error).toLowerCase().includes("rollback") ? "rollingBack" : "failed";
+    uiState = String(error).toLowerCase().includes("rollback") ? "rollingBack" : "failed";
     message = formatUpdaterError(error);
-    if (state === "rollingBack") {
+    if (uiState === "rollingBack") {
       setTimeout(() => {
-        state = "failed";
+        uiState = "failed";
       }, 900);
     }
   }
@@ -107,23 +107,23 @@
   function applyCheckResult(result: SuwayomiUpdateCheckResult) {
     checkResult = result;
     if (result.status === "updateAvailable") {
-      state = "updateAvailable";
+      uiState = "updateAvailable";
       message = $_("suwayomi.update.availableMessage", { version: result.latestCompatibleVersion ?? result.releaseTag ?? $_("suwayomi.update.unknown") });
     } else if (result.status === "upToDate") {
-      state = "upToDate";
+      uiState = "upToDate";
       message = $_("suwayomi.update.upToDateMessage");
     } else if (result.status === "blocked") {
-      state = "blocked";
+      uiState = "blocked";
       message = result.blockReason ?? $_("suwayomi.update.noCompatibleUpdate");
     } else {
-      state = "failed";
+      uiState = "failed";
       message = result.blockReason ?? $_("suwayomi.update.checkFailedMessage");
     }
   }
 
   async function refreshRuntime() {
     const operation = nextOperation();
-    state = "checking";
+    uiState = "checking";
     message = $_("suwayomi.update.checkingRuntime");
     try {
       const status = await getSuwayomiRuntimeStatus();
@@ -138,7 +138,7 @@
   async function checkUpdates(force = false) {
     if (!force && !canCheck) return;
     const operation = nextOperation();
-    state = "checking";
+    uiState = "checking";
     message = $_("suwayomi.update.checkingReleases");
     staged = null;
     try {
@@ -154,13 +154,13 @@
   async function downloadUpdate() {
     if (!canDownload || !checkResult?.latestCompatibleVersion) return;
     const operation = nextOperation();
-    state = "downloading";
+    uiState = "downloading";
     message = $_("suwayomi.update.downloadingVersion", { version: checkResult.latestCompatibleVersion });
     try {
       const result = await stageSuwayomiRuntimeUpdate({ targetVersion: checkResult.latestCompatibleVersion });
       if (!isCurrentOperation(operation)) return;
       staged = result;
-      state = "readyToInstall";
+      uiState = "readyToInstall";
       message = $_("suwayomi.update.readyToInstallMessage", { version: staged.version });
     } catch (error) {
       if (!isCurrentOperation(operation)) return;
@@ -171,10 +171,10 @@
   async function installUpdate() {
     if (!canInstall || !staged) return;
     const operation = nextOperation();
-    state = "installing";
+    uiState = "installing";
     message = $_("suwayomi.update.creatingSnapshot");
     try {
-      state = "restarting";
+      uiState = "restarting";
       message = $_("suwayomi.update.installingRestarting");
       await installSuwayomiRuntimeUpdate({
         stagedVersion: staged.version,
@@ -261,7 +261,7 @@
       <p class="settings-mini-row__label">Suwayomi</p>
       <p class="settings-mini-row__hint">{currentVersion} - {runtime?.mode ?? $_("suwayomi.update.runtimeChecking")}</p>
     </div>
-    <span class="suwayomi-update-pill" data-state={state}>{stateLabel(state)}</span>
+    <span class="suwayomi-update-pill" data-state={uiState}>{stateLabel(uiState)}</span>
     <button
       bind:this={detailsButton}
       class="n-btn n-btn--sm n-btn-ghost"
@@ -296,7 +296,7 @@
       </div>
 
       <div class="suwayomi-update-modal__status">
-        <span class="suwayomi-update-pill" data-state={state}>{stateLabel(state)}</span>
+        <span class="suwayomi-update-pill" data-state={uiState}>{stateLabel(uiState)}</span>
         <span>{message}</span>
       </div>
 
@@ -342,14 +342,14 @@
   </div>
 
       <div class="settings-card__footer settings-card__footer--actions">
-        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={checkUpdates} disabled={!canCheck}>
-          {state === "checking" ? $_("suwayomi.update.state.checking") : $_("suwayomi.update.checkForUpdates")}
+        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => checkUpdates()} disabled={!canCheck}>
+          {uiState === "checking" ? $_("suwayomi.update.state.checking") : $_("suwayomi.update.checkForUpdates")}
         </button>
         <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={downloadUpdate} disabled={!canDownload}>
-          {state === "downloading" ? $_("suwayomi.update.state.downloading") : $_("suwayomi.update.downloadUpdate")}
+          {uiState === "downloading" ? $_("suwayomi.update.state.downloading") : $_("suwayomi.update.downloadUpdate")}
         </button>
         <button class="n-btn n-btn--sm" type="button" onclick={installUpdate} disabled={!canInstall}>
-          {state === "installing" || state === "restarting" ? $_("suwayomi.update.state.installing") : $_("suwayomi.update.installUpdate")}
+          {uiState === "installing" || uiState === "restarting" ? $_("suwayomi.update.state.installing") : $_("suwayomi.update.installUpdate")}
         </button>
       </div>
   </dialog>
