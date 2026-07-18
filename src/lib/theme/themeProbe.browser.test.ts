@@ -28,19 +28,7 @@ const surfaceTokens = [
   "--component-updater-status-bg",
 ] as const;
 
-const nocturneCompatibilityAliases = [
-  "--n-surface-container-high",
-  "--n-surface-container-highest",
-  "--n-primary",
-  "--n-primary-container",
-  "--n-on-primary",
-  "--n-on-surface",
-  "--n-on-surface-variant",
-  "--n-gradient-primary",
-] as const;
-
 const nocturnePortTokens = [
-  ...nocturneCompatibilityAliases,
   "--component-splash-ink-source",
   "--component-splash-danger-source",
   "--component-splash-background-base-source",
@@ -172,7 +160,7 @@ describe("test-only theme probe", () => {
       const builtinShadow = computedShadow("--component-card-shadow");
       const builtinRadius = computedToken("--component-toast-radius");
 
-      expect(exactProperties).toHaveLength(295);
+      expect(exactProperties).toHaveLength(281);
       expect(applyCustomTheme(root, {
         version: 5,
         id: "custom:empty-nocturne-browser",
@@ -228,9 +216,6 @@ describe("test-only theme probe", () => {
       for (const property of probeProperties) root.style.removeProperty(property);
       await new Promise(requestAnimationFrame);
       const builtin = new Map(surfaceTokens.map((token) => [token, computedBackground(token)]));
-      const builtinCompatibility = new Map(
-        nocturneCompatibilityAliases.map((token) => [token, computedToken(token)]),
-      );
       const builtinFocusShadow = computedShadow("--shadow-focus");
       const builtinToastRadius = computedToken("--component-toast-radius");
       const builtinMotion = new Map(
@@ -262,13 +247,6 @@ describe("test-only theme probe", () => {
         expect(value, `${token} must resolve in a custom Nocturne-based theme`).not.toBe("");
         expect(value, `${token} must not become transparent`).not.toBe(transparentBackground);
         expect(value, `${token} must respond to the custom V5 contract`).not.toBe(builtin.get(token));
-      }
-      for (const token of nocturneCompatibilityAliases) {
-        const value = computedToken(token);
-        expect(value, `${token} must resolve through the custom V5 provider`).not.toBe("");
-        expect(value, `${token} must respond to the custom V5 provider`).not.toBe(
-          builtinCompatibility.get(token),
-        );
       }
       expect(computedToken("--component-toast-radius")).toBe(THEME_PROBE_HUD_TOKENS["hud-toast-radius"]);
       expect(computedToken("--component-toast-radius")).not.toBe(builtinToastRadius);
@@ -394,7 +372,7 @@ describe("test-only theme probe", () => {
       const sourceNames = builtinExactSourceNames();
       const builtin = new Map(sourceNames.map((token) => [token, computedToken(token)]));
 
-      expect(sourceNames).toHaveLength(238);
+      expect(sourceNames).toHaveLength(224);
       applyProbeContract(true);
       await new Promise(requestAnimationFrame);
       const custom = new Map(sourceNames.map((token) => [token, computedToken(token)]));

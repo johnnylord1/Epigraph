@@ -1,42 +1,10 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
-import { THEME_TOKEN_KEYS } from "./contract";
 
 const ROOT = process.cwd();
 const PORT_PATH = "src/styles/nocturne-port.css";
 const PORT_LEGACY_TOKENS: string[] = [];
-const PORT_N_REFERENCES: string[] = [];
-const ACTIVE_GEOMETRY_BRIDGES = new Map([
-  ["--n-hud-scale", "--hud-scale"],
-  ["--n-topbar-height-base", "--shell-topbar-height-base"],
-  ["--n-sidebar-width-base", "--shell-sidebar-width-base"],
-  ["--n-topbar-height", "--shell-topbar-height"],
-  ["--n-sidebar-width", "--shell-sidebar-width"],
-  ["--n-sidebar-rail-width", "--shell-sidebar-rail-width"],
-  ["--n-sidebar-edge-x", "--shell-sidebar-edge-x"],
-  ["--n-sidebar-edge-y", "--shell-sidebar-edge-y"],
-  ["--n-sidebar-radius", "--shell-sidebar-radius"],
-  ["--n-sidebar-padding-y", "--shell-sidebar-padding-y"],
-  ["--n-sidebar-gap", "--shell-sidebar-gap"],
-  ["--n-sidebar-btn-size", "--shell-sidebar-button-size"],
-  ["--n-sidebar-btn-radius", "--shell-sidebar-button-radius"],
-  ["--n-brand-size", "--shell-brand-size"],
-  ["--n-brand-offset-top", "--shell-brand-offset-top"],
-  ["--n-brand-offset-bottom", "--shell-brand-offset-bottom"],
-  ["--n-topbar-pad-x", "--shell-topbar-padding-x"],
-  ["--n-topbar-gap", "--shell-topbar-gap"],
-  ["--n-search-width", "--shell-search-width"],
-  ["--n-search-width-focus", "--shell-search-width-focus"],
-  ["--n-search-height", "--shell-search-height"],
-  ["--n-search-icon-offset", "--shell-search-icon-offset"],
-  ["--n-search-icon-size", "--shell-search-icon-size"],
-  ["--n-search-padding-right", "--shell-search-padding-right"],
-  ["--n-search-padding-left", "--shell-search-padding-left"],
-  ["--n-icon-btn-size", "--shell-icon-button-size"],
-  ["--n-icon-btn-radius", "--shell-icon-button-radius"],
-  ["--n-segmented-height", "--shell-segmented-height"],
-] as const);
 const DIRECT_COLOR_PATTERN = /#[0-9A-Fa-f]{3,8}\b|rgba?\(|hsla?\(|oklch\(|(?<![-\w])(?:white|black)(?![-\w])/g;
 const PORT_DERIVED_SINGLE_SOURCES = [
   "--color-chip-surface-source",
@@ -55,16 +23,6 @@ const PORT_DERIVED_COMPONENT_ALIASES = new Map([
   ["--color-recommendation-pill-light-source", "--component-sources-metric-recommendation-light-source"],
   ["--color-soft-control-text-source", "--component-soft-control-fg-source"],
 ]);
-const PORT_N_COLOR_ALIASES = new Map([
-  ["--n-surface-container-high", "--color-modal"],
-  ["--n-surface-container-highest", "--color-surface-secondary"],
-  ["--n-primary", "--color-accent"],
-  ["--n-primary-container", "--accent-bright"],
-  ["--n-on-primary", "--color-on-accent-strong"],
-  ["--n-on-surface", "--text-primary"],
-  ["--n-on-surface-variant", "--text-secondary"],
-  ["--n-gradient-primary", "--gradient-accent-primary"],
-] as const);
 
 function readProjectFile(path: string) {
   return readFileSync(resolve(ROOT, path), "utf8");
@@ -115,28 +73,6 @@ function componentAliasForSource(source: string): string {
   return PORT_DERIVED_COMPONENT_ALIASES.get(source) ?? source.replace("--color-", "--component-");
 }
 
-function declarationMap(source: string): Map<string, string> {
-  return new Map(
-    Array.from(source.matchAll(/^\s*(--[A-Za-z0-9_-]+)\s*:\s*([\s\S]*?);/gm), (match) => [
-      match[1],
-      match[2].trim(),
-    ]),
-  );
-}
-
-function reachesAny(
-  token: string,
-  roots: ReadonlySet<string>,
-  values: ReadonlyMap<string, string>,
-  seen = new Set<string>(),
-): boolean {
-  if (roots.has(token)) return true;
-  if (seen.has(token)) return false;
-  const nextSeen = new Set(seen).add(token);
-  return Array.from((values.get(token) ?? "").matchAll(/var\((--[A-Za-z0-9_-]+)/g), (match) => match[1])
-    .some((reference) => reachesAny(reference, roots, values, nextSeen));
-}
-
 describe("Nocturne port compatibility contract", () => {
   test("keeps the port last in the active CSS cascade", () => {
     const globalCss = readProjectFile("src/styles/global.css");
@@ -170,52 +106,14 @@ describe("Nocturne port compatibility contract", () => {
     );
   });
 
-  test("keeps only audited Legacy --n-* references in the active port", () => {
-    expect(references(readProjectFile(PORT_PATH), "--n-")).toEqual(PORT_N_REFERENCES);
-  });
-
-  test("derives all 28 former active geometry aliases from canonical shell tokens", () => {
+  test("retires compatibility aliases while preserving canonical shell geometry", () => {
     const port = readProjectFile(PORT_PATH);
-    const fallbackValues = declarationMap(readProjectFile("src/styles/tokens.css"));
-    const nocturneValues = declarationMap(readProjectFile("src/styles/nocturne-theme.css"));
+    const themeLayers = `${readProjectFile("src/styles/tokens.css")}\n${readProjectFile("src/styles/nocturne-theme.css")}`;
 
-    expect(ACTIVE_GEOMETRY_BRIDGES).toHaveLength(28);
-    for (const [alias, canonical] of ACTIVE_GEOMETRY_BRIDGES) {
-      expect(fallbackValues.get(alias), `${alias} fallback bridge`).toBe(`var(${canonical})`);
-      expect(nocturneValues.get(alias), `${alias} Nocturne bridge`).toBe(`var(${canonical})`);
-      expect(port, `${alias} active port consumer`).not.toContain(`var(${alias}`);
-    }
-  });
-
-  test("keeps active port color and motion consumers on canonical tokens", () => {
-    const port = readProjectFile(PORT_PATH);
-    const migratedAliases = [
-      "--n-duration-fast",
-      "--n-duration-normal",
-      "--n-ease-spring",
-      "--n-gradient-primary",
-      "--n-on-primary",
-      "--n-on-surface",
-      "--n-on-surface-variant",
-      "--n-primary",
-      "--n-primary-container",
-    ];
-
-    for (const token of migratedAliases) expect(port).not.toContain(`var(${token}`);
-  });
-
-  test("derives every referenced --n-* color alias from the editable theme contract", () => {
-    const tokens = readProjectFile("src/styles/tokens.css");
-    const nocturne = readProjectFile("src/styles/nocturne-theme.css");
-    const fallbackValues = declarationMap(tokens);
-    const nocturneValues = declarationMap(nocturne);
-    const editableRoots = new Set(THEME_TOKEN_KEYS.map((name) => `--${name}`));
-
-    expect(PORT_N_COLOR_ALIASES).toHaveLength(8);
-    for (const [alias, semantic] of PORT_N_COLOR_ALIASES) {
-      expect(nocturneValues.get(alias), `${alias} must be a semantic compatibility alias`).toBe(`var(${semantic})`);
-      expect(reachesAny(semantic, editableRoots, fallbackValues), `${alias} must reach the V4 contract`).toBe(true);
-    }
+    expect(references(port, "--n-")).toEqual([]);
+    expect(themeLayers).not.toMatch(/^\s*--n-[A-Za-z0-9_-]+\s*:/m);
+    expect(themeLayers).toContain("--shell-search-width-focus: calc(380px * var(--hud-scale));");
+    expect(themeLayers).toContain("--shell-sidebar-rail-width: calc(62px * var(--hud-scale));");
   });
 
   test("keeps all four port sections attached to active hosts", () => {

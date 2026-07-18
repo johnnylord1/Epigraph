@@ -943,7 +943,6 @@ async function captureSessionVisualState(instance, name, sessionKey) {
         viewport: { width: innerWidth, height: innerHeight },
         semanticTokens: {
           '--text-primary': rootStyle.getPropertyValue('--text-primary').trim(),
-          '--n-on-surface': rootStyle.getPropertyValue('--n-on-surface').trim(),
         },
         row: { rect: readRect(arguments[0]), style: readStyle(arguments[0]) },
         trigger: {

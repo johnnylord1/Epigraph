@@ -18,7 +18,7 @@ const CONTRAST_PAIRS = [
   ["text-primary/background", "--text-primary", "--color-background"],
   ["text-secondary/background", "--text-secondary", "--color-background"],
   ["text-primary/card", "--text-primary", "--component-card-bg"],
-  ["button", "--component-button-fg", "--component-button-bg"],
+  ["button", "--text-primary", "--component-button-bg"],
   ["input", "--component-input-fg", "--component-input-bg"],
   ["toast", "--component-toast-title-fg", "--component-toast-bg"],
 ];

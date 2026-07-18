@@ -6,7 +6,7 @@ const ROOT = process.cwd();
 const NOCTURNE_PATH = "src/styles/nocturne-theme.css";
 const PORT_PATH = "src/styles/nocturne-port.css";
 
-const LEGACY_BRIDGES = [
+const RETIRED_N_BRIDGES = [
   "--n-hud-scale",
   "--n-primary",
   "--n-primary-container",
@@ -54,7 +54,7 @@ const LEGACY_BRIDGES = [
   "--n-popover-item-hover",
 ] as const;
 
-const UNREFERENCED_LEGACY_ALIASES = [
+const RETIRED_N_ALIASES = [
   "--n-bg",
   "--n-bg-top",
   "--n-gradient-bg",
@@ -73,8 +73,6 @@ const UNREFERENCED_LEGACY_ALIASES = [
   "--n-toolbar-divider-height",
   "--n-toolbar-icon-btn-size",
 ] as const;
-
-const SELECTOR_ONLY_LEGACY_ALIASES = [] as const;
 
 const REMOVED_ACTIVITY_ALIASES = [
   "--activity-panel",
@@ -121,10 +119,6 @@ const AUTHORING_AND_STORE_FILES = [
   "src/store/state.svelte.ts",
 ] as const;
 
-const COMPATIBILITY_CONSUMER_FILES = new Set([
-  "src/styles/nocturne-port.css",
-]);
-
 function projectFiles(path: string): string[] {
   return readdirSync(resolve(ROOT, path), { withFileTypes: true }).flatMap((entry) => {
     const child = `${path}/${entry.name}`;
@@ -157,29 +151,23 @@ function declarations(source: string, prefix: string): string[] {
     .sort();
 }
 
-describe("Legacy theme retention evidence", () => {
+describe("Legacy theme retirement evidence", () => {
   const files = projectFiles("src");
   const nocturne = read(NOCTURNE_PATH);
   const port = read(PORT_PATH);
 
-  test("freezes all 62 --n-* aliases as retained compatibility inventory", () => {
-    const expected = [
-      ...LEGACY_BRIDGES,
-      ...UNREFERENCED_LEGACY_ALIASES,
-      ...SELECTOR_ONLY_LEGACY_ALIASES,
-    ].sort();
-
-    expect(declarations(nocturne, "--n-")).toEqual(expected);
-    expect(LEGACY_BRIDGES).toHaveLength(45);
-    expect(UNREFERENCED_LEGACY_ALIASES).toHaveLength(17);
-    expect(SELECTOR_ONLY_LEGACY_ALIASES).toHaveLength(0);
+  test("retires all 62 --n-* aliases from fallback, Nocturne, and the port", () => {
+    expect(RETIRED_N_BRIDGES).toHaveLength(45);
+    expect(RETIRED_N_ALIASES).toHaveLength(17);
+    expect(declarations(read("src/styles/tokens.css"), "--n-")).toEqual([]);
+    expect(declarations(nocturne, "--n-")).toEqual([]);
+    expect(declarations(port, "--n-")).toEqual([]);
   });
 
-  test("keeps active production independent from retained --n-* aliases", () => {
+  test("keeps active production independent from retired --n-* aliases", () => {
     const activeReferences = files
-      .filter((path) => !COMPATIBILITY_CONSUMER_FILES.has(path))
       .flatMap((path) =>
-        [...LEGACY_BRIDGES, ...UNREFERENCED_LEGACY_ALIASES, ...SELECTOR_ONLY_LEGACY_ALIASES]
+        [...RETIRED_N_BRIDGES, ...RETIRED_N_ALIASES]
           .filter((token) => referencesIn(path, token) > 0)
           .map((token) => `${path}:${token}`),
       );
@@ -196,13 +184,9 @@ describe("Legacy theme retention evidence", () => {
     expect(read("src/components/settings/Settings.svelte")).toContain("SyncdConnectionPanel");
   });
 
-  test("keeps the 17 non-bridge Legacy aliases unreferenced or selector-only", () => {
-    for (const token of UNREFERENCED_LEGACY_ALIASES) {
+  test("keeps every retired alias without static consumers", () => {
+    for (const token of [...RETIRED_N_BRIDGES, ...RETIRED_N_ALIASES]) {
       expect(files.reduce((count, path) => count + referencesIn(path, token), 0), token).toBe(0);
-    }
-    for (const token of SELECTOR_ONLY_LEGACY_ALIASES) {
-      const consumers = files.filter((path) => referencesIn(path, token) > 0);
-      expect(consumers, token).toEqual([PORT_PATH]);
     }
   });
 
@@ -247,34 +231,32 @@ describe("Legacy theme retention evidence", () => {
     }
   });
 
-  test("finds no literal dynamic API access for retained aliases", () => {
+  test("finds no literal dynamic API access for retired aliases", () => {
     const dynamicApiPattern = /(?:setProperty|getPropertyValue|removeProperty)\s*\(\s*["']([^"']+)["']/g;
     const dynamicTokens = files.flatMap((path) =>
       [...read(path).matchAll(dynamicApiPattern)].map((match) => `${path}:${match[1]}`),
     );
-    const retained = new Set<string>([
-      ...LEGACY_BRIDGES,
-      ...UNREFERENCED_LEGACY_ALIASES,
-      ...SELECTOR_ONLY_LEGACY_ALIASES,
+    const retired = new Set<string>([
+      ...RETIRED_N_BRIDGES,
+      ...RETIRED_N_ALIASES,
       ...REMOVED_ACTIVITY_ALIASES,
       ...REMOVED_COMPONENT_TOKENS,
       ...REMOVED_PORT_LOCAL_DECLARATIONS,
     ]);
 
-    expect(dynamicTokens.filter((entry) => retained.has(entry.slice(entry.indexOf(":") + 1)))).toEqual([]);
+    expect(dynamicTokens.filter((entry) => retired.has(entry.slice(entry.indexOf(":") + 1)))).toEqual([]);
   });
 
-  test("keeps retained aliases outside ThemeEditor, documents, presets, provider, and stores", () => {
-    const retained = [
-      ...LEGACY_BRIDGES,
-      ...UNREFERENCED_LEGACY_ALIASES,
-      ...SELECTOR_ONLY_LEGACY_ALIASES,
+  test("keeps retired aliases outside ThemeEditor, documents, presets, provider, and stores", () => {
+    const retired = [
+      ...RETIRED_N_BRIDGES,
+      ...RETIRED_N_ALIASES,
       ...REMOVED_ACTIVITY_ALIASES,
       ...REMOVED_COMPONENT_TOKENS,
       ...REMOVED_PORT_LOCAL_DECLARATIONS,
     ];
     const references = AUTHORING_AND_STORE_FILES.flatMap((path) =>
-      retained
+      retired
         .filter((token) => referencesIn(path, token) > 0)
         .map((token) => `${path}:${token}`),
     );

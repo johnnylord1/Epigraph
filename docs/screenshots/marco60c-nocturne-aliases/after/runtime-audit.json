@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "cdp": "http://127.0.0.1:9223",
+  "viewport": {
+    "width": 1280,
+    "height": 800
+  },
+  "surfaces": [
+    "nocturne-library-books.png",
+    "nocturne-context-menu.png",
+    "nocturne-browse-search.png",
+    "nocturne-browse-discover.png",
+    "nocturne-browse-sources.png",
+    "nocturne-source-overlay.png",
+    "nocturne-downloads.png",
+    "nocturne-settings.png",
+    "theme-nocturne-settings.png",
+    "nocturne-reader-pdf-hud.png"
+  ],
+  "limitations": [
+    "nocturne-reader-pdf-hud: captured the real loading state because PDF reflow did not settle within 30 seconds.",
+    "nocturne-toast-runtime: no real toast event was active; no synthetic toast was created."
+  ],
+  "themes": [
+    {
+      "theme": "nocturne",
+      "appliedTheme": "nocturne",
+      "customTheme": null,
+      "pairs": [
+        {
+          "label": "text-primary/background",
+          "foreground": "rgb(229, 226, 225)",
+          "background": "rgb(19, 19, 19)",
+          "canvas": "rgb(19, 19, 19)",
+          "ratio": 14.419
+        },
+        {
+          "label": "text-secondary/background",
+          "foreground": "rgb(202, 196, 208)",
+          "background": "rgb(19, 19, 19)",
+          "canvas": "rgb(19, 19, 19)",
+          "ratio": 10.899
+        },
+        {
+          "label": "text-primary/card",
+          "foreground": "rgb(229, 226, 225)",
+          "background": "rgb(32, 31, 31)",
+          "canvas": "rgb(19, 19, 19)",
+          "ratio": 12.76
+        },
+        {
+          "label": "button",
+          "foreground": "rgb(229, 226, 225)",
+          "background": "rgba(255, 255, 255, 0.035)",
+          "canvas": "rgb(19, 19, 19)",
+          "ratio": 13.331
+        },
+        {
+          "label": "input",
+          "foreground": "rgb(229, 226, 225)",
+          "background": "rgba(20, 19, 24, 0.72)",
+          "canvas": "rgb(19, 19, 19)",
+          "ratio": 14.367
+        },
+        {
+          "label": "toast",
+          "foreground": "rgb(232, 228, 235)",
+          "background": "rgba(0, 0, 0, 0)",
+          "canvas": "rgb(19, 19, 19)",
+          "ratio": 14.801
+        }
+      ],
+      "focus": {
+        "tag": "BUTTON",
+        "className": "n-sidebar__brand",
+        "outline": "rgb(129, 115, 214) solid 1px",
+        "outlineStyle": "solid",
+        "outlineWidth": "1px",
+        "boxShadow": "none",
+        "borderColor": "rgb(229, 226, 225)"
+      }
+    }
+  ]
+}

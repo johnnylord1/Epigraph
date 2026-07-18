@@ -17,19 +17,6 @@ const APP_FULLSCREEN_TOKENS = [
   "--component-app-fullscreen-exit-hover-bg",
   "--component-app-fullscreen-exit-hover-fg",
 ] as const;
-const LEGACY_NOCTURNE_TOKENS = [
-  "--n-bg",
-  "--n-bg-top",
-  "--n-gradient-bg",
-  "--n-line",
-  "--n-line-strong",
-  "--n-on-primary-container",
-  "--n-outline-variant",
-  "--n-popover-control-bg",
-  "--n-popover-control-border",
-  "--n-surface-container",
-  "--n-surface-container-low",
-];
 const REMOVED_ACTIVITY_TOKENS = [
   "--activity-panel",
   "--activity-panel-soft",
@@ -231,16 +218,14 @@ describe("App theme compatibility contract", () => {
     }
   });
 
-  it("keeps retained Nocturne aliases Legacy and removed activity aliases absent", () => {
+  it("keeps retired compatibility and activity aliases absent", () => {
     const source = sourceCorpus("src");
+    const tokens = readProjectFile("src/styles/tokens.css");
     const nocturne = readProjectFile("src/styles/nocturne-theme.css");
+    const port = readProjectFile("src/styles/nocturne-port.css");
 
-    for (const token of LEGACY_NOCTURNE_TOKENS) {
-      expect(nocturne, `${token} must remain defined`).toMatch(new RegExp(`${token}\\s*:`));
-      expect(withoutDefinitions(source, token), `${token} gained an active reference`).not.toMatch(
-        new RegExp(`${token}(?![A-Za-z0-9_-])`),
-      );
-    }
+    expect(`${tokens}\n${nocturne}\n${port}`).not.toMatch(/^\s*--n-[A-Za-z0-9_-]+\s*:/m);
+    expect(source).not.toMatch(/var\(--n-[A-Za-z0-9_-]+/);
     for (const token of REMOVED_ACTIVITY_TOKENS) {
       expect(nocturne, `${token} must be removed`).not.toMatch(new RegExp(`${token}\\s*:`));
       expect(withoutDefinitions(source, token), `${token} gained an active reference`).not.toMatch(

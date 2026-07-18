@@ -68,15 +68,13 @@ describe("HUD and motion contract gate", () => {
     }
   });
 
-  test("keeps the Reader animation shorthand valid and preserves Legacy port motion", () => {
+  test("keeps the Reader animation shorthand valid after retiring Legacy motion aliases", () => {
     expect(`${tokensCss}\n${nocturneCss}`).not.toContain(
       "var(--t-slow) cubic-bezier(0.16, 1, 0.3, 1)",
     );
     expect(tokensCss).toContain(
       "--component-reader-core-resume-in-animation: var(--motion-duration-slow) cubic-bezier(0.16, 1, 0.3, 1) both;",
     );
-    expect(nocturneCss).toContain("--n-duration-fast: var(--duration-normal);");
-    expect(nocturneCss).toContain("--n-duration-normal: var(--duration-relaxed);");
-    expect(nocturneCss).toContain("--n-ease-spring: var(--easing-spring);");
+    expect(nocturneCss).not.toMatch(/^\s*--n-(?:duration-fast|duration-normal|ease-spring)\s*:/m);
   });
 });

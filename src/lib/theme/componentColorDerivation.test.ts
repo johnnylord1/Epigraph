@@ -83,12 +83,7 @@ describe("derived component color contract", () => {
       .filter(({ value }) => directColorPattern.test(value))
       .map(({ name, value }) => `${name}: ${value}`);
     const legacyAliases = migrated
-      .filter(
-        ({ value }) =>
-          /var\(--n-(?!(?:hud-scale|topbar-height|sidebar-width|search-width|search-width-focus)\b)/.test(
-            value,
-          ),
-      )
+      .filter(({ value }) => /var\(--n-/.test(value))
       .map(({ name, value }) => `${name}: ${value}`);
 
     expect(directColors).toEqual([]);

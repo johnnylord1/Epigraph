@@ -35,30 +35,6 @@ const directColorPattern = new RegExp(
 const malformedSplitHexPattern = /#[0-9a-f]{3,7}\s+[a-f][0-9a-f]{0,4}\b/i;
 const encodedHexPattern = /%(?:25)*23[0-9a-f]{3,8}\b/gi;
 const encodedHexInventory = [] as const;
-const unreferencedLegacyNocturneTokens = [
-  "--n-bg",
-  "--n-bg-top",
-  "--n-gradient-bg",
-  "--n-line",
-  "--n-line-strong",
-  "--n-on-primary-container",
-  "--n-outline-variant",
-  "--n-popover-control-bg",
-  "--n-popover-control-border",
-  "--n-surface-container",
-  "--n-surface-container-low",
-  "--n-surface-container-high",
-  "--n-surface-container-highest",
-  "--n-toolbar-cluster-padding",
-  "--n-toolbar-cluster-radius",
-  "--n-toolbar-divider-height",
-  "--n-toolbar-icon-btn-size",
-] as const;
-const selectorOnlyLegacyNocturneTokens = [] as const;
-const legacyNocturneTokens = [
-  ...unreferencedLegacyNocturneTokens,
-  ...selectorOnlyLegacyNocturneTokens,
-] as const;
 const removedActivityTokens = [
   "--activity-panel",
   "--activity-panel-soft",
@@ -74,10 +50,6 @@ const removedActivityTokens = [
   "--activity-accent-line",
   "--activity-danger",
 ] as const;
-const compatibilityConsumerFiles = new Set([
-  "src/styles/nocturne-port.css",
-]);
-
 interface CssDeclaration {
   name: string;
   value: string;
@@ -405,28 +377,13 @@ describe("final derived theme gate", () => {
     expect(nocturneMissing).toEqual([]);
   });
 
-  test("preserves the audited compatibility bridge and Legacy inventories", () => {
+  test("retires the audited compatibility aliases", () => {
     const source = sourceCorpus("src");
-    const nocturneTokens = new Set(
-      declarations(nocturneCss)
-        .map(({ name }) => name)
-        .filter((name) => name.startsWith("--n-")),
-    );
-    const compatibilityBridges = [...nocturneTokens].filter(
-      (token) => !legacyNocturneTokens.includes(token as (typeof legacyNocturneTokens)[number]),
-    );
+    const themeLayers = `${tokensCss}\n${nocturneCss}\n${nocturnePortCss}`;
 
-    expect(nocturneTokens.size).toBe(62);
-    expect(compatibilityBridges).toHaveLength(45);
-    expect(legacyNocturneTokens).toHaveLength(17);
+    expect(themeLayers).not.toMatch(/^\s*--n-[A-Za-z0-9_-]+\s*:/m);
+    expect(source).not.toMatch(/var\(--n-[A-Za-z0-9_-]+/);
     expect(removedActivityTokens).toHaveLength(13);
-
-    for (const token of unreferencedLegacyNocturneTokens) {
-      expect(nocturneCss, `${token} must remain defined`).toMatch(new RegExp(`${token}\\s*:`));
-      expect(withoutDefinitions(source, token), `${token} gained an active reference`).not.toMatch(
-        new RegExp(`${token}(?![A-Za-z0-9_-])`),
-      );
-    }
     for (const token of removedActivityTokens) {
       expect(nocturneCss, `${token} must remain removed`).not.toMatch(new RegExp(`${token}\\s*:`));
       expect(withoutDefinitions(source, token), `${token} gained an active reference`).not.toMatch(
@@ -434,23 +391,14 @@ describe("final derived theme gate", () => {
       );
     }
 
-    for (const token of selectorOnlyLegacyNocturneTokens) {
-      expect(nocturneCss, `${token} must remain defined`).toMatch(new RegExp(`${token}\\s*:`));
-      expect(nocturnePortCss, `${token} must remain attached to its Legacy selector`).toContain(`var(${token})`);
-    }
   });
 
-  test("keeps active production consumers independent from --n-*", () => {
-    const activeSources = sourceFiles("src")
-      .filter((path) => !compatibilityConsumerFiles.has(path))
-      .filter((path) => !path.endsWith("src/styles/tokens.css") && !path.endsWith("src/styles/nocturne-theme.css"))
-      .map((path) => readFileSync(resolve(ROOT, path), "utf8"));
-    const activeThemeDefinitions = `${tokensCss}\n${nocturneCss}`
-      .replace(/^\s*--(?:n|activity)-[\w-]+\s*:\s*[\s\S]*?;/gm, "");
-    const references = `${activeSources.join("\n")}\n${activeThemeDefinitions}`
-      .match(/var\(--n-[\w-]+/g) ?? [];
+  test("keeps production free from retired compatibility references", () => {
+    const production = sourceFiles("src")
+      .map((path) => readFileSync(resolve(ROOT, path), "utf8"))
+      .join("\n");
 
-    expect(references).toEqual([]);
+    expect(production.match(/var\(--n-[\w-]+/g) ?? []).toEqual([]);
   });
 
   test.each([

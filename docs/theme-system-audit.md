@@ -3465,10 +3465,20 @@ Categorias cobertas:
 
 #### Marco 60C - `--n-*` compatibility layer
 
-- Revalidar os 62 aliases individualmente apos 60A/60B. Apos o Marco 58 existem **0 Ativos / 62 Legacy / 0 Mortos**.
-- A dependencia Syncd foi encerrada: `--component-syncd-input-fg` usa `--text-primary`, e `--n-on-surface` nao possui consumidor ativo.
-- Remover bridges apenas depois de confirmar ausencia em CSS/Svelte/JS, `setProperty`, computed style, ThemeEditor, documentos V1-V5, import/export, presets, stores, templates, deep links e plugins suportados.
-- Nao considerar um alias Morto por ausencia textual isolada; compatibilidade incerta permanece Legacy.
+**Status: concluido.** Os **62 aliases `--n-*`** foram revalidados individualmente depois dos Marcos 58, 60A e 60B. A busca global confirmou **0 Ativos / 62 Legacy antes da remocao**, sem consumidor em CSS/Svelte/JS, API dinamica, computed style, ThemeEditor, documentos V1-V5, import/export, presets, stores, templates ou harness runtime.
+
+- Removidas 28 bridges de geometria do fallback e todas as 62 declaracoes Nocturne. O port ja estava integralmente ligado a semantic/component tokens canonicos e nao exigiu substituicao por literal.
+- A coleta diagnostica Syncd deixou de consultar `--n-on-surface`; `--component-syncd-input-fg` continua derivado de `--text-primary` e os 60 tokens Syncd permanecem Ativos.
+- Os documentos V1-V5, provider, ThemeEditor e custom themes nao continham nem aceitavam component/compatibility aliases, portanto sua compatibilidade e round-trip permanecem inalterados.
+- Resultado final: **0 declaracoes `--n-*`, 0 referencias de producao, 0 acessos dinamicos e 0 CSS computado dependente**. O inventario de component tokens permanece **2.637 definidos / 2.637 Ativos / 0 Legacy / 0 Mortos**.
+- O tema-probe passou a cobrir **281 propriedades exatas** e **224 fontes Nocturne exatas**; as 14 propriedades retiradas eram literais exclusivos dos aliases, sem consumidor.
+
+#### Evidencia visual e gates do 60C
+
+- `docs/screenshots/marco60c-nocturne-aliases/before/` reutiliza a baseline WebView2 estavel do Marco 55B; `after/` contem dez capturas novas em Nocturne: Library Books, context menu, Search, Discover, Sources, repository overlay, Downloads, Settings, Settings por tema e Reader PDF/HUD.
+- A comparacao nao mostra regressao aparente de geometria, surfaces, borders, shadows, blur, radius, tipografia ou hierarquia. Mudancas de obras/status decorrem dos dados runtime atuais, nao da remocao dos aliases.
+- O auditor mediu contraste entre **10,899:1 e 14,801:1** nos seis pares representativos e foco visivel na sidebar. O PDF real permaneceu no loading durante os 30 segundos do harness; nenhum toast real ocorreu e nenhum estado sintetico foi criado.
+- Gates focados: **7 arquivos / 67 testes verdes**. Browser port/probe/HUD/builtin: **4 arquivos / 16 testes verdes**. Runtime audit: **3 testes verdes**. `pnpm theme:check-builtins`: verde. `pnpm build`: verde. `git diff --check`: verde.
 - Commit recomendado: `refactor(theme): retire nocturne compatibility aliases`.
 
 #### Gate final do Marco 60
