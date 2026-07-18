@@ -61,6 +61,7 @@ export function loadNovelsProfileSnapshot(
   const map = readStateMap(storage);
   return normalizeAethonNovelsSnapshot(map[scope] ?? {
     entries: [],
+    chapters: [],
     progress: [],
     bookmarks: [],
     history: [],
@@ -92,6 +93,7 @@ export function applyRestoredNovelsProfileSnapshot(
 
   return saveNovelsProfileSnapshot(scope, {
     entries: restored.entries,
+    chapters: restored.chapters,
     progress: restored.progress,
     bookmarks: restored.bookmarks,
     history: restored.history,

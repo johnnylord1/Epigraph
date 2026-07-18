@@ -254,7 +254,10 @@ function defaultRestoreModeForPayload(
 }
 
 function finalizePayloadPlan(
-  input: Omit<AethonPayloadRestorePlan, "selectedByDefault" | "canRestoreNow" | "needsUserAction">,
+  input: Omit<
+    AethonPayloadRestorePlan,
+    "selectedByDefault" | "canRestoreNow" | "needsUserAction" | "canExecuteRestore"
+  >,
 ): AethonPayloadRestorePlan {
   const flags = flagsForStatus(input.status);
   return {

@@ -6,11 +6,18 @@ import type {
   AethonNovelPluginReference,
   AethonNovelProgressEntry,
   AethonNovelRepositoryReference,
+  AethonNovelSourceIdentity,
   AethonNovelsSnapshot,
   RestoredAethonNovelsSnapshot,
 } from "./novelsBackup";
 import type { PersistedNovelLibraryState } from "../novels/domain";
 import type { PersistedNovelRepositoryState } from "../novels/repositoryState";
+
+const UNKNOWN_NOVEL_SOURCE: AethonNovelSourceIdentity = {
+  repositoryUrl: null,
+  pluginId: null,
+  sourceId: null,
+};
 
 function mapEntry(
   entry: PersistedNovelLibraryState["entries"][number],
@@ -106,7 +113,7 @@ export function applyRestoredNovelsSnapshotToLibraryState(input: {
       path: entry.path,
       status: entry.status ?? null,
       tags: [...(entry.tags ?? [])],
-      source: entry.source,
+      source: entry.source ?? { ...UNKNOWN_NOVEL_SOURCE },
       chapterCount: input.restored.chapters.filter((chapter) => chapter.novelId === entry.id).length,
       addedAt: entry.addedAt,
       updatedAt: entry.updatedAt,

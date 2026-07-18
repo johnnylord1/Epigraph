@@ -21,6 +21,12 @@ function toUint8Array(input: ArrayBuffer | Uint8Array): Uint8Array {
   return input instanceof Uint8Array ? input : new Uint8Array(input);
 }
 
+function copyBytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
+}
+
 function decodeUtf8(bytes: Uint8Array): string {
   return new TextDecoder().decode(bytes);
 }
@@ -331,7 +337,7 @@ function concatChunks(chunks: Uint8Array[]): Uint8Array {
 }
 
 export async function fingerprintBytes(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const digest = await crypto.subtle.digest("SHA-256", copyBytesToArrayBuffer(bytes));
   return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
 }
 

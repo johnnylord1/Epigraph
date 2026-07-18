@@ -132,7 +132,9 @@ export async function extractAethonMangaPayloadFile(
   bytes: Uint8Array | ArrayBuffer,
 ): Promise<File> {
   const parsed = await parseAethonMangaPayload(bytes);
-  return new File([parsed.payloadBytes], parsed.payloadFilename, {
+  const payloadBuffer = new Uint8Array(parsed.payloadBytes.byteLength);
+  payloadBuffer.set(parsed.payloadBytes);
+  return new File([payloadBuffer.buffer], parsed.payloadFilename, {
     type: "application/octet-stream",
   });
 }

@@ -99,17 +99,26 @@ export interface ParsedAethonBooksPayload {
 
 export interface RestoredAethonBooksSnapshot extends AethonBooksSnapshot {
   exportMode: AethonBooksExportMode;
+  booksCategories: AethonBooksCategoryRecord[];
+  booksCategoryAssignments: Record<string, string[]>;
+  booksLibraryUi: PersistedBooksLibraryUiState;
   issues: AethonBooksRestoreIssue[];
 }
 
-type BooksBackupDeps = {
+type BooksBackupReadDeps = {
   readBinaryFile: (path: string) => Promise<ArrayBuffer>;
+};
+
+type BooksBackupWriteDeps = {
   writeManagedBookAsset: (bookId: string, bytesBase64: string, ext: string) => Promise<string>;
   writeManagedBookCover: (bookId: string, bytesBase64: string, ext: string) => Promise<string>;
 };
 
-const defaultDeps: BooksBackupDeps = {
+const defaultReadDeps: BooksBackupReadDeps = {
   readBinaryFile: readFileAsArrayBuffer,
+};
+
+const defaultWriteDeps: BooksBackupWriteDeps = {
   writeManagedBookAsset: writeBookAsset,
   writeManagedBookCover: writeBookCover,
 };
@@ -284,7 +293,7 @@ async function readRequiredBinary(
   path: string,
   kind: "asset" | "cover",
   bookId: string,
-  deps: BooksBackupDeps,
+  deps: BooksBackupReadDeps,
 ): Promise<ArrayBuffer> {
   try {
     return await deps.readBinaryFile(path);
@@ -312,7 +321,7 @@ export async function buildAethonBooksPayload(
   options: {
     exportMode?: AethonBooksExportMode;
   } = {},
-  deps: BooksBackupDeps = defaultDeps,
+  deps: BooksBackupReadDeps = defaultReadDeps,
 ): Promise<AethonBackupPayloadBuildInput> {
   const exportMode = options.exportMode ?? "full";
   const categories = normalizeCategories(snapshot.booksCategories);
@@ -411,7 +420,7 @@ export async function buildAethonBooksBackupContainer(
     platform?: string | null;
     sourceProfileId?: string | null;
   } = {},
-  deps: BooksBackupDeps = defaultDeps,
+  deps: BooksBackupReadDeps = defaultReadDeps,
 ): Promise<BuiltAethonBackupContainer> {
   const payload = await buildAethonBooksPayload(snapshot, { exportMode: options.exportMode }, deps);
   return buildAethonBackupContainer({
@@ -466,7 +475,7 @@ export async function parseAethonBooksPayload(
 
 export async function restoreAethonBooksPayload(
   bytes: Uint8Array | ArrayBuffer,
-  deps: BooksBackupDeps = defaultDeps,
+  deps: BooksBackupWriteDeps = defaultWriteDeps,
 ): Promise<RestoredAethonBooksSnapshot> {
   const parsed = await parseAethonBooksPayload(bytes);
   const zip = await JSZip.loadAsync(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
