@@ -3483,7 +3483,11 @@ Categorias cobertas:
 
 #### Gate final do Marco 60
 
-- Atualizar `legacyRetentionGate`, `themeGate`, `themeInventory`, gates de port/motion e `docs/theme-system-audit.md` com as novas contagens comprovadas.
-- Executar suite completa de tema, browser computed-style, `pnpm theme:check-builtins`, `pnpm build` e `git diff --check`.
-- Repetir auditoria real em todos os builtins para Library, Browse, Sources, Settings, Reader, Details, modal, popover, toast e Splash. Nocturne deve permanecer visualmente equivalente; Dark deve continuar cinza/preto com roxo neon e AMOLED deve preservar preto real.
-- Nenhum tema novo sera criado durante o Marco 60. A remocao e considerada concluida somente quando nenhum alias removido for necessario para documentos existentes ou superficies ativas.
+**Status: concluido.**
+
+- Suite completa: **139 arquivos / 798 testes unit/jsdom verdes**. Browser: **9 arquivos / 44 testes verdes**. Runtime audit: **3 testes verdes**. Builtins gerados estao sincronizados e o build de producao permanece verde.
+- A baseline browser `settings-reader-library-reader.png` foi atualizada depois de revisao visual: a imagem anterior diferia em 694 pixels (0,0678%), restritos ao antialias/glow dos dois segmented controls. Geometria e conteudo eram identicos; o matcher global permaneceu estrito e passou depois da baseline valida.
+- `docs/screenshots/marco60-final-runtime/` contem **17 capturas WebView2 reais**: nove superficies Nocturne e Settings nos oito builtins. Dark permanece cinza/preto com roxo neon; AMOLED resolveu background, card, button e input para `rgb(0, 0, 0)`.
+- Os 48 pares de contraste runtime ficaram acima de WCAG AA; Nocturne variou de **10,899:1 a 14,801:1**. Todos os builtins exibiram foco por teclado. Nenhum toast real ocorreu durante a sessao e nenhum toast sintetico foi criado.
+- Tres capturas adicionais validam o Search dim em Library -> Home -> Library. Em todos os ciclos: dim `z-index: 500`, topbar `520`, search/center `540`, `isolation: isolate`; ao perder foco a opacidade retornou a `0` antes da navegacao seguinte.
+- Resultado final do Marco 60: **0 `--n-*`, 0 `--activity-*`, 0 component tokens Legacy, 2.637/2.637 component tokens Ativos**. Nenhum tema novo, schema, layout, comportamento ou dado do usuario foi alterado.
