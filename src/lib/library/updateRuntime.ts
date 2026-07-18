@@ -612,7 +612,7 @@ export async function waitForLibraryUpdateToSettle(
       return jobsInfo ?? initialJobsInfo ?? null;
     }
     if (!jobsInfo?.isRunning && Date.now() - startedAt > 5000) return jobsInfo ?? initialJobsInfo ?? null;
-    await new Promise((resolve) => setTimeout(jobsInfo?.isRunning ? 2500 : 500));
+    await new Promise<void>((resolve) => setTimeout(resolve, jobsInfo?.isRunning ? 2500 : 500));
   }
 
   return null;

@@ -45,6 +45,7 @@
     createComicsLibraryActions,
   } from "../../lib/library/comicsSection";
   import type {
+    BooksTypeFilterId,
     BooksTypeOptionVM,
     LibraryCollectionVM,
     LibraryCollectionsReorderApi,
@@ -53,6 +54,7 @@
     LibrarySectionVM,
     LibraryToolbarVM,
   } from "../../lib/library/contracts";
+  import type { LibraryPreferredGridColumns, LibraryViewMode } from "../../lib/libraryDisplay";
   import { _ } from "../../lib/i18n/runtime";
   import { dedupeMangaById } from "../../lib/util";
   import { createBookLibraryCardId, createComicLibraryCardId } from "../../lib/library/cardIdentity";
@@ -97,7 +99,6 @@
     type LibrarySortDir,
     type LibrarySortMode,
     type LibraryStatusFilter,
-    type Settings,
   } from "../../store/state.svelte";
   import {
     buildCategoryMembers,
@@ -349,7 +350,7 @@
     return cache.get(
       CACHE_KEYS.CATEGORIES,
       async () => {
-        await ensureServerAwakeFor("library-categories", {
+        await ensureServerAwakeFor("library-category-members", {
           serverUrl: store.runtimeServerUrl,
           binary: store.settings.serverBinary,
           updateIntensity: store.settings.libraryUpdateIntensity,
@@ -1072,8 +1073,7 @@
     }));
   }
 
-  function localizeSectionVm<T extends LibrarySectionVM>(vm: T | undefined): T | undefined {
-    if (!vm) return undefined;
+  function localizeSectionVm<T extends LibrarySectionVM>(vm: T): T {
     return {
       ...vm,
       sectionTabs: localizeSectionTabs(vm.sectionTabs),
@@ -1082,8 +1082,8 @@
     };
   }
 
-  const localizedBooksSectionVm = $derived(localizeSectionVm(booksSectionState?.vm));
-  const localizedComicsSectionVm = $derived(localizeSectionVm(comicsSectionState?.vm));
+  const localizedBooksSectionVm = $derived(localizeSectionVm(booksSectionState.vm));
+  const localizedComicsSectionVm = $derived(localizeSectionVm(comicsSectionState.vm));
   const displaySectionVm = $derived(
     visualLibrarySection === "books"
       ? localizedBooksSectionVm
@@ -1276,7 +1276,7 @@
       label: $_("library.collections.saved"),
       count: store.books.length + novelsLibraryState.entries.length,
       icon: "books",
-      active: activeBooksStandardFilter === "saved",
+      active: isActiveBooksStandardFilter("saved"),
       reorderable: false,
       isDefault: true,
     },
@@ -1285,7 +1285,7 @@
       label: $_("library.collections.downloaded"),
       count: store.books.filter(hasBookLocalAsset).length,
       icon: "download",
-      active: activeBooksStandardFilter === "downloaded",
+      active: isActiveBooksStandardFilter("downloaded"),
       reorderable: false,
       isDefault: false,
     },
@@ -1295,11 +1295,15 @@
       count: store.books.filter((book) => isFinishedBook(book.id)).length
         + novelsLibraryState.entries.filter((entry) => isFinishedNovel(entry.id)).length,
       icon: "folder",
-      active: activeBooksStandardFilter === "finished",
+      active: isActiveBooksStandardFilter("finished"),
       reorderable: false,
       isDefault: false,
     },
   ]);
+
+  function isActiveBooksStandardFilter(filter: typeof activeBooksStandardFilter): boolean {
+    return activeBooksStandardFilter === filter;
+  }
   const activeHeroCollections = $derived(displaySectionVm?.collections ?? []);
   const heroSystemCollections = $derived(
     visualLibrarySection === "books"
@@ -1525,16 +1529,16 @@
     else comicsActions.setFilter(value);
   }
 
-  function handleBookTypeChange(id: string) {
+  function handleBookTypeChange(id: BooksTypeFilterId) {
     booksActions.selectType(id);
   }
 
-  function handleViewModeChange(mode: string) {
-    updateSettings({ libraryViewMode: mode as Settings["libraryViewMode"] });
+  function handleViewModeChange(mode: LibraryViewMode) {
+    updateSettings({ libraryViewMode: mode });
   }
 
-  function handlePreferredColumnsChange(value: string) {
-    updateSettings({ libraryPreferredGridColumns: value as Settings["libraryPreferredGridColumns"] });
+  function handlePreferredColumnsChange(value: LibraryPreferredGridColumns) {
+    updateSettings({ libraryPreferredGridColumns: value });
   }
 
   function handleShowProgressChange(value: boolean) {
@@ -1591,9 +1595,11 @@
   async function refreshComicsLibrary() {
     const beforeUpdate = [...store.libraryMangaSnapshot];
     const updateRun = await runSharedLibraryUpdate({
-      reason: translate("ui_manualLibraryUpdate"),
+      reason: "manual-library-update",
       categories: manualUpdateCategoryIds(),
-      onLiveRefresh: refreshLibrarySnapshotLive,
+      onLiveRefresh: async () => {
+        await refreshLibrarySnapshotLive();
+      },
     });
     const updatedAt = updateRun.updatedAt;
     updateSettings({ lastLibraryUpdateAt: updatedAt });
@@ -2041,8 +2047,6 @@
     onPreferredColumnsChange={handlePreferredColumnsChange}
     onShowProgressChange={handleShowProgressChange}
     onShowOutlineChange={handleShowOutlineChange}
-    onRefresh={openLibraryRefreshDialog}
-    refreshPending={manualRefreshInFlight || store.libraryUpdateInFlight}
   >
     {#snippet hero()}
       <section class="library-hero">

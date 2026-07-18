@@ -397,7 +397,7 @@ function buildComicsLibraryCardSignature(
 function resolveComicsSource(
   manga: Manga,
   sourcesById?: ReadonlyMap<string, Source>,
-): Pick<Source, "id" | "name" | "lang" | "displayName"> | undefined {
+): NonNullable<Manga["source"]> | undefined {
   if (manga.source) return manga.source;
   if (!manga.sourceId || !sourcesById) return undefined;
   const found = sourcesById.get(String(manga.sourceId));

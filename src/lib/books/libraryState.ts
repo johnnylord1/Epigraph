@@ -116,7 +116,7 @@ function normalizeLoadedBookProgress(progress: unknown): BookProgress {
 function normalizeBooksCategories(value: unknown): PersistedBooksCategory[] {
   if (!Array.isArray(value)) return [];
   return value
-    .map((entry, index) => ({
+    .map<PersistedBooksCategory>((entry, index) => ({
       id: typeof (entry as PersistedBooksCategory | null | undefined)?.id === "string" && (entry as PersistedBooksCategory).id.trim()
         ? (entry as PersistedBooksCategory).id.trim()
         : `books-cat-${index + 1}`,

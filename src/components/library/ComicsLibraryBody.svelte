@@ -9,7 +9,7 @@
 
 <script lang="ts">
   import { translate } from "../../lib/i18n/runtime";
-  import { onMount } from "svelte";
+  import { onMount, type ComponentProps } from "svelte";
   import { Books, CheckSquare, Folder, FolderSimplePlus, Trash, X } from "phosphor-svelte";
   import { createComicLibraryCardId } from "../../lib/library/cardIdentity";
   import {
@@ -37,9 +37,11 @@
     setLibraryScrollTop,
     store,
   } from "../../store/state.svelte";
-  import ContextMenu, { type MenuEntry } from "../shared/ContextMenu.svelte";
+  import ContextMenu from "../shared/ContextMenu.svelte";
   import VirtualLibraryCardGrid from "./VirtualLibraryCardGrid.svelte";
   import { estimateLibraryVirtualRowSize } from "../../lib/library/virtualGrid";
+
+  type MenuEntry = ComponentProps<typeof ContextMenu>["items"][number];
 
   type Props = {
     vm: ComicsSectionVM;
@@ -52,10 +54,10 @@
     sources?: Source[];
     renderLimit?: number;
     viewKey: string;
-    viewMode: LibraryViewMode;
-    preferredColumns: LibraryPreferredGridColumns;
-    showProgress: boolean;
-    showOutline: boolean;
+    viewMode?: LibraryViewMode;
+    preferredColumns?: LibraryPreferredGridColumns;
+    showProgress?: boolean;
+    showOutline?: boolean;
     onRemoveFromLibrary?: (manga: Manga) => Promise<void> | void;
     onAddToLibrary?: (manga: Manga) => Promise<void> | void;
     onDeleteAllDownloads?: (manga: Manga) => Promise<void> | void;

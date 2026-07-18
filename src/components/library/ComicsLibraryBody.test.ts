@@ -24,6 +24,20 @@ vi.mock("../../lib/library/coverCache", () => ({
 
 const originalImageDecode = HTMLImageElement.prototype.decode;
 
+function manga(overrides: Partial<Manga> & Pick<Manga, "id" | "title">): Manga {
+  return {
+    thumbnailUrl: "",
+    inLibrary: true,
+    source: {
+      id: "source-1",
+      name: "source-one",
+      displayName: "Source One",
+      lang: "en",
+    },
+    ...overrides,
+  };
+}
+
 describe("ComicsLibraryBody", () => {
   afterEach(() => {
     cleanup();
@@ -70,22 +84,21 @@ describe("ComicsLibraryBody", () => {
   });
 
   test("keeps selection and context menu ownership outside the shared grid", async () => {
-    const manga = {
+    const targetManga = manga({
       id: 1,
       title: "Sample Manga",
-      thumbnailUrl: null,
-      inLibrary: true,
       downloadCount: 2,
       unreadCount: 4,
-      source: { id: "source-1" },
-    } as Manga;
-    const category = {
+    });
+    const category: Category = {
       id: 10,
       name: "Finished",
       order: 1,
       default: false,
-      mangas: { nodes: [manga] },
-    } as unknown as Category;
+      includeInUpdate: "GLOBAL",
+      includeInDownload: "GLOBAL",
+      mangas: { nodes: [targetManga] },
+    };
 
     const vm: ComicsSectionVM = {
       kind: "comics",
@@ -124,9 +137,9 @@ describe("ComicsLibraryBody", () => {
     render(ComicsLibraryBody, {
       props: {
         vm,
-        mangas: [manga],
+        mangas: [targetManga],
         categories: [category],
-        categoryMangaMap: new Map([[10, [manga]]]),
+        categoryMangaMap: new Map([[10, [targetManga]]]),
         renderLimit: 48,
         viewKey: "library",
         onRemoveFromLibrary: vi.fn(),
@@ -148,17 +161,14 @@ describe("ComicsLibraryBody", () => {
   });
 
   test("renders clickable cards from manga data when the section vm omits card VMs", async () => {
-    const manga = {
+    const targetManga = manga({
       id: 7,
       title: "Returned From Reader",
-      thumbnailUrl: null,
-      inLibrary: true,
       downloadCount: 0,
       unreadCount: 3,
       chapterCount: 10,
       status: "ONGOING",
-      source: { id: "source-1", displayName: "Source One" },
-    } as Manga;
+    });
 
     const vm: ComicsSectionVM = {
       kind: "comics",
@@ -185,7 +195,7 @@ describe("ComicsLibraryBody", () => {
     render(ComicsLibraryBody, {
       props: {
         vm,
-        mangas: [manga],
+        mangas: [targetManga],
         categories: [],
         categoryMangaMap: new Map(),
         renderLimit: 48,
@@ -215,16 +225,14 @@ describe("ComicsLibraryBody", () => {
 
   test("uses session cover memory after remounting the comics section", async () => {
     vi.mocked(getSessionLibraryCoverUrl).mockReturnValue("cover://session-cover");
-    const manga = {
+    const targetManga = manga({
       id: 17,
       title: "Remembered Cover",
       thumbnailUrl: "/api/v1/manga/17/thumbnail",
-      inLibrary: true,
       downloadCount: 0,
       unreadCount: 0,
       chapterCount: 4,
-      source: { id: "source-1", displayName: "Source One" },
-    } as Manga;
+    });
 
     const vm: ComicsSectionVM = {
       kind: "comics",
@@ -251,7 +259,7 @@ describe("ComicsLibraryBody", () => {
     const { container } = render(ComicsLibraryBody, {
       props: {
         vm,
-        mangas: [manga],
+        mangas: [targetManga],
         categories: [],
         categoryMangaMap: new Map(),
         renderLimit: 48,
@@ -269,16 +277,14 @@ describe("ComicsLibraryBody", () => {
     vi.mocked(getCachedLibraryCoverUrl).mockResolvedValue(null);
     vi.mocked(cacheLibraryCoverFromServer).mockResolvedValue(null);
 
-    const manga = {
+    const targetManga = manga({
       id: 18,
       title: "Uncached Visible Cover",
       thumbnailUrl: "/api/v1/manga/18/thumbnail",
-      inLibrary: true,
       downloadCount: 0,
       unreadCount: 0,
       chapterCount: 4,
-      source: { id: "source-1", displayName: "Source One" },
-    } as Manga;
+    });
 
     const vm: ComicsSectionVM = {
       kind: "comics",
@@ -305,7 +311,7 @@ describe("ComicsLibraryBody", () => {
     const { container } = render(ComicsLibraryBody, {
       props: {
         vm,
-        mangas: [manga],
+        mangas: [targetManga],
         categories: [],
         categoryMangaMap: new Map(),
         renderLimit: 48,
@@ -330,16 +336,14 @@ describe("ComicsLibraryBody", () => {
       .spyOn(HTMLImageElement.prototype, "decode")
       .mockRejectedValue(new Error("decode failed"));
 
-    const manga = {
+    const targetManga = manga({
       id: 19,
       title: "Bad Cached Cover",
       thumbnailUrl: "/api/v1/manga/19/thumbnail",
-      inLibrary: true,
       downloadCount: 0,
       unreadCount: 0,
       chapterCount: 4,
-      source: { id: "source-1", displayName: "Source One" },
-    } as Manga;
+    });
 
     const vm: ComicsSectionVM = {
       kind: "comics",
@@ -367,7 +371,7 @@ describe("ComicsLibraryBody", () => {
       const { container } = render(ComicsLibraryBody, {
         props: {
           vm,
-          mangas: [manga],
+          mangas: [targetManga],
           categories: [],
           categoryMangaMap: new Map(),
           renderLimit: 48,
@@ -381,22 +385,19 @@ describe("ComicsLibraryBody", () => {
       const src = container.querySelector("img.cover")?.getAttribute("src") ?? "";
       expect(src).toContain("/api/v1/manga/19/thumbnail");
       expect(src).not.toBe("cover://bad-cache");
-      expect(setSessionLibraryCoverUrl).not.toHaveBeenCalledWith(expect.anything(), manga, "cover://bad-cache");
+      expect(setSessionLibraryCoverUrl).not.toHaveBeenCalledWith(expect.anything(), targetManga, "cover://bad-cache");
     } finally {
       decodeSpy.mockRestore();
     }
   });
 
   test("renders comics through the virtual grid without a manual load-more gate", async () => {
-    const mangas = Array.from({ length: 5 }, (_, index) => ({
+    const mangas = Array.from({ length: 5 }, (_, index) => manga({
       id: index + 1,
       title: `Paged Manga ${index + 1}`,
-      thumbnailUrl: null,
-      inLibrary: true,
       unreadCount: index + 1,
       chapterCount: 10,
-      source: { id: "source-1", displayName: "Source One" },
-    })) as Manga[];
+    }));
 
     const vm: ComicsSectionVM = {
       kind: "comics",
@@ -450,15 +451,13 @@ describe("ComicsLibraryBody", () => {
   });
 
   test("keeps a broken cover on the placeholder after one recovery attempt", async () => {
-    const manga = {
+    const targetManga = manga({
       id: 55,
       title: "Broken Cover Manga",
       thumbnailUrl: "/covers/broken.jpg",
-      inLibrary: true,
       unreadCount: 0,
       chapterCount: 10,
-      source: { id: "source-1", displayName: "Source One" },
-    } as Manga;
+    });
     const onCoverErrorDetected = vi.fn();
 
     const vm: ComicsSectionVM = {
@@ -485,7 +484,7 @@ describe("ComicsLibraryBody", () => {
 
     const props = {
       vm,
-      mangas: [manga],
+      mangas: [targetManga],
       categories: [],
       categoryMangaMap: new Map<number, Manga[]>(),
       renderLimit: 48,
@@ -541,15 +540,13 @@ describe("ComicsLibraryBody", () => {
     store.runtimeResolvedLocalProfileId = "main";
     store.runtimeServerUrl = "http://127.0.0.1:4567";
 
-    const manga = {
+    const targetManga = manga({
       id: 77,
       title: "Race Cover Manga",
       thumbnailUrl: "/api/v1/manga/77/thumbnail",
-      inLibrary: true,
       unreadCount: 0,
       chapterCount: 10,
-      source: { id: "source-1", displayName: "Source One" },
-    } as Manga;
+    });
 
     const vm: ComicsSectionVM = {
       kind: "comics",
@@ -575,7 +572,7 @@ describe("ComicsLibraryBody", () => {
 
     const baseProps = {
       vm,
-      mangas: [manga],
+      mangas: [targetManga],
       categories: [],
       categoryMangaMap: new Map<number, Manga[]>(),
       renderLimit: 48,

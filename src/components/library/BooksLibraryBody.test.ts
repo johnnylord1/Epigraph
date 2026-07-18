@@ -30,7 +30,7 @@ describe("BooksLibraryBody", () => {
   test("keeps drag-and-drop overlay and book-open ownership outside the shared grid", async () => {
     const { default: BooksLibraryBody } = await import("./BooksLibraryBody.svelte");
 
-    const book = {
+    const book: BookEntry = {
       id: "book-1",
       title: "Chrysalis",
       author: "RinoZ",
@@ -45,7 +45,7 @@ describe("BooksLibraryBody", () => {
       sectionCount: 12,
       tocCount: 12,
       spineCount: 12,
-    } as BookEntry;
+    };
 
     const vm: BooksSectionVM = {
       kind: "books",
@@ -76,6 +76,10 @@ describe("BooksLibraryBody", () => {
         selected: false,
         disabled: false,
       }],
+      typeOptions: [],
+      activeCategoryId: null,
+      activeType: "all",
+      activeStatus: "all",
       dragDropEnabled: true,
       importing: false,
       dropActive: false,
@@ -101,7 +105,7 @@ describe("BooksLibraryBody", () => {
   test("renders large book shelves through the virtual grid lazy resolver", async () => {
     const { default: BooksLibraryBody } = await import("./BooksLibraryBody.svelte");
 
-    const books = Array.from({ length: 240 }, (_, index) => ({
+    const books: BookEntry[] = Array.from({ length: 240 }, (_, index) => ({
       id: `book-${index}`,
       title: `Book ${index}`,
       author: null,
@@ -116,7 +120,7 @@ describe("BooksLibraryBody", () => {
       sectionCount: 1,
       tocCount: 1,
       spineCount: 1,
-    })) as BookEntry[];
+    }));
 
     const vm: BooksSectionVM = {
       kind: "books",
@@ -135,6 +139,10 @@ describe("BooksLibraryBody", () => {
       error: null,
       emptyMessage: "Empty",
       cards: [],
+      typeOptions: [],
+      activeCategoryId: null,
+      activeType: "all",
+      activeStatus: "all",
       dragDropEnabled: false,
       importing: false,
       dropActive: false,
@@ -162,7 +170,7 @@ describe("BooksLibraryBody", () => {
   test("keeps a broken source novel cover on the placeholder", async () => {
     const { default: BooksLibraryBody } = await import("./BooksLibraryBody.svelte");
 
-    const novel = {
+    const novel: PersistedNovelLibraryEntry = {
       id: "novel-1",
       title: "Source Novel",
       author: "Author",
@@ -184,7 +192,7 @@ describe("BooksLibraryBody", () => {
         sourceName: "Source One",
         lang: "en",
       },
-    } as PersistedNovelLibraryEntry;
+    };
 
     const vm: BooksSectionVM = {
       kind: "books",
@@ -203,6 +211,10 @@ describe("BooksLibraryBody", () => {
       error: null,
       emptyMessage: "Empty",
       cards: [],
+      typeOptions: [],
+      activeCategoryId: null,
+      activeType: "all",
+      activeStatus: "all",
       dragDropEnabled: false,
       importing: false,
       dropActive: false,
@@ -234,7 +246,7 @@ describe("BooksLibraryBody", () => {
   test("renders large source novel shelves through the virtual grid lazy resolver", async () => {
     const { default: BooksLibraryBody } = await import("./BooksLibraryBody.svelte");
 
-    const novels = Array.from({ length: 320 }, (_, index) => ({
+    const novels: PersistedNovelLibraryEntry[] = Array.from({ length: 320 }, (_, index) => ({
       id: `novel-${index}`,
       title: `Novel ${index}`,
       author: index % 2 === 0 ? "Author" : null,
@@ -256,7 +268,7 @@ describe("BooksLibraryBody", () => {
         sourceName: "Source One",
         lang: "en",
       },
-    })) as PersistedNovelLibraryEntry[];
+    }));
 
     const vm: BooksSectionVM = {
       kind: "books",
@@ -275,6 +287,10 @@ describe("BooksLibraryBody", () => {
       error: null,
       emptyMessage: "Empty",
       cards: [],
+      typeOptions: [],
+      activeCategoryId: null,
+      activeType: "all",
+      activeStatus: "all",
       dragDropEnabled: false,
       importing: false,
       dropActive: false,

@@ -5,7 +5,7 @@
 
 <script lang="ts">
   import { _, translate } from "../../lib/i18n/runtime";
-  import { onMount } from "svelte";
+  import { onMount, type ComponentProps } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { Folder, FolderSimplePlus, UploadSimple } from "phosphor-svelte";
   import { addToast, setActiveBookId, setLibraryScrollTop, store, updateSettings, upsertBook } from "../../store/state.svelte";
@@ -30,9 +30,11 @@
     type NovelShelfCardContext,
   } from "../../lib/novels/libraryShelf";
   import type { PersistedNovelLibraryEntry } from "../../lib/novels/domain";
-  import ContextMenu, { type MenuEntry } from "../shared/ContextMenu.svelte";
+  import ContextMenu from "../shared/ContextMenu.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
   import VirtualLibraryCardGrid from "./VirtualLibraryCardGrid.svelte";
+
+  type MenuEntry = ComponentProps<typeof ContextMenu>["items"][number];
 
   type Props = {
     vm: BooksSectionVM;
@@ -41,10 +43,10 @@
     totalBooks: number;
     renderLimit?: number;
     viewKey: string;
-    viewMode: LibraryViewMode;
-    preferredColumns: LibraryPreferredGridColumns;
-    showProgress: boolean;
-    showOutline: boolean;
+    viewMode?: LibraryViewMode;
+    preferredColumns?: LibraryPreferredGridColumns;
+    showProgress?: boolean;
+    showOutline?: boolean;
     novelEntries?: PersistedNovelLibraryEntry[];
     novelCardContext?: NovelShelfCardContext;
     onOpenNovel?: (novelId: string) => void;
@@ -614,6 +616,7 @@
     const entries: Array<{ id: string; src: string; kind: "book" | "novel" }> = [];
     for (let index = prewarmStartIndex; index < visibleEnd; index += 1) {
       const card = getRawCardAt(index);
+      if (!card) continue;
       if (!card.coverSrc) continue;
       if (card.id.startsWith("novel-card:")) {
         if (stableNovelCoverSrc.get(card.id) === card.coverSrc) continue;

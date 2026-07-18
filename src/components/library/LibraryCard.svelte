@@ -926,6 +926,7 @@
     color: var(--text-secondary);
     line-height: var(--leading-snug);
     display: -webkit-box;
+    line-clamp: 2;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
@@ -943,6 +944,7 @@
 
   .card-list .title {
     min-height: 0;
+    line-clamp: 1;
     -webkit-line-clamp: 1;
   }
 

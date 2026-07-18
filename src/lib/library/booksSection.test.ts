@@ -19,10 +19,10 @@ function book(overrides: Partial<BookEntry> = {}): BookEntry {
     spineCount: 4,
     sectionCount: 4,
     sectionsSummary: [
-      { id: "s1", label: "Section 1", href: "s1.xhtml", depth: 0, order: 0 },
-      { id: "s2", label: "Section 2", href: "s2.xhtml", depth: 0, order: 1 },
-      { id: "s3", label: "Section 3", href: "s3.xhtml", depth: 0, order: 2 },
-      { id: "s4", label: "Section 4", href: "s4.xhtml", depth: 0, order: 3 },
+      { id: "s1", label: "Section 1", href: "s1.xhtml", depth: 0 },
+      { id: "s2", label: "Section 2", href: "s2.xhtml", depth: 0 },
+      { id: "s3", label: "Section 3", href: "s3.xhtml", depth: 0 },
+      { id: "s4", label: "Section 4", href: "s4.xhtml", depth: 0 },
     ],
     ...overrides,
   };
