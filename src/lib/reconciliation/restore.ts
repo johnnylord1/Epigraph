@@ -62,5 +62,5 @@ export function buildReconciledBackupFile(
   const mapping = buildSourceMapping(analysis, manualSelections);
   const excludedSourceIds = buildExcludedSourceIds(analysis, manualSelections);
   const payload = createReconciledBackupPayload(parsedBackup, mapping, excludedSourceIds);
-  return new File([payload], originalFilename, { type: "application/octet-stream" });
+  return new File([Uint8Array.from(payload).buffer], originalFilename, { type: "application/octet-stream" });
 }

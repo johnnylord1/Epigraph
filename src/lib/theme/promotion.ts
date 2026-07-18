@@ -204,7 +204,7 @@ function validateEvidence(
 
 function hasResolvedDifference(
   document: ThemeDocumentV5,
-  resolved: BuiltinThemeContract,
+  resolved: Pick<BuiltinThemeContract, "tokens" | "hud">,
 ): boolean {
   const base = getBuiltinThemeFallbackContract(document.base);
   return document.motion !== base.motion

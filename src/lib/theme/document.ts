@@ -483,7 +483,10 @@ function validateSparseThemeDocument(
   validateCycles(graph, errors);
 
   if (errors.length > 0) return { valid: false, errors };
-  return { valid: true, document: canonicalizeSparseDocument(input, version) };
+  const document = version === LEGACY_SPARSE_THEME_DOCUMENT_VERSION
+    ? canonicalizeSparseDocument(input, LEGACY_SPARSE_THEME_DOCUMENT_VERSION)
+    : canonicalizeSparseDocument(input, THEME_DOCUMENT_VERSION);
+  return { valid: true, document };
 }
 
 export function validateThemeDocument(input: unknown): ThemeDocumentValidationResult {

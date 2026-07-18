@@ -7,6 +7,7 @@ export function canResolveDiscordCover(settings: Partial<DiscordPrivacySettings>
 }
 
 export function canRunDiscordCoverImprovement(settings: Partial<DiscordPrivacySettings> | null | undefined): boolean {
-  return canResolveDiscordCover(settings)
+  return settings != null
+    && canResolveDiscordCover(settings)
     && settings.discordRpcImproveCovers === true;
 }

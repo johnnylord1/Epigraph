@@ -48,7 +48,7 @@ export async function loadOfflineMangaChapter(input: OfflineMangaChapterInput) {
   const urls: string[] = [];
   for (const entry of entries) {
     const bytes = await entry.async("uint8array");
-    urls.push(URL.createObjectURL(new Blob([bytes], { type: imageMimeType(entry.name) })));
+    urls.push(URL.createObjectURL(new Blob([Uint8Array.from(bytes).buffer], { type: imageMimeType(entry.name) })));
   }
   return urls;
 }
