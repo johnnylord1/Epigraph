@@ -42,6 +42,7 @@ const MIGRATED_PREFIXES = [
   "migrate",
   "updater",
   "novel",
+  "syncd",
 ] as const;
 
 const directColorPattern =

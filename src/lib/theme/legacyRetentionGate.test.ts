@@ -6,13 +6,12 @@ const ROOT = process.cwd();
 const NOCTURNE_PATH = "src/styles/nocturne-theme.css";
 const PORT_PATH = "src/styles/nocturne-port.css";
 
-const ACTIVE_SYNCD_ALIAS = "--n-on-surface" as const;
-
 const LEGACY_BRIDGES = [
   "--n-hud-scale",
   "--n-primary",
   "--n-primary-container",
   "--n-on-primary",
+  "--n-on-surface",
   "--n-on-surface-variant",
   "--n-gradient-primary",
   "--n-duration-fast",
@@ -127,9 +126,6 @@ const COMPATIBILITY_CONSUMER_FILES = new Set([
   "src/styles/nocturne-port.css",
   "src/components/pages/Discover.svelte",
   "src/components/pages/Extensions.svelte",
-  "src/components/settings/SyncdConnectionPanel.svelte",
-  "src/components/settings/SyncdSessionDetails.svelte",
-  "src/lib/syncdQr.ts",
 ]);
 
 function projectFiles(path: string): string[] {
@@ -158,14 +154,6 @@ function referencesIn(path: string, token: string): number {
   return source.match(new RegExp(`${escapeRegExp(token)}(?![A-Za-z0-9_-])`, "g"))?.length ?? 0;
 }
 
-function activeReferencesIn(path: string, token: string): number {
-  const source = withoutDeclaration(read(path), token).replace(
-    /^\s*--component-syncd-[\w-]+\s*:\s*[\s\S]*?;/gm,
-    "",
-  );
-  return source.match(new RegExp(`${escapeRegExp(token)}(?![A-Za-z0-9_-])`, "g"))?.length ?? 0;
-}
-
 function declarations(source: string, prefix: string): string[] {
   return [...source.matchAll(new RegExp(`^\\s*(${escapeRegExp(prefix)}[A-Za-z0-9_-]+)\\s*:`, "gm"))]
     .map((match) => match[1])
@@ -179,40 +167,39 @@ describe("Legacy theme retention evidence", () => {
 
   test("freezes all 62 --n-* aliases as retained compatibility inventory", () => {
     const expected = [
-      ACTIVE_SYNCD_ALIAS,
       ...LEGACY_BRIDGES,
       ...UNREFERENCED_LEGACY_ALIASES,
       ...SELECTOR_ONLY_LEGACY_ALIASES,
     ].sort();
 
     expect(declarations(nocturne, "--n-")).toEqual(expected);
-    expect(LEGACY_BRIDGES).toHaveLength(44);
+    expect(LEGACY_BRIDGES).toHaveLength(45);
     expect(UNREFERENCED_LEGACY_ALIASES).toHaveLength(11);
     expect(SELECTOR_ONLY_LEGACY_ALIASES).toHaveLength(6);
   });
 
-  test("keeps active non-Syncd production independent from retained --n-* aliases", () => {
+  test("keeps active production independent from retained --n-* aliases", () => {
     const activeReferences = files
       .filter((path) => !COMPATIBILITY_CONSUMER_FILES.has(path))
       .flatMap((path) =>
-        [ACTIVE_SYNCD_ALIAS, ...LEGACY_BRIDGES, ...UNREFERENCED_LEGACY_ALIASES, ...SELECTOR_ONLY_LEGACY_ALIASES]
-          .filter((token) => activeReferencesIn(path, token) > 0)
+        [...LEGACY_BRIDGES, ...UNREFERENCED_LEGACY_ALIASES, ...SELECTOR_ONLY_LEGACY_ALIASES]
+          .filter((token) => referencesIn(path, token) > 0)
           .map((token) => `${path}:${token}`),
       );
 
     expect(activeReferences).toEqual([]);
   });
 
-  test("keeps --n-on-surface classified Active until the deferred Syncd migration", () => {
-    expect(referencesIn(NOCTURNE_PATH, ACTIVE_SYNCD_ALIAS)).toBe(1);
-    expect(nocturne).toContain(`--component-syncd-input-fg: var(${ACTIVE_SYNCD_ALIAS});`);
+  test("keeps Syncd active after decoupling its final --n-* dependency", () => {
+    expect(referencesIn(NOCTURNE_PATH, "--n-on-surface")).toBe(0);
+    expect(nocturne).toContain("--component-syncd-input-fg: var(--text-primary);");
     expect(read("src/components/settings/SyncdConnectionPanel.svelte")).toContain(
       "var(--component-syncd-input-fg)",
     );
     expect(read("src/components/settings/Settings.svelte")).toContain("SyncdConnectionPanel");
   });
 
-  test("keeps the 17 pre-existing Legacy aliases either unreferenced or selector-only", () => {
+  test("keeps the 17 non-bridge Legacy aliases unreferenced or selector-only", () => {
     for (const token of UNREFERENCED_LEGACY_ALIASES) {
       expect(files.reduce((count, path) => count + referencesIn(path, token), 0), token).toBe(0);
     }
@@ -258,7 +245,6 @@ describe("Legacy theme retention evidence", () => {
       [...read(path).matchAll(dynamicApiPattern)].map((match) => `${path}:${match[1]}`),
     );
     const retained = new Set<string>([
-      ACTIVE_SYNCD_ALIAS,
       ...LEGACY_BRIDGES,
       ...UNREFERENCED_LEGACY_ALIASES,
       ...SELECTOR_ONLY_LEGACY_ALIASES,
@@ -271,7 +257,6 @@ describe("Legacy theme retention evidence", () => {
 
   test("keeps retained aliases outside ThemeEditor, documents, presets, provider, and stores", () => {
     const retained = [
-      ACTIVE_SYNCD_ALIAS,
       ...LEGACY_BRIDGES,
       ...UNREFERENCED_LEGACY_ALIASES,
       ...SELECTOR_ONLY_LEGACY_ALIASES,

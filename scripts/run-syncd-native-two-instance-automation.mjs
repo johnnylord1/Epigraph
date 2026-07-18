@@ -701,6 +701,13 @@ async function waitForPersistedSessionCount(joiner, expectedCount, timeout = DEF
   }, timeout, `Timed out waiting for ${expectedCount} persisted session(s).`);
 }
 
+async function waitForPersistedSessionOrigin(instance, canonicalOrigin, timeout = DEFAULT_TIMEOUT_MS) {
+  return waitForCondition(async () => {
+    const persisted = await readPersistedState(instance).catch(() => null);
+    return persisted?.sessions?.find((session) => session.canonicalOrigin === canonicalOrigin) ?? null;
+  }, timeout, `Timed out waiting for persisted Syncd session ${canonicalOrigin}.`);
+}
+
 async function readPersistedState(instance) {
   const statePath = path.join(
     instance.localAppDataDir,
@@ -855,6 +862,112 @@ async function clickSessionAction(instance, testIdValue, sessionKey, timeout = D
   await instance.driver.executeScript("arguments[0].click();", element);
 }
 
+async function openSessionPopover(instance, sessionKey, timeout = DEFAULT_TIMEOUT_MS) {
+  const rowLocator = sessionRowSelector(sessionKey);
+  await instance.driver.wait(until.elementLocated(rowLocator), timeout, `Timed out waiting for session row ${sessionKey}.`);
+  const row = await instance.driver.findElement(rowLocator);
+  const trigger = await row.findElement(By.css(".syncd-session-trigger"));
+  await instance.driver.executeScript(
+    "arguments[0].scrollIntoView({ block: 'center', inline: 'center' });",
+    trigger,
+  );
+  await instance.driver.wait(until.elementIsEnabled(trigger), timeout);
+  const popoverId = await trigger.getAttribute("aria-controls");
+  if (!popoverId) {
+    throw new Error(`Session trigger ${sessionKey} does not expose aria-controls.`);
+  }
+  if ((await trigger.getAttribute("aria-expanded")) !== "true") {
+    await instance.driver.executeScript("arguments[0].click();", trigger);
+  }
+  const popover = await instance.driver.wait(
+    until.elementLocated(By.id(popoverId)),
+    timeout,
+    `Timed out waiting for session popover ${sessionKey}.`,
+  );
+  await instance.driver.wait(until.elementIsVisible(popover), timeout);
+  return { row, trigger, popover };
+}
+
+async function captureSessionVisualState(instance, name, sessionKey) {
+  const { row, trigger, popover } = await openSessionPopover(instance, sessionKey);
+  const computed = await instance.driver.executeScript(
+    `
+      const readRect = (element) => {
+        const rect = element.getBoundingClientRect();
+        return {
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+          top: rect.top,
+          right: rect.right,
+          bottom: rect.bottom,
+          left: rect.left,
+        };
+      };
+      const readStyle = (element) => {
+        const style = getComputedStyle(element);
+        return {
+          backgroundColor: style.backgroundColor,
+          backgroundImage: style.backgroundImage,
+          borderColor: style.borderColor,
+          borderRadius: style.borderRadius,
+          boxShadow: style.boxShadow,
+          backdropFilter: style.backdropFilter,
+          color: style.color,
+          opacity: style.opacity,
+          zIndex: style.zIndex,
+          fontFamily: style.fontFamily,
+          fontSize: style.fontSize,
+          lineHeight: style.lineHeight,
+          padding: style.padding,
+          gap: style.gap,
+          width: style.width,
+          height: style.height,
+        };
+      };
+      const rootStyle = getComputedStyle(document.documentElement);
+      const syncdTokens = {};
+      for (let index = 0; index < rootStyle.length; index += 1) {
+        const name = rootStyle.item(index);
+        if (name.startsWith('--component-syncd-')) {
+          syncdTokens[name] = rootStyle.getPropertyValue(name).trim();
+        }
+      }
+      const actions = [...arguments[2].querySelectorAll('button')].map((button) => ({
+        testId: button.getAttribute('data-testid'),
+        label: button.textContent?.trim() ?? '',
+        disabled: button.disabled || button.getAttribute('aria-disabled') === 'true',
+      }));
+      return {
+        viewport: { width: innerWidth, height: innerHeight },
+        semanticTokens: {
+          '--text-primary': rootStyle.getPropertyValue('--text-primary').trim(),
+          '--n-on-surface': rootStyle.getPropertyValue('--n-on-surface').trim(),
+        },
+        row: { rect: readRect(arguments[0]), style: readStyle(arguments[0]) },
+        trigger: {
+          rect: readRect(arguments[1]),
+          style: readStyle(arguments[1]),
+          ariaExpanded: arguments[1].getAttribute('aria-expanded'),
+        },
+        popover: { rect: readRect(arguments[2]), style: readStyle(arguments[2]) },
+        actions,
+        syncdTokens,
+      };
+    `,
+    row,
+    trigger,
+    popover,
+  );
+  const screenshot = await saveScreenshot(instance, name);
+  const computedStyles = await snapshotJson(`${name}-computed`, computed);
+  const close = await popover.findElement(By.css(".syncd-session-popover__close"));
+  await instance.driver.executeScript("arguments[0].click();", close);
+  await instance.driver.wait(async () => (await trigger.getAttribute("aria-expanded")) === "false", SHORT_TIMEOUT_MS);
+  return { screenshot, computedStyles };
+}
+
 async function extractQrToFile(host, filePath) {
   const image = await waitForTestId(host.driver, "syncd-host-qr-image");
   await host.driver.wait(async () => {
@@ -982,37 +1095,34 @@ async function runScenario() {
       throw error;
     }
     step("  - host observed approved");
-    await waitForConnectStatus(joiner, "Connected", SCENARIO_STATUS_TIMEOUT_MS, "scenario1-joiner-connected-timeout");
-    step("  - joiner observed connected");
+    await waitForPersistedSessionOrigin(joiner, hostState.bundle.syncdBaseUrl, SCENARIO_STATUS_TIMEOUT_MS);
+    step("  - joiner persisted the approved host origin");
     await waitForPersistedSessionCount(joiner, 1);
     step("  - joiner persisted approved session");
     await waitForReplicationStatus(joiner, "Live", DEFAULT_TIMEOUT_MS);
     await waitForReplicationStatus(host, "Live", DEFAULT_TIMEOUT_MS);
     step("  - replication reached live on both host and joiner");
-    await mutateBookFixture(joiner, { mode: "clear_bookmarks", marker: "joiner-seed" });
-    step("  - joiner seeded the audit book fixture locally for book-only replication checks");
-
-    const hostBookProgress = await mutateBookFixture(host, {
+    const hostNovelProgress = await mutateNovelFixture(host, {
       mode: "progress",
       marker: "host-progress-1",
       progressPercent: 0.42,
     });
-    await waitForBookProgress(joiner, hostBookProgress.bookId, 0.42, DEFAULT_TIMEOUT_MS);
-    step("  - host book progress replicated to joiner");
+    await waitForNovelProgress(joiner, hostNovelProgress.novelId, 0.42, DEFAULT_TIMEOUT_MS);
+    step("  - host novel progress replicated to joiner");
 
-    const hostBookBookmark = await mutateBookFixture(host, {
+    const hostNovelBookmark = await mutateNovelFixture(host, {
       mode: "bookmark",
       marker: "host-bookmark-1",
       progressPercent: 0.42,
     });
-    await snapshotJson("scenario1-host-bookmark-local", {
-      mutationResult: hostBookBookmark,
-      persistence: await readBookPersistence(host).catch((error) => ({
+    await snapshotJson("scenario1-host-novel-bookmark-local", {
+      mutationResult: hostNovelBookmark,
+      persistence: await readNovelPersistence(host).catch((error) => ({
         readError: error instanceof Error ? error.message : String(error),
       })),
     });
-    await waitForBookBookmark(joiner, hostBookBookmark.bookId, hostBookBookmark.bookmarkLabel, DEFAULT_TIMEOUT_MS);
-    step("  - host book bookmark replicated to joiner");
+    await waitForNovelBookmark(joiner, hostNovelBookmark.novelId, hostNovelBookmark.bookmarkLabel, DEFAULT_TIMEOUT_MS);
+    step("  - host novel bookmark replicated to joiner");
 
     const joinerNovelProgress = await mutateNovelFixture(joiner, {
       mode: "progress",
@@ -1030,14 +1140,24 @@ async function runScenario() {
     step("  - joiner novel bookmark replicated back to host");
 
     const persistedAfterApprove = await readPersistedState(joiner);
+    const approvedSession = persistedAfterApprove.sessions[0];
+    if (!approvedSession) {
+      throw new Error("Approved Syncd session was not available for visual validation.");
+    }
+    const connectedVisual = await captureSessionVisualState(
+      joiner,
+      "scenario1-joiner-connected-popover",
+      approvedSession.sessionKey,
+    );
     report.scenarios.push({
       name: "mdns-discovery-approval-replication",
       hostOrigin: hostState.bundle.syncdBaseUrl,
       persistedSessions: persistedAfterApprove.sessions.length,
       replicated: {
-        bookId: hostBookProgress.bookId,
-        novelId: joinerNovelProgress.novelId,
+        hostNovelId: hostNovelProgress.novelId,
+        joinerNovelId: joinerNovelProgress.novelId,
       },
+      visual: connectedVisual,
       screenshot: await saveScreenshot(joiner, "scenario1-joiner-connected"),
     });
 
@@ -1046,17 +1166,43 @@ async function runScenario() {
     await waitForPersistedSessionCount(joiner, 1);
     await waitForPersistedStatusText(joiner, "Connected");
     await waitForReplicationStatus(joiner, "Live", DEFAULT_TIMEOUT_MS);
+    const persistedAfterRestart = await readPersistedState(joiner);
+    const restartedSession = persistedAfterRestart.sessions[0];
+    if (!restartedSession) {
+      throw new Error("Persisted Syncd session was not available after restart.");
+    }
+    const restartVisual = await captureSessionVisualState(
+      joiner,
+      "scenario2-joiner-restarted-live-popover",
+      restartedSession.sessionKey,
+    );
     await clickTestId(joiner.driver, "syncd-replication-toggle");
     await waitForReplicationStatus(joiner, "Paused", DEFAULT_TIMEOUT_MS);
+    const pausedVisual = await captureSessionVisualState(
+      joiner,
+      "scenario2-joiner-paused-popover",
+      restartedSession.sessionKey,
+    );
     step("  - replication paused");
     await clickTestId(joiner.driver, "syncd-replication-toggle");
     await waitForReplicationStatus(joiner, "Live", DEFAULT_TIMEOUT_MS);
+    const resumedVisual = await captureSessionVisualState(
+      joiner,
+      "scenario2-joiner-resumed-popover",
+      restartedSession.sessionKey,
+    );
     step("  - replication resumed");
     await clickTestId(joiner.driver, "syncd-replication-reconnect");
     await waitForReplicationStatus(joiner, "Live", DEFAULT_TIMEOUT_MS);
+    const reconnectedVisual = await captureSessionVisualState(
+      joiner,
+      "scenario2-joiner-reconnected-popover",
+      restartedSession.sessionKey,
+    );
     step("  - replication reconnected");
     report.scenarios.push({
       name: "restart-revalidation-pause-resume",
+      visual: { restartVisual, pausedVisual, resumedVisual, reconnectedVisual },
       screenshot: await saveScreenshot(joiner, "scenario2-joiner-restarted"),
     });
 
@@ -1075,7 +1221,7 @@ async function runScenario() {
     await waitForConnectStatus(joiner, "Claimed", DEFAULT_TIMEOUT_MS, "scenario3-joiner-claimed-timeout");
     await decideHost(hostAlt, "approve");
     await waitForText(hostAlt.driver, "syncd-host-status-live", "Approved");
-    await waitForConnectStatus(joiner, "Connected", DEFAULT_TIMEOUT_MS, "scenario3-joiner-connected-timeout");
+    await waitForPersistedSessionOrigin(joiner, altHostState.bundle.syncdBaseUrl, DEFAULT_TIMEOUT_MS);
     await waitForPersistedSessionCount(joiner, 2);
     const persistedWithAlt = await readPersistedState(joiner);
     const originalSession = persistedWithAlt.sessions.find((session) => session.canonicalOrigin === hostState.bundle.syncdBaseUrl);
@@ -1083,16 +1229,37 @@ async function runScenario() {
     if (!originalSession || !altSession) {
       throw new Error("Could not identify both persisted sync sessions after the second approval.");
     }
+    const originalActiveVisual = await captureSessionVisualState(
+      joiner,
+      "scenario3-original-active-popover",
+      originalSession.sessionKey,
+    );
+    const altInactiveVisual = await captureSessionVisualState(
+      joiner,
+      "scenario3-alt-inactive-popover",
+      altSession.sessionKey,
+    );
     await clickSessionAction(joiner, "syncd-session-set-active", altSession.sessionKey);
     await waitForActiveSessionKey(joiner, altSession.sessionKey, DEFAULT_TIMEOUT_MS);
     await waitForReplicationStatus(joiner, "Live", DEFAULT_TIMEOUT_MS);
     step("  - second session became active");
+    const altActiveVisual = await captureSessionVisualState(
+      joiner,
+      "scenario3-alt-active-popover",
+      altSession.sessionKey,
+    );
+    const originalInactiveVisual = await captureSessionVisualState(
+      joiner,
+      "scenario3-original-inactive-popover",
+      originalSession.sessionKey,
+    );
     await clickSessionAction(joiner, "syncd-session-forget", originalSession.sessionKey);
     await waitForPersistedSessionCount(joiner, 1);
     step("  - inactive original session forgotten");
     report.scenarios.push({
       name: "session-management-active-switch",
       activeOrigin: altHostState.bundle.syncdBaseUrl,
+      visual: { originalActiveVisual, altInactiveVisual, altActiveVisual, originalInactiveVisual },
       screenshot: await saveScreenshot(joiner, "scenario3-joiner-session-management"),
     });
 
@@ -1189,10 +1356,23 @@ async function runScenario() {
     }
     await decideHost(host, "approve");
     await waitForText(host.driver, "syncd-host-status-live", "Approved");
-    await waitForConnectStatus(joiner, "Connected", DEFAULT_TIMEOUT_MS, "scenario7-joiner-connected-timeout");
+    await waitForPersistedSessionOrigin(joiner, qrHostState.bundle.syncdBaseUrl, DEFAULT_TIMEOUT_MS);
+    const persistedAfterQr = await readPersistedState(joiner);
+    const qrSession = persistedAfterQr.sessions.find(
+      (session) => session.canonicalOrigin === qrHostState.bundle.syncdBaseUrl,
+    );
+    if (!qrSession) {
+      throw new Error("QR-approved Syncd session was not available for visual validation.");
+    }
+    const qrVisual = await captureSessionVisualState(
+      joiner,
+      "scenario7-joiner-connected-qr-popover",
+      qrSession.sessionKey,
+    );
     report.scenarios.push({
       name: "qr-approval",
       qrPath,
+      visual: qrVisual,
       screenshot: await saveScreenshot(joiner, "scenario7-joiner-connected-qr"),
     });
 

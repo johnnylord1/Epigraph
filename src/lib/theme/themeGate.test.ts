@@ -91,9 +91,6 @@ const compatibilityConsumerFiles = new Set([
   "src/components/library/NovelsLibraryBody.svelte",
   "src/components/pages/Tracking.svelte",
   "src/components/pages/GenreDrillPage.svelte",
-  "src/components/settings/SyncdConnectionPanel.svelte",
-  "src/components/settings/SyncdSessionDetails.svelte",
-  "src/lib/syncdQr.ts",
 ]);
 
 interface CssDeclaration {
@@ -109,7 +106,7 @@ function declarations(source: string): CssDeclaration[] {
 
 function componentDeclarations(source: string) {
   return declarations(source).filter(
-    ({ name }) => name.startsWith("--component-") && !name.startsWith("--component-syncd-"),
+    ({ name }) => name.startsWith("--component-"),
   );
 }
 
@@ -275,7 +272,7 @@ describe("final derived theme gate", () => {
     expect(leaked).toEqual([]);
   });
 
-  test("keeps every non-Syncd component token free of direct colors", () => {
+  test("keeps every component token free of direct colors", () => {
     const offenders = componentDeclarations(`${tokensCss}\n${nocturneCss}`)
       .filter(({ value }) => directColorPattern.test(value))
       .map(({ name, value }) => `${name}: ${value}`);
@@ -327,7 +324,6 @@ describe("final derived theme gate", () => {
       .filter(
         ([name, value]) =>
           name.startsWith("--component-") &&
-          !name.startsWith("--component-syncd-") &&
           !geometryName.test(name) &&
           (colorName.test(name) || visualValue.test(value)),
       );
@@ -365,11 +361,11 @@ describe("final derived theme gate", () => {
       runtime: runtime.length,
       neutral: neutral.length,
     }).toEqual({
-      componentColors: 1463,
-      editable: 1452,
-      absolute: 290,
+      componentColors: 1494,
+      editable: 1483,
+      absolute: 295,
       absoluteOnly: 0,
-      mixedEditableAbsolute: 290,
+      mixedEditableAbsolute: 295,
       runtime: 9,
       neutral: 11,
     });
@@ -459,8 +455,7 @@ describe("final derived theme gate", () => {
       .filter((path) => !path.endsWith("src/styles/tokens.css") && !path.endsWith("src/styles/nocturne-theme.css"))
       .map((path) => readFileSync(resolve(ROOT, path), "utf8"));
     const activeThemeDefinitions = `${tokensCss}\n${nocturneCss}`
-      .replace(/^\s*--(?:n|activity)-[\w-]+\s*:\s*[\s\S]*?;/gm, "")
-      .replace(/^\s*--component-syncd-[\w-]+\s*:\s*[\s\S]*?;/gm, "");
+      .replace(/^\s*--(?:n|activity)-[\w-]+\s*:\s*[\s\S]*?;/gm, "");
     const references = `${activeSources.join("\n")}\n${activeThemeDefinitions}`
       .match(/var\(--n-[\w-]+/g) ?? [];
 

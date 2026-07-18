@@ -15,6 +15,7 @@ const surfaceTokens = [
   "--component-menu-bg",
   "--component-sidebar-bg",
   "--component-settings-card-bg",
+  "--component-syncd-card-bg",
   "--component-detail-layer-bg",
   "--component-home-card-bg",
   "--component-activity-center-bg",

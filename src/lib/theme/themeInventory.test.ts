@@ -21,12 +21,6 @@ const LEGACY_CONSUMER_FILES = new Set([
   "src/components/pages/Tracking.svelte",
   "src/components/pages/GenreDrillPage.svelte",
 ]);
-const SYNCD_CONSUMER_FILES = new Set([
-  "src/components/settings/SyncdConnectionPanel.svelte",
-  "src/components/settings/SyncdSessionDetails.svelte",
-  "src/lib/syncdQr.ts",
-]);
-
 const EXPECTED_FAMILY_COUNTS = {
   activity: 74,
   app: 16,
@@ -58,6 +52,7 @@ const EXPECTED_FAMILY_COUNTS = {
   soft: 1,
   sources: 138,
   splash: 21,
+  syncd: 60,
   tab: 2,
   taste: 51,
   "theme-editor": 221,
@@ -78,7 +73,7 @@ const EXPECTED_UNCONSUMED_LEGACY = [
 ] as const;
 
 type DefinitionLayer = "fallback" | "nocturne";
-type InventoryStatus = "Active" | "Legacy" | "Excluded";
+type InventoryStatus = "Active" | "Legacy";
 type ConsumptionMode = "static" | "dynamic" | "transitive" | "none";
 
 interface TokenDefinition {
@@ -194,9 +189,7 @@ function reachableTokens(
 function buildInventory() {
   const definitions = readDefinitions();
   const files = projectFiles("src").filter((path) => !THEME_FILES.includes(path as never));
-  const activeFiles = files.filter(
-    (path) => !LEGACY_CONSUMER_FILES.has(path) && !SYNCD_CONSUMER_FILES.has(path),
-  );
+  const activeFiles = files.filter((path) => !LEGACY_CONSUMER_FILES.has(path));
   const legacyFiles = files.filter((path) => LEGACY_CONSUMER_FILES.has(path));
   const activeDirect = mergeReferences(
     directReferences(activeFiles),
@@ -215,7 +208,6 @@ function buildInventory() {
   const legacyReachable = reachableTokens(legacyRoots, definitions);
 
   const entries: TokenInventoryEntry[] = [...definitions.entries()].map(([token, definition]) => {
-    const excluded = token.startsWith("--component-syncd-");
     const active = activeReachable.has(token);
     const consumption: ConsumptionMode = activeDirect.dynamicReferences.has(token)
       ? "dynamic"
@@ -230,7 +222,7 @@ function buildInventory() {
       token,
       family: tokenFamily(token),
       layers: [...definition.layers].sort(),
-      status: excluded ? "Excluded" : active ? "Active" : "Legacy",
+      status: active ? "Active" : "Legacy",
       consumption,
     };
   });
@@ -240,26 +232,25 @@ function buildInventory() {
 
 describe("exhaustive component theme inventory", () => {
   const inventory = buildInventory();
-  const scoped = inventory.entries.filter(({ status }) => status !== "Excluded");
+  const scoped = inventory.entries;
 
   test("classifies every definition without inferring dead tokens", () => {
     expect(inventory.entries).toHaveLength(2730);
-    expect(inventory.entries.filter(({ status }) => status === "Excluded")).toHaveLength(60);
-    expect(scoped).toHaveLength(2670);
-    expect(scoped.filter(({ status }) => status === "Active")).toHaveLength(2576);
+    expect(scoped).toHaveLength(2730);
+    expect(scoped.filter(({ status }) => status === "Active")).toHaveLength(2636);
     expect(scoped.filter(({ status }) => status === "Legacy")).toHaveLength(94);
-    expect(inventory.entries.every(({ status }) => ["Active", "Legacy", "Excluded"].includes(status))).toBe(true);
+    expect(inventory.entries.every(({ status }) => ["Active", "Legacy"].includes(status))).toBe(true);
     expect(inventory.entries.some(({ status }) => (status as string) === "Dead")).toBe(false);
   });
 
-  test("fixes the complete non-Syncd family and definition-layer inventories", () => {
+  test("fixes the complete family and definition-layer inventories", () => {
     const families = Object.fromEntries(
       [...Map.groupBy(scoped, ({ family }) => family).entries()]
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([family, entries]) => [family, entries.length]),
     );
     expect(families).toEqual(EXPECTED_FAMILY_COUNTS);
-    expect(scoped.filter(({ layers }) => layers.join("+") === "fallback+nocturne")).toHaveLength(2434);
+    expect(scoped.filter(({ layers }) => layers.join("+") === "fallback+nocturne")).toHaveLength(2494);
     expect(scoped.filter(({ layers }) => layers.join("+") === "fallback")).toHaveLength(236);
     expect(scoped.filter(({ layers }) => layers.join("+") === "nocturne")).toHaveLength(0);
   });
@@ -271,7 +262,7 @@ describe("exhaustive component theme inventory", () => {
     const unconsumed = legacy.filter(({ consumption }) => consumption === "none");
     const dynamic = scoped.filter(({ consumption }) => consumption === "dynamic");
 
-    expect(active.filter(({ consumption }) => consumption === "static")).toHaveLength(2562);
+    expect(active.filter(({ consumption }) => consumption === "static")).toHaveLength(2622);
     expect(active.filter(({ consumption }) => consumption === "dynamic")).toHaveLength(1);
     expect(active.filter(({ consumption }) => consumption === "transitive")).toHaveLength(13);
     expect(legacyOnly).toHaveLength(89);

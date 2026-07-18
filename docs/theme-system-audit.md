@@ -3366,10 +3366,36 @@ Categorias cobertas:
 - Nenhuma superficie foi reativada, removida ou migrada. Nao houve mudanca visual; as capturas reais do Marco 55B continuam a baseline. Uma futura reativacao exige rota real, acessibilidade, screenshots e testes dedicados; remocao exige prova adicional de ausencia em bundle, deep links, plugins e estado persistido.
 - Unit/jsdom: **3 arquivos / 21 testes verdes**, cobrindo grafo Legacy, compatibilidade do shell e allowlist de valores visuais. `pnpm build`: verde com apenas o aviso conhecido de chunk principal; `git diff --check`: verde.
 
-### Marco 58 - Syncd Runtime Closure (deferred)
+### Marco 58 - Syncd Runtime Closure (concluido)
 
-- Syncd permanece adiado ate existir sessao persistida real reproduzivel. Seus 60 tokens ja estao definidos e consumidos; o trabalho restante e validar pairing, sessao e popovers em runtime real e entao inclui-los no inventario global Ativo.
-- Nao alterar replication, reconnect, persistencia ou QR apenas para produzir evidencia visual.
+#### Evidencia runtime real
+
+- O harness nativo WebView2 executou duas instancias com `LOCALAPPDATA` isolado e concluiu **7/7 cenarios**: descoberta mDNS, claim/aprovacao, replicacao bidirecional de progresso e bookmark, restart com sessao persistida, pause/resume, reconnect, troca e esquecimento de sessao ativa, rejeicao manual, host indisponivel, expiracao e importacao por QR.
+- A automacao passou a aceitar o Edge WebDriver por parametro ou `AETHON_EDGE_DRIVER`, evitando dependencia de uma versao WinGet fixa. O minimo de cliente do harness usa a versao de `package.json` somente no processo de teste; defaults e regras do produto nao foram alterados.
+- O sucesso de aprovacao e comprovado pela sessao persistida e pela replicacao `Live`, em vez de depender do card transitorio de conexao. Durante o preflight, esse card chegou a reportar `Access denied (os error 5)` apos a sessao ja estar persistida e replicando; a automacao agora mede o estado duravel correto sem mascarar falha de replicacao.
+
+#### Tokens e contrato
+
+- Os **60 `--component-syncd-*`** estao definidos nas duas camadas, consumidos diretamente por `SyncdConnectionPanel.svelte` ou `SyncdSessionDetails.svelte` e classificados Ativos: **60 definidos / 60 consumidos / 0 sem consumo / 0 indefinidos**.
+- `--component-syncd-input-fg` deixou de depender de `--n-on-surface` e passou a consumir `--text-primary`. No runtime Nocturne, ambos resolviam a `#e5e2e1`; a troca nao alterou o valor computado.
+- A auditoria global revelou 18 valores de cor Nocturne que ainda eram literais dentro do prefixo Syncd. Eles foram derivados dos tokens semanticos existentes com `color-mix()`, preservando exatamente source color e alpha. O gradient do trigger tambem passou a usar `--color-highlight-source`.
+- `componentColorDerivation` e `themeGate` agora incluem Syncd. Os **31 tokens Syncd classificados como visuais** alcançam o contrato editavel; nenhum literal, alias `--n-*` ou dependencia visual nao classificada permanece no prefixo.
+- Inventario global apos a promocao: **2.730 component tokens / 2.636 Ativos / 94 Legacy / 0 Excluidos**. Consumo Ativo: **2.622 estaticos / 1 dinamico / 13 transitivos**. Os 62 aliases `--n-*` ficam classificados **0 Ativos / 62 Legacy / 0 Mortos**; nenhum foi removido neste marco.
+
+#### Evidencia visual e acessibilidade
+
+- `docs/screenshots/marco58-syncd-runtime/before/` e `after/` contem cinco pares reais: conectado, pausado, reconectado, sessao alternativa ativa e aprovacao por QR.
+- A comparacao visual confirma ausencia de regressao aparente. UUIDs, timestamps e contadores mudam por serem dados reais de cada execucao; geometria, surfaces, blur, radius, borders, shadow, tipografia e hierarquia permanecem equivalentes.
+- O popover manteve `360 x 317.78125 px`, background `color(srgb 0.0627451 0.0627451 0.0862745 / 0.97)`, border alpha `0.055`, radius `10.6668px`, a mesma shadow composta e `backdrop-filter: none`.
+- Connected, Active, Paused e os controles de pause/resume/reconnect foram validados no app real. Estados de rejeicao, indisponibilidade e expiracao tambem foram exercitados pelo harness, sem fixtures persistidas no perfil do usuario.
+
+#### Gates
+
+- Unit/contrato: **4 arquivos / 47 testes verdes**.
+- Syncd/jsdom: **2 arquivos / 4 testes verdes**.
+- Browser theme-probe: **1 arquivo / 8 testes verdes**, incluindo resposta de `--component-syncd-card-bg` a uma paleta oposta.
+- Build frontend e binario Tauri de automacao: verdes; automacao nativa final: **7/7 cenarios verdes**.
+- `git diff --check`: verde. Nenhuma mudanca de logica Syncd, pairing, QR, replication, reconnect, persistencia ou componente visual foi realizada.
 
 ### Marco 59 - Legacy Surface Removal
 

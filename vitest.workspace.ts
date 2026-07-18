@@ -17,6 +17,7 @@ export default defineWorkspace([
       ],
       exclude: [
         "src/lib/reader/tts.test.ts",
+        "src/**/*.browser.test.ts",
       ],
     },
   },

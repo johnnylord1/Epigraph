@@ -1,5 +1,6 @@
 param(
-  [switch]$SkipBuild
+  [switch]$SkipBuild,
+  [string]$NativeDriver = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -262,13 +263,24 @@ if ($SkipBuild) {
 Sync-SidecarBinary
 
 $tauriDriver = "C:\Users\jhow-\.cargo\bin\tauri-driver.exe"
-$nativeDriver = "C:\Users\jhow-\AppData\Local\Microsoft\WinGet\Packages\Microsoft.EdgeDriver_Microsoft.Winget.Source_8wekyb3d8bbwe\msedgedriver.exe"
+$nativeDriver = if ($NativeDriver) {
+  $NativeDriver
+} elseif ($env:AETHON_EDGE_DRIVER) {
+  $env:AETHON_EDGE_DRIVER
+} else {
+  "C:\Users\jhow-\AppData\Local\Microsoft\WinGet\Packages\Microsoft.EdgeDriver_Microsoft.Winget.Source_8wekyb3d8bbwe\msedgedriver.exe"
+}
 
 if (-not (Test-Path $tauriDriver)) {
   throw "tauri-driver was not found at $tauriDriver"
 }
 if (-not (Test-Path $nativeDriver)) {
   throw "msedgedriver was not found at $nativeDriver"
+}
+
+if (-not $env:AETHON_SYNCD_MIN_CLIENT_VERSION) {
+  $packageMetadata = Get-Content (Join-Path $projectRoot "package.json") -Raw | ConvertFrom-Json
+  $env:AETHON_SYNCD_MIN_CLIENT_VERSION = [string]$packageMetadata.version
 }
 
 $driverProcess = $null
