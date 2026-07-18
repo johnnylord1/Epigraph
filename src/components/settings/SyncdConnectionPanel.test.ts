@@ -114,6 +114,7 @@ describe("SyncdConnectionPanel", () => {
     const dialog = await screen.findByRole("dialog", { name: "Desktop sync pairing" });
     await fireEvent.click(within(dialog).getByTestId("syncd-host-start"));
     await waitFor(() => expect(within(dialog).getByTestId("syncd-host-status-live").textContent).toContain("Pending"));
+    expect(within(dialog).getByTestId("syncd-host-status-live").getAttribute("data-status")).toBe("pending");
 
     await waitFor(() => expect(pairingStatusListener).not.toBeNull());
     await act(async () => {
@@ -125,6 +126,7 @@ describe("SyncdConnectionPanel", () => {
     });
 
     expect(within(dialog).getByText("A desktop wants to connect")).toBeTruthy();
+    expect(within(dialog).getByTestId("syncd-host-status-live").getAttribute("data-status")).toBe("claimed");
     expect(within(dialog).getByTestId("syncd-host-approve")).toBeTruthy();
     expect(within(dialog).getByTestId("syncd-host-reject")).toBeTruthy();
   });

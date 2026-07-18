@@ -262,21 +262,46 @@ if ($SkipBuild) {
 
 Sync-SidecarBinary
 
-$tauriDriver = "C:\Users\jhow-\.cargo\bin\tauri-driver.exe"
-$nativeDriver = if ($NativeDriver) {
-  $NativeDriver
-} elseif ($env:AETHON_EDGE_DRIVER) {
-  $env:AETHON_EDGE_DRIVER
-} else {
-  "C:\Users\jhow-\AppData\Local\Microsoft\WinGet\Packages\Microsoft.EdgeDriver_Microsoft.Winget.Source_8wekyb3d8bbwe\msedgedriver.exe"
+$tauriDriver = Join-Path $HOME ".cargo\bin\tauri-driver.exe"
+
+function Resolve-EdgeDriver {
+  $candidates = [System.Collections.Generic.List[string]]::new()
+  if ($NativeDriver) {
+    $candidates.Add($NativeDriver)
+  }
+  if ($env:AETHON_EDGE_DRIVER) {
+    $candidates.Add($env:AETHON_EDGE_DRIVER)
+  }
+
+  $command = Get-Command "msedgedriver.exe" -ErrorAction SilentlyContinue
+  if ($command -and $command.Source) {
+    $candidates.Add($command.Source)
+  }
+
+  $wingetRoot = Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Packages"
+  if (Test-Path $wingetRoot) {
+    Get-ChildItem -Path $wingetRoot -Directory -Filter "Microsoft.EdgeDriver_*" -ErrorAction SilentlyContinue |
+      Get-ChildItem -Recurse -File -Filter "msedgedriver.exe" -ErrorAction SilentlyContinue |
+      Sort-Object LastWriteTime -Descending |
+      ForEach-Object { $candidates.Add($_.FullName) }
+  }
+
+  foreach ($candidate in $candidates) {
+    if ($candidate -and (Test-Path $candidate)) {
+      return (Resolve-Path $candidate).Path
+    }
+  }
+
+  throw "msedgedriver was not found. Install Microsoft Edge WebDriver or set AETHON_EDGE_DRIVER."
 }
+
+$nativeDriver = Resolve-EdgeDriver
 
 if (-not (Test-Path $tauriDriver)) {
   throw "tauri-driver was not found at $tauriDriver"
 }
-if (-not (Test-Path $nativeDriver)) {
-  throw "msedgedriver was not found at $nativeDriver"
-}
+Write-Host "Using EdgeDriver: $nativeDriver"
+& $nativeDriver --version
 
 if (-not $env:AETHON_SYNCD_MIN_CLIENT_VERSION) {
   $packageMetadata = Get-Content (Join-Path $projectRoot "package.json") -Raw | ConvertFrom-Json

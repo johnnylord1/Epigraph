@@ -10,7 +10,7 @@
     statusTone = "neutral",
     summary,
     lastValidatedLabel,
-    replicationLabel = "Idle",
+    replicationLabel = "",
     reconnectError = null,
     isReplicationPaused = false,
     onSetActive = undefined,
@@ -121,7 +121,7 @@
         <p class="syncd-list__hint" data-testid="syncd-session-status">{summary}</p>
         <p class="syncd-list__meta">{$_("ui_validated")} {lastValidatedLabel}</p>
         {#if reconnectError}
-          <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Session" title={$_("ui_reconnectFailed")} body={reconnectError} />
+          <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("syncd_modal_session")} title={$_("ui_reconnectFailed")} body={reconnectError} />
         {/if}
       </div>
 
@@ -134,7 +134,7 @@
           type="button"
           class="syncd-session-trigger"
           bind:this={triggerButton}
-          aria-label={`Open session details for ${session.remoteProfileId}`}
+          aria-label={$_("syncd_modal_openSessionDetails", { profile: session.remoteProfileId })}
           aria-expanded={open}
           aria-controls={popoverId}
           onclick={toggleDetails}
@@ -161,7 +161,7 @@
         <button
           type="button"
           class="syncd-session-popover__close"
-          aria-label={`Close session details for ${session.remoteProfileId}`}
+          aria-label={$_("syncd_modal_closeSessionDetails", { profile: session.remoteProfileId })}
           onclick={() => closeDetails({ focusTrigger: true })}
         >
           <X size={12} weight="bold" />
@@ -222,7 +222,7 @@
             onclick={() => onSetActive()}
             disabled={!session.actions.canSetActive || setActiveBusy}
           >
-            {setActiveBusy ? "Switching..." : $_("ui_setActive")}
+            {setActiveBusy ? $_("syncd_action_switching") : $_("ui_setActive")}
           </button>
         {/if}
         {#if onRevalidate}
@@ -234,7 +234,7 @@
             onclick={() => onRevalidate()}
             disabled={!session.actions.canRevalidate || revalidateBusy}
           >
-            {revalidateBusy ? "Checking..." : "Revalidate"}
+            {revalidateBusy ? $_("syncd_action_checking") : $_("syncd_action_revalidate")}
           </button>
         {/if}
         {#if session.isActiveForSync && onPauseResume}
@@ -246,7 +246,7 @@
             onclick={() => onPauseResume()}
             disabled={pauseResumeBusy}
           >
-            {pauseResumeBusy ? "Updating..." : (isReplicationPaused ? $_("ui_resumeReplication") : $_("ui_pauseReplication"))}
+            {pauseResumeBusy ? $_("syncd_action_updating") : (isReplicationPaused ? $_("ui_resumeReplication") : $_("ui_pauseReplication"))}
           </button>
         {/if}
         {#if onDisconnect}
@@ -258,7 +258,7 @@
             onclick={() => onDisconnect()}
             disabled={!session.actions.canDisconnect || disconnectBusy}
           >
-            {disconnectBusy ? "Removing..." : "Disconnect"}
+            {disconnectBusy ? $_("syncd_action_removing") : $_("syncd_action_disconnect")}
           </button>
         {/if}
         {#if onForget}
@@ -270,7 +270,7 @@
             onclick={() => onForget()}
             disabled={!session.actions.canForget || forgetBusy}
           >
-            {forgetBusy ? "Forgetting..." : "Forget"}
+            {forgetBusy ? $_("syncd_action_forgetting") : $_("syncd_action_forget")}
           </button>
         {/if}
       </div>

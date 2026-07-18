@@ -782,7 +782,7 @@
   --component-theme-editor-slider-value-fg: var(--text-muted);
   --component-syncd-grid-gap: 16px;
   --component-syncd-card-bg: color-mix(in srgb, var(--bg-surface) 60%, transparent);
-  --component-syncd-card-border: color-mix(in srgb, var(--border-strong) 14%, transparent);
+  --component-syncd-card-border: color-mix(in srgb, var(--accent) 16%, color-mix(in srgb, var(--border-strong) 14%, transparent));
   --component-syncd-card-radius: 18px;
   --component-syncd-card-padding: 18px;
   --component-syncd-card-gap: 16px;
@@ -791,7 +791,7 @@
   --component-syncd-label-fg: color-mix(in srgb, var(--text-secondary) 42%, transparent);
   --component-syncd-muted-fg: color-mix(in srgb, var(--text-secondary) 48%, transparent);
   --component-syncd-surface-bg: color-mix(in srgb, var(--color-highlight-source) 2%, transparent);
-  --component-syncd-surface-border: color-mix(in srgb, var(--border-strong) 12%, transparent);
+  --component-syncd-surface-border: color-mix(in srgb, var(--accent) 14%, color-mix(in srgb, var(--border-strong) 12%, transparent));
   --component-syncd-surface-radius: 14px;
   --component-syncd-surface-padding: 14px;
   --component-syncd-surface-gap: 12px;
@@ -821,8 +821,8 @@
   --component-syncd-pill-padding: 4px 10px;
   --component-syncd-pill-gap: 4px;
   --component-syncd-pill-font-size: 11px;
-  --component-syncd-pill-success-border: color-mix(in srgb, var(--color-success) 55%, var(--border-base));
-  --component-syncd-pill-success-fg: var(--color-success);
+  --component-syncd-pill-success-border: color-mix(in srgb, var(--accent) 62%, var(--border-base));
+  --component-syncd-pill-success-fg: var(--accent-fg);
   --component-syncd-pill-info-border: color-mix(in srgb, var(--color-info) 55%, var(--border-base));
   --component-syncd-pill-info-fg: var(--color-info);
   --component-syncd-pill-danger-border: color-mix(in srgb, var(--color-error) 55%, var(--border-base));
@@ -843,7 +843,7 @@
   --component-syncd-modal-width: min(760px, calc(100vw - 48px));
   --component-syncd-modal-height: min(760px, calc(100vh - 64px));
   --component-syncd-modal-bg: var(--component-modal-bg);
-  --component-syncd-modal-border: var(--component-modal-border);
+  --component-syncd-modal-border: color-mix(in srgb, var(--accent) 24%, var(--component-modal-border));
   --component-syncd-modal-radius: var(--component-modal-radius);
   --component-syncd-modal-shadow: var(--component-modal-shadow);
   --component-syncd-modal-backdrop-bg: var(--component-overlay-bg);
@@ -851,7 +851,7 @@
   --component-syncd-modal-backdrop-padding: var(--space-lg);
   --component-syncd-modal-z-index: var(--z-modal);
   --component-syncd-modal-chrome-bg: var(--component-settings-card-bg);
-  --component-syncd-modal-divider: var(--component-settings-divider);
+  --component-syncd-modal-divider: color-mix(in srgb, var(--accent) 16%, var(--component-settings-divider));
   --component-syncd-modal-chrome-padding: var(--space-md) var(--space-lg);
   --component-syncd-modal-chrome-padding-compact: var(--space-sm) var(--space-md);
   --component-syncd-modal-body-padding: var(--space-lg);
@@ -861,7 +861,7 @@
   --component-syncd-modal-enter-scale: 0.985;
   --component-syncd-heading-icon-size: 36px;
   --component-syncd-status-bg: var(--component-settings-button-bg);
-  --component-syncd-status-border: var(--component-settings-border-dim);
+  --component-syncd-status-border: color-mix(in srgb, var(--accent) 22%, var(--component-settings-border-dim));
   --component-syncd-status-radius: var(--radius-xl);
   --component-syncd-status-padding: var(--space-lg);
   --component-syncd-status-icon-size: 48px;

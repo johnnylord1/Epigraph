@@ -75,4 +75,36 @@ describe("syncd connection theme tokens", () => {
     expect(popoverRule).toContain("bottom: calc(100% + var(--component-syncd-session-popover-offset));");
     expect(popoverRule).not.toMatch(/\btop\s*:/);
   });
+
+  test("derives modal surfaces from the active theme accent and semantic surfaces", () => {
+    for (const file of TOKEN_FILES) {
+      const source = readRepoFile(file);
+      expect(source).toContain("--component-syncd-modal-bg: var(--component-modal-bg);");
+      expect(source).toContain("--component-syncd-modal-chrome-bg: var(--component-settings-card-bg);");
+      expect(source).toContain("--component-syncd-status-bg: var(--component-settings-button-bg);");
+      expect(source).toMatch(
+        /--component-syncd-modal-border:\s*color-mix\(in srgb, var\(--accent\) 24%, var\(--component-modal-border\)\);/,
+      );
+      expect(source).toMatch(
+        /--component-syncd-status-border:\s*color-mix\(in srgb, var\(--accent\) 22%, var\(--component-settings-border-dim\)\);/,
+      );
+    }
+  });
+
+  test("keeps the new pairing flow copy behind Paraglide messages", () => {
+    const componentSource = SYNC_COMPONENT_FILES.map(readRepoFile).join("\n");
+    const untranslatedCopy = [
+      "Secure sync",
+      "Live status",
+      "Pair another desktop",
+      "Connection details",
+      "Pairing options",
+      "Create pairing QR",
+    ];
+
+    for (const copy of untranslatedCopy) {
+      expect(componentSource).not.toContain(`>${copy}<`);
+      expect(componentSource).not.toContain(`\"${copy}\"`);
+    }
+  });
 });

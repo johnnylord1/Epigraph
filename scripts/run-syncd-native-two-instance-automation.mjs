@@ -39,6 +39,7 @@ const SHORT_TIMEOUT_MS = 15_000;
 const BOOTSTRAP_REACHABILITY_TIMEOUT_MS = 15_000;
 const APP_BOOT_TIMEOUT_MS = 180_000;
 const SCENARIO_STATUS_TIMEOUT_MS = 45_000;
+let webviewLaunchGeneration = 0;
 
 function normalizeVisibleText(value) {
   return String(value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
@@ -109,22 +110,39 @@ async function launchDesktop(name, options) {
     launchArgs.push(`--syncd-bootstrap-ttl-seconds=${options.bootstrapTtlSeconds}`);
   }
 
-  const capabilities = new Capabilities();
-  capabilities.setBrowserName("wry");
-  capabilities.set("tauri:options", {
-    application: appBasePath,
-    args: launchArgs,
-    webviewOptions: {
-      userDataFolder: path.join(options.localAppDataDir, "WebView2Automation"),
-      additionalBrowserArguments: ["--remote-debugging-port=0"],
-    },
-  });
+  let driver = null;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    webviewLaunchGeneration += 1;
+    const capabilities = new Capabilities();
+    capabilities.setBrowserName("wry");
+    capabilities.set("tauri:options", {
+      application: appBasePath,
+      args: launchArgs,
+      webviewOptions: {
+        userDataFolder: path.join(
+          options.localAppDataDir,
+          "WebView2Automation",
+          `${name}-${webviewLaunchGeneration}`,
+        ),
+        additionalBrowserArguments: ["--remote-debugging-port=0"],
+      },
+    });
 
-  step(`launchDesktop(${name}): building webdriver session`);
-  const driver = await new Builder()
-    .usingServer(driverUrl)
-    .withCapabilities(capabilities)
-    .build();
+    step(`launchDesktop(${name}): building webdriver session (attempt ${attempt})`);
+    try {
+      driver = await new Builder()
+        .usingServer(driverUrl)
+        .withCapabilities(capabilities)
+        .build();
+      break;
+    } catch (error) {
+      if (attempt === 2) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      step(`launchDesktop(${name}): session launch failed, retrying with a clean WebView2 profile (${message})`);
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+    }
+  }
+  if (!driver) throw new Error(`launchDesktop(${name}) did not create a webdriver session.`);
 
   step(`launchDesktop(${name}): webdriver session ready`);
   await driver.manage().setTimeouts({
@@ -138,7 +156,14 @@ async function launchDesktop(name, options) {
   step(`launchDesktop(${name}): audit shell ready`);
   await openSecuritySettings(driver, DEFAULT_TIMEOUT_MS);
   step(`launchDesktop(${name}): security settings open`);
-  await clickTestId(driver, "settings-security-syncd-manage", DEFAULT_TIMEOUT_MS);
+  try {
+    await clickTestId(driver, "settings-security-syncd-manage", SHORT_TIMEOUT_MS);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    step(`launchDesktop(${name}): Syncd settings action was not ready, reopening Security (${message})`);
+    await openSecuritySettings(driver, DEFAULT_TIMEOUT_MS);
+    await clickTestId(driver, "settings-security-syncd-manage", DEFAULT_TIMEOUT_MS);
+  }
   step(`launchDesktop(${name}): syncd manage clicked`);
   await waitForTestId(driver, "syncd-panel-grid", DEFAULT_TIMEOUT_MS);
   step(`launchDesktop(${name}): syncd panel visible`);
@@ -160,6 +185,7 @@ async function closeDesktop(instance) {
   } finally {
     instance.driver = null;
   }
+  await new Promise((resolve) => setTimeout(resolve, 750));
 }
 
 async function restartDesktop(instance, overrides = {}) {
@@ -361,24 +387,26 @@ async function openSyncdModalView(instance, view, timeout = DEFAULT_TIMEOUT_MS) 
 }
 
 async function openSecuritySettings(driver, timeout = DEFAULT_TIMEOUT_MS) {
-  await driver.executeScript(`
-    if (!window.__aethonAudit?.openSettings) {
-      throw new Error("Aethon audit bridge is not available.");
-    }
-    window.__aethonAudit.openSettings("security");
-  `);
-
+  let lastOpenRequestAt = 0;
   await driver.wait(async () => {
     try {
-      return await driver.executeScript(`
-        return !!window.__aethonAudit?.getState
-          && window.__aethonAudit.getState().navPage === "settings"
-          && window.__aethonAudit.getState().settingsOpen === true;
-      `);
+      const now = Date.now();
+      const shouldRequestOpen = now - lastOpenRequestAt >= 2_000;
+      const ready = await driver.executeScript(`
+        const audit = window.__aethonAudit;
+        if (!audit?.openSettings || !audit?.getState) return false;
+        if (arguments[0]) audit.openSettings("security");
+        const state = audit.getState();
+        return state.navPage === "settings"
+          && state.settingsOpen === true
+          && !!document.querySelector(".settings-page");
+      `, shouldRequestOpen);
+      if (shouldRequestOpen) lastOpenRequestAt = now;
+      return ready;
     } catch {
       return false;
     }
-  }, timeout, "Timed out waiting for Security settings to open.");
+  }, timeout, "Timed out waiting for the mounted Security settings surface.");
 }
 
 async function setInputValue(driver, id, value) {
@@ -441,12 +469,14 @@ async function getValue(driver, id, timeout = DEFAULT_TIMEOUT_MS) {
   return driver.executeScript("return arguments[0].value;", element);
 }
 
-async function waitForText(driver, id, expected, timeout = DEFAULT_TIMEOUT_MS) {
-  const normalizedExpected = normalizeVisibleText(expected);
-  await driver.wait(async () => {
-    const text = await getText(driver, id, SHORT_TIMEOUT_MS).catch(() => "");
-    return normalizeVisibleText(text) === normalizedExpected;
-  }, timeout, `Timed out waiting for ${id} to equal ${expected}.`);
+async function waitForStatus(driver, id, expected, timeout = DEFAULT_TIMEOUT_MS) {
+  const normalizedExpected = String(expected).trim().toLowerCase().replaceAll(" ", "_");
+  const element = await waitForTestId(driver, id, timeout);
+  await driver.wait(
+    async () => (await element.getAttribute("data-status")) === normalizedExpected,
+    timeout,
+    `Timed out waiting for ${id} status to equal ${normalizedExpected}.`,
+  );
 }
 
 async function waitForNonEmptyValue(driver, id, timeout = DEFAULT_TIMEOUT_MS) {
@@ -626,7 +656,7 @@ async function startHostPairing(host, screenshotName) {
   await clickTestId(host.driver, "syncd-host-start");
   try {
     await waitForNonEmptyValue(host.driver, "syncd-bootstrap-bundle-host");
-    await waitForText(host.driver, "syncd-host-status-live", "Pending");
+    await waitForStatus(host.driver, "syncd-host-status-live", "pending");
   } catch (error) {
     await captureHostDiagnostics(host, screenshotName || "host-bootstrap-readiness-failure");
     throw error;
@@ -699,7 +729,7 @@ async function connectJoiner(joiner, { bundleRaw, manualOrigin = null, useQrPath
 
 async function waitForConnectStatus(joiner, status, timeout = DEFAULT_TIMEOUT_MS, diagnosticsName = null) {
   try {
-    await waitForText(joiner.driver, "syncd-connect-status", status, timeout);
+    await waitForStatus(joiner.driver, "syncd-connect-status", status, timeout);
   } catch (error) {
     if (diagnosticsName) {
       await captureJoinerDiagnostics(joiner, diagnosticsName);
@@ -1031,14 +1061,14 @@ async function waitForPersistedStatusText(joiner, expected, timeout = DEFAULT_TI
   await joiner.driver.wait(async () => {
     const items = await joiner.driver.findElements(testId("syncd-persisted-session-item"));
     if (!items.length) return false;
-    const text = await items[0].getText();
-    return normalizeVisibleText(text).includes(normalizedExpected);
+    const status = await items[0].getAttribute("data-connection-status");
+    return normalizeVisibleText(status) === normalizedExpected;
   }, timeout, `Timed out waiting for persisted session status ${expected}.`);
 }
 
 async function waitForReplicationStatus(instance, expected, timeout = DEFAULT_TIMEOUT_MS) {
   await openSyncdModalView(instance, "pairing", timeout);
-  await waitForText(instance.driver, "syncd-replication-status", expected, timeout);
+  await waitForStatus(instance.driver, "syncd-replication-status", expected, timeout);
 }
 
 async function waitForActiveSessionKey(instance, expectedSessionKey, timeout = DEFAULT_TIMEOUT_MS) {
@@ -1108,7 +1138,7 @@ async function runScenario() {
     await connectJoiner(joiner, { bundleRaw: hostState.bootstrapBundleRaw });
     step("  - joiner submitted bootstrap bundle");
     try {
-      await waitForText(host.driver, "syncd-host-status-live", "Claimed", SCENARIO_STATUS_TIMEOUT_MS);
+      await waitForStatus(host.driver, "syncd-host-status-live", "claimed", SCENARIO_STATUS_TIMEOUT_MS);
     } catch (error) {
       await captureHostDiagnostics(host, "scenario1-host-claimed-timeout");
       throw error;
@@ -1119,7 +1149,7 @@ async function runScenario() {
     await decideHost(host, "approve");
     step("  - host approved");
     try {
-      await waitForText(host.driver, "syncd-host-status-live", "Approved", SCENARIO_STATUS_TIMEOUT_MS);
+      await waitForStatus(host.driver, "syncd-host-status-live", "approved", SCENARIO_STATUS_TIMEOUT_MS);
     } catch (error) {
       await captureHostDiagnostics(host, "scenario1-host-approved-timeout");
       throw error;
@@ -1251,10 +1281,10 @@ async function runScenario() {
       bundleRaw: altHostState.bootstrapBundleRaw,
       manualOrigin: altHostState.bundle.syncdBaseUrl,
     });
-    await waitForText(hostAlt.driver, "syncd-host-status-live", "Claimed");
+    await waitForStatus(hostAlt.driver, "syncd-host-status-live", "claimed");
     await waitForConnectStatus(joiner, "Claimed", DEFAULT_TIMEOUT_MS, "scenario3-joiner-claimed-timeout");
     await decideHost(hostAlt, "approve");
-    await waitForText(hostAlt.driver, "syncd-host-status-live", "Approved");
+    await waitForStatus(hostAlt.driver, "syncd-host-status-live", "approved");
     await waitForPersistedSessionOrigin(joiner, altHostState.bundle.syncdBaseUrl, DEFAULT_TIMEOUT_MS);
     await waitForPersistedSessionCount(joiner, 2);
     const persistedWithAlt = await readPersistedState(joiner);
@@ -1303,10 +1333,10 @@ async function runScenario() {
       bundleRaw: manualHostState.bootstrapBundleRaw,
       manualOrigin: manualHostState.bundle.syncdBaseUrl,
     });
-    await waitForText(hostAlt.driver, "syncd-host-status-live", "Claimed");
+    await waitForStatus(hostAlt.driver, "syncd-host-status-live", "claimed");
     await waitForConnectStatus(joiner, "Claimed", DEFAULT_TIMEOUT_MS, "scenario4-joiner-claimed-timeout");
     await decideHost(hostAlt, "reject");
-    await waitForText(hostAlt.driver, "syncd-host-status-live", "Rejected");
+    await waitForStatus(hostAlt.driver, "syncd-host-status-live", "rejected");
     await waitForConnectStatus(joiner, "Rejected", DEFAULT_TIMEOUT_MS, "scenario4-joiner-rejected-timeout");
     report.scenarios.push({
       name: "manual-origin-rejection",
@@ -1336,9 +1366,9 @@ async function runScenario() {
       bundleRaw: expiryHostState.bootstrapBundleRaw,
       manualOrigin: expiryHostState.bundle.syncdBaseUrl,
     });
-    await waitForText(expiryHost.driver, "syncd-host-status-live", "Claimed");
+    await waitForStatus(expiryHost.driver, "syncd-host-status-live", "claimed");
     await waitForConnectStatus(joiner, "Claimed", DEFAULT_TIMEOUT_MS, "scenario6-joiner-claimed-timeout");
-    await waitForText(expiryHost.driver, "syncd-host-status-live", "Expired", 30_000);
+    await waitForStatus(expiryHost.driver, "syncd-host-status-live", "expired", 30_000);
     await waitForConnectStatus(joiner, "Expired", 30_000, "scenario6-joiner-expired-timeout");
     report.scenarios.push({
       name: "expiry",
@@ -1384,13 +1414,13 @@ async function runScenario() {
     });
     await waitForConnectStatus(joiner, "Claimed", DEFAULT_TIMEOUT_MS, "scenario7-joiner-claimed-timeout");
     try {
-      await waitForText(host.driver, "syncd-host-status-live", "Claimed");
+      await waitForStatus(host.driver, "syncd-host-status-live", "claimed");
     } catch (error) {
       await captureHostDiagnostics(host, "scenario7-host-claimed-timeout");
       throw error;
     }
     await decideHost(host, "approve");
-    await waitForText(host.driver, "syncd-host-status-live", "Approved");
+    await waitForStatus(host.driver, "syncd-host-status-live", "approved");
     await waitForPersistedSessionOrigin(joiner, qrHostState.bundle.syncdBaseUrl, DEFAULT_TIMEOUT_MS);
     const persistedAfterQr = await readPersistedState(joiner);
     const qrSession = persistedAfterQr.sessions.find(

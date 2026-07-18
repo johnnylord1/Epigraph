@@ -3530,3 +3530,32 @@ Categorias cobertas:
 
 - Parte dos rotulos tecnicos herdados do Syncd e parte dos novos textos de orientacao ainda misturam mensagens traduzidas com strings em ingles. A internacionalizacao deve ser consolidada em lote proprio para nao misturar o redesenho visual com alteracoes amplas de catalogo.
 - Estados com uma sessao remota real continuam representados pelas capturas e pelo harness isolado 7/7; a sessao normal final nao criou um novo pareamento para preservar os dados do usuario.
+
+## Marco 62 - Syncd Modal Theme And Runtime Hardening
+
+### Tema e tokens
+
+- O modal continua com **98 `--component-syncd-*` definidos / 98 consumidos / 0 sem consumo / 0 indefinidos** nas camadas fallback e Nocturne. Nenhum valor especifico do Nocturne foi movido para o componente.
+- Backgrounds e surfaces permanecem ligados aos semantic/component tokens canonicos. Bordas, foco, progresso e estados aprovados/conectados passaram a derivar de `--accent`, eliminando o verde fixo que nao representava a identidade do tema ativo.
+- A matriz WebView2 real em viewport `1280 x 800` confirmou resposta independente em Nocturne, Dark, AMOLED, Light, Midnight e Warm. O AMOLED preserva modal `rgb(8, 8, 12)` e chrome/cards `rgb(0, 0, 0)`; a cor de sucesso resolve para o acento de cada builtin, incluindo `#d3c4ff` no Nocturne e `#b36dff` no AMOLED.
+- `docs/screenshots/marco62-syncd-hardening/before/` preserva a baseline anterior de Pairing nos seis temas. `after/` contem as seis capturas finais, mais Details e Options em Nocturne e `computed-styles.json`. Nao ha regressao aparente de geometria, blur, radius, shadow, tipografia, hierarquia ou overflow.
+
+### Internacionalizacao e automacao
+
+- Os textos novos de Pairing, Details, Options, status, acoes, erros e labels tecnicos deixaram de ser literals no Svelte e passaram pelo runtime Paraglide. Os cinco catalogos possuem o mesmo contrato de chaves; ingles e portugues possuem copy localizada.
+- Espanhol, japones e chines preservam temporariamente a copy inglesa para as novas chaves Syncd. Isso mantem o comportamento anterior do modal nesses tres idiomas e evita chave ausente, mas a traducao editorial nativa permanece como risco de conteudo futuro.
+- Estados usados pela automacao agora expõem `data-status`/`data-connection-status`; o harness nao depende mais do texto traduzido visivel. O fluxo comum continua usando os mesmos controles, eventos e APIs.
+- O runner nativo resolve EdgeDriver por parametro, ambiente, `PATH` ou instalacao WinGet, cria um perfil WebView2 unico por lancamento e repete uma sessao uma vez com perfil limpo. Isso removeu o erro de restart `failed to write prefs file` sem alterar dados do usuario.
+- O fechamento de Settings espera o DOM real, nao apenas o store. O bug preexistente que comparava a decisao interna `approve` com texto traduzido foi corrigido para comparar o valor de protocolo, afetando somente a escolha correta do toast.
+
+### Validacao final
+
+- A build release atual foi exercitada pelo harness nativo de duas instancias com `LOCALAPPDATA` isolado. Resultado: **7/7 cenarios verdes**, cobrindo mDNS, aprovacao, replication bidirecional, restart/persistencia, pause/resume/reconnect, troca/forget de sessao, rejeicao, host indisponivel, expiracao e QR.
+- A sessao desktop comum foi reiniciada pelo gate gerenciado e aberta por `Settings -> System -> Security -> Manage`. Pairing, Details e Options foram navegados no modal real; nenhuma fixture ou sessao do usuario foi criada.
+- O primeiro reinicio do dev gate encontrou o Suwayomi orphan mantendo o bundle debug bloqueado. Depois da limpeza do processo pertencente ao Aethon, a mesma build iniciou normalmente em `Aethon [MAIN :4567]`; isso foi um bloqueio ambiental de arquivo, nao uma falha do modal ou do Syncd.
+- Testes focados, build, builtin gate e `git diff --check` permanecem gates obrigatorios do commit deste marco.
+
+### Riscos restantes
+
+- Traducao editorial nativa das novas mensagens Syncd em `es`, `ja` e `zh-CN` permanece para um lote de localizacao; nao ha chave ausente nem fallback tecnico visivel.
+- A automacao nativa exige EdgeDriver compativel com o WebView2 instalado. O runner agora descobre e registra explicitamente o binario usado, mas a distribuicao dessa dependencia continua externa ao aplicativo.
