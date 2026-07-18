@@ -28,7 +28,7 @@ const EXPECTED_FAMILY_COUNTS = {
   modal: 4,
   nav: 15,
   "nocturne-state": 126,
-  novel: 98,
+  novel: 9,
   overlay: 1,
   popover: 11,
   reader: 168,
@@ -221,10 +221,10 @@ describe("exhaustive component theme inventory", () => {
   const scoped = inventory.entries;
 
   test("classifies every definition without inferring dead tokens", () => {
-    expect(inventory.entries).toHaveLength(2730);
-    expect(scoped).toHaveLength(2730);
+    expect(inventory.entries).toHaveLength(2641);
+    expect(scoped).toHaveLength(2641);
     expect(scoped.filter(({ status }) => status === "Active")).toHaveLength(2636);
-    expect(scoped.filter(({ status }) => status === "Legacy")).toHaveLength(94);
+    expect(scoped.filter(({ status }) => status === "Legacy")).toHaveLength(5);
     expect(inventory.entries.every(({ status }) => ["Active", "Legacy"].includes(status))).toBe(true);
     expect(inventory.entries.some(({ status }) => (status as string) === "Dead")).toBe(false);
   });
@@ -236,7 +236,7 @@ describe("exhaustive component theme inventory", () => {
         .map(([family, entries]) => [family, entries.length]),
     );
     expect(families).toEqual(EXPECTED_FAMILY_COUNTS);
-    expect(scoped.filter(({ layers }) => layers.join("+") === "fallback+nocturne")).toHaveLength(2494);
+    expect(scoped.filter(({ layers }) => layers.join("+") === "fallback+nocturne")).toHaveLength(2405);
     expect(scoped.filter(({ layers }) => layers.join("+") === "fallback")).toHaveLength(236);
     expect(scoped.filter(({ layers }) => layers.join("+") === "nocturne")).toHaveLength(0);
   });
@@ -252,9 +252,8 @@ describe("exhaustive component theme inventory", () => {
     expect(active.filter(({ consumption }) => consumption === "dynamic")).toHaveLength(1);
     expect(active.filter(({ consumption }) => consumption === "transitive")).toHaveLength(13);
     expect(legacyOnly).toHaveLength(0);
-    expect(unconsumed).toHaveLength(94);
-    expect(unconsumed.filter(({ token }) => token.startsWith("--component-novel-repositories-"))).toHaveLength(89);
-    expect(unconsumed.filter(({ token }) => !token.startsWith("--component-novel-repositories-")).map(({ token }) => token).sort()).toEqual([...EXPECTED_UNCONSUMED_LEGACY]);
+    expect(unconsumed).toHaveLength(5);
+    expect(unconsumed.map(({ token }) => token).sort()).toEqual([...EXPECTED_UNCONSUMED_LEGACY]);
     expect(dynamic.map(({ token }) => token)).toEqual(["--component-reader-core-epub-link-fg"]);
     expect(inventory.activeDirect.dynamicReferences.get("--component-reader-core-epub-link-fg")).toEqual(
       new Set(["src/components/reader/BookReader.svelte"]),

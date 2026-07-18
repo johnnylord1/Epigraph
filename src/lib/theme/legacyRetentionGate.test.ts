@@ -66,11 +66,11 @@ const UNREFERENCED_LEGACY_ALIASES = [
   "--n-popover-control-border",
   "--n-surface-container",
   "--n-surface-container-low",
+  "--n-surface-container-high",
+  "--n-surface-container-highest",
 ] as const;
 
 const SELECTOR_ONLY_LEGACY_ALIASES = [
-  "--n-surface-container-high",
-  "--n-surface-container-highest",
   "--n-toolbar-cluster-padding",
   "--n-toolbar-cluster-radius",
   "--n-toolbar-divider-height",
@@ -172,8 +172,8 @@ describe("Legacy theme retention evidence", () => {
 
     expect(declarations(nocturne, "--n-")).toEqual(expected);
     expect(LEGACY_BRIDGES).toHaveLength(45);
-    expect(UNREFERENCED_LEGACY_ALIASES).toHaveLength(11);
-    expect(SELECTOR_ONLY_LEGACY_ALIASES).toHaveLength(6);
+    expect(UNREFERENCED_LEGACY_ALIASES).toHaveLength(13);
+    expect(SELECTOR_ONLY_LEGACY_ALIASES).toHaveLength(4);
   });
 
   test("keeps active production independent from retained --n-* aliases", () => {
@@ -222,16 +222,13 @@ describe("Legacy theme retention evidence", () => {
     }
   });
 
-  test("retains the 89 removed-surface tokens until the dedicated CSS cleanup", () => {
+  test("removes the 89 tokens exclusive to the quarantined repository surface", () => {
     const definitions = new Set(
       [...`${read("src/styles/tokens.css")}\n${nocturne}`.matchAll(/(--component-novel-repositories-[\w-]+)\s*:/g)]
         .map((match) => match[1]),
     );
 
-    expect(definitions).toHaveLength(89);
-    for (const token of definitions) {
-      expect(files.reduce((count, path) => count + referencesIn(path, token), 0), token).toBe(0);
-    }
+    expect(definitions).toEqual(new Set());
   });
 
   test("keeps the other three historical component tokens classified Active", () => {

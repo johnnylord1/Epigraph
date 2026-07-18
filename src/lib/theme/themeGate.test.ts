@@ -47,10 +47,10 @@ const unreferencedLegacyNocturneTokens = [
   "--n-popover-control-border",
   "--n-surface-container",
   "--n-surface-container-low",
-] as const;
-const selectorOnlyLegacyNocturneTokens = [
   "--n-surface-container-high",
   "--n-surface-container-highest",
+] as const;
+const selectorOnlyLegacyNocturneTokens = [
   "--n-toolbar-cluster-padding",
   "--n-toolbar-cluster-radius",
   "--n-toolbar-divider-height",
@@ -218,10 +218,10 @@ describe("final derived theme gate", () => {
 
     expect(selectorStart).toBeGreaterThan(-1);
     expect(selectorEnd).toBeGreaterThan(selectorStart);
-    expect(exactSources).toHaveLength(238);
+    expect(exactSources).toHaveLength(224);
     expect(builtinBlock).toContain("--color-on-accent-strong: #352660;");
     expect(outsideBuiltin).not.toMatch(/--color-on-accent-strong\s*:/);
-    expect(new Set(exactSources.map(({ name }) => name)).size).toBe(238);
+    expect(new Set(exactSources.map(({ name }) => name)).size).toBe(224);
     expect(missingFallback).toEqual([]);
     expect(unreferenced).toEqual([]);
     expect(leaked).toEqual([]);
@@ -347,11 +347,11 @@ describe("final derived theme gate", () => {
       runtime: runtime.length,
       neutral: neutral.length,
     }).toEqual({
-      componentColors: 1494,
-      editable: 1483,
-      absolute: 295,
+      componentColors: 1462,
+      editable: 1451,
+      absolute: 291,
       absoluteOnly: 0,
-      mixedEditableAbsolute: 295,
+      mixedEditableAbsolute: 291,
       runtime: 9,
       neutral: 11,
     });
@@ -468,9 +468,6 @@ describe("final derived theme gate", () => {
     ["Reader muted text", "--component-reader-muted-fg", "--component-reader-panel-bg"],
     ["Migration eyebrow", "--component-migration-eyebrow-fg", "--component-migration-modal-bg"],
     ["Migration muted text", "--component-migration-muted-fg", "--component-migration-modal-bg"],
-    ["Novel field label", "--component-novel-repositories-field-color", "--component-novel-repositories-input-background"],
-    ["Novel muted text", "--component-novel-repositories-muted-color", "--component-novel-repositories-surface-background"],
-    ["Novel muted badge", "--component-novel-repositories-badge-muted-color", "--component-novel-repositories-badge-background"],
   ])("keeps %s at WCAG AA in Nocturne and the theme probe", (_label, foreground, background) => {
     const nocturneSource = `${tokensCss}\n${nocturneCss}`;
     const probeSource = `${tokensCss}\n:root {\n${themeProbeCss()}\n}`;

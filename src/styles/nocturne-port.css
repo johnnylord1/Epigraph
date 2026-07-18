@@ -1149,17 +1149,6 @@ html[data-aethon-motion="idle"] .n-topbar {
   box-shadow: 0 4px 20px color-mix(in srgb, var(--accent-bright) 25%, transparent);
 }
 
-.n-btn-secondary {
-  background: var(--n-surface-container-high);
-  color: var(--text-primary);
-  border: 1px solid color-mix(in srgb, var(--text-secondary) 8%, transparent);
-}
-
-.n-btn-secondary:hover:not(:disabled):not([aria-disabled="true"]) {
-  background: var(--n-surface-container-highest);
-  color: var(--text-primary);
-}
-
 .n-btn-ghost {
   color: var(--text-secondary);
   border: 1px solid transparent;

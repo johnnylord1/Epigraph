@@ -7,8 +7,6 @@ const ROOT = process.cwd();
 const PORT_PATH = "src/styles/nocturne-port.css";
 const PORT_LEGACY_TOKENS = ["--color-info-bg", "--splash-error", "--splash-ink-muted"];
 const PORT_N_REFERENCES = [
-  "--n-surface-container-high",
-  "--n-surface-container-highest",
   "--n-toolbar-cluster-padding",
   "--n-toolbar-cluster-radius",
   "--n-toolbar-divider-height",

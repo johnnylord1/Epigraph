@@ -3428,10 +3428,20 @@ Categorias cobertas:
 
 #### Marco 60A - Removed-surface CSS
 
-- Recalcular os component tokens que pertenciam exclusivamente aos arquivos removidos no Marco 59. A contagem atual de 94 Legacy nao deve ser reutilizada sem nova auditoria.
-- Remover definicoes fallback/Nocturne apenas quando nenhum componente ativo, ThemeEditor, provider, documento, preset, store, teste browser ou acesso dinamico consumir o token.
-- Remover seletores do port ligados exclusivamente aos hosts eliminados, incluindo `.n-btn-secondary`, toolbar cluster/divider e regras especializadas antigas, somente apos busca de hosts reais e computed style.
-- Preservar todos os semantic/primitive tokens compartilhados, mesmo que uma declaracao local antiga seja removida.
+**Status: concluido.** A auditoria global confirmou que os 89 `--component-novel-repositories-*` e as 14 fontes `--color-novel-*-source` associadas existiam somente nas duas camadas de tema e nos gates que documentavam a quarentena. Nao havia referencia em componentes ativos, ThemeEditor, provider, documentos V1-V5, presets, stores, templates, APIs dinamicas ou CSS computado.
+
+- Removidas **178 declaracoes de component tokens** (89 fallback + 89 Nocturne) e **28 declaracoes de fontes exclusivas** (14 fallback + 14 Nocturne). Primitive e semantic tokens compartilhados foram preservados.
+- Removidos `.n-btn-secondary` e seu hover do port depois de busca global confirmar zero host. `--n-surface-container-high` e `--n-surface-container-highest` continuam definidos e foram reclassificados de selector-only para Legacy sem referencia; nenhum `--n-*` foi removido.
+- Toolbar cluster/divider permanecem intactos neste lote e seguem para a auditoria 60B. A remocao nao foi ampliada para seletores ou aliases fora da superficie eliminada.
+- Inventario final do lote: **2.641 component tokens**, sendo **2.636 Ativos / 5 Legacy / 0 Mortos**; **2.405** definidos nas duas camadas e **236** somente no fallback. Os cinco Legacy restantes sao `--component-button-fg`, `--component-card-radius`, `--component-popover-radius`, `--component-tab-bg-active` e `--component-tab-fg-active`.
+- O gate de derivacao passou a registrar **224 fontes exatas Nocturne** e **1.462 dependencias visuais de componente**, todas classificadas; os tres pares de contraste exclusivos do painel removido foram retirados.
+
+#### Evidencia visual e gates do 60A
+
+- Quatro pares reais em `docs/screenshots/marco60a-quarantined-css/` cobrem Settings, Sources, BookDetail e o display popover da Library. As baselines vieram das capturas estaveis dos Marcos 59/30 e as capturas after foram produzidas no WebView2 real em Nocturne.
+- Nao ha regressao aparente de geometria, superficies, bordas, shadows, radius, tipografia ou hierarquia. O popover after manteve `border-radius: 10.6668px`, borda de `1px`, fundo translucido e a sombra composta esperada.
+- NovelDetail nao possuia novel local elegivel no runtime real; BookDetail validou o mesmo shell moderno sem criar dados artificiais. A ausencia dos tokens removidos e a independencia das superficies ativas permanecem cobertas pelos gates estaticos.
+- Tema/gates: **5 arquivos / 54 testes verdes**. Settings/Sources: **2 arquivos / 13 testes verdes**. `pnpm theme:check-builtins`: verde. `pnpm build`: verde. `git diff --check`: verde.
 - Commit recomendado: `refactor(theme): remove quarantined surface css`.
 
 #### Marco 60B - Unconsumed Legacy aliases
