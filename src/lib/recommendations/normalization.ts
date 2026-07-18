@@ -87,7 +87,7 @@ export function normalizeRecency(
 
 export function combineMetrics(metrics: Array<NormalizedMetric | undefined | null>): NormalizedMetric | undefined {
   const valid = metrics.filter((metric): metric is NormalizedMetric =>
-    Boolean(metric) && metric.confidence > 0,
+    metric != null && metric.confidence > 0,
   );
   if (valid.length === 0) return undefined;
 

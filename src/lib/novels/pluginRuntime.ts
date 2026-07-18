@@ -744,7 +744,7 @@ function wrapRuntimeResponse(response: Response): Response {
   wrapped.text = async () => readResponseText(response);
   wrapped.arrayBuffer = async () => {
     const bytes = await readResponseBytes(response);
-    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    return Uint8Array.from(bytes).buffer;
   };
   wrapped.json = async () => {
     if (originalJson) {
@@ -769,13 +769,18 @@ function encodeGrpcEnvelope(payload: Uint8Array): Uint8Array {
   return body;
 }
 
+function normalizeRuntimeFetchBody(body: NovelRuntimeFetchInit["body"]): BodyInit | undefined {
+  if (body == null) return undefined;
+  return body instanceof Uint8Array ? Uint8Array.from(body).buffer : body;
+}
+
 function createFetchShim() {
   const fetchApi = async (url: string, init?: NovelRuntimeFetchInit) => {
     const settings = readRuntimeFlareSolverrSettings();
     const response = await tauriFetch(url, {
       method: init?.method ?? "GET",
       headers: normalizeFetchHeaders(init?.headers),
-      body: init?.body ?? undefined,
+      body: normalizeRuntimeFetchBody(init?.body),
     });
 
     if (

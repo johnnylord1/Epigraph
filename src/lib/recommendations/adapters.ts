@@ -62,7 +62,7 @@ export function novelToTasteProfileSeed(novel: PersistedNovelLibraryEntry): Tast
     title: novel.title,
     tags: novel.tags,
     contentType: "novel",
-    sourceId: novel.source.id,
+    sourceId: novel.source.sourceId ?? novel.source.pluginId,
     implicitWeight: inferNovelImplicitWeight(novel),
     status: mapMangaStatusToSeedStatus(novel.status),
   };
@@ -115,6 +115,8 @@ export function mangaToRecommendationCandidate(
 }
 
 export function novelToRecommendationCandidate(novel: PersistedNovelLibraryEntry): RecommendationCandidate {
+  const providerId = novel.source.sourceId ?? novel.source.pluginId ?? "novel-source";
+  const providerName = novel.source.sourceName ?? novel.source.pluginName ?? providerId;
   return {
     id: `novel:${novel.id}`,
     title: novel.title,
@@ -127,8 +129,8 @@ export function novelToRecommendationCandidate(novel: PersistedNovelLibraryEntry
     updatedAtMs: novel.updatedAt,
     providers: [
       {
-        providerId: novel.source.id,
-        providerName: novel.source.name,
+        providerId,
+        providerName,
         kind: "source",
         availability: normalizeScore(1, 1, 0.75),
         recency: normalizeRecency(novel.updatedAt, undefined, 21, 0.55),

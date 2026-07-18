@@ -4,6 +4,7 @@ import {
   type AethonNovelBookmarkEntry,
   type AethonNovelHistoryEntry,
   type AethonNovelProgressEntry,
+  type AethonNovelSourceIdentity,
 } from "../backup/novelsBackup";
 import { resolveNovelsProfileScope } from "../backup/novelsProfileState";
 import { DEFAULT_LOCAL_PROFILE_ID, normalizeLocalProfileId, normalizeServerUrl } from "../localProfiles";
@@ -123,6 +124,22 @@ function normalizeHistoryEntry(value: unknown): AethonNovelHistoryEntry | null {
   };
 }
 
+function normalizeSourceIdentity(value: unknown): AethonNovelSourceIdentity {
+  const record = value && typeof value === "object"
+    ? value as Record<string, unknown>
+    : {};
+  return {
+    repositoryUrl: normalizeText(record.repositoryUrl),
+    repositoryName: normalizeText(record.repositoryName),
+    pluginId: normalizeText(record.pluginId),
+    pluginName: normalizeText(record.pluginName),
+    pluginVersion: normalizeText(record.pluginVersion),
+    sourceId: normalizeText(record.sourceId),
+    sourceName: normalizeText(record.sourceName),
+    lang: normalizeText(record.lang),
+  };
+}
+
 function normalizeLibraryEntry(value: unknown): PersistedNovelLibraryEntry | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
@@ -130,20 +147,6 @@ function normalizeLibraryEntry(value: unknown): PersistedNovelLibraryEntry | nul
   const title = normalizeText(record.title);
   const path = normalizeText(record.path);
   if (!id || !title || !path) return null;
-
-  const sourceValue = record.source;
-  const source = sourceValue && typeof sourceValue === "object"
-    ? {
-        repositoryUrl: normalizeText((sourceValue as Record<string, unknown>).repositoryUrl),
-        repositoryName: normalizeText((sourceValue as Record<string, unknown>).repositoryName),
-        pluginId: normalizeText((sourceValue as Record<string, unknown>).pluginId),
-        pluginName: normalizeText((sourceValue as Record<string, unknown>).pluginName),
-        pluginVersion: normalizeText((sourceValue as Record<string, unknown>).pluginVersion),
-        sourceId: normalizeText((sourceValue as Record<string, unknown>).sourceId),
-        sourceName: normalizeText((sourceValue as Record<string, unknown>).sourceName),
-        lang: normalizeText((sourceValue as Record<string, unknown>).lang),
-      }
-    : null;
 
   return {
     id,
@@ -154,7 +157,7 @@ function normalizeLibraryEntry(value: unknown): PersistedNovelLibraryEntry | nul
     path,
     status: normalizeText(record.status),
     tags: normalizeStringArray(Array.isArray(record.tags) ? record.tags : []),
-    source,
+    source: normalizeSourceIdentity(record.source),
     chapterCount: typeof record.chapterCount === "number" ? record.chapterCount : 0,
     addedAt: typeof record.addedAt === "number" ? record.addedAt : Date.now(),
     updatedAt: typeof record.updatedAt === "number" ? record.updatedAt : Date.now(),
@@ -676,7 +679,16 @@ export function snapshotNovelLibraryStateSlice(
         chapterCount: entry.chapterCount,
         addedAt: entry.addedAt,
         updatedAt: entry.updatedAt,
-        source: entry.source ? { ...entry.source } : null,
+        source: {
+          repositoryUrl: entry.source.repositoryUrl,
+          repositoryName: entry.source.repositoryName ?? null,
+          pluginId: entry.source.pluginId,
+          pluginName: entry.source.pluginName ?? null,
+          pluginVersion: entry.source.pluginVersion ?? null,
+          sourceId: entry.source.sourceId,
+          sourceName: entry.source.sourceName ?? null,
+          lang: entry.source.lang ?? null,
+        },
       }
     : null;
 
@@ -711,7 +723,10 @@ export function restoreNovelLibraryStateSlice(
   state: PersistedNovelLibraryState,
   slice: NovelMigrationStateSlice,
 ): PersistedNovelLibraryState {
-  const novelId = slice.entry?.id ?? slice.chapters[0]?.novelId ?? normalizeText((slice.progress[0] as Record<string, unknown> | undefined)?.novelId) ?? null;
+  const novelId = slice.entry?.id
+    ?? slice.chapters[0]?.novelId
+    ?? normalizeProgressEntry(slice.progress[0])?.novelId
+    ?? null;
   if (!novelId) {
     return state;
   }
@@ -725,13 +740,22 @@ export function restoreNovelLibraryStateSlice(
     ...withoutNovel,
     entries: [...withoutNovel.entries, {
       ...slice.entry,
-      source: slice.entry.source ? { ...slice.entry.source } : null,
+      source: normalizeSourceIdentity(slice.entry.source),
       tags: [...slice.entry.tags],
     }].sort((left, right) => right.updatedAt - left.updatedAt),
     chapters: [...withoutNovel.chapters, ...slice.chapters.map((chapter) => ({ ...chapter }))].sort((left, right) => left.order - right.order),
-    progress: [...withoutNovel.progress, ...slice.progress.map((entry) => ({ ...entry as AethonNovelProgressEntry }))],
-    bookmarks: [...withoutNovel.bookmarks, ...slice.bookmarks.map((entry) => ({ ...entry as AethonNovelBookmarkEntry }))],
-    history: [...slice.history.map((entry) => ({ ...entry as AethonNovelHistoryEntry })), ...withoutNovel.history].slice(0, 200),
+    progress: [
+      ...withoutNovel.progress,
+      ...slice.progress.map(normalizeProgressEntry).filter((entry): entry is AethonNovelProgressEntry => entry !== null),
+    ],
+    bookmarks: [
+      ...withoutNovel.bookmarks,
+      ...slice.bookmarks.map(normalizeBookmarkEntry).filter((entry): entry is AethonNovelBookmarkEntry => entry !== null),
+    ],
+    history: [
+      ...slice.history.map(normalizeHistoryEntry).filter((entry): entry is AethonNovelHistoryEntry => entry !== null),
+      ...withoutNovel.history,
+    ].slice(0, 200),
     updatedAtMs: Date.now(),
   };
 }

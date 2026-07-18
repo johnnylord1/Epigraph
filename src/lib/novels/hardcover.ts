@@ -661,7 +661,8 @@ export function normalizeHardcoverBook(value: unknown): HardcoverBookSearchResul
     ratingsCount: coerceNumber(record.ratings_count),
     slug,
     url: slug ? `https://hardcover.app/books/${slug}` : `https://hardcover.app/books/${id}`,
-    workStatus: normalizeHardcoverWorkStatus(record.book_status?.name) ?? normalizeHardcoverBookStatusId(coerceNumber(record.book_status_id)),
+    workStatus: normalizeHardcoverWorkStatus(normalizeText(record.book_status?.name))
+      ?? normalizeHardcoverBookStatusId(coerceNumber(record.book_status_id)),
   };
 }
 
@@ -941,7 +942,7 @@ function normalizeHardcoverTrackRecord(value: unknown): HardcoverNovelTrackRecor
       : [],
     coverUrl: normalizeText(record.coverUrl),
     status: normalizeText(record.status),
-    workStatus: normalizeHardcoverWorkStatus(record.workStatus),
+    workStatus: normalizeHardcoverWorkStatus(normalizeText(record.workStatus)),
     rating: coerceNumber(record.rating),
     progress: coerceNumber(record.progress),
     remoteUrl: normalizeText(record.remoteUrl),

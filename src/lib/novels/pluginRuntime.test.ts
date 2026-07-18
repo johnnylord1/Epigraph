@@ -1,7 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 
+interface MockFetchResponse {
+  ok: boolean;
+  status: number;
+  statusText?: string;
+  headers?: Headers;
+  text?: () => Promise<string>;
+  arrayBuffer?: () => Promise<ArrayBuffer>;
+  json?: () => Promise<unknown>;
+}
+
 const { tauriFetchMock } = vi.hoisted(() => ({
-  tauriFetchMock: vi.fn(async (url: string) => {
+  tauriFetchMock: vi.fn(async (url: string): Promise<MockFetchResponse> => {
     const encodeUtf8 = (html: string) => new TextEncoder().encode(html);
     const makeGarbledUtf8Text = (html: string) => new TextDecoder("latin1").decode(encodeUtf8(html));
 

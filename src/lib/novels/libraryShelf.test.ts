@@ -15,6 +15,7 @@ function novel(overrides: Partial<PersistedNovelLibraryEntry> = {}): PersistedNo
     status: null,
     tags: [],
     source: {
+      repositoryUrl: null,
       sourceId: "lnreader:illusia",
       pluginId: "lnreader",
       pluginName: "LNReader",
