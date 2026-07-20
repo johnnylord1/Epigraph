@@ -17,6 +17,7 @@ import {
   resetMigrationJournalStateCacheForTests,
   saveMigrationJournalState,
 } from "./journalState";
+import type { MangaMigrationUndoPayload } from "./types";
 
 describe("migration journal state", () => {
   beforeEach(() => {
@@ -50,6 +51,22 @@ describe("migration journal state", () => {
   it("persists the migration journal to desktop storage", async () => {
     invokeMock.mockResolvedValueOnce("C:/Users/jhow-/AppData/Roaming/aethon/migration/journal-state.json");
 
+    const payload: MangaMigrationUndoPayload = {
+      oldState: {
+        mangaId: 1,
+        inLibrary: true,
+        title: "Old",
+        categoryIds: [],
+        chapters: [],
+      },
+      newState: {
+        mangaId: 2,
+        inLibrary: false,
+        title: "New",
+        categoryIds: [],
+        chapters: [],
+      },
+    };
     const entry = buildMigrationJournalEntry({
       contentKind: "manga",
       sourceFrom: "1",
@@ -63,20 +80,7 @@ describe("migration journal state", () => {
         transferredReadCount: 10,
         transferredBookmarkCount: 2,
       },
-      payload: {
-        oldState: {
-          mangaId: 1,
-          inLibrary: true,
-          title: "Old",
-          chapters: [],
-        },
-        newState: {
-          mangaId: 2,
-          inLibrary: false,
-          title: "New",
-          chapters: [],
-        },
-      },
+      payload,
     });
 
     const saved = await appendMigrationJournalEntry(entry);

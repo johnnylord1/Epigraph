@@ -13,8 +13,8 @@ import { updateSettings } from "../store/state.svelte";
 const fetchMock = vi.fn();
 const createObjectUrlMock = vi.fn();
 const revokeObjectUrlMock = vi.fn();
-let createObjectUrlSpy: ReturnType<typeof vi.spyOn> | null = null;
-let revokeObjectUrlSpy: ReturnType<typeof vi.spyOn> | null = null;
+let createObjectUrlSpy: { mockRestore(): void } | null = null;
+let revokeObjectUrlSpy: { mockRestore(): void } | null = null;
 
 vi.mock("@tauri-apps/plugin-http", () => ({
   fetch: fetchMock,
@@ -154,6 +154,7 @@ describe("imageCache", () => {
       removeAttribute: vi.fn(),
     } as unknown as HTMLImageElement;
     const action = resolvedImage(node, "http://127.0.0.1:4567/page-1");
+    if (!action) throw new Error("resolvedImage must return action controls");
     await Promise.resolve();
     await Promise.resolve();
 
@@ -177,7 +178,7 @@ describe("imageCache", () => {
       serverAuthPass: "secret",
     });
 
-    let resolveFirst: ((response: Response) => void) | null = null;
+    let resolveFirst!: (response: Response) => void;
     fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => {
       resolveFirst = resolve;
     }));
@@ -190,10 +191,11 @@ describe("imageCache", () => {
       removeEventListener: vi.fn(),
     } as unknown as HTMLImageElement;
     const action = resolvedImage(node, "http://127.0.0.1:4567/page-stale");
+    if (!action) throw new Error("resolvedImage must return action controls");
     action.update?.("http://127.0.0.1:4567/page-current");
 
     await new Promise((resolve) => setTimeout(resolve, 0));
-    resolveFirst?.(new Response(new Blob(["first"]), { status: 200 }));
+    resolveFirst(new Response(new Blob(["first"]), { status: 200 }));
     await new Promise((resolve) => setTimeout(resolve, 0));
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -204,15 +206,17 @@ describe("imageCache", () => {
 
   it("resolvedImage does not reapply the same failed source until the url changes", async () => {
     let srcWrites = 0;
-    let errorHandler: (() => void) | null = null;
+    let nodeSrc = "";
+    let errorHandler: () => void = () => {
+      throw new Error("Expected resolvedImage to register an error handler");
+    };
     const node = {
-      _src: "",
       get src() {
-        return this._src;
+        return nodeSrc;
       },
       set src(value: string) {
         srcWrites += 1;
-        this._src = value;
+        nodeSrc = value;
       },
       removeAttribute: vi.fn(),
       addEventListener: vi.fn((event: string, handler: () => void) => {
@@ -222,10 +226,11 @@ describe("imageCache", () => {
     } as unknown as HTMLImageElement;
 
     const action = resolvedImage(node, "https://example.test/broken.jpg");
+    if (!action) throw new Error("resolvedImage must return action controls");
     await Promise.resolve();
 
     expect(srcWrites).toBe(1);
-    errorHandler?.();
+    errorHandler();
 
     action.update?.("https://example.test/broken.jpg");
     await Promise.resolve();

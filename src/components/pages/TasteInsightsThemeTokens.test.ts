@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import TasteInsightsModal from "./TasteInsightsModal.svelte";
 import { resolveCssColor, type RgbaColor } from "../../test/themeColor";
+import type { RecommendationContentType } from "../../lib/recommendations/types";
 
 const ROOT = process.cwd();
 const NATIVE_ANIMATE = Element.prototype.animate;
@@ -92,7 +93,7 @@ describe("Taste Insights theme tokens", () => {
       configurable: true,
       value: () => {
         let finish: Animation["onfinish"] = null;
-        return {
+        const animation = {
           cancel: vi.fn(),
           currentTime: 0,
           effect: null,
@@ -102,9 +103,10 @@ describe("Taste Insights theme tokens", () => {
           },
           set onfinish(callback) {
             finish = callback;
-            if (callback) queueMicrotask(() => callback.call(this, new Event("finish") as AnimationPlaybackEvent));
+            if (callback) queueMicrotask(() => callback.call(animation, new Event("finish") as AnimationPlaybackEvent));
           },
         } as unknown as Animation;
+        return animation;
       },
     });
     const outside = document.createElement("button");
@@ -116,7 +118,7 @@ describe("Taste Insights theme tokens", () => {
       props: {
         profile: {
           tagWeights: new Map([["Action", 1]]),
-          contentTypeWeights: new Map([["manga", 1]]),
+          contentTypeWeights: new Map<RecommendationContentType, number>([["manga", 1]]),
           sourceWeights: new Map(),
           topTags: ["Action"],
           positiveTags: ["Action"],

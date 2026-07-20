@@ -728,9 +728,10 @@ describe("BrowseV3", () => {
     });
 
     const baseImplementation = gqlMock.getMockImplementation();
+    if (!baseImplementation) throw new Error("Expected GraphQL mock implementation");
     gqlMock.mockImplementationOnce(async (query: string, variables?: Record<string, unknown>) => {
       if (query === "GET_EXTENSIONS") throw new Error("Suwayomi returned an empty GraphQL error.");
-      return baseImplementation?.(query, variables);
+      return baseImplementation(query, variables);
     });
 
     window.dispatchEvent(new CustomEvent("aethon:server-ready"));

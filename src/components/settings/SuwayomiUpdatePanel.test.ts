@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/sv
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { store } from "../../store/state.svelte";
 import { suwayomiUpdateUx } from "../../lib/suwayomiUpdateUx.svelte";
+import type { SuwayomiUpdateStageResult } from "../../lib/suwayomiRuntimeUpdate";
 import SuwayomiUpdatePanel from "./SuwayomiUpdatePanel.svelte";
 
 const {
@@ -240,8 +241,8 @@ describe("SuwayomiUpdatePanel", () => {
   });
 
   test("avoids duplicate downloads while staging is in progress", async () => {
-    let resolveStage: ((value: unknown) => void) | null = null;
-    stageSuwayomiRuntimeUpdateMock.mockImplementationOnce(() => new Promise((resolve) => {
+    let resolveStage!: (value: SuwayomiUpdateStageResult) => void;
+    stageSuwayomiRuntimeUpdateMock.mockImplementationOnce(() => new Promise<SuwayomiUpdateStageResult>((resolve) => {
       resolveStage = resolve;
     }));
 
@@ -258,7 +259,7 @@ describe("SuwayomiUpdatePanel", () => {
     await fireEvent.click(downloadButton);
     expect(stageSuwayomiRuntimeUpdateMock).toHaveBeenCalledTimes(1);
 
-    resolveStage?.({
+    resolveStage({
       stagingPath: "stale",
       jarPath: "stale/Suwayomi-Server.jar",
       version: "v2.2.2100",

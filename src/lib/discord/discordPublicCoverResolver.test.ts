@@ -244,7 +244,7 @@ describe("Discord public cover resolver", () => {
   });
 
   test("deduplicates simultaneous lookups for the same fingerprint", async () => {
-    let release: ((value: string) => void) | null = null;
+    let release!: (value: string) => void;
     const cache = createMemoryStorage();
     const resolver = new DiscordPublicCoverResolver({ storage: cache.storage });
     const tracker = vi.fn(() => new Promise<string>((resolve) => {
@@ -258,7 +258,7 @@ describe("Discord public cover resolver", () => {
     await vi.waitFor(() => {
       expect(tracker).toHaveBeenCalledTimes(1);
     });
-    release?.("https://tracker.example.com/shared.jpg");
+    release("https://tracker.example.com/shared.jpg");
 
     await expect(Promise.all([first, second])).resolves.toEqual([
       { url: "https://tracker.example.com/shared.jpg", source: "tracker" },

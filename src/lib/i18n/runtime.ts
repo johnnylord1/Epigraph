@@ -24,10 +24,14 @@ export function resolveMessageLocale(appLocale: string): string {
 
 export const translate: TranslateFn = (id, options = {}) => {
   const key = messageKey(id);
-  const fn = (m as Record<string, ((inputs?: TranslateValues) => string) | undefined>)[key];
-  if (!fn) return id;
-  const values = "values" in options ? options.values ?? {} : options;
-  return fn(values);
+  const message: unknown = Reflect.get(m, key);
+  if (typeof message !== "function") return id;
+  const nestedValues = "values" in options ? options.values : undefined;
+  const values = nestedValues && typeof nestedValues === "object"
+    ? nestedValues
+    : ("values" in options ? {} : options);
+  const translated: unknown = Reflect.apply(message, undefined, [values]);
+  return typeof translated === "string" ? translated : String(translated);
 };
 
 export const _ = {

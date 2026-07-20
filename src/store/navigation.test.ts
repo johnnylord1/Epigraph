@@ -232,40 +232,32 @@ describe("navigation subscriptions", () => {
   });
 
   test("navigation clears lingering search-engaged body classes", () => {
-    const previousDocument = (globalThis as { document?: Document }).document;
+    const previousDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
     const bodyClasses = new Set<string>();
-    (globalThis as typeof globalThis & {
-      document: {
-        body: {
-          classList: {
-            add: (...tokens: string[]) => void;
-            remove: (...tokens: string[]) => void;
-            contains: (token: string) => boolean;
-          };
-        };
-      };
-    }).document = {
-      body: {
-        classList: {
-          add: (...tokens: string[]) => { tokens.forEach((token) => bodyClasses.add(token)); },
-          remove: (...tokens: string[]) => { tokens.forEach((token) => bodyClasses.delete(token)); },
-          contains: (token: string) => bodyClasses.has(token),
-        },
-      },
+    const classList = {
+      add: (...tokens: string[]) => { tokens.forEach((token) => bodyClasses.add(token)); },
+      remove: (...tokens: string[]) => { tokens.forEach((token) => bodyClasses.delete(token)); },
+      contains: (token: string) => bodyClasses.has(token),
     };
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: { body: { classList } },
+    });
 
-    bodyClasses.add("aethon-settings-search-engaged");
-    bodyClasses.add("aethon-home-search-engaged");
-    bodyClasses.add("aethon-library-search-engaged");
-    bodyClasses.add("aethon-browse-search-engaged");
-    bodyClasses.add("aethon-downloads-search-engaged");
+    classList.add(
+      "aethon-settings-search-engaged",
+      "aethon-home-search-engaged",
+      "aethon-library-search-engaged",
+      "aethon-browse-search-engaged",
+      "aethon-downloads-search-engaged",
+    );
 
     setNavPage("downloads");
-    expect(document.body.classList.contains("aethon-settings-search-engaged")).toBe(false);
-    expect(document.body.classList.contains("aethon-home-search-engaged")).toBe(false);
-    expect(document.body.classList.contains("aethon-library-search-engaged")).toBe(false);
-    expect(document.body.classList.contains("aethon-browse-search-engaged")).toBe(false);
-    expect(document.body.classList.contains("aethon-downloads-search-engaged")).toBe(false);
+    expect(classList.contains("aethon-settings-search-engaged")).toBe(false);
+    expect(classList.contains("aethon-home-search-engaged")).toBe(false);
+    expect(classList.contains("aethon-library-search-engaged")).toBe(false);
+    expect(classList.contains("aethon-browse-search-engaged")).toBe(false);
+    expect(classList.contains("aethon-downloads-search-engaged")).toBe(false);
 
     document.body.classList.add("aethon-browse-search-engaged");
     openHomeDashboard();
@@ -280,14 +272,11 @@ describe("navigation subscriptions", () => {
     expect(document.body.classList.contains("aethon-library-search-engaged")).toBe(false);
 
     document.body.classList.add("aethon-browse-search-engaged");
-    document.body.classList.remove("aethon-browse-search-engaged");
-    expect(document.body.classList.contains("aethon-browse-search-engaged")).toBe(false);
+    classList.remove("aethon-browse-search-engaged");
+    expect(classList.contains("aethon-browse-search-engaged")).toBe(false);
 
-    if (previousDocument) {
-      (globalThis as { document?: Document }).document = previousDocument;
-    } else {
-      delete (globalThis as { document?: Document }).document;
-    }
+    if (previousDocument) Object.defineProperty(globalThis, "document", previousDocument);
+    else Reflect.deleteProperty(globalThis, "document");
   });
 
   test("profile scoped settings follow the selected local profile", () => {
@@ -300,7 +289,7 @@ describe("navigation subscriptions", () => {
         ...previousSettings,
         defaultLocalProfileId: "main",
         customLocalProfiles: [
-          { id: "profile-a", label: "Profile A", serverUrl: "http://127.0.0.1:4777", port: 4777, createdAt: 1 },
+          { id: "profile-a", label: "Profile A", port: 4777 },
         ],
         profileScopedSettings: {},
         serverUrl: "http://127.0.0.1:4567",
@@ -318,14 +307,14 @@ describe("navigation subscriptions", () => {
       });
       updateSettings({
         appLanguage: "ja",
-        libraryViewMode: "compact",
+        libraryViewMode: "compact_grid",
         libraryShowProgress: false,
       });
 
       expect(store.settings.profileScopedSettings.main?.appLanguage).toBe("pt-BR");
       expect(store.settings.profileScopedSettings.main?.libraryViewMode).toBe("grid");
       expect(store.settings.profileScopedSettings["profile-a"]?.appLanguage).toBe("ja");
-      expect(store.settings.profileScopedSettings["profile-a"]?.libraryViewMode).toBe("compact");
+      expect(store.settings.profileScopedSettings["profile-a"]?.libraryViewMode).toBe("compact_grid");
       expect(store.settings.serverAuthEnabled).toBe(true);
 
       updateSettings({

@@ -115,7 +115,7 @@ function applyProbeContract(customTheme = false) {
 
 function builtinExactProperties(predicate: (property: string) => boolean): string[] {
   const selector = '[data-theme="nocturne"]:not([data-custom-theme])';
-  const pending = Array.from(document.styleSheets).flatMap((sheet) => {
+  const pending: CSSRule[] = Array.from(document.styleSheets).flatMap((sheet) => {
     try {
       return Array.from(sheet.cssRules);
     } catch {
@@ -128,9 +128,13 @@ function builtinExactProperties(predicate: (property: string) => boolean): strin
     if (rule instanceof CSSStyleRule && rule.selectorText === selector) {
       return Array.from(rule.style).filter(predicate);
     }
-    if ("cssRules" in rule) pending.push(...Array.from(rule.cssRules));
+    if (hasNestedCssRules(rule)) pending.push(...Array.from(rule.cssRules));
   }
   return [];
+}
+
+function hasNestedCssRules(rule: CSSRule): rule is CSSRule & { readonly cssRules: CSSRuleList } {
+  return "cssRules" in rule;
 }
 
 function builtinExactSourceNames(): string[] {

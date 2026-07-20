@@ -132,7 +132,7 @@ describe("Discord Rich Presence", () => {
   });
 
   test("does not send presence when disabled while start is still pending", async () => {
-    let releaseStart: (() => void) | null = null;
+    let releaseStart = () => {};
     const sent: any[] = [];
     const driver: DiscordPresenceDriver = {
       start: vi.fn(() => new Promise<void>((resolve) => {
@@ -152,7 +152,7 @@ describe("Discord Rich Presence", () => {
     const stopPromise = service.stop();
     const sentWhileDisabled = await service.setPresence(progressPayload(0), enabledSettings, "work-change");
 
-    releaseStart?.();
+    releaseStart();
     await Promise.all([startPromise, stopPromise]);
 
     expect(sentWhileDisabled).toBe(false);

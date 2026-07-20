@@ -44,22 +44,25 @@ describe("tts controller", () => {
 
   beforeEach(() => {
     spoken = [];
+    let paused = false;
     voices = [
       { name: "A", lang: "en-US" } as SpeechSynthesisVoice,
       { name: "B", lang: "pt-BR" } as SpeechSynthesisVoice,
     ];
     synthesis = {
-      paused: false,
+      get paused() {
+        return paused;
+      },
       getVoices: vi.fn(() => voices),
       speak: vi.fn((utterance: SpeechSynthesisUtterance) => {
         spoken.push(utterance as unknown as MockUtterance);
       }),
       cancel: vi.fn(),
       pause: vi.fn(() => {
-        synthesis.paused = true;
+        paused = true;
       }),
       resume: vi.fn(() => {
-        synthesis.paused = false;
+        paused = false;
       }),
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),

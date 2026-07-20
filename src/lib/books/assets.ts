@@ -151,7 +151,7 @@ async function buildCanonicalPatch(book: BookEntry): Promise<CanonicalBookPatch 
     }
   }
 
-  if (!effectiveCoverPath && isUsableBookCoverUrl(book.coverUrl)) {
+  if (!effectiveCoverPath && book.coverUrl && isUsableBookCoverUrl(book.coverUrl)) {
     const payload = parseLegacyCoverDataUrl(book.coverUrl);
     if (payload) {
       const isRenderableLegacyCover = await canRenderEmbeddedImage(

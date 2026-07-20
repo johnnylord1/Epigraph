@@ -136,9 +136,9 @@ describe("Discord optimized cover service", () => {
   });
 
   test("deduplicates simultaneous jobs for the same fingerprint", async () => {
-    let release: ((value: string) => void) | null = null;
+    let release!: (value: string) => void;
     const cache = createMemoryStorage();
-    const processor: DiscordCoverProcessor = vi.fn(() => new Promise((resolve) => {
+    const processor = vi.fn<DiscordCoverProcessor>(() => new Promise<string>((resolve) => {
       release = resolve;
     }));
     const service = new DiscordCoverService({ storage: cache.storage, processor });
@@ -149,7 +149,7 @@ describe("Discord optimized cover service", () => {
     await vi.waitFor(() => {
       expect(processor).toHaveBeenCalledTimes(1);
     });
-    release?.("https://cdn.example.com/shared.jpg");
+    release("https://cdn.example.com/shared.jpg");
 
     await expect(Promise.all([first, second])).resolves.toEqual([
       "https://cdn.example.com/shared.jpg",

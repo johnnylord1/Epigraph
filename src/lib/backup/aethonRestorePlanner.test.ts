@@ -133,8 +133,6 @@ async function buildBooksPayload(exportMode: "full" | "metadata-only" = "full") 
     {
       readBinaryFile: async (filePath: string) =>
         new TextEncoder().encode(filePath.endsWith(".epub") ? "EPUB-BYTES" : "PNG-BYTES").buffer,
-      writeManagedBookAsset: async () => "",
-      writeManagedBookCover: async () => "",
     },
   );
 }

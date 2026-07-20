@@ -295,8 +295,6 @@ describe("books backup payload", () => {
       { exportMode: "full", appVersion: "0.0.1", platform: "windows", sourceProfileId: "main" },
       {
         readBinaryFile,
-        writeManagedBookAsset: vi.fn(),
-        writeManagedBookCover: vi.fn(),
       },
     );
 
@@ -335,8 +333,6 @@ describe("books backup payload", () => {
       {
         readBinaryFile: vi.fn(async (path: string) =>
           new TextEncoder().encode(path.endsWith(".epub") ? "EPUB-BYTES" : "JPEG-BYTES").buffer),
-        writeManagedBookAsset: vi.fn(),
-        writeManagedBookCover: vi.fn(),
       },
     );
 
@@ -346,7 +342,6 @@ describe("books backup payload", () => {
       `C:/managed/books/covers/${bookId}.${ext}`);
 
     const restored = await restoreAethonBooksPayload(built.bytes, {
-      readBinaryFile: vi.fn(),
       writeManagedBookAsset,
       writeManagedBookCover,
     });
@@ -375,13 +370,10 @@ describe("books backup payload", () => {
       { exportMode: "metadata-only" },
       {
         readBinaryFile: vi.fn(),
-        writeManagedBookAsset: vi.fn(),
-        writeManagedBookCover: vi.fn(),
       },
     );
 
     const restored = await restoreAethonBooksPayload(built.bytes, {
-      readBinaryFile: vi.fn(),
       writeManagedBookAsset: vi.fn(),
       writeManagedBookCover: vi.fn(),
     });

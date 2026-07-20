@@ -58,25 +58,21 @@ describe("Discord tracker cover resolver", () => {
   test("infers manga tracker providers from url, metadata, or known tracker id", () => {
     expect(inferMangaTrackerCoverProvider({
       trackerId: 999,
-      remoteId: "123",
       remoteUrl: "https://kitsu.io/manga/123",
     })).toBe("kitsu");
     expect(inferMangaTrackerCoverProvider({
       trackerId: 999,
-      remoteId: "123",
       remoteUrl: null,
-      tracker: { name: "Bangumi", icon: null },
+      tracker: { id: 999, name: "Bangumi", icon: "" },
     })).toBe("bangumi");
     expect(inferMangaTrackerCoverProvider({
       trackerId: 7,
-      remoteId: "15090100540",
       remoteUrl: null,
     })).toBe("mangaupdates");
     expect(inferMangaTrackerCoverProvider({
       trackerId: 999,
-      remoteId: "123",
       remoteUrl: null,
-      tracker: { name: "Unknown", icon: null },
+      tracker: { id: 999, name: "Unknown", icon: "" },
     })).toBeNull();
   });
 

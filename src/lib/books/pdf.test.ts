@@ -110,8 +110,9 @@ describe("createPdfDocumentInit", () => {
 
 describe("configurePdfJsWorker", () => {
   it("fills workerSrc once for pdfjs environments that need an explicit worker URL", () => {
+    const workerOptions: { workerSrc?: string } = {};
     const pdfjsLib = {
-      GlobalWorkerOptions: {},
+      GlobalWorkerOptions: workerOptions,
     };
 
     configurePdfJsWorker(pdfjsLib);
