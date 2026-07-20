@@ -372,7 +372,7 @@ No cenário reproduzido, o usuário não consegue criar QR nem parear outro desk
 
 Log do sidecar com `os error 10048`, ausência de `runtime.json`, timeout do runner e captura nativa redigida apenas por descrição porque continha caminho privado. Tornar start/stop idempotentes e distinguir “já em execução” de colisão externa.
 
-Para o app, manter uma porta preferida persistida, mas selecionar outra quando ela estiver ocupada; a porta efetiva deve ser gravada em `runtime.json` e publicada no QR/mDNS. Para a automação, alocar dinamicamente driver, WebDriver nativo, servidores locais e sidecars, usando `runId`, diretórios e perfis exclusivos. A limpeza deve usar apenas os PIDs iniciados pela própria execução, sem encerrar processos por nome, caminho genérico ou porta isoladamente.
+Para o app, manter uma porta preferida persistida, mas selecionar outra quando ela estiver ocupada; a porta efetiva deve ser gravada em `runtime.json` e publicada no QR/mDNS sem exigir decisão do usuário. O estado interno deve permanecer no diretório padrão do aplicativo, com temporários e logs limitados e limpos automaticamente. Para a automação, alocar dinamicamente driver, WebDriver nativo, servidores locais e sidecars, usando `runId`, diretórios e perfis exclusivos. A limpeza deve usar apenas os PIDs iniciados pela própria execução, sem encerrar processos por nome, caminho genérico ou porta isoladamente.
 
 Usuários em computadores diferentes podem usar a mesma porta porque seus endereços IP são distintos. Contas, perfis ou instâncias no mesmo Windows compartilham o namespace TCP e precisam de portas diferentes.
 

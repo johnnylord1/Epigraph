@@ -17,7 +17,8 @@ Aethon is manga-first in the near term, with room to explore other media formats
 - The repo/documentation foundation is established.
 - The safe Aethon rebrand and desktop stabilization baseline are already in place.
 - Active work is still desktop-first and includes library/detail continuity, reader fallback paths, setup-state refresh flow, tracking ergonomics, and backup/restore hardening.
-- Android remains isolated outside `main` until the shell can be validated end-to-end.
+- Aethon Mobile is a separate Flutter/Sorayomi product and is not implemented or packaged from this repository.
+- This desktop app may host the shared Suwayomi and Aethon Syncd services consumed by mobile, while mobile UI and platform code remain isolated in its own workspace.
 
-## Non-Goals For Now
-This phase does not include novel, EPUB, PDF, or Android implementation.
+## Repository Boundary
+This repository does not contain Android/iOS UI, mobile packaging, or a Tauri mobile shell. Mobile work belongs exclusively to the separate Aethon Mobile workspace. PC-hosted Core services, shared protocol contracts, pairing, and secure LAN access remain valid desktop responsibilities.

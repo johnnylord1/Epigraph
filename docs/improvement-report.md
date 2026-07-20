@@ -24,7 +24,8 @@ Este documento não redefine os bugs confirmados de `bug-report.md`. Os itens ab
 | IMP-014 | Observabilidade | Fluxos externos não apresentam um relatório de capacidades consolidadas (configurado, indisponível, credencial ausente, offline). | Diagnóstico de suporte mais rápido sem expor tokens. | Média | Baixo | P2 | About, Activity Center, Settings, runtime diagnostics | — |
 | IMP-015 | Contratos | O tipo mDNS é repetido em Rust e PowerShell com formas diferentes quanto ao ponto final. | Evitar gates falsamente vermelhos e consumidores incompatíveis. | Baixa | Médio | P1 | discovery provider, phase gate, diagnóstico Syncd | BUG-005 |
 | IMP-016 | Confiabilidade | O lifecycle Syncd não forneceu bootstrap quando o sidecar encontrou colisão e `runtime.json` não foi criado. | Start/restart idempotente e recuperação clara sem deixar o pairing em espera. | Alta | Alto | P1 | sidecar, lifecycle, runtime file, automação nativa | BUG-006 |
-| IMP-017 | Automação / concorrência | Driver, servidor local e instâncias Syncd usam conjuntos de portas fixas; a limpeza procura processos e listeners de forma ampla. Execuções paralelas no mesmo Windows podem disputar portas ou interferir entre si. | Permitir auditorias e duas ou mais instâncias locais simultâneas sem afetar outros usuários, chats ou sessões do Aethon. | Alta | Alto | P1 | runner nativo, wrapper PowerShell, lifecycle, `runtime.json`, mDNS/QR | BUG-006 |
+| IMP-017 | Automação / concorrência | Driver, servidor local e instâncias Syncd usam conjuntos de portas fixas; a limpeza procura processos e listeners de forma ampla. Execuções paralelas no mesmo Windows podem disputar portas ou interferir entre si. | Permitir auditorias e duas ou mais instâncias locais simultâneas sem afetar outros usuários, chats ou sessões do Aethon, mantendo a complexidade invisível no app. | Alta | Alto | P1 | runner nativo, wrapper PowerShell, lifecycle, `runtime.json`, mDNS/QR | BUG-006 |
+| IMP-018 | Armazenamento / UX | Runtime, logs, temporários e diagnósticos podem crescer ou aparecer como múltiplos artefatos se cada execução criar estruturas permanentes. | Manter o perfil do usuário limpo, com estado interno limitado, rotação automática e nenhuma configuração técnica no fluxo normal. | Média | Alto | P1 | diretório de dados do app, logs, temporários, diagnósticos, backup | — |
 
 ## Ordem sugerida
 
@@ -42,6 +43,7 @@ Este documento não redefine os bugs confirmados de `bug-report.md`. Os itens ab
 - `IMP-013` permanece como melhoria de diagnóstico, embora o inventário atual esteja reconciliado e verde.
 - `IMP-015` e `IMP-016` foram funcionalmente resolvidos; permanecem no histórico para rastreabilidade.
 - `IMP-017` continua adiado para um ciclo futuro de automação Syncd e não bloqueia os marcos atuais.
+- `IMP-018` é um critério transversal: novas implementações não devem criar artefatos em pastas comuns do usuário nem expor detalhes de runtime no fluxo padrão.
 
 ## Critérios para uma futura reauditoria
 
@@ -49,8 +51,12 @@ Este documento não redefine os bugs confirmados de `bug-report.md`. Os itens ab
 - Exigir relatórios de ready antes de capturas visuais; nunca atualizar baseline em loading.
 - Manter credenciais fora de logs, screenshots e fixtures versionadas.
 - Usar somente instâncias desktop no gate Syncd.
-- Alocar dinamicamente portas de driver, WebDriver nativo, servidor local e sidecar Syncd para cada execução. A seleção deve ser registrada no relatório e propagada a `runtime.json`, QR e anúncio mDNS.
-- Usar um `runId`, diretório temporário e perfis exclusivos por execução; registrar os PIDs filhos e limpar somente os processos pertencentes àquele `runId`.
+- No produto, alocar portas automaticamente e ocultar IP, porta, PID, `runId` e arquivos internos do fluxo principal. Endereço manual e diagnóstico técnico devem ficar em uma área avançada.
+- Na automação, alocar dinamicamente portas de driver, WebDriver nativo, servidor local e sidecar Syncd. A seleção deve ser registrada somente no relatório técnico e propagada ao runtime, QR e anúncio mDNS.
+- Usar `runId`, diretório temporário e perfis exclusivos apenas na automação; registrar os PIDs filhos e limpar somente os processos pertencentes àquele `runId`.
 - Não assumir que contas diferentes do mesmo Windows possuem namespaces de porta separados. Portas podem ser reutilizadas em computadores diferentes, mas são compartilhadas por processos no mesmo sistema operacional.
 - Evitar a sequência “consultar porta livre e iniciar depois” sem reserva, pois existe uma corrida entre a verificação e o bind. Preferir reserva coordenada ou retry limitado com nova porta.
+- Armazenar o estado normal somente no diretório padrão de dados do aplicativo, sem criar pastas na Área de Trabalho, Documentos ou Downloads. Manter apenas arquivos indispensáveis por perfil.
+- Rotacionar logs por tamanho/idade, apagar temporários após sucesso ou falha e remover manifests/locks obsoletos durante uma inicialização segura.
+- Gerar pacote de diagnóstico somente quando o usuário solicitar. Backup e conteúdo importado devem usar um destino escolhido ou claramente configurado pelo usuário.
 - Reconciliar totais da matriz e links de bugs após qualquer mudança de estado.

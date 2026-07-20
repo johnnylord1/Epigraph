@@ -100,7 +100,7 @@ More real screenshots are available in [docs/screenshots](docs/screenshots).
 These items are planned work, not completed functionality:
 
 - Aethon Syncd productization and cross-device synchronization.
-- Mobile version.
+- PC-hosted Core services and contracts consumed by the separate Flutter/Sorayomi Aethon Mobile project.
 - Design System consolidation.
 - Reader improvements.
 - TTS improvements.

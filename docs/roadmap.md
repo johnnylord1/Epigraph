@@ -20,8 +20,8 @@ This roadmap records known development priorities without committing to dates or
 
 ## Long Term
 
-- Aethon Syncd: productize the existing sync foundation into a user-facing cross-device synchronization flow.
-- Mobile version: planned companion/mobile experience after the desktop data model is stable.
+- Aethon Core host: productize managed Suwayomi, Syncd, pairing, TLS, discovery, and secure LAN access so this desktop app can host the separate Aethon Mobile client.
+- Mobile boundary: keep all Flutter UI, Android/iOS packaging, device storage, and mobile release work in the separate Aethon Mobile repository; share only explicit protocols, schemas, design tokens, and compatibility fixtures.
 - Planned capabilities: expand migration, tracking, and source-management workflows only after release blockers stay stable.
 - Infrastructure: harden release packaging, updater metadata, Suwayomi runtime ownership, and cross-platform build automation.
 - Optimizations: reduce bundle size, improve startup sequencing, and keep downloads/cache/thumbnails isolated from user-owned data.

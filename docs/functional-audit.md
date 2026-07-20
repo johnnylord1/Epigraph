@@ -160,7 +160,7 @@ General, Reader, Content e About foram renderizados em inglês a 1280×800 em am
 
 O backend Rust validou autenticação, escopos, bootstrap, pairing, sessão, pause/resume/reconnect, snapshots, replay, tombstones e replicação para comics, novels e books. Os gates base, pairing, live pairing, mutações, hardening LAN e discovery passaram. O runner WebView2 com perfis isolados concluiu 7/7 cenários nos Marcos 58, 61 e 62. O risco remanescente é de concorrência do harness por portas e ownership de processos (`IMP-017`), não uma falha funcional Syncd reproduzida.
 
-Para a próxima certificação nativa, recomenda-se alocar dinamicamente todas as portas locais — driver, WebDriver nativo, Suwayomi de teste e cada sidecar Syncd — e propagá-las ao runtime, QR e mDNS. Cada execução deve possuir `runId`, perfil, diretório temporário e lista de PIDs próprios; a limpeza não deve localizar alvos apenas por nome ou porta. Computadores diferentes podem reutilizar a mesma porta, mas instâncias e contas no mesmo Windows compartilham o namespace TCP.
+Para a próxima certificação nativa, recomenda-se alocar dinamicamente todas as portas locais — driver, WebDriver nativo, Suwayomi de teste e cada sidecar Syncd — e propagá-las ao runtime, QR e mDNS. `runId`, perfil descartável, diretório temporário e lista de PIDs próprios devem existir apenas no harness. No produto, a seleção precisa ser automática e invisível, sem criar artefatos em pastas comuns do usuário ou expor configuração de porta no fluxo principal. Computadores diferentes podem reutilizar a mesma porta, mas instâncias e contas no mesmo Windows compartilham o namespace TCP.
 
 ## Mudanças recentes e trabalhos de outros agentes
 
