@@ -17,6 +17,7 @@
     syncdForceReplicationReconnect,
     syncdGetActiveHostPairing,
     syncdGetReplicationState,
+    syncdGetRuntimeIdentity,
     syncdGetSessionCatalog,
     syncdHostDecidePairing,
     syncdForgetPersistedSession,
@@ -36,6 +37,7 @@
     type SyncdHostPairingState,
     type SyncdReplicationSnapshot,
     type SyncdReconnectStatus,
+    type SyncdRuntimeIdentity,
   } from "../../lib/syncdDesktop";
 
   interface Props {
@@ -81,6 +83,13 @@
   let panelSubscriptionsReady = $state(false);
   let modalView = $state<SyncdModalView>("pairing");
   let modalElement = $state<HTMLElement | null>(null);
+  let runtimeIdentity = $state<SyncdRuntimeIdentity | null>(null);
+  let panelMounted = false;
+  let subscriptionGeneration = 0;
+  let panelUnlisteners: Array<() => void> = [];
+
+  const HOST_DECISION_TIMEOUT_MS = 10_000;
+  const HOST_REFRESH_TIMEOUT_MS = 4_000;
 
   const activeProfileId = $derived.by(
     () => (typeof profileId === "string" && profileId.trim().length > 0 ? profileId : null),
@@ -148,6 +157,9 @@
   }
 
   function closeModal() {
+    panelMounted = false;
+    hostDecisionBusy = null;
+    stopPanelSubscriptions();
     onClose();
   }
 
@@ -312,11 +324,51 @@
     return bootstrapBundleTextarea?.value ?? bootstrapBundleInput;
   }
 
+  function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timeout = globalThis.setTimeout(() => reject(new Error(message)), timeoutMs);
+      promise.then(
+        (value) => {
+          globalThis.clearTimeout(timeout);
+          resolve(value);
+        },
+        (error) => {
+          globalThis.clearTimeout(timeout);
+          reject(error);
+        },
+      );
+    });
+  }
+
   async function loadHostState() {
     try {
-      host = mergeHostState(host, await syncdGetActiveHostPairing());
+      const nextHost = await syncdGetActiveHostPairing();
+      if (panelMounted) {
+        host = mergeHostState(host, nextHost);
+      }
     } catch (error) {
-      panelError = error instanceof Error ? error.message : String(error);
+      if (panelMounted) {
+        panelError = error instanceof Error ? error.message : String(error);
+      }
+    }
+  }
+
+  async function refreshHostAfterDecision() {
+    try {
+      const nextHost = await withTimeout(
+        syncdGetActiveHostPairing(),
+        HOST_REFRESH_TIMEOUT_MS,
+        "Sync pairing status refresh timed out.",
+      );
+      if (!panelMounted || !nextHost) return;
+      host = mergeHostState(host, nextHost);
+      if (nextHost.status === "approved" || nextHost.status === "rejected") {
+        panelError = null;
+      }
+    } catch (error) {
+      if (panelMounted && !panelError) {
+        panelError = error instanceof Error ? error.message : String(error);
+      }
     }
   }
 
@@ -455,7 +507,13 @@
     hostDecisionBusy = decision;
     panelError = null;
     try {
-      host = mergeHostState(host, await syncdHostDecidePairing(host.sessionId, decision));
+      const nextHost = await withTimeout(
+        syncdHostDecidePairing(host.sessionId, decision),
+        HOST_DECISION_TIMEOUT_MS,
+        "Sync pairing decision timed out. The session status will refresh automatically.",
+      );
+      if (!panelMounted) return;
+      host = mergeHostState(host, nextHost);
       addToast({
         kind: decision === "approve" ? "success" : "info",
         title: decision === "approve" ? translate("ui_syncPairingApproved") : translate("ui_syncPairingRejected"),
@@ -464,9 +522,14 @@
           : translate("ui_theRemoteDesktopWasToldToStopBefore"),
       });
     } catch (error) {
-      panelError = error instanceof Error ? error.message : String(error);
+      if (panelMounted) {
+        panelError = error instanceof Error ? error.message : String(error);
+      }
     } finally {
-      hostDecisionBusy = null;
+      if (panelMounted) {
+        hostDecisionBusy = null;
+        void refreshHostAfterDecision();
+      }
     }
   }
 
@@ -685,9 +748,91 @@
   }
 
   function applyDesktopSnapshot(snapshot: SyncdDesktopSnapshot) {
+    observeRuntimeIdentity(snapshot.runtimeIdentity ?? null);
     host = mergeHostState(host, snapshot.host ?? null);
     connect = mergeConnectState(connect, snapshot.connect ?? null);
     void refreshHostQrCode(host);
+  }
+
+  function runtimeIdentityKey(identity: SyncdRuntimeIdentity): string {
+    return `${identity.pid}:${identity.serverId ?? ""}`;
+  }
+
+  function observeRuntimeIdentity(nextIdentity: SyncdRuntimeIdentity | null) {
+    if (!nextIdentity) return;
+    const previousIdentity = runtimeIdentity;
+    runtimeIdentity = nextIdentity;
+    if (
+      panelMounted
+      && previousIdentity
+      && runtimeIdentityKey(previousIdentity) !== runtimeIdentityKey(nextIdentity)
+    ) {
+      void reconnectPanelSubscriptions().then(() => loadHostState());
+    }
+  }
+
+  async function refreshRuntimeIdentity() {
+    try {
+      observeRuntimeIdentity(await syncdGetRuntimeIdentity());
+    } catch {
+      // Active pairing and replication calls own user-visible runtime errors.
+    }
+  }
+
+  function stopPanelSubscriptions() {
+    subscriptionGeneration += 1;
+    panelSubscriptionsReady = false;
+    const listeners = panelUnlisteners;
+    panelUnlisteners = [];
+    listeners.forEach((unlisten) => unlisten());
+  }
+
+  async function reconnectPanelSubscriptions() {
+    if (!panelMounted) return;
+    const generation = subscriptionGeneration + 1;
+    stopPanelSubscriptions();
+    subscriptionGeneration = generation;
+
+    try {
+      const listeners = await Promise.all([
+        listenSyncdDesktopState((payload) => {
+          if (panelMounted) applyDesktopSnapshot(payload);
+        }),
+        listenSyncdPairingStatus((payload) => {
+          if (!panelMounted) return;
+          if ("hostReady" in payload) {
+            host = mergeHostState(host, payload);
+          } else {
+            connect = mergeConnectState(connect, payload);
+          }
+        }),
+        listenSyncdReconnectStatus((payload) => {
+          if (!panelMounted) return;
+          lastReconnectStatuses = {
+            ...lastReconnectStatuses,
+            [payload.sessionKey]: payload,
+          };
+          void refreshPersistedSessions();
+        }),
+        listenSyncdReplicationState((payload) => {
+          if (panelMounted && activeProfileId && payload.localProfileId === activeProfileId) {
+            replicationSnapshot = payload;
+            void refreshPersistedSessions();
+          }
+        }),
+      ]);
+
+      if (!panelMounted || generation !== subscriptionGeneration) {
+        listeners.forEach((unlisten) => unlisten());
+        return;
+      }
+      panelUnlisteners = listeners;
+      panelSubscriptionsReady = true;
+    } catch (error) {
+      if (panelMounted && generation === subscriptionGeneration) {
+        panelError = error instanceof Error ? error.message : String(error);
+      }
+    }
   }
 
   $effect(() => {
@@ -700,11 +845,13 @@
   });
 
   onMount(() => {
+    panelMounted = true;
     queueMicrotask(() => {
       modalElement?.focus();
     });
 
     void loadHostState();
+    void refreshRuntimeIdentity();
     void refreshDiscoveryCandidates();
     if (activeProfileId) {
       void refreshPersistedSessions();
@@ -715,6 +862,7 @@
       if (activeProfileId) {
         void refreshReplicationSnapshot();
       }
+      void refreshRuntimeIdentity();
     }, 2000);
 
     const handleAutomationQrImport = (event: Event) => {
@@ -725,45 +873,13 @@
     };
     window.addEventListener("aethon:syncd-import-qr-data-url", handleAutomationQrImport as EventListener);
 
-    const unlisteners: Array<() => void> = [];
-    void Promise.all([
-      listenSyncdDesktopState((payload) => {
-        applyDesktopSnapshot(payload);
-      }),
-      listenSyncdPairingStatus((payload) => {
-        if ("hostReady" in payload) {
-          host = mergeHostState(host, payload);
-        } else {
-          connect = mergeConnectState(connect, payload);
-        }
-      }),
-      listenSyncdReconnectStatus((payload) => {
-        lastReconnectStatuses = {
-          ...lastReconnectStatuses,
-          [payload.sessionKey]: payload,
-        };
-        void refreshPersistedSessions();
-      }),
-      listenSyncdReplicationState((payload) => {
-        if (activeProfileId && payload.localProfileId === activeProfileId) {
-          replicationSnapshot = payload;
-          void refreshPersistedSessions();
-        }
-      }),
-    ])
-      .then((listeners) => {
-        unlisteners.push(...listeners);
-        panelSubscriptionsReady = true;
-      })
-      .catch((error) => {
-        panelError = error instanceof Error ? error.message : String(error);
-      });
+    void reconnectPanelSubscriptions();
 
     return () => {
+      panelMounted = false;
       window.removeEventListener("aethon:syncd-import-qr-data-url", handleAutomationQrImport as EventListener);
       window.clearInterval(replicationPoll);
-      panelSubscriptionsReady = false;
-      unlisteners.forEach((unlisten) => unlisten());
+      stopPanelSubscriptions();
     };
   });
 

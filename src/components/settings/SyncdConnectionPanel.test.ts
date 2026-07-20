@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 let pairingStatusListener: ((payload: unknown) => void) | null = null;
+let desktopStateListener: ((payload: unknown) => void) | null = null;
 
 const hostState = {
   profileId: "main",
@@ -28,7 +29,10 @@ vi.mock("../../lib/syncdQr", () => ({
 }));
 
 vi.mock("../../lib/syncdDesktop", () => ({
-  listenSyncdDesktopState: vi.fn(async () => () => {}),
+  listenSyncdDesktopState: vi.fn(async (listener: (payload: unknown) => void) => {
+    desktopStateListener = listener;
+    return () => {};
+  }),
   listenSyncdPairingStatus: vi.fn(async (listener: (payload: unknown) => void) => {
     pairingStatusListener = listener;
     return () => {};
@@ -39,6 +43,7 @@ vi.mock("../../lib/syncdDesktop", () => ({
   syncdDisconnectPersistedSession: vi.fn(),
   syncdForceReplicationReconnect: vi.fn(),
   syncdGetActiveHostPairing: vi.fn(async () => null),
+  syncdGetRuntimeIdentity: vi.fn(async () => ({ pid: 100, serverId: "server-a" })),
   syncdGetReplicationState: vi.fn(async () => ({
     localProfileId: "main",
     activeSessionKey: null,
@@ -73,13 +78,31 @@ vi.mock("../../lib/syncdDesktop", () => ({
 }));
 
 import SyncdConnectionPanel from "./SyncdConnectionPanel.svelte";
+import {
+  listenSyncdDesktopState,
+  listenSyncdPairingStatus,
+  syncdGetActiveHostPairing,
+  syncdGetRuntimeIdentity,
+  syncdHostDecidePairing,
+} from "../../lib/syncdDesktop";
 
 describe("SyncdConnectionPanel", () => {
   beforeEach(() => {
     pairingStatusListener = null;
+    desktopStateListener = null;
+    vi.clearAllMocks();
+    vi.mocked(syncdGetActiveHostPairing).mockResolvedValue(null);
+    vi.mocked(syncdGetRuntimeIdentity).mockResolvedValue({ pid: 100, serverId: "server-a" });
+    vi.mocked(syncdHostDecidePairing).mockImplementation(async (_sessionId, decision) => ({
+      ...hostState,
+      status: decision === "approve" ? "approved" : "rejected",
+    }));
   });
 
-  afterEach(() => cleanup());
+  afterEach(() => {
+    vi.useRealTimers();
+    cleanup();
+  });
 
   test("opens as a focused pairing flow and keeps technical content behind Details and Options", async () => {
     const onClose = vi.fn();
@@ -129,5 +152,119 @@ describe("SyncdConnectionPanel", () => {
     expect(within(dialog).getByTestId("syncd-host-status-live").getAttribute("data-status")).toBe("claimed");
     expect(within(dialog).getByTestId("syncd-host-approve")).toBeTruthy();
     expect(within(dialog).getByTestId("syncd-host-reject")).toBeTruthy();
+  });
+
+  test("refetches the active host after a pairing decision", async () => {
+    render(SyncdConnectionPanel, {
+      props: { profileId: "main", scopeLabel: "Main profile" },
+    });
+
+    const dialog = await screen.findByRole("dialog", { name: "Desktop sync pairing" });
+    await fireEvent.click(within(dialog).getByTestId("syncd-host-start"));
+    await waitFor(() => expect(pairingStatusListener).not.toBeNull());
+    await act(async () => {
+      pairingStatusListener?.({
+        ...hostState,
+        status: "claimed",
+        claimedDeviceId: "desktop-2",
+      });
+    });
+
+    vi.mocked(syncdGetActiveHostPairing).mockResolvedValue({
+      ...hostState,
+      status: "approved",
+      claimedDeviceId: "desktop-2",
+    });
+    await fireEvent.click(within(dialog).getByTestId("syncd-host-approve"));
+
+    await waitFor(() => {
+      expect(syncdHostDecidePairing).toHaveBeenCalledWith("pairing-1", "approve");
+      expect(syncdGetActiveHostPairing).toHaveBeenCalledTimes(2);
+      expect(within(dialog).getByTestId("syncd-host-status-live").getAttribute("data-status")).toBe("approved");
+    });
+  });
+
+  test("reconnects native event listeners when the daemon identity changes", async () => {
+    render(SyncdConnectionPanel, {
+      props: { profileId: "main", scopeLabel: "Main profile" },
+    });
+
+    await screen.findByRole("dialog", { name: "Desktop sync pairing" });
+    await waitFor(() => {
+      expect(listenSyncdDesktopState).toHaveBeenCalledTimes(1);
+      expect(listenSyncdPairingStatus).toHaveBeenCalledTimes(1);
+      expect(desktopStateListener).not.toBeNull();
+    });
+
+    await act(async () => {
+      desktopStateListener?.({
+        host: null,
+        connect: null,
+        runtimeIdentity: { pid: 101, serverId: "server-b" },
+      });
+    });
+
+    await waitFor(() => {
+      expect(listenSyncdDesktopState).toHaveBeenCalledTimes(2);
+      expect(listenSyncdPairingStatus).toHaveBeenCalledTimes(2);
+      expect(syncdGetActiveHostPairing).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  test("allows the modal to close while a host decision is pending", async () => {
+    const onClose = vi.fn();
+    vi.mocked(syncdHostDecidePairing).mockImplementation(() => new Promise(() => {}));
+    render(SyncdConnectionPanel, {
+      props: { profileId: "main", scopeLabel: "Main profile", onClose },
+    });
+
+    const dialog = await screen.findByRole("dialog", { name: "Desktop sync pairing" });
+    await fireEvent.click(within(dialog).getByTestId("syncd-host-start"));
+    await waitFor(() => expect(pairingStatusListener).not.toBeNull());
+    await act(async () => {
+      pairingStatusListener?.({
+        ...hostState,
+        status: "claimed",
+        claimedDeviceId: "desktop-2",
+      });
+    });
+
+    await fireEvent.click(within(dialog).getByTestId("syncd-host-approve"));
+    expect(within(dialog).getByTestId("syncd-host-approve").textContent).toContain("Approving");
+    await fireEvent.click(within(dialog).getAllByRole("button", { name: "Close" })[0]);
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  test("releases the decision controls when the native decision times out", async () => {
+    vi.mocked(syncdHostDecidePairing).mockImplementation(() => new Promise(() => {}));
+    render(SyncdConnectionPanel, {
+      props: { profileId: "main", scopeLabel: "Main profile" },
+    });
+
+    const dialog = await screen.findByRole("dialog", { name: "Desktop sync pairing" });
+    await fireEvent.click(within(dialog).getByTestId("syncd-host-start"));
+    await waitFor(() => expect(pairingStatusListener).not.toBeNull());
+    await act(async () => {
+      pairingStatusListener?.({
+        ...hostState,
+        status: "claimed",
+        claimedDeviceId: "desktop-2",
+      });
+    });
+    vi.mocked(syncdGetActiveHostPairing).mockResolvedValue({
+      ...hostState,
+      status: "claimed",
+      claimedDeviceId: "desktop-2",
+    });
+
+    vi.useFakeTimers();
+    await fireEvent.click(within(dialog).getByTestId("syncd-host-approve"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_001);
+    });
+
+    expect(within(dialog).getByTestId("syncd-host-approve").hasAttribute("disabled")).toBe(false);
+    expect(within(dialog).getAllByText(/decision timed out/i).length).toBeGreaterThan(0);
   });
 });

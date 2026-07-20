@@ -5292,6 +5292,7 @@ pub fn run() {
             syncd_desktop::syncd_list_discovery_candidates,
             syncd_desktop::syncd_start_host_pairing,
             syncd_desktop::syncd_get_active_host_pairing,
+            syncd_desktop::syncd_get_runtime_identity,
             syncd_desktop::syncd_connect_with_bootstrap,
             syncd_desktop::syncd_host_decide_pairing,
             syncd_desktop::syncd_list_persisted_sync_sessions,

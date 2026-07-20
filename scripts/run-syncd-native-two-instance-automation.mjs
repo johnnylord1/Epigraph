@@ -220,6 +220,36 @@ async function killListeningProcessOnPort(port) {
   }
 }
 
+async function replaceSyncdDaemon(instance) {
+  const manifestPath = path.join(
+    instance.localAppDataDir,
+    "Aethon",
+    "syncd",
+    "runtime.json",
+  );
+  const previous = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+  await execFileAsync(
+    "taskkill.exe",
+    ["/PID", String(previous.pid), "/F", "/T"],
+    { windowsHide: true },
+  ).catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to stop Syncd PID ${previous.pid}: ${message}`);
+  });
+
+  const next = await waitForCondition(async () => {
+    const raw = await fs.readFile(manifestPath, "utf8").catch(() => null);
+    if (!raw) return null;
+    const candidate = JSON.parse(raw);
+    return candidate.pid !== previous.pid ? candidate : null;
+  }, SCENARIO_STATUS_TIMEOUT_MS, "Timed out waiting for the desktop to replace its Syncd daemon.");
+
+  return {
+    previous: { pid: previous.pid, serverId: previous.serverId },
+    next: { pid: next.pid, serverId: next.serverId },
+  };
+}
+
 async function waitForBootstrapPayloadReachable(
   origin,
   sessionId,
@@ -1146,6 +1176,10 @@ async function runScenario() {
     step("  - host observed claimed");
     await waitForConnectStatus(joiner, "Claimed", SCENARIO_STATUS_TIMEOUT_MS, "scenario1-joiner-claimed-timeout");
     step("  - joiner observed claimed");
+    const daemonReplacement = await replaceSyncdDaemon(host);
+    step(`  - host Syncd daemon replaced (${daemonReplacement.previous.pid} -> ${daemonReplacement.next.pid})`);
+    await waitForStatus(host.driver, "syncd-host-status-live", "claimed", SCENARIO_STATUS_TIMEOUT_MS);
+    step("  - host pairing listener recovered after daemon replacement");
     await decideHost(host, "approve");
     step("  - host approved");
     try {
@@ -1213,6 +1247,7 @@ async function runScenario() {
       name: "mdns-discovery-approval-replication",
       hostOrigin: hostState.bundle.syncdBaseUrl,
       persistedSessions: persistedAfterApprove.sessions.length,
+      daemonReplacement,
       replicated: {
         hostNovelId: hostNovelProgress.novelId,
         joinerNovelId: joinerNovelProgress.novelId,

@@ -39,6 +39,8 @@ const EVENT_DESKTOP_STATE: &str = "syncd-desktop-state";
 const EVENT_PAIRING_STATUS: &str = "syncd-pairing-status";
 const EVENT_RECONNECT_STATUS: &str = "syncd-reconnect-status";
 const DISCOVERY_BROWSE_TIMEOUT: Duration = Duration::from_secs(5);
+const HOST_DECISION_TIMEOUT: Duration = Duration::from_secs(8);
+const PAIRING_LISTENER_RETRY_DELAY: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -147,9 +149,17 @@ pub struct SyncdReconnectStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct SyncdRuntimeIdentity {
+    pub pid: u32,
+    pub server_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct SyncdDesktopSnapshot {
     pub host: Option<SyncdHostPairingState>,
     pub connect: Option<SyncdConnectState>,
+    pub runtime_identity: Option<SyncdRuntimeIdentity>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -211,6 +221,7 @@ struct SyncdDesktopRuntime {
     connect: Option<SyncdConnectState>,
     host_task: Option<JoinHandle<()>>,
     connect_task: Option<JoinHandle<()>>,
+    runtime_identity: Option<SyncdRuntimeIdentity>,
 }
 
 #[derive(Clone, Default)]
@@ -336,6 +347,7 @@ pub async fn syncd_start_host_pairing(
         "syncd_start_host_pairing begin profile_id={profile_id}"
     ));
     let runtime = syncd_sidecar::ensure_host_mode(&app).await?;
+    reconcile_runtime_identity(&app, state.inner(), &runtime).await?;
     automation_log(format!(
         "syncd_start_host_pairing host_mode_ready profile_id={} local_base_url={} advertised_base_url={}",
         profile_id, runtime.local_base_url, runtime.advertised_base_url
@@ -407,9 +419,21 @@ pub async fn syncd_start_host_pairing(
 
 #[tauri::command]
 pub async fn syncd_get_active_host_pairing(
+    app: AppHandle,
     state: State<'_, SyncdDesktopState>,
 ) -> Result<Option<SyncdHostPairingState>, String> {
+    let runtime = syncd_sidecar::ensure_host_mode(&app).await?;
+    reconcile_runtime_identity(&app, state.inner(), &runtime).await?;
     Ok(state.runtime.lock().await.host.clone())
+}
+
+#[tauri::command]
+pub async fn syncd_get_runtime_identity(
+    app: AppHandle,
+    state: State<'_, SyncdDesktopState>,
+) -> Result<SyncdRuntimeIdentity, String> {
+    let runtime = syncd_sidecar::ensure_host_mode(&app).await?;
+    reconcile_runtime_identity(&app, state.inner(), &runtime).await
 }
 
 #[tauri::command]
@@ -571,6 +595,9 @@ pub async fn syncd_host_decide_pairing(
     app: AppHandle,
     state: State<'_, SyncdDesktopState>,
 ) -> Result<SyncdHostPairingState, String> {
+    let sidecar_runtime = syncd_sidecar::ensure_host_mode(&app).await?;
+    reconcile_runtime_identity(&app, state.inner(), &sidecar_runtime).await?;
+
     let host = {
         let runtime = state.runtime.lock().await;
         runtime
@@ -585,10 +612,12 @@ pub async fn syncd_host_decide_pairing(
 
     let client = insecure_local_client()?;
     let response: PairingHostDecisionResponse = send_json_request(
-        client.post(format!(
-            "{}/v1/pairing/session/{}/decision",
-            host.local_control_url, host.session_id
-        )),
+        client
+            .post(format!(
+                "{}/v1/pairing/session/{}/decision",
+                host.local_control_url, host.session_id
+            ))
+            .timeout(HOST_DECISION_TIMEOUT),
         &PairingHostDecisionRequest { decision },
     )
     .await?;
@@ -607,6 +636,8 @@ pub async fn syncd_host_decide_pairing(
         current.clone()
     };
 
+    app.emit(EVENT_PAIRING_STATUS, &next)
+        .map_err(|error| error.to_string())?;
     emit_desktop_state(&app, state.inner()).await?;
     Ok(next)
 }
@@ -773,51 +804,140 @@ fn spawn_host_pairing_listener(
     })
 }
 
+async fn reconcile_runtime_identity(
+    app: &AppHandle,
+    state: &SyncdDesktopState,
+    sidecar_runtime: &syncd_sidecar::SyncdRuntimeInfo,
+) -> Result<SyncdRuntimeIdentity, String> {
+    let next_identity = SyncdRuntimeIdentity {
+        pid: sidecar_runtime.pid,
+        server_id: sidecar_runtime.server_id.clone(),
+    };
+    let host_to_reconnect = {
+        let mut runtime = state.runtime.lock().await;
+        if runtime.runtime_identity.as_ref() == Some(&next_identity) {
+            return Ok(next_identity);
+        }
+
+        if let Some(task) = runtime.host_task.take() {
+            task.abort();
+        }
+        runtime.runtime_identity = Some(next_identity.clone());
+        runtime.host.clone()
+    };
+
+    if let Some(host) = host_to_reconnect {
+        let task = spawn_host_pairing_listener(app.clone(), state.clone(), host);
+        let mut runtime = state.runtime.lock().await;
+        if runtime.runtime_identity.as_ref() == Some(&next_identity) {
+            runtime.host_task = Some(task);
+        } else {
+            task.abort();
+        }
+    }
+
+    emit_desktop_state(app, state).await?;
+    Ok(next_identity)
+}
+
 fn spawn_connect_pairing_listener(
     app: AppHandle,
     state: SyncdDesktopState,
     context: ConnectListenerContext,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let result = listen_to_pairing_status(
-            &context.attempted_origin,
-            &context.bundle.pairing_session_id,
-            &context.bundle.pairing_code,
-            &context.tls_cert_sha256,
-            |event| {
-                let app = app.clone();
-                let state = state.clone();
-                let context = context.clone();
-                async move {
-                    let next =
-                        update_connect_from_pairing_event(&app, &state, &context, &event).await?;
-                    app.emit(EVENT_PAIRING_STATUS, &next)
-                        .map_err(|error| error.to_string())?;
-                    emit_desktop_state(&app, &state).await?;
-                    Ok(())
-                }
-            },
-        )
-        .await;
+        loop {
+            let result = listen_to_pairing_status(
+                &context.attempted_origin,
+                &context.bundle.pairing_session_id,
+                &context.bundle.pairing_code,
+                &context.tls_cert_sha256,
+                |event| {
+                    let app = app.clone();
+                    let state = state.clone();
+                    let context = context.clone();
+                    async move {
+                        let next =
+                            update_connect_from_pairing_event(&app, &state, &context, &event)
+                                .await?;
+                        app.emit(EVENT_PAIRING_STATUS, &next)
+                            .map_err(|error| error.to_string())?;
+                        emit_desktop_state(&app, &state).await?;
+                        Ok(())
+                    }
+                },
+            )
+            .await;
 
-        if let Err(error) = result {
-            let next = {
-                let mut runtime = state.runtime.lock().await;
-                let Some(current) = runtime.connect.as_mut() else {
+            let status = {
+                let runtime = state.runtime.lock().await;
+                let Some(current) = runtime.connect.as_ref() else {
                     return;
                 };
-                current.status = if is_tls_mismatch_error(&error) {
-                    SyncdDesktopConnectionStatus::TlsMismatch
-                } else {
-                    SyncdDesktopConnectionStatus::Unreachable
-                };
-                current.error = Some(error);
-                current.clone()
+                if current.session_id != context.bundle.pairing_session_id {
+                    return;
+                }
+                current.status.clone()
             };
-            let _ = app.emit(EVENT_PAIRING_STATUS, &next);
-            let _ = emit_desktop_state(&app, &state).await;
+            if connect_pairing_listener_is_terminal(&status) {
+                return;
+            }
+
+            if let Err(error) = result {
+                if is_tls_mismatch_error(&error) {
+                    let next = {
+                        let mut runtime = state.runtime.lock().await;
+                        let Some(current) = runtime.connect.as_mut() else {
+                            return;
+                        };
+                        current.status = SyncdDesktopConnectionStatus::TlsMismatch;
+                        current.error = Some(error);
+                        current.clone()
+                    };
+                    let _ = app.emit(EVENT_PAIRING_STATUS, &next);
+                    let _ = emit_desktop_state(&app, &state).await;
+                    return;
+                }
+                automation_log(format!(
+                    "pairing live reconnect scheduled session={} error={error}",
+                    context.bundle.pairing_session_id
+                ));
+            } else {
+                automation_log(format!(
+                    "pairing live reconnect scheduled session={} after socket close",
+                    context.bundle.pairing_session_id
+                ));
+            }
+
+            if now_ms() >= context.bundle.expires_at_ms {
+                let next = {
+                    let mut runtime = state.runtime.lock().await;
+                    let Some(current) = runtime.connect.as_mut() else {
+                        return;
+                    };
+                    current.status = SyncdDesktopConnectionStatus::Expired;
+                    current.error = None;
+                    current.clone()
+                };
+                let _ = app.emit(EVENT_PAIRING_STATUS, &next);
+                let _ = emit_desktop_state(&app, &state).await;
+                return;
+            }
+
+            tokio::time::sleep(PAIRING_LISTENER_RETRY_DELAY).await;
         }
     })
+}
+
+fn connect_pairing_listener_is_terminal(status: &SyncdDesktopConnectionStatus) -> bool {
+    matches!(
+        status,
+        SyncdDesktopConnectionStatus::Connected
+            | SyncdDesktopConnectionStatus::Rejected
+            | SyncdDesktopConnectionStatus::Expired
+            | SyncdDesktopConnectionStatus::NeedsReauth
+            | SyncdDesktopConnectionStatus::TlsMismatch
+    )
 }
 
 async fn update_connect_from_pairing_event(
@@ -1630,6 +1750,7 @@ async fn emit_desktop_state(app: &AppHandle, state: &SyncdDesktopState) -> Resul
         SyncdDesktopSnapshot {
             host: runtime.host.clone(),
             connect: runtime.connect.clone(),
+            runtime_identity: runtime.runtime_identity.clone(),
         }
     };
     app.emit(EVENT_DESKTOP_STATE, &snapshot)
@@ -1668,6 +1789,28 @@ mod tests {
             semver::Version::parse(CURRENT_CLIENT_VERSION).unwrap()
                 >= semver::Version::parse(&config.min_client_version).unwrap()
         );
+    }
+
+    #[test]
+    fn pairing_listener_retries_only_non_terminal_connection_states() {
+        assert!(!connect_pairing_listener_is_terminal(
+            &SyncdDesktopConnectionStatus::Claimed
+        ));
+        assert!(!connect_pairing_listener_is_terminal(
+            &SyncdDesktopConnectionStatus::Pending
+        ));
+        assert!(connect_pairing_listener_is_terminal(
+            &SyncdDesktopConnectionStatus::Connected
+        ));
+        assert!(connect_pairing_listener_is_terminal(
+            &SyncdDesktopConnectionStatus::Rejected
+        ));
+        assert!(connect_pairing_listener_is_terminal(
+            &SyncdDesktopConnectionStatus::Expired
+        ));
+        assert!(connect_pairing_listener_is_terminal(
+            &SyncdDesktopConnectionStatus::TlsMismatch
+        ));
     }
 
     #[test]

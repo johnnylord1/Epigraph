@@ -53,6 +53,7 @@ pub struct RunningSyncd {
     pub child: Option<CommandChild>,
     pub ownership: SyncdOwnershipMode,
     pub pid: u32,
+    pub server_id: Option<String>,
     pub local_base_url: String,
     pub advertised_base_url: String,
     pub bind_host: String,
@@ -74,6 +75,7 @@ pub struct SyncdState {
 #[serde(rename_all = "camelCase")]
 pub struct SyncdRuntimeInfo {
     pub pid: u32,
+    pub server_id: Option<String>,
     pub local_base_url: String,
     pub advertised_base_url: String,
     pub bind_host: String,
@@ -278,10 +280,20 @@ async fn ensure_spawned(
                     probe_health(&current.local_base_url).await.is_ok()
                 }
                 SyncdOwnershipMode::PersistentAttached => {
-                    matches!(
-                        validate_existing_persistent_runtime(&request).await,
-                        Ok(Some(_))
-                    )
+                    match validate_existing_persistent_runtime(&request).await? {
+                        Some(validated)
+                            if runtime_matches_validated_identity(&current, &validated) =>
+                        {
+                            true
+                        }
+                        Some(validated) => {
+                            let running = running_from_validated(&request, validated, None);
+                            let info = runtime_info_from_running(&running);
+                            *state.runtime.lock().unwrap() = Some(running);
+                            return Ok(info);
+                        }
+                        None => false,
+                    }
                 }
             };
             if healthy {
@@ -375,6 +387,7 @@ async fn ensure_spawned(
                 child: Some(child),
                 ownership: request.ownership,
                 pid,
+                server_id: None,
                 local_base_url,
                 advertised_base_url,
                 bind_host: request.bind_host,
@@ -407,6 +420,7 @@ async fn ensure_spawned(
 fn runtime_info_from_running(running: &RunningSyncd) -> SyncdRuntimeInfo {
     SyncdRuntimeInfo {
         pid: running.pid,
+        server_id: running.server_id.clone(),
         local_base_url: running.local_base_url.clone(),
         advertised_base_url: running.advertised_base_url.clone(),
         bind_host: running.bind_host.clone(),
@@ -448,6 +462,7 @@ fn running_from_validated(
         child,
         ownership: SyncdOwnershipMode::PersistentAttached,
         pid: validated.manifest.pid,
+        server_id: Some(validated.manifest.server_id.clone()),
         local_base_url,
         advertised_base_url: validated.descriptor.advertised_origin.base_url,
         bind_host: request.bind_host.clone(),
@@ -458,6 +473,14 @@ fn running_from_validated(
         cert_path: request.data_dir.join("cert.pem"),
         log_path: request.data_dir.join("syncd-sidecar.log"),
     }
+}
+
+fn runtime_matches_validated_identity(
+    runtime: &SyncdRuntimeInfo,
+    validated: &ValidatedPersistentRuntime,
+) -> bool {
+    runtime.pid == validated.manifest.pid
+        && runtime.server_id.as_deref() == Some(validated.manifest.server_id.as_str())
 }
 
 async fn validate_existing_persistent_runtime(
@@ -786,6 +809,7 @@ mod tests {
     fn launch_request_never_confuses_ephemeral_and_persistent_ownership() {
         let runtime = SyncdRuntimeInfo {
             pid: 42,
+            server_id: Some("server-a".to_string()),
             local_base_url: "https://127.0.0.1:4777".to_string(),
             advertised_base_url: "https://192.168.1.20:4777".to_string(),
             bind_host: "0.0.0.0".to_string(),
@@ -805,6 +829,51 @@ mod tests {
         assert!(!runtime_matches_request(
             &runtime,
             &request(SyncdOwnershipMode::EphemeralOwned)
+        ));
+    }
+
+    #[test]
+    fn attached_runtime_identity_changes_with_pid_or_server_id() {
+        let fingerprint = "a".repeat(64);
+        let runtime = SyncdRuntimeInfo {
+            pid: 42,
+            server_id: Some("server-a".to_string()),
+            local_base_url: "https://127.0.0.1:4777".to_string(),
+            advertised_base_url: "https://192.168.1.20:4777".to_string(),
+            bind_host: "0.0.0.0".to_string(),
+            port: 4777,
+            host_mode: true,
+            ownership: SyncdOwnershipMode::PersistentAttached,
+            data_dir: r"C:\temp\aethon-syncd".to_string(),
+            db_path: r"C:\temp\aethon-syncd\syncd.sqlite".to_string(),
+            cert_path: r"C:\temp\aethon-syncd\cert.pem".to_string(),
+            log_path: r"C:\temp\aethon-syncd\syncd-sidecar.log".to_string(),
+        };
+        let validated = |pid, server_id: &str| ValidatedPersistentRuntime {
+            manifest: SyncdRuntimeManifest::new(
+                pid,
+                server_id,
+                4777,
+                &fingerprint,
+                std::env::current_exe()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            descriptor: descriptor(server_id, &fingerprint),
+        };
+
+        assert!(runtime_matches_validated_identity(
+            &runtime,
+            &validated(42, "server-a")
+        ));
+        assert!(!runtime_matches_validated_identity(
+            &runtime,
+            &validated(43, "server-a")
+        ));
+        assert!(!runtime_matches_validated_identity(
+            &runtime,
+            &validated(42, "server-b")
         ));
     }
 

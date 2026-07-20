@@ -161,9 +161,15 @@ export interface SyncdReplicationErrorPayload {
   error: string;
 }
 
+export interface SyncdRuntimeIdentity {
+  pid: number;
+  serverId?: string | null;
+}
+
 export interface SyncdDesktopSnapshot {
   host?: SyncdHostPairingState | null;
   connect?: SyncdConnectState | null;
+  runtimeIdentity?: SyncdRuntimeIdentity | null;
 }
 
 export interface SyncdConnectBootstrapInput {
@@ -190,6 +196,10 @@ export function syncdStartHostPairing(profileId: string): Promise<SyncdHostPairi
 
 export function syncdGetActiveHostPairing(): Promise<SyncdHostPairingState | null> {
   return invoke("syncd_get_active_host_pairing");
+}
+
+export function syncdGetRuntimeIdentity(): Promise<SyncdRuntimeIdentity> {
+  return invoke("syncd_get_runtime_identity");
 }
 
 export function syncdConnectWithBootstrap(
