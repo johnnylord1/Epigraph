@@ -501,10 +501,6 @@
     onjump={(val) => openChapterByIndex(val - 1)}
     onbookmark={toggleCurrentChapterBookmark}
   >
-    {#snippet ttsControls()}
-      <TtsControls controller={tts} />
-    {/snippet}
-
     {#snippet settingsPopover()}
       {#if activeSubPanel === "tts"}
         <TtsControls controller={tts} onback={() => activeSubPanel = "main"} />

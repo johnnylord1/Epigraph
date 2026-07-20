@@ -345,6 +345,7 @@
     border-radius: var(--component-reader-pill-radius);
     background: var(--tts-reader-track-bg);
     outline: none;
+    appearance: none;
     -webkit-appearance: none;
     cursor: pointer;
   }
