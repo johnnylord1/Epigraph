@@ -445,6 +445,9 @@
       fpsText = "";
       return;
     }
+    const starfield = starfieldEl;
+    const orbitBack = orbitBackEl;
+    const orbitFront = orbitFrontEl;
 
     const random = mulberry32(0xa37a0e);
     const ambientConfigs = [
@@ -457,13 +460,13 @@
       const element = createStarElement("ambient-star", config.size);
       element.style.setProperty("--x", `${config.x.toFixed(2)}%`);
       element.style.setProperty("--y", `${config.y.toFixed(2)}%`);
-      starfieldEl.append(element);
+      starfield.append(element);
       return { element, config };
     });
 
     const orbitStars: MountedStar<OrbitConfig>[] = ORBIT_CONFIGS.map((config) => {
       const element = createStarElement("orbit-star", config.size);
-      orbitBackEl.append(element);
+      orbitBack.append(element);
       return { element, config };
     });
 
@@ -475,7 +478,7 @@
     const animate = (timestamp: number) => {
       if (timestamp - lastFrame > 32) {
         updateAmbientStars(ambientStars, timestamp);
-        updateOrbitStars(orbitStars, orbitBackEl, orbitFrontEl, timestamp);
+        updateOrbitStars(orbitStars, orbitBack, orbitFront, timestamp);
         lastFrame = timestamp;
 
         if (showFps) {

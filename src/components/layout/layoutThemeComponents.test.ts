@@ -74,7 +74,6 @@ describe("layout theme components", () => {
       mangaTitle: "Token Audit",
       chapterId: 1,
       chapterName: "Chapter 1",
-      pageNumber: 1,
       thumbnailUrl: "",
       readAt: Date.now(),
     }];
@@ -93,5 +92,18 @@ describe("layout theme components", () => {
 
   test("keeps the global layout shell CSS block free of direct color functions", () => {
     expect(layoutCssShellBlock()).not.toMatch(DIRECT_COLOR_PATTERN);
+  });
+
+  test("keeps the global search dim below modal surfaces", () => {
+    const shell = layoutCssShellBlock();
+    const tokens = readRepoFile("src/styles/tokens.css");
+
+    expect(shell).toMatch(/\.aethon-search-dim-layer\s*\{[^}]*z-index:\s*var\(--z-popover\);/s);
+    expect(tokens).toMatch(/--z-popover:\s*(\d+);/);
+    expect(tokens).toMatch(/--z-modal:\s*(\d+);/);
+
+    const popoverZ = Number(tokens.match(/--z-popover:\s*(\d+);/)?.[1]);
+    const modalZ = Number(tokens.match(/--z-modal:\s*(\d+);/)?.[1]);
+    expect(popoverZ).toBeLessThan(modalZ);
   });
 });
