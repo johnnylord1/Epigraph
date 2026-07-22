@@ -8,8 +8,8 @@
 - Funcionando: 29; funcionando parcialmente: 4; quebradas: 0.
 - Somente interface: 0; implementadas mas inacessíveis: 1; não implementadas: 0.
 - Não foi possível testar: 9; dependem de configuração ausente: 5; dependem de serviço externo: 15.
-- Bugs registrados: **6** — 1 confirmado em aberto e 5 resolvidos após revalidação.
-- Risco principal atual: o gate Svelte/TypeScript permanece vermelho com 308 erros e 11 warnings; tema, browser, formatação Rust, discovery e automação nativa Syncd estão verdes.
+- Bugs registrados: **6** — todos resolvidos após revalidação.
+- O gate Svelte/TypeScript passou com 0 erros e 0 warnings em 21/07/2026. Os riscos abertos estão registrados como melhorias de certificação, acessibilidade, integrações e desempenho, não como bugs reproduzidos.
 
 Nenhum bug de severidade Crítica ou Alta foi reproduzido no caminho do usuário. Isso não significa ausência de risco: vários fluxos nativos e externos ficaram bloqueados pelas limitações registradas na auditoria.
 
@@ -35,7 +35,7 @@ Nenhum bug de severidade Crítica ou Alta foi reproduzido no caminho do usuário
 - `BUG-004`: resolvido; `cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check` encerra com código 0.
 - `BUG-005`: resolvido por normalização equivalente das formas mDNS com e sem ponto final; o phase gate real concluiu com sucesso.
 - `BUG-006`: resolvido funcionalmente pelos Marcos 58, 61 e 62; o harness nativo isolado concluiu 7/7 cenários. O isolamento completo de portas e ownership de PIDs continua como melhoria `IMP-017`, não como regressão funcional aberta.
-- `BUG-002`: permanece confirmado e é o único bug aberto deste relatório.
+- `BUG-002`: resolvido; o `svelte-check` passou com 0 erros e 0 warnings em 21/07/2026.
 
 ## BUG-001 — Contratos de tema não acompanham os novos tokens Syncd
 
@@ -101,20 +101,20 @@ Revisar semanticamente cada token novo, atualizar alias/família e regenerar som
 
 Temas builtin, temas customizados, contraste do modal, divisores, estados de sessão e detalhes Syncd.
 
-## BUG-002 — Verificação Svelte/TypeScript falha com 308 erros
+## BUG-002 — Verificação Svelte/TypeScript falhava com 308 erros
 
 **Severidade:** Média
 **Prioridade sugerida:** P1
-**Status:** Confirmado
+**Status:** Resolvido
 **Área:** Frontend / contratos
 **Funcionalidade afetada:** transversal
 **Rota ou tela:** múltiplas
-**Ambiente:** `svelte-check` na cópia temporária
+**Ambiente:** `svelte-check` no worktree atual
 **Mudança relacionada:** parte dos erros toca arquivos recentemente modificados, mas a origem temporal de todos eles não foi confirmada.
 
 ### Descrição
 
-O frontend gera bundle, porém não passa sua verificação estática. O volume inclui testes e código de produção, impedindo usar o type-check como gate confiável.
+O baseline original tinha 308 erros e 11 warnings, incluindo testes e código de produção. Os contratos afetados foram corrigidos em lotes e o type-check voltou a ser um gate confiável.
 
 ### Pré-condições
 
@@ -127,7 +127,7 @@ O frontend gera bundle, porém não passa sua verificação estática. O volume 
 
 ### Resultado atual
 
-308 erros e 11 warnings em 76 arquivos. Exemplos de produção:
+Em 21/07/2026, o comando conclui com 0 erros e 0 warnings. O snapshot histórico de 308 erros e 11 warnings em 76 arquivos incluía:
 
 - `Reader.svelte` passa/binda `toolsOpen`, mas `ReaderHud.svelte` não declara a propriedade;
 - valores opcionais/null em assets de books, library state, recomendações e Hardcover;
@@ -140,7 +140,7 @@ Zero erros de tipo, ou baseline explícito e reduzido que não esconda regressõ
 
 ### Frequência
 
-Sempre.
+Resolvido no baseline atual.
 
 ### Impacto para o usuário
 
@@ -148,22 +148,23 @@ Indireto, mas amplo: contratos quebrados podem emergir como estados inválidos, 
 
 ### Evidências
 
-- Saída do comando: `svelte-check found 308 errors and 11 warnings in 76 files`.
-- `pnpm build` passa, demonstrando que o empacotamento isolado não detecta o problema.
+- Snapshot histórico: `svelte-check found 308 errors and 11 warnings in 76 files`.
+- Revalidação de 21/07/2026: `svelte-check found 0 errors and 0 warnings`.
+- `pnpm build` continua sendo um gate separado, pois o empacotamento isolado não substitui o type-check.
 
 ### Causa provável
 
-**Hipótese:** dívida acumulada de tipos somada a mudanças recentes que adicionaram propriedades/tokens sem atualizar todas as interfaces e fixtures.
+**Causa confirmada:** dívida acumulada de contratos entre componentes, módulos e fixtures, corrigida sem `any`, `@ts-ignore` ou supressões amplas.
 
 ### Direção sugerida para correção
 
-Separar produção de testes, resolver primeiro contratos que cruzam componentes/backends e tornar o type-check um gate incrementalmente verde. Cada ajuste deve ser acompanhado pelo teste funcional da área.
+Manter o comando no gate de release e impedir regressões. Cada mudança de contrato deve continuar acompanhada pelo teste funcional da área.
 
 ### Possíveis regressões
 
 Readers, importação/offline, backup, i18n, recomendações, Hardcover, books e novels.
 
-## BUG-003 — Suite browser está vermelha e captura estados assíncronos instáveis
+## BUG-003 — Suite browser estava vermelha e capturava estados assíncronos instáveis
 
 **Severidade:** Média
 **Prioridade sugerida:** P1
@@ -172,11 +173,11 @@ Readers, importação/offline, backup, i18n, recomendações, Hardcover, books e
 **Funcionalidade afetada:** FUNC-005, FUNC-006, FUNC-047 e FUNC-062
 **Rota ou tela:** Library e Settings
 **Ambiente:** Vitest browser-components, 1280×800
-**Mudança relacionada:** `vitest.workspace.ts`, Settings e componentes de biblioteca estão modificados no worktree.
+**Mudança relacionada:** correções históricas no workspace Vitest, Settings e componentes de biblioteca.
 
 ### Descrição
 
-O projeto browser não fornece um resultado determinístico: bodies de Library falham por mocks/fixtures, o service worker MSW não registra e snapshots de Settings são tirados antes de operações assíncronas terminarem.
+Na auditoria original, o projeto browser não fornecia um resultado determinístico: bodies de Library falhavam por mocks/fixtures, o service worker MSW não registrava e snapshots de Settings eram tirados antes de operações assíncronas terminarem. A revalidação de 21/07/2026 passou 44/44 testes.
 
 ### Pré-condições
 
@@ -187,7 +188,7 @@ O projeto browser não fornece um resultado determinístico: bodies de Library f
 1. Executar `pnpm test:browser`.
 2. Inspecionar falhas e capturas `*.actual.png` somente na cópia temporária.
 
-### Resultado atual
+### Resultado na auditoria original
 
 - 9 arquivos: 6 passaram e 3 falharam.
 - 44 testes: 27 passaram e 17 falharam.
@@ -203,7 +204,7 @@ O harness deve instalar mocks antes do render, esperar estado estável e produzi
 
 ### Frequência
 
-Sempre na execução auditada; o grau de divergência visual pode variar.
+Resolvido no harness atual.
 
 ### Impacto para o usuário
 
@@ -382,7 +383,7 @@ QR, pairing, restart, reconnect, sessões persistidas e replicação entre deskt
 
 ## Suspeitas não promovidas a bug
 
-- Os erros de tipo em `ReaderHud`/`Reader`, backup e offline manga são reais no gate, mas não tiveram manifestação de runtime reproduzida individualmente.
+- Os erros históricos de tipo em `ReaderHud`/`Reader`, backup e offline manga não tiveram manifestação de runtime reproduzida individualmente e já não aparecem no gate atual.
 - O actual de Storage em loading comprova instabilidade do teste, não defeito funcional da tela.
 - `source.settings.write` é whitelistada e retorna `not_implemented`, porém não possui chamador de produção; está em `improvement-report.md` como dívida arquitetural/inacessível.
 - Chunks grandes são risco de desempenho, não bug reproduzido de usuário.

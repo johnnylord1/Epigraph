@@ -30,7 +30,7 @@ Os estados descrevem o que pôde ser confirmado neste ambiente. “Funcionando�
 
 ### Revalidação após o Marco 63
 
-O snapshot histórico abaixo foi revalidado no worktree atual. Tema, browser, formatação Rust e discovery Syncd voltaram a ficar verdes: 803/803 testes unit/jsdom, 44/44 testes browser, 76 testes Rust filtrados de discovery e o phase gate nativo passaram. O harness nativo Syncd dos Marcos 58, 61 e 62 permanece certificado em 7/7 cenários. O único gate funcional aberto desta auditoria é o `svelte-check`, ainda com 308 erros e 11 warnings em 76 arquivos.
+O snapshot histórico abaixo foi revalidado no worktree atual. Tema, browser, formatação Rust e discovery Syncd voltaram a ficar verdes: 803/803 testes unit/jsdom, 44/44 testes browser, 76 testes Rust filtrados de discovery e o phase gate nativo passaram. O harness nativo Syncd dos Marcos 58, 61 e 62 permanece certificado em 7/7 cenários. Em 21/07/2026, o `svelte-check` também voltou a ficar verde, com 0 erros e 0 warnings; as contagens históricas permanecem registradas no BUG-002.
 
 ## Ambiente e método
 
@@ -114,10 +114,10 @@ O snapshot histórico abaixo foi revalidado no worktree atual. Tema, browser, fo
 
 | Comando | Resultado | Evidência resumida |
 | --- | --- | --- |
-| `pnpm build` | Passou | 6.300 módulos; ~67 s; aviso de chunks > 500 kB |
-| `pnpm exec svelte-check --tsconfig ./tsconfig.json` | Falhou | 308 erros e 11 warnings em 76 arquivos; ver BUG-002 |
-| `pnpm test:unit` | Passou | 140/140 arquivos; 803/803 testes unit e shell-jsdom |
-| `pnpm exec vitest run --project shell-jsdom --reporter=basic` | Passou | 38/38 arquivos; 168/168 testes |
+| `pnpm build` | Passou | 6.396 módulos; 45,16 s em 21/07/2026; aviso de chunks > 500 kB |
+| `pnpm exec svelte-check --tsconfig ./tsconfig.json` | Passou | 0 erros e 0 warnings em 21/07/2026; o baseline anterior está preservado no BUG-002 |
+| `pnpm test:unit` | Passou | 141/141 arquivos; 811/811 testes unit e shell-jsdom, com dois workers, em 21/07/2026 |
+| `pnpm exec vitest run --project shell-jsdom --reporter=basic` | Passou no último snapshot isolado | 38/38 arquivos; 168/168 testes; o conjunto também está incluído no gate unit/jsdom atual |
 | `pnpm test:browser` | Passou | 9/9 arquivos; 44/44 testes browser em execução serial |
 | `pnpm test:suwayomi-certification` | Passou | 5/5 testes |
 | `pnpm theme:test-runtime-audit` | Passou | 3/3 testes |
@@ -136,7 +136,7 @@ O snapshot histórico abaixo foi revalidado no worktree atual. Tema, browser, fo
 | Runner nativo de duas instâncias desktop | Passou | 7/7 cenários nos Marcos 58, 61 e 62 com `LOCALAPPDATA` isolado; ver evidências em `theme-system-audit.md` |
 | Lint | Não configurado | Não existe script dedicado; nenhuma ferramenta foi instalada |
 
-O build frontend não prova ausência de erros de tipo: Vite transpila e empacota enquanto o `svelte-check` falha. Entre os erros de produção estão divergências em `ReaderHud`/`Reader`, tipos opcionais de assets/books, i18n, `BlobPart`, recomendações e Hardcover. Não houve reprodução suficiente para transformar cada erro de tipo em bug de usuário individual.
+O build frontend e o type-check permanecem gates complementares: Vite transpila e empacota, enquanto o `svelte-check` valida os contratos Svelte/TypeScript. O baseline atual passa ambos; as divergências históricas de readers, books, i18n, `BlobPart`, recomendações e Hardcover foram corrigidas em lotes focados.
 
 ## Detalhamento por área
 
@@ -146,7 +146,7 @@ O shell, a navegação primária, os estados vazios e o Activity Center têm cob
 
 ### Library, detalhes e leitores
 
-Library possui superfícies distintas para comics e books/novels, com busca, filtro, ordenação, categorias e seleção em massa. O projeto `shell-jsdom` passou integralmente, mas o projeto browser falhou antes das asserções dos bodies de Books e Comics por problemas de fixture/mock. Leitor de manga, HUD, progresso, bookmarks e TTS têm testes verdes. EPUB/PDF e fallback offline exigiam dados importados e permaneceram não testados.
+Library possui superfícies distintas para comics e books/novels, com busca, filtro, ordenação, categorias e seleção em massa. Os projetos `shell-jsdom` e browser passaram integralmente na revalidação atual, incluindo os bodies de Books e Comics. Leitor de manga, HUD, progresso, bookmarks e TTS têm testes verdes. EPUB/PDF e fallback offline ainda exigem o gate nativo descartável previsto para o Marco 66.
 
 ### Browse, Sources e integrações
 
