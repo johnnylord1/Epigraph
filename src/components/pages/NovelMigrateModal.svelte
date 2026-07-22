@@ -11,6 +11,7 @@
     Warning,
     X,
   } from "phosphor-svelte";
+  import { onMount } from "svelte";
 
   import { addToast, store } from "../../store/state.svelte";
   import type { ActiveNovelDetailState, InstalledNovelSourceDescriptor, NovelDetailRecord, NovelSourceSearchResult } from "../../lib/novels/domain";
@@ -38,6 +39,7 @@
   import { loadNovelSourceClassificationState, peekNovelSourceClassificationState, type PersistedNovelSourceClassificationState } from "../../lib/novels/sourceClassificationState";
   import NocturneState from "../shared/NocturneState.svelte";
   import { getNovelMigrationBlocker, hasMinimumNovelMigrationSafeCohort, isNovelSourceMigrationSafe } from "../../lib/novels/migrationSafe";
+  import { createDialogFocusBoundary } from "../../lib/accessibility/dialogFocus";
 
   interface Props {
     active: ActiveNovelDetailState;
@@ -69,6 +71,9 @@
   let preview = $state<NovelMigrationPreview | null>(null);
   let massPreview = $state<MassNovelMigrationPreview | null>(null);
   let massSelectedIds = $state<Set<string>>(new Set());
+  let overlayEl: HTMLDivElement | undefined = $state();
+  let modalEl: HTMLDivElement | undefined = $state();
+  let closeButtonEl: HTMLButtonElement | undefined = $state();
 
   const scopeInput = $derived({
     profileId: store.runtimeResolvedLocalProfileId,
@@ -334,17 +339,26 @@
       query = active.novel.title;
     }
   });
+
+  onMount(() => {
+    if (!overlayEl || !modalEl) return;
+    return createDialogFocusBoundary({
+      dialog: modalEl,
+      isolationRoot: overlayEl,
+      initialFocus: closeButtonEl,
+    });
+  });
 </script>
 
-<div class="overlay">
+<div bind:this={overlayEl} class="overlay">
   <button class="backdrop" type="button" aria-label={$_("ui_closeMigrationModal")} onclick={onClose}></button>
-  <div class="modal" role="dialog" aria-modal="true" aria-label={$_("ui_migrateNovel")}>
+  <div bind:this={modalEl} class="modal" role="dialog" aria-modal="true" aria-label={$_("ui_migrateNovel")} tabindex="-1">
     <div class="modal-header">
       <div class="modal-title">
         <span class="modal-title-label">{$_("ui_migrateNovel")}</span>
         <span class="modal-title-name">{active.novel.title}</span>
       </div>
-      <button class="close-btn" type="button" onclick={onClose}><X size={14} weight="light" /></button>
+      <button bind:this={closeButtonEl} class="close-btn" type="button" onclick={onClose} aria-label={$_("ui_closeMigrationModal")}><X size={14} weight="light" /></button>
     </div>
 
     {#if cohortBlocker}

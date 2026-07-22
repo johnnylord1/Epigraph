@@ -1,0 +1,74 @@
+[
+  {
+    "surface": "home",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "activeTag": "BUTTON",
+    "activeVisible": true,
+    "innerHeight": 800,
+    "innerWidth": 1280,
+    "scrollWidth": 1280
+  },
+  {
+    "surface": "library",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "activeTag": "BUTTON",
+    "activeVisible": true,
+    "innerHeight": 800,
+    "innerWidth": 1280,
+    "scrollWidth": 1280
+  },
+  {
+    "surface": "settings",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "activeTag": "BUTTON",
+    "activeVisible": true,
+    "innerHeight": 800,
+    "innerWidth": 1280,
+    "scrollWidth": 1280
+  },
+  {
+    "surface": "home",
+    "viewport": {
+      "width": 800,
+      "height": 600
+    },
+    "activeTag": "BUTTON",
+    "activeVisible": true,
+    "innerHeight": 600,
+    "innerWidth": 800,
+    "scrollWidth": 800
+  },
+  {
+    "surface": "library",
+    "viewport": {
+      "width": 800,
+      "height": 600
+    },
+    "activeTag": "BUTTON",
+    "activeVisible": true,
+    "innerHeight": 600,
+    "innerWidth": 800,
+    "scrollWidth": 800
+  },
+  {
+    "surface": "settings",
+    "viewport": {
+      "width": 800,
+      "height": 600
+    },
+    "activeTag": "BUTTON",
+    "activeVisible": true,
+    "innerHeight": 600,
+    "innerWidth": 800,
+    "scrollWidth": 800
+  }
+]

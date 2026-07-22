@@ -2,7 +2,7 @@
   import { translate } from "../../lib/i18n/runtime";
   import { _ } from "../../lib/i18n/runtime";
   import { X, MagnifyingGlass, CircleNotch, ArrowRight, Check, Warning, Sparkle, ArrowsClockwise } from "phosphor-svelte";
-  import { untrack } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { gql } from "../../lib/client";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
@@ -17,6 +17,7 @@
     applyMangaMigrationWithJournal,
     undoMangaMigration,
   } from "../../lib/migration/manga";
+  import { createDialogFocusBoundary } from "../../lib/accessibility/dialogFocus";
 
   interface Props {
     manga:           Manga;
@@ -98,6 +99,9 @@
   let loadingMatchId: number | null = $state(null);
   let migrating             = $state(false);
   let error: string | null  = $state(null);
+  let overlayEl: HTMLDivElement | undefined = $state();
+  let modalEl: HTMLDivElement | undefined = $state();
+  let closeButtonEl: HTMLButtonElement | undefined = $state();
   const readCount   = $derived(currentChapters.filter((c) => c.isRead).length);
   const totalCount  = $derived(currentChapters.length);
   const chapterDiff = $derived(chapterDifference(selectedMatch, totalCount));
@@ -151,6 +155,15 @@
   });
 
   function onKey(e: KeyboardEvent) { if (e.key === "Escape") onClose(); }
+
+  onMount(() => {
+    if (!overlayEl || !modalEl) return;
+    return createDialogFocusBoundary({
+      dialog: modalEl,
+      isolationRoot: overlayEl,
+      initialFocus: closeButtonEl,
+    });
+  });
 
   async function searchSource(src: Source, q: string) {
     if (!src || !q.trim()) return;
@@ -249,8 +262,15 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="overlay" onclick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-  <div class="modal">
+<div bind:this={overlayEl} class="overlay" onclick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+  <div
+    bind:this={modalEl}
+    class="modal"
+    role="dialog"
+    aria-modal="true"
+    aria-label={$_("ui_migrateSource")}
+    tabindex="-1"
+  >
 
     <!-- Header -->
     <div class="modal-header">
@@ -258,7 +278,7 @@
         <span class="modal-title-label">{$_("ui_migrateSource")}</span>
         <span class="modal-title-manga">{manga.title}</span>
       </div>
-      <button class="close-btn" onclick={onClose}><X size={14} weight="light" /></button>
+      <button bind:this={closeButtonEl} class="close-btn" type="button" onclick={onClose} aria-label={$_("ui_closeMigrationModal")}><X size={14} weight="light" /></button>
     </div>
 
     <!-- Step indicators -->

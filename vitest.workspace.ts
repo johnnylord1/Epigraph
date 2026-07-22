@@ -53,6 +53,7 @@ export default defineWorkspace([
         "src/components/pages/TasteInsightsThemeTokens.test.ts",
         "src/components/pages/MassMigrationThemeTokens.test.ts",
         "src/components/pages/MigrateModal.test.ts",
+        "src/components/pages/MigrationModalsAccessibility.test.ts",
         "src/components/pages/MigrationModalsThemeTokens.test.ts",
         "src/components/pages/SourcesThemeTokens.test.ts",
         "src/components/shared/SeriesDetailV3Shell.test.ts",

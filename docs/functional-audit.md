@@ -80,8 +80,8 @@ O snapshot histórico abaixo foi revalidado no worktree atual. Tema, browser, fo
 | FUNC-032 | Downloads | Lista, busca e estados da fila | Downloads | Sim | Sim | Funcionando | 9 testes de `Downloads` passaram | — |
 | FUNC-033 | Downloads | Pausar, retomar, cancelar e repetir | Downloads | Sim | Sim | Funcionando | Testes de fila e reducer de downloads | — |
 | FUNC-034 | Downloads | Download offline de novels | Novel Detail/Downloads | Sim | Não | Depende de serviço externo | Requer source e conteúdo remoto | — |
-| FUNC-035 | Migração | Migração individual de manga/novel | Detail > Migrate | Sim | Não | Depende de serviço externo | Requer dois sources compatíveis | — |
-| FUNC-036 | Migração | Migração em massa | Library > Mass Migrate | Sim | Não | Depende de serviço externo | Requer biblioteca e source destino reais | — |
+| FUNC-035 | Migração | Migração individual de manga/novel | Detail > Migrate | Sim | Parcial | Depende de serviço externo | Fluxo funcional requer dois sources compatíveis; semântica modal, isolamento, ciclo e restauração de foco passaram no Marco 67 | — |
+| FUNC-036 | Migração | Migração em massa | Library > Mass Migrate | Sim | Parcial | Depende de serviço externo | Fluxo funcional requer biblioteca/source destino reais; contrato de foco e background `inert` passou no Marco 67 | — |
 | FUNC-037 | Dados | Criar backup unificado | Settings > Storage | Sim | Sim, payload Books | Funcionando parcialmente | Marco 66 exportou container completo de Books com checksum em perfil descartável; manga/novels/app continuam cobertos pelos testes próprios | — |
 | FUNC-038 | Dados | Restaurar, sandbox e reconciliar | Settings > Storage | Sim | Sim, payload Books | Funcionando parcialmente | Restore em segundo perfil preservou books, categorias, progresso e bookmarks; corrupção foi rejeitada sem mutação | — |
 | FUNC-039 | Settings | General, perfis e startup | Settings > General | Sim | Sim | Funcionando | 10 testes de Settings, captura real do componente em inglês | — |
@@ -147,6 +147,10 @@ O shell, a navegação primária, os estados vazios e o Activity Center têm cob
 ### Library, detalhes e leitores
 
 Library possui superfícies distintas para comics e books/novels, com busca, filtro, ordenação, categorias e seleção em massa. Os projetos `shell-jsdom` e browser passaram integralmente na revalidação atual, incluindo os bodies de Books e Comics. Leitor de manga, HUD, progresso, bookmarks e TTS têm testes verdes. O Marco 66 certificou EPUB/PDF e o round-trip de Books em WebView2 descartável; o fallback offline de manga permanece coberto por contrato determinístico, ainda sem screenshot nativa de um capítulo baixado real.
+
+### Acessibilidade e viewports
+
+O Marco 67 consolidou `MassMigrateModal`, `MigrateModal` e `NovelMigrateModal` sobre o mesmo limite de foco: foco inicial, Tab/Shift+Tab circular, isolamento do background com `inert` e restauração ao elemento de origem. O smoke WebView2 descartável validou Home, Library e Settings em 1280×800 e 800×600, com foco visível e zero overflow horizontal; as seis capturas e a geometria medida estão em `docs/screenshots/marco67-native-viewports/`. Os modais de migração não foram abertos no perfil nativo vazio porque dependem de sources compatíveis; essa limitação permanece explícita e não foi contornada com dados persistidos artificiais.
 
 ### Browse, Sources e integrações
 

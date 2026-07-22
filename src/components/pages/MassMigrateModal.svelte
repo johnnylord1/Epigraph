@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick, untrack } from "svelte";
+  import { onMount, untrack } from "svelte";
   import {
     ArrowLeft,
     ArrowRight,
@@ -40,6 +40,7 @@
   import { addToast, store } from "../../store/state.svelte";
   import type { Chapter, Manga, Source } from "../../lib/types";
   import type { ManagedExtension } from "../../lib/managedExtensions";
+  import { createDialogFocusBoundary } from "../../lib/accessibility/dialogFocus";
 
   interface Props {
     extension: ManagedExtension;
@@ -86,6 +87,8 @@
   let restoredDraft: MassMigrationDraft | null = null;
   let targetSearchCapability = $state<SourceMangaSearchCapability | null>(null);
   let closeButtonEl: HTMLButtonElement | undefined = $state();
+  let overlayEl: HTMLDivElement | undefined = $state();
+  let modalEl: HTMLDivElement | undefined = $state();
 
   const dialogTitleId = "mass-migration-title";
   const dialogDescriptionId = "mass-migration-description";
@@ -772,16 +775,20 @@
   });
 
   onMount(() => {
-    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    void tick().then(() => closeButtonEl?.focus());
-    return () => previousFocus?.focus();
+    if (!overlayEl || !modalEl) return;
+    return createDialogFocusBoundary({
+      dialog: modalEl,
+      isolationRoot: overlayEl,
+      initialFocus: closeButtonEl,
+    });
   });
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="overlay" onpointerdown={handleOverlayPointerDown} onclick={handleOverlayClick}>
+<div bind:this={overlayEl} class="overlay" onpointerdown={handleOverlayPointerDown} onclick={handleOverlayClick}>
   <div
+    bind:this={modalEl}
     class="modal"
     role="dialog"
     aria-modal="true"
