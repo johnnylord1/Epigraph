@@ -57,8 +57,8 @@ O snapshot histórico abaixo foi revalidado no worktree atual. Tema, browser, fo
 | FUNC-009 | Library | Categorias/pastas e atribuições | Library/Settings > Categories | Sim | Sim | Funcionando | Testes de categorias, estado e Syncd Rust | — |
 | FUNC-010 | Library | Seleção em massa e ações de lote | Library | Sim | Sim | Funcionando | Testes de library bodies e contratos de seleção | — |
 | FUNC-011 | Library | Atualização manual/automática da biblioteca | Library/Home | Sim | Não, sem catálogo ativo | Depende de serviço externo | Requer Suwayomi/source real; lógica e testes unitários encontrados | — |
-| FUNC-012 | Importação | Importação EPUB | Library > Books | Sim | Não | Não foi possível testar | Exige diálogo nativo e gravação em perfil descartável; automação disponível não cobriu o fluxo | — |
-| FUNC-013 | Importação | Importação PDF | Library > Books | Sim | Não | Não foi possível testar | Mesma limitação de diálogo nativo e persistência | — |
+| FUNC-012 | Importação | Importação EPUB | Library > Books | Sim | Sim, WebView2 descartável | Funcionando | Marco 66 importou um EPUB real pelo mesmo caminho pós-seleção, reiniciou o app e preservou asset, categoria, progresso e bookmark | — |
+| FUNC-013 | Importação | Importação PDF | Library > Books | Sim | Sim, WebView2 descartável | Funcionando | Marco 66 importou um PDF real, persistiu leitura e validou restore em um segundo perfil isolado | — |
 | FUNC-014 | Browse | Pesquisa por palavra-chave de manga | Browse > Search | Sim | Não, sem source | Depende de serviço externo | `BrowseV3` e testes de normalização; catálogo externo ausente | — |
 | FUNC-015 | Browse | Discover/popular/latest para manga | Browse > Discover | Sim | Não, sem source | Depende de serviço externo | Adaptadores presentes; resposta real depende de source | — |
 | FUNC-016 | Browse | Catálogo e pesquisa por source de manga | Browse > Sources | Sim | Não | Depende de serviço externo | Requer extensão/source instalada e servidor acessível | — |
@@ -68,13 +68,13 @@ O snapshot histórico abaixo foi revalidado no worktree atual. Tema, browser, fo
 | FUNC-020 | Browse | Recomendações e Taste Insights | Browse/Home | Sim | Não | Depende de serviço externo | Adaptadores encontrados; sem dados/catalogadores externos | — |
 | FUNC-021 | Detalhes | Detalhe de série manga | Series Detail | Sim | Não | Depende de serviço externo | Requer série retornada por source | — |
 | FUNC-022 | Detalhes | Detalhe de novel | Novel Detail | Sim | Não | Depende de serviço externo | Requer plugin/source de novel | — |
-| FUNC-023 | Detalhes | Detalhe de EPUB/PDF local | Book Detail | Sim | Não | Não foi possível testar | Depende de arquivo importado em perfil descartável | — |
+| FUNC-023 | Detalhes | Detalhe de EPUB/PDF local | Book Detail | Sim | Sim, WebView2 descartável | Funcionando | Os dois tipos foram abertos no perfil de certificação após import/restore | — |
 | FUNC-024 | Leitor | Leitor de manga e modos single/double/longstrip | Reader | Sim | Sim | Funcionando | Testes `Reader`, HUD e matriz de temas | — |
 | FUNC-025 | Leitor | HUD, teclado, fullscreen, zoom e navegação | Reader | Sim | Parcial | Funcionando parcialmente | HUD/teclado/zoom cobertos; fullscreen nativo e foco em WebView2 não foram certificados manualmente | — |
-| FUNC-026 | Leitor | Fallback offline de manga | Reader | Sim | Não | Não foi possível testar | Exige capítulo baixado real; type-check sinaliza incompatibilidade de `BlobPart`, sem reprodução de runtime | — |
+| FUNC-026 | Leitor | Fallback offline de manga | Reader | Sim | Sim, contrato determinístico | Funcionando parcialmente | Loader nativo foi validado com CBZ em memória, ordem natural, tipos de imagem e revogação de blobs; falta screenshot WebView2 com capítulo real baixado | — |
 | FUNC-027 | Leitor | Leitor de novel por source | Novel Reader | Sim | Não | Depende de serviço externo | Requer capítulo retornado pelo plugin | — |
-| FUNC-028 | Leitor | Leitor EPUB local | Book Reader | Sim | Não | Não foi possível testar | Nenhum EPUB foi importado no perfil descartável | — |
-| FUNC-029 | Leitor | Leitor PDF local | Book Reader | Sim | Não | Não foi possível testar | Nenhum PDF foi importado no perfil descartável | — |
+| FUNC-028 | Leitor | Leitor EPUB local | Book Reader | Sim | Sim, WebView2 descartável | Funcionando | EPUB real foi importado, reaberto após restart e restaurado com estado de leitura | — |
+| FUNC-029 | Leitor | Leitor PDF local | Book Reader | Sim | Sim, WebView2 descartável | Funcionando | PDF real foi importado e restaurado com progresso e bookmark | — |
 | FUNC-030 | Leitor | TTS e controles de voz | Readers | Sim | Sim, componente | Funcionando | 2 testes de controles TTS passaram | — |
 | FUNC-031 | Leitor | Progresso e bookmarks | Readers/Library | Sim | Sim | Funcionando | Testes frontend e Rust de merge, reset e tombstones | — |
 | FUNC-032 | Downloads | Lista, busca e estados da fila | Downloads | Sim | Sim | Funcionando | 9 testes de `Downloads` passaram | — |
@@ -82,8 +82,8 @@ O snapshot histórico abaixo foi revalidado no worktree atual. Tema, browser, fo
 | FUNC-034 | Downloads | Download offline de novels | Novel Detail/Downloads | Sim | Não | Depende de serviço externo | Requer source e conteúdo remoto | — |
 | FUNC-035 | Migração | Migração individual de manga/novel | Detail > Migrate | Sim | Não | Depende de serviço externo | Requer dois sources compatíveis | — |
 | FUNC-036 | Migração | Migração em massa | Library > Mass Migrate | Sim | Não | Depende de serviço externo | Requer biblioteca e source destino reais | — |
-| FUNC-037 | Dados | Criar backup unificado | Settings > Storage | Sim | Não | Não foi possível testar | Operação persistente reservada a perfil nativo descartável não disponibilizado no smoke | — |
-| FUNC-038 | Dados | Restaurar, sandbox e reconciliar | Settings > Storage | Sim | Não | Não foi possível testar | Fluxo destrutivo não executado sem sessão nativa descartável certificada | — |
+| FUNC-037 | Dados | Criar backup unificado | Settings > Storage | Sim | Sim, payload Books | Funcionando parcialmente | Marco 66 exportou container completo de Books com checksum em perfil descartável; manga/novels/app continuam cobertos pelos testes próprios | — |
+| FUNC-038 | Dados | Restaurar, sandbox e reconciliar | Settings > Storage | Sim | Sim, payload Books | Funcionando parcialmente | Restore em segundo perfil preservou books, categorias, progresso e bookmarks; corrupção foi rejeitada sem mutação | — |
 | FUNC-039 | Settings | General, perfis e startup | Settings > General | Sim | Sim | Funcionando | 10 testes de Settings, captura real do componente em inglês | — |
 | FUNC-040 | Settings | Appearance, temas e editor | Settings > Appearance | Sim | Sim | Funcionando | Inventário reconciliado em 2.675 tokens ativos; Syncd 98/98; gates de tema e matriz browser passaram | — |
 | FUNC-041 | Settings | Keybinds e reset | Settings > Keybinds | Sim | Sim | Funcionando | Testes de Settings e estado | — |
@@ -146,7 +146,7 @@ O shell, a navegação primária, os estados vazios e o Activity Center têm cob
 
 ### Library, detalhes e leitores
 
-Library possui superfícies distintas para comics e books/novels, com busca, filtro, ordenação, categorias e seleção em massa. Os projetos `shell-jsdom` e browser passaram integralmente na revalidação atual, incluindo os bodies de Books e Comics. Leitor de manga, HUD, progresso, bookmarks e TTS têm testes verdes. EPUB/PDF e fallback offline ainda exigem o gate nativo descartável previsto para o Marco 66.
+Library possui superfícies distintas para comics e books/novels, com busca, filtro, ordenação, categorias e seleção em massa. Os projetos `shell-jsdom` e browser passaram integralmente na revalidação atual, incluindo os bodies de Books e Comics. Leitor de manga, HUD, progresso, bookmarks e TTS têm testes verdes. O Marco 66 certificou EPUB/PDF e o round-trip de Books em WebView2 descartável; o fallback offline de manga permanece coberto por contrato determinístico, ainda sem screenshot nativa de um capítulo baixado real.
 
 ### Browse, Sources e integrações
 

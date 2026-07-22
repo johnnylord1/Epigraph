@@ -5241,6 +5241,18 @@ fn get_launch_target(state: tauri::State<'_, LaunchTarget>) -> LaunchTargetInfo 
 }
 
 #[tauri::command]
+fn is_webdriver_automation() -> bool {
+    std::env::var("TAURI_WEBVIEW_AUTOMATION")
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+#[tauri::command]
 fn record_media_audit_event(event: String) -> Result<(), String> {
     let path = match std::env::var("AETHON_MEDIA_AUDIT_LOG") {
         Ok(path) if !path.trim().is_empty() => PathBuf::from(path),
@@ -5283,6 +5295,7 @@ pub fn run() {
         .manage(syncd_sidecar::SyncdState::default())
         .invoke_handler(tauri::generate_handler![
             get_launch_target,
+            is_webdriver_automation,
             record_media_audit_event,
             discord_rpc::discord_rpc_start,
             discord_rpc::discord_rpc_stop,

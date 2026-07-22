@@ -932,6 +932,24 @@
       subtype: string;
       categoryId: string;
     } | null>;
+    setBookReadingState: (input: {
+      bookId: string;
+      progressPercent: number;
+      bookmarkLabel: string;
+    }) => Promise<{ bookId: string; progressCount: number; bookmarkCount: number }>;
+    exportBooksBackupToPath: (path: string) => Promise<{
+      path: string;
+      sha256: string;
+      bookCount: number;
+      progressCount: number;
+      bookmarkCount: number;
+    }>;
+    restoreBooksBackupFromPath: (path: string) => Promise<{
+      bookCount: number;
+      progressCount: number;
+      bookmarkCount: number;
+      issueCount: number;
+    }>;
     mutateSyncdAuditBookFixture: (input?: {
       mode?: "progress" | "bookmark" | "clear_bookmarks";
       marker?: string | null;
@@ -1202,6 +1220,7 @@
   }
 
   async function importAuditBookFromPath(sourcePath: string) {
+    await assertWebdriverAutomation();
     const imported = await importLocalBookFile(sourcePath, { existingBooks: store.books });
     upsertBook(imported.entry);
 
@@ -1237,11 +1256,136 @@
     };
   }
 
+  async function assertWebdriverAutomation() {
+    const enabled = await invoke<boolean>("is_webdriver_automation").catch(() => false);
+    if (!enabled) {
+      throw new Error("This audit operation is available only in WebDriver automation mode.");
+    }
+  }
+
+  function bytesToBase64(bytes: Uint8Array): string {
+    let binary = "";
+    const chunkSize = 0x8000;
+    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+    }
+    return btoa(binary);
+  }
+
+  async function setAuditBookReadingState(input: {
+    bookId: string;
+    progressPercent: number;
+    bookmarkLabel: string;
+  }) {
+    await assertWebdriverAutomation();
+    const { reloadBookLibraryState, saveBookLibraryState } = await import("./lib/books/libraryState");
+    const profileId = store.runtimeResolvedLocalProfileId;
+    const state = await reloadBookLibraryState({ profileId });
+    const book = state.books.find((entry) => entry.id === input.bookId);
+    if (!book) throw new Error(`Audit book ${input.bookId} was not found.`);
+
+    const progressPercent = Math.max(0, Math.min(1, input.progressPercent));
+    const now = Date.now();
+    const location = book.subtype === "pdf" ? `page:${Math.max(1, Math.round(progressPercent * Math.max(1, book.pageCount ?? 1)))}` : `audit:${book.id}:${progressPercent}`;
+    const saved = await saveBookLibraryState({
+      ...state,
+      bookProgress: [
+        ...state.bookProgress.filter((entry) => entry.bookId !== book.id),
+        {
+          bookId: book.id,
+          location,
+          href: book.subtype === "pdf" ? null : book.sectionsSummary?.[0]?.href ?? null,
+          progressPercent,
+          lastReadAt: now,
+          pageIndex: book.subtype === "pdf" ? Math.max(0, Math.round(progressPercent * Math.max(1, book.pageCount ?? 1)) - 1) : null,
+          totalPages: book.subtype === "pdf" ? book.pageCount ?? 1 : null,
+          sectionLabel: book.subtype === "pdf" ? "Audit page" : book.sectionsSummary?.[0]?.label ?? "Audit section",
+          renderer: book.subtype,
+        },
+      ],
+      bookBookmarks: [
+        ...state.bookBookmarks.filter((entry) => entry.bookId !== book.id),
+        {
+          bookId: book.id,
+          location,
+          href: book.subtype === "pdf" ? null : book.sectionsSummary?.[0]?.href ?? null,
+          pageIndex: book.subtype === "pdf" ? Math.max(0, Math.round(progressPercent * Math.max(1, book.pageCount ?? 1)) - 1) : null,
+          progressPercent,
+          label: input.bookmarkLabel,
+          savedAt: now,
+        },
+      ],
+      updatedAtMs: now,
+    }, { profileId });
+
+    replaceBooksState(saved);
+    return {
+      bookId: book.id,
+      progressCount: saved.bookProgress.filter((entry) => entry.bookId === book.id).length,
+      bookmarkCount: saved.bookBookmarks.filter((entry) => entry.bookId === book.id).length,
+    };
+  }
+
+  async function exportAuditBooksBackupToPath(path: string) {
+    await assertWebdriverAutomation();
+    const profileId = store.runtimeResolvedLocalProfileId;
+    const [{ reloadBookLibraryState }, { buildAethonBooksBackupContainer, buildAethonBooksSnapshotFromLibraryState }] = await Promise.all([
+      import("./lib/books/libraryState"),
+      import("./lib/backup/booksBackup"),
+    ]);
+    const state = await reloadBookLibraryState({ profileId });
+    const container = await buildAethonBooksBackupContainer(
+      buildAethonBooksSnapshotFromLibraryState(state),
+      { exportMode: "full", sourceProfileId: profileId },
+    );
+    const writtenPath = await invoke<string>("write_file_base64", {
+      path,
+      bytesBase64: bytesToBase64(container.bytes),
+    });
+    const sha256 = await invoke<string>("compute_file_sha256", { path: writtenPath });
+    return {
+      path: writtenPath,
+      sha256,
+      bookCount: state.books.length,
+      progressCount: state.bookProgress.length,
+      bookmarkCount: state.bookBookmarks.length,
+    };
+  }
+
+  async function restoreAuditBooksBackupFromPath(path: string) {
+    await assertWebdriverAutomation();
+    const [{ restoreAethonBooksPayload }, { saveBookLibraryState }] = await Promise.all([
+      import("./lib/backup/booksBackup"),
+      import("./lib/books/libraryState"),
+    ]);
+    const bytes = await readFileAsArrayBuffer(path);
+    const restored = await restoreAethonBooksPayload(bytes);
+    const profileId = store.runtimeResolvedLocalProfileId;
+    const saved = await saveBookLibraryState({
+      version: 1,
+      books: restored.books,
+      bookProgress: restored.bookProgress,
+      bookBookmarks: restored.bookBookmarks,
+      booksCategories: restored.booksCategories,
+      booksCategoryAssignments: restored.booksCategoryAssignments,
+      booksLibraryUi: store.settings.booksLibraryUi,
+      updatedAtMs: Date.now(),
+    }, { profileId });
+    replaceBooksState(saved);
+    return {
+      bookCount: restored.books.length,
+      progressCount: restored.bookProgress.length,
+      bookmarkCount: restored.bookBookmarks.length,
+      issueCount: restored.issues.length,
+    };
+  }
+
   async function mutateSyncdAuditBookFixture(input?: {
     mode?: "progress" | "bookmark" | "clear_bookmarks";
     marker?: string | null;
     progressPercent?: number | null;
   }) {
+    await assertWebdriverAutomation();
     const { reloadBookLibraryState, saveBookLibraryState } = await import("./lib/books/libraryState");
     const mode = input?.mode ?? "progress";
     const marker = input?.marker?.trim() || "audit";
@@ -1325,6 +1469,7 @@
     marker?: string | null;
     progressPercent?: number | null;
   }) {
+    await assertWebdriverAutomation();
     const scope = resolveAuditSyncScope();
     if (!scope.profileId) {
       throw new Error("No active local profile is available for the syncd novel audit fixture.");
@@ -1468,6 +1613,9 @@
       readNovelLibraryPersistence: readAuditNovelLibraryPersistence,
       readBookLibraryPersistence: readAuditBookLibraryPersistence,
       importBookFromPath: importAuditBookFromPath,
+      setBookReadingState: setAuditBookReadingState,
+      exportBooksBackupToPath: exportAuditBooksBackupToPath,
+      restoreBooksBackupFromPath: restoreAuditBooksBackupFromPath,
       mutateSyncdAuditBookFixture,
       mutateSyncdAuditNovelFixture,
       enableMediaAudit,
