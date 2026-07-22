@@ -9,7 +9,7 @@ Este documento não redefine os bugs confirmados de `bug-report.md`. Os itens ab
 | ID | Categoria | Problema atual e evidência | Benefício esperado | Complexidade | Risco | Prioridade | Dependências / módulos | Relação |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | IMP-001 | Cobertura de testes | Não existe uma certificação nativa curta para Home, Library, Settings e readers em 1280×800 e 800×600. O browser-test não substitui WebView2. | Detectar regressões de foco, fullscreen, teclado, diálogos e persistência no runtime real. | Alta | Médio | P1 | Tauri driver, launcher gerenciado, perfis descartáveis | BUG-003 |
-| IMP-002 | Arquitetura | `source.settings.write` está na whitelist do runtime de novels, mas não é implementada nem chamada em produção. A leitura necessária já ocorre sob demanda por `source.settings.read`. | Remover a capacidade de escrita não funcional sem duplicar nem antecipar dados de settings. | Baixa | Baixo | P1 | `novels/contracts.ts`, runtime host e testes de contrato | FUNC-063 |
+| IMP-002 | Arquitetura | O Marco 65 removeu `source.settings.write`, que não possuía implementação nem chamador de produção. `source.settings.read` continua sob demanda. | Contrato publicado corresponde às capacidades reais. | Concluída | Baixo | Resolvido | `novels/contracts.ts` e testes de contrato | FUNC-063 |
 | IMP-003 | Desempenho | O build de 21/07/2026 alerta para chunks >500 kB; bundle principal tem 1.316,23 kB minificado/380,10 kB gzip e CSS principal 638,96 kB. | Menor tempo de startup, parse e memória do WebView2. | Média | Médio | P2 | code splitting baseado no grafo real de imports | — |
 | IMP-004 | Cobertura de testes | Restore, backup, importação EPUB/PDF e fallback offline não têm um gate descartável end-to-end nesta auditoria. | Provar integridade de dados, rollback e reconciliação antes de releases. | Alta | Alto | P1 | fixtures externas ao repo, perfil Tauri descartável | — |
 | IMP-005 | Observabilidade | O snapshot original tinha 23 erros não tratados; o browser gate atual passou 44/44 sem repetir a falha. | Manter logs com fase, perfil, comando Tauri e correlação sem dados sensíveis nos novos harnesses. | Média | Baixo | P1 | Vitest browser, bridge Tauri, scripts de release | BUG-003 |
@@ -30,7 +30,7 @@ Este documento não redefine os bugs confirmados de `bug-report.md`. Os itens ab
 ## Ordem sugerida
 
 1. Marcos 63–64: concluídos; o último snapshot completo de Rust/discovery permanece verde e a revalidação atual confirmou tema, browser, build e `svelte-check`.
-2. Marco 65: remover `source.settings.write` da capacidade publicada e preservar `source.settings.read` estritamente sob demanda.
+2. Marco 65: concluído; `source.settings.write` foi removida e `source.settings.read` permanece estritamente sob demanda.
 3. Marcos 66–70: certificar dados locais, acessibilidade nativa, integrações/localização e desempenho em lotes independentes.
 4. Marco 71: executar os gates finais, reconciliar os três relatórios e publicar a matriz de riscos remanescentes.
 
@@ -38,7 +38,7 @@ Este documento não redefine os bugs confirmados de `bug-report.md`. Os itens ab
 
 - Resolvidos: `BUG-001`, `BUG-002`, `BUG-003`, `BUG-004`, `BUG-005` e `BUG-006`.
 - `IMP-006` foi concluído: o `svelte-check` passou com 0 erros e 0 warnings; o baseline de 308/11 permanece como histórico no BUG-002.
-- `IMP-002` tem decisão fechada: remover a escrita inexistente no Marco 65; a leitura de settings continua lazy e não requer cache novo.
+- `IMP-002` foi concluído no Marco 65: a escrita inexistente foi removida e a leitura de settings continua lazy, sem cache novo.
 - `IMP-013` permanece como melhoria de diagnóstico, embora o inventário atual esteja reconciliado e verde.
 - `IMP-015` e `IMP-016` foram funcionalmente resolvidos; permanecem no histórico para rastreabilidade.
 - `IMP-017` continua adiado para um ciclo futuro de automação Syncd e não bloqueia os marcos atuais.

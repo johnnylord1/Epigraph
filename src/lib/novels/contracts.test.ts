@@ -17,8 +17,11 @@ describe("novels contracts", () => {
 
   it("uses a deny-by-default runtime action whitelist", () => {
     expect(isNovelRuntimeActionWhitelisted("source.search")).toBe(true);
+    expect(isNovelRuntimeActionWhitelisted("source.settings.read")).toBe(true);
+    expect(isNovelRuntimeActionWhitelisted("source.settings.write")).toBe(false);
     expect(isNovelRuntimeActionWhitelisted("source.secret-read")).toBe(false);
     expect(NOVEL_RUNTIME_ALLOWED_ACTIONS).toContain("source.details");
+    expect(NOVEL_RUNTIME_ALLOWED_ACTIONS).not.toContain("source.settings.write");
   });
 
   it("creates a minimal default capability profile for the hidden host", () => {

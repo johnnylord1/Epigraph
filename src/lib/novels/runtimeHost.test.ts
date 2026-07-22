@@ -137,7 +137,6 @@ const {
               "source.chapter",
               "source.filters.read",
               "source.settings.read",
-              "source.settings.write",
               "source.resolve-url",
             ],
             supportsCancel: true,
@@ -241,6 +240,20 @@ describe("novel runtime host", () => {
 
     await host.stop();
     expect(await MockWebviewWindow.getByLabel("novel-runtime-host")).toBeNull();
+  });
+
+  it("rejects the retired settings write action before starting the hidden host", async () => {
+    const host = new TauriNovelRuntimeHostAdapter();
+
+    await expect(
+      host.invoke("source.settings.write" as never, {
+        pluginId: "sample.plugin",
+        values: { hideLocked: true },
+      }),
+    ).rejects.toThrow("Novel runtime action source.settings.write is not whitelisted.");
+
+    expect(MockWebviewWindow.createdCount).toBe(0);
+    expect(emitToMock).not.toHaveBeenCalled();
   });
 
   it("serializes concurrent startup requests for the hidden host", async () => {

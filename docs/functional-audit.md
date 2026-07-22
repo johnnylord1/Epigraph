@@ -108,7 +108,7 @@ O snapshot histórico abaixo foi revalidado no worktree atual. Tema, browser, fo
 | FUNC-060 | Syncd Desktop | Replicação de comics, novels e books | Syncd runtime | Sim | Sim, backend | Funcionando | Rust validou snapshot, replay, progresso, bookmarks, categorias, tombstones e assets | — |
 | FUNC-061 | Atualização | Updater do Aethon Desktop | Settings > About | Sim | Não | Depende de serviço externo | Requer endpoint/release e assinatura disponíveis | — |
 | FUNC-062 | Resiliência | Loading, erros de rede e fallback de entrada | Splash/Shell | Sim | Sim | Funcionando | Fallback de inicialização e 44/44 testes browser passaram sem erros não tratados | — |
-| FUNC-063 | Novels | Escrita de settings de plugin no runtime host | Runtime oculto | Sim | Não acessível | Implementada, mas inacessível | A ação está na whitelist, mas não possui chamador de produção e retorna `not_implemented` | — |
+| FUNC-063 | Novels | Escrita de settings de plugin no runtime host | Runtime oculto | Não | Não aplicável | Removida | A capacidade não possuía chamador nem implementação; o Marco 65 removeu a ação da whitelist e preservou somente `source.settings.read` sob demanda | — |
 
 ## Resultado de build e verificações
 

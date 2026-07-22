@@ -82,7 +82,6 @@ export type NovelRuntimeInvokeAction =
   | "source.chapter"
   | "source.filters.read"
   | "source.settings.read"
-  | "source.settings.write"
   | "source.resolve-url";
 
 export interface NovelRuntimeHostAdapter {
@@ -108,7 +107,6 @@ export const NOVEL_RUNTIME_ALLOWED_ACTIONS = [
   "source.chapter",
   "source.filters.read",
   "source.settings.read",
-  "source.settings.write",
   "source.resolve-url",
 ] as const satisfies readonly NovelRuntimeInvokeAction[];
 

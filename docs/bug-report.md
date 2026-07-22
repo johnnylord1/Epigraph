@@ -385,5 +385,5 @@ QR, pairing, restart, reconnect, sessões persistidas e replicação entre deskt
 
 - Os erros históricos de tipo em `ReaderHud`/`Reader`, backup e offline manga não tiveram manifestação de runtime reproduzida individualmente e já não aparecem no gate atual.
 - O actual de Storage em loading comprova instabilidade do teste, não defeito funcional da tela.
-- `source.settings.write` é whitelistada e retorna `not_implemented`, porém não possui chamador de produção; está em `improvement-report.md` como dívida arquitetural/inacessível.
+- `source.settings.write` não possuía chamador de produção e foi removida da capacidade publicada no Marco 65; testes negativos impedem sua reintrodução acidental.
 - Chunks grandes são risco de desempenho, não bug reproduzido de usuário.
