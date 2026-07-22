@@ -211,3 +211,13 @@ Drift observado: entre a elaboração inicial do plano e o baseline de execuçã
 - O perfil persistente existente não recebeu submissões.
 - Capturas do guia são renderizações reais do componente desktop em inglês e 1280×800, com dados de teste; não certificam por si só persistência backend.
 - Não foram executados testes móveis, touch, Android/iOS, Flutter ou qualquer cliente móvel Syncd.
+
+## Marco 69 — certificação determinística de integrações
+
+O comando `pnpm release:certify-integrations` certifica as integrações existentes sem contas reais e com execução serial. O gate passou com 93 testes TypeScript, 5 contratos Suwayomi e 1 teste Rust focado. A cobertura inclui OAuth e operações GraphQL de trackers, autorização/cache/rate limit do Hardcover, ausência e recuperação do Discord, privacidade e SSRF de capas, saúde/timeout/recuperação do FlareSolverr, validação SOCKS e políticas dos dois updaters.
+
+O updater do Aethon agora separa histórico público de autoridade de atualização: `list_releases` filtra drafts, prereleases e tags instáveis, enquanto apenas `check_aethon_update`, baseado no endpoint configurado e assinado, pode anunciar uma atualização. A instalação nativa exige que a versão escolhida continue sendo a oferecida pelo endpoint assinado. Assim, uma release pública mais nova, mas sem manifesto autorizado, aparece apenas como histórico e não como atualização instalável.
+
+O gate sanitiza caminhos do workspace e padrões de credenciais antes de imprimir subprocessos. `release:smoke-live` permanece opcional e exige opt-in explícito com endpoints descartáveis; nenhuma conta, cookie, token ou serviço real é necessário para o gate bloqueante.
+
+A tela Settings > About passou em 6/6 testes browser. A baseline foi atualizada somente para registrar o estado saudável agora verificável, “You're on the latest version”; geometria, superfícies e hierarquia permaneceram equivalentes.

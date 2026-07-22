@@ -98,6 +98,7 @@
   import { traceMediaAudit } from "./lib/mediaAudit";
   import { getImageCacheStats, trimImageCache } from "./lib/imageCache";
   import { refreshSuwayomiUpdateUx } from "./lib/suwayomiUpdateUx.svelte";
+  import type { AethonUpdateStatus } from "./lib/aethonUpdater";
   import { _, applyAppLanguage } from "./lib/i18n/runtime";
   import { DEFAULT_BUILTIN_THEME_ID, normalizeThemeSelection } from "./lib/theme/contract";
   import Toaster      from "./components/layout/Toaster.svelte";
@@ -1867,34 +1868,11 @@
 
   async function checkForUpdateSilently() {
     try {
-      const [currentVersion, releases] = await Promise.all([
-        getVersion(),
-        invoke<Array<{ tag_name: string; html_url: string }>>("list_releases"),
-      ]);
-
-      const valid = releases.filter(r => typeof r.tag_name === "string" && r.tag_name.trim());
-      if (!valid.length) return;
-
-      const parse = (tag: string): number[] =>
-        tag.replace(/^v/, "").split(".").map(Number);
-
-      const compare = (a: number[], b: number[]): number => {
-        for (let i = 0; i < 3; i++) {
-          if ((a[i] ?? 0) !== (b[i] ?? 0)) return (b[i] ?? 0) - (a[i] ?? 0);
-        }
-        return 0;
-      };
-
-      const latestTag = valid
-        .map(r => r.tag_name)
-        .sort((a, b) => compare(parse(a), parse(b)))[0]
-        .replace(/^v/, "");
-
-      const isNewer = compare(parse(latestTag), parse(currentVersion)) < 0;
-      if (isNewer) {
+      const status = await invoke<AethonUpdateStatus>("check_aethon_update");
+      if (status.update_available && status.version) {
         addToast({
           kind: "info",
-          title: `Update available — v${latestTag}`,
+          title: `Update available — v${status.version}`,
           body: "Open Settings → About to install.",
           duration: 8000,
         });

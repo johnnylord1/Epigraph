@@ -96,6 +96,13 @@
   import type { AvailableExtensionEntry, OverlayEntry, ParsedBackup, ReconciliationAnalysis, ReconciliationClusterResult, RestoreReadinessSummary, SourceInventoryEntry } from "../../lib/reconciliation/types";
   import { SETTINGS_AETHON_BACKUP_EXTENSION, loadSettingsStorageRuntime } from "./settingsStorageRuntime";
   import { APP_LANGUAGE_OPTIONS, appLanguageLabel, resolveAppLocale, type AppLanguageCode } from "../../lib/i18n/languages";
+  import {
+    isAuthorizedAethonUpdate,
+    sortAethonReleaseHistory,
+    type AethonReleaseInfo,
+    type AethonUpdateStatus,
+  } from "../../lib/aethonUpdater";
+  import { normalizeSocksProxyInput } from "../../lib/proxySettings";
   interface Props {
     onOpenThemeEditor?: (id?: string | null) => void;
     backupAuditPlan?: AethonRestorePlan | null;
@@ -2769,15 +2776,23 @@
   async function saveSocksProxy() {
     secLoading = true; secError = null;
     try {
+      const normalized = normalizeSocksProxyInput({
+        enabled: socksEnabled,
+        host: socksHost,
+        port: socksPort,
+        version: socksVersion,
+        username: socksUsername,
+        password: socksPassword,
+      });
       await gql(SET_SOCKS_PROXY, {
-        socksProxyEnabled: socksEnabled, socksProxyHost: socksHost.trim(),
-        socksProxyPort: socksPort.trim(), socksProxyVersion: socksVersion,
-        socksProxyUsername: socksUsername.trim(), socksProxyPassword: socksPassword.trim(),
+        socksProxyEnabled: normalized.enabled, socksProxyHost: normalized.host,
+        socksProxyPort: normalized.port, socksProxyVersion: normalized.version,
+        socksProxyUsername: normalized.username, socksProxyPassword: normalized.password,
       });
       updateSettings({
-        socksProxyEnabled: socksEnabled, socksProxyHost: socksHost,
-        socksProxyPort: socksPort, socksProxyVersion: socksVersion,
-        socksProxyUsername: socksUsername, socksProxyPassword: socksPassword,
+        socksProxyEnabled: normalized.enabled, socksProxyHost: normalized.host,
+        socksProxyPort: normalized.port, socksProxyVersion: normalized.version,
+        socksProxyUsername: normalized.username, socksProxyPassword: normalized.password,
       });
       showSaved("socks");
     } catch (e: any) {
@@ -3168,13 +3183,7 @@
     credsPassword = "";
   }
   function usesOAuth(t: Tracker): boolean { return !!t.authUrl; }
-  interface ReleaseInfo {
-    tag_name:     string;
-    name:         string;
-    body:         string;
-    published_at: string;
-    html_url:     string;
-  }
+  type ReleaseInfo = AethonReleaseInfo;
   type UpdatePhase =
     | "idle"
     | "downloading"
@@ -3185,6 +3194,8 @@
   let releases        = $state<ReleaseInfo[]>([]);
   let releasesLoading = $state(false);
   let releasesError   = $state<string | null>(null);
+  let updateCheck     = $state<AethonUpdateStatus | null>(null);
+  let updateCheckError = $state<string | null>(null);
   let expandedTag     = $state<string | null>(null);
   let updatePhase     = $state<UpdatePhase>("idle");
   let updateError     = $state<string | null>(null);
@@ -3210,39 +3221,39 @@
     await openUrl(AETHON_GITHUB_URL);
   }
   async function loadReleases() {
-    releasesLoading = true; releasesError = null;
+    releasesLoading = true; releasesError = null; updateCheckError = null;
     try {
       const timeout = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error("Request timed out after 10s")), 10_000)
       );
-      const all = await Promise.race([
-        invoke<ReleaseInfo[]>("list_releases"),
+      const [historyResult, updateResult] = await Promise.race([
+        Promise.allSettled([
+          invoke<ReleaseInfo[]>("list_releases"),
+          invoke<AethonUpdateStatus>("check_aethon_update"),
+        ]),
         timeout,
       ]);
-      releases = all.filter(r => typeof r.tag_name === "string" && r.tag_name.trim());
+      if (historyResult.status === "fulfilled") {
+        releases = sortAethonReleaseHistory(historyResult.value);
+      } else {
+        releasesError = historyResult.reason instanceof Error ? historyResult.reason.message : String(historyResult.reason);
+      }
+      if (updateResult.status === "fulfilled") {
+        updateCheck = updateResult.value;
+      } else {
+        updateCheck = null;
+        updateCheckError = updateResult.reason instanceof Error ? updateResult.reason.message : String(updateResult.reason);
+      }
     } catch (e: any) {
       releasesError = e instanceof Error ? e.message : String(e);
+      updateCheckError = releasesError;
     } finally {
       releasesLoading = false;
     }
   }
   function stripV(v: string) { return v.replace(/^v/, ""); }
   function isCurrentVersion(tag: string) { return stripV(tag) === appVersion; }
-  function parseSemver(v: string): number[] {
-    return stripV(v).split(".").map(Number);
-  }
-  function compareSemver(a: string, b: string): number {
-    const pa = parseSemver(a), pb = parseSemver(b);
-    for (let i = 0; i < 3; i++) {
-      if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pb[i] ?? 0) - (pa[i] ?? 0);
-    }
-    return 0;
-  }
-  let onLatestVersion = $derived((() => {
-    if (releasesLoading || releases.length === 0 || !appVersion || appVersion === "...") return false;
-    const sorted = releases.slice().sort((a, b) => compareSemver(a.tag_name, b.tag_name));
-    return compareSemver(appVersion, sorted[0].tag_name) >= 0;
-  })());
+  let onLatestVersion = $derived(updateCheck !== null && !updateCheck.update_available);
   function fmtDate(iso: string): string {
     if (!iso) return "";
     const d = new Date(iso);
@@ -3258,6 +3269,10 @@
   });
   async function installUpdate(release: ReleaseInfo) {
     if (updatePhase === "downloading") return;
+    if (IS_WINDOWS && !isAuthorizedAethonUpdate(release, updateCheck)) {
+      await openUrl(release.html_url);
+      return;
+    }
     targetTag   = release.tag_name;
     updatePhase = "downloading";
     updateError = null;
@@ -3266,7 +3281,7 @@
     try {
       if (IS_WINDOWS) {
         try { await invoke("kill_server", { serverUrl: currentRuntimeServerUrl }); } catch {}
-        await invoke("download_and_install_update");
+        await invoke("download_and_install_update", { expectedVersion: updateCheck?.version ?? release.tag_name });
         updatePhase = "ready";
       } else {
         await openUrl(release.html_url);
@@ -6130,6 +6145,11 @@
                   <NocturneState layout="compact" tone="success" icon="info" eyebrow="Updates" title={$_("settings_inline_latestVersion")} />
                 </div>
               {/if}
+              {#if updateCheckError && !releasesLoading}
+                <div class="settings-state">
+                  <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Updates" title="Could not verify signed updates" body="Release history is still available. Try checking again before installing." />
+                </div>
+              {/if}
               {#if updatePhase === "downloading" && IS_WINDOWS}
                 <div class="update-progress-wrap">
                   <div class="update-progress-bar">
@@ -6178,6 +6198,7 @@
                         {@const isExpanded = expandedTag === release.tag_name}
                         {@const isTarget = targetTag === release.tag_name}
                         {@const isInstalling = isTarget && updatePhase === "downloading"}
+                        {@const isAuthorizedUpdate = isAuthorizedAethonUpdate(release, updateCheck)}
                         <div class="release-row" class:current={isCurrent}>
                           <div class="release-header">
                             <div class="release-meta">
@@ -6195,8 +6216,8 @@
                               {/if}
                               {#if !isCurrent}
                                 {#if IS_WINDOWS}
-                                  <button class="update-action-btn" class:primary={!isInstalling} disabled={updatePhase === "downloading"} type="button" onclick={() => installUpdate(release)}>
-                                    {isInstalling ? "Downloading..." : "Install"}
+                                  <button class="update-action-btn" class:primary={isAuthorizedUpdate && !isInstalling} disabled={updatePhase === "downloading"} type="button" onclick={() => installUpdate(release)}>
+                                    {isInstalling ? "Downloading..." : isAuthorizedUpdate ? "Install" : "View"}
                                   </button>
                                 {:else}
                                   <button class="update-action-btn" type="button" onclick={() => installUpdate(release)}>{$_("settings_inline_openOnGithub")}</button>

@@ -62,3 +62,12 @@ Este documento não redefine os bugs confirmados de `bug-report.md`. Os itens ab
 - Rotacionar logs por tamanho/idade, apagar temporários após sucesso ou falha e remover manifests/locks obsoletos durante uma inicialização segura.
 - Gerar pacote de diagnóstico somente quando o usuário solicitar. Backup e conteúdo importado devem usar um destino escolhido ou claramente configurado pelo usuário.
 - Reconciliar totais da matriz e links de bugs após qualquer mudança de estado.
+
+## Atualização do Marco 69
+
+- `IMP-008` foi concluído no gate reproduzível: trackers, Hardcover, Discord, updater Aethon, updater Suwayomi, FlareSolverr e SOCKS possuem contratos determinísticos sem credenciais reais.
+- O falso aviso de update foi eliminado na origem: releases GitHub não autorizam instalação; somente o endpoint assinado do Tauri updater informa disponibilidade.
+- Hardcover não inclui corpo remoto em erros 401/403 e sanitiza padrões de credencial nos demais erros.
+- Discord não marca uma presença como enviada quando o cliente não iniciou e recupera em um novo start.
+- O smoke ao vivo permanece opcional e não bloqueante; instalação assinada real continua sendo um gate condicional de release.
+- `IMP-003` e `IMP-010` seguem para o Marco 70, que tratará budgets de bundle e custo dos testes lentos sem reduzir cobertura.

@@ -1002,7 +1002,10 @@ async function sendHardcoverGraphql<T>(
     if (response.status === 429) {
       throw new HardcoverRateLimitError(`Hardcover rejected the request (HTTP 429). ${summarizeHardcoverResponse(body)}`, Date.now() + HARDCOVER_RATE_LIMIT_COOLDOWN_MS);
     }
-    throw new Error(`Hardcover rejected the API key (HTTP ${response.status}). ${summarizeHardcoverResponse(body)}`);
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(`Hardcover rejected the API key (HTTP ${response.status}).`);
+    }
+    throw new Error(`Hardcover request failed (HTTP ${response.status}). ${summarizeHardcoverResponse(body)}`);
   }
 
   let json: HardcoverGraphqlResponse<T>;
@@ -1033,7 +1036,11 @@ function isHardcoverAuthorizationError(error: Error): boolean {
 }
 
 function summarizeHardcoverResponse(body: string): string {
-  const trimmed = body.replace(/\s+/g, " ").trim();
+  const trimmed = body
+    .replace(/Bearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [redacted]")
+    .replace(/((?:api[_ -]?key|token|authorization)[\s\"']*[:=][\s\"']*)[^\s,\"'}]+/gi, "$1[redacted]")
+    .replace(/\s+/g, " ")
+    .trim();
   if (!trimmed) return "";
   try {
     const parsed = JSON.parse(trimmed) as { errors?: Array<{ message?: string }>; message?: string };

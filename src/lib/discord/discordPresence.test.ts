@@ -118,6 +118,22 @@ describe("Discord Rich Presence", () => {
     expect(driver.start).toHaveBeenCalledWith(AETHON_DISCORD_APPLICATION_ID);
   });
 
+  test("reports an absent Discord client and recovers on a later start", async () => {
+    const { driver, sent } = createDriver();
+    vi.mocked(driver.start)
+      .mockRejectedValueOnce(new Error("Discord client unavailable"))
+      .mockResolvedValueOnce(undefined);
+    const service = new DiscordPresenceService(driver);
+
+    await service.start();
+    expect(await service.setPresence(progressPayload(0), enabledSettings, "work-change")).toBe(false);
+    expect(sent).toHaveLength(0);
+
+    await service.start();
+    expect(await service.setPresence(progressPayload(0), enabledSettings, "work-change")).toBe(true);
+    expect(sent).toHaveLength(1);
+  });
+
   test("clears the activity before stopping the RPC thread", async () => {
     const { driver } = createDriver();
     const service = new DiscordPresenceService(driver);

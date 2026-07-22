@@ -387,3 +387,4 @@ QR, pairing, restart, reconnect, sessões persistidas e replicação entre deskt
 - O actual de Storage em loading comprova instabilidade do teste, não defeito funcional da tela.
 - `source.settings.write` não possuía chamador de produção e foi removida da capacidade publicada no Marco 65; testes negativos impedem sua reintrodução acidental.
 - Chunks grandes são risco de desempenho, não bug reproduzido de usuário.
+- O aviso de update baseado apenas na release pública mais recente foi corrigido no Marco 69. O histórico GitHub continua visível, mas disponibilidade e instalação dependem exclusivamente do endpoint assinado configurado.

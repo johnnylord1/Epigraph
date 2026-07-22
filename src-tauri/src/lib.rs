@@ -1437,6 +1437,16 @@ mod tests {
     }
 
     #[test]
+    fn stable_release_policy_excludes_drafts_prereleases_and_malformed_tags() {
+        assert!(is_public_stable_release("v1.2.3", false, false));
+        assert!(is_public_stable_release("1.2.3", false, false));
+        assert!(!is_public_stable_release("v1.2.3", true, false));
+        assert!(!is_public_stable_release("v1.2.3", false, true));
+        assert!(!is_public_stable_release("v1.2.3-beta.1", false, false));
+        assert!(!is_public_stable_release("latest", false, false));
+    }
+
+    #[test]
     fn serve_book_asset_options_returns_cors_headers() {
         let request = Request::builder()
             .method("OPTIONS")
@@ -2218,6 +2228,15 @@ pub struct ReleaseInfo {
     pub body: String,
     pub published_at: String,
     pub html_url: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct AethonUpdateStatus {
+    pub update_available: bool,
+    pub current_version: String,
+    pub version: Option<String>,
+    pub body: Option<String>,
+    pub published_at: Option<String>,
 }
 
 /// Progress event emitted during download — matches what the frontend listens for.
@@ -4855,6 +4874,8 @@ async fn list_releases() -> Result<Vec<ReleaseInfo>, String> {
         body: Option<String>,
         published_at: Option<String>,
         html_url: String,
+        draft: bool,
+        prerelease: bool,
     }
 
     let body = resp.text().await.map_err(|e| e.to_string())?;
@@ -4862,6 +4883,9 @@ async fn list_releases() -> Result<Vec<ReleaseInfo>, String> {
 
     Ok(releases
         .into_iter()
+        .filter(|release| {
+            is_public_stable_release(&release.tag_name, release.draft, release.prerelease)
+        })
         .map(|r| ReleaseInfo {
             tag_name: r.tag_name.clone(),
             name: r.name.unwrap_or_else(|| r.tag_name.clone()),
@@ -4872,13 +4896,55 @@ async fn list_releases() -> Result<Vec<ReleaseInfo>, String> {
         .collect())
 }
 
+fn is_public_stable_release(tag_name: &str, draft: bool, prerelease: bool) -> bool {
+    !draft
+        && !prerelease
+        && semver::Version::parse(tag_name.trim().trim_start_matches('v'))
+            .map(|version| version.pre.is_empty() && version.build.is_empty())
+            .unwrap_or(false)
+}
+
+/// Check only the configured signed updater endpoint. GitHub release history is
+/// informational and must never be used to announce or authorize installation.
+#[tauri::command]
+async fn check_aethon_update(app: tauri::AppHandle) -> Result<AethonUpdateStatus, String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    let update = tokio::time::timeout(std::time::Duration::from_secs(10), updater.check())
+        .await
+        .map_err(|_| "Signed update check timed out after 10 seconds.".to_string())?
+        .map_err(|e| e.to_string())?;
+    let current_version = app.package_info().version.to_string();
+
+    Ok(match update {
+        Some(update) => AethonUpdateStatus {
+            update_available: true,
+            current_version,
+            version: Some(update.version.to_string()),
+            body: update.body,
+            published_at: update.date.map(|date| date.to_string()),
+        },
+        None => AethonUpdateStatus {
+            update_available: false,
+            current_version,
+            version: None,
+            body: None,
+            published_at: None,
+        },
+    })
+}
+
 /// Download and install the latest update using tauri-plugin-updater.
 /// Emits `update-progress` events with `{ downloaded, total }` while downloading.
 /// On Windows the installer runs in passive (silent) mode; the frontend prompts restart.
 /// On other platforms this command is a no-op — the frontend opens the GitHub page instead.
 #[tauri::command]
 #[allow(unused_variables)]
-async fn download_and_install_update(app: tauri::AppHandle) -> Result<(), String> {
+async fn download_and_install_update(
+    app: tauri::AppHandle,
+    expected_version: String,
+) -> Result<(), String> {
     #[cfg(not(target_os = "windows"))]
     return Err("Native install is Windows-only; open the GitHub release page instead.".into());
 
@@ -4892,6 +4958,13 @@ async fn download_and_install_update(app: tauri::AppHandle) -> Result<(), String
         let Some(update) = update else {
             return Err("No update available from the updater endpoint.".into());
         };
+        let expected = semver::Version::parse(expected_version.trim().trim_start_matches('v'))
+            .map_err(|_| "The requested update version is invalid.".to_string())?;
+        if update.version.trim().trim_start_matches('v') != expected.to_string() {
+            return Err(
+                "The signed updater endpoint no longer offers the selected version.".into(),
+            );
+        }
 
         let app_clone = app.clone();
         update
@@ -5375,6 +5448,7 @@ pub fn run() {
             start_flaresolverr_docker,
             stop_flaresolverr_docker,
             list_releases,
+            check_aethon_update,
             suwayomi_update::get_suwayomi_runtime_status,
             suwayomi_update::check_suwayomi_runtime_update,
             suwayomi_update::get_suwayomi_update_lock_status,

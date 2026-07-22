@@ -24,6 +24,18 @@ const {
       };
     }
     if (command === "get_default_downloads_path") return "C:/Aethon/Downloads";
+    if (command === "list_releases") {
+      return [{
+        tag_name: "v4.2.0",
+        name: "Aethon 4.2.0",
+        body: "Stable release.",
+        published_at: "2026-07-21T00:00:00Z",
+        html_url: "https://github.com/johnnylord1/Aethon/releases/tag/v4.2.0",
+      }];
+    }
+    if (command === "check_aethon_update") {
+      return { update_available: false, current_version: "4.2.0", version: null, body: null, published_at: null };
+    }
     if (command === "restart_app") return null;
     if (command === "get_suwayomi_runtime_status") {
       return {

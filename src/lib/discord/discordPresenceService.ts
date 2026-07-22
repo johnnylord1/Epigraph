@@ -97,6 +97,7 @@ export class DiscordPresenceService {
   private lastProgressSentAt = 0;
   private lastProgressBucket: number | null = null;
   private desiredEnabled = false;
+  private driverReady = false;
   private lifecycleGeneration = 0;
   private lifecycleQueue: Promise<void> = Promise.resolve();
 
@@ -116,7 +117,9 @@ export class DiscordPresenceService {
       this.lastSentSignature = null;
       this.lastProgressSentAt = 0;
       this.lastProgressBucket = null;
-      await this.driver.start(AETHON_DISCORD_APPLICATION_ID).catch(() => {});
+      this.driverReady = await this.driver.start(AETHON_DISCORD_APPLICATION_ID)
+        .then(() => true)
+        .catch(() => false);
     });
   }
 
@@ -142,6 +145,7 @@ export class DiscordPresenceService {
     this.lastSentLargeImage = null;
     this.lastProgressSentAt = 0;
     this.lastProgressBucket = null;
+    this.driverReady = false;
   }
 
   private async clearAndStop(): Promise<void> {
@@ -163,7 +167,7 @@ export class DiscordPresenceService {
   ): Promise<boolean> {
     if (!settings.discordRpc || !this.desiredEnabled) return false;
     await this.lifecycleQueue;
-    if (!settings.discordRpc || !this.desiredEnabled) return false;
+    if (!settings.discordRpc || !this.desiredEnabled || !this.driverReady) return false;
 
     const now = this.driver.now();
     const filtered = applyPrivacyFilter(
