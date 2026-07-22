@@ -11,7 +11,7 @@
   import { cache, CACHE_KEYS, getPageSet } from "../../lib/cache";
   import { loadLibrarySnapshot } from "../../lib/library/snapshot";
   import { dedupeSources, dedupeMangaById, dedupeMangaByTitle, shouldHideNsfw, shouldHideSource } from "../../lib/util";
-  import { store, updateSettings, setSearchPrefill, setPreviewManga, setExtensionsPanelHint, addToast, setSearchTabHint, setSearchBrowseHint, setSearchSourcesPaneHint, setActiveNovelDetail, setActiveBookId, setActiveManga, setNavPage } from "../../store/state.svelte";
+  import { store, updateSettings, setSearchPrefill, setExtensionsPanelHint, addToast, setSearchTabHint, setSearchBrowseHint, setSearchSourcesPaneHint, setActiveNovelDetail, setActiveBookId, setActiveManga, openMangaDetail, setNavPage } from "../../store/state.svelte";
   import type { Manga, Source, Tracker, TrackRecord, TrackSearch } from "../../lib/types";
   import NocturneState from "../shared/NocturneState.svelte";
   import SetupStatusCard from "../shared/SetupStatusCard.svelte";
@@ -24,7 +24,7 @@
   import ActivityButton from "../layout/ActivityButton.svelte";
   import WindowControlsInline from "../layout/WindowControlsInline.svelte";
   import { browseInstalledNovelSource, loadTrustedInstalledNovelSources, readInstalledNovelDetails, searchInstalledNovelSource, shutdownInstalledNovelSourcesRuntime } from "../../lib/novels/sources";
-  import { createNovelLibraryId, type InstalledNovelSourceDescriptor, type NovelDetailRecord, type NovelSourceSearchResult } from "../../lib/novels/domain";
+  import { createNovelLibraryId, type ActiveNovelDetailState, type InstalledNovelSourceDescriptor, type NovelDetailRecord, type NovelSourceSearchResult } from "../../lib/novels/domain";
   import { isNovelInLibrary, loadNovelLibraryState, peekNovelLibraryState } from "../../lib/novels/libraryState";
   import { NOVEL_TITLE_ALIAS_VERSION, canonicalNovelTitleCandidates } from "../../lib/novels/titleAliases";
   import { classifySourceAccessError, isSourceChallengeMessage, sourceAccessErrorMessage } from "../../lib/sourceAccess";
@@ -2770,7 +2770,7 @@
         setNavPage("library");
         setActiveManga(manga);
       } else {
-        setPreviewManga(manga);
+        openMangaDetail(manga);
       }
       return;
     }
@@ -2804,6 +2804,70 @@
     if (book) {
       setNavPage("library");
       setActiveBookId(book.id);
+      return;
+    }
+
+    const hardcoverProvider = item.candidate.providers.find((provider) => provider.providerId === "hardcover" && provider.remoteId);
+    if (hardcoverProvider) {
+      const titleKey = recommendationTitleKey(item.candidate.title, "novel");
+      const sourceResult = searchNovelSourcePool.find((result) => recommendationTitleKey(result.title, "novel") === titleKey);
+      if (sourceResult) {
+        const source = searchNovelSourceById.get(sourceResult.sourceId);
+        if (source) {
+          await openNovelSourceResult(source, sourceResult);
+          return;
+        }
+      }
+
+      const hardcoverRecord = searchHardcoverRecords.find((record) => String(record.bookId) === hardcoverProvider.remoteId);
+      const linkedNovelId = hardcoverRecord?.sourceNovelId ?? null;
+      const linkedNovel = linkedNovelId
+        ? novelLibraryState?.entries.find((entry) => entry.id === linkedNovelId)
+        : null;
+      if (linkedNovel && novelLibraryState) {
+        const chapters = novelLibraryState.chapters
+          .filter((chapter) => chapter.novelId === linkedNovel.id)
+          .sort((a, b) => a.order - b.order)
+          .map((chapter) => ({ ...chapter, id: chapter.id, novelId: linkedNovel.id }));
+        setActiveNovelDetail({
+          novel: {
+            ...linkedNovel,
+            sourceId: linkedNovel.source.sourceId ?? linkedNovel.source.pluginId ?? "unknown",
+            chapters,
+          },
+          inLibrary: true,
+        });
+        return;
+      }
+
+      const metadataOnlyDetail: ActiveNovelDetailState = {
+        novel: {
+          id: `hardcover:${hardcoverProvider.remoteId}`,
+          sourceId: "hardcover",
+          title: item.candidate.title,
+          path: `hardcover:${hardcoverProvider.remoteId}`,
+          coverUrl: item.candidate.coverUrl ?? null,
+          author: item.candidate.alternativeTitles?.join(", ") || null,
+          description: null,
+          status: item.candidate.status ?? null,
+          tags: item.candidate.tags,
+          chapterCount: 0,
+          chapters: [],
+          source: {
+            repositoryUrl: "https://hardcover.app",
+            repositoryName: "Hardcover",
+            pluginId: "hardcover",
+            pluginName: "Hardcover",
+            pluginVersion: null,
+            sourceId: "hardcover",
+            sourceName: "Hardcover",
+            lang: null,
+          },
+        },
+        inLibrary: false,
+        metadataOnly: true,
+      };
+      setActiveNovelDetail(metadataOnlyDetail);
       return;
     }
 
@@ -5500,7 +5564,7 @@
             {:else if mangas.length > 0}
               <div class="sourceRow">
                 {#each mangas.filter(shouldShowCatalogManga).slice(0, (store.settings.renderLimit ?? 48)) as m (m.id)}
-                  <button class="n-library-card" onclick={() => setPreviewManga(m)}>
+                  <button class="n-library-card" onclick={() => openMangaDetail(m)}>
                     <div class="card-cover-container">
                       <div class="n-library-card__cover">
                         <img
@@ -5783,7 +5847,7 @@
           {:else if src_activeSource && src_browseResults.length > 0}
             <div class="tagGrid" onscroll={handleCatalogGridScroll}>
               {#each src_browseResults.filter(shouldShowCatalogManga) as m (m.id)}
-                <button class="n-library-card" onclick={() => setPreviewManga(m)}>
+                <button class="n-library-card" onclick={() => openMangaDetail(m)}>
                   <div class="card-cover-container">
                     <div class="n-library-card__cover">
                       <img src={resolveMangaCoverUrl(m, { context: "browse", persistence: m.inLibrary ? "persistent" : "memory", cacheGeneration: store.libraryCoverCacheGeneration })} alt={m.title} loading="lazy" decoding="async" />
@@ -5921,7 +5985,7 @@
             {:else if tag_hasActiveTags && tag_mergedResults.length > 0}
               <div class="tagGrid" onscroll={handleCatalogGridScroll}>
                 {#each tag_mergedResults.filter(shouldShowCatalogManga) as m (m.id)}
-                  <button class="n-library-card" onclick={() => setPreviewManga(m)}>
+                  <button class="n-library-card" onclick={() => openMangaDetail(m)}>
                     <div class="card-cover-container">
                       <div class="n-library-card__cover">
                         <img src={resolveMangaCoverUrl(m, { context: "browse", persistence: m.inLibrary ? "persistent" : "memory", cacheGeneration: store.libraryCoverCacheGeneration })} alt={m.title} loading="lazy" decoding="async" />
@@ -6066,7 +6130,7 @@
             {:else if activeContentType === "manga" && discoverMangaResults.length > 0}
               <div class="tagGrid" onscroll={handleCatalogGridScroll}>
                 {#each discoverMangaResults.filter(shouldShowCatalogManga) as m (m.id)}
-                  <button class="n-library-card" onclick={() => setPreviewManga(m)}>
+                  <button class="n-library-card" onclick={() => openMangaDetail(m)}>
                     <div class="card-cover-container">
                       <div class="n-library-card__cover">
                         <img src={resolveMangaCoverUrl(m, { context: "browse", persistence: m.inLibrary ? "persistent" : "memory", cacheGeneration: store.libraryCoverCacheGeneration })} alt={m.title} loading="lazy" decoding="async" />

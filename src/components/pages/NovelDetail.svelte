@@ -41,6 +41,7 @@
   const CHAPTERS_PER_PAGE = 25;
 
   const activeDetail = $derived(store.activeNovelDetail);
+  const metadataOnly = $derived(activeDetail?.metadataOnly === true);
   let migrateOpen = $state(false);
   let trackingOpen = $state(false);
   let detailsOpen = $state(false);
@@ -132,7 +133,7 @@
   });
 
   async function addToLibrary() {
-    if (!activeDetail) return;
+    if (!activeDetail || metadataOnly) return;
     const state = await loadNovelLibraryState(scopeInput);
     libraryState = await saveNovelLibraryState(upsertNovelInLibrary(state, activeDetail.novel), scopeInput);
     bumpContentSetupVersion();
@@ -172,7 +173,7 @@
   }
 
   function openChapter(chapterId: string, chapterPath: string, chapterTitle: string) {
-    if (!activeDetail) return;
+    if (!activeDetail || metadataOnly) return;
     setActiveNovelReader({
       novelId: activeDetail.novel.id,
       chapterId,
@@ -437,15 +438,18 @@
     {/snippet}
 
     {#snippet secondaryActions()}
-      <button class="series-action series-icon-action" class:active={activeDetail.inLibrary} onclick={activeDetail.inLibrary ? removeFromLibrary : addToLibrary} title={activeDetail.inLibrary ? "In Library" : "Add to Library"} aria-label={activeDetail.inLibrary ? "In Library" : "Add to Library"}>
-        <BookmarkSimple size={13} weight={activeDetail.inLibrary ? "fill" : "light"} />
-      </button>
-      <button class="series-action series-icon-action" type="button" onclick={() => trackingOpen = true} title={$_("home_sections_tracking")} aria-label={$_("home_sections_tracking")}>
-        <ChartLineUp size={13} weight="light" />
-      </button>
+      {#if !metadataOnly}
+        <button class="series-action series-icon-action" class:active={activeDetail.inLibrary} onclick={activeDetail.inLibrary ? removeFromLibrary : addToLibrary} title={activeDetail.inLibrary ? "In Library" : "Add to Library"} aria-label={activeDetail.inLibrary ? "In Library" : "Add to Library"}>
+          <BookmarkSimple size={13} weight={activeDetail.inLibrary ? "fill" : "light"} />
+        </button>
+        <button class="series-action series-icon-action" type="button" onclick={() => trackingOpen = true} title={$_("home_sections_tracking")} aria-label={$_("home_sections_tracking")}>
+          <ChartLineUp size={13} weight="light" />
+        </button>
+      {/if}
     {/snippet}
 
     {#snippet utilityActions()}
+      {#if !metadataOnly}
       <div class="fp-wrap" bind:this={folderPickerRef}>
         <button class="series-utility" class:active={hasFolders} type="button" onclick={() => folderPickerOpen = !folderPickerOpen} title={$_("detail_actions_folders")}>
           <FolderSimplePlus size={13} weight={hasFolders ? "fill" : "light"} />
@@ -551,6 +555,7 @@
         <ArrowsLeftRight size={15} weight="light" />
         {$_("detail_actions_migrate")}
       </button>
+      {/if}
     {/snippet}
 
     {#snippet detailsExtra()}
@@ -662,7 +667,7 @@
   </SeriesDetailV3Shell>
 {/if}
 
-{#if trackingOpen && activeDetail}
+{#if trackingOpen && activeDetail && !metadataOnly}
   <NovelTrackingPanel
     title={activeDetail.novel.title}
     sourceNovelId={activeDetail.novel.id}

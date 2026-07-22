@@ -96,6 +96,8 @@ export interface PersistedNovelLibraryState {
 export interface ActiveNovelDetailState {
   novel: NovelDetailRecord;
   inLibrary: boolean;
+  /** True when the record is remote metadata without an installed reading source. */
+  metadataOnly?: boolean;
 }
 
 export interface ActiveNovelReaderState {

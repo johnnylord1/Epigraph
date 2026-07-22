@@ -1,6 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { tick } from "svelte";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 const {
   gqlMock,
@@ -410,7 +412,7 @@ vi.mock("../../store/state.svelte", async () => {
     ...actual,
     addToast: addToastMock,
     setSearchPrefill: vi.fn(),
-    setPreviewManga: vi.fn(),
+    openMangaDetail: vi.fn(),
     setExtensionsPanelHint: vi.fn(),
     setSearchTabHint: vi.fn(),
     setSearchBrowseHint: vi.fn(),
@@ -538,6 +540,16 @@ describe("BrowseV3", () => {
       expect(screen.getByText("Manage extensions")).toBeTruthy();
       expect(screen.getByText("Installed")).toBeTruthy();
     });
+  });
+
+  test("routes Browse manga cards to the active SeriesDetail instead of the legacy preview", () => {
+    const source = readFileSync(resolve(process.cwd(), "src/components/pages/BrowseV3.svelte"), "utf8");
+
+    expect(source).toContain("openMangaDetail(manga)");
+    expect(source).toContain("onclick={() => openMangaDetail(m)}");
+    expect(source).toContain("const linkedNovelId = hardcoverRecord?.sourceNovelId ?? null;");
+    expect(source).toContain("metadataOnly: true");
+    expect(source).not.toContain("setPreviewManga(m)");
   });
 
   test("installs, updates, and removes manga extensions from Sources", async () => {
