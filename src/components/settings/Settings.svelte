@@ -5418,7 +5418,7 @@
                     <p class="settings-mini-row__hint">{$_("settings_inline_desktopSyncPairingHint")}</p>
                   </div>
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (trackingSyncdOpen = !trackingSyncdOpen)}>
-                    {trackingSyncdOpen ? "Close" : "Manage"}
+                    {trackingSyncdOpen ? $_("common_close") : $_("ui_manage")}
                   </button>
                 </div>
               </div>
@@ -5550,7 +5550,7 @@
                     data-testid="settings-security-syncd-manage"
                     onclick={() => (securityDetailPane = securityDetailPane === "syncd" ? null : "syncd")}
                   >
-                    {securityDetailPane === "syncd" ? "Close" : "Manage"}
+                    {securityDetailPane === "syncd" ? $_("common_close") : $_("ui_manage")}
                   </button>
                 </div>
               </div>

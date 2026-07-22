@@ -164,6 +164,8 @@ General, Reader, Content e About foram renderizados em inglês a 1280×800 em am
 
 O backend Rust validou autenticação, escopos, bootstrap, pairing, sessão, pause/resume/reconnect, snapshots, replay, tombstones e replicação para comics, novels e books. Os gates base, pairing, live pairing, mutações, hardening LAN e discovery passaram. O runner WebView2 com perfis isolados concluiu 7/7 cenários nos Marcos 58, 61 e 62. O risco remanescente é de concorrência do harness por portas e ownership de processos (`IMP-017`), não uma falha funcional Syncd reproduzida.
 
+O Marco 68 localizou o contrato completo de 134 mensagens efetivamente renderizadas pelo modal em espanhol, japonês e chinês simplificado. Paridade de chaves/placeholders, termos técnicos, ausência de cópias inglesas e proteção contra endpoints/IDs em texto comum passaram em 5/5 testes; Pairing, Details e Options passaram em 4/4 testes browser e cinco baselines estáveis. A URL de exemplo permanece somente em Options, área avançada destinada à origem manual.
+
 Para a próxima certificação nativa, recomenda-se alocar dinamicamente todas as portas locais — driver, WebDriver nativo, Suwayomi de teste e cada sidecar Syncd — e propagá-las ao runtime, QR e mDNS. `runId`, perfil descartável, diretório temporário e lista de PIDs próprios devem existir apenas no harness. No produto, a seleção precisa ser automática e invisível, sem criar artefatos em pastas comuns do usuário ou expor configuração de porta no fluxo principal. Computadores diferentes podem reutilizar a mesma porta, mas instâncias e contas no mesmo Windows compartilham o namespace TCP.
 
 ## Mudanças recentes e trabalhos de outros agentes

@@ -31,8 +31,9 @@ Este documento não redefine os bugs confirmados de `bug-report.md`. Os itens ab
 
 1. Marcos 63–64: concluídos; o último snapshot completo de Rust/discovery permanece verde e a revalidação atual confirmou tema, browser, build e `svelte-check`.
 2. Marco 65: concluído; `source.settings.write` foi removida e `source.settings.read` permanece estritamente sob demanda.
-3. Marcos 66–70: certificar dados locais, acessibilidade nativa, integrações/localização e desempenho em lotes independentes.
-4. Marco 71: executar os gates finais, reconciliar os três relatórios e publicar a matriz de riscos remanescentes.
+3. Marcos 66–68: concluídos; dados locais, acessibilidade/viewports e localização Syncd possuem gates reproduzíveis.
+4. Marcos 69–70: certificar integrações externas simuladas e desempenho em lotes independentes.
+5. Marco 71: executar os gates finais, reconciliar os três relatórios e publicar a matriz de riscos remanescentes.
 
 ## Estado revalidado em 21/07/2026
 
@@ -40,6 +41,7 @@ Este documento não redefine os bugs confirmados de `bug-report.md`. Os itens ab
 - `IMP-006` foi concluído: o `svelte-check` passou com 0 erros e 0 warnings; o baseline de 308/11 permanece como histórico no BUG-002.
 - `IMP-002` foi concluído no Marco 65: a escrita inexistente foi removida e a leitura de settings continua lazy, sem cache novo.
 - `IMP-001` e `IMP-007` foram reduzidos no Marco 67: viewports e foco estão cobertos automaticamente; manga fullscreen e leitor de tela permanecem como validações manuais/condicionais.
+- O Marco 68 certificou as 134 mensagens ativas do Syncd em `es`, `ja` e `zh-CN`, incluindo baselines browser de Pairing, Details e Options.
 - `IMP-013` permanece como melhoria de diagnóstico, embora o inventário atual esteja reconciliado e verde.
 - `IMP-015` e `IMP-016` foram funcionalmente resolvidos; permanecem no histórico para rastreabilidade.
 - `IMP-017` continua adiado para um ciclo futuro de automação Syncd e não bloqueia os marcos atuais.

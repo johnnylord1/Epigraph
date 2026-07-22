@@ -85,6 +85,7 @@ export default defineWorkspace([
       include: [
         "src/components/layout/SplashScreen.browser.test.ts",
         "src/components/settings/Settings.browser.test.ts",
+        "src/components/settings/SyncdLocalization.browser.test.ts",
         "src/components/library/LibraryCardGrid.test.ts",
         "src/components/library/ComicsLibraryBody.test.ts",
         "src/components/library/BooksLibraryBody.test.ts",
