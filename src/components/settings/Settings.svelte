@@ -6150,7 +6150,7 @@
               {/if}
               {#if updatePhase === "error"}
                 <div class="settings-state">
-                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Updates" title={$_("settings_inline_updateFailed")} body={updateError} />
+                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Updates" title={$_("settings_inline_updateFailed")} body={updateError ?? ""} />
                 </div>
                 <div class="update-error-row">
                   <button class="n-btn n-btn--sm n-btn-ghost settings-mini-action" type="button" onclick={cancelUpdate}>{$_("settings_inline_dismiss")}</button>

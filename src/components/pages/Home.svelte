@@ -245,11 +245,6 @@
     void refreshSetupState();
   });
 
-  $effect(() => {
-    if (store.homePanelHint !== "history") return;
-    markActivitySeen();
-  });
-
   async function refreshSetupState() {
     setupStateController?.abort();
     const controller = new AbortController();
@@ -312,8 +307,9 @@
 
   function cancelScheduledHomeMetaLoad() {
     if (scheduledHomeMetaLoad === null) return;
-    if ("cancelIdleCallback" in window) {
-      (window as Window & { cancelIdleCallback: (handle: number) => void }).cancelIdleCallback(scheduledHomeMetaLoad);
+    const idleWindow = window as Window & { cancelIdleCallback?: (handle: number) => void };
+    if (idleWindow.cancelIdleCallback) {
+      idleWindow.cancelIdleCallback(scheduledHomeMetaLoad);
     } else {
       window.clearTimeout(scheduledHomeMetaLoad);
     }
@@ -326,8 +322,9 @@
       scheduledHomeMetaLoad = null;
       void loadHomeMeta();
     };
-    if ("requestIdleCallback" in window) {
-      scheduledHomeMetaLoad = (window as Window & { requestIdleCallback: (callback: IdleRequestCallback, opts?: IdleRequestOptions) => number }).requestIdleCallback(
+    const idleWindow = window as Window & { requestIdleCallback?: (callback: IdleRequestCallback, opts?: IdleRequestOptions) => number };
+    if (idleWindow.requestIdleCallback) {
+      scheduledHomeMetaLoad = idleWindow.requestIdleCallback(
         () => run(),
         { timeout: 1200 },
       );

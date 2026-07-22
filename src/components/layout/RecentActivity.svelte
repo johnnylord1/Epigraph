@@ -76,7 +76,6 @@
     thumbnailUrl:      string;
     latestChapterId:   number;
     latestChapterName: string;
-    latestPageNumber:  number;
     firstChapterName:  string;
     chapterCount:      number;
     readAt:            number;
@@ -126,7 +125,6 @@
         thumbnailUrl:      latest.thumbnailUrl,
         latestChapterId:   latest.chapterId,
         latestChapterName: latest.chapterName,
-        latestPageNumber:  latest.pageNumber,
         firstChapterName:  oldest.chapterName,
         chapterCount:      group.length,
         readAt:            latest.readAt,
@@ -545,9 +543,6 @@
                         {session.latestChapterName}
                       {:else}
                         {session.latestChapterName}
-                        {#if session.latestPageNumber > 1}
-                          <span class="chapter-page">p.{session.latestPageNumber}</span>
-                        {/if}
                       {/if}
                     </span>
                   </div>
@@ -981,8 +976,7 @@
     color: var(--component-activity-center-accent);
   }
 
-  .chapter-arrow,
-  .chapter-page {
+  .chapter-arrow {
     color: var(--component-activity-center-chapter-fg);
   }
 

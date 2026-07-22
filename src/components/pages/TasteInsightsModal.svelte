@@ -5,7 +5,7 @@
   import { onMount } from "svelte";
   import type { TasteProfile, RecommendationItem } from "../../lib/recommendations/types";
   import { X, Info, BookOpen, Sparkle, Star } from "phosphor-svelte";
-  import { setNavPage } from "../../store/state.svelte";
+  import { openSearchSources } from "../../store/state.svelte";
 
   let { profile, items, contentType, onClose } = $props<{
     profile: TasteProfile;
@@ -156,7 +156,7 @@
   );
 
   function goToExtensions() {
-    setNavPage("extensions");
+    openSearchSources("extensions");
     onClose();
   }
 </script>
