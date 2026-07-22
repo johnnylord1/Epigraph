@@ -227,3 +227,17 @@ A tela Settings > About passou em 6/6 testes browser. A baseline foi atualizada 
 `release:check-bundles` percorre recursivamente o grafo de imports estáticos, mede entry, payload inicial, gzip, CSS total e chunks comuns. O gate passou com redução de 17,57% no entry e sem vendors de EPUB, PDF ou parsers no carregamento inicial.
 
 `release:check-navigation` usa Tauri/WebView2, Core local simulado e cinco perfis descartáveis. O gate aguarda o painel ativo sem skeleton e dois frames de pintura antes de concluir a troca Comics/Books, além de cobrir vinte ciclos de Search, dim, geometria, overflow e toast em motion-idle. O primeiro baseline instrumentado passou na rodada final com medianas de 3.292 ms, 75,5 ms e 432,5 ms; ele bloqueia regressões futuras de 15%, sem alegar comparação temporal com builds que não possuíam a mesma telemetria. O `report.json` vincula as evidências ao SHA-256 do executável e ao commit-base.
+
+## Marco 71 — matriz final de certificação
+
+`pnpm release:verify` executa os gates bloqueantes em ordem, com um worker de Vitest, um job Cargo e um thread de teste Rust. A execução final de 22/07/2026 passou 16/16 etapas e preservou o worktree, perfis normais e diretórios de usuário.
+
+| Classe | Cobertura certificada | Resultado |
+| --- | --- | --- |
+| Automática | Svelte/TypeScript, unit/jsdom, browser components, builtins, runtime de temas, Suwayomi, integrações determinísticas, bundles, Rust e builds | Verde: 151/852 unit-jsdom, 10/48 browser, 324+172 Rust |
+| WebView2 descartável | Import/restore EPUB e PDF, corrupção sem mutação, viewports 1280×800 e 800×600, Search dim, Comics/Books, toast e navegação | Verde: 2 livros, 2 progressos, 2 bookmarks, 6 checks de viewport e 5 sessões de navegação |
+| Condicional de release | Instalação real do updater Aethon a partir de manifesto/assinatura de produção | Não executada sem chave e pacote assinados; contratos de versão, manifesto e assinatura permanecem bloqueantes |
+| Smoke ao vivo opcional | Trackers, Hardcover, Discord, proxies e serviços externos reais | Não executado sem opt-in/credenciais; os transports falsos e servidores locais são o gate reproduzível |
+| Manual residual | Leitor de tela e manga/fullscreen com catálogo real | Pendente, sem regressão comprovada nos smokes disponíveis |
+
+Evidências visuais versionadas permanecem em `docs/screenshots/marco60-final-runtime/`, `marco61-syncd-pairing/`, `marco62-syncd-hardening/`, `marco67-native-viewports/`, `marco70-bundle-performance/` e nas baselines revisadas em `src/test/browser/__screenshots__/custom/`. O Marco 71 reexecutou a build atual e validou estado e geometria em capturas temporárias WebView2, descartadas depois do gate para não versionar duplicatas ou artefatos de perfil. Comparação pixel automatizada permanece restrita às baselines browser revisadas.

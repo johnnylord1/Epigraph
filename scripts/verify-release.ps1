@@ -1,0 +1,99 @@
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$projectRoot = Split-Path -Parent $scriptDir
+$appPath = Join-Path $projectRoot "src-tauri\target\release\aethon.exe"
+$runId = "aethon-release-verify-$([DateTime]::UtcNow.ToString('yyyyMMddHHmmss'))-$PID"
+$tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) $runId
+$initialFingerprint = $null
+$results = [System.Collections.Generic.List[object]]::new()
+
+function Get-WorktreeFingerprint([string]$Label) {
+  $trackedPatch = Join-Path $tempRoot "$Label-tracked.patch"
+  $untrackedManifest = Join-Path $tempRoot "$Label-untracked.txt"
+  & git diff --binary HEAD "--output=$trackedPatch" --
+  if ($LASTEXITCODE -ne 0) { throw "Could not snapshot tracked worktree content" }
+
+  $entries = [System.Collections.Generic.List[string]]::new()
+  $untrackedPaths = @(& git ls-files --others --exclude-standard)
+  if ($LASTEXITCODE -ne 0) { throw "Could not enumerate untracked worktree content" }
+  foreach ($relativePath in $untrackedPaths) {
+    $absolutePath = Join-Path $projectRoot $relativePath
+    if (Test-Path -LiteralPath $absolutePath -PathType Leaf) {
+      $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $absolutePath).Hash
+      $entries.Add("$relativePath`t$hash")
+    }
+  }
+  [System.IO.File]::WriteAllLines($untrackedManifest, $entries, [System.Text.Encoding]::UTF8)
+  $trackedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $trackedPatch).Hash
+  $untrackedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $untrackedManifest).Hash
+  return "$trackedHash`:$untrackedHash"
+}
+
+function Test-GitWhitespace {
+  & git diff --check
+  if ($LASTEXITCODE -ne 0) { throw "Unstaged whitespace check failed" }
+  & git diff --cached --check
+  if ($LASTEXITCODE -ne 0) { throw "Staged whitespace check failed" }
+}
+
+function Invoke-ReleaseStep([string]$Name, [scriptblock]$Command) {
+  Write-Host "`n[release:verify] $Name" -ForegroundColor Cyan
+  $timer = [System.Diagnostics.Stopwatch]::StartNew()
+  & $Command
+  $exitCode = $LASTEXITCODE
+  $timer.Stop()
+  if ($null -ne $exitCode -and $exitCode -ne 0) {
+    throw "$Name failed with exit code $exitCode"
+  }
+  $results.Add([pscustomobject]@{
+    name = $Name
+    durationMs = $timer.ElapsedMilliseconds
+    status = "passed"
+  })
+}
+
+Push-Location $projectRoot
+try {
+  New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+  $initialFingerprint = Get-WorktreeFingerprint "initial"
+  $env:CI = "true"
+  $env:CARGO_BUILD_JOBS = "1"
+  $env:NODE_OPTIONS = if ($env:NODE_OPTIONS) { $env:NODE_OPTIONS } else { "--max-old-space-size=3072" }
+  $env:AETHON_NATIVE_SMOKE_OUTPUT_DIR = Join-Path $tempRoot "native-viewports"
+  $env:AETHON_NAVIGATION_OUTPUT_DIR = Join-Path $tempRoot "navigation"
+  $env:AETHON_BROWSER_SCREENSHOT_DIR = Join-Path $tempRoot "browser-provider"
+
+  Invoke-ReleaseStep "Initial whitespace check" { Test-GitWhitespace }
+  Invoke-ReleaseStep "Svelte diagnostics" { & pnpm exec svelte-check --tsconfig ./tsconfig.json }
+  Invoke-ReleaseStep "Unit and jsdom tests" { & pnpm exec vitest run --project unit --project shell-jsdom --maxWorkers=1 --minWorkers=1 }
+  Invoke-ReleaseStep "Browser component tests" { & pnpm exec vitest run --project browser-components --maxWorkers=1 --minWorkers=1 }
+  Invoke-ReleaseStep "Builtin theme generation check" { & pnpm theme:check-builtins }
+  Invoke-ReleaseStep "Theme runtime contract" { & pnpm theme:test-runtime-audit }
+  Invoke-ReleaseStep "Suwayomi release certification" { & pnpm test:suwayomi-certification }
+  Invoke-ReleaseStep "External integration contracts" {
+    $env:AETHON_SKIP_SUWAYOMI_CERTIFICATION = "1"
+    try { & pnpm release:certify-integrations }
+    finally { Remove-Item Env:AETHON_SKIP_SUWAYOMI_CERTIFICATION -ErrorAction SilentlyContinue }
+  }
+  Invoke-ReleaseStep "Bundle budgets" { & pnpm release:check-bundles }
+  Invoke-ReleaseStep "Rust test suite" { & cargo test --locked --manifest-path src-tauri/Cargo.toml --jobs 1 -- --test-threads=1 }
+  Invoke-ReleaseStep "Frontend production build" { & pnpm build }
+  Invoke-ReleaseStep "Tauri automation build" { & pnpm tauri -- build --no-bundle --config src-tauri/tauri.automation.conf.json }
+  Invoke-ReleaseStep "Local data round trips" { & powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-local-data-release-certification.ps1 -App $appPath }
+  Invoke-ReleaseStep "Native viewport smoke" { & powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-native-viewport-smoke.ps1 -App $appPath }
+  Invoke-ReleaseStep "Native navigation budgets" { & powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-native-viewport-smoke.ps1 -App $appPath -NodeScript check-navigation-performance.mjs }
+  Invoke-ReleaseStep "Whitespace check" { Test-GitWhitespace }
+
+  $finalFingerprint = Get-WorktreeFingerprint "final"
+  if ($finalFingerprint -ne $initialFingerprint) {
+    throw "Release verification changed the worktree. Inspect generated artifacts before committing."
+  }
+
+  Write-Host "`n[release:verify] all $($results.Count) blocking gates passed" -ForegroundColor Green
+  $results | Format-Table -AutoSize
+} finally {
+  Pop-Location
+  [System.IO.Directory]::Delete($tempRoot, $true)
+}

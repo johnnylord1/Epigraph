@@ -1,9 +1,15 @@
 import path from "node:path";
+import { tmpdir } from "node:os";
 import { defineWorkspace } from "vitest/config";
 
 const BROWSER_SCREENSHOT_BASE_DIR = path.resolve(
   "src/test/browser/__screenshots__/custom"
 );
+const BROWSER_TRANSIENT_SCREENSHOT_DIR = path.resolve(
+  process.env.AETHON_BROWSER_SCREENSHOT_DIR
+    || path.join(tmpdir(), "aethon-vitest-browser", String(process.pid))
+);
+const BROWSER_UPDATE_SCREENSHOTS = process.env.AETHON_UPDATE_SCREENSHOTS === "1";
 
 export default defineWorkspace([
   {
@@ -76,6 +82,8 @@ export default defineWorkspace([
     extends: "./vite.config.ts",
     define: {
       __AETHON_BROWSER_SCREENSHOT_DIR__: JSON.stringify(BROWSER_SCREENSHOT_BASE_DIR),
+      __AETHON_BROWSER_ACTUAL_SCREENSHOT_DIR__: JSON.stringify(BROWSER_TRANSIENT_SCREENSHOT_DIR),
+      __AETHON_BROWSER_UPDATE_SCREENSHOTS__: JSON.stringify(BROWSER_UPDATE_SCREENSHOTS),
     },
     test: {
       name: "browser-components",
@@ -103,7 +111,7 @@ export default defineWorkspace([
           width: 1280,
           height: 800,
         },
-        screenshotDirectory: "src/test/browser/__screenshots__",
+        screenshotDirectory: BROWSER_TRANSIENT_SCREENSHOT_DIR,
         providerOptions: {
           context: {
             colorScheme: "dark",

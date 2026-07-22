@@ -68,9 +68,9 @@ async function expectDialogScreenshot(name: string) {
   expect(rect.bottom).toBeLessThanOrEqual(window.innerHeight);
   await (
     expect(dialog) as unknown as {
-      toMatchScreenshot: (screenshotName: string) => Promise<void>;
+      toMatchAethonScreenshot: (screenshotName: string) => Promise<void>;
     }
-  ).toMatchScreenshot(name);
+  ).toMatchAethonScreenshot(name);
   return dialog;
 }
 

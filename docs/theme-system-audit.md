@@ -3543,7 +3543,7 @@ Categorias cobertas:
 ### Internacionalizacao e automacao
 
 - Os textos novos de Pairing, Details, Options, status, acoes, erros e labels tecnicos deixaram de ser literals no Svelte e passaram pelo runtime Paraglide. Os cinco catalogos possuem o mesmo contrato de chaves; ingles e portugues possuem copy localizada.
-- Espanhol, japones e chines preservam temporariamente a copy inglesa para as novas chaves Syncd. Isso mantem o comportamento anterior do modal nesses tres idiomas e evita chave ausente, mas a traducao editorial nativa permanece como risco de conteudo futuro.
+- No Marco 62, espanhol, japones e chines ainda preservavam temporariamente a copy inglesa para as novas chaves Syncd. Esse estado historico foi encerrado pela traducao editorial e pelos gates do Marco 68.
 - Estados usados pela automacao agora expõem `data-status`/`data-connection-status`; o harness nao depende mais do texto traduzido visivel. O fluxo comum continua usando os mesmos controles, eventos e APIs.
 - O runner nativo resolve EdgeDriver por parametro, ambiente, `PATH` ou instalacao WinGet, cria um perfil WebView2 unico por lancamento e repete uma sessao uma vez com perfil limpo. Isso removeu o erro de restart `failed to write prefs file` sem alterar dados do usuario.
 - O fechamento de Settings espera o DOM real, nao apenas o store. O bug preexistente que comparava a decisao interna `approve` com texto traduzido foi corrigido para comparar o valor de protocolo, afetando somente a escolha correta do toast.
@@ -3557,5 +3557,13 @@ Categorias cobertas:
 
 ### Riscos restantes
 
-- Traducao editorial nativa das novas mensagens Syncd em `es`, `ja` e `zh-CN` permanece para um lote de localizacao; nao ha chave ausente nem fallback tecnico visivel.
+- A traducao editorial nativa de `es`, `ja` e `zh-CN` foi concluida e certificada no Marco 68; esta pendencia historica esta encerrada.
 - A automacao nativa exige EdgeDriver compativel com o WebView2 instalado. O runner agora descobre e registra explicitamente o binario usado, mas a distribuicao dessa dependencia continua externa ao aplicativo.
+
+## Marco 71 - Final Release Theme Gate
+
+- `pnpm release:verify` passou os 16 gates bloqueantes em 22/07/2026, incluindo `theme:check-builtins`, `theme:test-runtime-audit`, 48 testes browser e a build Tauri usada nos smokes WebView2.
+- Nenhum CSS, token, componente visual ou documento de tema foi alterado neste marco. O Nocturne e os builtins permanecem sob o contrato já certificado: 2.637/2.637 component tokens ativos, zero Legacy, zero `--n-*` e zero `--activity-*`.
+- A validação visual atual reutilizou as baselines versionadas dos Marcos 60 e 66-70. A build corrente foi exercitada em perfis descartáveis com validação de estado e geometria, não com comparação pixel nativa automatizada: Search completou 20 ciclos sem dim residual; Comics/Books permaneceram estáveis; a barra de vida do toast continuou animada; seis checks de viewport passaram sem clipping.
+- As capturas transitórias do Marco 71 foram gravadas em `%TEMP%` e removidas depois do gate. Não foram versionadas duplicatas nem perfis/logs de automação.
+- Gates condicionais que não redefinem o contrato de tema: instalação assinada do updater, integrações reais opt-in, manga/fullscreen dependente de source e auditoria manual com leitor de tela.

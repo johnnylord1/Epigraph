@@ -93,7 +93,11 @@ try {
   if ([DateTime]::UtcNow -ge $deadline) { throw "tauri-driver did not become ready" }
   $nodeScriptPath = Join-Path $scriptDir $NodeScript
   if (-not (Test-Path $nodeScriptPath)) { throw "Native smoke script was not found at $nodeScriptPath" }
-  & node $nodeScriptPath "--driver-url=$driverUrl" "--app=$appPath"
+  $nodeArguments = @($nodeScriptPath, "--driver-url=$driverUrl", "--app=$appPath")
+  if ($NodeScript -eq "smoke-native-viewports.mjs" -and $env:AETHON_NATIVE_SMOKE_OUTPUT_DIR) {
+    $nodeArguments += "--out=$env:AETHON_NATIVE_SMOKE_OUTPUT_DIR"
+  }
+  & node @nodeArguments
   if ($LASTEXITCODE -ne 0) { throw "Native viewport smoke failed" }
   $completed = $true
 } finally {
@@ -105,7 +109,4 @@ try {
     Remove-DriverLog $stdout
     Remove-DriverLog $stderr
   }
-  Get-ChildItem -Path $logRoot -File -Filter "tauri-driver-*.log" -ErrorAction SilentlyContinue |
-    Where-Object { $_.LastWriteTimeUtc -lt [DateTime]::UtcNow.AddDays(-3) } |
-    Remove-Item -Force -ErrorAction SilentlyContinue
 }

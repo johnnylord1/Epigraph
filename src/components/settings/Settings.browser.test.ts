@@ -248,9 +248,9 @@ async function expectSettingsScreenshot(name: string) {
   if (!root) throw new Error("Settings shell root not found");
   await (
     expect(root) as unknown as {
-      toMatchScreenshot: (screenshotName: string) => Promise<void>;
+      toMatchAethonScreenshot: (screenshotName: string) => Promise<void>;
     }
-  ).toMatchScreenshot(name);
+  ).toMatchAethonScreenshot(name);
 }
 
 describe("Settings (browser)", () => {

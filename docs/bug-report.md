@@ -388,3 +388,9 @@ QR, pairing, restart, reconnect, sessões persistidas e replicação entre deskt
 - `source.settings.write` não possuía chamador de produção e foi removida da capacidade publicada no Marco 65; testes negativos impedem sua reintrodução acidental.
 - Chunks grandes são risco de desempenho, não bug reproduzido de usuário.
 - O aviso de update baseado apenas na release pública mais recente foi corrigido no Marco 69. O histórico GitHub continua visível, mas disponibilidade e instalação dependem exclusivamente do endpoint assinado configurado.
+
+## Fechamento do Marco 71 — gate final de release
+
+Em 22/07/2026, `pnpm release:verify` concluiu os 16 gates bloqueantes em uma única execução serial. Passaram `svelte-check` (0 erros/0 warnings), 151 arquivos e 852 testes unit/jsdom, 10 arquivos e 48 testes browser, contratos de tema, certificações Suwayomi e de integrações, budgets de bundle, 324 testes Rust do app, 172 testes Rust do binário, builds frontend/Tauri e os smokes WebView2 de dados, viewport e navegação.
+
+Nenhum bug novo foi promovido. Os seis bugs confirmados permanecem resolvidos. Os riscos residuais são validações condicionais ou manuais, não regressões observadas: instalação assinada do updater, sucesso contra serviços externos reais, manga/fullscreen dependente de catálogo e auditoria completa com leitor de tela.

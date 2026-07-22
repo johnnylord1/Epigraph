@@ -11,7 +11,10 @@ import process from "node:process";
 import { Builder, Capabilities } from "selenium-webdriver";
 
 const projectRoot = path.resolve(import.meta.dirname, "..");
-const outputDirectory = path.join(projectRoot, "docs", "screenshots", "marco70-bundle-performance");
+const outputDirectory = path.resolve(
+  process.env.AETHON_NAVIGATION_OUTPUT_DIR
+    || path.join(projectRoot, "docs", "screenshots", "marco70-bundle-performance"),
+);
 const iterations = 5;
 const searchCycles = 20;
 const budgets = JSON.parse(await fs.readFile(path.join(projectRoot, "config", "release-navigation-budgets.json"), "utf8"));

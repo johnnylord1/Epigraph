@@ -48,6 +48,19 @@ New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
 $stdout = Join-Path $logRoot "tauri-driver-$driverPort.stdout.log"
 $stderr = Join-Path $logRoot "tauri-driver-$driverPort.stderr.log"
 $driverProcess = $null
+$completed = $false
+
+function Remove-DriverLog([string]$Path) {
+  for ($attempt = 0; $attempt -lt 10; $attempt++) {
+    try {
+      [System.IO.File]::Delete($Path)
+      return
+    } catch [System.IO.IOException] {
+      Start-Sleep -Milliseconds 100
+    }
+  }
+  Write-Warning "Could not remove released driver log: $Path"
+}
 
 try {
   $driverProcess = Start-Process -FilePath $tauriDriver `
@@ -72,8 +85,14 @@ try {
   if ($KeepArtifacts) { $arguments += "--keep-artifacts=true" }
   & node @arguments
   if ($LASTEXITCODE -ne 0) { throw "Local data release certification failed" }
+  $completed = $true
 } finally {
   if ($driverProcess -and -not $driverProcess.HasExited) {
     Stop-Process -Id $driverProcess.Id -Force -ErrorAction SilentlyContinue
+    [void]$driverProcess.WaitForExit(5000)
+  }
+  if ($completed) {
+    Remove-DriverLog $stdout
+    Remove-DriverLog $stderr
   }
 }

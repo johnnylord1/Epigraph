@@ -15,8 +15,8 @@ Este documento não redefine os bugs confirmados de `bug-report.md`. Os itens ab
 | IMP-005 | Observabilidade | O snapshot original tinha 23 erros não tratados; o browser gate atual passou 44/44 sem repetir a falha. | Manter logs com fase, perfil, comando Tauri e correlação sem dados sensíveis nos novos harnesses. | Média | Baixo | P1 | Vitest browser, bridge Tauri, scripts de release | BUG-003 |
 | IMP-006 | Manutenção | O baseline histórico tinha 308 erros e 11 warnings; em 21/07/2026 o `svelte-check` passou com 0 erros e 0 warnings. | Manter o type-check verde como gate de release. | Concluída | Baixo | Resolvido | Svelte/TS, readers, books, i18n, novels | BUG-002 |
 | IMP-007 | Acessibilidade | O Marco 67 certificou foco inicial/circular, background `inert` e restauração nos três modais de migração, além de foco visível e ausência de clipping no smoke nativo. Falta uma auditoria manual completa com leitor de tela. | Navegação previsível sem mouse e menor risco de clipping/contraste. | Baixa | Baixo | P3 | shell, modais, readers, Settings, Activity Center | — |
-| IMP-008 | Segurança | Integrações com credenciais ficaram bloqueadas; faltam fixtures/ambiente seguro que provem redaction de logs e estados de token inválido/expirado na UI. | Evitar exposição acidental e validar erro/recuperação sem usar segredos reais. | Alta | Alto | P1 | trackers, Hardcover, updater, Discord, proxy | — |
-| IMP-009 | Documentação | `package.json` não possui lint dedicado e o gate de promoção de tema exige candidato, mas não há comando agregado de auditoria. | Uma lista oficial de gates, entradas e critérios de “não aplicável”. | Baixa | Baixo | P2 | scripts e documentação de release | — |
+| IMP-008 | Segurança | O Marco 69 certificou redaction e estados inválido/expirado com transports falsos e servidores locais, sem credenciais reais. | Evitar exposição acidental e validar erro/recuperação sem usar segredos reais. | Concluída | Baixo | Resolvido | trackers, Hardcover, updater, Discord, proxy | — |
+| IMP-009 | Documentação | O Marco 71 adicionou `release:verify`, com ordem, limites de concorrência e critérios condicionais documentados. | Uma lista oficial de gates, entradas e critérios de “não aplicável”. | Concluída | Baixo | Resolvido | scripts e documentação de release | — |
 | IMP-010 | Confiabilidade | Testes de composição de capas Discord passam, mas dois levam mais de 60 s. | Reduzir tempo de feedback sem diminuir a cobertura de dimensões/SSRF. | Média | Médio | P2 | `discord_cover` e fixtures de imagem | — |
 | IMP-011 | Experiência do usuário | O splash de servidor indisponível comunica o erro, mas o ambiente auxiliar alterna idiomas e termos (“MAIN profile”) no mesmo cartão. | Mensagens consistentes com o idioma ativo e orientação clara sobre servidor local. | Baixa | Baixo | P3 | i18n e startup state | — |
 | IMP-012 | Arquitetura | Backend expõe comandos internos de replicação Syncd além dos usados diretamente pelo painel; não há inventário gerado frontend↔Tauri. | Identificar comandos realmente públicos, internos e órfãos sem buscas manuais. | Média | Médio | P2 | `generate_handler!`, wrappers `invoke`, Syncd | — |
@@ -32,8 +32,8 @@ Este documento não redefine os bugs confirmados de `bug-report.md`. Os itens ab
 1. Marcos 63–64: concluídos; o último snapshot completo de Rust/discovery permanece verde e a revalidação atual confirmou tema, browser, build e `svelte-check`.
 2. Marco 65: concluído; `source.settings.write` foi removida e `source.settings.read` permanece estritamente sob demanda.
 3. Marcos 66–68: concluídos; dados locais, acessibilidade/viewports e localização Syncd possuem gates reproduzíveis.
-4. Marcos 69–70: certificar integrações externas simuladas e desempenho em lotes independentes.
-5. Marco 71: executar os gates finais, reconciliar os três relatórios e publicar a matriz de riscos remanescentes.
+4. Marcos 69–70: concluídos; integrações determinísticas e budgets de desempenho estão certificados.
+5. Marco 71: concluído; o gate agregado e a matriz de riscos foram publicados.
 
 ## Estado revalidado em 21/07/2026
 
@@ -82,3 +82,11 @@ Este documento não redefine os bugs confirmados de `bug-report.md`. Os itens ab
 - A pausa global de motion-idle não atinge mais o toast. O container `slideIn` ficou visível e a barra `toastLife` avançou de `scaleX(0,956)` para `scaleX(0,844)` durante a medição.
 - O relatório nativo registra SHA-256 do executável, commit-base e estado dirty. Logs de driver são removidos em sucesso e limitados a três dias após falhas.
 - Evidências finais: `docs/screenshots/marco70-bundle-performance/`. Comics e Books são capturados somente após o painel ativo remover o skeleton e concluir dois frames de pintura; Search e toast também usam estados estáveis. Baselines anteriores permanecem em `marco60-final-runtime` e `marco28a-base`.
+
+## Atualização do Marco 71
+
+- `IMP-009` foi concluído com `pnpm release:verify`, que executa 16 gates bloqueantes serialmente e limita Vitest/Cargo para reduzir pressão de CPU e memória.
+- A rodada final passou `svelte-check` 0/0, 151 arquivos/852 testes unit-jsdom, 10 arquivos/48 testes browser, 324+172 testes Rust, builds frontend/Tauri e os três gates WebView2.
+- Dados e perfis de automação permaneceram em `%TEMP%`; capturas transitórias e logs de sucesso foram removidos. O status do worktree ao final foi igual ao status inicial do gate.
+- Riscos ainda abertos: `IMP-001`/`IMP-007` (manga fullscreen e leitor de tela), `IMP-010` (tempo dos testes de capas Discord), `IMP-011` (copy histórica do splash), `IMP-012` (inventário frontend↔Tauri), `IMP-013` (diagnóstico dos gates de tema), `IMP-014` (capability report), `IMP-017` (concorrência Syncd futura) e `IMP-018` (política contínua de armazenamento).
+- Instalação assinada e serviços externos reais permanecem condicionais; `release:smoke-live` é opcional e nunca faz parte do gate reproduzível sem opt-in.

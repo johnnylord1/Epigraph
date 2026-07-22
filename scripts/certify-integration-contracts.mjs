@@ -54,7 +54,11 @@ run("deterministic TypeScript contracts", process.execPath, [
   "--minWorkers=1",
 ]);
 
-run("Suwayomi updater certification", process.execPath, ["--test", "scripts/certify-suwayomi-release.test.mjs"]);
+if (process.env.AETHON_SKIP_SUWAYOMI_CERTIFICATION !== "1") {
+  run("Suwayomi updater certification", process.execPath, ["--test", "scripts/certify-suwayomi-release.test.mjs"]);
+} else {
+  console.log("[release integrations] Suwayomi updater certification skipped by the aggregate gate (already certified separately)");
+}
 run(
   "native updater policy",
   process.platform === "win32" ? "cargo.exe" : "cargo",
