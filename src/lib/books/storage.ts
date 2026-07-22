@@ -1,4 +1,5 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { isUsableBookCoverUrl } from "./persisted";
 import type { BookEntry } from "./types";
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -19,10 +20,6 @@ function mimeFromPath(path: string): string {
 const objectUrlCache = new Map<string, string>();
 const dataUrlCache = new Map<string, string>();
 const fileSrcCache = new Map<string, string>();
-
-export function isUsableBookCoverUrl(coverUrl: string | null | undefined): boolean {
-  return typeof coverUrl === "string" && coverUrl.startsWith("data:image/") && coverUrl.length > 64;
-}
 
 export function needsBookCoverUrlBackfill(
   book: Pick<BookEntry, "coverPath" | "coverUrl">,

@@ -6,7 +6,6 @@
   import type { BackupLaunchIntent } from "../../lib/backup/backupRollout";
   import Sidebar from "./Sidebar.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
-  import ActivityOverlay from "./ActivityOverlay.svelte";
   import { peekPersistedBookEntry } from "../../lib/books/libraryState";
   import type { NavPage } from "../../store/state.svelte";
 
@@ -64,6 +63,22 @@
   let detailLoadedKey = $state<DetailKey | null>(null);
   let detailError = $state<string | null>(null);
   let detailLoadRequestId = 0;
+  let ActivityOverlayComponent = $state<any>(null);
+  let activityOverlayPromise: Promise<any> | null = null;
+  let activityOverlayError = $state<string | null>(null);
+
+  function ensureActivityOverlay() {
+    activityOverlayError = null;
+    activityOverlayPromise ??= import("./ActivityOverlay.svelte")
+      .then((module) => module.default)
+      .catch((error) => {
+        activityOverlayPromise = null;
+        activityOverlayError = error instanceof Error ? error.message : String(error);
+        console.error("Failed to load the activity overlay:", error);
+        return null;
+      });
+    return activityOverlayPromise;
+  }
 
   function getCachedComponent<Key extends string>(
     cache: Map<Key, Promise<any>>,
@@ -72,7 +87,12 @@
   ) {
     let pending = cache.get(key);
     if (!pending) {
-      pending = loader().then((module) => module.default);
+      pending = loader()
+        .then((module) => module.default)
+        .catch((error) => {
+          cache.delete(key);
+          throw error;
+        });
       cache.set(key, pending);
     }
     return pending;
@@ -141,6 +161,14 @@
   }
 
   $effect(() => {
+    if (store.activityPanelOpen && !ActivityOverlayComponent && !activityOverlayError) {
+      void ensureActivityOverlay().then((component) => {
+        ActivityOverlayComponent = component;
+      });
+    }
+  });
+
+  $effect(() => {
     const nextPage = navPage;
     void loadPage(nextPage);
   });
@@ -175,8 +203,14 @@
         .then((component) => {
           pageComponentCache.set("library", component);
           libraryComponent = component;
+        })
+        .catch((error) => {
+          console.warn("Library preload did not complete; navigation will retry it.", error);
         });
-      void getCachedComponent(pageComponentPromises, "home", pageLoaders.home);
+      void getCachedComponent(pageComponentPromises, "home", pageLoaders.home)
+        .catch((error) => {
+          console.warn("Home preload did not complete; navigation will retry it.", error);
+        });
     });
   });
 </script>
@@ -319,7 +353,34 @@
     {/if}
 
     {#if store.activityPanelOpen && !readerActive}
-      <ActivityOverlay />
+      {#if ActivityOverlayComponent}
+        {@const ActivityOverlayView = ActivityOverlayComponent}
+        <ActivityOverlayView />
+      {:else if activityOverlayError}
+        <div class="activity-overlay-pending">
+          <NocturneState
+            layout="center"
+            tone="danger"
+            icon="warning"
+            eyebrow={$_("shell.pageState.status")}
+            title={$_("shell.pageState.failedTitle")}
+            body={$_("shell.pageState.failedBody")}
+            detail={activityOverlayError}
+            actions={[{
+              label: $_("shell.pageState.retry"),
+              kind: "primary",
+              icon: "retry",
+              onClick: () => void ensureActivityOverlay().then((component) => {
+                if (component) ActivityOverlayComponent = component;
+              }),
+            }]}
+          />
+        </div>
+      {:else}
+        <div class="activity-overlay-pending" aria-busy="true" aria-live="polite">
+          <NocturneState layout="center" tone="info" icon="info" eyebrow={$_("ui_recentActivity")} title={$_("ui_loading")} />
+        </div>
+      {/if}
     {/if}
   </div>
 </div>
@@ -330,6 +391,16 @@
     height: 100%;
     background: var(--component-app-bg);
     overflow: hidden;
+  }
+
+  .activity-overlay-pending {
+    position: absolute;
+    inset: 0;
+    z-index: var(--component-activity-overlay-z-index);
+    display: grid;
+    place-items: center;
+    background: var(--component-activity-overlay-bg);
+    backdrop-filter: var(--component-activity-overlay-blur);
   }
 
   .main {

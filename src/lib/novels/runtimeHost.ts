@@ -13,18 +13,21 @@ import {
   type NovelRuntimeHostKind,
   type NovelRuntimeInvokeAction,
 } from "./contracts";
+import {
+  NOVEL_RUNTIME_HOST_CANCEL_EVENT,
+  NOVEL_RUNTIME_HOST_INVOKE_EVENT,
+  NOVEL_RUNTIME_HOST_LABEL,
+  NOVEL_RUNTIME_HOST_READY_EVENT,
+  NOVEL_RUNTIME_HOST_REQUEST_TIMEOUT_MS,
+  NOVEL_RUNTIME_HOST_RESPONSE_EVENT,
+  NOVEL_RUNTIME_HOST_SHUTDOWN_COMPLETE_EVENT,
+  NOVEL_RUNTIME_HOST_SHUTDOWN_REQUEST_EVENT,
+  NOVEL_RUNTIME_HOST_START_TIMEOUT_MS,
+  NOVEL_RUNTIME_HOST_STOP_TIMEOUT_MS,
+  NOVEL_RUNTIME_HOST_URL,
+} from "./runtimeConstants";
 
-export const NOVEL_RUNTIME_HOST_LABEL = "novel-runtime-host";
-export const NOVEL_RUNTIME_HOST_URL = "index.html?novelRuntimeHost=1";
-export const NOVEL_RUNTIME_HOST_READY_EVENT = "novel-runtime-host:ready";
-export const NOVEL_RUNTIME_HOST_INVOKE_EVENT = "novel-runtime-host:invoke";
-export const NOVEL_RUNTIME_HOST_RESPONSE_EVENT = "novel-runtime-host:response";
-export const NOVEL_RUNTIME_HOST_CANCEL_EVENT = "novel-runtime-host:cancel";
-export const NOVEL_RUNTIME_HOST_SHUTDOWN_REQUEST_EVENT = "novel-runtime-host:shutdown-request";
-export const NOVEL_RUNTIME_HOST_SHUTDOWN_COMPLETE_EVENT = "novel-runtime-host:shutdown-complete";
-export const NOVEL_RUNTIME_HOST_START_TIMEOUT_MS = 12_000;
-export const NOVEL_RUNTIME_HOST_REQUEST_TIMEOUT_MS = 15_000;
-export const NOVEL_RUNTIME_HOST_STOP_TIMEOUT_MS = 5_000;
+export * from "./runtimeConstants";
 
 export interface NovelRuntimeHostReadyPayload {
   label: string;

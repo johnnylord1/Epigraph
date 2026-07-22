@@ -10,7 +10,7 @@ Este documento não redefine os bugs confirmados de `bug-report.md`. Os itens ab
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | IMP-001 | Cobertura de testes | O Marco 67 adicionou smoke WebView2 de Home, Library e Settings em 1280×800 e 800×600; o Marco 66 cobre EPUB/PDF. Manga fullscreen ainda depende de catálogo/capítulo real. | Detectar regressões de foco, fullscreen, teclado, diálogos e persistência no runtime real. | Média | Baixo | P2 | Tauri driver, launcher gerenciado, perfis descartáveis | BUG-003 |
 | IMP-002 | Arquitetura | O Marco 65 removeu `source.settings.write`, que não possuía implementação nem chamador de produção. `source.settings.read` continua sob demanda. | Contrato publicado corresponde às capacidades reais. | Concluída | Baixo | Resolvido | `novels/contracts.ts` e testes de contrato | FUNC-063 |
-| IMP-003 | Desempenho | O build de 21/07/2026 alerta para chunks >500 kB; bundle principal tem 1.316,23 kB minificado/380,10 kB gzip e CSS principal 638,96 kB. | Menor tempo de startup, parse e memória do WebView2. | Média | Médio | P2 | code splitting baseado no grafo real de imports | — |
+| IMP-003 | Desempenho | O Marco 70 reduziu o entry em 17,57%, retirou EPUB/PDF/parsers do grafo estático inicial e adicionou budgets determinísticos de bundle e navegação. | Menor tempo de startup, parse e memória do WebView2. | Concluída | Baixo | Resolvido | `release:check-bundles`, `release:check-navigation` | — |
 | IMP-004 | Cobertura de testes | O Marco 66 adicionou gate WebView2 descartável para EPUB/PDF e round-trip de Books, além do contrato de fallback offline. | Provar integridade de dados, rejeição de corrupção e persistência antes de releases. | Concluída | Baixo | Resolvido | `release:certify-data`, perfil Tauri descartável | — |
 | IMP-005 | Observabilidade | O snapshot original tinha 23 erros não tratados; o browser gate atual passou 44/44 sem repetir a falha. | Manter logs com fase, perfil, comando Tauri e correlação sem dados sensíveis nos novos harnesses. | Média | Baixo | P1 | Vitest browser, bridge Tauri, scripts de release | BUG-003 |
 | IMP-006 | Manutenção | O baseline histórico tinha 308 erros e 11 warnings; em 21/07/2026 o `svelte-check` passou com 0 erros e 0 warnings. | Manter o type-check verde como gate de release. | Concluída | Baixo | Resolvido | Svelte/TS, readers, books, i18n, novels | BUG-002 |
@@ -70,4 +70,15 @@ Este documento não redefine os bugs confirmados de `bug-report.md`. Os itens ab
 - Hardcover não inclui corpo remoto em erros 401/403 e sanitiza padrões de credencial nos demais erros.
 - Discord não marca uma presença como enviada quando o cliente não iniciou e recupera em um novo start.
 - O smoke ao vivo permanece opcional e não bloqueante; instalação assinada real continua sendo um gate condicional de release.
-- `IMP-003` e `IMP-010` seguem para o Marco 70, que tratará budgets de bundle e custo dos testes lentos sem reduzir cobertura.
+- `IMP-003` foi tratado no Marco 70. `IMP-010` permanece como otimização independente dos testes Rust de capas Discord; a cobertura atual não foi reduzida nem mascarada.
+
+## Atualização do Marco 70
+
+- `IMP-003` foi concluído com budgets versionados para o entry, o grafo estático inicial, CSS total, chunks comuns e navegação WebView2.
+- O entry caiu de 1.399.311 para 1.153.838 bytes minificados, redução de 17,54%; gzip ficou em 305.962 bytes. O teto versionado é 1.154.000 bytes (1,10 MiB arredondado), preservando retry limitado e backoff dos chunks. EPUB, PDF e parsers permanecem fora do payload estático inicial; storage leve possui chunk próprio.
+- O payload inicial completo ficou em 1.505.574 bytes minificados e 382.305 bytes gzip. O CSS total ficou em 1.033.024 bytes, com limite de regressão de 2%.
+- Cinco sessões nativas descartáveis produziram medianas de 3.292 ms para shell pronto, 75,5 ms para Comics/Books após o painel ativo concluir dois frames, e 432,5 ms por ciclo completo de Search. O gate passa a bloquear regressões futuras acima de 15%; versões anteriores não expunham telemetria nativa equivalente.
+- Vinte ciclos de abrir/fechar Search terminaram sem dim residual; a busca permaneceu acima do overlay (`z-index` 540 contra 90).
+- A pausa global de motion-idle não atinge mais o toast. O container `slideIn` ficou visível e a barra `toastLife` avançou de `scaleX(0,956)` para `scaleX(0,844)` durante a medição.
+- O relatório nativo registra SHA-256 do executável, commit-base e estado dirty. Logs de driver são removidos em sucesso e limitados a três dias após falhas.
+- Evidências finais: `docs/screenshots/marco70-bundle-performance/`. Comics e Books são capturados somente após o painel ativo remover o skeleton e concluir dois frames de pintura; Search e toast também usam estados estáveis. Baselines anteriores permanecem em `marco60-final-runtime` e `marco28a-base`.

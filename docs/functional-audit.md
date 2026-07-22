@@ -221,3 +221,9 @@ O updater do Aethon agora separa histórico público de autoridade de atualizaç
 O gate sanitiza caminhos do workspace e padrões de credenciais antes de imprimir subprocessos. `release:smoke-live` permanece opcional e exige opt-in explícito com endpoints descartáveis; nenhuma conta, cookie, token ou serviço real é necessário para o gate bloqueante.
 
 A tela Settings > About passou em 6/6 testes browser. A baseline foi atualizada somente para registrar o estado saudável agora verificável, “You're on the latest version”; geometria, superfícies e hierarquia permaneceram equivalentes.
+
+## Marco 70 — certificação de bundle e navegação
+
+`release:check-bundles` percorre recursivamente o grafo de imports estáticos, mede entry, payload inicial, gzip, CSS total e chunks comuns. O gate passou com redução de 17,57% no entry e sem vendors de EPUB, PDF ou parsers no carregamento inicial.
+
+`release:check-navigation` usa Tauri/WebView2, Core local simulado e cinco perfis descartáveis. O gate aguarda o painel ativo sem skeleton e dois frames de pintura antes de concluir a troca Comics/Books, além de cobrir vinte ciclos de Search, dim, geometria, overflow e toast em motion-idle. O primeiro baseline instrumentado passou na rodada final com medianas de 3.292 ms, 75,5 ms e 432,5 ms; ele bloqueia regressões futuras de 15%, sem alegar comparação temporal com builds que não possuíam a mesma telemetria. O `report.json` vincula as evidências ao SHA-256 do executável e ao commit-base.

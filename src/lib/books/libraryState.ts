@@ -1,8 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { reconcileBookIdentityState } from "./identity";
-import { BookAssetResolver } from "./assets";
 import { extractIsbns } from "./isbn";
+import { toPersistedBookEntry } from "./persisted";
 import { normalizeBookBookmark, normalizeBookProgress } from "./progress";
 import type { BookBookmarkEntry, BookEntry, BookProgress } from "./types";
 
@@ -215,7 +215,7 @@ export function normalizeBookLibraryState(value: unknown): PersistedBookLibraryS
 
   return {
     version: BOOK_LIBRARY_STATE_VERSION,
-    books: reconciled.books.map((book) => BookAssetResolver.toPersistedBookEntry(book)),
+    books: reconciled.books.map(toPersistedBookEntry),
     bookProgress: reconciled.bookProgress,
     bookBookmarks: Array.isArray(record.bookBookmarks)
       ? record.bookBookmarks

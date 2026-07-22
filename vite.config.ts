@@ -62,6 +62,26 @@ export default defineConfig({
       },
       output: {
         manualChunks(id) {
+          const normalizedId = id.replaceAll("\\", "/");
+          if (normalizedId.includes("vite/preload-helper")) return "runtime-preload";
+          if (
+            normalizedId.includes("/src/lib/books/") &&
+            /\/(identity|isbn|libraryState|persisted|progress|summary)\.(ts|svelte\.ts)$/.test(normalizedId)
+          ) {
+            return "domain-books-core";
+          }
+          if (
+            normalizedId.includes("/src/lib/books/") &&
+            /\/(import|storage)\.(ts|svelte\.ts)$/.test(normalizedId)
+          ) {
+            return "domain-books-storage";
+          }
+          if (
+            normalizedId.includes("/src/lib/books/") &&
+            /\/(assets|epub|importFile|pdf|pdfReflow)\.(ts|svelte\.ts)$/.test(normalizedId)
+          ) {
+            return "domain-books-import";
+          }
           if (!id.includes("node_modules")) return undefined;
           if (id.includes("pdfjs-dist")) return "vendor-pdf";
           if (id.includes("epubjs") || id.includes("jszip") || id.includes("pako")) return "vendor-books";

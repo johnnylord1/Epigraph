@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "maxMedianRegressionPercent": 15,
+  "baselineMethod": "Conservative maximum from two five-session WebView2 passes after Marco 70; this blocks future regressions because earlier builds did not expose equivalent native timing telemetry",
+  "baseline": {
+    "startupMedianMs": 3816,
+    "librarySectionMedianMs": 80,
+    "searchCycleMedianMs": 457
+  }
+}

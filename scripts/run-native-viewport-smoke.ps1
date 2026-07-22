@@ -1,6 +1,7 @@
 param(
   [string]$App,
-  [string]$NativeDriver
+  [string]$NativeDriver,
+  [string]$NodeScript = "smoke-native-viewports.mjs"
 )
 
 $ErrorActionPreference = "Stop"
@@ -38,6 +39,20 @@ function Resolve-EdgeDriver {
 if (-not (Test-Path $tauriDriver)) { throw "tauri-driver was not found at $tauriDriver" }
 if (-not (Test-Path $appPath)) { throw "Automation build was not found at $appPath" }
 
+if (-not $App) {
+  $productionInputs = @(
+    Get-ChildItem -Path (Join-Path $projectRoot "src") -Recurse -File -Include *.ts,*.svelte,*.css,*.json |
+      Where-Object { $_.FullName -notmatch '[\\/]src[\\/]test[\\/]' -and $_.Name -notmatch '\.(test|spec)\.' }
+    Get-ChildItem -Path (Join-Path $projectRoot "src-tauri\src") -Recurse -File -Include *.rs
+    Get-Item (Join-Path $projectRoot "package.json"), (Join-Path $projectRoot "vite.config.ts")
+  )
+  $latestInput = $productionInputs | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+  $appFile = Get-Item $appPath
+  if ($latestInput -and $appFile.LastWriteTimeUtc -lt $latestInput.LastWriteTimeUtc) {
+    throw "Automation build is older than $($latestInput.FullName). Rebuild it or pass -App explicitly."
+  }
+}
+
 $edgeDriver = Resolve-EdgeDriver
 $driverPort = Get-FreePort
 $nativePort = Get-FreePort
@@ -47,6 +62,19 @@ New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
 $stdout = Join-Path $logRoot "tauri-driver-$driverPort.stdout.log"
 $stderr = Join-Path $logRoot "tauri-driver-$driverPort.stderr.log"
 $driverProcess = $null
+$completed = $false
+
+function Remove-DriverLog([string]$Path) {
+  for ($attempt = 0; $attempt -lt 10; $attempt++) {
+    try {
+      [System.IO.File]::Delete($Path)
+      return
+    } catch [System.IO.IOException] {
+      Start-Sleep -Milliseconds 100
+    }
+  }
+  Write-Warning "Could not remove released driver log: $Path"
+}
 
 try {
   $driverProcess = Start-Process -FilePath $tauriDriver `
@@ -63,10 +91,21 @@ try {
   } while ([DateTime]::UtcNow -lt $deadline)
 
   if ([DateTime]::UtcNow -ge $deadline) { throw "tauri-driver did not become ready" }
-  & node (Join-Path $scriptDir "smoke-native-viewports.mjs") "--driver-url=$driverUrl" "--app=$appPath"
+  $nodeScriptPath = Join-Path $scriptDir $NodeScript
+  if (-not (Test-Path $nodeScriptPath)) { throw "Native smoke script was not found at $nodeScriptPath" }
+  & node $nodeScriptPath "--driver-url=$driverUrl" "--app=$appPath"
   if ($LASTEXITCODE -ne 0) { throw "Native viewport smoke failed" }
+  $completed = $true
 } finally {
   if ($driverProcess -and -not $driverProcess.HasExited) {
     Stop-Process -Id $driverProcess.Id -Force -ErrorAction SilentlyContinue
+    [void]$driverProcess.WaitForExit(5000)
   }
+  if ($completed) {
+    Remove-DriverLog $stdout
+    Remove-DriverLog $stderr
+  }
+  Get-ChildItem -Path $logRoot -File -Filter "tauri-driver-*.log" -ErrorAction SilentlyContinue |
+    Where-Object { $_.LastWriteTimeUtc -lt [DateTime]::UtcNow.AddDays(-3) } |
+    Remove-Item -Force -ErrorAction SilentlyContinue
 }

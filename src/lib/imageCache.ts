@@ -1,11 +1,16 @@
 import type { Action } from "svelte/action";
 import { getServerAuthHeader, getServerUrl } from "./client";
+import {
+  IMAGE_CACHE_MAX_BYTES,
+  IMAGE_CACHE_MAX_ENTRIES,
+  registerImageCacheStatsReader,
+  registerImageCacheTrim,
+  type ImageCacheStats,
+} from "./imageCacheMetrics";
 import { traceMediaAudit } from "./mediaAudit";
 
 type HttpModule = typeof import("@tauri-apps/plugin-http");
 
-const MAX_CACHE_ENTRIES = 240;
-const MAX_CACHE_BYTES = 192 * 1024 * 1024;
 const MAX_CONCURRENT_FETCHES = 6;
 
 type MediaAuditEvent = {
@@ -37,14 +42,7 @@ export type ResolvedMediaLease = {
   release: () => void;
 };
 
-export type ImageCacheStats = {
-  entryCount: number;
-  inflightCount: number;
-  totalCachedBytes: number;
-  activeLeaseCount: number;
-  maxEntries: number;
-  maxBytes: number;
-};
+export { getImageCacheStats, type ImageCacheStats } from "./imageCacheMetrics";
 
 const blobCache = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<CacheEntry>>();
@@ -105,7 +103,7 @@ function evictInactiveEntries(forceAll = false): void {
     .sort((left, right) => left.lastAccess - right.lastAccess);
 
   const shouldContinue = () =>
-    forceAll || blobCache.size > MAX_CACHE_ENTRIES || totalCachedBytes > MAX_CACHE_BYTES;
+    forceAll || blobCache.size > IMAGE_CACHE_MAX_ENTRIES || totalCachedBytes > IMAGE_CACHE_MAX_BYTES;
 
   while (candidates.length && shouldContinue()) {
     const next = candidates.shift();
@@ -386,7 +384,7 @@ export function trimImageCache(forceAll = false): void {
   evictInactiveEntries(forceAll);
 }
 
-export function getImageCacheStats(): ImageCacheStats {
+function readImageCacheStats(): ImageCacheStats {
   let activeLeaseCount = 0;
   for (const entry of blobCache.values()) {
     activeLeaseCount += entry.refCount;
@@ -397,10 +395,13 @@ export function getImageCacheStats(): ImageCacheStats {
     inflightCount: inflight.size,
     totalCachedBytes,
     activeLeaseCount,
-    maxEntries: MAX_CACHE_ENTRIES,
-    maxBytes: MAX_CACHE_BYTES,
+    maxEntries: IMAGE_CACHE_MAX_ENTRIES,
+    maxBytes: IMAGE_CACHE_MAX_BYTES,
   };
 }
+
+registerImageCacheStatsReader(readImageCacheStats);
+registerImageCacheTrim(trimImageCache);
 
 export const resolvedImage: Action<HTMLImageElement, string | null | undefined> = (node, initialUrl) => {
   let requestToken = 0;

@@ -11,7 +11,6 @@
     shouldAutoStartManagedServer,
     shouldBootFromLibrarySnapshot,
   } from "./lib/serverBootPolicy";
-  import ReaderPage from "./components/reader/Reader.svelte";
   import {
     DEFAULT_LOCAL_PROFILE_ID,
     type LocalProfileId,
@@ -36,7 +35,6 @@
     addToast,
     openBookReader,
     replaceBooksState,
-    upsertBook,
     updateSettings,
     setActiveDownloads,
     setActiveBookId,
@@ -57,26 +55,16 @@
     setSettingsOpen,
   } from "./store/state.svelte";
   import { applyCustomTheme, clearCustomThemeProperties } from "./lib/theme/provider";
-  import { readFileAsArrayBuffer } from "./lib/books/storage";
-  import { importLocalBookFile } from "./lib/books/importFile";
   import type { AethonRestorePlan, AethonRestorePlannerRuntime } from "./lib/backup/aethonRestorePlanner";
   import type { BackupLaunchIntent } from "./lib/backup/backupRollout";
   import type { AethonNovelRuntimeState } from "./lib/backup/novelsBackup";
   import type { RestoreReadinessSummary } from "./lib/reconciliation/types";
-  import { initRpc, setNavigationPresence, setDownloadPresence, destroyRpc } from "./lib/discord";
   import { cache, CACHE_GROUPS, CACHE_KEYS, DEFAULT_TTL_MS } from "./lib/cache";
   import { normalizeCategories } from "./lib/library/categories";
   import { reconcileComicsChapterSnapshot } from "./lib/library/comicsChapterSnapshot";
   import { loadLibrarySnapshot, saveLibrarySnapshot } from "./lib/library/snapshot";
   import { setLibraryMotionEnvironment } from "./lib/library/motionGate";
   import { getLibraryVisibilityRegistryStats } from "./lib/library/visibilityRegistry";
-  import {
-    clearStaleLibraryUpdateInFlight,
-    formatLibraryUpdateFinalSummary,
-    libraryUpdateProgressNumbers,
-    runSharedLibraryUpdate,
-    showLibraryUpdateProgress as showSharedLibraryUpdateProgress,
-  } from "./lib/library/updateRuntime";
   import { isEditableKeyboardTarget } from "./lib/keybinds";
   import {
     configureLocalServerRuntime,
@@ -85,26 +73,43 @@
     maybeStandbyLocalServer,
     notifyServerReady,
   } from "./lib/serverLifecycle";
-  import { loadNovelRepositoryState } from "./lib/novels/repositoryState";
-  import {
-    listenSyncdReplicationError,
-    listenSyncdReplicationState,
-    type SyncdReplicationSnapshot,
-  } from "./lib/syncdDesktop";
+  import type { SyncdReplicationSnapshot } from "./lib/syncdDesktop";
   import type { TrackerCompletionTracker } from "./lib/library/completion";
-  import { createBooksCategory, getBooksUpdateExcludedBookIds, sortBooksCategories } from "./lib/library/domainCategories";
+  import { getBooksUpdateExcludedBookIds } from "./lib/library/bookUpdateExclusions";
   import type { Category, Chapter, DownloadStatus, DownloadQueueItem, Manga, Tracker } from "./lib/types";
   import type { ActiveDownload } from "./store/state.svelte";
   import { traceMediaAudit } from "./lib/mediaAudit";
-  import { getImageCacheStats, trimImageCache } from "./lib/imageCache";
-  import { refreshSuwayomiUpdateUx } from "./lib/suwayomiUpdateUx.svelte";
+  import { getImageCacheStats, trimImageCacheIfLoaded } from "./lib/imageCacheMetrics";
   import type { AethonUpdateStatus } from "./lib/aethonUpdater";
   import { _, applyAppLanguage } from "./lib/i18n/runtime";
   import { DEFAULT_BUILTIN_THEME_ID, normalizeThemeSelection } from "./lib/theme/contract";
-  import Toaster      from "./components/layout/Toaster.svelte";
   import SplashScreen from "./components/layout/SplashScreen.svelte";
-  import Layout from "./components/layout/Layout.svelte";
-  import { NOVEL_RUNTIME_HOST_LABEL } from "./lib/novels/runtimeHost";
+  import { NOVEL_RUNTIME_HOST_LABEL } from "./lib/novels/runtimeConstants";
+
+  type DiscordRuntime = typeof import("./lib/discord");
+  let discordRuntimePromise: Promise<DiscordRuntime> | null = null;
+
+  function loadDiscordRuntime() {
+    discordRuntimePromise ??= import("./lib/discord");
+    return discordRuntimePromise;
+  }
+
+  async function initRpc(...args: Parameters<DiscordRuntime["initRpc"]>) {
+    return (await loadDiscordRuntime()).initRpc(...args);
+  }
+
+  async function setNavigationPresence(...args: Parameters<DiscordRuntime["setNavigationPresence"]>) {
+    return (await loadDiscordRuntime()).setNavigationPresence(...args);
+  }
+
+  async function setDownloadPresence(...args: Parameters<DiscordRuntime["setDownloadPresence"]>) {
+    return (await loadDiscordRuntime()).setDownloadPresence(...args);
+  }
+
+  async function destroyRpc() {
+    if (!discordRuntimePromise) return;
+    return (await discordRuntimePromise).destroyRpc();
+  }
 
   $effect(() => {
     const themeId  = normalizeThemeSelection(store.settings.theme, store.settings.customThemes ?? []);
@@ -134,6 +139,9 @@
   type LazyModule = { default: any };
   type LazyKey =
     | "novelRuntimeHost"
+    | "layout"
+    | "toaster"
+    | "mangaReader"
     | "bookReader"
     | "novelDetail"
     | "novelReader"
@@ -142,6 +150,9 @@
 
   const lazyLoaders: Record<LazyKey, () => Promise<LazyModule>> = {
     novelRuntimeHost: () => import("./components/novels/NovelRuntimeHost.svelte"),
+    layout: () => import("./components/layout/Layout.svelte"),
+    toaster: () => import("./components/layout/Toaster.svelte"),
+    mangaReader: () => import("./components/reader/Reader.svelte"),
     bookReader: () => import("./components/reader/BookReader.svelte"),
     novelDetail: () => import("./components/pages/NovelDetail.svelte"),
     novelReader: () => import("./components/reader/NovelReader.svelte"),
@@ -150,17 +161,53 @@
   };
 
   let NovelRuntimeHostComponent = $state<any>(null);
+  let LayoutComponent = $state<any>(null);
+  let ToasterComponent = $state<any>(null);
+  let MangaReaderComponent = $state<any>(null);
   let BookReaderComponent = $state<any>(null);
   let NovelDetailComponent = $state<any>(null);
   let NovelReaderComponent = $state<any>(null);
   let ThemeEditorComponent = $state<any>(null);
   let MangaPreviewComponent = $state<any>(null);
+  let lazyRetryEpoch = $state(0);
   const lazyComponentPromises = new Map<LazyKey, Promise<any>>();
+  const lazyComponentRetryTimers = new Map<LazyKey, ReturnType<typeof setTimeout>>();
+  const lazyComponentRetryCounts = new Map<LazyKey, number>();
+
+  function scheduleLazyComponentRetry(key: LazyKey) {
+    if (lazyComponentRetryTimers.has(key)) return;
+    const retryCount = (lazyComponentRetryCounts.get(key) ?? 0) + 1;
+    if (retryCount > 4) return;
+    lazyComponentRetryCounts.set(key, retryCount);
+    const timer = setTimeout(() => {
+      lazyComponentRetryTimers.delete(key);
+      lazyRetryEpoch += 1;
+    }, 1_500 * (2 ** (retryCount - 1)));
+    lazyComponentRetryTimers.set(key, timer);
+  }
 
   async function ensureLazyComponent(key: LazyKey) {
     let pending = lazyComponentPromises.get(key);
     if (!pending) {
-      pending = lazyLoaders[key]().then((module) => module.default);
+      pending = lazyLoaders[key]()
+        .then((module) => {
+          lazyComponentRetryCounts.delete(key);
+          return module.default;
+        })
+        .catch(async (firstError) => {
+          console.warn(`Retrying lazy component "${key}" after load failure:`, firstError);
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          return lazyLoaders[key]().then((module) => {
+            lazyComponentRetryCounts.delete(key);
+            return module.default;
+          });
+        })
+        .catch((error) => {
+          console.error(`Failed to load lazy component "${key}":`, error);
+          lazyComponentPromises.delete(key);
+          scheduleLazyComponentRetry(key);
+          return null;
+        });
       lazyComponentPromises.set(key, pending);
     }
     return pending;
@@ -180,6 +227,7 @@
   const STARTUP_FAILSAFE_MS = 18_000;
   let win: TauriWindow | null = null;
   let isNovelRuntimeHostWindow = $state(false);
+  let runtimeWindowClassified = $state(false);
 
 
   let serverProbeOk = $state(false);
@@ -275,6 +323,7 @@
   });
 
   $effect(() => {
+    lazyRetryEpoch;
     if (isNovelRuntimeHostWindow && !NovelRuntimeHostComponent) {
       void ensureLazyComponent("novelRuntimeHost").then((component) => {
         if (component) NovelRuntimeHostComponent = component;
@@ -283,6 +332,34 @@
   });
 
   $effect(() => {
+    lazyRetryEpoch;
+    if (activeReaderChapter && !MangaReaderComponent) {
+      void ensureLazyComponent("mangaReader").then((component) => {
+        if (component) MangaReaderComponent = component;
+      });
+    }
+  });
+
+  $effect(() => {
+    lazyRetryEpoch;
+    if (runtimeWindowClassified && !isNovelRuntimeHostWindow && !LayoutComponent) {
+      void ensureLazyComponent("layout").then((component) => {
+        if (component) LayoutComponent = component;
+      });
+    }
+  });
+
+  $effect(() => {
+    lazyRetryEpoch;
+    if ((store.toasts.length || store.libraryUpdateProgress) && !ToasterComponent) {
+      void ensureLazyComponent("toaster").then((component) => {
+        if (component) ToasterComponent = component;
+      });
+    }
+  });
+
+  $effect(() => {
+    lazyRetryEpoch;
     if (store.activeBookReaderId && !BookReaderComponent) {
       void ensureLazyComponent("bookReader").then((component) => {
         if (component) BookReaderComponent = component;
@@ -291,6 +368,7 @@
   });
 
   $effect(() => {
+    lazyRetryEpoch;
     if (store.activeNovelReader && !NovelReaderComponent) {
       void ensureLazyComponent("novelReader").then((component) => {
         if (component) NovelReaderComponent = component;
@@ -299,6 +377,7 @@
   });
 
   $effect(() => {
+    lazyRetryEpoch;
     if (store.activeNovelDetail && !NovelDetailComponent) {
       void ensureLazyComponent("novelDetail").then((component) => {
         if (component) NovelDetailComponent = component;
@@ -307,6 +386,7 @@
   });
 
   $effect(() => {
+    lazyRetryEpoch;
     if (themeEditorOpen && !ThemeEditorComponent) {
       void ensureLazyComponent("themeEditor").then((component) => {
         if (component) ThemeEditorComponent = component;
@@ -315,7 +395,8 @@
   });
 
   $effect(() => {
-    if (!MangaPreviewComponent) {
+    lazyRetryEpoch;
+    if (store.previewManga && !MangaPreviewComponent) {
       void ensureLazyComponent("mangaPreview").then((component) => {
         if (component) MangaPreviewComponent = component;
       });
@@ -348,6 +429,16 @@
   let automaticLibraryUpdateInFlight: Promise<void> | null = null;
   let standbyInFlight = false;
   let staleLibraryUpdateCheckTimer: ReturnType<typeof setTimeout> | null = null;
+  let libraryUpdateRuntimePromise: Promise<typeof import("./lib/library/updateRuntime")> | null = null;
+
+  function loadLibraryUpdateRuntime() {
+    libraryUpdateRuntimePromise ??= import("./lib/library/updateRuntime");
+    return libraryUpdateRuntimePromise;
+  }
+
+  async function clearStaleLibraryUpdateInFlight() {
+    return (await loadLibraryUpdateRuntime()).clearStaleLibraryUpdateInFlight();
+  }
 
   async function handleReplicationState(payload: SyncdReplicationSnapshot) {
     if (!payload.lastAppliedAtMs || payload.lastAppliedScopes.length === 0) return;
@@ -649,8 +740,9 @@
 
   async function runAutomaticLibraryUpdate(reason: "startup" | "focus" | "interval") {
     if (automaticLibraryUpdateInFlight) return automaticLibraryUpdateInFlight;
+    const updateRuntime = await loadLibraryUpdateRuntime();
     if (store.libraryUpdateInFlight) {
-      await clearStaleLibraryUpdateInFlight();
+      await updateRuntime.clearStaleLibraryUpdateInFlight();
     }
     if (store.libraryUpdateInFlight) return null;
     if (!store.runtimeResolvedLocalProfileId || !store.runtimeServerUrl) return null;
@@ -661,14 +753,14 @@
     setLibraryUpdateInFlight(true);
     automaticLibraryUpdateInFlight = (async () => {
       const beforeUpdate = [...store.libraryMangaSnapshot];
-      const updateRun = await runSharedLibraryUpdate({ reason: "auto-library-update" });
+      const updateRun = await updateRuntime.runSharedLibraryUpdate({ reason: "auto-library-update" });
       const updatedAt = updateRun.updatedAt;
       updateSettings({ lastLibraryUpdateAt: updatedAt });
       cache.clearGroup(CACHE_GROUPS.LIBRARY);
       await preloadLibrarySnapshot(true);
       bumpLibraryCoverCacheGeneration();
       if (updateRun.cancelled) {
-        showSharedLibraryUpdateProgress("Library update stopped.", 1800);
+        updateRuntime.showLibraryUpdateProgress("Library update stopped.", 1800);
         return;
       }
       const comicsReconcile = await reconcileLibrarySnapshotChaptersAfterUpdate(
@@ -760,10 +852,10 @@
           body: `${updateIssues.length} title${updateIssues.length === 1 ? "" : "s"} could not update. See Recent Activity.`,
         });
       }
-      showSharedLibraryUpdateProgress(
-        formatLibraryUpdateFinalSummary("Comics library", updateRun.jobsInfo, comicsIssueCount),
+      updateRuntime.showLibraryUpdateProgress(
+        updateRuntime.formatLibraryUpdateFinalSummary("Comics library", updateRun.jobsInfo, comicsIssueCount),
         1800,
-        libraryUpdateProgressNumbers(updateRun.jobsInfo),
+        updateRuntime.libraryUpdateProgressNumbers(updateRun.jobsInfo),
       );
       await maybeStandbyAfterIdle("auto-library-update");
     })()
@@ -774,7 +866,7 @@
           title: "Automatic library update failed",
           body: error instanceof Error ? error.message : "Aethon could not refresh your library.",
         });
-        showSharedLibraryUpdateProgress("Automatic library update failed.", 2200);
+        updateRuntime.showLibraryUpdateProgress("Automatic library update failed.", 2200);
       })
       .finally(() => {
         automaticLibraryUpdateInFlight = null;
@@ -885,6 +977,7 @@
     openSettings: () => void;
     closeSettings: () => void;
     openLibrary: () => void;
+    prepareLibrary: () => Promise<void>;
     openBooksLibrary: () => void;
     openFirstManga: () => void;
     openFirstReader: () => Promise<void>;
@@ -901,6 +994,7 @@
       activeBookReaderId: string | null;
       settingsOpen: boolean;
       splashVisible: boolean;
+      shellReady: boolean;
       profileId: string | null;
       serverUrl: string | null;
     };
@@ -975,6 +1069,7 @@
     }>;
     enableMediaAudit: () => void;
     disableMediaAudit: () => void;
+    showPerformanceToast: () => Promise<void>;
   };
 
   type AethonAuditWindow = globalThis.Window & {
@@ -1121,6 +1216,7 @@
       },
     });
 
+    const { resolveAuditSyncScope } = await import("./lib/release/appAuditDataBridge");
     const scope = resolveAuditSyncScope();
     const { reloadNovelLibraryState, getNovelLibraryChapters, buildNovelDetailRecordFromLibrary } = await import("./lib/novels/libraryState");
     const state = await reloadNovelLibraryState(scope);
@@ -1145,6 +1241,7 @@
       activeBookReaderId: store.activeBookReaderId,
       settingsOpen: store.settingsOpen,
       splashVisible: devSplash || startupSplashVisible,
+      shellReady,
       profileId: normalizeLocalProfileIdFromSession(store.runtimeResolvedLocalProfileId),
       serverUrl: normalizeServerUrlFromSession(store.runtimeServerUrl),
     };
@@ -1176,419 +1273,33 @@
     };
   }
 
-  const AUDIT_SYNCD_BOOK_ID = "audit-sync-book";
-  const AUDIT_SYNCD_NOVEL_SOURCE_ID = "audit-sync-source";
-  const AUDIT_SYNCD_NOVEL_PATH = "/audit-sync-novel";
-  const AUDIT_SYNCD_NOVEL_CHAPTER_PATH = "/chapter-1";
-
-  function resolveAuditSyncScope() {
-    const profileId = normalizeLocalProfileIdFromSession(store.runtimeResolvedLocalProfileId);
-    const serverUrl = normalizeServerUrlFromSession(store.runtimeResolvedLocalProfileMeta?.serverUrl ?? store.runtimeServerUrl);
-    return { profileId, serverUrl };
-  }
-
-  async function readAuditNovelLibraryPersistence() {
-    const scope = {
-      profileId: normalizeLocalProfileIdFromSession(store.runtimeResolvedLocalProfileId),
-      serverUrl: normalizeServerUrlFromSession(store.runtimeServerUrl),
-    };
-    const [{ reloadNovelLibraryState }, rawState, storageRoot] = await Promise.all([
-      import("./lib/novels/libraryState"),
-      invoke<string | null>("read_novel_library_state", scope).catch(() => null),
-      invoke<string>("resolve_novel_storage_root", scope).catch(() => null),
-    ]);
-
-    return {
-      storageRoot,
-      rawState,
-      state: await reloadNovelLibraryState(scope),
-    };
-  }
-
-  async function readAuditBookLibraryPersistence() {
-    const profileId = store.runtimeResolvedLocalProfileId;
-    const [{ reloadBookLibraryState }, rawState, storageRoot] = await Promise.all([
-      import("./lib/books/libraryState"),
-      invoke<string | null>("read_book_library_state", { profileId }).catch(() => null),
-      invoke<string>("resolve_book_storage_root").catch(() => null),
-    ]);
-
-    return {
-      storageRoot,
-      rawState,
-      state: await reloadBookLibraryState({ profileId }),
-    };
-  }
-
-  async function importAuditBookFromPath(sourcePath: string) {
-    await assertWebdriverAutomation();
-    const imported = await importLocalBookFile(sourcePath, { existingBooks: store.books });
-    upsertBook(imported.entry);
-
-    const category = store.settings.booksCategories.find((entry) => entry.name === "Audit Shelf")
-      ?? createBooksCategory(store.settings.booksCategories, "Audit Shelf");
-
-    const booksCategories = sortBooksCategories([
-      ...store.settings.booksCategories.filter((entry) => entry.id !== category.id),
-      category,
-    ]);
-    const previousAssignments = store.settings.booksCategoryAssignments[imported.entry.id] ?? [];
-    const booksCategoryAssignments = {
-      ...store.settings.booksCategoryAssignments,
-      [imported.entry.id]: Array.from(new Set([...previousAssignments, category.id])),
-    };
-
-    updateSettings({
-      booksCategories,
-      booksCategoryAssignments,
-      booksLibraryUi: {
-        ...store.settings.booksLibraryUi,
-        activeCategoryId: category.id,
-        typeFilter: imported.entry.subtype,
-        search: imported.entry.title,
-      },
-    });
-
-    return {
-      id: imported.entry.id,
-      title: imported.entry.title,
-      subtype: imported.entry.subtype,
-      categoryId: category.id,
-    };
-  }
-
-  async function assertWebdriverAutomation() {
-    const enabled = await invoke<boolean>("is_webdriver_automation").catch(() => false);
-    if (!enabled) {
-      throw new Error("This audit operation is available only in WebDriver automation mode.");
-    }
-  }
-
-  function bytesToBase64(bytes: Uint8Array): string {
-    let binary = "";
-    const chunkSize = 0x8000;
-    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-      binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
-    }
-    return btoa(binary);
-  }
-
-  async function setAuditBookReadingState(input: {
-    bookId: string;
-    progressPercent: number;
-    bookmarkLabel: string;
-  }) {
-    await assertWebdriverAutomation();
-    const { reloadBookLibraryState, saveBookLibraryState } = await import("./lib/books/libraryState");
-    const profileId = store.runtimeResolvedLocalProfileId;
-    const state = await reloadBookLibraryState({ profileId });
-    const book = state.books.find((entry) => entry.id === input.bookId);
-    if (!book) throw new Error(`Audit book ${input.bookId} was not found.`);
-
-    const progressPercent = Math.max(0, Math.min(1, input.progressPercent));
-    const now = Date.now();
-    const location = book.subtype === "pdf" ? `page:${Math.max(1, Math.round(progressPercent * Math.max(1, book.pageCount ?? 1)))}` : `audit:${book.id}:${progressPercent}`;
-    const saved = await saveBookLibraryState({
-      ...state,
-      bookProgress: [
-        ...state.bookProgress.filter((entry) => entry.bookId !== book.id),
-        {
-          bookId: book.id,
-          location,
-          href: book.subtype === "pdf" ? null : book.sectionsSummary?.[0]?.href ?? null,
-          progressPercent,
-          lastReadAt: now,
-          pageIndex: book.subtype === "pdf" ? Math.max(0, Math.round(progressPercent * Math.max(1, book.pageCount ?? 1)) - 1) : null,
-          totalPages: book.subtype === "pdf" ? book.pageCount ?? 1 : null,
-          sectionLabel: book.subtype === "pdf" ? "Audit page" : book.sectionsSummary?.[0]?.label ?? "Audit section",
-          renderer: book.subtype,
-        },
-      ],
-      bookBookmarks: [
-        ...state.bookBookmarks.filter((entry) => entry.bookId !== book.id),
-        {
-          bookId: book.id,
-          location,
-          href: book.subtype === "pdf" ? null : book.sectionsSummary?.[0]?.href ?? null,
-          pageIndex: book.subtype === "pdf" ? Math.max(0, Math.round(progressPercent * Math.max(1, book.pageCount ?? 1)) - 1) : null,
-          progressPercent,
-          label: input.bookmarkLabel,
-          savedAt: now,
-        },
-      ],
-      updatedAtMs: now,
-    }, { profileId });
-
-    replaceBooksState(saved);
-    return {
-      bookId: book.id,
-      progressCount: saved.bookProgress.filter((entry) => entry.bookId === book.id).length,
-      bookmarkCount: saved.bookBookmarks.filter((entry) => entry.bookId === book.id).length,
-    };
-  }
-
-  async function exportAuditBooksBackupToPath(path: string) {
-    await assertWebdriverAutomation();
-    const profileId = store.runtimeResolvedLocalProfileId;
-    const [{ reloadBookLibraryState }, { buildAethonBooksBackupContainer, buildAethonBooksSnapshotFromLibraryState }] = await Promise.all([
-      import("./lib/books/libraryState"),
-      import("./lib/backup/booksBackup"),
-    ]);
-    const state = await reloadBookLibraryState({ profileId });
-    const container = await buildAethonBooksBackupContainer(
-      buildAethonBooksSnapshotFromLibraryState(state),
-      { exportMode: "full", sourceProfileId: profileId },
-    );
-    const writtenPath = await invoke<string>("write_file_base64", {
-      path,
-      bytesBase64: bytesToBase64(container.bytes),
-    });
-    const sha256 = await invoke<string>("compute_file_sha256", { path: writtenPath });
-    return {
-      path: writtenPath,
-      sha256,
-      bookCount: state.books.length,
-      progressCount: state.bookProgress.length,
-      bookmarkCount: state.bookBookmarks.length,
-    };
-  }
-
-  async function restoreAuditBooksBackupFromPath(path: string) {
-    await assertWebdriverAutomation();
-    const [{ restoreAethonBooksPayload }, { saveBookLibraryState }] = await Promise.all([
-      import("./lib/backup/booksBackup"),
-      import("./lib/books/libraryState"),
-    ]);
-    const bytes = await readFileAsArrayBuffer(path);
-    const restored = await restoreAethonBooksPayload(bytes);
-    const profileId = store.runtimeResolvedLocalProfileId;
-    const saved = await saveBookLibraryState({
-      version: 1,
-      books: restored.books,
-      bookProgress: restored.bookProgress,
-      bookBookmarks: restored.bookBookmarks,
-      booksCategories: restored.booksCategories,
-      booksCategoryAssignments: restored.booksCategoryAssignments,
-      booksLibraryUi: store.settings.booksLibraryUi,
-      updatedAtMs: Date.now(),
-    }, { profileId });
-    replaceBooksState(saved);
-    return {
-      bookCount: restored.books.length,
-      progressCount: restored.bookProgress.length,
-      bookmarkCount: restored.bookBookmarks.length,
-      issueCount: restored.issues.length,
-    };
-  }
-
-  async function mutateSyncdAuditBookFixture(input?: {
-    mode?: "progress" | "bookmark" | "clear_bookmarks";
-    marker?: string | null;
-    progressPercent?: number | null;
-  }) {
-    await assertWebdriverAutomation();
-    const { reloadBookLibraryState, saveBookLibraryState } = await import("./lib/books/libraryState");
-    const mode = input?.mode ?? "progress";
-    const marker = input?.marker?.trim() || "audit";
-    const now = Date.now();
-    const progressPercent = typeof input?.progressPercent === "number"
-      ? Math.max(0, Math.min(1, input.progressPercent))
-      : 0.5;
-
-    const profileId = store.runtimeResolvedLocalProfileId;
-    const state = await reloadBookLibraryState({ profileId });
-    const books = state.books.some((entry) => entry.id === AUDIT_SYNCD_BOOK_ID)
-      ? state.books
-      : [
-          ...state.books,
-          {
-            id: AUDIT_SYNCD_BOOK_ID,
-            title: "Audit Sync Book",
-            author: "Aethon",
-            description: "Automation-only sync replication fixture.",
-            coverPath: null,
-            subtype: "epub" as const,
-            createdAt: now,
-            updatedAt: now,
-            importPath: "audit://sync-book.epub",
-            assetPath: "audit://sync-book.epub",
-            sectionCount: 1,
-          },
-        ];
-
-    let bookProgress = state.bookProgress.filter((entry) => entry.bookId !== AUDIT_SYNCD_BOOK_ID);
-    let bookBookmarks = state.bookBookmarks.filter((entry) => !(entry.bookId === AUDIT_SYNCD_BOOK_ID && entry.location === "audit-sync-bookmark"));
-
-    if (mode === "progress") {
-      bookProgress = [
-        ...bookProgress,
-        {
-          bookId: AUDIT_SYNCD_BOOK_ID,
-          location: `audit-progress-${marker}`,
-          href: `/audit/${marker}`,
-          progressPercent,
-          lastReadAt: now,
-          pageIndex: 1,
-          totalPages: 10,
-          sectionLabel: `Audit ${marker}`,
-          renderer: "epub" as const,
-        },
-      ];
-    } else if (mode === "bookmark") {
-      bookBookmarks = [
-        ...bookBookmarks,
-        {
-          bookId: AUDIT_SYNCD_BOOK_ID,
-          location: "audit-sync-bookmark",
-          href: `/audit/bookmark/${marker}`,
-          pageIndex: 1,
-          progressPercent,
-          label: `Audit bookmark ${marker}`,
-          savedAt: now,
-        },
-      ];
-    }
-
-    const saved = await saveBookLibraryState({
-      ...state,
-      books,
-      bookProgress,
-      bookBookmarks,
-      updatedAtMs: now,
-    }, { profileId });
-
-    return {
-      bookId: AUDIT_SYNCD_BOOK_ID,
-      progressPercent: mode === "progress" ? progressPercent : null,
-      bookmarkLabel: mode === "bookmark" ? `Audit bookmark ${marker}` : null,
-      bookmarkCount: saved.bookBookmarks.filter((entry) => entry.bookId === AUDIT_SYNCD_BOOK_ID).length,
-    };
-  }
-
-  async function mutateSyncdAuditNovelFixture(input?: {
-    mode?: "progress" | "bookmark" | "clear_bookmarks";
-    marker?: string | null;
-    progressPercent?: number | null;
-  }) {
-    await assertWebdriverAutomation();
-    const scope = resolveAuditSyncScope();
-    if (!scope.profileId) {
-      throw new Error("No active local profile is available for the syncd novel audit fixture.");
-    }
-
-    const {
-      reloadNovelLibraryState,
-      saveNovelLibraryState,
-      upsertNovelInLibrary,
-      markNovelChapterRead,
-    } = await import("./lib/novels/libraryState");
-    const {
-      createNovelLibraryId,
-      createNovelChapterId,
-    } = await import("./lib/novels/domain");
-
-    const mode = input?.mode ?? "progress";
-    const marker = input?.marker?.trim() || "audit";
-    const now = Date.now();
-    const requestedProgressPercent = typeof input?.progressPercent === "number"
-      ? Math.max(0, Math.min(1, input.progressPercent))
-      : 1;
-
-    const novelId = createNovelLibraryId(AUDIT_SYNCD_NOVEL_SOURCE_ID, AUDIT_SYNCD_NOVEL_PATH);
-    const chapterId = createNovelChapterId(novelId, AUDIT_SYNCD_NOVEL_CHAPTER_PATH);
-    const chapterTitle = "Audit Chapter 1";
-
-    let state = await reloadNovelLibraryState(scope);
-    state = upsertNovelInLibrary(state, {
-      id: novelId,
-      sourceId: AUDIT_SYNCD_NOVEL_SOURCE_ID,
-      title: "Audit Sync Novel",
-      path: AUDIT_SYNCD_NOVEL_PATH,
-      coverUrl: null,
-      author: "Aethon",
-      description: "Automation-only sync replication fixture.",
-      status: "ongoing",
-      tags: ["audit", "syncd"],
-      chapterCount: 1,
-      chapters: [
-        {
-          id: chapterId,
-          novelId,
-          path: AUDIT_SYNCD_NOVEL_CHAPTER_PATH,
-          title: chapterTitle,
-          order: 1,
-          releaseTime: null,
-          unread: true,
-        },
-      ],
-      source: {
-        repositoryUrl: "https://audit.invalid/repo",
-        repositoryName: "Audit Repository",
-        pluginId: "audit-sync-plugin",
-        pluginName: "Audit Sync Plugin",
-        pluginVersion: "1.0.0",
-        sourceId: AUDIT_SYNCD_NOVEL_SOURCE_ID,
-        sourceName: "Audit Source",
-        lang: "en",
-      },
-    });
-
-    if (mode === "progress") {
-      state = markNovelChapterRead(state, {
-        novelId,
-        chapterId,
-        chapterTitle,
-      });
-      if (requestedProgressPercent < 1) {
-        state = {
-          ...state,
-          progress: state.progress.map((entry) => entry.novelId === novelId
-            ? { ...entry, progressPercent: requestedProgressPercent, updatedAt: now }
-            : entry),
-          updatedAtMs: now,
-        };
-      }
-    } else if (mode === "bookmark") {
-      state = {
-        ...state,
-        bookmarks: [
-          ...state.bookmarks.filter((entry) => !(entry.novelId === novelId && entry.locator === "audit-sync-novel-bookmark")),
-          {
-            novelId,
-            chapterId,
-            chapterTitle,
-            locator: "audit-sync-novel-bookmark",
-            label: `Audit novel bookmark ${marker}`,
-            savedAt: now,
-          },
-        ],
-        updatedAtMs: now,
-      };
-    } else {
-      state = {
-        ...state,
-        bookmarks: state.bookmarks.filter((entry) => !(entry.novelId === novelId && entry.locator === "audit-sync-novel-bookmark")),
-        updatedAtMs: now,
-      };
-    }
-
-    const saved = await saveNovelLibraryState(state, scope);
-    return {
-      profileId: scope.profileId,
-      novelId,
-      chapterId,
-      progressPercent: mode === "progress" ? requestedProgressPercent : null,
-      bookmarkLabel: mode === "bookmark" ? `Audit novel bookmark ${marker}` : null,
-      bookmarkCount: saved.bookmarks.filter((entry) => entry.novelId === novelId).length,
-    };
-  }
-
   function enableMediaAudit() {
     (window as AethonAuditWindow).__aethonMediaAudit = true;
   }
 
   function disableMediaAudit() {
     (window as AethonAuditWindow).__aethonMediaAudit = false;
+  }
+
+  async function showPerformanceToast() {
+    const enabled = await invoke<boolean>("is_webdriver_automation").catch(() => false);
+    if (!enabled) throw new Error("WebDriver automation required.");
+    addToast({
+      id: "release-performance-toast",
+      kind: "info",
+      title: "Performance check",
+      body: "Validating notification motion.",
+      duration: 6_000,
+    });
+  }
+
+  type AuditDataBridge = ReturnType<(typeof import("./lib/release/appAuditDataBridge"))["createAuditDataBridge"]>;
+  let auditDataBridgePromise: Promise<AuditDataBridge> | null = null;
+
+  function loadAuditDataBridge() {
+    auditDataBridgePromise ??= import("./lib/release/appAuditDataBridge")
+      .then(({ createAuditDataBridge }) => createAuditDataBridge());
+    return auditDataBridgePromise;
   }
 
   function installAuditBridge() {
@@ -1602,6 +1313,9 @@
       openSettings: openAuditSettings,
       closeSettings: closeAuditSettings,
       openLibrary: openAuditLibrary,
+      prepareLibrary: async () => {
+        await preloadLibrarySnapshot(true);
+      },
       openBooksLibrary: openAuditBooksLibrary,
       openFirstManga: openAuditFirstManga,
       openFirstReader: openAuditFirstReader,
@@ -1611,16 +1325,17 @@
       openFirstNovel: openAuditFirstNovel,
       getState: getAuditState,
       getSyncdPanelDiagnostics,
-      readNovelLibraryPersistence: readAuditNovelLibraryPersistence,
-      readBookLibraryPersistence: readAuditBookLibraryPersistence,
-      importBookFromPath: importAuditBookFromPath,
-      setBookReadingState: setAuditBookReadingState,
-      exportBooksBackupToPath: exportAuditBooksBackupToPath,
-      restoreBooksBackupFromPath: restoreAuditBooksBackupFromPath,
-      mutateSyncdAuditBookFixture,
-      mutateSyncdAuditNovelFixture,
+      readNovelLibraryPersistence: () => loadAuditDataBridge().then((bridge) => bridge.readNovelLibraryPersistence()),
+      readBookLibraryPersistence: () => loadAuditDataBridge().then((bridge) => bridge.readBookLibraryPersistence()),
+      importBookFromPath: (sourcePath) => loadAuditDataBridge().then((bridge) => bridge.importBookFromPath(sourcePath)),
+      setBookReadingState: (input) => loadAuditDataBridge().then((bridge) => bridge.setBookReadingState(input)),
+      exportBooksBackupToPath: (path) => loadAuditDataBridge().then((bridge) => bridge.exportBooksBackupToPath(path)),
+      restoreBooksBackupFromPath: (path) => loadAuditDataBridge().then((bridge) => bridge.restoreBooksBackupFromPath(path)),
+      mutateSyncdAuditBookFixture: (input) => loadAuditDataBridge().then((bridge) => bridge.mutateSyncdAuditBookFixture(input)),
+      mutateSyncdAuditNovelFixture: (input) => loadAuditDataBridge().then((bridge) => bridge.mutateSyncdAuditNovelFixture(input)),
       enableMediaAudit,
       disableMediaAudit,
+      showPerformanceToast,
     };
   }
 
@@ -1784,7 +1499,7 @@
     lastRuntimeTrimAt = now;
 
     cache.trimExpired(now);
-    trimImageCache(false);
+    trimImageCacheIfLoaded(false);
 
   }
 
@@ -1981,6 +1696,11 @@
     return primary ? [primary] : [];
   }
 
+  async function readFileAsArrayBuffer(path: string): Promise<ArrayBuffer> {
+    const storage = await import("./lib/books/storage");
+    return storage.readFileAsArrayBuffer(path);
+  }
+
   async function applyPendingAuditBooksRestore() {
     const path = pendingAuditBooksBackupPath?.trim();
     if (!path) return;
@@ -2103,6 +1823,7 @@
   }
 
   async function loadNovelAuditRuntimeState(): Promise<AethonNovelRuntimeState> {
+    const { loadNovelRepositoryState } = await import("./lib/novels/repositoryState");
     const state = await loadNovelRepositoryState({
       profileId: store.runtimeResolvedLocalProfileId,
       serverUrl: store.runtimeResolvedLocalProfileMeta?.serverUrl ?? store.runtimeServerUrl,
@@ -2689,6 +2410,7 @@
       console.warn("Unable to inspect current webview during startup:", error);
       isNovelRuntimeHostWindow = false;
     }
+    runtimeWindowClassified = true;
 
     if (isNovelRuntimeHostWindow) {
       startupSplashVisible = false;
@@ -2981,6 +2703,10 @@
     if (shouldListenToSyncdReplication) {
       if (!syncdListenersAttached && !syncdListenersPromise) {
         syncdListenersPromise = (async () => {
+          const {
+            listenSyncdReplicationError,
+            listenSyncdReplicationState,
+          } = await import("./lib/syncdDesktop");
           const replicationStateUnlisten = await listenSyncdReplicationState((payload) => {
             void handleReplicationState(payload);
           }).catch((error) => {
@@ -3033,7 +2759,9 @@
   $effect(() => {
     if (!shellReady || isNovelRuntimeHostWindow) return;
     const timer = setTimeout(() => {
-      void refreshSuwayomiUpdateUx({ notify: true }).catch(() => {});
+      void import("./lib/suwayomiUpdateUx.svelte")
+        .then(({ refreshSuwayomiUpdateUx }) => refreshSuwayomiUpdateUx({ notify: true }))
+        .catch(() => {});
     }, 7_000);
     return () => clearTimeout(timer);
   });
@@ -3264,9 +2992,14 @@
       {/if}
       <div class="content">
         {#if activeReaderChapter}
-          {#key readerRenderKey}
-            <ReaderPage />
-          {/key}
+          {#if MangaReaderComponent}
+            {@const MangaReaderView = MangaReaderComponent}
+            {#key readerRenderKey}
+              <MangaReaderView />
+            {/key}
+          {:else}
+            <div class="page-loading" aria-busy="true" aria-live="polite">{$_("ui_loadingChapters")}</div>
+          {/if}
         {:else if store.activeBookReaderId}
           {#if BookReaderComponent}
             {@const BookReaderView = BookReaderComponent}
@@ -3289,17 +3022,27 @@
             <div class="page-loading" aria-busy="true" aria-live="polite">{$_("ui_loadingDetails")}</div>
           {/if}
         {:else if store.navPage === "settings" || store.navPage === "home" || store.navPage === "library" || store.navPage === "search" || store.navPage === "downloads"}
-          <Layout
-            onOpenThemeEditor={openThemeEditor}
-            {backupAuditPlan}
-            {backupRestoreLaunchIntent}
-          />
+          {#if LayoutComponent}
+            {@const LayoutView = LayoutComponent}
+            <LayoutView
+              onOpenThemeEditor={openThemeEditor}
+              {backupAuditPlan}
+              {backupRestoreLaunchIntent}
+            />
+          {:else}
+            <div class="page-loading" aria-busy="true" aria-live="polite">{$_("ui_loading")}</div>
+          {/if}
         {:else}
-          <Layout
-            onOpenThemeEditor={openThemeEditor}
-            {backupAuditPlan}
-            {backupRestoreLaunchIntent}
-          />
+          {#if LayoutComponent}
+            {@const LayoutView = LayoutComponent}
+            <LayoutView
+              onOpenThemeEditor={openThemeEditor}
+              {backupAuditPlan}
+              {backupRestoreLaunchIntent}
+            />
+          {:else}
+            <div class="page-loading" aria-busy="true" aria-live="polite">{$_("ui_loading")}</div>
+          {/if}
         {/if}
       </div>
       <div class="aethon-search-dim-layer" aria-hidden="true"></div>
@@ -3327,7 +3070,10 @@
         {@const MangaPreviewView = MangaPreviewComponent}
         <MangaPreviewView />
       {/if}
-      <Toaster />
+      {#if ToasterComponent}
+        {@const ToasterView = ToasterComponent}
+        <ToasterView />
+      {/if}
     </div>
 
   {#if devSplash}
@@ -3402,12 +3148,17 @@
     animation-play-state: paused !important;
   }
 
-  :global([data-aethon-motion="idle"] .aethon-app-shell *:not(.anim-spin):not(.anim-liquid-progress)) {
+  :global([data-aethon-motion="idle"] .aethon-app-shell *:not(.anim-spin):not(.anim-liquid-progress):not(.toast-life)) {
     animation-play-state: paused !important;
   }
 
   :global([data-aethon-motion="idle"] .aethon-app-shell .anim-spin) {
     animation-play-state: paused !important;
+  }
+
+  :global([data-aethon-motion="idle"] .aethon-app-shell .toast.toast.toast.toast),
+  :global([data-aethon-motion="idle"] .aethon-app-shell .toast.toast.toast.toast *) {
+    animation-play-state: running !important;
   }
 
   :global([data-aethon-motion="idle"] .aethon-app-shell .n-topbar),

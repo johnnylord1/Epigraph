@@ -9,7 +9,6 @@ import type {
 } from "../lib/localProfiles";
 import { getLocalProfileMeta, normalizeCustomLocalProfiles, normalizeLocalProfileId, normalizeServerUrl } from "../lib/localProfiles";
 import type { BookBookmarkEntry, BookEntry, BookProgress } from "../lib/books/types";
-import { BookAssetResolver } from "../lib/books/assets";
 import { reconcileBookIdentityState } from "../lib/books/identity";
 import {
   canUseDesktopBookStorage,
@@ -17,6 +16,7 @@ import {
   peekBookLibraryState,
   saveBookLibraryState,
 } from "../lib/books/libraryState";
+import { needsCanonicalBookMigration, toPersistedBookEntry } from "../lib/books/persisted";
 import {
   createBookBookmark,
   mergeBookProgress,
@@ -1572,7 +1572,7 @@ class Store {
         this.booksStatePersistQueued = false;
         await saveBookLibraryState({
           version: 1 as const,
-          books: this.books.map(BookAssetResolver.toPersistedBookEntry),
+          books: this.books.map(toPersistedBookEntry),
           bookProgress: this.bookProgress,
           bookBookmarks: this.bookBookmarks,
           booksCategories: this.settings.booksCategories,
@@ -1601,10 +1601,12 @@ class Store {
 
     const task = (async () => {
       const pendingIds = this.books
-        .filter((book) => BookAssetResolver.needsCanonicalBookMigration(book))
+        .filter(needsCanonicalBookMigration)
         .map((book) => book.id);
 
       if (!pendingIds.length) return 0;
+
+      const { BookAssetResolver } = await import("../lib/books/assets");
 
       let migratedCount = 0;
 

@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "baseline": {
+    "entryMinifiedBytes": 1399311,
+    "minimumReductionPercent": 15
+  },
+  "entry": {
+    "maxMinifiedBytes": 1154000,
+    "maxGzipBytes": 337920
+  },
+  "initialPayload": {
+    "baselineMinifiedBytes": 1505155,
+    "baselineGzipBytes": 382173,
+    "maxMinifiedBytes": 1730928,
+    "maxGzipBytes": 439499
+  },
+  "commonChunkMaxBytes": 512000,
+  "css": {
+    "baselineBytes": 1032845,
+    "maxBytes": 1053502
+  },
+  "allowlistedOversize": [
+    "pdf.worker",
+    "vendor-pdf",
+    "vendor-books"
+  ],
+  "forbiddenInitialImports": [
+    "vendor-books",
+    "vendor-parsers",
+    "vendor-pdf"
+  ]
+}

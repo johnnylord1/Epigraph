@@ -3,12 +3,16 @@
   import { onDestroy } from "svelte";
   import { store, dismissToast, setLibraryUpdateProgress } from "../../store/state.svelte";
   import type { LibraryUpdateProgress, Toast } from "../../store/state.svelte";
-  import { stopSharedLibraryUpdate } from "../../lib/library/updateRuntime";
 
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const timerVersions = new Map<string, number>();
   let libraryUpdateTimer: ReturnType<typeof setTimeout> | null = null;
   let libraryUpdateTimerVersion = 0;
+
+  async function stopLibraryUpdate() {
+    const { stopSharedLibraryUpdate } = await import("../../lib/library/updateRuntime");
+    stopSharedLibraryUpdate();
+  }
 
   function schedule(t: Toast) {
     const version = t.updatedAt ?? 0;
@@ -103,7 +107,7 @@
             type="button"
             onclick={(event) => {
               event.stopPropagation();
-              void stopSharedLibraryUpdate();
+              void stopLibraryUpdate();
             }}
           >
             {$_("ui_stop")}
