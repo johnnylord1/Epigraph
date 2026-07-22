@@ -109,4 +109,7 @@ try {
     Remove-DriverLog $stdout
     Remove-DriverLog $stderr
   }
+  Get-ChildItem -Path $logRoot -File -Filter "tauri-driver-*.log" -ErrorAction SilentlyContinue |
+    Where-Object { $_.LastWriteTimeUtc -lt [DateTime]::UtcNow.AddDays(-3) } |
+    Remove-Item -Force -ErrorAction SilentlyContinue
 }

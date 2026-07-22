@@ -29,7 +29,7 @@ describe("MangaPreview theme tokens", () => {
     expect(app).toContain("<MangaPreviewView />");
     expect(state).toContain("previewManga:");
     expect(state).toContain("setPreviewManga(next: Manga | null)");
-    expect(browse).toContain("setPreviewManga(m");
+    expect(browse).not.toContain("setPreviewManga(m");
     expect(home).toContain("setPreviewManga(");
   });
 
