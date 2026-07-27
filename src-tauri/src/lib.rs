@@ -1,6 +1,7 @@
 mod discord_cover;
 mod discord_rpc;
 mod suwayomi_lan;
+mod suwayomi_runtime;
 mod suwayomi_update;
 pub mod syncd;
 mod syncd_desktop;
@@ -197,6 +198,8 @@ struct RunningServer {
 
 struct ServerState(Mutex<Option<RunningServer>>);
 
+struct RuntimeSupervisorState(Mutex<suwayomi_runtime::RuntimeStatus>);
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LaunchTargetInfo {
@@ -363,6 +366,10 @@ struct ServerOwner {
     port: u16,
     server_url: String,
     started_at: u64,
+    #[serde(default)]
+    run_id: Option<String>,
+    #[serde(default)]
+    process_identity: Option<suwayomi_runtime::RuntimeProcessIdentity>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1578,6 +1585,8 @@ mod tests {
             port: 4667,
             server_url: "http://127.0.0.1:4667".to_string(),
             started_at: 1,
+            run_id: None,
+            process_identity: None,
         };
 
         write_server_owner_atomic(&owner_path, &owner).unwrap();
@@ -1943,6 +1952,8 @@ server.maxSourcesInParallel = 6
             port: 4667,
             server_url: "http://127.0.0.1:4667".to_string(),
             started_at: 1,
+            run_id: None,
+            process_identity: None,
         };
 
         assert!(matches!(
@@ -2469,6 +2480,54 @@ fn java_pid_uses_rootdir(pid: u32, data_dir: &Path) -> bool {
         .unwrap_or(false)
 }
 
+fn runtime_process_identity(pid: u32) -> Option<suwayomi_runtime::RuntimeProcessIdentity> {
+    let system = System::new_all();
+    let process = system.process(Pid::from_u32(pid))?;
+    let args = process
+        .cmd()
+        .iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    Some(suwayomi_runtime::RuntimeProcessIdentity {
+        pid,
+        process_creation_time: Some(process.start_time()),
+        executable_path: process
+            .exe()
+            .map(|path| path.to_string_lossy().into_owned()),
+        command_line_hash: Some(suwayomi_runtime::command_line_hash(&args)),
+    })
+}
+
+fn set_runtime_status(
+    app: &tauri::AppHandle,
+    state: suwayomi_runtime::RuntimeLifecycleState,
+    profile_id: Option<String>,
+    server_url: Option<String>,
+    pid: Option<u32>,
+    message: Option<String>,
+) {
+    if let Ok(mut status) = app.state::<RuntimeSupervisorState>().0.lock() {
+        *status = suwayomi_runtime::RuntimeStatus {
+            state,
+            profile_id,
+            server_url,
+            pid,
+            message,
+        };
+    }
+}
+
+#[tauri::command]
+fn get_local_runtime_status(
+    state: tauri::State<'_, RuntimeSupervisorState>,
+) -> suwayomi_runtime::RuntimeStatus {
+    state
+        .0
+        .lock()
+        .map(|status| status.clone())
+        .unwrap_or_default()
+}
+
 #[cfg(windows)]
 fn parse_windows_listener_pid_for_port(netstat_output: &str, port: u16) -> Option<u32> {
     let suffix = format!(":{}", port);
@@ -2914,6 +2973,18 @@ fn validate_server_owner(target: &LocalServerTarget, owner: &ServerOwner) -> Own
     };
     if !java_process_uses_rootdir(process, &rootdir_flag) {
         return OwnerReuseDecision::Stale;
+    }
+
+    if let Some(expected) = &owner.process_identity {
+        let Some(actual) = runtime_process_identity(owner.java_pid) else {
+            return OwnerReuseDecision::Stale;
+        };
+        if expected.process_creation_time != actual.process_creation_time
+            || expected.executable_path != actual.executable_path
+            || expected.command_line_hash != actual.command_line_hash
+        {
+            return OwnerReuseDecision::Stale;
+        }
     }
 
     if !probe_local_server(&target.server_url, LOCAL_SERVER_HEALTH_PROBE_TIMEOUT) {
@@ -3463,6 +3534,14 @@ pub(crate) fn kill_tachidesk_target(app: &tauri::AppHandle, target: &LocalServer
         if let Some(parent) = running.owner_path.parent() {
             let _ = std::fs::remove_file(parent.join("server.owner.json.tmp"));
         }
+        set_runtime_status(
+            app,
+            suwayomi_runtime::RuntimeLifecycleState::Unavailable,
+            Some(target.profile_key.clone()),
+            Some(target.server_url.clone()),
+            None,
+            None,
+        );
         return;
     }
 
@@ -3478,6 +3557,14 @@ pub(crate) fn kill_tachidesk_target(app: &tauri::AppHandle, target: &LocalServer
     }
     let _ = std::fs::remove_file(server_spawn_lock_path(&target.root_dir));
     remove_server_owner_files(&target.root_dir);
+    set_runtime_status(
+        app,
+        suwayomi_runtime::RuntimeLifecycleState::Unavailable,
+        Some(target.profile_key.clone()),
+        Some(target.server_url.clone()),
+        None,
+        None,
+    );
 }
 
 const DEFAULT_SERVER_CONF: &str = r#"server.ip = "127.0.0.1"
@@ -3827,9 +3914,10 @@ fn find_java_in_bundle(bundle_dir: &PathBuf, log: &mut Option<std::fs::File>) ->
 }
 
 fn do_log(log: &mut Option<std::fs::File>, msg: &str) {
-    eprintln!("{}", msg);
+    let sanitized = suwayomi_runtime::sanitize_log_line(msg, &[]);
+    eprintln!("{}", sanitized);
     if let Some(f) = log {
-        let _ = writeln!(f, "{}", msg);
+        let _ = writeln!(f, "{}", sanitized);
     }
 }
 
@@ -3838,7 +3926,8 @@ fn append_timestamped_line(path: &Path, msg: &str) {
         let _ = std::fs::create_dir_all(parent);
     }
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(file, "[{}] {}", unix_now_millis(), msg);
+        let sanitized = suwayomi_runtime::sanitize_log_line(msg, &[]);
+        let _ = writeln!(file, "[{}] {}", unix_now_millis(), sanitized);
     }
 }
 
@@ -4189,6 +4278,14 @@ fn spawn_server(
             "Audit targets are attach-only and never auto-start a local server.".to_string(),
         ));
     }
+    set_runtime_status(
+        &app,
+        suwayomi_runtime::RuntimeLifecycleState::Starting,
+        Some(target.profile_key.clone()),
+        Some(target.server_url.clone()),
+        None,
+        None,
+    );
     if is_builtin_local_server_profile_key(&target.profile_key) {
         target.root_dir = ensure_suwayomi_data_dir(target.profile);
     } else {
@@ -4393,6 +4490,8 @@ fn spawn_server(
                 port: target.port,
                 server_url: target.server_url.clone(),
                 started_at: unix_now_secs(),
+                run_id: Some(uuid::Uuid::new_v4().to_string()),
+                process_identity: runtime_process_identity(java_pid),
             };
             if let Err(err) = write_server_owner_atomic(&owner_path, &owner) {
                 let _ = std::fs::remove_file(&spawn_lock_path);
@@ -4645,6 +4744,14 @@ fn spawn_server(
                 let _ = child.kill();
                 let _ = std::fs::remove_file(&spawn_lock_path);
                 remove_server_owner_files(&data_dir);
+                set_runtime_status(
+                    &app,
+                    suwayomi_runtime::RuntimeLifecycleState::Unavailable,
+                    Some(target.profile_key.clone()),
+                    Some(target.server_url.clone()),
+                    None,
+                    Some(message.clone()),
+                );
                 return Err(SpawnError::SpawnFailed(message));
             }
 
@@ -4666,11 +4773,20 @@ fn spawn_server(
                 let _ = child.kill();
                 let _ = std::fs::remove_file(&spawn_lock_path);
                 remove_server_owner_files(&data_dir);
+                set_runtime_status(
+                    &app,
+                    suwayomi_runtime::RuntimeLifecycleState::Unavailable,
+                    Some(target.profile_key.clone()),
+                    Some(target.server_url.clone()),
+                    None,
+                    Some("Local server failed health check after spawn.".to_string()),
+                );
                 return Err(SpawnError::SpawnFailed(
                     "Local server failed health check after spawn.".to_string(),
                 ));
             }
 
+            let run_id = uuid::Uuid::new_v4().to_string();
             let owner = ServerOwner {
                 profile_key: target.profile_key.clone(),
                 root_dir: data_dir.to_string_lossy().into_owned(),
@@ -4679,6 +4795,8 @@ fn spawn_server(
                 port: target.port,
                 server_url: target.server_url.clone(),
                 started_at: unix_now_secs(),
+                run_id: Some(run_id),
+                process_identity: runtime_process_identity(java_pid),
             };
 
             if let Err(err) = write_server_owner_atomic(&owner_path, &owner) {
@@ -4695,6 +4813,14 @@ fn spawn_server(
                 let _ = child.kill();
                 let _ = std::fs::remove_file(&spawn_lock_path);
                 remove_server_owner_files(&data_dir);
+                set_runtime_status(
+                    &app,
+                    suwayomi_runtime::RuntimeLifecycleState::Unavailable,
+                    Some(target.profile_key.clone()),
+                    Some(target.server_url.clone()),
+                    None,
+                    Some(format!("Failed to publish local server owner: {err}")),
+                );
                 return Err(SpawnError::SpawnFailed(format!(
                     "Failed to publish local server owner: {}",
                     err
@@ -4713,12 +4839,28 @@ fn spawn_server(
                 owner_path,
                 spawn_lock_path,
             });
+            set_runtime_status(
+                &app,
+                suwayomi_runtime::RuntimeLifecycleState::Ready,
+                Some(target.profile_key),
+                Some(target.server_url),
+                Some(java_pid),
+                None,
+            );
             Ok(())
         }
         Err(e) => {
             let _ = std::fs::remove_file(&spawn_lock_path);
             do_log(&mut log, &format!("[spawn_server] SPAWN FAILED: {}", e));
             do_log(&mut log, &format!("[spawn_server] error kind: {:?}", e));
+            set_runtime_status(
+                &app,
+                suwayomi_runtime::RuntimeLifecycleState::Unavailable,
+                Some(target.profile_key),
+                Some(target.server_url),
+                None,
+                Some(e.to_string()),
+            );
             Err(SpawnError::SpawnFailed(e.to_string()))
         }
     }
@@ -5363,6 +5505,9 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(LaunchTarget(parse_launch_target()))
         .manage(ServerState(Mutex::new(None)))
+        .manage(RuntimeSupervisorState(Mutex::new(
+            suwayomi_runtime::RuntimeStatus::default(),
+        )))
         .manage(syncd_desktop::SyncdDesktopState::default())
         .manage(syncd_replication::SyncdReplicationState::default())
         .manage(syncd_sidecar::SyncdState::default())
@@ -5459,6 +5604,7 @@ pub fn run() {
             download_and_install_update,
             probe_server_health,
             get_runtime_diagnostics,
+            get_local_runtime_status,
             restart_app,
             relaunch_with_args,
         ])
@@ -5485,6 +5631,7 @@ pub fn run() {
     app.run(|app_handle, event| {
         syncd_sidecar::handle_run_event(app_handle, &event);
         if matches!(event, tauri::RunEvent::Exit) {
+            kill_tachidesk(app_handle, None);
             clear_suwayomi_lan_state();
         }
     });
