@@ -109,6 +109,7 @@ async fn proxy_http(
     let client = proxy_client();
     let mut upstream_request = client.request(method.clone(), upstream_url);
     upstream_request = copy_request_headers(upstream_request, &parts.headers, include_body);
+    let mut operation_lease = None;
     if include_body {
         let bytes = match to_bytes(body, MAX_GRAPHQL_BODY_BYTES).await {
             Ok(bytes) => bytes,
@@ -121,6 +122,21 @@ async fn proxy_http(
                 )
             }
         };
+        if graphql_body_is_mutation(&bytes) {
+            operation_lease = match crate::suwayomi_maintenance::try_acquire_shared_file_lease(
+                &crate::suwayomi_maintenance::default_runtime_root(),
+            ) {
+                Ok(lease) => Some(lease),
+                Err(_) => {
+                    return proxy_error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "SUWAYOMI_MAINTENANCE",
+                        "The comics runtime is being maintained. Try again shortly.",
+                        true,
+                    )
+                }
+            };
+        }
         upstream_request = upstream_request.body(bytes);
     }
 
@@ -155,7 +171,41 @@ async fn proxy_http(
         );
     }
 
-    stream_upstream_response(upstream_response, method == Method::HEAD)
+    let response = stream_upstream_response(upstream_response, method == Method::HEAD);
+    drop(operation_lease);
+    response
+}
+
+fn graphql_body_is_mutation(bytes: &[u8]) -> bool {
+    let Ok(payload) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+        return false;
+    };
+    let Some(document) = payload.get("query").and_then(serde_json::Value::as_str) else {
+        return false;
+    };
+    let mut index = 0;
+    while index < document.len() {
+        let remaining = &document[index..];
+        let Some(character) = remaining.chars().next() else {
+            break;
+        };
+        if character == '#' {
+            index += remaining.find('\n').unwrap_or(remaining.len());
+            continue;
+        }
+        if character == ',' || character.is_whitespace() {
+            index += character.len_utf8();
+            continue;
+        }
+        break;
+    }
+    document[index..]
+        .get(..8)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("mutation"))
+        && document[index + 8..]
+            .chars()
+            .next()
+            .is_none_or(|character| !character.is_ascii_alphanumeric() && character != '_')
 }
 
 async fn proxy_websocket(
@@ -727,6 +777,17 @@ mod tests {
     };
     use crate::syncd::middleware::{CLIENT_PROTOCOL_HEADER, CLIENT_VERSION_HEADER};
     use crate::syncd::models::AppState;
+
+    #[test]
+    fn graphql_proxy_distinguishes_mutations_from_queries() {
+        assert!(graphql_body_is_mutation(
+            br##"{"query":"# comment\n mutation Update { updateManga { id } }"}"##,
+        ));
+        assert!(!graphql_body_is_mutation(
+            br#"{"query":"query Library { mangas { nodes { id } } }"}"#,
+        ));
+        assert!(!graphql_body_is_mutation(b"not-json"));
+    }
 
     #[test]
     fn websocket_bridge_preserves_graphql_close_code_and_reason() {

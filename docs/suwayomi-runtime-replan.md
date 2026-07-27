@@ -1,6 +1,6 @@
 # Replanejamento do runtime Suwayomi
 
-Status: SR3, SR4 e SR5 implementados; SR6-SR8 ainda nao iniciados.
+Status: SR3-SR6 implementados; SR7-SR8 ainda nao iniciados.
 
 ## Resultado desta etapa
 
@@ -258,11 +258,35 @@ versoes nao aprovadas, e instalar somente uma versao exata apos SR7.
 
 ### SR6 - Core/Syncd maintenance e recuperacao
 
-- Bloquear somente mutacoes que dependem do runtime durante update/rollback,
-  sem limitar Syncd, novels/LNReader ou dados ja normalizados; nunca transformar
-  runtime offline em exclusao.
-- Verificar snapshots de perfil, restart, rollback e replay idempotente.
-- Confirmar identidade interna das obras independente de source/package externos.
+- Implementado um coordenador de operacoes com leases compartilhadas para
+  mutacoes e lease exclusiva para snapshot, promocao, instalacao e recuperacao.
+  O lock em arquivo coordena o processo principal e o sidecar Syncd; o estado
+  em memoria drena operacoes iniciadas pela UI antes de parar o runtime.
+- Mutacoes GraphQL mantem a lease ate receber e decodificar a resposta e nao
+  sao repetidas automaticamente depois de falha ambigua. Migracao, update da
+  Library e restore de backup mantem uma lease durante a operacao completa.
+- No proxy Syncd, somente documentos GraphQL `mutation` recebem a lease.
+  Queries, replicacao Syncd, snapshots normalizados, novels/LNReader,
+  repositories de novels e demais rotas do AethonCore nao sao bloqueados.
+- O snapshot passou ao schema 2 e inclui recursivamente banco, configuracao,
+  `extensions/` e `settings/`, com tamanho e SHA-256 por arquivo. Downloads,
+  backups, caches, covers, imports e conteudo local permanecem excluidos.
+- O restore valida hashes e caminhos relativos, remove apenas extras das duas
+  arvores allowlisted, sincroniza cada arquivo temporario e publica por troca
+  atomica. Manifestos schema 1 continuam restauraveis.
+- A promocao grava um journal atomico antes da primeira troca de diretorio e
+  registra `CURRENT_STOPPED`, `RUNTIME_PROMOTED`, `POST_CHECK_RUNNING`,
+  `COMMITTED`, `ROLLBACK_RUNNING` e `ROLLED_BACK`. Startup incompleto executa
+  rollback antes de iniciar o runtime; replay repetido distingue o candidate
+  pela versao do JAR e nao remove novamente o runtime restaurado.
+- O rollback exige encerramento confirmado do processo antes de alterar H2 ou
+  diretorios. Comandos externos de start, stop, reset e configuracao respeitam
+  o lock; os comandos internos do updater usam um caminho explicitamente
+  controlado para evitar deadlock.
+- Validacao: 333 testes Rust da biblioteca, incluindo Syncd; 70 testes focados
+  do updater; 38 testes TypeScript de client/adapter/migration/update; 37
+  testes dos contratos SR2-SR5, com o smoke live condicional ignorado; Settings
+  jsdom; build; e `svelte-check` sem erros ou avisos.
 - Commit: `fix(sources): coordinate runtime maintenance with core`.
 
 ### SR7 - Promocao controlada de v2.3.2243
@@ -300,5 +324,6 @@ arquivos inteiros ou usar operacoes destrutivas globais.
 - Os testes de SR4 exercitam stores legacy e oficiais sem tocar Syncd, Core,
   novels/LNReader ou persistencia de biblioteca.
 
-Pendencias: classificacao estrutural do `AbstractMethodError`, health checks de
-extensoes, maintenance Core/Syncd e decisao de promocao da v2.3.2243.
+Pendencias: certificacao destrutiva controlada da promocao da `v2.3.2243` no
+SR7 e consolidacao do gate final no SR8. A versao permanece fora da allowlist
+ate essa evidencia existir.

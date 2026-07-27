@@ -1,6 +1,7 @@
 mod discord_cover;
 mod discord_rpc;
 mod suwayomi_lan;
+mod suwayomi_maintenance;
 mod suwayomi_runtime;
 mod suwayomi_update;
 pub mod syncd;
@@ -2498,7 +2499,7 @@ fn runtime_process_identity(pid: u32) -> Option<suwayomi_runtime::RuntimeProcess
     })
 }
 
-fn set_runtime_status(
+pub(crate) fn set_runtime_status(
     app: &tauri::AppHandle,
     state: suwayomi_runtime::RuntimeLifecycleState,
     profile_id: Option<String>,
@@ -4265,6 +4266,26 @@ fn spawn_server(
     update_intensity: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<(), SpawnError> {
+    spawn_server_unlocked(
+        binary,
+        server_url,
+        profile_id,
+        profile_label,
+        update_intensity,
+        app,
+        true,
+    )
+}
+
+fn spawn_server_unlocked(
+    binary: String,
+    server_url: String,
+    profile_id: Option<String>,
+    profile_label: Option<String>,
+    update_intensity: Option<String>,
+    app: tauri::AppHandle,
+    recover_update: bool,
+) -> Result<(), SpawnError> {
     let launch_target = app.state::<LaunchTarget>().0.clone();
     let mut target = resolve_local_server_target(
         &launch_target,
@@ -4292,6 +4313,28 @@ fn spawn_server(
         std::fs::create_dir_all(&target.root_dir)
             .map_err(|err| SpawnError::SpawnFailed(err.to_string()))?;
     }
+    if recover_update {
+        suwayomi_update::recover_suwayomi_update_before_spawn(&app, &target)
+            .map_err(SpawnError::SpawnFailed)?;
+        set_runtime_status(
+            &app,
+            suwayomi_runtime::RuntimeLifecycleState::Starting,
+            Some(target.profile_key.clone()),
+            Some(target.server_url.clone()),
+            None,
+            None,
+        );
+    }
+    let _lifecycle_lease = if recover_update {
+        Some(
+            suwayomi_maintenance::try_acquire_shared_file_lease(
+                &suwayomi_maintenance::default_runtime_root(),
+            )
+            .map_err(SpawnError::SpawnFailed)?,
+        )
+    } else {
+        None
+    };
 
     let data_dir = target.root_dir.clone();
     let owner_path = server_owner_path(&data_dir);
@@ -4871,7 +4914,15 @@ pub(crate) fn spawn_managed_server_for_update(
     profile_id: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<(), SpawnError> {
-    spawn_server(String::new(), server_url, profile_id, None, None, app)
+    spawn_server_unlocked(
+        String::new(),
+        server_url,
+        profile_id,
+        None,
+        None,
+        app,
+        false,
+    )
 }
 
 #[tauri::command]
@@ -4882,6 +4933,10 @@ fn configure_local_server_runtime(
     update_intensity: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<(), SpawnError> {
+    let _lease = suwayomi_maintenance::try_acquire_shared_file_lease(
+        &suwayomi_maintenance::default_runtime_root(),
+    )
+    .map_err(SpawnError::SpawnFailed)?;
     let launch_target = app.state::<LaunchTarget>().0.clone();
     let mut target = resolve_local_server_target(
         &launch_target,
@@ -4916,6 +4971,9 @@ fn reset_local_profile_root(profile_id: &str) -> Result<PathBuf, String> {
 
 #[tauri::command]
 fn reset_local_profile_data(profile_id: String, app: tauri::AppHandle) -> Result<bool, String> {
+    let _lease = suwayomi_maintenance::try_acquire_shared_file_lease(
+        &suwayomi_maintenance::default_runtime_root(),
+    )?;
     let profile_key = local_server_profile_key_from_id(Some(profile_id.as_str()))
         .ok_or_else(|| "Invalid profile id.".to_string())?;
     let server_url = format!(
@@ -4975,6 +5033,9 @@ fn reset_resolved_local_profile_data(
 
 #[tauri::command]
 fn kill_server(server_url: Option<String>, app: tauri::AppHandle) -> Result<(), String> {
+    let _lease = suwayomi_maintenance::try_acquire_shared_file_lease(
+        &suwayomi_maintenance::default_runtime_root(),
+    )?;
     kill_tachidesk(&app, server_url.as_deref());
     Ok(())
 }
@@ -5468,6 +5529,16 @@ fn is_webdriver_automation() -> bool {
 }
 
 #[tauri::command]
+fn begin_suwayomi_runtime_operation(scope: String) -> Result<String, String> {
+    suwayomi_maintenance::begin_operation(&suwayomi_maintenance::default_runtime_root(), &scope)
+}
+
+#[tauri::command]
+fn end_suwayomi_runtime_operation(token: String) -> bool {
+    suwayomi_maintenance::end_operation(&token)
+}
+
+#[tauri::command]
 fn record_media_audit_event(event: String) -> Result<(), String> {
     let path = match std::env::var("AETHON_MEDIA_AUDIT_LOG") {
         Ok(path) if !path.trim().is_empty() => PathBuf::from(path),
@@ -5597,6 +5668,8 @@ pub fn run() {
             suwayomi_update::get_suwayomi_runtime_status,
             suwayomi_update::check_suwayomi_runtime_update,
             suwayomi_update::get_suwayomi_update_lock_status,
+            begin_suwayomi_runtime_operation,
+            end_suwayomi_runtime_operation,
             suwayomi_update::create_suwayomi_update_snapshot,
             suwayomi_update::stage_suwayomi_runtime_update,
             suwayomi_update::promote_suwayomi_runtime_update,

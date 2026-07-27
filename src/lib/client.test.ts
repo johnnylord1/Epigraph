@@ -133,4 +133,14 @@ describe("GraphQL client errors", () => {
     )).rejects.toThrow(SUWAYOMI_UPDATE_WRITE_BLOCKED_MESSAGE);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  test("does not retry an ambiguous mutation transport failure", async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new TypeError("connection reset");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(gql("mutation MarkRead { noop }")).rejects.toThrow("connection reset");
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
 });

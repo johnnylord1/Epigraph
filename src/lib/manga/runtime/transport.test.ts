@@ -125,6 +125,27 @@ describe("SuwayomiTransport", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  test("holds the mutation lease through decoding and releases it after failure", async () => {
+    const release = vi.fn();
+    const beginMutationLease = vi.fn(async () => release);
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ data: null, errors: [{ message: "Write failed" }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const transport = new SuwayomiTransport({
+      endpoint: "http://127.0.0.1:4567/api/graphql",
+      fetch: fetchMock,
+      beginMutationLease,
+    });
+    const mutation = { ...EXAMPLE_QUERY, kind: "mutation" as const };
+
+    await expect(transport.execute(mutation, { id: "source-1" })).rejects.toThrow("Write failed");
+    expect(beginMutationLease).toHaveBeenCalledOnce();
+    expect(release).toHaveBeenCalledOnce();
+  });
+
   test("normalizes GraphQL and incompatible JSON errors", async () => {
     const graphqlFetch = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify({ data: null, errors: [{ message: "Source failed" }] }), {

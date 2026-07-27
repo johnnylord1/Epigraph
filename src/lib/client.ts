@@ -1,5 +1,5 @@
 import { store } from "../store/state.svelte";
-import { assertSuwayomiWritesAllowed } from "./suwayomiUpdateLock.svelte";
+import { acquireSuwayomiOperationLease } from "./suwayomiUpdateLock.svelte";
 
 const DEFAULT_URL = "http://127.0.0.1:4567";
 const RESERVED_TEST_PORT = 4667;
@@ -134,9 +134,10 @@ export async function gql<T>(
   signal?: AbortSignal,
   timeoutMs = 12000,
 ): Promise<T> {
-  if (isGraphqlMutation(query)) {
-    await assertSuwayomiWritesAllowed();
-  }
+  const mutation = isGraphqlMutation(query);
+  const releaseMutationLease = mutation
+    ? await acquireSuwayomiOperationLease("mutation")
+    : null;
 
   const controller = signal ? null : new AbortController();
   const effectiveSignal = signal ?? controller?.signal;
@@ -151,7 +152,7 @@ export async function gql<T>(
       method: "POST",
       headers: { "Content-Type": "application/json", ...getAuthHeader() },
       body: JSON.stringify({ query, variables }),
-    }, effectiveSignal);
+    }, effectiveSignal, mutation ? 1 : 3);
 
     if (effectiveSignal?.aborted) throw new DOMException("Aborted", "AbortError");
     if (!res.ok) throw new Error(`Suwayomi HTTP ${res.status}`);
@@ -167,6 +168,7 @@ export async function gql<T>(
     return json.data;
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
+    await releaseMutationLease?.();
   }
 }
 
@@ -176,9 +178,10 @@ export async function gqlUpload<T>(
   uploads: Record<string, File>,
   signal?: AbortSignal,
 ): Promise<T> {
-  if (isGraphqlMutation(query)) {
-    await assertSuwayomiWritesAllowed();
-  }
+  const mutation = isGraphqlMutation(query);
+  const releaseMutationLease = mutation
+    ? await acquireSuwayomiOperationLease("mutation")
+    : null;
 
   const form = new FormData();
   const map: Record<string, string[]> = {};
@@ -198,22 +201,26 @@ export async function gqlUpload<T>(
     index += 1;
   }
 
-  const res = await fetchWithRetry(gqlUrl(), {
-    method: "POST",
-    headers: { ...getAuthHeader() },
-    body: form,
-  }, signal);
+  try {
+    const res = await fetchWithRetry(gqlUrl(), {
+      method: "POST",
+      headers: { ...getAuthHeader() },
+      body: form,
+    }, signal, mutation ? 1 : 3);
 
-  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-  if (!res.ok) throw new Error(`Suwayomi HTTP ${res.status}`);
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    if (!res.ok) throw new Error(`Suwayomi HTTP ${res.status}`);
 
-  const json: GQLResponse<T> = await res.json();
+    const json: GQLResponse<T> = await res.json();
 
-  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-  if (json.errors?.length) {
-    const message = json.errors.map((error) => error.message?.trim()).filter(Boolean).join("; ");
-    throw new Error(message || "Suwayomi returned an empty GraphQL error.");
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    if (json.errors?.length) {
+      const message = json.errors.map((error) => error.message?.trim()).filter(Boolean).join("; ");
+      throw new Error(message || "Suwayomi returned an empty GraphQL error.");
+    }
+
+    return json.data;
+  } finally {
+    await releaseMutationLease?.();
   }
-
-  return json.data;
 }

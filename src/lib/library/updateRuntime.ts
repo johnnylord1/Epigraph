@@ -9,6 +9,7 @@ import type { LibraryUpdateIssueErrorType, LibraryUpdateIssueKind } from "../../
 import { classifySourceAccessError, sourceAccessErrorMessage } from "../sourceAccess";
 import { mergeMangaCountsFromChapters } from "./chapterCounts";
 import { translate } from "../i18n/runtime";
+import { withSuwayomiOperationLease } from "../suwayomiUpdateLock.svelte";
 
 export interface LibraryUpdateProgressNumbers {
   current: number;
@@ -702,7 +703,7 @@ export function stopSharedLibraryUpdate() {
 export function runSharedLibraryUpdate(options: SharedLibraryUpdateRunOptions) {
   if (activeLibraryUpdateRun) return activeLibraryUpdateRun;
 
-  activeLibraryUpdateRun = (async () => {
+  activeLibraryUpdateRun = withSuwayomiOperationLease("library-update", async () => {
     const runId = updateRunId();
 
     try {
@@ -715,8 +716,8 @@ export function runSharedLibraryUpdate(options: SharedLibraryUpdateRunOptions) {
         serverUrl: store.runtimeServerUrl,
         binary: store.settings.serverBinary,
         updateIntensity: store.settings.libraryUpdateIntensity,
-      profileId: store.runtimeResolvedLocalProfileId,
-      profileLabel: store.runtimeResolvedLocalProfileMeta?.label ?? store.runtimeServerLabel,
+        profileId: store.runtimeResolvedLocalProfileId,
+        profileLabel: store.runtimeResolvedLocalProfileMeta?.label ?? store.runtimeServerLabel,
       });
       if (!awake) throw new Error("Suwayomi is not reachable.");
 
@@ -737,7 +738,7 @@ export function runSharedLibraryUpdate(options: SharedLibraryUpdateRunOptions) {
       libraryUpdateStopRequested = false;
       activeLibraryUpdateRun = null;
     }
-  })();
+  });
 
   return activeLibraryUpdateRun;
 }

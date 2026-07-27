@@ -34,6 +34,7 @@ export interface SuwayomiTransportOptions {
   retryDelayMs?: number;
   defaultTimeoutMs?: number;
   beforeMutation?: () => void | Promise<void>;
+  beginMutationLease?: () => Promise<() => void | Promise<void>>;
 }
 
 interface GraphQLErrorPayload {
@@ -98,6 +99,9 @@ export class SuwayomiTransport implements GraphQLTransport {
     options: GraphQLExecuteOptions = {},
   ): Promise<TResult> {
     if (operation.kind === "mutation") await this.options.beforeMutation?.();
+    const releaseMutationLease = operation.kind === "mutation"
+      ? await this.options.beginMutationLease?.()
+      : undefined;
 
     const controller = new AbortController();
     const abortFromParent = () => controller.abort();
@@ -132,6 +136,7 @@ export class SuwayomiTransport implements GraphQLTransport {
     } finally {
       globalThis.clearTimeout(timeout);
       options.signal?.removeEventListener("abort", abortFromParent);
+      await releaseMutationLease?.();
     }
   }
 

@@ -2,7 +2,7 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -12,7 +12,11 @@ use sysinfo::{Disks, Pid, System};
 use tauri::{AppHandle, Manager};
 use url::Url;
 use uuid::Uuid;
+use walkdir::WalkDir;
 
+use crate::suwayomi_maintenance::{
+    self, ExclusiveMaintenanceGuard, MaintenancePhase, UpdateJournalState,
+};
 use crate::{
     find_java_pid_for_rootdir, is_loopback_http_url, kill_tachidesk_target, process_is_alive,
     read_server_owner, resolve_local_server_target, server_owner_path, server_spawn_lock_path,
@@ -29,7 +33,7 @@ const SUWAYOMI_RELEASES_USER_AGENT: &str = "Aethon-Suwayomi-Updater";
 const SUWAYOMI_RELEASES_CACHE_TTL: Duration = Duration::from_secs(60);
 const SUWAYOMI_SNAPSHOT_DIR: &str = "aethon-update-snapshots";
 const SUWAYOMI_SNAPSHOT_MANIFEST: &str = "snapshot-manifest.json";
-const SUWAYOMI_SNAPSHOT_VERSION: &str = "1";
+const SUWAYOMI_SNAPSHOT_VERSION: &str = "2";
 const SUWAYOMI_SNAPSHOT_SPACE_MARGIN_BYTES: u64 = 1024 * 1024;
 const SUWAYOMI_RUNTIME_DIR: &str = "suwayomi-runtime";
 const SUWAYOMI_STAGING_DIR: &str = "staging";
@@ -48,6 +52,7 @@ const SUWAYOMI_SNAPSHOT_ALLOWLIST: &[&str] = &[
     "database.trace.db",
     "server.owner.json",
 ];
+const SUWAYOMI_SNAPSHOT_DIRECTORY_ALLOWLIST: &[&str] = &["extensions", "settings"];
 const SUWAYOMI_SERVER_OWNER_FILE: &str = "server.owner.json";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -305,6 +310,7 @@ pub struct SuwayomiUpdateLockStatus {
 
 pub(crate) struct SuwayomiUpdateLockGuard {
     token: String,
+    maintenance: Option<ExclusiveMaintenanceGuard>,
 }
 
 static SUWAYOMI_UPDATE_LOCK: OnceLock<Mutex<Option<ActiveSuwayomiUpdateLock>>> = OnceLock::new();
@@ -509,7 +515,8 @@ pub fn create_suwayomi_update_snapshot(
 ) -> Result<SuwayomiUpdateSnapshotResult, String> {
     let started = log_update_start("snapshot");
     let result = (|| {
-        let _guard = try_acquire_suwayomi_update_lock("snapshot")?;
+        let mut guard = try_acquire_suwayomi_update_lock("snapshot")?;
+        guard.begin_maintenance("snapshot", MaintenancePhase::Updating)?;
         create_suwayomi_update_snapshot_unlocked(
             server_url,
             binary,
@@ -663,7 +670,8 @@ pub async fn promote_suwayomi_runtime_update(
 ) -> Result<SuwayomiUpdatePromotionResult, String> {
     let started = log_update_start("promotion");
     let result = async {
-        let _guard = try_acquire_suwayomi_update_lock("promotion")?;
+        let mut guard = try_acquire_suwayomi_update_lock("promotion")?;
+        guard.begin_maintenance("promotion", MaintenancePhase::Updating)?;
         promote_suwayomi_runtime_update_unlocked(
             server_url,
             binary,
@@ -700,7 +708,8 @@ pub async fn install_suwayomi_runtime_update(
 ) -> Result<SuwayomiUpdatePromotionResult, String> {
     let started = log_update_start("install");
     let result = async {
-        let _guard = try_acquire_suwayomi_update_lock("install")?;
+        let mut guard = try_acquire_suwayomi_update_lock("install")?;
+        guard.begin_maintenance("install", MaintenancePhase::Updating)?;
         let snapshot = create_suwayomi_update_snapshot_unlocked(
             server_url.clone(),
             binary.clone(),
@@ -761,12 +770,27 @@ async fn promote_suwayomi_runtime_update_unlocked(
         }
     }
 
-    let manifest = load_compatibility_manifest()?;
     let target = resolve_update_target(server_url, profile_id, profile_label, &app)?;
+    let manifest = match load_compatibility_manifest() {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            restart_after_preparation_failure(runtime_already_stopped, &app, &target)?;
+            return Err(error);
+        }
+    };
     let snapshot_dir = PathBuf::from(snapshot_path);
-    validate_snapshot_for_restore(&snapshot_dir)?;
+    if let Err(error) = validate_snapshot_for_restore(&snapshot_dir) {
+        restart_after_preparation_failure(runtime_already_stopped, &app, &target)?;
+        return Err(error);
+    }
     let staging_dir = managed_runtime_staging_root().join(normalize_version_tag(&staged_version));
-    let staging_manifest = validate_staging_dir(&staging_dir, &manifest)?;
+    let staging_manifest = match validate_staging_dir(&staging_dir, &manifest) {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            restart_after_preparation_failure(runtime_already_stopped, &app, &target)?;
+            return Err(error);
+        }
+    };
 
     let stopped_runtime = if runtime_already_stopped {
         true
@@ -774,15 +798,82 @@ async fn promote_suwayomi_runtime_update_unlocked(
         stop_managed_runtime_for_snapshot(&app, &target)?
     };
     let runtime_root = managed_runtime_root();
-    let promotion = match promote_staging_directories(&runtime_root, &staging_manifest.version) {
-        Ok(promotion) => promotion,
-        Err(error) => {
-            let _ = restart_runtime_after_snapshot_failure(stopped_runtime, || {
-                restart_managed_runtime(&app, &target)
-            });
-            return Err(error);
+    let operation_id = Uuid::new_v4().to_string();
+    let promotion =
+        match plan_runtime_promotion(&runtime_root, &staging_manifest.version, &operation_id) {
+            Ok(promotion) => promotion,
+            Err(error) => {
+                let _ = restart_runtime_after_snapshot_failure(stopped_runtime, || {
+                    restart_managed_runtime(&app, &target)
+                });
+                return Err(error);
+            }
+        };
+    let journal_path = suwayomi_maintenance::update_journal_path(&runtime_root);
+    let previous_dir = runtime_root.join(SUWAYOMI_PREVIOUS_DIR);
+    let mut journal = suwayomi_maintenance::new_update_journal(
+        operation_id,
+        target.profile_key.clone(),
+        path_to_string(&target.root_dir),
+        target.server_url.clone(),
+        staging_manifest.version.clone(),
+        path_to_string(&snapshot_dir),
+        path_to_string(&promotion.current_dir),
+        path_to_string(&previous_dir),
+        promotion
+            .previous_backup_dir
+            .as_ref()
+            .map(|path| path_to_string(path))
+            .unwrap_or_default(),
+        path_to_string(&promotion.staging_dir),
+        promotion.had_current,
+    );
+    if let Err(error) = suwayomi_maintenance::write_update_journal(&journal_path, &journal) {
+        let _ = restart_runtime_after_snapshot_failure(stopped_runtime, || {
+            restart_managed_runtime(&app, &target)
+        });
+        return Err(error);
+    }
+    if let Err(error) = apply_runtime_promotion(&promotion) {
+        journal.transition(UpdateJournalState::RollbackRunning);
+        let _ = suwayomi_maintenance::write_update_journal(&journal_path, &journal);
+        let rollback = rollback_promoted_runtime(&app, &target, &promotion, &snapshot_dir);
+        if rollback.is_ok() {
+            journal.transition(UpdateJournalState::RolledBack);
+            let _ = suwayomi_maintenance::write_update_journal(&journal_path, &journal);
+            let _ = suwayomi_maintenance::remove_update_journal(&journal_path);
         }
-    };
+        return match rollback {
+            Ok(()) => Err(error),
+            Err(rollback_error) => Err(format!(
+                "Promotion failed: {error}. Automatic rollback also failed: {rollback_error}"
+            )),
+        };
+    }
+    journal.transition(UpdateJournalState::RuntimePromoted);
+    if let Err(error) = suwayomi_maintenance::write_update_journal(&journal_path, &journal) {
+        return rollback_after_journal_failure(
+            error,
+            &journal_path,
+            &mut journal,
+            &app,
+            &target,
+            &promotion,
+            &snapshot_dir,
+        );
+    }
+    journal.transition(UpdateJournalState::PostCheckRunning);
+    if let Err(error) = suwayomi_maintenance::write_update_journal(&journal_path, &journal) {
+        return rollback_after_journal_failure(
+            error,
+            &journal_path,
+            &mut journal,
+            &app,
+            &target,
+            &promotion,
+            &snapshot_dir,
+        );
+    }
 
     let start_result = restart_managed_runtime(&app, &target).and_then(|_| {
         wait_for_runtime_jar(
@@ -804,7 +895,11 @@ async fn promote_suwayomi_runtime_update_unlocked(
     };
     match health_result {
         Ok(()) => {
-            cleanup_previous_backup(&promotion)?;
+            journal.transition(UpdateJournalState::Committed);
+            suwayomi_maintenance::write_update_journal(&journal_path, &journal)?;
+            if cleanup_previous_backup(&promotion).is_ok() {
+                let _ = suwayomi_maintenance::remove_update_journal(&journal_path);
+            }
             Ok(SuwayomiUpdatePromotionResult {
                 current_path: path_to_string(&promotion.current_dir),
                 previous_path: promotion
@@ -817,6 +912,8 @@ async fn promote_suwayomi_runtime_update_unlocked(
             })
         }
         Err(error) => {
+            journal.transition(UpdateJournalState::RollbackRunning);
+            let _ = suwayomi_maintenance::write_update_journal(&journal_path, &journal);
             let rollback_result =
                 rollback_promoted_runtime(&app, &target, &promotion, &snapshot_dir).map_err(
                     |rollback_error| {
@@ -826,13 +923,187 @@ async fn promote_suwayomi_runtime_update_unlocked(
                     },
                 );
             match rollback_result {
-                Ok(()) => Err(format!(
-                    "Promotion failed: {error}. The previous Suwayomi runtime was restored."
-                )),
+                Ok(()) => {
+                    journal.transition(UpdateJournalState::RolledBack);
+                    let _ = suwayomi_maintenance::write_update_journal(&journal_path, &journal);
+                    let _ = suwayomi_maintenance::remove_update_journal(&journal_path);
+                    Err(format!(
+                        "Promotion failed: {error}. The previous Suwayomi runtime was restored."
+                    ))
+                }
                 Err(rollback_error) => Err(rollback_error),
             }
         }
     }
+}
+
+fn restart_after_preparation_failure(
+    runtime_already_stopped: bool,
+    app: &AppHandle,
+    target: &LocalServerTarget,
+) -> Result<(), String> {
+    if runtime_already_stopped {
+        restart_managed_runtime(app, target)?;
+    }
+    Ok(())
+}
+
+fn rollback_after_journal_failure(
+    journal_error: String,
+    journal_path: &Path,
+    journal: &mut suwayomi_maintenance::SuwayomiUpdateJournal,
+    app: &AppHandle,
+    target: &LocalServerTarget,
+    promotion: &RuntimePromotionState,
+    snapshot_dir: &Path,
+) -> Result<SuwayomiUpdatePromotionResult, String> {
+    journal.transition(UpdateJournalState::RollbackRunning);
+    let _ = suwayomi_maintenance::write_update_journal(journal_path, journal);
+    match rollback_promoted_runtime(app, target, promotion, snapshot_dir) {
+        Ok(()) => {
+            journal.transition(UpdateJournalState::RolledBack);
+            let _ = suwayomi_maintenance::write_update_journal(journal_path, journal);
+            let _ = suwayomi_maintenance::remove_update_journal(journal_path);
+            Err(format!(
+                "Promotion journal failed: {journal_error}. The previous Suwayomi runtime was restored."
+            ))
+        }
+        Err(rollback_error) => Err(format!(
+            "Promotion journal failed: {journal_error}. Automatic rollback also failed: {rollback_error}"
+        )),
+    }
+}
+
+pub(crate) fn recover_suwayomi_update_before_spawn(
+    app: &AppHandle,
+    requested_target: &LocalServerTarget,
+) -> Result<(), String> {
+    let runtime_root = managed_runtime_root();
+    let journal_path = suwayomi_maintenance::update_journal_path(&runtime_root);
+    let Some(mut journal) = suwayomi_maintenance::read_update_journal(&journal_path)? else {
+        return Ok(());
+    };
+
+    let mut guard = try_acquire_suwayomi_update_lock("recovery")?;
+    guard.begin_maintenance("recovery", MaintenancePhase::Recovering)?;
+    validate_recovery_journal_paths(&journal, &runtime_root)?;
+    crate::set_runtime_status(
+        app,
+        crate::suwayomi_runtime::RuntimeLifecycleState::Recovering,
+        Some(journal.profile_id.clone()),
+        Some(journal.server_url.clone()),
+        None,
+        Some("Recovering an interrupted Suwayomi update.".to_string()),
+    );
+
+    let journal_root = PathBuf::from(&journal.root_dir);
+    if find_java_pid_for_rootdir(&journal_root).is_some() {
+        return Err(
+            "An interrupted Suwayomi update cannot be recovered while its runtime is still active."
+                .to_string(),
+        );
+    }
+    if journal.state == UpdateJournalState::Committed {
+        let backup = PathBuf::from(&journal.previous_backup_dir);
+        if !journal.previous_backup_dir.is_empty() && backup.exists() {
+            fs::remove_dir_all(&backup)
+                .map_err(|error| format!("Could not clean committed runtime backup: {error}"))?;
+        }
+        suwayomi_maintenance::remove_update_journal(&journal_path)?;
+        return Ok(());
+    }
+
+    journal.transition(UpdateJournalState::RollbackRunning);
+    suwayomi_maintenance::write_update_journal(&journal_path, &journal)?;
+    recover_runtime_directories(&journal)?;
+    restore_snapshot_to_root(Path::new(&journal.snapshot_path), &journal_root)?;
+    journal.transition(UpdateJournalState::RolledBack);
+    suwayomi_maintenance::write_update_journal(&journal_path, &journal)?;
+    suwayomi_maintenance::remove_update_journal(&journal_path)?;
+
+    if requested_target.profile_key == journal.profile_id
+        && comparable_path(&requested_target.root_dir) != comparable_path(&journal_root)
+    {
+        return Err(
+            "Recovered Suwayomi profile does not match the requested runtime root.".to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn recover_runtime_directories(
+    journal: &suwayomi_maintenance::SuwayomiUpdateJournal,
+) -> Result<(), String> {
+    let current_dir = PathBuf::from(&journal.current_dir);
+    let previous_dir = PathBuf::from(&journal.previous_dir);
+    let backup_dir = (!journal.previous_backup_dir.is_empty())
+        .then(|| PathBuf::from(&journal.previous_backup_dir));
+    let current_is_promoted = current_dir.join(SUWAYOMI_SERVER_JAR).is_file()
+        && read_suwayomi_jar_version(&current_dir.join(SUWAYOMI_SERVER_JAR))
+            .and_then(|version| version.version)
+            .is_some_and(|version| {
+                normalize_version_tag(&version) == normalize_version_tag(&journal.staged_version)
+            });
+    // A journal state can be replayed after the directory rollback already completed.
+    // Only the staged runtime version proves that `current` is still the candidate.
+    let promotion_was_published = current_is_promoted;
+
+    if journal.had_current {
+        if promotion_was_published && current_dir.exists() {
+            fs::remove_dir_all(&current_dir)
+                .map_err(|error| format!("Could not remove interrupted runtime: {error}"))?;
+        }
+        if !current_dir.exists() && previous_dir.exists() {
+            rename_same_parent(&previous_dir, &current_dir)?;
+        }
+    } else if promotion_was_published && current_dir.exists() {
+        fs::remove_dir_all(&current_dir)
+            .map_err(|error| format!("Could not remove interrupted runtime: {error}"))?;
+    }
+
+    if let Some(backup_dir) = backup_dir {
+        if backup_dir.exists() {
+            if previous_dir.exists() {
+                fs::remove_dir_all(&previous_dir).map_err(|error| {
+                    format!("Could not replace previous runtime backup: {error}")
+                })?;
+            }
+            rename_same_parent(&backup_dir, &previous_dir)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_recovery_journal_paths(
+    journal: &suwayomi_maintenance::SuwayomiUpdateJournal,
+    runtime_root: &Path,
+) -> Result<(), String> {
+    let current_dir = PathBuf::from(&journal.current_dir);
+    let previous_dir = PathBuf::from(&journal.previous_dir);
+    let staging_dir = PathBuf::from(&journal.staging_dir);
+    let expected_current = runtime_root.join(SUWAYOMI_CURRENT_DIR);
+    let expected_previous = runtime_root.join(SUWAYOMI_PREVIOUS_DIR);
+    let expected_staging = runtime_root
+        .join(SUWAYOMI_STAGING_DIR)
+        .join(normalize_version_tag(&journal.staged_version));
+    if comparable_path(&current_dir) != comparable_path(&expected_current)
+        || comparable_path(&previous_dir) != comparable_path(&expected_previous)
+        || comparable_path(&staging_dir) != comparable_path(&expected_staging)
+    {
+        return Err("Suwayomi update journal contains unexpected runtime paths.".to_string());
+    }
+    if !journal.previous_backup_dir.is_empty() {
+        let backup = PathBuf::from(&journal.previous_backup_dir);
+        if backup.parent().map(comparable_path) != Some(comparable_path(runtime_root))
+            || !backup
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(".previous-replaced-"))
+        {
+            return Err("Suwayomi update journal contains an unexpected backup path.".to_string());
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -958,7 +1229,24 @@ fn try_acquire_suwayomi_update_lock(owner: &str) -> Result<SuwayomiUpdateLockGua
         owner: owner.trim().to_string(),
         started_at_ms: unix_now_ms(),
     });
-    Ok(SuwayomiUpdateLockGuard { token })
+    Ok(SuwayomiUpdateLockGuard {
+        token,
+        maintenance: None,
+    })
+}
+
+impl SuwayomiUpdateLockGuard {
+    fn begin_maintenance(&mut self, owner: &str, phase: MaintenancePhase) -> Result<(), String> {
+        if self.maintenance.is_some() {
+            return Ok(());
+        }
+        self.maintenance = Some(suwayomi_maintenance::begin_exclusive_maintenance(
+            &managed_runtime_root(),
+            owner,
+            phase,
+        )?);
+        Ok(())
+    }
 }
 
 fn release_suwayomi_update_lock(token: &str) -> bool {
@@ -1088,7 +1376,7 @@ fn create_snapshot_for_plan(
     let result = (|| {
         let files = copy_snapshot_plan(&plan, &temp_dir)?;
         let manifest = SuwayomiSnapshotManifest {
-            schema_version: 1,
+            schema_version: 2,
             snapshot_version: SUWAYOMI_SNAPSHOT_VERSION.to_string(),
             created_at: unix_now_ms(),
             profile_id,
@@ -1149,6 +1437,47 @@ fn plan_snapshot_files(root_dir: &Path) -> Result<Vec<SnapshotPlanFile>, String>
             size_bytes,
         });
     }
+    for directory in SUWAYOMI_SNAPSHOT_DIRECTORY_ALLOWLIST {
+        let source_root = root_dir.join(directory);
+        if !source_root.exists() {
+            continue;
+        }
+        if !source_root.is_dir() {
+            return Err(format!(
+                "Snapshot allowlist entry is not a directory: {directory}"
+            ));
+        }
+        for entry in WalkDir::new(&source_root).follow_links(false) {
+            let entry = entry.map_err(|error| {
+                format!("Could not inspect snapshot directory {directory}: {error}")
+            })?;
+            if entry.file_type().is_symlink() {
+                return Err(format!(
+                    "Snapshot directory {directory} contains an unsupported symbolic link."
+                ));
+            }
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let relative = entry.path().strip_prefix(root_dir).map_err(|_| {
+                format!(
+                    "Snapshot file escaped the Suwayomi profile: {}",
+                    entry.path().display()
+                )
+            })?;
+            let name = relative_path_string(relative)?;
+            let size_bytes = entry
+                .metadata()
+                .map_err(|error| format!("Could not read metadata for {name}: {error}"))?
+                .len();
+            files.push(SnapshotPlanFile {
+                name,
+                source_path: entry.path().to_path_buf(),
+                size_bytes,
+            });
+        }
+    }
+    files.sort_by(|left, right| left.name.cmp(&right.name));
     if files.is_empty() {
         return Err("No allowlisted Suwayomi files were available for snapshot.".to_string());
     }
@@ -1211,6 +1540,14 @@ fn copy_snapshot_plan(
     let mut files = Vec::new();
     for planned in plan {
         let target = temp_dir.join(&planned.name);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                format!(
+                    "Could not create snapshot parent for {}: {error}",
+                    planned.name
+                )
+            })?;
+        }
         match fs::copy(&planned.source_path, &target) {
             Ok(_) => {}
             Err(error)
@@ -1259,6 +1596,7 @@ fn validate_snapshot_files(
     files: &[SuwayomiSnapshotFile],
 ) -> Result<(), String> {
     for file in files {
+        validate_snapshot_relative_path(&file.name)?;
         let path = snapshot_dir.join(&file.name);
         let metadata = fs::metadata(&path)
             .map_err(|error| format!("Could not validate snapshot file {}: {error}", file.name))?;
@@ -2056,12 +2394,24 @@ struct RuntimePromotionState {
     current_dir: PathBuf,
     previous_dir: Option<PathBuf>,
     previous_backup_dir: Option<PathBuf>,
+    staging_dir: PathBuf,
     had_current: bool,
 }
 
+#[cfg(test)]
 fn promote_staging_directories(
     runtime_root: &Path,
     version: &str,
+) -> Result<RuntimePromotionState, String> {
+    let promotion = plan_runtime_promotion(runtime_root, version, &Uuid::new_v4().to_string())?;
+    apply_runtime_promotion(&promotion)?;
+    Ok(promotion)
+}
+
+fn plan_runtime_promotion(
+    runtime_root: &Path,
+    version: &str,
+    operation_id: &str,
 ) -> Result<RuntimePromotionState, String> {
     let current_dir = runtime_root.join(SUWAYOMI_CURRENT_DIR);
     let previous_dir = runtime_root.join(SUWAYOMI_PREVIOUS_DIR);
@@ -2078,44 +2428,46 @@ fn promote_staging_directories(
         return Err("Previous Suwayomi runtime path is not a directory.".to_string());
     }
 
-    fs::create_dir_all(runtime_root)
-        .map_err(|error| format!("Could not create Suwayomi runtime directory: {error}"))?;
     let had_current = current_dir.exists();
     let previous_backup_dir = if had_current && previous_dir.exists() {
-        let backup = runtime_root.join(format!(
-            ".previous-replaced-{}-{}",
-            unix_now_ms(),
-            Uuid::new_v4()
-        ));
-        rename_same_parent(&previous_dir, &backup)?;
-        Some(backup)
+        Some(runtime_root.join(format!(".previous-replaced-{operation_id}")))
     } else {
         None
     };
-
-    if had_current {
-        if let Err(error) = rename_same_parent(&current_dir, &previous_dir) {
-            restore_previous_backup(&previous_dir, previous_backup_dir.as_ref());
-            return Err(error);
-        }
-    }
-
-    if let Err(error) = rename_same_parent(&staging_dir, &current_dir) {
-        let _ = rollback_promoted_directories(&RuntimePromotionState {
-            current_dir: current_dir.clone(),
-            previous_dir: Some(previous_dir.clone()),
-            previous_backup_dir: previous_backup_dir.clone(),
-            had_current,
-        });
-        return Err(error);
-    }
 
     Ok(RuntimePromotionState {
         current_dir,
         previous_dir: had_current.then_some(previous_dir),
         previous_backup_dir,
+        staging_dir,
         had_current,
     })
+}
+
+fn apply_runtime_promotion(promotion: &RuntimePromotionState) -> Result<(), String> {
+    let runtime_root = promotion
+        .current_dir
+        .parent()
+        .ok_or_else(|| "Suwayomi runtime directory has no parent.".to_string())?;
+    fs::create_dir_all(runtime_root)
+        .map_err(|error| format!("Could not create Suwayomi runtime directory: {error}"))?;
+    let previous_dir = runtime_root.join(SUWAYOMI_PREVIOUS_DIR);
+    if let Some(backup) = &promotion.previous_backup_dir {
+        rename_same_parent(&previous_dir, backup)?;
+    }
+
+    if promotion.had_current {
+        if let Err(error) = rename_same_parent(&promotion.current_dir, &previous_dir) {
+            restore_previous_backup(&previous_dir, promotion.previous_backup_dir.as_ref());
+            return Err(error);
+        }
+    }
+
+    if let Err(error) = rename_same_parent(&promotion.staging_dir, &promotion.current_dir) {
+        let _ = rollback_promoted_directories(promotion);
+        return Err(error);
+    }
+    Ok(())
 }
 
 fn rename_same_parent(from: &Path, to: &Path) -> Result<(), String> {
@@ -2141,7 +2493,7 @@ fn rollback_promoted_runtime(
     snapshot_dir: &Path,
 ) -> Result<(), String> {
     kill_tachidesk_target(app, target);
-    let _ = wait_for_managed_runtime_stop(&target.root_dir, 0);
+    wait_for_managed_runtime_stop(&target.root_dir, 0)?;
     rollback_promoted_directories(promotion)?;
     restore_snapshot_to_root(snapshot_dir, &target.root_dir)?;
     restart_managed_runtime(app, target)?;
@@ -2430,7 +2782,9 @@ fn validate_snapshot_for_restore(snapshot_dir: &Path) -> Result<SuwayomiSnapshot
         .map_err(|error| format!("Could not read rollback snapshot manifest: {error}"))?;
     let manifest: SuwayomiSnapshotManifest = serde_json::from_str(&text)
         .map_err(|error| format!("Could not parse rollback snapshot manifest: {error}"))?;
-    if manifest.schema_version != 1 || manifest.snapshot_version != SUWAYOMI_SNAPSHOT_VERSION {
+    let supported = (manifest.schema_version == 1 && manifest.snapshot_version == "1")
+        || (manifest.schema_version == 2 && manifest.snapshot_version == SUWAYOMI_SNAPSHOT_VERSION);
+    if !supported {
         return Err("Rollback snapshot manifest has an unsupported schema.".to_string());
     }
     validate_snapshot_files(snapshot_dir, &manifest.files)?;
@@ -2442,24 +2796,117 @@ fn restore_snapshot_to_root(snapshot_dir: &Path, root_dir: &Path) -> Result<(), 
     if comparable_path(Path::new(&manifest.source_root)) != comparable_path(root_dir) {
         return Err("Rollback snapshot belongs to a different Suwayomi root.".to_string());
     }
+    let snapshot_names = manifest
+        .files
+        .iter()
+        .map(|file| file.name.as_str())
+        .collect::<std::collections::HashSet<_>>();
     for name in SUWAYOMI_SNAPSHOT_ALLOWLIST {
         let target = root_dir.join(name);
-        if !manifest.files.iter().any(|file| file.name == *name) && target.exists() {
+        if !snapshot_names.contains(name) && target.exists() {
             fs::remove_file(&target)
                 .map_err(|error| format!("Could not remove restored-absent {name}: {error}"))?;
         }
     }
+    remove_snapshot_directory_extras(root_dir, &snapshot_names)?;
     for file in &manifest.files {
+        validate_snapshot_relative_path(&file.name)?;
         let source = snapshot_dir.join(&file.name);
         let target = root_dir.join(&file.name);
-        fs::copy(&source, &target)
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                format!("Could not create restore parent for {}: {error}", file.name)
+            })?;
+        }
+        let temp_target = target.with_extension(format!("{}.restore.tmp", Uuid::new_v4()));
+        fs::copy(&source, &temp_target)
             .map_err(|error| format!("Could not restore {} from snapshot: {error}", file.name))?;
-        let restored_sha256 = sha256_file(&target)?;
+        OpenOptions::new()
+            .write(true)
+            .open(&temp_target)
+            .and_then(|restored| restored.sync_all())
+            .map_err(|error| format!("Could not sync restored {}: {error}", file.name))?;
+        let restored_sha256 = sha256_file(&temp_target)?;
         if restored_sha256 != file.sha256 {
+            let _ = fs::remove_file(&temp_target);
             return Err(format!(
                 "Restored snapshot file {} failed SHA-256 validation.",
                 file.name
             ));
+        }
+        suwayomi_maintenance::atomic_replace_file(&temp_target, &target)
+            .map_err(|error| format!("Could not publish restored {}: {error}", file.name))?;
+    }
+    Ok(())
+}
+
+fn relative_path_string(path: &Path) -> Result<String, String> {
+    validate_snapshot_relative_path(&path.to_string_lossy())?;
+    Ok(path
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/"))
+}
+
+fn validate_snapshot_relative_path(value: &str) -> Result<(), String> {
+    let path = Path::new(value);
+    if value.trim().is_empty()
+        || path.is_absolute()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        })
+    {
+        return Err("Snapshot manifest contains an unsafe relative path.".to_string());
+    }
+    Ok(())
+}
+
+fn remove_snapshot_directory_extras(
+    root_dir: &Path,
+    snapshot_names: &std::collections::HashSet<&str>,
+) -> Result<(), String> {
+    for directory in SUWAYOMI_SNAPSHOT_DIRECTORY_ALLOWLIST {
+        let directory_root = root_dir.join(directory);
+        if !directory_root.exists() {
+            continue;
+        }
+        let entries = WalkDir::new(&directory_root)
+            .follow_links(false)
+            .contents_first(true)
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("Could not inspect restore directory {directory}: {error}"))?;
+        for entry in entries {
+            if entry.file_type().is_symlink() {
+                return Err(format!(
+                    "Restore directory {directory} contains an unsupported symbolic link."
+                ));
+            }
+            if entry.file_type().is_file() {
+                let relative = entry
+                    .path()
+                    .strip_prefix(root_dir)
+                    .map_err(|_| "Restore file escaped the Suwayomi profile.".to_string())?;
+                let name = relative_path_string(relative)?;
+                if !snapshot_names.contains(name.as_str()) {
+                    fs::remove_file(entry.path()).map_err(|error| {
+                        format!("Could not remove restored-absent {name}: {error}")
+                    })?;
+                }
+            } else if entry.file_type().is_dir()
+                && entry.path() != directory_root
+                && fs::read_dir(entry.path())
+                    .map(|mut children| children.next().is_none())
+                    .unwrap_or(false)
+            {
+                let _ = fs::remove_dir(entry.path());
+            }
         }
     }
     Ok(())
@@ -3475,12 +3922,35 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         write_root_file(temp.path(), "server.conf", b"server");
         write_root_file(temp.path(), "database.mv.db", b"db");
+        std::fs::create_dir_all(temp.path().join("extensions").join("installed")).unwrap();
+        std::fs::write(
+            temp.path()
+                .join("extensions")
+                .join("installed")
+                .join("source.jar"),
+            b"extension",
+        )
+        .unwrap();
+        std::fs::create_dir_all(temp.path().join("settings")).unwrap();
+        std::fs::write(
+            temp.path().join("settings").join("source.json"),
+            b"settings",
+        )
+        .unwrap();
 
         let snapshot = create_snapshot_for_root(temp.path()).unwrap();
 
         assert!(Path::new(&snapshot.snapshot_path).is_dir());
         assert!(Path::new(&snapshot.manifest_path).is_file());
-        assert_eq!(snapshot.copied_files, vec!["server.conf", "database.mv.db"]);
+        assert_eq!(
+            snapshot.copied_files,
+            vec![
+                "database.mv.db",
+                "extensions/installed/source.jar",
+                "server.conf",
+                "settings/source.json",
+            ]
+        );
         assert!(Path::new(&snapshot.snapshot_path)
             .join("server.conf")
             .is_file());
@@ -3488,10 +3958,10 @@ mod tests {
             .join("database.mv.db")
             .is_file());
         let manifest = read_snapshot_manifest(&snapshot);
-        assert_eq!(manifest.schema_version, 1);
+        assert_eq!(manifest.schema_version, 2);
         assert_eq!(manifest.snapshot_version, SUWAYOMI_SNAPSHOT_VERSION);
         assert_eq!(manifest.runtime_mode, SuwayomiRuntimeMode::Unknown);
-        assert_eq!(manifest.files.len(), 2);
+        assert_eq!(manifest.files.len(), 4);
         assert!(manifest.files.iter().all(|file| file.sha256.len() == 64));
     }
 
@@ -3575,6 +4045,28 @@ mod tests {
         assert!(snapshot_path.join("server.conf").is_file());
         assert!(!snapshot_path.join("downloads").exists());
         assert!(!snapshot_path.join("library-cover-cache").exists());
+    }
+
+    #[test]
+    fn snapshot_rejects_symlinks_in_recursive_allowlist() {
+        let temp = tempfile::tempdir().unwrap();
+        write_root_file(temp.path(), "server.conf", b"server");
+        std::fs::create_dir_all(temp.path().join("extensions")).unwrap();
+
+        #[cfg(windows)]
+        {
+            let outside = temp.path().join("outside.jar");
+            std::fs::write(&outside, b"outside").unwrap();
+            if std::os::windows::fs::symlink_file(
+                &outside,
+                temp.path().join("extensions").join("linked.jar"),
+            )
+            .is_ok()
+            {
+                let error = plan_snapshot_files(temp.path()).unwrap_err();
+                assert!(error.contains("symbolic link"));
+            }
+        }
     }
 
     #[test]
@@ -3945,6 +4437,7 @@ mod tests {
             current_dir: current.clone(),
             previous_dir: Some(previous.clone()),
             previous_backup_dir: None,
+            staging_dir: temp.path().join(SUWAYOMI_STAGING_DIR).join("unused"),
             had_current: true,
         };
 
@@ -3963,6 +4456,7 @@ mod tests {
             current_dir: current,
             previous_dir: Some(temp.path().join(SUWAYOMI_PREVIOUS_DIR)),
             previous_backup_dir: None,
+            staging_dir: temp.path().join(SUWAYOMI_STAGING_DIR).join("unused"),
             had_current: true,
         };
 
@@ -3980,6 +4474,7 @@ mod tests {
             current_dir: current.clone(),
             previous_dir: None,
             previous_backup_dir: None,
+            staging_dir: temp.path().join(SUWAYOMI_STAGING_DIR).join("unused"),
             had_current: false,
         };
 
@@ -3995,11 +4490,18 @@ mod tests {
         std::fs::create_dir(&root).unwrap();
         write_root_file(&root, "server.conf", b"old-server");
         write_root_file(&root, "database.mv.db", b"old-db");
+        std::fs::create_dir_all(root.join("extensions")).unwrap();
+        std::fs::write(root.join("extensions").join("kept.jar"), b"old-extension").unwrap();
+        std::fs::create_dir_all(root.join("settings")).unwrap();
+        std::fs::write(root.join("settings").join("kept.json"), b"old-setting").unwrap();
         let snapshot = create_snapshot_for_root(&root).unwrap();
         write_root_file(&root, "server.conf", b"new-server");
         write_root_file(&root, "database.trace.db", b"new-trace");
         std::fs::create_dir(root.join("downloads")).unwrap();
         std::fs::write(root.join("downloads").join("chapter.cbz"), b"keep").unwrap();
+        std::fs::write(root.join("extensions").join("kept.jar"), b"new-extension").unwrap();
+        std::fs::write(root.join("extensions").join("extra.jar"), b"remove").unwrap();
+        std::fs::write(root.join("settings").join("kept.json"), b"new-setting").unwrap();
 
         restore_snapshot_to_root(Path::new(&snapshot.snapshot_path), &root).unwrap();
 
@@ -4013,6 +4515,111 @@ mod tests {
         );
         assert!(!root.join("database.trace.db").exists());
         assert!(root.join("downloads").join("chapter.cbz").is_file());
+        assert_eq!(
+            std::fs::read(root.join("extensions").join("kept.jar")).unwrap(),
+            b"old-extension"
+        );
+        assert!(!root.join("extensions").join("extra.jar").exists());
+        assert_eq!(
+            std::fs::read(root.join("settings").join("kept.json")).unwrap(),
+            b"old-setting"
+        );
+    }
+
+    fn recovery_journal(
+        root: &Path,
+        runtime_root: &Path,
+        snapshot: &SuwayomiUpdateSnapshotResult,
+        state: UpdateJournalState,
+    ) -> suwayomi_maintenance::SuwayomiUpdateJournal {
+        let mut journal = suwayomi_maintenance::new_update_journal(
+            "recovery-test".into(),
+            "main".into(),
+            path_to_string(root),
+            "http://127.0.0.1:4567".into(),
+            "v2.3.2243".into(),
+            snapshot.snapshot_path.clone(),
+            path_to_string(&runtime_root.join(SUWAYOMI_CURRENT_DIR)),
+            path_to_string(&runtime_root.join(SUWAYOMI_PREVIOUS_DIR)),
+            path_to_string(&runtime_root.join(".previous-replaced-recovery-test")),
+            path_to_string(&runtime_root.join(SUWAYOMI_STAGING_DIR).join("v2.3.2243")),
+            true,
+        );
+        journal.state = state;
+        journal
+    }
+
+    #[test]
+    fn interrupted_promotion_recovery_is_idempotent_before_publish() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("profile");
+        let runtime_root = temp.path().join("runtime");
+        std::fs::create_dir_all(&root).unwrap();
+        write_root_file(&root, "database.mv.db", b"old-db");
+        let snapshot = create_snapshot_for_root(&root).unwrap();
+        write_root_file(&root, "database.mv.db", b"changed-db");
+
+        let current = runtime_root.join(SUWAYOMI_CURRENT_DIR);
+        let previous = runtime_root.join(SUWAYOMI_PREVIOUS_DIR);
+        let backup = runtime_root.join(".previous-replaced-recovery-test");
+        let staging = runtime_root.join(SUWAYOMI_STAGING_DIR).join("v2.3.2243");
+        write_runtime_marker(&previous, "old-current");
+        write_runtime_marker(&backup, "older-previous");
+        write_runtime_marker(&staging, "candidate");
+        let mut journal = recovery_journal(
+            &root,
+            &runtime_root,
+            &snapshot,
+            UpdateJournalState::CurrentStopped,
+        );
+
+        recover_runtime_directories(&journal).unwrap();
+        restore_snapshot_to_root(Path::new(&journal.snapshot_path), &root).unwrap();
+        assert_eq!(read_runtime_marker(&current), "old-current");
+        assert_eq!(read_runtime_marker(&previous), "older-previous");
+        assert_eq!(
+            std::fs::read(root.join("database.mv.db")).unwrap(),
+            b"old-db"
+        );
+
+        journal.state = UpdateJournalState::RollbackRunning;
+        recover_runtime_directories(&journal).unwrap();
+        restore_snapshot_to_root(Path::new(&journal.snapshot_path), &root).unwrap();
+        assert_eq!(read_runtime_marker(&current), "old-current");
+        assert_eq!(read_runtime_marker(&previous), "older-previous");
+    }
+
+    #[test]
+    fn interrupted_promotion_recovery_removes_published_candidate() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("profile");
+        let runtime_root = temp.path().join("runtime");
+        std::fs::create_dir_all(&root).unwrap();
+        write_root_file(&root, "server.conf", b"old-server");
+        let snapshot = create_snapshot_for_root(&root).unwrap();
+
+        let current = runtime_root.join(SUWAYOMI_CURRENT_DIR);
+        let previous = runtime_root.join(SUWAYOMI_PREVIOUS_DIR);
+        let backup = runtime_root.join(".previous-replaced-recovery-test");
+        std::fs::create_dir_all(&current).unwrap();
+        std::fs::write(
+            current.join(SUWAYOMI_SERVER_JAR),
+            create_test_jar_bytes("v2.3.2243"),
+        )
+        .unwrap();
+        write_runtime_marker(&previous, "old-current");
+        write_runtime_marker(&backup, "older-previous");
+        let journal = recovery_journal(
+            &root,
+            &runtime_root,
+            &snapshot,
+            UpdateJournalState::RuntimePromoted,
+        );
+
+        recover_runtime_directories(&journal).unwrap();
+
+        assert_eq!(read_runtime_marker(&current), "old-current");
+        assert_eq!(read_runtime_marker(&previous), "older-previous");
     }
 
     #[test]

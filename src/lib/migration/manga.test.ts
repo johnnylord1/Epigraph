@@ -134,6 +134,10 @@ describe("manga migration services", () => {
 
     invokeMock.mockImplementation(async (command: string, payload?: Record<string, unknown>) => {
       switch (command) {
+        case "begin_suwayomi_runtime_operation":
+          return "migration-lease";
+        case "end_suwayomi_runtime_operation":
+          return true;
         case "read_migration_journal_state":
           return journalStateJson;
         case "write_migration_journal_state":

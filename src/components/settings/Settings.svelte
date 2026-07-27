@@ -11,6 +11,7 @@
   import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
   import { open as openUrl } from "@tauri-apps/plugin-shell";
   import { gql, gqlUpload, getServerAuthHeader, serverFileUrl } from "../../lib/client";
+  import { withSuwayomiOperationLease } from "../../lib/suwayomiUpdateLock.svelte";
   import { setMigrationPresence } from "../../lib/discord";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import {
@@ -1825,6 +1826,7 @@
   }
 
   async function restoreBackup(): Promise<{ ok: boolean; finalState: string | null }> {
+    return withSuwayomiOperationLease("backup-restore", async () => {
     if (!backupSelectedFile || !backupParsed || !backupAnalysis) {
       return { ok: false, finalState: null };
     }
@@ -1894,6 +1896,7 @@
     } finally {
       backupRestoring = false;
     }
+    });
   }
 
   async function relaunchRestoreIntoOtherProfile() {

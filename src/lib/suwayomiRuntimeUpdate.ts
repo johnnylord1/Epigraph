@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getServerAuthHeader } from "./client";
+import { resetManagedSourceRuntime } from "./manga/runtime";
+import {
+  beginSuwayomiUpdateMaintenance,
+  endSuwayomiUpdateMaintenance,
+} from "./suwayomiUpdateLock.svelte";
 import { store } from "../store/state.svelte";
 
 export type SuwayomiRuntimeMode =
@@ -80,6 +85,19 @@ export interface SuwayomiUpdatePromotionResult {
   restartedRuntime: boolean;
 }
 
+async function withSuwayomiUpdateMaintenance<T>(
+  owner: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const token = beginSuwayomiUpdateMaintenance(owner);
+  try {
+    return await operation();
+  } finally {
+    resetManagedSourceRuntime();
+    await endSuwayomiUpdateMaintenance(token);
+  }
+}
+
 export function currentSuwayomiRuntimeStatusInput(): Required<SuwayomiRuntimeStatusInput> {
   return {
     serverUrl: store.runtimeServerUrl ?? store.runtimeResolvedLocalProfileMeta?.serverUrl ?? store.settings.serverUrl,
@@ -130,39 +148,42 @@ export function createSuwayomiUpdateSnapshot(
   input: SuwayomiRuntimeStatusInput = currentSuwayomiRuntimeStatusInput(),
 ) {
   const fallback = currentSuwayomiRuntimeStatusInput();
-  return invoke<SuwayomiUpdateSnapshotResult>("create_suwayomi_update_snapshot", {
-    serverUrl: input.serverUrl ?? fallback.serverUrl,
-    binary: input.binary ?? fallback.binary,
-    profileId: input.profileId ?? fallback.profileId,
-    profileLabel: input.profileLabel ?? fallback.profileLabel,
-  });
+  return withSuwayomiUpdateMaintenance("snapshot", () =>
+    invoke<SuwayomiUpdateSnapshotResult>("create_suwayomi_update_snapshot", {
+      serverUrl: input.serverUrl ?? fallback.serverUrl,
+      binary: input.binary ?? fallback.binary,
+      profileId: input.profileId ?? fallback.profileId,
+      profileLabel: input.profileLabel ?? fallback.profileLabel,
+    }));
 }
 
 export function promoteSuwayomiRuntimeUpdate(
   input: SuwayomiRuntimeStatusInput & { stagedVersion: string; snapshotPath: string },
 ) {
   const fallback = currentSuwayomiRuntimeStatusInput();
-  return invoke<SuwayomiUpdatePromotionResult>("promote_suwayomi_runtime_update", {
-    serverUrl: input.serverUrl ?? fallback.serverUrl,
-    binary: input.binary ?? fallback.binary,
-    profileId: input.profileId ?? fallback.profileId,
-    profileLabel: input.profileLabel ?? fallback.profileLabel,
-    stagedVersion: input.stagedVersion,
-    snapshotPath: input.snapshotPath,
-    authHeader: getServerAuthHeader(),
-  });
+  return withSuwayomiUpdateMaintenance("promotion", () =>
+    invoke<SuwayomiUpdatePromotionResult>("promote_suwayomi_runtime_update", {
+      serverUrl: input.serverUrl ?? fallback.serverUrl,
+      binary: input.binary ?? fallback.binary,
+      profileId: input.profileId ?? fallback.profileId,
+      profileLabel: input.profileLabel ?? fallback.profileLabel,
+      stagedVersion: input.stagedVersion,
+      snapshotPath: input.snapshotPath,
+      authHeader: getServerAuthHeader(),
+    }));
 }
 
 export function installSuwayomiRuntimeUpdate(
   input: SuwayomiRuntimeStatusInput & { stagedVersion: string },
 ) {
   const fallback = currentSuwayomiRuntimeStatusInput();
-  return invoke<SuwayomiUpdatePromotionResult>("install_suwayomi_runtime_update", {
-    serverUrl: input.serverUrl ?? fallback.serverUrl,
-    binary: input.binary ?? fallback.binary,
-    profileId: input.profileId ?? fallback.profileId,
-    profileLabel: input.profileLabel ?? fallback.profileLabel,
-    stagedVersion: input.stagedVersion,
-    authHeader: getServerAuthHeader(),
-  });
+  return withSuwayomiUpdateMaintenance("install", () =>
+    invoke<SuwayomiUpdatePromotionResult>("install_suwayomi_runtime_update", {
+      serverUrl: input.serverUrl ?? fallback.serverUrl,
+      binary: input.binary ?? fallback.binary,
+      profileId: input.profileId ?? fallback.profileId,
+      profileLabel: input.profileLabel ?? fallback.profileLabel,
+      stagedVersion: input.stagedVersion,
+      authHeader: getServerAuthHeader(),
+    }));
 }

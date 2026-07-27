@@ -2,7 +2,10 @@ import {
   getServerAuthHeader,
   getServerUrl,
 } from "../../client";
-import { assertSuwayomiWritesAllowed } from "../../suwayomiUpdateLock.svelte";
+import {
+  acquireSuwayomiOperationLease,
+  assertSuwayomiWritesAllowed,
+} from "../../suwayomiUpdateLock.svelte";
 import { createSuwayomiSourceRuntime } from "./factory";
 import { SuwayomiTransport } from "./transport";
 import type { SourceRuntime } from "./types";
@@ -58,6 +61,7 @@ const managedRuntimeCache = new ManagedSourceRuntimeCache((endpoint) => {
       return headers;
     },
     beforeMutation: assertSuwayomiWritesAllowed,
+    beginMutationLease: () => acquireSuwayomiOperationLease("mutation"),
   });
   return createSuwayomiSourceRuntime(transport);
 });
