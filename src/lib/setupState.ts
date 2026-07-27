@@ -1,6 +1,5 @@
-import { gql } from "./client";
-import { GET_EXTENSIONS, GET_SETTINGS, GET_SOURCES } from "./queries";
-import type { Extension, Source } from "./types";
+import { getManagedSourceRuntime } from "./manga/runtime";
+import type { ExtensionRef, SourceRef } from "./manga/runtime";
 import { shouldHideSource } from "./util";
 
 const NON_CONTENT_EXTENSION_PKG_NAMES = new Set([
@@ -48,8 +47,19 @@ type SetupSettings = {
   nsfwBlockedSourceIds: string[];
 };
 
-function isContentExtension(extension: Pick<Extension, "pkgName">): boolean {
-  return !NON_CONTENT_EXTENSION_PKG_NAMES.has(extension.pkgName);
+function isContentExtension(extension: Pick<ExtensionRef, "packageName">): boolean {
+  return !NON_CONTENT_EXTENSION_PKG_NAMES.has(extension.packageName);
+}
+
+function sourceVisibilityShape(source: SourceRef) {
+  return {
+    id: source.id,
+    name: source.name,
+    lang: source.language,
+    displayName: source.displayName,
+    iconUrl: source.iconUrl ?? "",
+    isNsfw: source.isNsfw,
+  };
 }
 
 export function isSuwayomiSchemaInitializingError(error: unknown): boolean {
@@ -63,21 +73,24 @@ export async function detectSetupState(
   signal?: AbortSignal,
 ): Promise<SetupState> {
   try {
-    const [settingsData, extensionsData, sourcesData] = await Promise.all([
-      gql<{ settings: { extensionRepos: string[] } }>(GET_SETTINGS, undefined, signal),
-      gql<{ extensions: { nodes: Extension[] } }>(GET_EXTENSIONS, undefined, signal),
-      gql<{ sources: { nodes: Source[] } }>(GET_SOURCES, undefined, signal),
+    const runtime = await getManagedSourceRuntime();
+    const [stores, extensions, sources] = await Promise.all([
+      runtime.listStores(signal),
+      runtime.listExtensions(signal),
+      runtime.listSources(signal),
     ]);
 
-    const extensionRepoCount = settingsData.settings.extensionRepos?.length ?? 0;
-    const installedExtensions = extensionsData.extensions.nodes.filter((ext) => ext.isInstalled);
+    const extensionRepoCount = stores.length;
+    const installedExtensions = extensions.filter((ext) => ext.isInstalled);
     const installedContentExtensions = installedExtensions.filter(isContentExtension);
     const installedHelperExtensions = installedExtensions.filter((ext) => !isContentExtension(ext));
     const installedExtensionCount = installedExtensions.length;
     const installedContentExtensionCount = installedContentExtensions.length;
     const installedHelperExtensionCount = installedHelperExtensions.length;
-    const allSources = sourcesData.sources.nodes.filter((src) => src.id !== "0");
-    const usableSources = allSources.filter((src) => !shouldHideSource(src, settings));
+    const allSources = sources.filter((src) => src.id !== "0");
+    const usableSources = allSources.filter(
+      (src) => !shouldHideSource(sourceVisibilityShape(src), settings),
+    );
     const totalSourceCount = allSources.length;
     const usableSourceCount = usableSources.length;
     const hiddenSourceCount = totalSourceCount - usableSourceCount;

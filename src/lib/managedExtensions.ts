@@ -1,4 +1,5 @@
 import type { Extension } from "./types";
+import type { ExtensionRef } from "./manga/runtime";
 import type { InstalledNovelSourceDescriptor } from "./novels/domain";
 import type { NovelCatalogEntry } from "./novels/contracts";
 import type { NovelCatalogPluginStatus } from "./novels/repositories";
@@ -29,6 +30,24 @@ export function toManagedMangaExtension(extension: Extension): ManagedExtension 
   return {
     ...extension,
     kind: "manga",
+  };
+}
+
+export function toManagedMangaRuntimeExtension(extension: ExtensionRef): ManagedExtension {
+  const parsedVersionCode = Number(extension.versionCode);
+  return {
+    apkName: extension.apkName ?? extension.packageName,
+    pkgName: extension.packageName,
+    name: extension.name,
+    lang: extension.language,
+    versionName: extension.versionName,
+    versionCode: Number.isSafeInteger(parsedVersionCode) ? parsedVersionCode : undefined,
+    isInstalled: extension.isInstalled,
+    isObsolete: extension.isObsolete,
+    hasUpdate: extension.hasUpdate,
+    iconUrl: extension.iconUrl,
+    kind: "manga",
+    repo: extension.storeId,
   };
 }
 

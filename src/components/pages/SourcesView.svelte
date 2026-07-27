@@ -15,15 +15,16 @@
   import { gql, gqlUpload } from "../../lib/client";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import {
-    FETCH_EXTENSIONS,
-    GET_EXTENSIONS,
     GET_SETTINGS,
     INSTALL_EXTERNAL_EXTENSION,
     SET_EXTENSION_REPOS,
-    UPDATE_EXTENSION,
   } from "../../lib/queries";
-  import type { Extension } from "../../lib/types";
-  import { toManagedMangaExtension, toManagedNovelCatalogEntry, type ManagedExtension } from "../../lib/managedExtensions";
+  import {
+    toManagedMangaRuntimeExtension,
+    toManagedNovelCatalogEntry,
+    type ManagedExtension,
+  } from "../../lib/managedExtensions";
+  import { getManagedSourceRuntime } from "../../lib/manga/runtime";
   import {
     addNovelRepositoryToState,
     deriveNovelRepositoryUiState,
@@ -291,7 +292,8 @@
     const refreshed = extensions.find((item) => item.pkgName === extension.pkgName);
     if (refreshed?.isInstalled) return refreshed;
 
-    await gql(UPDATE_EXTENSION, { id: extension.pkgName, install: true }, undefined, 60000);
+    const runtime = await getManagedSourceRuntime();
+    await runtime.installExtension({ packageName: extension.pkgName });
     await loadExtensions();
     return extensions.find((item) => item.pkgName === extension.pkgName) ?? refreshed ?? extension;
   }
@@ -302,15 +304,15 @@
 
   async function fetchMangaExtensionNodes() {
     try {
-      const data = await gql<{ extensions: { nodes: Extension[] } }>(GET_EXTENSIONS, undefined, undefined, 15000);
-      return data.extensions.nodes;
+      const runtime = await getManagedSourceRuntime();
+      return runtime.listExtensions();
     } catch (firstError) {
       if (!(await ensureMangaServerAwake())) throw firstError;
       if (!(await waitForSuwayomiGraphqlReady("extensions", { attempts: 8, delayMs: 800, timeoutMs: 5000 }))) {
         throw firstError;
       }
-      const data = await gql<{ extensions: { nodes: Extension[] } }>(GET_EXTENSIONS, undefined, undefined, 15000);
-      return data.extensions.nodes;
+      const runtime = await getManagedSourceRuntime();
+      return runtime.listExtensions();
     }
   }
 
@@ -318,7 +320,7 @@
     try {
       const nodes = await fetchMangaExtensionNodes();
       if (isCurrentExtensionLoad(run, "manga")) {
-        const next = nodes.map(toManagedMangaExtension);
+        const next = nodes.map(toManagedMangaRuntimeExtension);
         mangaExtensionCatalogLoaded = true;
         lastMangaExtensions = next;
         extensions = next;
@@ -398,9 +400,10 @@
       if (!(await waitForSuwayomiGraphqlReady("extensions", { attempts: 8, delayMs: 800, timeoutMs: 5000 }))) {
         throw new Error("Suwayomi is still starting. Try refreshing extensions again in a moment.");
       }
-      const data = await gql<{ fetchExtensions: { extensions: Extension[] } }>(FETCH_EXTENSIONS);
+      const runtime = await getManagedSourceRuntime();
+      const refreshedExtensions = await runtime.refreshExtensions();
       if (isCurrentExtensionLoad(run, "manga")) {
-        const next = data.fetchExtensions.extensions.map(toManagedMangaExtension);
+        const next = refreshedExtensions.map(toManagedMangaRuntimeExtension);
         mangaExtensionCatalogLoaded = true;
         lastMangaExtensions = next;
         extensions = next;
@@ -702,7 +705,8 @@
       if (!(await waitForSuwayomiGraphqlReady("extensions", { attempts: 8, delayMs: 800, timeoutMs: 5000 }))) {
         throw new Error("Suwayomi is still starting. Try installing the extension again in a moment.");
       }
-      await gql(UPDATE_EXTENSION, { id: extension.pkgName, install: true }, undefined, 60000);
+      const runtime = await getManagedSourceRuntime();
+      await runtime.installExtension({ packageName: extension.pkgName });
       bumpContentSetupVersion();
       await loadExtensions();
       installedExtension = extensions.find((item) => item.pkgName === extension.pkgName) ?? {
@@ -877,7 +881,10 @@
       return;
     }
     const didRemove = await mutate(
-      () => gql(UPDATE_EXTENSION, { id: extension.pkgName, uninstall: true }),
+      async () => {
+        const runtime = await getManagedSourceRuntime();
+        await runtime.uninstallExtension(extension.pkgName);
+      },
       extension.pkgName,
       "remove",
       false,
@@ -908,8 +915,9 @@
     }
     const didUpdate = await mutate(
       async () => {
-        await gql(FETCH_EXTENSIONS, undefined, undefined, 60000);
-        await gql(UPDATE_EXTENSION, { id: extension.pkgName, update: true }, undefined, 60000);
+        const runtime = await getManagedSourceRuntime();
+        await runtime.refreshExtensions();
+        await runtime.updateExtension({ packageName: extension.pkgName });
       },
       extension.pkgName,
       "update",
@@ -986,11 +994,12 @@
         if (!(await waitForSuwayomiGraphqlReady("extensions", { attempts: 8, delayMs: 800, timeoutMs: 5000 }))) {
           throw new Error("Suwayomi is still starting. Try updating extensions again in a moment.");
         }
-        await gql(FETCH_EXTENSIONS, undefined, undefined, 60000);
+        const runtime = await getManagedSourceRuntime();
+        await runtime.refreshExtensions();
         const updatedPkgNames = new Set<string>();
         for (const extension of candidates) {
           try {
-            await gql(UPDATE_EXTENSION, { id: extension.pkgName, update: true }, undefined, 60000);
+            await runtime.updateExtension({ packageName: extension.pkgName });
             updatedPkgNames.add(extension.pkgName);
             mockSettingsStore.refreshConfig(extension.pkgName, extension);
           } catch (error) {
