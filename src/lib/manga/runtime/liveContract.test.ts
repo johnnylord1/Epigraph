@@ -4,6 +4,7 @@ import {
   CompatibilityProfileV21,
   CompatibilityProfileV23,
 } from "./compatibility";
+import { collectStructuralExtensionHealth } from "./health";
 import { SuwayomiTransport } from "./transport";
 
 const endpoint = process.env.AETHON_SUWAYOMI_LIVE_ENDPOINT;
@@ -29,5 +30,11 @@ describe.runIf(Boolean(endpoint))("Suwayomi live compatibility contract", () => 
     await expect(adapter.listStores()).resolves.toBeDefined();
     await expect(adapter.listExtensions()).resolves.toBeDefined();
     await expect(adapter.listSources()).resolves.toBeDefined();
+    await expect(collectStructuralExtensionHealth(adapter)).resolves.toMatchObject({
+      level: 0,
+      stale: false,
+      runtime: { status: "healthy" },
+      manager: { status: "healthy" },
+    });
   }, 60_000);
 });

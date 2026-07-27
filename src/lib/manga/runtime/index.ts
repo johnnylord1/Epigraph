@@ -24,6 +24,23 @@ export {
   getManagedSourceRuntime,
   resetManagedSourceRuntime,
 } from "./managed";
+export {
+  SourceHealthProbeCache,
+  classifyExtensionFailure,
+  collectStructuralExtensionHealth,
+  probeSourceReachability,
+} from "./health";
+export type {
+  ExtensionHealthCheck,
+  ExtensionHealthCode,
+  ExtensionHealthDimension,
+  ExtensionHealthStatus,
+  ExtensionStructuralHealth,
+  SourceReachabilityHealth,
+  SourceReachabilityProbeInput,
+  StructuralExtensionHealthSnapshot,
+  StructuralHealthOptions,
+} from "./health";
 export { createExtensionProvenance } from "./provenance";
 export {
   INTROSPECTION_OPERATION,

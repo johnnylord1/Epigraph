@@ -1,6 +1,6 @@
 # Replanejamento do runtime Suwayomi
 
-Status: SR3 e SR4 implementados; SR5-SR8 ainda nao iniciados.
+Status: SR3, SR4 e SR5 implementados; SR6-SR8 ainda nao iniciados.
 
 ## Resultado desta etapa
 
@@ -232,11 +232,28 @@ versoes nao aprovadas, e instalar somente uma versao exata apos SR7.
 
 ### SR5 - Saude estrutural e canarios
 
-- Estados: runtime ready, manager ready, store available, installed, loaded,
-  source registered, source reachable, login, antibot, offline e incompatible.
-- Usar fixtures/canarios pequenos para ABI, serialization, classloader e cache;
-  websites reais sao smoke opcional.
-- Classificar o `AbstractMethodError` sem atribuir erro de website ao runtime.
+- Implementado em `src/lib/manga/runtime/health.ts` com dois niveis separados.
+  O Level 0 consulta apenas runtime, stores, extensoes e sources registrados no
+  GraphQL local; ele nao acessa websites. O Level 1 executa uma unica consulta
+  leve somente quando chamado explicitamente, com timeout, cancelamento, cache
+  limitado e preservacao temporaria da ultima evidencia saudavel.
+- Estados cobertos: runtime ready, manager ready, store available, installed,
+  obsolete/update available, loaded, source registered, source reachable,
+  login, antibot, offline, rate limited, configuration required e incompatible.
+- `AbstractMethodError`, erros de classloader e serialization sao classificados
+  como incompatibilidade de extensao. Cloudflare, login, rate limit e falhas de
+  rede permanecem estados externos e nao rebaixam o runtime automaticamente.
+- O pacote helper `eu.kanade.tachiyomi.extension.all.tachidesk` nao e marcado
+  como quebrado por nao registrar uma source de conteudo.
+- Falhas transitorias do runtime preservam o ultimo inventario estrutural valido;
+  evidencias expiradas nao sao reutilizadas. Cancelamentos do usuario nao sao
+  registrados como falha de saude.
+- Cobertura automatizada: correlacao estrutural, helper, inventario stale,
+  classificacao ABI/serialization/rede/autenticacao, cache, expiracao, timeout,
+  cancelamento e smoke opcional contra runtime descartavel via
+  `AETHON_SUWAYOMI_LIVE_ENDPOINT`.
+- Nenhuma tela, fluxo Syncd, novel/LNReader ou teste automatico em massa contra
+  websites foi adicionado neste marco.
 - Commit: `feat(sources): add structural extension health`.
 
 ### SR6 - Core/Syncd maintenance e recuperacao
