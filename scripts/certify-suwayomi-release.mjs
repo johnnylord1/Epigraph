@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -12,10 +13,54 @@ const CHECKSUM_ASSET = "Checksums.sha256";
 const DEFAULT_TIMEOUT_MS = 120_000;
 export const DEFAULT_CERTIFICATION_VERSION = "v2.3.2243";
 export const RUNTIME_CONTRACT = Object.freeze({
-  requiredQueries: ["extensions", "mangas", "sources"],
-  requiredMutations: [],
+  requiredQueries: ["aboutServer", "extensionStores", "extensions", "mangas", "sources"],
+  requiredMutations: [
+    "addExtensionStore",
+    "removeExtensionStore",
+    "fetchExtensions",
+    "updateExtension",
+    "fetchSourceManga",
+    "fetchManga",
+    "fetchChapters",
+    "fetchChapterPages",
+  ],
   requiredFields: {
-    Query: ["extensions", "mangas", "sources"],
+    ExtensionType: [
+      "pkgName",
+      "name",
+      "lang",
+      "versionName",
+      "versionCodeLong",
+      "isInstalled",
+      "isObsolete",
+      "hasUpdate",
+      "iconUrl",
+      "storeIndexUrl",
+      "apkName",
+      "apkUrl",
+      "jarUrl",
+    ],
+    ExtensionStoreType: [
+      "name",
+      "badgeLabel",
+      "signingKey",
+      "contactWebsite",
+      "contactDiscord",
+      "indexUrl",
+      "isLegacy",
+      "extensionListUrl",
+    ],
+    SourceType: [
+      "id",
+      "name",
+      "lang",
+      "displayName",
+      "iconUrl",
+      "isNsfw",
+      "supportsLatest",
+      "isConfigurable",
+      "extension",
+    ],
   },
   optionalCapabilities: [
     "extensionStores",
@@ -301,12 +346,17 @@ export async function readJarVersion(bytes) {
   return version;
 }
 
-export function buildAllowlistCandidate({ version, asset, sha256: certifiedSha256, platforms }) {
+export function buildCompatibilityReview({ version, asset, sha256: certifiedSha256, platforms }) {
   return {
+    schemaVersion: 1,
+    reviewOnly: true,
+    promotionEligible: false,
+    executionIsolation: "disposable-profile-only",
     version,
     asset,
-    sha256: certifiedSha256,
-    notes: `Certified by Aethon's managed-runtime gate on ${platforms.join(" and ")}.`,
+    artifactSha256: certifiedSha256,
+    platforms,
+    notes: "Compatibility evidence only. Promotion requires the supervised SR7 data, extension, rollback, and ownership gates.",
   };
 }
 
@@ -371,6 +421,69 @@ function javaExecutable(explicit) {
   return path.join(process.env.JAVA_HOME, "bin", process.platform === "win32" ? "java.exe" : "java");
 }
 
+export async function allocateLoopbackPort() {
+  const server = createServer();
+  try {
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen({ host: "127.0.0.1", port: 0, exclusive: true }, resolve);
+    });
+    const address = server.address();
+    if (!address || typeof address === "string" || !Number.isInteger(address.port)) {
+      throw new Error("Could not allocate a candidate loopback port.");
+    }
+    return address.port;
+  } finally {
+    await new Promise((resolve) => server.close(() => resolve()));
+  }
+}
+
+async function listeningProcessIds(port) {
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error("Candidate port is invalid.");
+  }
+  if (process.platform === "win32") {
+    const command = [
+      `$owners = @(Get-NetTCPConnection -State Listen -LocalPort ${port} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique)`,
+      "$owners -join [Environment]::NewLine",
+    ].join("\n");
+    const { stdout } = await execFileAsync(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-Command", command],
+      { timeout: 5_000, windowsHide: true },
+    );
+    return stdout.split(/\r?\n/).map(Number).filter((value) => Number.isInteger(value) && value > 0);
+  }
+
+  try {
+    const { stdout } = await execFileAsync(
+      "lsof",
+      ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"],
+      { timeout: 5_000 },
+    );
+    return stdout.split(/\r?\n/).map(Number).filter((value) => Number.isInteger(value) && value > 0);
+  } catch (error) {
+    if (error?.code === 1) return [];
+    throw new Error("Could not verify candidate port ownership on this platform.", { cause: error });
+  }
+}
+
+export async function assertPortOwnedByProcess(port, pid) {
+  const owners = await listeningProcessIds(port);
+  if (owners.length !== 1 || owners[0] !== pid) {
+    throw new Error("Candidate GraphQL port is not owned exclusively by the launched Suwayomi process.");
+  }
+}
+
+async function waitForPortRelease(port, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if ((await listeningProcessIds(port)).length === 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("Candidate GraphQL port remained occupied after shutdown.");
+}
+
 function serverConfig(port) {
   return [
     'server.ip = "127.0.0.1"',
@@ -415,14 +528,22 @@ function startRuntime(java, jarPath, rootDir) {
   return { child, output, get spawnError() { return spawnError; } };
 }
 
-async function stopRuntime(child) {
-  if (!child.pid || child.exitCode !== null) return;
-  child.kill("SIGTERM");
-  await Promise.race([
-    new Promise((resolve) => child.once("exit", resolve)),
-    new Promise((resolve) => setTimeout(resolve, 10_000)),
-  ]);
-  if (child.exitCode === null) child.kill("SIGKILL");
+async function stopRuntime(child, port) {
+  if (child.pid && child.exitCode === null) {
+    child.kill("SIGTERM");
+    await Promise.race([
+      new Promise((resolve) => child.once("exit", resolve)),
+      new Promise((resolve) => setTimeout(resolve, 10_000)),
+    ]);
+    if (child.exitCode === null) {
+      child.kill("SIGKILL");
+      await Promise.race([
+        new Promise((resolve) => child.once("exit", resolve)),
+        new Promise((resolve) => setTimeout(resolve, 5_000)),
+      ]);
+    }
+  }
+  await waitForPortRelease(port);
 }
 
 async function runHealthCheck(endpoint, expectedKey, query) {
@@ -553,13 +674,14 @@ async function waitForHealth(endpoint, runtime, timeoutMs) {
   throw Object.assign(new Error(`GraphQL health timed out: ${lastError}`), { checks });
 }
 
-async function certifyRuntime({ java, jarPath, rootDir, endpoint, timeoutMs }) {
+async function certifyRuntime({ java, jarPath, rootDir, endpoint, port, timeoutMs }) {
   const runs = [];
   for (const phase of ["initial", "restart"]) {
     const runtime = startRuntime(java, jarPath, rootDir);
     const started = Date.now();
     try {
       const health = await waitForHealth(endpoint, runtime, timeoutMs);
+      await assertPortOwnedByProcess(port, runtime.child.pid);
       const baseline = await collectRuntimeBaseline(endpoint, runtime.child.pid);
       runs.push({ phase, ok: true, durationMs: Date.now() - started, ...health, baseline });
     } catch (error) {
@@ -573,7 +695,7 @@ async function certifyRuntime({ java, jarPath, rootDir, endpoint, timeoutMs }) {
       });
       throw Object.assign(error instanceof Error ? error : new Error(String(error)), { runs });
     } finally {
-      await stopRuntime(runtime.child);
+      await stopRuntime(runtime.child, port);
     }
   }
   return runs;
@@ -582,20 +704,24 @@ async function certifyRuntime({ java, jarPath, rootDir, endpoint, timeoutMs }) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const version = normalizeVersion(options.version ?? DEFAULT_CERTIFICATION_VERSION);
-  const port = Number.parseInt(options.port ?? "45679", 10);
-  if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error("Port must be between 1024 and 65535.");
+  const requestedPort = options.port === undefined ? null : Number.parseInt(options.port, 10);
+  if (requestedPort !== null && (!Number.isInteger(requestedPort) || requestedPort < 1024 || requestedPort > 65535)) {
+    throw new Error("Port must be between 1024 and 65535.");
+  }
   const timeoutMs = Number.parseInt(options["timeout-ms"] ?? String(DEFAULT_TIMEOUT_MS), 10);
   const artifactDir = path.resolve(options["artifact-dir"] ?? path.join("tmp", "suwayomi-certification", `${version}-${process.platform}-${process.arch}`));
   await mkdir(artifactDir, { recursive: true });
   const reportPath = path.join(artifactDir, "certification-report.json");
-  const candidatePath = path.join(artifactDir, "allowlist-candidate.json");
-  await rm(candidatePath, { force: true });
+  const reviewPath = path.join(artifactDir, "compatibility-review.json");
+  await rm(reviewPath, { force: true });
   const report = {
     schemaVersion: 2,
     repository: REPOSITORY,
     version,
     targetPolicy: options.version ? "explicit-manual" : "fixed-sr1-default",
     productionAllowlistChanged: false,
+    promotionEligible: false,
+    executionIsolation: "disposable-profile-only",
     platform: process.platform,
     arch: process.arch,
     startedAt: new Date().toISOString(),
@@ -620,6 +746,7 @@ async function main() {
     const jarVersion = normalizeVersion(await readJarVersion(jarBytes));
     if (jarVersion !== version) throw new Error(`JAR declares ${jarVersion}, expected ${version}.`);
     runtimeRoot = await mkdtemp(path.join(tmpdir(), "aethon-suwayomi-certification-"));
+    const port = requestedPort ?? await allocateLoopbackPort();
     const jarPath = path.join(runtimeRoot, assetName);
     await writeFile(jarPath, jarBytes);
     await writeFile(path.join(runtimeRoot, "server.conf"), serverConfig(port));
@@ -628,11 +755,13 @@ async function main() {
     report.assetBytes = jarBytes.byteLength;
     report.sha256 = actualSha256;
     report.jarVersion = jarVersion;
+    report.portPolicy = requestedPort === null ? "dynamic-loopback" : "explicit-loopback";
     report.runs = await certifyRuntime({
       java: javaExecutable(options.java),
       jarPath,
       rootDir: runtimeRoot,
       endpoint: `http://127.0.0.1:${port}/api/graphql`,
+      port,
       timeoutMs,
     });
     const [firstRun, restartRun] = report.runs;
@@ -657,7 +786,7 @@ async function main() {
       throw new Error("Runtime schema or semantic contract changed after restart.");
     }
     report.passed = true;
-    await writeFile(candidatePath, `${JSON.stringify(buildAllowlistCandidate({
+    await writeFile(reviewPath, `${JSON.stringify(buildCompatibilityReview({
       version,
       asset: assetName,
       sha256: actualSha256,

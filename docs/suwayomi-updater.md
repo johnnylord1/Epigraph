@@ -69,7 +69,7 @@ Each runner:
 6. records a canonical, description-free schema hash and evaluates the required GraphQL fields as a semantic contract;
 7. records observed capabilities and best-effort process memory, CPU, thread, and startup metrics;
 8. stops and starts the same disposable root again, then requires the health contract and canonical schema to remain stable;
-9. emits a redacted `certification-report.json` and a review-only `allowlist-candidate.json` as CI artifacts.
+9. allocates a loopback port dynamically, proves that its listener belongs to the launched PID, and emits a redacted `certification-report.json` plus a non-promotable `compatibility-review.json`.
 
 An allowlist update requires successful evidence from both platforms and manual review of the generated candidate. Local maintainers can exercise the same gate with:
 
@@ -87,7 +87,7 @@ Certification never edits `src-tauri/resources/suwayomi-compatibility.json`. Pas
 
 The SR1 baseline uses a new empty profile under the operating system temporary directory. It does not inspect, copy, or modify the user's managed Suwayomi profile. The report stores only release metadata, payload shapes, canonical schema evidence, observed capability field paths, timing, and process counters. Runtime output is redacted for disposable roots, user-home paths, URL credentials, authorization values, cookies, passwords, secrets, and tokens before it is written.
 
-This baseline is process isolation by disposable profile only. AppContainer, ACL, Job Object, outbound-network enforcement, copied-profile migration, and transactional promotion remain later runtime-supervisor gates and must not be inferred from an SR1 pass.
+This baseline is process isolation by disposable profile only. It verifies an official checksum, an empty generated profile, process/port ownership, restart stability, and the V23 semantic contract. It does not produce an allowlist entry and must not be treated as promotion evidence. The AppContainer experiment was retired because the official Suwayomi/JCEF runtime could not initialize reliably there; promotion remains blocked on the supervised SR7 data, extension, ownership, and rollback gates.
 
 The current fixed-target evidence is recorded in [`suwayomi-certification-baseline-v2.3.2243.md`](./suwayomi-certification-baseline-v2.3.2243.md).
 

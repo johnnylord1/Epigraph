@@ -100,6 +100,11 @@ e confirmou:
   76-77 threads e nenhuma imposicao artificial de limite de heap;
 - relatorio sanitizado em perfil temporario.
 
+O certificador agora aloca a porta loopback dinamicamente, confirma que o
+listener pertence ao PID iniciado e aguarda sua liberacao no shutdown. A saida
+e `compatibility-review.json`, marcada como nao promovivel; somente o SR7 pode
+produzir evidencia para alterar a allowlist.
+
 A versao ainda nao foi adicionada a `resources/suwayomi-compatibility.json`.
 Promocao continua sendo responsabilidade do SR7, depois dos gates de dados,
 extensoes, Core e Syncd.

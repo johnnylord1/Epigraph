@@ -37,9 +37,22 @@ function compatibleSchema() {
     "isInstalled",
     "isObsolete",
     "hasUpdate",
+    "iconUrl",
     "repo",
+    "apkName",
   ];
-  const sourceFields = ["id", "name", "lang", "displayName", "iconUrl", "isNsfw", "preferences"];
+  const sourceFields = [
+    "id",
+    "name",
+    "lang",
+    "displayName",
+    "iconUrl",
+    "isNsfw",
+    "supportsLatest",
+    "isConfigurable",
+    "extension",
+    "preferences",
+  ];
   return {
     __schema: {
       queryType: { name: "Query" },

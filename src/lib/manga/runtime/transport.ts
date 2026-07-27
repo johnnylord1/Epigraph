@@ -108,7 +108,11 @@ export class SuwayomiTransport implements GraphQLTransport {
     const timeout = globalThis.setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-      for (let attempt = 0; attempt <= this.retries; attempt += 1) {
+      // A mutation may have completed server-side even when its HTTP response
+      // was lost. Retrying it here can duplicate writes, so only queries use
+      // the transport-level retry policy.
+      const retries = operation.kind === "query" ? this.retries : 0;
+      for (let attempt = 0; attempt <= retries; attempt += 1) {
         try {
           return await this.executeOnce(operation, variables, controller.signal);
         } catch (error) {
@@ -120,7 +124,7 @@ export class SuwayomiTransport implements GraphQLTransport {
             );
           }
           const normalized = normalizeSourceRuntimeError(error);
-          if (!normalized.retryable || attempt === this.retries) throw normalized;
+          if (!normalized.retryable || attempt === retries) throw normalized;
           await delay(this.retryDelayMs * (attempt + 1), controller.signal);
         }
       }

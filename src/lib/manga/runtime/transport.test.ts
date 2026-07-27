@@ -101,6 +101,30 @@ describe("SuwayomiTransport", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  test("never retries a mutation after an ambiguous transient failure", async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: { example: { ok: true } } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    const transport = new SuwayomiTransport({
+      endpoint: "http://127.0.0.1:4567/api/graphql",
+      fetch: fetchMock,
+      retries: 2,
+      retryDelayMs: 0,
+    });
+    const mutation = { ...EXAMPLE_QUERY, kind: "mutation" as const };
+
+    await expect(transport.execute(mutation, { id: "source-1" })).rejects.toMatchObject({
+      code: "RUNTIME_UNAVAILABLE",
+      retryable: true,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   test("normalizes GraphQL and incompatible JSON errors", async () => {
     const graphqlFetch = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify({ data: null, errors: [{ message: "Source failed" }] }), {

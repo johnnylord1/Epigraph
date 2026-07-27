@@ -94,4 +94,35 @@ describe("Suwayomi compatibility profiles", () => {
       jarUrl: "https://example.test/demo.jar",
     });
   });
+
+  test("requires every extension, source, and store field selected by profile operations", () => {
+    const v21 = new CompatibilityProfileV21();
+    const v23 = new CompatibilityProfileV23();
+
+    expect(v21.contract.requiredFields.ExtensionType).toEqual(expect.arrayContaining([
+      "iconUrl",
+      "repo",
+      "apkName",
+    ]));
+    expect(v23.contract.requiredFields.ExtensionType).toEqual(expect.arrayContaining([
+      "iconUrl",
+      "storeIndexUrl",
+      "apkName",
+      "apkUrl",
+      "jarUrl",
+    ]));
+    expect(v23.contract.requiredFields.ExtensionStoreType).toEqual(expect.arrayContaining([
+      "badgeLabel",
+      "contactWebsite",
+      "contactDiscord",
+      "extensionListUrl",
+    ]));
+    for (const profile of [v21, v23]) {
+      expect(profile.contract.requiredFields.SourceType).toEqual(expect.arrayContaining([
+        "supportsLatest",
+        "isConfigurable",
+        "extension",
+      ]));
+    }
+  });
 });

@@ -63,6 +63,6 @@ The virtual-memory value is address space, not committed resident memory. These 
 
 - The profile was empty; no real H2 migration or installed-extension compatibility was tested.
 - Network access was not blocked at the operating-system level.
-- AppContainer, ACL, Job Object, process-tree ownership, and transactional rollback belong to later supervisor milestones.
+- The disposable-profile baseline runs the checksum-verified official JAR under the current user. It now verifies that the dynamic loopback listener belongs to the launched PID, but it is not an OS sandbox and is not promotion evidence.
 - WebView2 and JCEF were not exercised.
-- The generated allowlist candidate remains review-only.
+- The gate emits `compatibility-review.json` with `promotionEligible: false`; it no longer emits an allowlist-shaped candidate.

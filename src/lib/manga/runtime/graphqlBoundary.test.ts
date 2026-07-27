@@ -30,10 +30,23 @@ function walkSvelteFiles(directory: string): string[] {
 }
 
 function importsDirectGraphql(source: string): boolean {
-  return /import\s*\{[^}]*\bgql(?:Upload)?\b[^}]*\}\s*from\s*["'][^"']*\/client["']/s.test(source);
+  const clientModule = String.raw`["'][^"']*\/client["']`;
+  return new RegExp(
+    String.raw`import\s*\{[^}]*\bgql(?:Upload)?\b[^}]*\}\s*from\s*${clientModule}`,
+    "s",
+  ).test(source)
+    || new RegExp(String.raw`import\s*\*\s*as\s+\w+\s*from\s*${clientModule}`, "s").test(source)
+    || new RegExp(String.raw`import\s*\(\s*${clientModule}\s*\)`, "s").test(source);
 }
 
 describe("source runtime GraphQL boundary", () => {
+  test("detects named, namespace, and dynamic access to the raw GraphQL client", () => {
+    expect(importsDirectGraphql('import { gql as rawGql } from "../../lib/client";')).toBe(true);
+    expect(importsDirectGraphql('import * as client from "../../lib/client";')).toBe(true);
+    expect(importsDirectGraphql('const client = await import("../../lib/client");')).toBe(true);
+    expect(importsDirectGraphql('import { getServerUrl } from "../../lib/client";')).toBe(false);
+  });
+
   test("prevents new components from importing the raw GraphQL client", () => {
     expect(statSync(COMPONENTS_ROOT).isDirectory()).toBe(true);
 

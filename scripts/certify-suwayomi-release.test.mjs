@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:net";
 import { test } from "node:test";
 import JSZip from "jszip";
 import {
-  buildAllowlistCandidate,
+  allocateLoopbackPort,
+  assertPortOwnedByProcess,
+  buildCompatibilityReview,
   canonicalizeSchema,
   checksumForAsset,
   DEFAULT_CERTIFICATION_VERSION,
@@ -24,20 +27,40 @@ test("normalizes only complete Suwayomi versions", () => {
 
 function schemaFixture({ reverse = false, descriptions = false } = {}) {
   const fields = [
+    { name: "aboutServer", type: { kind: "OBJECT", name: "AboutServer" }, args: [] },
     { name: "sources", type: { kind: "OBJECT", name: "SourceConnection" }, args: [] },
     { name: "extensions", type: { kind: "OBJECT", name: "ExtensionConnection" }, args: [] },
     { name: "mangas", type: { kind: "OBJECT", name: "MangaConnection" }, args: [] },
     { name: "extensionStores", type: { kind: "LIST", name: null, ofType: { kind: "OBJECT", name: "ExtensionStore" } }, args: [] },
   ];
   const mutationFields = [
-    { name: "installExternalExtension", type: { kind: "OBJECT", name: "Extension" }, args: [] },
+    { name: "addExtensionStore", type: { kind: "OBJECT", name: "ExtensionStoreType" }, args: [] },
+    { name: "removeExtensionStore", type: { kind: "OBJECT", name: "ExtensionStoreType" }, args: [] },
+    { name: "fetchExtensions", type: { kind: "OBJECT", name: "ExtensionType" }, args: [] },
     { name: "updateExtension", type: { kind: "OBJECT", name: "Extension" }, args: [] },
-    { name: "uninstallExtension", type: { kind: "SCALAR", name: "Boolean" }, args: [] },
+    { name: "fetchSourceManga", type: { kind: "OBJECT", name: "MangaType" }, args: [] },
+    { name: "fetchManga", type: { kind: "OBJECT", name: "MangaType" }, args: [] },
+    { name: "fetchChapters", type: { kind: "OBJECT", name: "ChapterType" }, args: [] },
+    { name: "fetchChapterPages", type: { kind: "OBJECT", name: "ChapterType" }, args: [] },
   ];
+  const extensionFields = [
+    "pkgName", "name", "lang", "versionName", "versionCodeLong", "isInstalled",
+    "isObsolete", "hasUpdate", "iconUrl", "storeIndexUrl", "apkName", "apkUrl", "jarUrl",
+  ].map((name) => ({ name, type: { kind: "SCALAR", name: "String" }, args: [] }));
+  const storeFields = [
+    "name", "badgeLabel", "signingKey", "contactWebsite", "contactDiscord", "indexUrl",
+    "isLegacy", "extensionListUrl",
+  ].map((name) => ({ name, type: { kind: "SCALAR", name: "String" }, args: [] }));
+  const sourceFields = [
+    "id", "name", "lang", "displayName", "iconUrl", "isNsfw", "supportsLatest",
+    "isConfigurable", "extension",
+  ].map((name) => ({ name, type: { kind: "SCALAR", name: "String" }, args: [] }));
   const types = [
     { kind: "OBJECT", name: "Query", fields, description: descriptions ? "Changed docs" : undefined },
     { kind: "OBJECT", name: "Mutation", fields: mutationFields },
-    { kind: "OBJECT", name: "ExtensionStore", fields: [{ name: "id", type: { kind: "SCALAR", name: "String" }, args: [] }] },
+    { kind: "OBJECT", name: "ExtensionType", fields: extensionFields },
+    { kind: "OBJECT", name: "ExtensionStoreType", fields: storeFields },
+    { kind: "OBJECT", name: "SourceType", fields: sourceFields },
   ];
   return {
     data: {
@@ -66,10 +89,10 @@ test("evaluates semantic contract and observed capabilities", () => {
   assert.equal(result.contract.passed, true);
   assert.equal(result.capabilities.extensionStores.observed, true);
   assert.equal(result.capabilities.legacyExtensionRepositories.observed, false);
-  assert.equal(result.capabilities.extensionInstallMutation.observed, true);
+  assert.equal(result.capabilities.extensionInstallMutation.observed, false);
   assert.equal(result.capabilities.extensionUpdateMutation.observed, true);
-  assert.equal(result.capabilities.extensionUninstallMutation.observed, true);
-  assert.deepEqual(result.operations.queries, ["extensionStores", "extensions", "mangas", "sources"]);
+  assert.equal(result.capabilities.extensionUninstallMutation.observed, false);
+  assert.deepEqual(result.operations.queries, ["aboutServer", "extensionStores", "extensions", "mangas", "sources"]);
 
   const incompatible = schemaFixture();
   incompatible.data.__schema.types[0].fields = incompatible.data.__schema.types[0].fields.filter(
@@ -116,15 +139,32 @@ test("reads the version declared by the JAR manifest", async () => {
   assert.equal(sha256(bytes).length, 64);
 });
 
-test("builds a pinned allowlist candidate", () => {
-  const candidate = buildAllowlistCandidate({
+test("builds a non-promotable compatibility review", () => {
+  const candidate = buildCompatibilityReview({
     version: "v2.1.1867",
     asset: "Suwayomi-Server-v2.1.1867.jar",
     sha256: "c".repeat(64),
     platforms: ["win32-x64", "darwin-arm64"],
   });
-  assert.equal(candidate.sha256, "c".repeat(64));
-  assert.match(candidate.notes, /win32-x64 and darwin-arm64/);
+  assert.equal(candidate.artifactSha256, "c".repeat(64));
+  assert.equal(candidate.reviewOnly, true);
+  assert.equal(candidate.promotionEligible, false);
+  assert.match(candidate.notes, /Promotion requires/);
+});
+
+test("allocates a free loopback port and verifies the listener owner", async () => {
+  const port = await allocateLoopbackPort();
+  const server = createServer();
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen({ host: "127.0.0.1", port, exclusive: true }, resolve);
+  });
+  try {
+    await assert.doesNotReject(() => assertPortOwnedByProcess(port, process.pid));
+    await assert.rejects(() => assertPortOwnedByProcess(port, process.pid + 1), /not owned exclusively/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 
 test("validates the same GraphQL shapes as the runtime updater", () => {
