@@ -1,20 +1,114 @@
 import { createHash } from "node:crypto";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import JSZip from "jszip";
 
 const REPOSITORY = "Suwayomi/Suwayomi-Server";
 const CHECKSUM_ASSET = "Checksums.sha256";
 const DEFAULT_TIMEOUT_MS = 120_000;
+export const DEFAULT_CERTIFICATION_VERSION = "v2.3.2243";
+export const RUNTIME_CONTRACT = Object.freeze({
+  requiredQueries: ["extensions", "mangas", "sources"],
+  requiredMutations: [],
+  requiredFields: {
+    Query: ["extensions", "mangas", "sources"],
+  },
+  optionalCapabilities: [
+    "extensionStores",
+    "legacyExtensionRepositories",
+    "extensionInstallMutation",
+    "extensionUpdateMutation",
+    "extensionUninstallMutation",
+    "sourcePreferences",
+    "webViewOperations",
+  ],
+});
 const QUERY_CHECKS = [
   ["typename", "query AethonHealthTypename { __typename }"],
   ["library", "query AethonHealthLibrary { library: mangas(condition: { inLibrary: true }, first: 1) { nodes { id } } }"],
   ["sources", "query AethonHealthSources { sources(first: 1) { nodes { id displayName } } }"],
   ["extensions", "query AethonHealthExtensions { extensions(first: 1) { nodes { pkgName isInstalled } } }"],
 ];
+const SCHEMA_QUERY = `
+  query AethonRuntimeSchema {
+    __schema {
+      queryType { name }
+      mutationType { name }
+      subscriptionType { name }
+      types {
+        kind
+        name
+        fields(includeDeprecated: true) {
+          name
+          args {
+            name
+            type {
+              kind
+              name
+              ofType {
+                kind
+                name
+                ofType {
+                  kind
+                  name
+                  ofType {
+                    kind
+                    name
+                    ofType { kind name }
+                  }
+                }
+              }
+            }
+          }
+          type {
+            kind
+            name
+            ofType {
+              kind
+              name
+              ofType {
+                kind
+                name
+                ofType {
+                  kind
+                  name
+                  ofType { kind name }
+                }
+              }
+            }
+          }
+        }
+        inputFields {
+          name
+          type {
+            kind
+            name
+            ofType {
+              kind
+              name
+              ofType {
+                kind
+                name
+                ofType {
+                  kind
+                  name
+                  ofType { kind name }
+                }
+              }
+            }
+          }
+        }
+        enumValues(includeDeprecated: true) { name }
+        possibleTypes { kind name }
+      }
+    }
+  }
+`;
+const execFileAsync = promisify(execFile);
 
 export function normalizeVersion(value) {
   const normalized = String(value ?? "").trim();
@@ -34,6 +128,167 @@ export function checksumForAsset(text, assetName) {
 
 export function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function normalizeTypeRef(type) {
+  if (!type || typeof type !== "object") return null;
+  return {
+    kind: typeof type.kind === "string" ? type.kind : null,
+    name: typeof type.name === "string" ? type.name : null,
+    ofType: normalizeTypeRef(type.ofType),
+  };
+}
+
+function sortByName(values) {
+  return [...(Array.isArray(values) ? values : [])].sort((left, right) =>
+    String(left?.name ?? "").localeCompare(String(right?.name ?? "")),
+  );
+}
+
+function schemaValue(payload) {
+  const schema = payload?.data?.__schema ?? payload?.__schema ?? payload;
+  if (!schema || !Array.isArray(schema.types)) {
+    throw new Error("GraphQL introspection response is missing schema types.");
+  }
+  return schema;
+}
+
+export function canonicalizeSchema(payload) {
+  const schema = schemaValue(payload);
+  const canonical = {
+    queryType: schema.queryType?.name ?? null,
+    mutationType: schema.mutationType?.name ?? null,
+    subscriptionType: schema.subscriptionType?.name ?? null,
+    types: sortByName(schema.types).map((type) => ({
+      kind: type.kind ?? null,
+      name: type.name ?? null,
+      fields: sortByName(type.fields).map((field) => ({
+        name: field.name ?? null,
+        args: sortByName(field.args).map((argument) => ({
+          name: argument.name ?? null,
+          type: normalizeTypeRef(argument.type),
+        })),
+        type: normalizeTypeRef(field.type),
+      })),
+      inputFields: sortByName(type.inputFields).map((field) => ({
+        name: field.name ?? null,
+        type: normalizeTypeRef(field.type),
+      })),
+      enumValues: sortByName(type.enumValues).map((value) => value.name ?? null),
+      possibleTypes: sortByName(type.possibleTypes).map((value) => ({
+        kind: value.kind ?? null,
+        name: value.name ?? null,
+      })),
+    })),
+  };
+  return JSON.stringify(canonical);
+}
+
+function schemaIndex(payload) {
+  const schema = schemaValue(payload);
+  const types = new Map(schema.types.map((type) => [type.name, type]));
+  const queryType = types.get(schema.queryType?.name);
+  const mutationType = types.get(schema.mutationType?.name);
+  const queryFields = new Set((queryType?.fields ?? []).map((field) => field.name));
+  const mutationFields = new Set((mutationType?.fields ?? []).map((field) => field.name));
+  const fieldPaths = [];
+  for (const type of schema.types) {
+    for (const field of type.fields ?? []) {
+      fieldPaths.push(`${type.name}.${field.name}`);
+    }
+    for (const field of type.inputFields ?? []) {
+      fieldPaths.push(`${type.name}.${field.name}`);
+    }
+  }
+  return { schema, types, queryFields, mutationFields, fieldPaths };
+}
+
+function capabilityEvidence(index, pattern, source = index.fieldPaths) {
+  return source.filter((value) => pattern.test(value)).sort().slice(0, 20);
+}
+
+export function evaluateRuntimeSchema(payload) {
+  const index = schemaIndex(payload);
+  const requiredQueries = RUNTIME_CONTRACT.requiredQueries.map((name) => ({
+    name,
+    present: index.queryFields.has(name),
+  }));
+  const requiredMutations = RUNTIME_CONTRACT.requiredMutations.map((name) => ({
+    name,
+    present: index.mutationFields.has(name),
+  }));
+  const requiredFields = Object.entries(RUNTIME_CONTRACT.requiredFields).flatMap(([typeName, fields]) => {
+    const available = new Set((index.types.get(typeName)?.fields ?? []).map((field) => field.name));
+    return fields.map((name) => ({ type: typeName, name, present: available.has(name) }));
+  });
+  const mutationPaths = [...index.mutationFields].map((name) => `Mutation.${name}`);
+  const capabilityPatterns = {
+    extensionStores: /extensionstores?/i,
+    legacyExtensionRepositories: /extensionrepos(itories)?/i,
+    extensionInstallMutation: /(?:install.*extension|extension.*install)/i,
+    extensionUpdateMutation: /(?:update.*extension|extension.*update)/i,
+    extensionUninstallMutation: /(?:(?:uninstall|delete).*extension|extension.*(?:uninstall|delete))/i,
+    sourcePreferences: /source.*preferences?/i,
+    webViewOperations: /webview/i,
+  };
+  const capabilities = Object.fromEntries(
+    Object.entries(capabilityPatterns).map(([name, pattern]) => {
+      const source = name.endsWith("Mutation") ? mutationPaths : index.fieldPaths;
+      const evidence = capabilityEvidence(index, pattern, source);
+      return [name, { observed: evidence.length > 0, evidence }];
+    }),
+  );
+  return {
+    contract: {
+      passed: [...requiredQueries, ...requiredMutations, ...requiredFields].every((entry) => entry.present),
+      requiredQueries,
+      requiredMutations,
+      requiredFields,
+    },
+    capabilities,
+    counts: {
+      types: index.schema.types.length,
+      queryFields: index.queryFields.size,
+      mutationFields: index.mutationFields.size,
+    },
+    operations: {
+      queries: [...index.queryFields].sort(),
+      mutations: [...index.mutationFields].sort(),
+    },
+  };
+}
+
+export function redactDiagnosticText(value, sensitiveValues = []) {
+  let redacted = String(value ?? "");
+  const replacements = [
+    [homedir(), "<user-home>"],
+    [tmpdir(), "<temp-dir>"],
+    ...sensitiveValues.map((item) => [String(item ?? ""), "<runtime-root>"]),
+  ]
+    .filter(([item]) => item)
+    .sort((left, right) => right[0].length - left[0].length);
+  for (const [sensitive, replacement] of replacements) {
+    const variants = [sensitive, sensitive.replaceAll("\\", "/")];
+    for (const variant of variants) {
+      const escaped = variant.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      redacted = redacted.replace(new RegExp(escaped, "gi"), replacement);
+    }
+  }
+  return redacted
+    .replace(/(https?:\/\/)([^/\s:@]+):([^@\s/]+)@/gi, "$1<redacted>@")
+    .replace(/\b(authorization|proxy-authorization|cookie|set-cookie)\b\s*[:=]\s*[^\r\n]+/gi, "$1=<redacted>")
+    .replace(/(["']?)(password|secret|token)\1\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, "$2=<redacted>");
+}
+
+function redactDiagnosticValue(value, sensitiveValues = []) {
+  if (typeof value === "string") return redactDiagnosticText(value, sensitiveValues);
+  if (Array.isArray(value)) return value.map((entry) => redactDiagnosticValue(entry, sensitiveValues));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, redactDiagnosticValue(entry, sensitiveValues)]),
+    );
+  }
+  return value;
 }
 
 export async function readJarVersion(bytes) {
@@ -127,7 +382,7 @@ function serverConfig(port) {
     "server.globalUpdateInterval = 0",
     "server.webUIUpdateCheckInterval = 0",
     "server.autoDownloadNewChapters = false",
-    "server.maxSourcesInParallel = 2",
+    "server.maxSourcesInParallel = 1",
     "server.extensionRepos = []",
     "",
   ].join("\n");
@@ -184,6 +439,93 @@ async function runHealthCheck(endpoint, expectedKey, query) {
   return Date.now() - started;
 }
 
+async function graphqlRequest(endpoint, query, timeoutMs = 10_000) {
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ query }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!response.ok) throw new Error(`GraphQL request returned HTTP ${response.status}.`);
+  const payload = await response.json();
+  if (Array.isArray(payload?.errors) && payload.errors.length) {
+    throw new Error("GraphQL introspection returned errors.");
+  }
+  return payload;
+}
+
+export async function sampleProcessMetrics(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return { available: false, error: "Process ID is unavailable." };
+  try {
+    if (process.platform === "win32") {
+      const command = [
+        `$process = Get-Process -Id ${pid} -ErrorAction Stop`,
+        "$metrics = [ordered]@{",
+        "  workingSetBytes = [int64]$process.WorkingSet64",
+        "  privateMemoryBytes = [int64]$process.PrivateMemorySize64",
+        "  virtualMemoryBytes = [int64]$process.VirtualMemorySize64",
+        "  threadCount = [int]$process.Threads.Count",
+        "  cpuSeconds = [double]$process.CPU",
+        "  startTimeUtc = $process.StartTime.ToUniversalTime().ToString('o')",
+        "}",
+        "$metrics | ConvertTo-Json -Compress",
+      ].join("\n");
+      const { stdout } = await execFileAsync(
+        "powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-Command", command],
+        { timeout: 5_000, windowsHide: true },
+      );
+      return {
+        available: true,
+        sampledAt: new Date().toISOString(),
+        source: "Get-Process",
+        ...JSON.parse(stdout.trim()),
+      };
+    }
+    const { stdout } = await execFileAsync(
+      "ps",
+      ["-o", "rss=,vsz=", "-p", String(pid)],
+      { timeout: 5_000 },
+    );
+    const [rssKb, virtualKb] = stdout.trim().split(/\s+/).map(Number);
+    if (![rssKb, virtualKb].every(Number.isFinite)) {
+      throw new Error("Process metrics output is incomplete.");
+    }
+    return {
+      available: true,
+      sampledAt: new Date().toISOString(),
+      source: "ps",
+      workingSetBytes: rssKb * 1024,
+      virtualMemoryBytes: virtualKb * 1024,
+    };
+  } catch (error) {
+    return {
+      available: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function collectRuntimeBaseline(endpoint, pid) {
+  const payload = await graphqlRequest(endpoint, SCHEMA_QUERY);
+  const canonicalSchema = canonicalizeSchema(payload);
+  const evaluation = evaluateRuntimeSchema(payload);
+  if (!evaluation.contract.passed) {
+    throw new Error("Runtime schema does not satisfy Aethon's baseline semantic contract.");
+  }
+  return {
+    schema: {
+      canonicalSha256: sha256(canonicalSchema),
+      canonicalBytes: Buffer.byteLength(canonicalSchema),
+      ...evaluation.counts,
+      operations: evaluation.operations,
+    },
+    contract: evaluation.contract,
+    capabilities: evaluation.capabilities,
+    process: await sampleProcessMetrics(pid),
+  };
+}
+
 async function waitForHealth(endpoint, runtime, timeoutMs) {
   const started = Date.now();
   const checks = [];
@@ -218,7 +560,8 @@ async function certifyRuntime({ java, jarPath, rootDir, endpoint, timeoutMs }) {
     const started = Date.now();
     try {
       const health = await waitForHealth(endpoint, runtime, timeoutMs);
-      runs.push({ phase, ok: true, durationMs: Date.now() - started, ...health });
+      const baseline = await collectRuntimeBaseline(endpoint, runtime.child.pid);
+      runs.push({ phase, ok: true, durationMs: Date.now() - started, ...health, baseline });
     } catch (error) {
       runs.push({
         phase,
@@ -238,7 +581,7 @@ async function certifyRuntime({ java, jarPath, rootDir, endpoint, timeoutMs }) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const version = normalizeVersion(options.version);
+  const version = normalizeVersion(options.version ?? DEFAULT_CERTIFICATION_VERSION);
   const port = Number.parseInt(options.port ?? "45679", 10);
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error("Port must be between 1024 and 65535.");
   const timeoutMs = Number.parseInt(options["timeout-ms"] ?? String(DEFAULT_TIMEOUT_MS), 10);
@@ -246,10 +589,13 @@ async function main() {
   await mkdir(artifactDir, { recursive: true });
   const reportPath = path.join(artifactDir, "certification-report.json");
   const candidatePath = path.join(artifactDir, "allowlist-candidate.json");
+  await rm(candidatePath, { force: true });
   const report = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     repository: REPOSITORY,
     version,
+    targetPolicy: options.version ? "explicit-manual" : "fixed-sr1-default",
+    productionAllowlistChanged: false,
     platform: process.platform,
     arch: process.arch,
     startedAt: new Date().toISOString(),
@@ -279,6 +625,7 @@ async function main() {
     await writeFile(path.join(runtimeRoot, "server.conf"), serverConfig(port));
     report.releaseUrl = release.html_url;
     report.asset = assetName;
+    report.assetBytes = jarBytes.byteLength;
     report.sha256 = actualSha256;
     report.jarVersion = jarVersion;
     report.runs = await certifyRuntime({
@@ -288,6 +635,27 @@ async function main() {
       endpoint: `http://127.0.0.1:${port}/api/graphql`,
       timeoutMs,
     });
+    const [firstRun, restartRun] = report.runs;
+    report.baseline = {
+      profile: "disposable-empty",
+      schema: firstRun?.baseline?.schema ?? null,
+      contract: firstRun?.baseline?.contract ?? null,
+      capabilities: firstRun?.baseline?.capabilities ?? null,
+      processRuns: report.runs.map((run) => ({
+        phase: run.phase,
+        durationMs: run.durationMs,
+        attempts: run.attempts,
+        process: run.baseline?.process ?? null,
+      })),
+      restartStable: Boolean(
+        firstRun?.baseline?.schema?.canonicalSha256
+        && firstRun.baseline.schema.canonicalSha256 === restartRun?.baseline?.schema?.canonicalSha256
+        && restartRun?.baseline?.contract?.passed,
+      ),
+    };
+    if (!report.baseline.restartStable) {
+      throw new Error("Runtime schema or semantic contract changed after restart.");
+    }
     report.passed = true;
     await writeFile(candidatePath, `${JSON.stringify(buildAllowlistCandidate({
       version,
@@ -311,7 +679,8 @@ async function main() {
       }
     }
     report.completedAt = new Date().toISOString();
-    await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+    const safeReport = redactDiagnosticValue(report, [runtimeRoot]);
+    await writeFile(reportPath, `${JSON.stringify(safeReport, null, 2)}\n`);
   }
   if (!report.passed) throw new Error(report.error ?? "Certification failed.");
   process.stdout.write(`Suwayomi ${version} certified on ${process.platform}-${process.arch}.\n`);

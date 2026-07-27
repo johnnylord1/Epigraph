@@ -66,14 +66,30 @@ Each runner:
 3. verifies the JAR checksum and its internal `Specification-Version`;
 4. starts the JAR with Aethon's headless memory/configuration profile in an isolated temporary root;
 5. validates typename, Library, Sources, and Extensions GraphQL queries;
-6. stops and starts the same root again, then repeats all health checks;
-7. emits `certification-report.json` and `allowlist-candidate.json` as CI artifacts.
+6. records a canonical, description-free schema hash and evaluates the required GraphQL fields as a semantic contract;
+7. records observed capabilities and best-effort process memory, CPU, thread, and startup metrics;
+8. stops and starts the same disposable root again, then requires the health contract and canonical schema to remain stable;
+9. emits a redacted `certification-report.json` and a review-only `allowlist-candidate.json` as CI artifacts.
 
 An allowlist update requires successful evidence from both platforms and manual review of the generated candidate. Local maintainers can exercise the same gate with:
 
 ```text
+pnpm certify:suwayomi
+```
+
+The default manual SR1 target is fixed to `v2.3.2243`. Historical or additional releases can still be inspected explicitly:
+
+```text
 pnpm certify:suwayomi -- --version v2.1.1867
 ```
+
+Certification never edits `src-tauri/resources/suwayomi-compatibility.json`. Passing evidence is necessary but not sufficient to permit a production update.
+
+The SR1 baseline uses a new empty profile under the operating system temporary directory. It does not inspect, copy, or modify the user's managed Suwayomi profile. The report stores only release metadata, payload shapes, canonical schema evidence, observed capability field paths, timing, and process counters. Runtime output is redacted for disposable roots, user-home paths, URL credentials, authorization values, cookies, passwords, secrets, and tokens before it is written.
+
+This baseline is process isolation by disposable profile only. AppContainer, ACL, Job Object, outbound-network enforcement, copied-profile migration, and transactional promotion remain later runtime-supervisor gates and must not be inferred from an SR1 pass.
+
+The current fixed-target evidence is recorded in [`suwayomi-certification-baseline-v2.3.2243.md`](./suwayomi-certification-baseline-v2.3.2243.md).
 
 ## Directories
 
