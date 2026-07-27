@@ -1,5 +1,4 @@
-import { gql } from "./client";
-import { GET_SETTINGS, SET_EXTENSION_REPOS } from "./queries";
+import { getManagedSourceRuntime } from "./manga/runtime";
 
 export interface ExtensionRepoDefinition {
   name: string;
@@ -16,27 +15,25 @@ function normalizeRepoUrl(url: string): string {
 }
 
 export async function ensureExtensionRepo(repo: ExtensionRepoDefinition) {
-  const settingsData = await gql<{ settings: { extensionRepos: string[] } }>(GET_SETTINGS);
-  const currentRepos = settingsData.settings.extensionRepos ?? [];
   const targetUrl = normalizeRepoUrl(repo.url);
-  const exists = currentRepos.some((current) => normalizeRepoUrl(current) === targetUrl);
+  const runtime = await getManagedSourceRuntime();
+  const stores = await runtime.listStores();
+  const exists = stores.some((store) => normalizeRepoUrl(store.indexUrl) === targetUrl);
 
   if (exists) {
     return {
       status: "existing" as const,
-      repos: currentRepos,
+      repos: stores.map((store) => store.indexUrl),
       repo,
     };
   }
 
-  const updatedRepos = [...currentRepos, repo.url];
-  const result = await gql<{ setSettings: { settings: { extensionRepos: string[] } } }>(SET_EXTENSION_REPOS, {
-    repos: updatedRepos,
-  });
+  await runtime.addStore({ indexUrl: repo.url });
+  const updatedStores = await runtime.listStores();
 
   return {
     status: "added" as const,
-    repos: result.setSettings.settings.extensionRepos,
+    repos: updatedStores.map((store) => store.indexUrl),
     repo,
   };
 }

@@ -24,6 +24,7 @@ export {
   getManagedSourceRuntime,
   resetManagedSourceRuntime,
 } from "./managed";
+export { createExtensionProvenance } from "./provenance";
 export {
   INTROSPECTION_OPERATION,
   canonicalSchemaJson,

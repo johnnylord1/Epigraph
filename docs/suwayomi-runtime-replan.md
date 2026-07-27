@@ -1,6 +1,6 @@
 # Replanejamento do runtime Suwayomi
 
-Status: SR3 implementado localmente; SR4-SR8 ainda nao iniciados.
+Status: SR3 e SR4 implementados; SR5-SR8 ainda nao iniciados.
 
 ## Resultado desta etapa
 
@@ -204,11 +204,25 @@ versoes nao aprovadas, e instalar somente uma versao exata apos SR7.
 
 ### SR4 - Stores e pipeline oficial de extensoes
 
-- Migrar qualquer caminho restante de repositories para Extension Stores usando
-  os mecanismos GraphQL do adapter.
-- Preservar stores adicionais, package name, versao e proveniencia; nunca APK->JAR.
-- Testar instalacao, update, uninstall, restart e falha isolada.
-- Nao promover v2.3 ainda.
+- O `SourceRuntime` agora expoe `listStores`, `addStore` e `removeStore`; os
+  componentes nao chamam mais `extensionRepos` diretamente.
+- Suwayomi v2.3 usa `addExtensionStore`/`removeExtensionStore` com `indexUrl`;
+  Suwayomi v2.1 permanece suportado por um fallback explicitamente marcado como
+  `isLegacy`, usando `setSettings` somente no adapter de compatibilidade.
+- O helper de repositorio recomendado e o painel manual de Sources usam o
+  adapter, preservando stores adicionais e evitando duplicacao por URL
+  normalizada.
+- O inventario de reconciliacao tambem consulta `runtime.listStores()`, sem
+  voltar a ler `settings.extensionRepos` fora dos profiles de compatibilidade.
+- A proveniencia registra package, versao, store, tipo de artefato e runtime.
+  Digest e assinatura observada permanecem nulos quando nao foram obtidos; o
+  sistema usa `verificationMethod: NONE` e nunca apresenta metadata declarada
+  pelo store como verificacao criptografica.
+- APK oficial continua permitido como artefato de origem; nenhuma conversao
+  APK->JAR foi criada.
+- Validacao isolada cobriu decodificacao V21/V23, add/remove, deduplicacao,
+  proveniencia e contrato GraphQL. Instalacao/update/uninstall do artefato e
+  restart do runtime permanecem no SR5/SR7, sem promover v2.3 neste marco.
 - Commit: `refactor(sources): stabilize official extension pipeline`.
 
 ### SR5 - Saude estrutural e canarios
@@ -252,15 +266,17 @@ Tauri/Cargo fora do teste descartado, Syncd e demais features continuam no
 worktree e nao foram staged. O SR3 experimental foi removido sem restaurar
 arquivos inteiros ou usar operacoes destrutivas globais.
 
-## Validacao do SR3
+## Validacao do SR3 e SR4
 
 - `cargo fmt`: aprovado.
-- `cargo test --lib suwayomi_runtime`: 5 aprovados.
+- `cargo test --lib suwayomi_runtime`: aprovado.
+- Runtime/adapter: `16 passed; 1 skipped`.
 - `scripts/certify-suwayomi-release.mjs --version v2.3.2243`: aprovado em
   startup e restart, sem promover allowlist.
 - `git diff --check`: aprovado.
-- `pnpm build`, `svelte-check` e `cargo test` completo: executar no gate final
-  apos o lote ser staged; nenhuma mudanca de frontend foi feita neste SR3.
+- `svelte-check`: 0 erros e 0 avisos.
+- Os testes de SR4 exercitam stores legacy e oficiais sem tocar Syncd, Core,
+  novels/LNReader ou persistencia de biblioteca.
 
-Pendencias: classificacao estrutural do `AbstractMethodError`, migration de
-Extension Stores, maintenance Core/Syncd e decisao de promocao da v2.3.2243.
+Pendencias: classificacao estrutural do `AbstractMethodError`, health checks de
+extensoes, maintenance Core/Syncd e decisao de promocao da v2.3.2243.

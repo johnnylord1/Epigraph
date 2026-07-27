@@ -12,13 +12,9 @@
     Plus,
     X,
   } from "phosphor-svelte";
-  import { gql, gqlUpload } from "../../lib/client";
+  import { gqlUpload } from "../../lib/client";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
-  import {
-    GET_SETTINGS,
-    INSTALL_EXTERNAL_EXTENSION,
-    SET_EXTENSION_REPOS,
-  } from "../../lib/queries";
+  import { INSTALL_EXTERNAL_EXTENSION } from "../../lib/queries";
   import {
     toManagedMangaRuntimeExtension,
     toManagedNovelCatalogEntry,
@@ -427,8 +423,8 @@
         repos = [];
         return;
       }
-      const data = await gql<{ settings: { extensionRepos: string[] } }>(GET_SETTINGS);
-      repos = data.settings.extensionRepos ?? [];
+      const runtime = await getManagedSourceRuntime();
+      repos = (await runtime.listStores()).map((store) => store.indexUrl);
     } catch (error) {
       console.error(error);
     } finally {
@@ -441,11 +437,17 @@
     savingRepos = true;
     try {
       if (!(await ensureMangaServerAwake())) return;
-      const data = await gql<{ setSettings: { settings: { extensionRepos: string[] } } }>(
-        SET_EXTENSION_REPOS,
-        { repos: updated },
-      );
-      repos = data.setSettings.settings.extensionRepos;
+      const runtime = await getManagedSourceRuntime();
+      const current = await runtime.listStores();
+      const currentUrls = new Set(current.map((store) => store.indexUrl));
+      const updatedUrls = new Set(updated.map((url) => url.trim()).filter(Boolean));
+      for (const url of currentUrls) {
+        if (!updatedUrls.has(url)) await runtime.removeStore(url);
+      }
+      for (const url of updatedUrls) {
+        if (!currentUrls.has(url)) await runtime.addStore({ indexUrl: url });
+      }
+      repos = (await runtime.listStores()).map((store) => store.indexUrl);
       bumpContentSetupVersion();
     } catch (error) {
       repoError = error instanceof Error ? error.message : "Failed to save";

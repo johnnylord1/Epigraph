@@ -26,6 +26,7 @@ function compatibleSchema() {
     "fetchManga",
     "fetchChapters",
     "fetchChapterPages",
+    "setSettings",
   ];
   const extensionFields = [
     "pkgName",
@@ -177,5 +178,37 @@ describe("SuwayomiAdapter", () => {
       { id: "eu.kanade.tachiyomi.extension.en.demo" },
       { signal: undefined, timeoutMs: 60_000 },
     );
+  });
+
+  test("manages legacy repositories through the runtime boundary", async () => {
+    const transport = new FixtureTransport({
+      AethonRuntimeContract: compatibleSchema(),
+      AethonLegacyExtensionStores: {
+        settings: { extensionRepos: ["https://old.example/repo.json"] },
+      },
+      AethonLegacyAddExtensionStore: {
+        setSettings: {
+          settings: { extensionRepos: ["https://old.example/repo.json", "https://new.example/repo.json"] },
+        },
+      },
+      AethonLegacyRemoveExtensionStore: {
+        setSettings: {
+          settings: { extensionRepos: ["https://new.example/repo.json"] },
+        },
+      },
+    });
+    const runtime = new SuwayomiAdapter(transport, new CompatibilityProfileV21());
+
+    const added = await runtime.addStore({ indexUrl: "https://new.example/repo.json" });
+    expect(added.indexUrl).toBe("https://new.example/repo.json");
+    const removed = await runtime.removeStore("https://old.example/repo.json");
+    expect(removed?.indexUrl).toBe("https://old.example/repo.json");
+    expect(transport.calls).toEqual([
+      "AethonRuntimeContract",
+      "AethonLegacyExtensionStores",
+      "AethonLegacyAddExtensionStore",
+      "AethonLegacyExtensionStores",
+      "AethonLegacyRemoveExtensionStore",
+    ]);
   });
 });

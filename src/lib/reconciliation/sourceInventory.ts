@@ -1,7 +1,8 @@
 import { gql } from "../client";
 import { fetchRepoEntries, type RepoExtensionEntry } from "../extensionSourceMap";
+import { getManagedSourceRuntime } from "../manga/runtime";
 import { loadNovelRepositoryState, type NovelRepositoryScopeInput } from "../novels/repositoryState";
-import { FETCH_EXTENSIONS, GET_SETTINGS, GET_SOURCES } from "../queries";
+import { FETCH_EXTENSIONS, GET_SOURCES } from "../queries";
 import type { Extension, Source } from "../types";
 import type {
   AvailableExtensionEntry,
@@ -45,13 +46,14 @@ export async function loadSourceInventory(): Promise<{
   warnings: ReconciliationWarning[];
   repoUrls: string[];
 }> {
-  const [sourcesData, settingsData, extensionsData] = await Promise.all([
+  const runtime = await getManagedSourceRuntime();
+  const [sourcesData, stores, extensionsData] = await Promise.all([
     gql<{ sources: { nodes: Source[] } }>(GET_SOURCES),
-    gql<{ settings: { extensionRepos: string[] } }>(GET_SETTINGS),
+    runtime.listStores(),
     gql<{ fetchExtensions: { extensions: Extension[] } }>(FETCH_EXTENSIONS),
   ]);
 
-  const repoUrls = settingsData.settings.extensionRepos ?? [];
+  const repoUrls = stores.map((store) => store.indexUrl);
   const repoFetch = await fetchRepoEntries(repoUrls);
   const warnings: ReconciliationWarning[] = repoFetch.failedRepos.map((repo) => ({
     kind: "repo_lookup_failed",

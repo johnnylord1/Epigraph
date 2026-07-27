@@ -1,5 +1,5 @@
 import type { Extension } from "./types";
-import type { ExtensionRef } from "./manga/runtime";
+import { createExtensionProvenance, type ExtensionProvenance, type ExtensionRef } from "./manga/runtime";
 import type { InstalledNovelSourceDescriptor } from "./novels/domain";
 import type { NovelCatalogEntry } from "./novels/contracts";
 import type { NovelCatalogPluginStatus } from "./novels/repositories";
@@ -24,6 +24,7 @@ export interface ManagedExtension {
   novelPluginId?: string;
   novelRepositoryId?: string;
   novelStatus?: NovelCatalogPluginStatus;
+  provenance?: ExtensionProvenance;
 }
 
 export function toManagedMangaExtension(extension: Extension): ManagedExtension {
@@ -48,6 +49,7 @@ export function toManagedMangaRuntimeExtension(extension: ExtensionRef): Managed
     iconUrl: extension.iconUrl,
     kind: "manga",
     repo: extension.storeId,
+    provenance: createExtensionProvenance(extension),
   };
 }
 

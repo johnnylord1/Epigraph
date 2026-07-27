@@ -56,9 +56,19 @@ interface PageVariables {
   chapterId: number;
 }
 
+interface ExtensionStoreVariables {
+  indexUrl: string;
+}
+
+interface LegacyExtensionReposVariables {
+  repos: readonly string[];
+}
+
 export interface CompatibilityProfileOperations {
   runtimeInfo: GraphQLOperation<Readonly<Record<string, never>>, RuntimeInfoPayload>;
   listStores: GraphQLOperation<Readonly<Record<string, never>>, readonly ExtensionStore[]>;
+  addStore: GraphQLOperation<LegacyExtensionReposVariables | ExtensionStoreVariables, ExtensionStore>;
+  removeStore: GraphQLOperation<LegacyExtensionReposVariables | ExtensionStoreVariables, ExtensionStore | null>;
   listExtensions: GraphQLOperation<Readonly<Record<string, never>>, readonly ExtensionRef[]>;
   refreshExtensions: GraphQLOperation<Readonly<Record<string, never>>, readonly ExtensionRef[]>;
   listSources: GraphQLOperation<Readonly<Record<string, never>>, readonly SourceRef[]>;
@@ -183,7 +193,7 @@ function extensionAction(
   };
 }
 
-function commonOperations(v23: boolean): Omit<CompatibilityProfileOperations, "listStores"> {
+function commonOperations(v23: boolean): Omit<CompatibilityProfileOperations, "listStores" | "addStore" | "removeStore"> {
   const decodeExtensions = (value: unknown, path: string): readonly ExtensionRef[] =>
     nodes(value, path).map(
       (item, index) => decodeExtension(item, `${path}.nodes[${index}]`, v23),
@@ -394,6 +404,22 @@ function commonOperations(v23: boolean): Omit<CompatibilityProfileOperations, "l
   };
 }
 
+function decodeExtensionStore(value: unknown, path: string): ExtensionStore {
+  const raw = record(value, path);
+  const indexUrl = string(field(raw, "indexUrl", path), `${path}.indexUrl`);
+  return {
+    id: indexUrl,
+    name: string(field(raw, "name", path), `${path}.name`),
+    indexUrl,
+    badgeLabel: nullableString(raw.badgeLabel, `${path}.badgeLabel`),
+    signingFingerprint: nullableString(raw.signingKey, `${path}.signingKey`),
+    contactWebsite: nullableString(raw.contactWebsite, `${path}.contactWebsite`),
+    contactDiscord: nullableString(raw.contactDiscord, `${path}.contactDiscord`),
+    extensionListUrl: nullableString(raw.extensionListUrl, `${path}.extensionListUrl`),
+    isLegacy: boolean(field(raw, "isLegacy", path), `${path}.isLegacy`),
+  };
+}
+
 const V21_CONTRACT: RuntimeContract = {
   requiredQueries: ["aboutServer", "settings", "extensions", "sources"],
   requiredMutations: [
@@ -403,6 +429,7 @@ const V21_CONTRACT: RuntimeContract = {
     "fetchManga",
     "fetchChapters",
     "fetchChapterPages",
+    "setSettings",
   ],
   requiredFields: {
     ExtensionType: [
@@ -491,6 +518,49 @@ export class CompatibilityProfileV21 implements CompatibilityProfile {
         );
       },
     },
+    addStore: {
+      name: "AethonLegacyAddExtensionStore",
+      kind: "mutation",
+      document: `
+        mutation AethonLegacyAddExtensionStore($repos: [String!]!) {
+          setSettings(input: { settings: { extensionRepos: $repos } }) {
+            settings { extensionRepos }
+          }
+        }
+      `,
+      decode(value) {
+        const root = record(value, "data");
+        const settings = record(field(root, "setSettings", "data"), "data.setSettings");
+        const rawSettings = record(field(settings, "settings", "data.setSettings"), "data.setSettings.settings");
+        const repos = array(field(rawSettings, "extensionRepos", "data.setSettings.settings"), "data.setSettings.settings.extensionRepos");
+        const indexUrl = string(repos[repos.length - 1], "data.setSettings.settings.extensionRepos[-1]");
+        return {
+          id: indexUrl,
+          name: indexUrl,
+          indexUrl,
+          badgeLabel: null,
+          signingFingerprint: null,
+          contactWebsite: null,
+          contactDiscord: null,
+          extensionListUrl: null,
+          isLegacy: true,
+        };
+      },
+    },
+    removeStore: {
+      name: "AethonLegacyRemoveExtensionStore",
+      kind: "mutation",
+      document: `
+        mutation AethonLegacyRemoveExtensionStore($repos: [String!]!) {
+          setSettings(input: { settings: { extensionRepos: $repos } }) {
+            settings { extensionRepos }
+          }
+        }
+      `,
+      decode() {
+        return null;
+      },
+    },
   };
 }
 
@@ -532,6 +602,49 @@ export class CompatibilityProfileV23 implements CompatibilityProfile {
             };
           },
         );
+      },
+    },
+    addStore: {
+      name: "AethonAddExtensionStore",
+      kind: "mutation",
+      document: `
+        mutation AethonAddExtensionStore($indexUrl: String!) {
+          addExtensionStore(input: { indexUrl: $indexUrl }) {
+            extensionStore {
+              name badgeLabel signingKey contactWebsite contactDiscord
+              indexUrl isLegacy extensionListUrl
+            }
+          }
+        }
+      `,
+      decode(value) {
+        const root = record(value, "data");
+        const payload = record(field(root, "addExtensionStore", "data"), "data.addExtensionStore");
+        return decodeExtensionStore(
+          field(payload, "extensionStore", "data.addExtensionStore"),
+          "data.addExtensionStore.extensionStore",
+        );
+      },
+    },
+    removeStore: {
+      name: "AethonRemoveExtensionStore",
+      kind: "mutation",
+      document: `
+        mutation AethonRemoveExtensionStore($indexUrl: String!) {
+          removeExtensionStore(input: { indexUrl: $indexUrl }) {
+            extensionStore {
+              name badgeLabel signingKey contactWebsite contactDiscord
+              indexUrl isLegacy extensionListUrl
+            }
+          }
+        }
+      `,
+      decode(value) {
+        const root = record(value, "data");
+        const payload = record(field(root, "removeExtensionStore", "data"), "data.removeExtensionStore");
+        return payload.extensionStore === null || payload.extensionStore === undefined
+          ? null
+          : decodeExtensionStore(payload.extensionStore, "data.removeExtensionStore.extensionStore");
       },
     },
   };

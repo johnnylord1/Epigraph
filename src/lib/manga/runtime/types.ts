@@ -52,6 +52,33 @@ export interface ExtensionStore {
   isLegacy: boolean;
 }
 
+export interface ExtensionStoreInput {
+  indexUrl: string;
+  signal?: AbortSignal;
+}
+
+export type ExtensionArtifactType = "apk" | "jar";
+export type ExtensionVerificationMethod =
+  | "APK_CERTIFICATE"
+  | "JAR_SIGNATURE"
+  | "SIGNED_STORE_METADATA"
+  | "NONE";
+
+export interface ExtensionProvenance {
+  packageName: string;
+  versionCode: string;
+  versionName: string;
+  storeId: string | null;
+  storeUrl: string | null;
+  artifactType: ExtensionArtifactType | null;
+  artifactDigest: string | null;
+  declaredSigningFingerprint: string | null;
+  observedSigningFingerprint: string | null;
+  verificationMethod: ExtensionVerificationMethod;
+  trustAnchor: string | null;
+  runtimeVersion: string | null;
+}
+
 export interface ExtensionRef {
   packageName: string;
   name: string;
@@ -154,6 +181,8 @@ export interface SourceRuntime {
   getRuntimeInfo(): Promise<RuntimeInfo>;
   getCapabilities(): Promise<RuntimeCapabilities>;
   listStores(signal?: AbortSignal): Promise<readonly ExtensionStore[]>;
+  addStore(input: ExtensionStoreInput): Promise<ExtensionStore>;
+  removeStore(indexUrl: string, signal?: AbortSignal): Promise<ExtensionStore | null>;
   listExtensions(signal?: AbortSignal): Promise<readonly ExtensionRef[]>;
   refreshExtensions(signal?: AbortSignal): Promise<readonly ExtensionRef[]>;
   listSources(signal?: AbortSignal): Promise<readonly SourceRef[]>;

@@ -8,6 +8,8 @@ import {
 import type { CompatibilityProfile } from "./compatibility";
 import type {
   ExtensionInstallInput,
+  ExtensionStore,
+  ExtensionStoreInput,
   ExtensionUpdateInput,
   RuntimeCapabilities,
   RuntimeContractReport,
@@ -59,6 +61,54 @@ export class SuwayomiAdapter implements SourceRuntime {
   async listStores(signal?: AbortSignal) {
     await this.requireCompatible();
     return this.transport.execute(this.profile.operations.listStores, {}, { signal });
+  }
+
+  async addStore(input: ExtensionStoreInput): Promise<ExtensionStore> {
+    await this.requireCompatible();
+    const indexUrl = normalizeStoreUrl(input.indexUrl);
+    const current = await this.listStores(input.signal);
+    const existing = current.find((store) => normalizeStoreUrl(store.indexUrl) === indexUrl);
+    if (existing) return existing;
+
+    if (this.profile.id === "suwayomi-v23") {
+      return this.transport.execute(
+        this.profile.operations.addStore,
+        { indexUrl },
+        { signal: input.signal, timeoutMs: 60_000 },
+      );
+    }
+
+    return this.transport.execute(
+      this.profile.operations.addStore,
+      { repos: [...current.map((store) => store.indexUrl), indexUrl] },
+      { signal: input.signal, timeoutMs: 60_000 },
+    );
+  }
+
+  async removeStore(indexUrl: string, signal?: AbortSignal): Promise<ExtensionStore | null> {
+    await this.requireCompatible();
+    const normalizedUrl = normalizeStoreUrl(indexUrl);
+    const current = await this.listStores(signal);
+    const existing = current.find((store) => normalizeStoreUrl(store.indexUrl) === normalizedUrl) ?? null;
+    if (!existing) return null;
+
+    if (this.profile.id === "suwayomi-v23") {
+      await this.transport.execute(
+        this.profile.operations.removeStore,
+        { indexUrl: existing.indexUrl },
+        { signal, timeoutMs: 60_000 },
+      );
+      return existing;
+    }
+
+    await this.transport.execute(
+      this.profile.operations.removeStore,
+      { repos: current
+        .filter((store) => store.id !== existing.id)
+        .map((store) => store.indexUrl) },
+      { signal, timeoutMs: 60_000 },
+    );
+    return existing;
   }
 
   async listExtensions(signal?: AbortSignal) {
@@ -180,6 +230,21 @@ export class SuwayomiAdapter implements SourceRuntime {
           missingTypes: Object.keys(report.missingFields).join(","),
         },
       },
+    );
+  }
+}
+
+function normalizeStoreUrl(value: string): string {
+  const trimmed = value.trim().replace(/\/+$/, "");
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("unsupported protocol");
+    return url.toString().replace(/\/+$/, "");
+  } catch (cause) {
+    throw new SourceRuntimeError(
+      "CONFIGURATION_REQUIRED",
+      "Extension store URL must use http:// or https://.",
+      { cause },
     );
   }
 }
