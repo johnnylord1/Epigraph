@@ -15,6 +15,7 @@
     "release:test-data-contracts": "node --test scripts/certify-local-data.test.mjs",
     "release:smoke-native-viewports": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-native-viewport-smoke.ps1",
     "release:certify-integrations": "node scripts/certify-integration-contracts.mjs",
+    "release:certify-source-runtime": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-source-runtime.ps1",
     "release:smoke-live": "node scripts/smoke-live-integrations.mjs",
     "release:check-bundles": "node scripts/check-bundle-budgets.mjs",
     "release:check-navigation": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-native-viewport-smoke.ps1 -NodeScript check-navigation-performance.mjs",

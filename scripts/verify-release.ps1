@@ -71,7 +71,9 @@ try {
   Invoke-ReleaseStep "Browser component tests" { & pnpm exec vitest run --project browser-components --maxWorkers=1 --minWorkers=1 }
   Invoke-ReleaseStep "Builtin theme generation check" { & pnpm theme:check-builtins }
   Invoke-ReleaseStep "Theme runtime contract" { & pnpm theme:test-runtime-audit }
-  Invoke-ReleaseStep "Suwayomi release certification" { & pnpm test:suwayomi-certification }
+  Invoke-ReleaseStep "Source runtime compatibility" {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-source-runtime.ps1 -ContractOnly
+  }
   Invoke-ReleaseStep "External integration contracts" {
     $env:AETHON_SKIP_SUWAYOMI_CERTIFICATION = "1"
     try { & pnpm release:certify-integrations }

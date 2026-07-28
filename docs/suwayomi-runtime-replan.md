@@ -1,6 +1,6 @@
 # Replanejamento do runtime Suwayomi
 
-Status: SR3-SR7 implementados; SR8 pendente.
+Status: SR3-SR8 implementados.
 
 ## Resultado desta etapa
 
@@ -316,10 +316,22 @@ versoes nao aprovadas, e instalar somente uma versao exata apos SR7.
 
 ### SR8 - Gate final
 
-- Consolidar cargo test, svelte-check, build, adapter contract, runtime health,
-  extension canaries, updater safety, cleanup e git diff check.
-- Documentar limitacoes externas e resultados; nao criar lista de centenas de
-  extensoes.
+- `pnpm release:certify-source-runtime` consolida, em ordem serial, contratos do
+  certificador, adapter V21/V23, runtime health, canarios, `svelte-check`, Cargo,
+  build, cleanup de JVM/diretorios candidate e whitespace.
+- O modo interno `-ContractOnly` e usado pelo `release:verify`, que ja executa
+  os gates globais de Svelte, Cargo e build. Isso evita duplicar as cargas mais
+  pesadas sem reduzir cobertura.
+- O manifesto e testado contra a versao, asset e SHA-256 exatos do SR7 e exige
+  que `v2.2.2100` continue bloqueada.
+- O gate nunca remove processos ou diretorios desconhecidos: residuos causam
+  falha acionavel. CPU, Vitest e Cargo permanecem limitados a um worker/job.
+- Limitacoes externas continuam explicitas; nenhuma lista de centenas de
+  extensoes ou promessa de disponibilidade de website foi criada.
+- Validacao local completa em 27/07/2026: 16 testes do certificador, 37 testes
+  de adapter/health (1 smoke live condicional ignorado), `svelte-check` com
+  0 erros/0 avisos, Cargo completo com 336 testes da biblioteca mais binarios e
+  doc-tests, build frontend e cleanup final aprovados em execucao serial.
 - Commit: `test(sources): enforce source runtime compatibility gate`.
 
 ## Arquivos preservados fora do SR3
@@ -341,6 +353,6 @@ arquivos inteiros ou usar operacoes destrutivas globais.
 - Os testes de SR4 exercitam stores legacy e oficiais sem tocar Syncd, Core,
   novels/LNReader ou persistencia de biblioteca.
 
-Pendencia: consolidacao do gate final no SR8. A `v2.3.2243` esta allowlisted
-apos a certificacao controlada do SR7; websites externos e JCEF permanecem
+SR1-SR8 estao concluidos. A `v2.3.2243` esta allowlisted apos a certificacao
+controlada do SR7 e protegida pelo gate SR8; websites externos e JCEF permanecem
 checks explicitos, sem alterar a compatibilidade estrutural do runtime.

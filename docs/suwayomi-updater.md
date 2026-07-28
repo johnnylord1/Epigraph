@@ -94,6 +94,18 @@ This baseline is process isolation by disposable profile only. It verifies an of
 
 The current fixed-target and SR7 migration evidence is recorded in [`suwayomi-certification-baseline-v2.3.2243.md`](./suwayomi-certification-baseline-v2.3.2243.md).
 
+The deterministic source-runtime release gate is available as:
+
+```text
+pnpm release:certify-source-runtime
+```
+
+It runs serially with one Vitest worker, one Cargo job and one Rust test thread.
+It covers certification contracts, V21/V23 adapters, structural extension
+health, the complete Rust suite, Svelte diagnostics, the frontend build,
+whitespace, and residual candidate cleanup. `release:verify` reuses its
+contract-only mode because the global gate already runs Cargo, Svelte and build.
+
 ## Directories
 
 Managed runtime data lives under app data:

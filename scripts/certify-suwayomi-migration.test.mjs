@@ -130,3 +130,19 @@ test("generates a candidate config with only explicitly supplied stores", () => 
   assert.doesNotMatch(v23Config, /server\.extensionRepos/);
   assert.doesNotMatch(config, /password|proxy|downloadsPath|backupPath/i);
 });
+
+test("pins the SR7 candidate as the exact maximum tested runtime", async () => {
+  const manifest = JSON.parse(await readFile(
+    path.resolve("src-tauri/resources/suwayomi-compatibility.json"),
+    "utf8",
+  ));
+  const candidate = manifest.allowedVersions.find((entry) => entry.version === "v2.3.2243");
+  assert.equal(manifest.maxTestedVersion, "v2.3.2243");
+  assert.deepEqual(candidate, {
+    version: "v2.3.2243",
+    asset: "Suwayomi-Server-v2.3.2243.jar",
+    sha256: "821141b32e170d4a02d3cbdfed577ed8f07bd22383ff5f4132ebb5ae40e98dd5",
+    notes: "Certified on Windows x64 with Java 21, disposable H2 migration, Extension Stores, installed extension canaries, restart, and rollback.",
+  });
+  assert.ok(manifest.blockedVersions.some((entry) => entry.version === "v2.2.2100"));
+});
