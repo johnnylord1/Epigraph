@@ -65,6 +65,12 @@ export default defineConfig({
           const normalizedId = id.replaceAll("\\", "/");
           if (normalizedId.includes("vite/preload-helper")) return "runtime-preload";
           if (
+            normalizedId.includes("/src/lib/theme/")
+            && /\/(contract|document|provider)\.ts$/.test(normalizedId)
+          ) {
+            return "domain-theme-core";
+          }
+          if (
             normalizedId.includes("/src/lib/books/") &&
             /\/(identity|isbn|libraryState|persisted|progress|summary)\.(ts|svelte\.ts)$/.test(normalizedId)
           ) {

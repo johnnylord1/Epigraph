@@ -1,12 +1,16 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { LibraryUpdateIntensity } from "../store/state.svelte";
-import { resetManagedSourceRuntime } from "./manga/runtime";
 
 export const SERVER_READY_EVENT = "aethon:server-ready";
 
 const SERVER_READY_NOTIFY_DEBOUNCE_MS = 10_000;
 
 let lastReadyNotification: { serverUrl: string; at: number } | null = null;
+
+async function resetManagedSourceRuntimeCache() {
+  const { resetManagedSourceRuntime } = await import("./manga/runtime/managed");
+  resetManagedSourceRuntime();
+}
 
 export type ServerWakeReason =
   | "startup"
@@ -84,7 +88,7 @@ export async function ensureServerAwakeFor(
     profileLabel: input.profileLabel ?? null,
     updateIntensity: input.updateIntensity ?? "balanced",
   });
-  resetManagedSourceRuntime();
+  await resetManagedSourceRuntimeCache();
 
   for (let attempt = 0; attempt < 30; attempt += 1) {
     if (await probeServerHealth(serverUrl)) {
@@ -107,7 +111,7 @@ export async function configureLocalServerRuntime(input: ServerLifecycleInput) {
     profileLabel: input.profileLabel ?? null,
     updateIntensity: input.updateIntensity ?? "balanced",
   });
-  resetManagedSourceRuntime();
+  await resetManagedSourceRuntimeCache();
   return true;
 }
 
@@ -116,6 +120,6 @@ export async function maybeStandbyLocalServer(input: ServerLifecycleInput) {
   if (!isLoopbackServerUrl(serverUrl)) return false;
   if (!(await probeServerHealth(serverUrl))) return false;
   await invoke<void>("kill_server", { serverUrl });
-  resetManagedSourceRuntime();
+  await resetManagedSourceRuntimeCache();
   return true;
 }

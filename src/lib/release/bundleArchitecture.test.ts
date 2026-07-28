@@ -56,6 +56,14 @@ describe("release bundle architecture", () => {
     expect(libraryState).toContain('from "./persisted"');
   });
 
+  test("loads the managed source runtime only when lifecycle state changes", () => {
+    const lifecycle = read("src/lib/serverLifecycle.ts");
+
+    expect(lifecycle).not.toMatch(/import\s+\{\s*resetManagedSourceRuntime\s*\}\s+from/);
+    expect(lifecycle).toContain('import("./manga/runtime/managed")');
+    expect(lifecycle).toContain("await resetManagedSourceRuntimeCache()");
+  });
+
   test("keeps heavy book vendors forbidden from initial imports", () => {
     const budgets = JSON.parse(read("config/release-bundle-budgets.json"));
     const vite = read("vite.config.ts");
@@ -67,6 +75,7 @@ describe("release bundle architecture", () => {
       "vendor-pdf",
     ]);
     expect(vite).toContain('return "runtime-preload"');
+    expect(vite).toContain('return "domain-theme-core"');
     expect(vite).toContain('return "domain-books-storage"');
     expect(vite).toContain('return "domain-books-import"');
     expect(vite).toContain('return "domain-books-core"');

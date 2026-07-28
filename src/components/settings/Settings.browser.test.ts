@@ -190,6 +190,7 @@ vi.mock("../../lib/client", () => ({
   gql: gqlMock,
   gqlUpload: vi.fn(async () => ({})),
   thumbUrl: vi.fn((path: string) => path),
+  getServerUrl: vi.fn(() => "http://127.0.0.1:4667"),
   getServerAuthHeader: vi.fn(() => null),
   serverFileUrl: vi.fn((path: string) => path),
 }));
