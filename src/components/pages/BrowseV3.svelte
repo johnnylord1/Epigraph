@@ -11,7 +11,7 @@
   import { cache, CACHE_KEYS, getPageSet } from "../../lib/cache";
   import { loadLibrarySnapshot } from "../../lib/library/snapshot";
   import { dedupeSources, dedupeMangaById, dedupeMangaByTitle, shouldHideNsfw, shouldHideSource } from "../../lib/util";
-  import { store, updateSettings, setSearchPrefill, setExtensionsPanelHint, addToast, setSearchTabHint, setSearchBrowseHint, setSearchSourcesPaneHint, setActiveNovelDetail, setActiveBookId, setActiveManga, openMangaDetail, setNavPage } from "../../store/state.svelte";
+  import { store, updateSettings, setSearchPrefill, engageSearch, disengageSearch, openSearchPalette, setSearchQuery, setExtensionsPanelHint, addToast, setSearchTabHint, setSearchBrowseHint, setSearchSourcesPaneHint, setActiveNovelDetail, setActiveBookId, setActiveManga, openMangaDetail, setNavPage } from "../../store/state.svelte";
   import type { Manga, Source, Tracker, TrackRecord, TrackSearch } from "../../lib/types";
   import NocturneState from "../shared/NocturneState.svelte";
   import SetupStatusCard from "../shared/SetupStatusCard.svelte";
@@ -56,6 +56,7 @@
     type RecommendationProviderSignal,
     type TasteProfileSeedItem,
   } from "../../lib/recommendations";
+  import hardcoverLogo from "../../assets/service-icons/hardcover.png";
 
   type SearchTab  = "keyword" | "browse" | "source";
   type BrowseTab  = "featured" | "tag";
@@ -576,8 +577,8 @@
   let activeContentType = $state<"manga" | "novels">("manga");
   let activeBrowseTab = $state<SearchTab>("keyword");
   let searchRecommendationsReady = $state(false);
-  let browseSearchFocused = $state(false);
   let searchQuery = $state("");
+  let browseSearchInput: HTMLInputElement | null = null;
   let selectedSource = $state("");
   let discoverSelectedSource = $state("");
   let discoverSelectedTracker = $state<number | null>(null);
@@ -609,6 +610,7 @@
   let allNovelSources: InstalledNovelSourceDescriptor[] = $state([]);
   let allTrackers: BrowseTrackerEntry[] = $state([]);
   let loadingSources         = $state(false);
+  let sourcesRefreshCompleted = $state(false);
   let loadingTrackers        = $state(false);
   let trackerCatalogResults = $state<TrackSearch[]>([]);
   let trackerCatalogLoading = $state(false);
@@ -721,6 +723,7 @@
 
   function selectContentType(next: "manga" | "novels") {
     if (activeContentType === next) return;
+    if (store.searchOpen) store.closeSearchPalette(false);
     releaseSearchRecommendationTransientState();
     activeContentType = next;
     resetContentTypeTransientState();
@@ -966,6 +969,7 @@
   }
 
   function selectBrowseTab(next: SearchTab) {
+    if (store.searchOpen) store.closeSearchPalette(false);
     if (activeBrowseTab === "keyword" && next !== "keyword") {
       releaseSearchRecommendationTransientState();
     }
@@ -1001,6 +1005,7 @@
   }
 
   function handleTopbarSearchInput(query: string) {
+    setSearchQuery(query);
     if (activeBrowseTab === "keyword") {
       kw_query = query;
       if (!query.trim()) {
@@ -1021,14 +1026,28 @@
   }
 
   function handleBrowseSearchFocus() {
-    browseSearchFocused = true;
-    document.body.classList.add("aethon-browse-search-engaged");
+    if (store.isSearchFocusRestoreInProgress) return;
+    engageSearch();
+  }
+
+  function openBrowseSearchPalette(query: string) {
+    if (activeBrowseTab !== "keyword" || !query.trim()) return;
+    openSearchPalette("browse", query, {
+      browseContentType: activeContentType,
+      browseSurface: "keyword",
+    });
   }
 
   function handleBrowseSearchBlur() {
-    browseSearchFocused = false;
-    document.body.classList.remove("aethon-browse-search-engaged");
+    disengageSearch();
   }
+
+  $effect(() => {
+    if (store.searchContext === "browse" && searchQuery !== store.searchQuery) {
+      searchQuery = store.searchQuery;
+      handleTopbarSearchInput(store.searchQuery);
+    }
+  });
 
   $effect(() => {
     if (activeBrowseTab === "browse" && (src_activeSource || src_activeNovelSource)) {
@@ -1095,10 +1114,20 @@
   $effect(() => {
     if (store.searchPrefill) {
       const prefill = store.searchPrefill;
+      const nextContentType = store.searchBrowseContentType;
       untrack(() => {
+        if (activeContentType !== nextContentType) {
+          activeContentType = nextContentType;
+          resetContentTypeTransientState();
+        }
+        searchQuery = prefill;
         pendingPrefill = prefill;
-      activeBrowseTab = "keyword";
+        activeBrowseTab = "keyword";
         setSearchPrefill("");
+        void tick().then(() => {
+          browseSearchInput?.focus({ preventScroll: true });
+          disengageSearch();
+        });
       });
     }
   });
@@ -1131,6 +1160,7 @@
       console.error(error);
     } finally {
       loadingSources = false;
+      sourcesRefreshCompleted = true;
     }
   }
 
@@ -1314,7 +1344,7 @@
   });
 
   $effect(() => {
-    if (!loadingSources && pendingPrefill && !kw_submitted && allSources.length) {
+    if (sourcesRefreshCompleted && !loadingSources && pendingPrefill && !kw_submitted) {
       const q = pendingPrefill;
       pendingPrefill = "";
       kw_query = q;
@@ -1349,13 +1379,13 @@
       return;
     }
     const visible = kwGetVisibleSources();
-    if (!visible.length) return;
     kw_abortCtrl?.abort();
     const ctrl = new AbortController();
     kw_abortCtrl = ctrl;
     kw_submitted = trimmed;
-    kw_results   = visible.map((src) => ({ source: src, mangas: [], loading: true, error: null }));
     kw_novelResults = [];
+    kw_results = visible.map((src) => ({ source: src, mangas: [], loading: true, error: null }));
+    if (!visible.length) return;
     await runConcurrent(visible, async (src) => {
       if (ctrl.signal.aborted) return;
       try {
@@ -1413,14 +1443,59 @@
     }, ctrl.signal);
   }
 
-  const kw_hasResults   = $derived(kw_results.some((r) => r.mangas.length > 0));
+  const kw_hasResults   = $derived(kw_results.some((r) => r.mangas.some(shouldShowCatalogManga)));
   const kw_hasNovelResults = $derived(kw_novelResults.some((r) => r.novels.length > 0));
   const kw_allDone      = $derived(
     activeContentType === "novels"
       ? kw_novelResults.length > 0 && kw_novelResults.every((r) => !r.loading)
       : kw_results.length > 0 && kw_results.every((r) => !r.loading),
   );
+  const kw_visibleMangaSourceCount = $derived(kwGetVisibleSources().length);
+  const kw_visibleNovelSourceCount = $derived(kwGetVisibleNovelSources().length);
   const kw_contentVisibleSources = $derived(allSources.filter((source) => !shouldHideSource(source, store.settings)));
+
+  function keepKeywordCardVisible(row: HTMLElement, item: HTMLElement) {
+    const rowRect = row.getBoundingClientRect();
+    const itemRect = item.getBoundingClientRect();
+    if (itemRect.left < rowRect.left) {
+      row.scrollLeft -= rowRect.left - itemRect.left;
+    } else if (itemRect.right > rowRect.right) {
+      row.scrollLeft += itemRect.right - rowRect.right;
+    }
+  }
+
+  function handleKeywordResultKeydown(event: KeyboardEvent) {
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+    const current = event.currentTarget;
+    if (!(current instanceof HTMLButtonElement)) return;
+    const currentRow = current.closest<HTMLElement>("[data-keyword-source-row]");
+    if (!currentRow) return;
+    const rows = [...document.querySelectorAll<HTMLElement>("[data-keyword-source-row]")]
+      .filter((row) => row.querySelector(".n-library-card:not(:disabled)"));
+    const rowIndex = rows.indexOf(currentRow);
+    const currentItems = [...currentRow.querySelectorAll<HTMLButtonElement>(".n-library-card:not(:disabled)")];
+    const itemIndex = currentItems.indexOf(current);
+    let targetRow = currentRow;
+    let targetIndex = itemIndex;
+
+    if (event.key === "ArrowLeft") targetIndex = Math.max(0, itemIndex - 1);
+    if (event.key === "ArrowRight") targetIndex = Math.min(currentItems.length - 1, itemIndex + 1);
+    if (event.key === "ArrowUp") targetRow = rows[Math.max(0, rowIndex - 1)] ?? currentRow;
+    if (event.key === "ArrowDown") targetRow = rows[Math.min(rows.length - 1, rowIndex + 1)] ?? currentRow;
+
+    const targetItems = [...targetRow.querySelectorAll<HTMLButtonElement>(".n-library-card:not(:disabled)")];
+    const target = targetItems[Math.min(Math.max(targetIndex, 0), targetItems.length - 1)];
+    if (!target || target === current) return;
+    event.preventDefault();
+    target.focus({ preventScroll: true });
+    keepKeywordCardVisible(targetRow, target);
+  }
+
+  function openKeywordMangaResult(manga: Manga) {
+    if (store.activeManga?.id === manga.id) return;
+    kw_abortCtrl?.abort();
+    openMangaDetail(manga);
+  }
 
   let tag_activeTags:       string[] = $state([]);
   let tag_tagMode:          TagMode  = $state("AND");
@@ -3213,7 +3288,7 @@
         name: "Hardcover",
         displayName: "Hardcover",
         lang: "all",
-        iconUrl: "https://hardcover.app/favicon.ico",
+        iconUrl: hardcoverLogo,
         isNsfw: false,
         contentKind: "hardcover" as const,
       },
@@ -5085,6 +5160,8 @@
   }
 
   async function openNovelSourceResult(source: InstalledNovelSourceDescriptor, result: NovelSourceSearchResult) {
+    if (src_openingNovelPath !== null) return;
+    kw_abortCtrl?.abort();
     src_openingNovelPath = result.path;
     try {
       const detail = await readInstalledNovelDetails({
@@ -5124,7 +5201,7 @@
   });
 </script>
 
-<div class="root" class:is-search-engaged={browseSearchFocused}>
+<div class="root">
   <AppTopbar className="browse-topbar">
     {#snippet left()}
       <nav class="n-segmented" data-active={activeContentType === "novels" ? "novels" : "manga"} aria-label={$_("browse.contentType")}>
@@ -5153,11 +5230,22 @@
         <div class="n-search n-search--browse">
           <span class="n-search__icon material-symbols-outlined" aria-hidden="true">search</span>
           <input
-            bind:value={searchQuery}
+            bind:this={browseSearchInput}
+            value={searchQuery}
             class="n-search__input"
+            role="combobox"
+            aria-expanded={store.searchOpen}
+            aria-controls="aethon-search-results"
+            aria-activedescendant={store.searchOpen ? store.searchActiveResultId ?? undefined : undefined}
+            aria-autocomplete="list"
             placeholder={browseSearchPlaceholder()}
-            oninput={(event) => handleTopbarSearchInput((event.currentTarget as HTMLInputElement).value)}
+            oninput={(event) => {
+              const value = (event.currentTarget as HTMLInputElement).value;
+              handleTopbarSearchInput(value);
+              openBrowseSearchPalette(value);
+            }}
             onfocus={handleBrowseSearchFocus}
+            onclick={handleBrowseSearchFocus}
             onblur={handleBrowseSearchBlur}
             onkeydown={(event) => event.key === "Enter" && handleSearch(searchQuery)}
           />
@@ -5311,10 +5399,7 @@
                                     <path d="M220 232C221.437 232 222.764 232.771 223.476 234.02C224.187 235.268 224.174 236.803 223.441 238.039L191.441 292.039C190.721 293.255 189.413 294 188 294C186.587 294 185.279 293.255 184.559 292.039L152.559 238.039C151.826 236.803 151.813 235.268 152.524 234.02C153.236 232.771 154.563 232 156 232H220ZM312 279C314.209 279 316 280.791 316 283C316 285.209 314.209 287 312 287H248.5C246.291 287 244.5 285.209 244.5 283C244.5 280.791 246.291 279 248.5 279H312ZM127.5 278.5C129.709 278.5 131.5 280.291 131.5 282.5C131.5 284.709 129.709 286.5 127.5 286.5H64C61.7909 286.5 60 284.709 60 282.5C60 280.291 61.7909 278.5 64 278.5H127.5ZM188 282.153L212.979 240H163.021L188 282.153ZM312 265C314.209 265 316 266.791 316 269C316 271.209 314.209 273 312 273H248.5C246.291 273 244.5 271.209 244.5 269C244.5 266.791 246.291 265 248.5 265H312ZM127.5 264.5C129.709 264.5 131.5 266.291 131.5 268.5C131.5 270.709 129.709 272.5 127.5 272.5H64C61.7909 272.5 60 270.709 60 268.5C60 266.291 61.7909 264.5 64 264.5H127.5ZM310.498 207.793C312.546 206.963 314.877 207.951 315.707 209.998C316.537 212.046 315.549 214.377 313.502 215.207L264.65 235L313.502 254.793C315.549 255.623 316.537 257.954 315.707 260.002C314.877 262.049 312.546 263.037 310.498 262.207L252.498 238.707C250.988 238.095 250 236.629 250 235C250 233.371 250.988 231.905 252.498 231.293L310.498 207.793ZM60.293 209.498C61.1225 207.451 63.4545 206.463 65.502 207.293L123.502 230.793C125.012 231.405 126 232.871 126 234.5C126 236.129 125.012 237.595 123.502 238.207L65.502 261.707C63.4545 262.537 61.1225 261.549 60.293 259.502C59.4634 257.454 60.4506 255.123 62.498 254.293L111.35 234.5L62.498 214.707C60.4506 213.877 59.4634 211.546 60.293 209.498Z" fill="#ff3599"/>
                                   </svg>
                                 {:else if bannerInfo.tracker === "hardcover"}
-                                  <!-- Hardcover Icon -->
-                                  <svg viewBox="0 0 24 24" class="source-metric-flag-img" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                    <path d="M7.5 6.5v11H16c.8 0 1.5-.7 1.5-1.5V8c0-.8-.7-1.5-1.5-1.5H7.5zm2.8 2.8h4.7v.9h-4.7v-.9zm0 2.8h4.7v.9h-4.7v-.9z" fill="#fff"/>
-                                  </svg>
+                                  <img src={hardcoverLogo} alt="" class="source-metric-flag-img" />
                                 {:else}
                                   <!-- Fallback Icon -->
                                   <svg viewBox="0 0 24 24" class="source-metric-flag-img" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -5431,22 +5516,28 @@
       </section>
     {:else}
       <div class="results">
-        {#if activeContentType === "novels" && kw_novelResults.length === 0}
+        {#if loadingSources}
           <div class="empty">
             <svg width="20" height="20" viewBox="0 0 256 256" fill="currentColor" class="anim-spin" style="color:var(--text-faint)" aria-hidden="true">
               <path d="M232,128a104,104,0,0,1-208,0c0-41,23.81-78.36,60.66-95.27a8,8,0,0,1,6.68,14.54C60.15,61.59,40,93.27,40,128a88,88,0,0,0,176,0c0-34.73-20.15-66.41-51.34-80.73a8,8,0,0,1,6.68-14.54C208.19,49.64,232,87,232,128Z"/>
             </svg>
           </div>
-        {:else if activeContentType === "manga" && kw_results.length === 0}
-          <div class="empty">
-            <svg width="20" height="20" viewBox="0 0 256 256" fill="currentColor" class="anim-spin" style="color:var(--text-faint)" aria-hidden="true">
-              <path d="M232,128a104,104,0,0,1-208,0c0-41,23.81-78.36,60.66-95.27a8,8,0,0,1,6.68,14.54C60.15,61.59,40,93.27,40,128a88,88,0,0,0,176,0c0-34.73-20.15-66.41-51.34-80.73a8,8,0,0,1,6.68-14.54C208.19,49.64,232,87,232,128Z"/>
-            </svg>
-          </div>
+        {:else if kw_submitted && (
+          (activeContentType === "novels" && kw_visibleNovelSourceCount === 0)
+          || (activeContentType === "manga" && kw_visibleMangaSourceCount === 0)
+        )}
+          <NocturneState
+            layout="center"
+            tone="info"
+            icon="search"
+            eyebrow={$_("browse.search.keywordEyebrow")}
+            title={activeContentType === "novels" ? $_("browse.search.noNovelData") : $_("browse.search.noMangaData")}
+            body={$_("browse.search.noKeywordResultsBody")}
+          />
         {/if}
 
         {#if activeContentType === "novels"}
-          {#each kw_novelResults.filter((r) => r.novels.length > 0 || r.loading || r.error) as { source, novels, loading, error } (source.pluginId)}
+          {#each kw_novelResults as { source, novels, loading, error } (source.pluginId)}
             <div class="sourceSection">
               <div class="sourceHeader">
                 {#if source.iconUrl}
@@ -5459,7 +5550,7 @@
                     decoding="async"
                   />
                 {/if}
-                <span class="sourceName">{source.name}</span>
+                <h3 class="sourceName">{source.name}</h3>
                 {#if hasMultipleLangs}
                   <span class="sourceLang">{source.lang.toUpperCase()}</span>
                 {/if}
@@ -5491,9 +5582,15 @@
                   {/each}
                 </div>
               {:else if novels.length > 0}
-                <div class="sourceRow">
+                <div class="sourceRow" data-keyword-source-row={source.pluginId}>
                   {#each novels.slice(0, (store.settings.renderLimit ?? 48)) as result (`${result.sourceId}:${result.path}`)}
-                    <button class="n-library-card" disabled={src_openingNovelPath !== null} onclick={() => openNovelSourceResult(source, result)}>
+                    <button
+                      class="n-library-card"
+                      data-browse-result-key={`${result.sourceId}:${result.path}`}
+                      disabled={src_openingNovelPath !== null}
+                      onclick={() => openNovelSourceResult(source, result)}
+                      onkeydown={handleKeywordResultKeydown}
+                    >
                       <div class="n-library-card__cover">
                         {#if result.coverUrl}
                           <img src={resolveMangaCoverUrl(result.coverUrl, { context: "browse", persistence: "memory" })} alt={result.title} loading="lazy" decoding="async" />
@@ -5514,11 +5611,21 @@
                     </button>
                   {/each}
                 </div>
+              {:else}
+                <NocturneState
+                  layout="compact"
+                  tone="info"
+                  icon="search"
+                  eyebrow={source.name}
+                  title={$_("browse.source.noResultsFor", { query: kw_submitted })}
+                  body={$_("browse.search.noKeywordResultsBody")}
+                />
               {/if}
             </div>
           {/each}
         {:else}
-        {#each kw_results.filter((r) => r.mangas.length > 0 || r.loading || r.error) as { source, mangas, loading, error } (source.id)}
+        {#each kw_results as { source, mangas, loading, error } (source.id)}
+          {@const visibleMangas = mangas.filter(shouldShowCatalogManga)}
           <div class="sourceSection">
             <div class="sourceHeader">
               <img
@@ -5529,7 +5636,7 @@
                 loading="lazy"
                 decoding="async"
               />
-              <span class="sourceName">{source.displayName}</span>
+              <h3 class="sourceName">{source.displayName}</h3>
               {#if hasMultipleLangs}
                 <span class="sourceLang">{source.lang.toUpperCase()}</span>
               {/if}
@@ -5537,8 +5644,8 @@
                 <svg width="12" height="12" viewBox="0 0 256 256" fill="currentColor" class="anim-spin" style="color:var(--text-faint);margin-left:auto" aria-hidden="true">
                   <path d="M232,128a104,104,0,0,1-208,0c0-41,23.81-78.36,60.66-95.27a8,8,0,0,1,6.68,14.54C60.15,61.59,40,93.27,40,128a88,88,0,0,0,176,0c0-34.73-20.15-66.41-51.34-80.73a8,8,0,0,1,6.68-14.54C208.19,49.64,232,87,232,128Z"/>
                 </svg>
-              {:else if mangas.length > 0}
-                <span class="resultCount">{mangas.length} {$_("ui_results")}</span>
+              {:else if visibleMangas.length > 0}
+                <span class="resultCount">{visibleMangas.length} {$_("ui_results")}</span>
               {/if}
             </div>
 
@@ -5561,10 +5668,15 @@
                   </div>
                 {/each}
               </div>
-            {:else if mangas.length > 0}
-              <div class="sourceRow">
-                {#each mangas.filter(shouldShowCatalogManga).slice(0, (store.settings.renderLimit ?? 48)) as m (m.id)}
-                  <button class="n-library-card" onclick={() => openMangaDetail(m)}>
+            {:else if visibleMangas.length > 0}
+              <div class="sourceRow" data-keyword-source-row={source.id}>
+                {#each visibleMangas.slice(0, (store.settings.renderLimit ?? 48)) as m (m.id)}
+                  <button
+                    class="n-library-card"
+                    data-browse-result-key={`${source.id}:${m.id}`}
+                    onclick={() => openKeywordMangaResult(m)}
+                    onkeydown={handleKeywordResultKeydown}
+                  >
                     <div class="card-cover-container">
                       <div class="n-library-card__cover">
                         <img
@@ -5592,6 +5704,15 @@
                   </button>
                 {/each}
               </div>
+            {:else}
+              <NocturneState
+                layout="compact"
+                tone="info"
+                icon="search"
+                eyebrow={source.displayName}
+                title={$_("browse.source.noResultsFor", { query: kw_submitted })}
+                body={$_("browse.search.noKeywordResultsBody")}
+              />
             {/if}
           </div>
         {/each}
@@ -6225,7 +6346,6 @@
     width: var(--component-browse-root-browse-topbar-n-search-width);
     margin: 0;
   }
-  .root.is-search-engaged :global(.browse-topbar .n-search),
   .root :global(.browse-topbar .n-search:focus-within) {
     width: var(--component-browse-root-is-search-engaged-browse-topbar-width);
   }
@@ -6841,6 +6961,7 @@
     background: var(--bg-raised);
   }
   .sourceName {
+    margin: 0;
     font-size: var(--text-base);
     font-weight: var(--weight-medium);
     color: var(--text-secondary);

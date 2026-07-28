@@ -72,5 +72,5 @@ export function normalizeTrackerOAuthInput(tracker: Tracker | null | undefined, 
     return `${key}=${rawValue}`;
   }
 
-  return trimmed;
+  return "";
 }

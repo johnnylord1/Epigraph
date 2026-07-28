@@ -37,6 +37,7 @@
   let searchResults: TrackSearch[] = $state([]);
   let searching:     boolean       = $state(false);
   let searchInited:  Set<number>   = $state(new Set());
+  let searchRequestId = 0;
 
   let binding:        boolean       = $state(false);
   let updatingRecord: number | null = $state(null);
@@ -96,38 +97,47 @@
     clearTimeout(searchTimer);
     if (typeof activeTab !== "number") return;
     const tid = activeTab;
-    if (!searchQuery.trim()) { searchResults = []; return; }
+    if (!searchQuery.trim()) {
+      searchRequestId += 1;
+      searching = false;
+      searchResults = [];
+      return;
+    }
     searchTimer = setTimeout(() => doSearch(tid, searchQuery), 400);
   }
 
   async function doSearch(trackerId: number, query: string) {
     if (!query.trim()) return;
+    const requestId = ++searchRequestId;
     searching = true;
     searchResults = [];
     try {
       const res = await gql<{ searchTracker: { trackSearches: TrackSearch[] } }>(
         SEARCH_TRACKER, { trackerId, query: query.trim() }
       );
+      if (requestId !== searchRequestId || activeTab !== trackerId) return;
       searchResults = res.searchTracker.trackSearches;
     } catch (e: any) {
+      if (requestId !== searchRequestId) return;
       addToast({ kind: "error", title: translate("ui_searchFailed"), body: e?.message });
     } finally {
-      searching = false;
+      if (requestId === searchRequestId) searching = false;
     }
   }
 
   // ── Bind / Unbind ──────────────────────────────────────────────────────────
 
   async function bind(result: TrackSearch) {
-    if (typeof activeTab !== "number") return;
+    if (typeof activeTab !== "number" || activeTab !== result.trackerId) return;
+    const trackerId = result.trackerId;
     binding = true;
     try {
       const res = await gql<{ bindTrack: { trackRecord: TrackRecord } }>(
-        BIND_TRACK, { mangaId, trackerId: activeTab, remoteId: result.remoteId }
+        BIND_TRACK, { mangaId, trackerId, remoteId: result.remoteId }
       );
-      records = [...records.filter(r => r.trackerId !== activeTab), res.bindTrack.trackRecord];
+      records = [...records.filter(r => r.trackerId !== trackerId), res.bindTrack.trackRecord];
       cache.clearGroup(CACHE_GROUPS.LIBRARY);
-      notifyTrackingStateChanged(activeTab);
+      notifyTrackingStateChanged(trackerId);
       addToast({ kind: "success", title: translate("ui_nowTracking"), body: result.title });
       activeTab = "records";
     } catch (e: any) {

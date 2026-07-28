@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import type { Tracker } from "../../lib/types";
 import { DEFAULT_SETTINGS, store } from "../../store/state.svelte";
 
 const {
@@ -122,7 +123,7 @@ const {
     const normalized = String(query).toLowerCase();
     if (normalized.includes("sources")) return { sources: { nodes: [] } };
     if (normalized.includes("extensions")) return { extensions: { nodes: [] } };
-    if (normalized.includes("trackers")) return { trackers: { nodes: [] } };
+    if (normalized.includes("trackers")) return { trackers: { nodes: [] as Tracker[] } };
     if (normalized.includes("settings")) {
       return { settings: { downloadsPath: "C:/Aethon/Downloads", localSourcePath: "" } };
     }
@@ -326,6 +327,59 @@ describe("Settings", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "Tracking" }));
     expect(screen.getByText("Connected services")).toBeTruthy();
+  });
+
+  test("uses bundled branding for the native Hardcover tracker", async () => {
+    renderSettings();
+    await fireEvent.click(screen.getByRole("button", { name: "Content & Integrations" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Tracking" }));
+
+    await waitFor(() => expect(screen.getByAltText("Hardcover")).toBeTruthy());
+    const hardcoverLogo = screen.getByAltText("Hardcover") as HTMLImageElement;
+    expect(hardcoverLogo.src).not.toContain("hardcover.app/favicon");
+  });
+
+  test("stops after a failed tracker load and retries only when requested", async () => {
+    const originalImplementation = gqlMock.getMockImplementation();
+    let trackerRequests = 0;
+    gqlMock.mockImplementation(async (query: string) => {
+      const normalized = String(query).toLowerCase();
+      if (normalized.includes("query gettrackers")) {
+        trackerRequests += 1;
+        if (trackerRequests === 1) throw new Error("Tracker service unavailable");
+        return {
+          trackers: {
+            nodes: [{
+              id: 1,
+              name: "MyAnimeList",
+              icon: "",
+              isLoggedIn: true,
+              authUrl: null,
+              supportsPrivateTracking: false,
+              scores: [],
+              statuses: [],
+            }],
+          },
+        };
+      }
+      return originalImplementation!(query);
+    });
+
+    renderSettings();
+    await fireEvent.click(screen.getByRole("button", { name: "Content & Integrations" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Tracking" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Tracker service unavailable")).toBeTruthy();
+    });
+    expect(trackerRequests).toBe(1);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => {
+      expect(screen.getByText("MyAnimeList")).toBeTruthy();
+    });
+    expect(trackerRequests).toBe(2);
+    gqlMock.mockImplementation(originalImplementation!);
   });
 
   test("toggles storage expansion panels from their own buttons", async () => {

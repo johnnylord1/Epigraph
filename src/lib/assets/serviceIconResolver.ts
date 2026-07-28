@@ -32,6 +32,14 @@ function fallbackGlyph(kind: ServiceIconKind): string {
   return "A";
 }
 
+function isBundledAppAsset(path: string): boolean {
+  return path.startsWith("data:")
+    || path.startsWith("blob:")
+    || path.startsWith("asset:")
+    || path.startsWith("/assets/")
+    || path.startsWith("/src/assets/");
+}
+
 export function serviceIconFallbackUrl(kind: ServiceIconKind = "service"): string {
   const cached = fallbackUrls.get(kind);
   if (cached) return cached;
@@ -56,7 +64,7 @@ export function resolveServiceIconUrl(input: ServiceIconInput, options: ServiceI
   const cached = resolvedIconUrls.get(cacheKey);
   if (cached) return cached;
 
-  const url = thumbUrl(path);
+  const url = isBundledAppAsset(path) ? path : thumbUrl(path);
   resolvedIconUrls.set(cacheKey, url);
   return url;
 }

@@ -854,7 +854,7 @@
   --component-sidebar-scrim-bg: var(--component-overlay-bg);
   --component-sidebar-highlight-bg: transparent;
   --component-sidebar-z-index: var(--z-dropdown);
-  --component-sidebar-search-z-index: var(--z-reader);
+  --component-sidebar-search-z-index: var(--z-settings);
   --component-nav-item-fg: var(--text-tertiary);
   --component-nav-item-hover-bg: var(--component-button-bg-hover);
   --component-nav-item-hover-fg: var(--text-primary);
@@ -999,11 +999,6 @@
   --component-activity-center-dot-shadow: var(--shadow-sm);
   --component-activity-center-download-dot-bg: var(--text-tertiary);
   --component-home-scale: var(--hud-scale, 1);
-  --component-home-search-dim-z-index: var(--z-reader);
-  --component-home-search-topbar-z-index: var(--z-dropdown);
-  --component-home-search-field-z-index: var(--z-popover);
-  --component-home-search-dim-opacity: 1;
-  --component-home-search-dim-transition: opacity var(--duration-slow) var(--easing-standard);
   --component-home-fg: var(--text-primary);
   --component-home-accent-fg: var(--color-accent);
   --component-home-strong-accent-fg: var(--color-accent);

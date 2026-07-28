@@ -15,7 +15,6 @@ const LEGACY_DIRECT_GRAPHQL_COMPONENTS = new Set([
   "pages/SeriesDetail.svelte",
   "pages/SourcesView.svelte",
   "reader/Reader.svelte",
-  "search/SearchPalette.svelte",
   "settings/Settings.svelte",
   "shared/MangaPreview.svelte",
   "shared/TrackingPanel.svelte",

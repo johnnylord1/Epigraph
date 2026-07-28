@@ -1,10 +1,14 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { LibraryToolbarVM } from "../../lib/library/contracts";
+import { store } from "../../store/state.svelte";
 import LibraryToolbar from "./LibraryToolbar.svelte";
 
 describe("LibraryToolbar", () => {
-  afterEach(() => cleanup());
+  afterEach(() => {
+    store.closeSearchPalette(false);
+    cleanup();
+  });
 
   test("renders search, sort, and filter controls from VM and callback props", async () => {
     const toolbar: LibraryToolbarVM = {

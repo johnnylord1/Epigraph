@@ -21,6 +21,13 @@ describe("service icon resolver", () => {
     expect(resolveServiceIconUrl("/api/v1/extension/icon", { kind: "extension" })).toContain("/api/v1/extension/icon");
   });
 
+  it("does not rewrite bundled app assets as Suwayomi server files", () => {
+    expect(resolveServiceIconUrl("/assets/hardcover.abc123.png", { kind: "tracker" }))
+      .toBe("/assets/hardcover.abc123.png");
+    expect(resolveServiceIconUrl("/src/assets/service-icons/hardcover.png", { kind: "tracker" }))
+      .toBe("/src/assets/service-icons/hardcover.png");
+  });
+
   it("can opt out of fallback for callers that intentionally hide missing icons", () => {
     expect(resolveServiceIconUrl(null, { fallback: false })).toBe("");
   });

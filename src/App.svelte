@@ -146,7 +146,8 @@
     | "novelDetail"
     | "novelReader"
     | "themeEditor"
-    | "mangaPreview";
+    | "mangaPreview"
+    | "searchPalette";
 
   const lazyLoaders: Record<LazyKey, () => Promise<LazyModule>> = {
     novelRuntimeHost: () => import("./components/novels/NovelRuntimeHost.svelte"),
@@ -158,6 +159,7 @@
     novelReader: () => import("./components/reader/NovelReader.svelte"),
     themeEditor: () => import("./components/settings/ThemeEditor.svelte"),
     mangaPreview: () => import("./components/shared/MangaPreview.svelte"),
+    searchPalette: () => import("./components/search/SearchPalette.svelte"),
   };
 
   let NovelRuntimeHostComponent = $state<any>(null);
@@ -169,6 +171,7 @@
   let NovelReaderComponent = $state<any>(null);
   let ThemeEditorComponent = $state<any>(null);
   let MangaPreviewComponent = $state<any>(null);
+  let SearchPaletteComponent = $state<any>(null);
   let lazyRetryEpoch = $state(0);
   const lazyComponentPromises = new Map<LazyKey, Promise<any>>();
   const lazyComponentRetryTimers = new Map<LazyKey, ReturnType<typeof setTimeout>>();
@@ -2757,6 +2760,15 @@
   });
 
   $effect(() => {
+    lazyRetryEpoch;
+    if ((shellReady || store.searchEngaged) && !SearchPaletteComponent) {
+      void ensureLazyComponent("searchPalette").then((component) => {
+        if (component) SearchPaletteComponent = component;
+      });
+    }
+  });
+
+  $effect(() => {
     if (!shellReady || isNovelRuntimeHostWindow) return;
     const timer = setTimeout(() => {
       void import("./lib/suwayomiUpdateUx.svelte")
@@ -3045,7 +3057,22 @@
           {/if}
         {/if}
       </div>
-      <div class="aethon-search-dim-layer" aria-hidden="true"></div>
+      <button
+        class="aethon-search-dim-layer"
+        type="button"
+        tabindex="-1"
+        aria-label={$_("ui_close")}
+        onmousedown={(event) => event.preventDefault()}
+        onclick={() => {
+          const activeElement = document.activeElement;
+          store.closeSearchPalette(false);
+          if (activeElement instanceof HTMLElement) activeElement.blur();
+        }}
+      ></button>
+      {#if SearchPaletteComponent}
+        {@const SearchPaletteView = SearchPaletteComponent}
+        <SearchPaletteView />
+      {/if}
       {#if store.isFullscreen}
         <button
           type="button"
@@ -3148,7 +3175,7 @@
     animation-play-state: paused !important;
   }
 
-  :global([data-aethon-motion="idle"] .aethon-app-shell *:not(.anim-spin):not(.anim-liquid-progress):not(.toast-life)) {
+  :global([data-aethon-motion="idle"] .aethon-app-shell *:not(.anim-spin):not(.anim-liquid-progress):not(.toast-life):not(.search-palette)) {
     animation-play-state: paused !important;
   }
 
@@ -3157,7 +3184,8 @@
   }
 
   :global([data-aethon-motion="idle"] .aethon-app-shell .toast.toast.toast.toast),
-  :global([data-aethon-motion="idle"] .aethon-app-shell .toast.toast.toast.toast *) {
+  :global([data-aethon-motion="idle"] .aethon-app-shell .toast.toast.toast.toast *),
+  :global([data-aethon-motion="idle"] .aethon-app-shell .search-palette) {
     animation-play-state: running !important;
   }
 

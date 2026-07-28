@@ -4,6 +4,20 @@ import { tick } from "svelte";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+function rect(left: number, top: number, right: number, bottom: number): DOMRect {
+  return {
+    x: left,
+    y: top,
+    left,
+    top,
+    right,
+    bottom,
+    width: right - left,
+    height: bottom - top,
+    toJSON: () => ({}),
+  } as DOMRect;
+}
+
 const {
   gqlMock,
   gqlUploadMock,
@@ -15,7 +29,39 @@ const {
   resetMangaExtensionsMock,
   failMangaUpdateIdsMock,
   sourceMangaFailureMock,
+  sourceMangaSearchMock,
+  mangaSourcesMock,
+  resetMangaSourcesMock,
+  readInstalledNovelDetailsMock,
+  searchInstalledNovelSourceMock,
+  setActiveNovelDetailMock,
+  managedRuntimeListExtensionsMock,
+  managedRuntimeRefreshExtensionsMock,
+  managedRuntimeInstallExtensionMock,
+  managedRuntimeUpdateExtensionMock,
+  managedRuntimeUninstallExtensionMock,
+  managedRuntimeListStoresMock,
+  managedRuntimeAddStoreMock,
+  managedRuntimeRemoveStoreMock,
 } = vi.hoisted(() => {
+  const mangaSourcesMock = [{
+    id: "manga-src",
+    name: "manga-src",
+    displayName: "Manga Source",
+    lang: "en",
+    iconUrl: null,
+    isNsfw: false,
+  }];
+  const resetMangaSourcesMock = vi.fn(() => {
+    mangaSourcesMock.splice(0, mangaSourcesMock.length, {
+      id: "manga-src",
+      name: "manga-src",
+      displayName: "Manga Source",
+      lang: "en",
+      iconUrl: null,
+      isNsfw: false,
+    });
+  });
   const mangaExtensionsMock: Array<{
     apkName: string;
     pkgName: string;
@@ -71,6 +117,45 @@ const {
       },
     );
   });
+  const runtimeExtensions = () => mangaExtensionsMock.map((extension) => ({
+    packageName: extension.pkgName,
+    name: extension.name,
+    language: extension.lang,
+    versionName: extension.versionName,
+    versionCode: "1",
+    isInstalled: extension.isInstalled,
+    isObsolete: extension.isObsolete,
+    hasUpdate: extension.hasUpdate,
+    iconUrl: extension.iconUrl,
+    storeId: null,
+    apkName: extension.apkName,
+    apkUrl: null,
+    jarUrl: null,
+  }));
+  const managedRuntimeListExtensionsMock = vi.fn(async () => runtimeExtensions());
+  const managedRuntimeRefreshExtensionsMock = vi.fn(async () => runtimeExtensions());
+  const managedRuntimeInstallExtensionMock = vi.fn(async ({ packageName }: { packageName: string }) => {
+    const extension = mangaExtensionsMock.find((item) => item.pkgName === packageName);
+    if (!extension) throw new Error("Extension not found");
+    extension.isInstalled = true;
+    extension.hasUpdate = false;
+  });
+  const managedRuntimeUpdateExtensionMock = vi.fn(async ({ packageName }: { packageName: string }) => {
+    const extension = mangaExtensionsMock.find((item) => item.pkgName === packageName);
+    if (!extension) throw new Error("Extension not found");
+    if (failMangaUpdateIdsMock.has(packageName)) throw new Error("Repository timeout");
+    extension.hasUpdate = false;
+    extension.versionName = "1.1";
+  });
+  const managedRuntimeUninstallExtensionMock = vi.fn(async (packageName: string) => {
+    const extension = mangaExtensionsMock.find((item) => item.pkgName === packageName);
+    if (!extension) throw new Error("Extension not found");
+    extension.isInstalled = false;
+    extension.hasUpdate = false;
+  });
+  const managedRuntimeListStoresMock = vi.fn(async () => []);
+  const managedRuntimeAddStoreMock = vi.fn(async () => {});
+  const managedRuntimeRemoveStoreMock = vi.fn(async () => {});
 
   return {
     addToastMock: vi.fn(),
@@ -87,6 +172,43 @@ const {
     resetMangaExtensionsMock,
     failMangaUpdateIdsMock,
     sourceMangaFailureMock,
+    sourceMangaSearchMock: vi.fn(async (_input: { sourceId: string }) => [] as unknown[]),
+    readInstalledNovelDetailsMock: vi.fn(async () => ({
+      id: "novel-src:/novel-result",
+      sourceId: "novel-src",
+      title: "Novel Result",
+      path: "/novel-result",
+      coverUrl: null,
+      author: "Novel Author",
+      description: null,
+      status: "ONGOING",
+      tags: [],
+      chapterCount: 12,
+      chapters: [],
+      source: {
+        sourceId: "novel-src",
+        sourceName: "Novel Source",
+        sourceLang: "en",
+        sourceSite: "https://novel.example.test",
+      },
+    })),
+    searchInstalledNovelSourceMock: vi.fn(async () => [{
+      sourceId: "novel-src",
+      path: "/novel-result",
+      title: "Novel Result",
+      coverUrl: null,
+    }]),
+    setActiveNovelDetailMock: vi.fn(),
+    managedRuntimeListExtensionsMock,
+    managedRuntimeRefreshExtensionsMock,
+    managedRuntimeInstallExtensionMock,
+    managedRuntimeUpdateExtensionMock,
+    managedRuntimeUninstallExtensionMock,
+    managedRuntimeListStoresMock,
+    managedRuntimeAddStoreMock,
+    managedRuntimeRemoveStoreMock,
+    mangaSourcesMock,
+    resetMangaSourcesMock,
     gqlMock: vi.fn(async (query: string, variables?: Record<string, unknown>) => {
     if (query.includes("AethonGraphqlReady")) return { __typename: "Query" };
     if (query.includes("AethonExtensionsReady")) return {
@@ -104,16 +226,7 @@ const {
     };
     if (query === "GET_SOURCES") return {
       sources: {
-        nodes: [
-          {
-            id: "manga-src",
-            name: "manga-src",
-            displayName: "Manga Source",
-            lang: "en",
-            iconUrl: null,
-            isNsfw: false,
-          },
-        ],
+        nodes: mangaSourcesMock,
       },
     };
     if (query === "EXPLORE_ALL_MANGA") return { mangas: { nodes: [] } };
@@ -389,8 +502,25 @@ vi.mock("../../lib/queries", () => ({
 }));
 
 vi.mock("../../lib/manga/sourceSearch", () => ({
-  fetchSourceMangaSearchWithFallback: vi.fn(async () => []),
+  fetchSourceMangaSearchWithFallback: sourceMangaSearchMock,
 }));
+
+vi.mock("../../lib/manga/runtime", async () => {
+  const actual = await vi.importActual<typeof import("../../lib/manga/runtime")>("../../lib/manga/runtime");
+  return {
+    ...actual,
+    getManagedSourceRuntime: vi.fn(async () => ({
+      listExtensions: managedRuntimeListExtensionsMock,
+      refreshExtensions: managedRuntimeRefreshExtensionsMock,
+      installExtension: managedRuntimeInstallExtensionMock,
+      updateExtension: managedRuntimeUpdateExtensionMock,
+      uninstallExtension: managedRuntimeUninstallExtensionMock,
+      listStores: managedRuntimeListStoresMock,
+      addStore: managedRuntimeAddStoreMock,
+      removeStore: managedRuntimeRemoveStoreMock,
+    })),
+  };
+});
 
 vi.mock("../../lib/cache", () => ({
   cache: { get: vi.fn(async (_key: string, load: () => Promise<unknown>) => load()) },
@@ -413,6 +543,7 @@ vi.mock("../../store/state.svelte", async () => {
     addToast: addToastMock,
     setSearchPrefill: vi.fn(),
     openMangaDetail: vi.fn(),
+    setActiveNovelDetail: setActiveNovelDetailMock,
     setExtensionsPanelHint: vi.fn(),
     setSearchTabHint: vi.fn(),
     setSearchBrowseHint: vi.fn(),
@@ -454,8 +585,8 @@ vi.mock("../../lib/serverLifecycle", () => ({
 vi.mock("../../lib/novels/sources", () => ({
   browseInstalledNovelSource: browseInstalledNovelSourceMock,
   loadTrustedInstalledNovelSources: loadTrustedInstalledNovelSourcesMock,
-  readInstalledNovelDetails: vi.fn(async () => null),
-  searchInstalledNovelSource: vi.fn(async () => []),
+  readInstalledNovelDetails: readInstalledNovelDetailsMock,
+  searchInstalledNovelSource: searchInstalledNovelSourceMock,
   shutdownInstalledNovelSourcesRuntime: vi.fn(async () => {}),
 }));
 
@@ -493,6 +624,7 @@ vi.mock("../../lib/novels/libraryState", () => ({
 vi.mock("../shared/SetupStatusCard.svelte", () => ({ default: class SetupStatusCardStub {} }));
 
 import BrowseV3 from "./BrowseV3.svelte";
+import { openMangaDetail as openMangaDetailMock, store as browseStore } from "../../store/state.svelte";
 
 describe("BrowseV3", () => {
   beforeEach(() => {
@@ -500,7 +632,24 @@ describe("BrowseV3", () => {
     gqlUploadMock.mockClear();
     addToastMock.mockClear();
     resetMangaExtensionsMock();
+    managedRuntimeListExtensionsMock.mockClear();
+    managedRuntimeRefreshExtensionsMock.mockClear();
+    managedRuntimeInstallExtensionMock.mockClear();
+    managedRuntimeUpdateExtensionMock.mockClear();
+    managedRuntimeUninstallExtensionMock.mockClear();
+    managedRuntimeListStoresMock.mockClear();
+    managedRuntimeAddStoreMock.mockClear();
+    managedRuntimeRemoveStoreMock.mockClear();
+    resetMangaSourcesMock();
     sourceMangaFailureMock.value = null;
+    sourceMangaSearchMock.mockReset();
+    sourceMangaSearchMock.mockResolvedValue([]);
+    searchInstalledNovelSourceMock.mockClear();
+    readInstalledNovelDetailsMock.mockClear();
+    setActiveNovelDetailMock.mockClear();
+    browseStore.searchPrefill = "";
+    browseStore.searchBrowseContentType = "manga";
+    vi.mocked(openMangaDetailMock).mockClear();
     browseInstalledNovelSourceMock.mockClear();
     detectSetupStateMock.mockClear();
     ensureServerAwakeForMock.mockReset();
@@ -530,11 +679,12 @@ describe("BrowseV3", () => {
 
     const searchInput = screen.getByPlaceholderText("Filter Discover...");
     await fireEvent.focus(searchInput);
-    expect(document.body.className).toContain("aethon-browse-search-engaged");
+    expect(document.body.className).not.toContain("aethon-browse-search-engaged");
     await fireEvent.blur(searchInput);
     expect(document.body.className).not.toContain("aethon-browse-search-engaged");
 
     await fireEvent.click(screen.getByRole("button", { name: "Sources" }));
+    expect(document.body.className).not.toContain("aethon-browse-search-engaged");
 
     await waitFor(() => {
       expect(screen.getByText("Manage extensions")).toBeTruthy();
@@ -546,10 +696,153 @@ describe("BrowseV3", () => {
     const source = readFileSync(resolve(process.cwd(), "src/components/pages/BrowseV3.svelte"), "utf8");
 
     expect(source).toContain("openMangaDetail(manga)");
-    expect(source).toContain("onclick={() => openMangaDetail(m)}");
+    expect(source).toContain("function openKeywordMangaResult(manga: Manga)");
+    expect(source).toContain("onclick={() => openKeywordMangaResult(m)}");
+    expect(source).toContain("kw_abortCtrl?.abort()");
     expect(source).toContain("const linkedNovelId = hardcoverRecord?.sourceNovelId ?? null;");
     expect(source).toContain("metadataOnly: true");
     expect(source).not.toContain("setPreviewManga(m)");
+  });
+
+  test("uses the shared palette only for keyword search", () => {
+    const source = readFileSync(resolve(process.cwd(), "src/components/pages/BrowseV3.svelte"), "utf8");
+    const focusHandler = source.slice(
+      source.indexOf("function handleBrowseSearchFocus()"),
+      source.indexOf("function handleBrowseSearchBlur()"),
+    );
+
+    expect(focusHandler).toContain("function openBrowseSearchPalette(query: string)");
+    expect(focusHandler).toContain('if (activeBrowseTab !== "keyword" || !query.trim()) return');
+    expect(focusHandler).toContain('browseSurface: "keyword"');
+    expect(focusHandler).not.toContain('document.body.classList.add("aethon-browse-search-engaged")');
+  });
+
+  test("keeps one independent horizontal result state per installed source", async () => {
+    browseStore.searchPrefill = "missing title";
+    render(BrowseV3);
+
+    await waitFor(() => {
+      expect(sourceMangaSearchMock).toHaveBeenCalledTimes(1);
+      expect((screen.getByRole("combobox") as HTMLInputElement).value).toBe("missing title");
+      expect(screen.getByRole("heading", { level: 3, name: "Manga Source" })).toBeTruthy();
+      expect(screen.getAllByText('No results for "missing title"').length).toBeGreaterThan(0);
+    });
+  });
+
+  test("shows the empty installed-source state without starting remote manga requests", async () => {
+    mangaSourcesMock.splice(0, mangaSourcesMock.length);
+    browseStore.searchPrefill = "missing source";
+    render(BrowseV3);
+
+    await waitFor(() => {
+      expect((screen.getByRole("combobox") as HTMLInputElement).value).toBe("missing source");
+      expect(sourceMangaSearchMock).not.toHaveBeenCalled();
+      expect(screen.getByText("No Suwayomi source data is available yet.")).toBeTruthy();
+    });
+  });
+
+  test("opens a source novel with its stable source and path identity", async () => {
+    browseStore.searchBrowseContentType = "novels";
+    browseStore.searchPrefill = "Novel Result";
+    render(BrowseV3);
+
+    const card = await screen.findByRole("button", { name: /Novel Result/i });
+    await fireEvent.click(card);
+
+    await waitFor(() => {
+      expect(searchInstalledNovelSourceMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          profileId: "main",
+          serverUrl: "http://127.0.0.1:4567",
+        }),
+        "novel-src",
+        "Novel Result",
+        1,
+      );
+      expect(readInstalledNovelDetailsMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          profileId: "main",
+          serverUrl: "http://127.0.0.1:4567",
+        }),
+        "novel-src",
+        "/novel-result",
+        {
+          title: "Novel Result",
+          coverUrl: null,
+        },
+      );
+      expect(setActiveNovelDetailMock).toHaveBeenCalledWith(expect.objectContaining({
+        novel: expect.objectContaining({
+          sourceId: "novel-src",
+          path: "/novel-result",
+        }),
+      }));
+    });
+  });
+
+  test("keeps stable source and item identities in keyboard-enabled result rows", () => {
+    const source = readFileSync(resolve(process.cwd(), "src/components/pages/BrowseV3.svelte"), "utf8");
+
+    expect(source).toContain("data-keyword-source-row={source.id}");
+    expect(source).toContain("data-keyword-source-row={source.pluginId}");
+    expect(source).toContain('data-browse-result-key={`${source.id}:${m.id}`}');
+    expect(source).toContain('data-browse-result-key={`${result.sourceId}:${result.path}`}');
+    expect(source).toContain("onkeydown={handleKeywordResultKeydown}");
+    expect(source).toContain('event.key === "ArrowRight"');
+    expect(source).toContain('event.key === "ArrowLeft"');
+    expect(source).toContain('event.key === "ArrowDown"');
+    expect(source).toContain('event.key === "ArrowUp"');
+    expect(source).not.toContain("kw_results.filter((r) => r.mangas.length > 0 || r.loading || r.error)");
+    expect(source).not.toContain("kw_novelResults.filter((r) => r.novels.length > 0 || r.loading || r.error)");
+  });
+
+  test("moves horizontally within one source and vertically to the nearest card without moving other rows", async () => {
+    mangaSourcesMock.push({
+      id: "second-src",
+      name: "second-src",
+      displayName: "Second Source",
+      lang: "en",
+      iconUrl: null,
+      isNsfw: false,
+    });
+    sourceMangaSearchMock.mockImplementation(async ({ sourceId }: { sourceId: string }) => (
+      [1, 2].map((position) => ({
+        id: sourceId === "manga-src" ? 100 + position : 200 + position,
+        title: `${sourceId} result ${position}`,
+        thumbnailUrl: "",
+        inLibrary: false,
+        chapterCount: position,
+        status: "ONGOING",
+        sourceId,
+      }))
+    ));
+    browseStore.searchPrefill = "result";
+    render(BrowseV3);
+
+    await waitFor(() => expect(document.querySelectorAll("[data-keyword-source-row]").length).toBe(2));
+    const rows = [...document.querySelectorAll<HTMLElement>("[data-keyword-source-row]")];
+    const firstRowCards = [...rows[0].querySelectorAll<HTMLButtonElement>("[data-browse-result-key]")];
+    const secondRowCards = [...rows[1].querySelectorAll<HTMLButtonElement>("[data-browse-result-key]")];
+    Object.defineProperty(rows[0], "scrollLeft", { value: 0, writable: true });
+    Object.defineProperty(rows[1], "scrollLeft", { value: 31, writable: true });
+    rows[0].getBoundingClientRect = () => rect(100, 100, 500, 300);
+    firstRowCards[1].getBoundingClientRect = () => rect(520, 100, 620, 250);
+
+    firstRowCards[0].focus();
+    await fireEvent.keyDown(firstRowCards[0], { key: "ArrowRight" });
+    expect(document.activeElement).toBe(firstRowCards[1]);
+    expect(rows[0].scrollLeft).toBe(120);
+    expect(rows[1].scrollLeft).toBe(31);
+
+    await fireEvent.keyDown(firstRowCards[1], { key: "ArrowDown" });
+    expect(document.activeElement).toBe(secondRowCards[1]);
+
+    await fireEvent.click(secondRowCards[1]);
+    expect(openMangaDetailMock).toHaveBeenCalledTimes(1);
+    expect(openMangaDetailMock).toHaveBeenCalledWith(expect.objectContaining({
+      id: 202,
+      sourceId: "second-src",
+    }));
   });
 
   test("installs, updates, and removes manga extensions from Sources", async () => {
@@ -568,12 +861,7 @@ describe("BrowseV3", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Install" }));
 
     await waitFor(() => {
-      expect(gqlMock).toHaveBeenCalledWith(
-        "UPDATE_EXTENSION",
-        expect.objectContaining({ id: "ext.asura", install: true }),
-        undefined,
-        60000,
-      );
+      expect(managedRuntimeInstallExtensionMock).toHaveBeenCalledWith({ packageName: "ext.asura" });
     });
     await waitFor(() => {
       expect(addToastMock).toHaveBeenCalledWith(expect.objectContaining({ title: "Extension installed" }));
@@ -586,12 +874,8 @@ describe("BrowseV3", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Update" }));
 
     await waitFor(() => {
-      expect(gqlMock).toHaveBeenCalledWith(
-        "UPDATE_EXTENSION",
-        expect.objectContaining({ id: "ext.mangadex", update: true }),
-        undefined,
-        60000,
-      );
+      expect(managedRuntimeRefreshExtensionsMock).toHaveBeenCalled();
+      expect(managedRuntimeUpdateExtensionMock).toHaveBeenCalledWith({ packageName: "ext.mangadex" });
     });
     await waitFor(() => {
       expect(addToastMock).toHaveBeenCalledWith(expect.objectContaining({ title: "Extension updated" }));
@@ -604,10 +888,7 @@ describe("BrowseV3", () => {
     await fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[0]);
 
     await waitFor(() => {
-      expect(gqlMock).toHaveBeenCalledWith(
-        "UPDATE_EXTENSION",
-        expect.objectContaining({ uninstall: true }),
-      );
+      expect(managedRuntimeUninstallExtensionMock).toHaveBeenCalledWith(expect.any(String));
     });
     await waitFor(() => {
       expect(addToastMock).toHaveBeenCalledWith(expect.objectContaining({ title: "Extension removed" }));
@@ -739,12 +1020,9 @@ describe("BrowseV3", () => {
       expect(screen.getByText("MangaDex")).toBeTruthy();
     });
 
-    const baseImplementation = gqlMock.getMockImplementation();
-    if (!baseImplementation) throw new Error("Expected GraphQL mock implementation");
-    gqlMock.mockImplementationOnce(async (query: string, variables?: Record<string, unknown>) => {
-      if (query === "GET_EXTENSIONS") throw new Error("Suwayomi returned an empty GraphQL error.");
-      return baseImplementation(query, variables);
-    });
+    managedRuntimeListExtensionsMock.mockRejectedValueOnce(
+      new Error("Suwayomi returned an empty GraphQL error."),
+    );
 
     window.dispatchEvent(new CustomEvent("aethon:server-ready"));
 

@@ -84,6 +84,7 @@
     setLibraryFilter,
     setLibrarySection,
     setLibraryMangaSnapshot,
+    setSearchNovelLibrarySnapshot,
     setLibraryUpdateInFlight,
     bumpLibraryCoverCacheGeneration,
     recordComicsUpdateNotifications,
@@ -1340,6 +1341,10 @@
       if (manga) openMangaDetail(manga);
     },
   }));
+
+  $effect(() => {
+    setSearchNovelLibrarySnapshot(novelsLibraryState.entries, novelsLibraryState.chapters);
+  });
 
   const booksActions = $derived(createBooksLibraryActions({
     openSection: (section) => switchLibrarySection(section),

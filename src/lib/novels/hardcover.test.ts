@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   hardcoverRecordToRecommendationCandidate,
+  findHardcoverRecordForNovel,
   matchHardcoverBook,
   mergeHardcoverTrackRecords,
   normalizeHardcoverBook,
@@ -277,5 +278,45 @@ describe("Hardcover novel tracking helpers", () => {
       genres: ["Fantasy"],
       tags: ["Mystery"],
     });
+  });
+
+  it("supports one unlinked legacy title without overriding explicit novel links", () => {
+    const record = {
+      bookId: 1435,
+      title: "Lord of the Mysteries",
+      authors: [],
+      genres: [],
+      tags: [],
+      moods: [],
+      coverUrl: null,
+      status: "Currently Reading",
+      workStatus: "Ongoing",
+      rating: null,
+      progress: null,
+      remoteUrl: "https://hardcover.app/books/lord-of-the-mysteries",
+      updatedAt: 1,
+      sourceNovelId: null,
+      sourceTitleKey: recommendationTitleKey("Lord of the Mysteries", "novel"),
+    };
+
+    expect(findHardcoverRecordForNovel([record], {
+      novelId: "novel:illusia:lotm",
+      title: record.title,
+    })).toBe(record);
+    expect(findHardcoverRecordForNovel([record], {
+      title: record.title,
+    })).toBe(record);
+
+    expect(findHardcoverRecordForNovel([{
+      ...record,
+      sourceNovelId: "novel:other:lotm",
+    }], {
+      novelId: "novel:illusia:lotm",
+      title: record.title,
+    })).toBeNull();
+    expect(findHardcoverRecordForNovel([record, { ...record, bookId: 1436 }], {
+      novelId: "novel:illusia:lotm",
+      title: record.title,
+    })).toBeNull();
   });
 });

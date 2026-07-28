@@ -4,6 +4,7 @@ import {
   buildCompletedLibraryIds,
   collectTrackedChapterTotalsByMangaId,
   collectTrackedCompletedMangaIds,
+  collectTrackedMangaIds,
   hasSatisfiedTrackedChapterTotal,
   isLibraryReadCompleted,
   isMangaFinishedReading,
@@ -55,6 +56,38 @@ describe("completion helpers", () => {
     ]);
 
     expect([...ids].sort((a, b) => a - b)).toEqual([10, 13]);
+  });
+
+  it("collects every distinct in-library record from connected trackers", () => {
+    const ids = collectTrackedMangaIds([
+      {
+        isLoggedIn: true,
+        trackRecords: {
+          nodes: [
+            { status: 1, manga: { id: 10, inLibrary: true } },
+            { status: 2, manga: { id: 11, inLibrary: true } },
+            { status: 3, manga: { id: 12, inLibrary: false } },
+          ],
+        },
+      },
+      {
+        isLoggedIn: true,
+        trackRecords: {
+          nodes: [
+            { status: 4, manga: { id: 10, inLibrary: true } },
+            { status: 4, manga: { id: 13, inLibrary: true } },
+          ],
+        },
+      },
+      {
+        isLoggedIn: false,
+        trackRecords: {
+          nodes: [{ status: 1, manga: { id: 14, inLibrary: true } }],
+        },
+      },
+    ]);
+
+    expect([...ids].sort((a, b) => a - b)).toEqual([10, 11, 13]);
   });
 
   it("tracks the highest known tracker chapter total per manga", () => {

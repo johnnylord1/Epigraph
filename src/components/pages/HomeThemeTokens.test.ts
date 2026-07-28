@@ -38,7 +38,7 @@ describe("Home theme tokens", () => {
     const nocturne = readProjectFile("src/styles/nocturne-theme.css");
     const consumed = uniqueMatches(home, TOKEN_PATTERN);
 
-    expect(consumed).toHaveLength(74);
+    expect(consumed).toHaveLength(69);
     expect(uniqueMatches(defaults, TOKEN_DEFINITION_PATTERN)).toEqual(consumed);
     expect(uniqueMatches(nocturne, TOKEN_DEFINITION_PATTERN)).toEqual(consumed);
   });
@@ -78,12 +78,15 @@ describe("Home theme tokens", () => {
     }
   });
 
-  it("keeps the active route and search-layer selectors intact", () => {
+  it("keeps the active route and delegates the search layer to the shared host", () => {
     const layout = readProjectFile("src/components/layout/Layout.svelte");
     const home = readProjectFile(HOME_PATH);
+    const app = readProjectFile("src/App.svelte");
 
     expect(layout).toContain('home: () => import("../pages/Home.svelte")');
-    expect(home).toContain("home-search-dim");
+    expect(app).toContain('searchPalette: () => import("./components/search/SearchPalette.svelte")');
+    expect(app).toContain("<SearchPaletteView />");
+    expect(home).not.toContain("home-search-dim");
     expect(home).toContain("aethon-home-search-engaged");
     expect(home).toContain("home-continue-grid");
   });
@@ -94,5 +97,17 @@ describe("Home theme tokens", () => {
     expect(home).toContain("metricValue: presented.progressValueLabel");
     expect(home).toContain("metricLabel: presented.progressTotalLabel");
     expect(home).not.toContain("metricValue: presented.readPercentLabel");
+  });
+
+  it("renders the complete runtime tracker inventory without a fixed display limit", () => {
+    const home = readProjectFile(HOME_PATH);
+
+    expect(home).toContain("loadTrackingProviderInventory(homeTrackers");
+    expect(home).toContain("collectTrackedMangaIds(trackingSummary)");
+    expect(home).toContain("loadNativeTrackedTitleKeys({");
+    expect(home).toContain("CACHE_KEYS.TRACKERS");
+    expect(home).toContain("{#each displayTrackers as tracker (tracker.id)}");
+    expect(home).not.toMatch(/homeTrackers\.slice\(/);
+    expect(home).not.toContain("trackedTitleCount = $derived(trackedCompletedIds.size)");
   });
 });

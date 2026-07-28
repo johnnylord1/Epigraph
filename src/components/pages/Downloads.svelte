@@ -20,7 +20,7 @@
     REORDER_DOWNLOAD,
   } from "../../lib/queries";
   import type { DownloadQueueItem, DownloadStatus } from "../../lib/types";
-  import { store, openHomeDashboard, setActiveDownloads, setPausedDownloads } from "../../store/state.svelte";
+  import { store, openHomeDashboard, engageSearch, disengageSearch, openSearchPalette, setActiveDownloads, setPausedDownloads, setSearchDownloads, setSearchQuery } from "../../store/state.svelte";
   import type { ActiveDownload, PausedDownloadItem } from "../../store/state.svelte";
 
   type DownloadVisualState = "downloading" | "paused" | "queued" | "error" | "finished";
@@ -165,9 +165,11 @@
     openHomeDashboard();
   }
 
-  function syncDownloadsSearchDim(active: boolean) {
-    document.body.classList.toggle("aethon-downloads-search-engaged", active);
-  }
+  $effect(() => {
+    if (store.searchContext === "downloads" && searchQuery !== store.searchQuery) {
+      searchQuery = store.searchQuery;
+    }
+  });
 
   function toggleFilterPanel() {
     filterPanelOpen = !filterPanelOpen;
@@ -595,6 +597,16 @@
       return left.chapter.id - right.chapter.id;
     });
   });
+  $effect(() => {
+    setSearchDownloads(queue.map((item) => ({
+      chapterId: item.chapter.id,
+      mangaTitle: item.chapter.manga?.title ?? $_("downloads.unknownTitle"),
+      chapterName: item.chapter.name,
+      progress: item.progress,
+      status: item.state,
+      image: item.chapter.manga?.thumbnailUrl ?? null,
+    })));
+  });
   let filteredQueue: DisplayDownloadItem[] = $derived(queue.filter((item: DisplayDownloadItem) => {
     if (!matchesSearch(item, searchQuery)) return false;
     return downloadFilter === "all" || getVisualState(item) === downloadFilter;
@@ -653,10 +665,21 @@
           <input
             class="n-search__input"
             type="text"
+            role="combobox"
+            aria-expanded={store.searchOpen}
+            aria-controls="aethon-search-results"
+            aria-activedescendant={store.searchOpen ? store.searchActiveResultId ?? undefined : undefined}
+            aria-autocomplete="list"
             placeholder={$_("downloads.searchPlaceholder")}
-            bind:value={searchQuery}
-            onfocus={() => syncDownloadsSearchDim(true)}
-            onblur={() => syncDownloadsSearchDim(false)}
+            value={searchQuery}
+            onfocus={engageSearch}
+            onclick={engageSearch}
+            onblur={disengageSearch}
+            oninput={(event) => {
+              searchQuery = (event.currentTarget as HTMLInputElement).value;
+              setSearchQuery(searchQuery);
+              if (searchQuery.trim()) openSearchPalette("downloads", searchQuery);
+            }}
           />
         </div>
       {/snippet}
@@ -848,7 +871,13 @@
             {@const percent = Math.round(item.progress * 100)}
             {@const isRemoving = dequeueing.has(item.chapter.id)}
             {@const isActionPending = isActionBusy(item)}
-            <div class="dl-row" class:is-paused={visualState === "paused"} class:is-faded={isRemoving}>
+            <div
+              class="dl-row"
+              class:is-paused={visualState === "paused"}
+              class:is-faded={isRemoving}
+              data-download-chapter-id={item.chapter.id}
+              tabindex="-1"
+            >
               <div class="dl-row__thumb">
                 {#if manga?.thumbnailUrl}
                   <img

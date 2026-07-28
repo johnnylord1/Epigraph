@@ -320,7 +320,7 @@
   --component-sidebar-highlight-bg: radial-gradient(circle at 50% 8%, color-mix(in srgb, var(--accent-bright) 8%, transparent), transparent 44%),
     color-mix(in srgb, var(--color-shell-scrim-source) 60%, transparent);
   --component-sidebar-z-index: 80;
-  --component-sidebar-search-z-index: 40;
+  --component-sidebar-search-z-index: var(--z-settings);
   --component-nav-item-fg: color-mix(in srgb, var(--text-primary) 38%, transparent);
   --component-nav-item-hover-bg: color-mix(in srgb, var(--color-highlight-source) 4%, transparent);
   --component-nav-item-hover-fg: color-mix(in srgb, var(--text-primary) 70%, transparent);
@@ -356,12 +356,15 @@
   --component-topbar-z-index: 50;
   --component-topbar-search-z-index: 520;
   --component-topbar-search-content-z-index: 540;
-  --component-search-shadow-focus: 0 24px 60px color-mix(in srgb, var(--color-shadow-source) 70%, transparent);
+  --component-search-shadow-focus:
+    0 0 0 1px color-mix(in srgb, var(--accent-bright) 34%, transparent),
+    0 0 24px color-mix(in srgb, var(--accent-bright) 24%, transparent),
+    0 24px 60px color-mix(in srgb, var(--color-shadow-source) 70%, transparent);
   --component-search-icon-fg: color-mix(in srgb, var(--text-secondary) 35%, transparent);
   --component-search-icon-focus-fg: var(--accent-bright);
   --component-search-bg: color-mix(in srgb, var(--color-search-field-surface-source) 80%, transparent);
   --component-search-border: color-mix(in srgb, var(--text-secondary) 8%, transparent);
-  --component-search-border-focus: color-mix(in srgb, var(--accent-bright) 18%, transparent);
+  --component-search-border-focus: color-mix(in srgb, var(--accent-bright) 68%, transparent);
   --component-search-fg: var(--text-primary);
   --component-search-placeholder-fg: color-mix(in srgb, var(--text-secondary) 40%, transparent);
   --component-search-inset-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-highlight-source) 2%, transparent);
@@ -479,11 +482,6 @@
   --component-activity-center-dot-shadow: 0 0 0 1px color-mix(in srgb, var(--color-activity-accent-source) 24%, transparent);
   --component-activity-center-download-dot-bg: color-mix(in srgb, var(--color-activity-muted-source) 62%, transparent);
   --component-home-scale: var(--hud-scale, 1);
-  --component-home-search-dim-z-index: 61;
-  --component-home-search-topbar-z-index: 62;
-  --component-home-search-field-z-index: 63;
-  --component-home-search-dim-opacity: 1;
-  --component-home-search-dim-transition: opacity 250ms ease;
   --component-home-fg: var(--text-primary);
   --component-home-accent-fg: var(--accent-bright);
   --component-home-strong-accent-fg: var(--accent);

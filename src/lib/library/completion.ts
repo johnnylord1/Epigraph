@@ -73,6 +73,22 @@ export function collectTrackedCompletedMangaIds(
   return completedIds;
 }
 
+export function collectTrackedMangaIds(
+  trackers: TrackerCompletionTracker[] | null | undefined,
+): Set<number> {
+  const trackedIds = new Set<number>();
+
+  for (const tracker of trackers ?? []) {
+    if (!tracker?.isLoggedIn) continue;
+    for (const record of tracker.trackRecords?.nodes ?? []) {
+      const mangaId = record.manga?.id;
+      if (record.manga?.inLibrary && typeof mangaId === "number") trackedIds.add(mangaId);
+    }
+  }
+
+  return trackedIds;
+}
+
 export function collectTrackedChapterTotalsByMangaId(
   trackers: TrackerCompletionTracker[] | null | undefined,
 ): Map<number, number> {

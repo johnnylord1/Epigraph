@@ -3,6 +3,7 @@
   import { slide } from "svelte/transition";
   import { _, translate } from "../../lib/i18n/runtime";
   import "../../lib/i18n/runtime";
+  import { SETTINGS_SEARCH_KEYWORDS as SHARED_SETTINGS_SEARCH_KEYWORDS } from "../../lib/search/settingsCatalog";
   import { Book, Image, Sliders, Info, Keyboard, Gear, HardDrives, FolderSimple, Plus, Pencil, Trash, Wrench, PaintBrush, ListChecks, Lock, Eye, EyeSlash, Star, ShieldCheck, Tag, CaretDown } from "phosphor-svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
@@ -12,6 +13,7 @@
   import { open as openUrl } from "@tauri-apps/plugin-shell";
   import { gql, gqlUpload, getServerAuthHeader, serverFileUrl } from "../../lib/client";
   import { withSuwayomiOperationLease } from "../../lib/suwayomiUpdateLock.svelte";
+  import { cache, CACHE_KEYS } from "../../lib/cache";
   import { setMigrationPresence } from "../../lib/discord";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import {
@@ -82,14 +84,14 @@
     toggleBooksCategoryUpdateRule,
   } from "../../lib/library/domainCategories";
   import splashMark from "../../assets/aethon-splash-mark.png";
+  import hardcoverLogo from "../../assets/service-icons/hardcover.png";
   import AppTopbar from "../layout/AppTopbar.svelte";
   import ActivityButton from "../layout/ActivityButton.svelte";
   import WindowControlsInline from "../layout/WindowControlsInline.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
   import SyncdConnectionPanel from "./SyncdConnectionPanel.svelte";
   import SuwayomiUpdatePanel from "./SuwayomiUpdatePanel.svelte";
-  import { store, updateSettings, resetSettings, resetKeybinds, clearHistory, wipeAllData, setSettingsOpen, setRuntimeSettingsTab, deleteCustomTheme, toggleHiddenCategory, setCategories, setLibraryMangaSnapshot, setLibraryTrackingSummarySnapshot, addToast, openSearchSources, replaceAppReadingState, replaceBooksState, DEFAULT_READING_STATS } from "../../store/state.svelte";
-  import { cache } from "../../lib/cache";
+  import { store, updateSettings, resetSettings, resetKeybinds, clearHistory, wipeAllData, setSettingsOpen, setRuntimeSettingsTab, engageSearch, disengageSearch, openSearchPalette, setSearchQuery, deleteCustomTheme, toggleHiddenCategory, setCategories, setLibraryMangaSnapshot, setLibraryTrackingSummarySnapshot, addToast, openSearchSources, replaceAppReadingState, replaceBooksState, DEFAULT_READING_STATS } from "../../store/state.svelte";
   import { KEYBIND_LABELS, DEFAULT_KEYBINDS, eventToKeybind } from "../../lib/keybinds";
   import type { HistoryEntry, ReadLogEntry, ReadingStats, Settings, FitMode, BooksCategory, BooksLibraryStatusFilter, BooksLibraryTypeFilter, RuntimeSettingsTab } from "../../store/state.svelte";
   import type { Keybinds } from "../../lib/keybinds";
@@ -194,19 +196,19 @@
     SETTINGS_GROUPS.map((group) => [group.id, group.items[0].id] as const)
   ) as Record<SettingsGroupId, Tab>;
   const SETTINGS_SEARCH_KEYWORDS: Record<Tab, string[]> = {
-    general: ["interface scale", "profile", "server", "autostart", "idle", "discord", "language", "startup", "zoom"],
-    appearance: ["theme", "oled", "accent", "visual", "surface", "custom themes", "editor"],
-    keybinds: ["keyboard", "shortcuts", "bindings", "keys", "reset"],
-    reader: ["reading", "direction", "fit", "zoom", "page style", "bookmarks"],
-    library: ["density", "layout", "cards", "library", "books", "browse"],
-    categories: ["categories", "folders", "hidden", "books categories", "assignments"],
-    content: ["blocked tags", "nsfw", "sources", "allowed", "blocked", "repositories"],
-    tracking: ["tracker", "oauth", "credentials", "sync", "anilist", "mal", "provider"],
-    storage: ["downloads", "paths", "backup", "restore", "reconciliation", "scan", "disk"],
-    performance: ["gpu", "render", "prefetch", "cache", "performance", "webview"],
-    security: ["pin", "proxy", "auth", "socks", "flaresolverr", "security"],
-    about: ["version", "release", "update", "github", "discord", "about"],
-    devtools: ["debug", "splash", "dev", "build info", "tools"],
+    general: SHARED_SETTINGS_SEARCH_KEYWORDS.general,
+    appearance: SHARED_SETTINGS_SEARCH_KEYWORDS.appearance,
+    keybinds: SHARED_SETTINGS_SEARCH_KEYWORDS.keybinds,
+    reader: SHARED_SETTINGS_SEARCH_KEYWORDS.reader,
+    library: SHARED_SETTINGS_SEARCH_KEYWORDS.library,
+    categories: SHARED_SETTINGS_SEARCH_KEYWORDS.folders,
+    content: SHARED_SETTINGS_SEARCH_KEYWORDS.content,
+    tracking: SHARED_SETTINGS_SEARCH_KEYWORDS.tracking,
+    storage: SHARED_SETTINGS_SEARCH_KEYWORDS.storage,
+    performance: SHARED_SETTINGS_SEARCH_KEYWORDS.performance,
+    security: SHARED_SETTINGS_SEARCH_KEYWORDS.security,
+    about: SHARED_SETTINGS_SEARCH_KEYWORDS.about,
+    devtools: SHARED_SETTINGS_SEARCH_KEYWORDS.devtools,
   };
   const SETTINGS_SEARCHABLE_SELECTOR = [
     ".section-title",
@@ -413,7 +415,6 @@
   let paneHydrated = $state<Record<Tab, boolean>>({ ...INITIAL_PANE_HYDRATION });
   let settingsSearchQuery = $state("");
   let settingsSearchAnnouncement = $state("");
-  let settingsSearchFocused = $state(false);
   let activeSettingsSearchHit: HTMLElement | null = null;
   let categoriesDetailsPane = $state<"comics" | "books" | null>(null);
   let contentSourceRulesOpen = $state(false);
@@ -540,12 +541,11 @@
     focusSettingsSearch();
   }
   function handleSettingsSearchFocusIn() {
-    settingsSearchFocused = true;
+    if (store.isSearchFocusRestoreInProgress) return;
+    engageSearch();
   }
-  function handleSettingsSearchFocusOut(event: FocusEvent) {
-    const currentTarget = event.currentTarget as HTMLFormElement | null;
-    const nextTarget = event.relatedTarget as Node | null;
-    settingsSearchFocused = !!(currentTarget && nextTarget && currentTarget.contains(nextTarget));
+  function handleSettingsSearchFocusOut() {
+    disengageSearch();
   }
   function resetAllSettingsToDefaults() {
     resetSettings();
@@ -617,11 +617,18 @@
     contentBodyEl?.scrollTo({ top: 0, behavior: "smooth" });
     settingsSearchAnnouncement = translate("settings.search.opened", { tab: translate(TAB_LABEL_KEYS[targetTab]) });
   }
-  const settingsSearchOverlayActive = $derived.by(() => settingsSearchFocused || settingsSearchQuery.trim().length > 0);
+  $effect(() => {
+    if (store.searchContext === "settings" && settingsSearchQuery !== store.searchQuery) {
+      settingsSearchQuery = store.searchQuery;
+      handleSettingsSearchInput();
+    }
+  });
 
   $effect(() => {
     if (typeof document === "undefined") return;
-    const engaged = store.navPage === "settings" && settingsSearchOverlayActive;
+    const engaged = store.navPage === "settings"
+      && store.searchOpen
+      && store.searchContext === "settings";
     document.body.classList.toggle("aethon-settings-search-engaged", engaged);
     return () => {
       document.body.classList.remove("aethon-settings-search-engaged");
@@ -1827,20 +1834,20 @@
 
   async function restoreBackup(): Promise<{ ok: boolean; finalState: string | null }> {
     return withSuwayomiOperationLease("backup-restore", async () => {
-    if (!backupSelectedFile || !backupParsed || !backupAnalysis) {
-      return { ok: false, finalState: null };
-    }
-    if (backupReadiness?.blocksRestore) {
-      backupError = backupReadiness.requiresInstallCount > 0
-        ? translate("settings_inline_installRequiredExtensionsFirst")
-        : translate("settings_inline_unavailableSourcesResolveFirst");
-      return { ok: false, finalState: null };
-    }
-    backupRestoring = true;
-    backupError = null;
-    backupRestoreId = null;
-    backupRestoreStatus = null;
-    try {
+      if (!backupSelectedFile || !backupParsed || !backupAnalysis) {
+        return { ok: false, finalState: null };
+      }
+      if (backupReadiness?.blocksRestore) {
+        backupError = backupReadiness.requiresInstallCount > 0
+          ? translate("settings_inline_installRequiredExtensionsFirst")
+          : translate("settings_inline_unavailableSourcesResolveFirst");
+        return { ok: false, finalState: null };
+      }
+      backupRestoring = true;
+      backupError = null;
+      backupRestoreId = null;
+      backupRestoreStatus = null;
+      try {
       const storageRuntime = await getStorageRuntime();
       const reconciledFile = storageRuntime.buildReconciledBackupFile(
         backupParsed,
@@ -1890,12 +1897,12 @@
         backupError = `Restore finished with state: ${backupRestoreStatus?.state ?? "unknown"}`;
         return { ok: false, finalState: backupRestoreStatus?.state ?? null };
       }
-    } catch (e: any) {
-      backupError = e?.message ?? "Failed to restore backup";
-      return { ok: false, finalState: null };
-    } finally {
-      backupRestoring = false;
-    }
+      } catch (e: any) {
+        backupError = e?.message ?? "Failed to restore backup";
+        return { ok: false, finalState: null };
+      } finally {
+        backupRestoring = false;
+      }
     });
   }
 
@@ -2984,12 +2991,14 @@
   }
   let trackers:        Tracker[]    = $state([]);
   let trackersLoading: boolean      = $state(false);
+  let trackersLoadAttempted: boolean = $state(false);
   let trackersError:   string|null  = $state(null);
   let oauthTrackerId:  number|null  = $state(null);
   let oauthCallbackInput: string    = $state("");
   let oauthSubmitting: boolean      = $state(false);
   let oauthAutoCapturing: boolean   = $state(false);
   let oauthAutoUnlisten: (() => void) | null = null;
+  let oauthWindowStateUnlisten: (() => void) | null = null;
   let credsTrackerId:  number|null  = $state(null);
   let credsUsername:   string       = $state("");
   let credsPassword:   string       = $state("");
@@ -3003,7 +3012,6 @@
   let hardcoverSubmitting = $state(false);
   let hardcoverError: string | null = $state(null);
   let hardcoverAuthOpen = $state(false);
-  let hardcoverIconBroken = $state(false);
   const activeTrackerDetail = $derived.by(
     () => trackers.find((candidate) => candidate.id === oauthTrackerId || candidate.id === credsTrackerId) ?? null,
   );
@@ -3011,17 +3019,23 @@
     () => (oauthTrackerId !== null ? "oauth" : credsTrackerId !== null ? "credentials" : null),
   );
   async function loadTrackers() {
+    trackersLoadAttempted = true;
     trackersLoading = true; trackersError = null;
     try {
       const res = await gql<{ trackers: { nodes: Tracker[] } }>(GET_TRACKERS);
       trackers = res.trackers.nodes;
+      cache.set(CACHE_KEYS.TRACKERS, trackers);
     } catch (e: any) {
       trackersError = e?.message ?? "Failed to load trackers";
     } finally {
       trackersLoading = false;
     }
   }
-  $effect(() => { if (tab === "tracking" && trackers.length === 0 && !trackersLoading) loadTrackers(); });
+  $effect(() => {
+    if (tab === "tracking" && !trackersLoadAttempted && !trackersLoading) {
+      void loadTrackers();
+    }
+  });
   $effect(() => {
     if (tab === "tracking") {
       hardcoverState = loadHardcoverState({
@@ -3223,6 +3237,31 @@
   async function openProjectGithub() {
     await openUrl(AETHON_GITHUB_URL);
   }
+  onMount(() => {
+    let disposed = false;
+    void listen<boolean>("tracker-oauth-window-state", (event) => {
+      if (event.payload !== false) return;
+      if (oauthAutoCapturing) {
+        oauthAutoCapturing = false;
+        oauthAutoUnlisten?.();
+        oauthAutoUnlisten = null;
+      }
+    }).then((unlisten) => {
+      if (disposed) {
+        unlisten();
+        return;
+      }
+      oauthWindowStateUnlisten = unlisten;
+    });
+
+    return () => {
+      disposed = true;
+      oauthAutoUnlisten?.();
+      oauthAutoUnlisten = null;
+      oauthWindowStateUnlisten?.();
+      oauthWindowStateUnlisten = null;
+    };
+  });
   async function loadReleases() {
     releasesLoading = true; releasesError = null; updateCheckError = null;
     try {
@@ -3393,7 +3432,7 @@
     return Array.from(map.values());
   });
 </script>
-<main class="settings-page n-shell aethon-port--settings" class:is-search-engaged={settingsSearchOverlayActive}>
+<main class="settings-page n-shell aethon-port--settings">
   <AppTopbar className="n-topbar--settings">
     {#snippet center()}
       <form
@@ -3407,13 +3446,24 @@
         <span class="n-search__icon material-symbols-outlined" aria-hidden="true">search</span>
         <input
           class="n-search__input"
+          role="combobox"
+          aria-expanded={store.searchOpen}
+          aria-controls="aethon-search-results"
+          aria-activedescendant={store.searchOpen ? store.searchActiveResultId ?? undefined : undefined}
+          aria-autocomplete="list"
           aria-label={$_("settings_inline_searchSettings")}
           placeholder={$_("settings_inline_searchSettingsPlaceholder")}
           bind:this={settingsSearchInputEl}
-          bind:value={settingsSearchQuery}
+          value={settingsSearchQuery}
           autocomplete="off"
           spellcheck="false"
-          oninput={handleSettingsSearchInput}
+          onclick={handleSettingsSearchFocusIn}
+          oninput={(event) => {
+            settingsSearchQuery = (event.currentTarget as HTMLInputElement).value;
+            setSearchQuery(settingsSearchQuery);
+            handleSettingsSearchInput();
+            if (settingsSearchQuery.trim()) openSearchPalette("settings", settingsSearchQuery);
+          }}
           onkeydown={handleSettingsSearchKeydown}
         />
       </form>
@@ -3427,8 +3477,6 @@
       <WindowControlsInline />
     {/snippet}
   </AppTopbar>
-  <div class="settings-search-overlay" class:is-active={settingsSearchOverlayActive} aria-hidden="true"></div>
-
   <aside class="settings-group-rail" id="settingsGroupRail">
     <nav class="settings-group-rail__nav" aria-label={$_("settings.nav.groupsAria")}>
       {#each SETTINGS_GROUPS as group}
@@ -5235,7 +5283,19 @@
               <p class="settings-card__title">{$_("settings_inline_connectedServices")}</p>
               {#if trackersError}
                 <div class="settings-state">
-                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Trackers" title={$_("settings_inline_couldNotLoadTrackers")} body={trackersError} />
+                  <NocturneState
+                    layout="compact"
+                    tone="danger"
+                    icon="warning"
+                    eyebrow="Trackers"
+                    title={$_("settings_inline_couldNotLoadTrackers")}
+                    body={trackersError}
+                    actions={[{
+                      label: $_("library_error_retry"),
+                      icon: "retry",
+                      onClick: () => void loadTrackers(),
+                    }]}
+                  />
                 </div>
               {/if}
               {#if trackersLoading}
@@ -5268,16 +5328,7 @@
                   {/each}
                   <div class="settings-row settings-mini-row settings-mini-row--tracker" class:tracker-row-active={hardcoverState.auth.connected}>
                     <div class="tracker-identity">
-                      {#if hardcoverIconBroken}
-                        <div class="tracker-logo tracker-logo--text">HC</div>
-                      {:else}
-                        <img
-                          src="https://hardcover.app/favicon.ico"
-                          alt="Hardcover"
-                          class="tracker-logo"
-                          onerror={() => (hardcoverIconBroken = true)}
-                        />
-                      {/if}
+                      <img src={hardcoverLogo} alt="Hardcover" class="tracker-logo" />
                       <div class="tracker-name-block">
                         <span class="tracker-label">Hardcover</span>
                         <span class="tracker-status-pill" class:pill-on={hardcoverState.auth.connected}>
@@ -7120,7 +7171,6 @@
   .update-error-row { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); padding: var(--sp-2) 0 0; }
   .tracker-identity { display: flex; align-items: center; gap: var(--sp-3); flex-shrink: 0; }
   .tracker-logo { width: 28px; height: 28px; border-radius: var(--radius-sm); object-fit: contain; flex-shrink: 0; }
-  .tracker-logo--text { display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--accent-dim); background: var(--accent-muted); color: var(--accent-fg); font-family: var(--font-ui); font-size: 10px; font-weight: var(--weight-bold); letter-spacing: var(--tracking-wide); }
   .tracker-name-block { display: flex; flex-direction: column; gap: 3px; }
   .tracker-label { font-size: var(--text-sm); color: var(--text-secondary); font-weight: var(--weight-medium); }
   .tracker-status-pill { font-family: var(--font-ui); font-size: var(--text-2xs); letter-spacing: var(--tracking-wider); text-transform: uppercase; padding: 2px 7px; border-radius: var(--radius-sm); border: 1px solid var(--border-dim); color: var(--text-faint); background: var(--bg-overlay); width: fit-content; }

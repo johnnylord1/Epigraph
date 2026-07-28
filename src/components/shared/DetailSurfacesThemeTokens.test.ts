@@ -92,9 +92,13 @@ describe("detail surfaces theme tokens", () => {
     expect(detailDefinitions.size).toBe(274);
     expect(detailConsumed.size).toBe(274);
     expect(trackingDefinitions.size).toBe(117);
-    expect(trackingConsumed.size).toBe(117);
+    expect(trackingConsumed.size).toBe(114);
     expect(detailUnused).toEqual([]);
-    expect(trackingUnused).toEqual([]);
+    expect(trackingUnused).toEqual([
+      "--component-tracking-record-tracker-icon-text-background",
+      "--component-tracking-record-tracker-icon-text-border",
+      "--component-tracking-record-tracker-icon-text-color",
+    ]);
     expect(detailUndefined).toEqual([]);
     expect(trackingUndefined).toEqual([]);
     expect(detailMissingNocturne).toEqual([]);

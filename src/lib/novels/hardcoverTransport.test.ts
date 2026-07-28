@@ -6,13 +6,31 @@ vi.mock("@tauri-apps/plugin-http", () => ({ fetch: httpFetch }));
 import {
   createEmptyHardcoverState,
   isHardcoverRateLimitError,
+  loadHardcoverState,
   saveHardcoverState,
   searchHardcoverBooks,
+  upsertHardcoverUserBook,
   validateHardcoverToken,
 } from "./hardcover";
 
 const storage = new Map<string, string>();
 const scope = { profileId: "main", serverUrl: "http://127.0.0.1:4567" };
+const hardcoverBook = {
+  id: 1435,
+  title: "Lord of the Mysteries",
+  authors: ["Cuttlefish"],
+  genres: ["Fantasy"],
+  tags: [],
+  moods: [],
+  coverUrl: null,
+  description: null,
+  releaseYear: null,
+  rating: 4.5,
+  ratingsCount: 10,
+  slug: "lord-of-the-mysteries",
+  url: "https://hardcover.app/books/lord-of-the-mysteries",
+  workStatus: "Completed",
+};
 
 describe("Hardcover transport contracts", () => {
   beforeEach(() => {
@@ -91,5 +109,91 @@ describe("Hardcover transport contracts", () => {
 
     await expect(searchHardcoverBooks(scope, "Cached Title")).resolves.toHaveLength(1);
     expect(httpFetch).not.toHaveBeenCalled();
+  });
+
+  it("creates a remote user book with the selected status before saving locally", async () => {
+    const state = createEmptyHardcoverState(scope);
+    saveHardcoverState({
+      ...state,
+      auth: { ...state.auth, connected: true, token: "write-token", userId: 7 },
+    }, scope);
+    httpFetch
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { user_books: [] } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: { insert_user_book: { id: 55, error: null } },
+      }), { status: 200 }));
+
+    await expect(upsertHardcoverUserBook(scope, {
+      book: hardcoverBook,
+      sourceNovelId: "novel:lotm",
+      status: "Currently Reading",
+      rating: 4,
+    })).resolves.toMatchObject({
+      userBookId: 55,
+      status: "Currently Reading",
+      rating: 4,
+    });
+
+    const request = JSON.parse(String(httpFetch.mock.calls[1][1].body));
+    expect(request.query).toContain("insert_user_book");
+    expect(request.variables).toMatchObject({ bookId: 1435, statusId: 2, rating: 4 });
+  });
+
+  it("updates an existing remote user book instead of inserting a duplicate", async () => {
+    const state = createEmptyHardcoverState(scope);
+    saveHardcoverState({
+      ...state,
+      auth: { ...state.auth, connected: true, token: "update-token", userId: 7 },
+      records: [{
+        userBookId: 55,
+        bookId: hardcoverBook.id,
+        title: hardcoverBook.title,
+        authors: hardcoverBook.authors,
+        genres: hardcoverBook.genres,
+        tags: [],
+        moods: [],
+        coverUrl: null,
+        status: "Want to Read",
+        workStatus: "Completed",
+        rating: null,
+        progress: null,
+        remoteUrl: hardcoverBook.url,
+        updatedAt: 1,
+        sourceNovelId: "novel:lotm",
+        sourceTitleKey: "novel:lord of the mysteries",
+      }],
+    }, scope);
+    httpFetch.mockResolvedValueOnce(new Response(JSON.stringify({
+      data: { update_user_book: { id: 55, error: null } },
+    }), { status: 200 }));
+
+    await upsertHardcoverUserBook(scope, {
+      book: hardcoverBook,
+      sourceNovelId: "novel:lotm",
+      status: "Read",
+      rating: 5,
+    });
+
+    const request = JSON.parse(String(httpFetch.mock.calls[0][1].body));
+    expect(request.query).toContain("update_user_book");
+    expect(request.variables).toMatchObject({ id: 55, statusId: 3, rating: 5 });
+    expect(httpFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not report a local tracking success when the remote write fails", async () => {
+    const state = createEmptyHardcoverState(scope);
+    saveHardcoverState({
+      ...state,
+      auth: { ...state.auth, connected: true, token: "failed-write-token", userId: 7 },
+    }, scope);
+    httpFetch.mockResolvedValueOnce(new Response(JSON.stringify({
+      errors: [{ message: "remote write failed" }],
+    }), { status: 200 }));
+
+    await expect(upsertHardcoverUserBook(scope, {
+      book: hardcoverBook,
+      sourceNovelId: "novel:lotm",
+    })).rejects.toThrow("remote write failed");
+    expect(loadHardcoverState(scope).records).toEqual([]);
   });
 });

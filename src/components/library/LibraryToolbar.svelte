@@ -5,6 +5,13 @@
   import { _ } from "../../lib/i18n/runtime";
   import BooksTypeSelector from "./BooksTypeSelector.svelte";
   import LibraryDisplayPopover from "./LibraryDisplayPopover.svelte";
+  import {
+    disengageSearch,
+    engageSearch,
+    openSearchPalette,
+    setSearchQuery,
+    store,
+  } from "../../store/state.svelte";
 
   type Props = {
     toolbar: LibraryToolbarVM;
@@ -84,9 +91,11 @@
     filterPanelOpen = false;
   }
 
-  function syncSearchDim(active: boolean) {
-    document.body.classList.toggle("aethon-library-search-engaged", active);
-  }
+  $effect(() => {
+    if (store.searchContext === "library" && toolbar.searchValue !== store.searchQuery) {
+      onSearchChange(store.searchQuery);
+    }
+  });
 
   onMount(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -127,11 +136,22 @@
       <MagnifyingGlass size={13} class="n-search__icon" weight="light" />
       <input
         class="n-search__input"
+        role="combobox"
+        aria-expanded={store.searchOpen}
+        aria-controls="aethon-search-results"
+        aria-activedescendant={store.searchOpen ? store.searchActiveResultId ?? undefined : undefined}
+        aria-autocomplete="list"
         placeholder={toolbar.searchPlaceholder}
         value={toolbar.searchValue}
-        oninput={(event) => onSearchChange((event.currentTarget as HTMLInputElement).value)}
-        onfocus={() => syncSearchDim(true)}
-        onblur={() => syncSearchDim(false)}
+        onfocus={engageSearch}
+        onclick={engageSearch}
+        onblur={disengageSearch}
+        oninput={(event) => {
+          const value = (event.currentTarget as HTMLInputElement).value;
+          setSearchQuery(value);
+          onSearchChange(value);
+          if (value.trim()) openSearchPalette("library", value);
+        }}
       />
     </div>
   {/if}

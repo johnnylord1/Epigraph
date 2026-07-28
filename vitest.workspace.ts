@@ -53,6 +53,8 @@ export default defineWorkspace([
         "src/components/shared/MangaPreviewThemeTokens.test.ts",
         "src/components/pages/Downloads.test.ts",
         "src/components/pages/DownloadsThemeTokens.test.ts",
+        "src/components/search/SearchPalette.test.ts",
+        "src/components/search/SearchPalette.behavior.test.ts",
         "src/components/pages/BrowseV3.test.ts",
         "src/components/pages/BrowseV3ThemeTokens.test.ts",
         "src/components/pages/HomeThemeTokens.test.ts",

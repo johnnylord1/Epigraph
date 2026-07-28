@@ -59,6 +59,7 @@
   let lastDiscordNovelId: string | null = null;
   let lastDiscordNovelChapterId: string | null = null;
   let lastDiscordPrivacySignature: string | null = null;
+  let hardcoverStateVersion = $state(0);
   let discordCoverNovelId: string | null = null;
   let discordCoverLookupKey: string | null = null;
   let discordCoverLookupVersion = 0;
@@ -107,6 +108,17 @@
   });
 
   $effect(() => {
+    const handleHardcoverStateChanged = () => {
+      hardcoverStateVersion += 1;
+    };
+    globalThis.addEventListener?.("aethon-hardcover-state-changed", handleHardcoverStateChanged);
+    return () => {
+      globalThis.removeEventListener?.("aethon-hardcover-state-changed", handleHardcoverStateChanged);
+    };
+  });
+
+  $effect(() => {
+    hardcoverStateVersion;
     const novelId = currentNovel?.id ?? null;
     const title = currentNovel?.title;
     const chapter = currentNovel && currentChapterIndex >= 0 ? currentNovel.chapters[currentChapterIndex] : null;
@@ -183,6 +195,7 @@
       "hardcover",
       hardcoverScopeInput.profileId ?? "",
       hardcoverScopeInput.serverUrl ?? "",
+      hardcoverStateVersion,
     ].join(":");
     const key = [
       "tracker-first",

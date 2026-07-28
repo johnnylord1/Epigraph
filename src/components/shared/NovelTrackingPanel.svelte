@@ -19,6 +19,7 @@
     type HardcoverNovelTrackRecord,
     type HardcoverTrackingState,
   } from "../../lib/novels/hardcover";
+  import hardcoverLogo from "../../assets/service-icons/hardcover.png";
   import NocturneState from "./NocturneState.svelte";
 
   type TabId = "records" | "hardcover";
@@ -50,6 +51,7 @@
   let loadingMore = $state(false);
   let searchPage = $state(1);
   let hasMoreResults = $state(false);
+  let searchRequestId = 0;
   let binding = $state(false);
   let updating = $state(false);
   let error: string | null = $state(null);
@@ -70,10 +72,13 @@
     searchQuery = title;
     searchResults = [];
     brokenCoverIds = new Set();
+    searching = false;
+    loadingMore = false;
     searchPage = 1;
     hasMoreResults = false;
     error = null;
     searchInited = false;
+    searchRequestId += 1;
     activeTab = "records";
   });
 
@@ -85,13 +90,15 @@
 
   async function doSearch(query = searchQuery, page = 1, append = false) {
     if (!query.trim() || !loggedIn) return;
-    if (searching || loadingMore) return;
+    if (append && (searching || loadingMore)) return;
+    const requestId = ++searchRequestId;
     const pageSize = 8;
     searching = !append;
     loadingMore = append;
     error = null;
     try {
       const results = await searchHardcoverBooks(scopeInput, query.trim(), pageSize, page);
+      if (requestId !== searchRequestId) return;
       searchPage = page;
       hasMoreResults = results.length >= pageSize;
       if (append) {
@@ -106,11 +113,14 @@
       }
       if (searchResults.length === 0) error = translate("browse_source_noResultsFor", { query: query.trim() });
     } catch (err: any) {
+      if (requestId !== searchRequestId) return;
       if (!append) error = err?.message ?? "Hardcover search failed";
       if (!append) searchResults = [];
     } finally {
-      searching = false;
-      loadingMore = false;
+      if (requestId === searchRequestId) {
+        searching = false;
+        loadingMore = false;
+      }
     }
   }
 
@@ -245,7 +255,7 @@
           type="button"
           onclick={() => activeTab = "hardcover"}
         >
-          <span class="tab-icon tab-icon-text">HC</span>
+          <img src={hardcoverLogo} alt="" class="tab-icon" />
           {$_("ui_hardcover")}
           {#if record}
             <span class="tab-dot"></span>
@@ -273,7 +283,7 @@
                 {/if}
                 <div class="record-content">
                   <div class="record-identity">
-                    <span class="record-tracker-icon record-tracker-icon-text">HC</span>
+                    <img src={hardcoverLogo} alt="" class="record-tracker-icon" />
                     {#if record.remoteUrl}
                       <a href={record.remoteUrl} target="_blank" rel="noreferrer" class="record-title">
                         {record.title}
@@ -442,7 +452,6 @@
   .tab-active { color: var(--component-tracking-tab-active-color); background: var(--component-tracking-tab-active-background); border-color: var(--component-tracking-tab-active-border-color-2); }
   .tab:active { transform: scale(0.97); }
   .tab-icon, .record-tracker-icon { width: 14px; height: 14px; border-radius: var(--component-tracking-record-tracker-icon-border-radius-2); flex-shrink: 0; object-fit: contain; }
-  .tab-icon-text, .record-tracker-icon-text { display: inline-flex; align-items: center; justify-content: center; background: var(--component-tracking-record-tracker-icon-text-background); border: var(--component-tracking-record-tracker-icon-text-border); color: var(--component-tracking-record-tracker-icon-text-color); font-size: 8px; font-weight: var(--weight-bold); }
   .record-tracker-icon { width: 16px; height: 16px; border-radius: var(--component-tracking-record-tracker-icon-border-radius); }
   .tab-badge { font-size: 10px; padding: 0 5px; border-radius: var(--radius-full); background: var(--component-tracking-tab-badge-background); color: var(--component-tracking-tab-badge-color); min-width: 16px; text-align: center; }
   .tab-dot { position: absolute; top: 4px; right: 4px; width: 5px; height: 5px; border-radius: var(--component-tracking-tab-dot-border-radius); background: var(--component-tracking-tab-dot-background); box-shadow: var(--component-tracking-tab-dot-box-shadow); }

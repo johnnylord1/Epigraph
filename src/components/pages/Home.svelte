@@ -5,11 +5,16 @@
   import { gql } from "../../lib/client";
   import { GET_LIBRARY, GET_CATEGORIES_SUMMARY, GET_LIBRARY_TRACKING_SUMMARY, GET_SOURCES, GET_TRACKERS, GET_EXTENSIONS } from "../../lib/queries";
   import { cache, CACHE_GROUPS, CACHE_KEYS, DEFAULT_TTL_MS } from "../../lib/cache";
-  import { buildCompletedLibraryIds, collectTrackedChapterTotalsByMangaId, collectTrackedCompletedMangaIds, type TrackerCompletionTracker } from "../../lib/library/completion";
+  import { buildCompletedLibraryIds, collectTrackedChapterTotalsByMangaId, collectTrackedCompletedMangaIds, collectTrackedMangaIds, type TrackerCompletionTracker } from "../../lib/library/completion";
   import { isCompletedCategory, normalizeCategories } from "../../lib/library/categories";
   import { dedupeSources, shouldHideSource } from "../../lib/util";
   import { presentBook } from "../../lib/books/presentation";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
+  import {
+    loadTrackingProviderInventory,
+    loadNativeTrackedTitleKeys,
+    TRACKING_PROVIDER_STATE_EVENTS,
+  } from "../../lib/tracking/providerInventory";
   import {
     store,
     openReader,
@@ -24,7 +29,10 @@
     openHomeDashboard,
     setCategories,
     setLibraryMangaSnapshot,
-    setSearchPrefill,
+    engageSearch,
+    disengageSearch,
+    openSearchPalette,
+    setSearchQuery,
     updateSettings,
   } from "../../store/state.svelte";
   import type { HistoryEntry, LibrarySortDir, LibrarySortMode } from "../../store/state.svelte";
@@ -90,8 +98,8 @@
   }
 
   let homeSearch = $state("");
-  let homeSearchFocused = $state(false);
   let trackedCompletedIds: Set<number> = $state(new Set());
+  let trackedMangaIds: Set<number> = $state(new Set());
   let trackedChapterTotalsByMangaId: Map<number, number> = $state(new Map());
   let loadingLibrary = $state(true);
   let setupState: SetupState | null = $state(null);
@@ -102,6 +110,7 @@
   let scheduledHomeMetaLoad: number | null = null;
   let homeSources: Source[] = $state([]);
   let homeTrackers: Tracker[] = $state([]);
+  let trackingProviderVersion = $state(0);
   let homeExtensions: Extension[] = $state([]);
   const libraryManga = $derived(store.libraryMangaSnapshot);
   const libraryBooks = $derived(store.books);
@@ -110,9 +119,13 @@
   function submitHomeSearch() {
     const query = homeSearch.trim();
     if (!query) return;
-    setSearchPrefill(query);
-    setNavPage("search");
-    homeSearch = "";
+    openSearchPalette("home", query);
+  }
+
+  function handleHomeSearchInput(value: string) {
+    setSearchQuery(value);
+    homeSearch = value;
+    if (value.trim()) openSearchPalette("home", value);
   }
 
   function openLibraryWithSort(sortMode: LibrarySortMode, sortDir: LibrarySortDir) {
@@ -174,14 +187,19 @@
   }
 
   function handleHomeSearchFocus() {
-    homeSearchFocused = true;
-    document.body.classList.add("aethon-home-search-engaged");
+    if (store.isSearchFocusRestoreInProgress) return;
+    engageSearch();
   }
 
   function handleHomeSearchBlur() {
-    homeSearchFocused = false;
-    document.body.classList.remove("aethon-home-search-engaged");
+    disengageSearch();
   }
+
+  $effect(() => {
+    if (store.searchContext === "home" && homeSearch !== store.searchQuery) {
+      homeSearch = store.searchQuery;
+    }
+  });
 
   function activityReturnLabel() {
     if (store.homePanelReturnPage === "library") return $_("home.activity.backToLibrary");
@@ -224,6 +242,13 @@
     const unsubLibrary = cache.subscribe(CACHE_KEYS.LIBRARY, () => loadLibrary());
     const unsubTracking = cache.subscribe(CACHE_KEYS.LIBRARY_TRACKING_SUMMARY, () => loadLibrary());
     const unsubSources = cache.subscribe(CACHE_KEYS.SOURCES, () => loadHomeMeta());
+    const unsubTrackers = cache.subscribe(CACHE_KEYS.TRACKERS, () => loadHomeMeta());
+    const handleTrackingProviderStateChanged = () => {
+      trackingProviderVersion += 1;
+    };
+    for (const eventName of TRACKING_PROVIDER_STATE_EVENTS) {
+      window.addEventListener(eventName, handleTrackingProviderStateChanged);
+    }
     return () => {
       componentActive = false;
       setupStateController?.abort();
@@ -234,6 +259,10 @@
       unsubLibrary();
       unsubTracking();
       unsubSources();
+      unsubTrackers();
+      for (const eventName of TRACKING_PROVIDER_STATE_EVENTS) {
+        window.removeEventListener(eventName, handleTrackingProviderStateChanged);
+      }
     };
   });
 
@@ -290,7 +319,7 @@
 
   function loadTrackersSnapshot() {
     return cache.get(
-      "home_trackers",
+      CACHE_KEYS.TRACKERS,
       () => gql<{ trackers: { nodes: Tracker[] } }>(GET_TRACKERS).then((d) => d.trackers.nodes),
       DEFAULT_TTL_MS,
     );
@@ -399,6 +428,7 @@
         })));
         setCategories(normalizeCategories(categories));
         trackedCompletedIds = collectTrackedCompletedMangaIds(trackingSummary);
+        trackedMangaIds = collectTrackedMangaIds(trackingSummary);
         trackedChapterTotalsByMangaId = collectTrackedChapterTotalsByMangaId(trackingSummary);
         scheduleHomeMetaLoad();
       })
@@ -790,9 +820,21 @@
       return { source, extension, state } satisfies HomeSourceDisplay;
     });
   })());
-  const connectedTrackers = $derived(homeTrackers.filter((tracker) => tracker.isLoggedIn));
-  const displayTrackers = $derived(homeTrackers.slice(0, 3));
-  const trackedTitleCount = $derived(trackedCompletedIds.size);
+  const displayTrackers = $derived.by(() => {
+    trackingProviderVersion;
+    return loadTrackingProviderInventory(homeTrackers, {
+      profileId: store.runtimeResolvedLocalProfileId,
+      serverUrl: store.runtimeServerUrl,
+    });
+  });
+  const trackedTitleCount = $derived.by(() => {
+    trackingProviderVersion;
+    const nativeKeys = loadNativeTrackedTitleKeys({
+      profileId: store.runtimeResolvedLocalProfileId,
+      serverUrl: store.runtimeServerUrl,
+    });
+    return trackedMangaIds.size + nativeKeys.length;
+  });
 
   const activeDownloadCount = $derived(store.activeDownloads.filter((item) => item.state === "DOWNLOADING").length);
   const queuedDownloadCount = $derived(store.activeDownloads.filter((item) => item.state === "QUEUED").length);
@@ -911,7 +953,7 @@
 
 </script>
 
-<div class="root n-page-shell home-nocturne" class:is-search-engaged={homeSearchFocused}>
+<div class="root n-page-shell home-nocturne">
   <AppTopbar className="home-topbar">
     {#snippet center()}
       <div class="n-search" data-component="search-bar">
@@ -919,9 +961,16 @@
         <input
           class="n-search__input"
           type="text"
+          role="combobox"
+          aria-expanded={store.searchOpen}
+          aria-controls="aethon-search-results"
+          aria-activedescendant={store.searchOpen ? store.searchActiveResultId ?? undefined : undefined}
+          aria-autocomplete="list"
           placeholder={$_("home.searchPlaceholder")}
-          bind:value={homeSearch}
+          value={homeSearch}
           onfocus={handleHomeSearchFocus}
+          onclick={handleHomeSearchFocus}
+          oninput={(event) => handleHomeSearchInput((event.currentTarget as HTMLInputElement).value)}
           onblur={handleHomeSearchBlur}
           onkeydown={(event) => event.key === "Enter" && submitHomeSearch()}
         />
@@ -1219,7 +1268,6 @@
       </div>
     {/if}
   </div>
-  <div class="n-search-dim home-search-dim" class:is-active={homeSearchFocused}></div>
 </div>
 
 <style>
@@ -1236,34 +1284,6 @@
 
   .home-continue-card__cover--blank {
     cursor: default;
-  }
-
-  .home-search-dim {
-    position: fixed;
-    inset: 0;
-    z-index: var(--component-home-search-dim-z-index);
-    background: transparent;
-    opacity: var(--component-home-search-dim-opacity);
-    pointer-events: none;
-    transition: var(--component-home-search-dim-transition);
-  }
-
-  .home-search-dim.is-active {
-    pointer-events: auto;
-  }
-
-  :global(body.aethon-home-search-engaged .aethon-app-shell::after) {
-    opacity: var(--component-home-search-dim-opacity);
-  }
-
-  :global(body.aethon-home-search-engaged .n-topbar .n-topbar__center) {
-    position: relative;
-    z-index: var(--component-home-search-topbar-z-index);
-  }
-
-  :global(body.aethon-home-search-engaged .n-topbar .n-search) {
-    position: relative;
-    z-index: var(--component-home-search-field-z-index);
   }
 
   .body {
@@ -1840,10 +1860,13 @@
   .home-source-list__name,
   .home-tracking-list li span {
     flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   .home-source-list li small,
   .home-tracking-list li small {
+    flex-shrink: 0;
     color: var(--component-home-source-meta-fg);
     font-size: calc(9px * var(--component-home-scale));
   }

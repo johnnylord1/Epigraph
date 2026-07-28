@@ -35,7 +35,7 @@ describe("tracker integration contracts", () => {
     const codeTracker = tracker("https://tracker.invalid/oauth");
     expect(normalizeTrackerOAuthInput(codeTracker, "Bearer direct-code")).toBe("code=direct-code");
     expect(normalizeTrackerOAuthInput(codeTracker, "https://example.invalid/callback?error=denied"))
-      .toBe("https://example.invalid/callback?error=denied");
+      .toBe("");
   });
 
   it("keeps login, retry/update and unlink operations on the existing GraphQL contract", () => {

@@ -519,8 +519,11 @@
 }
 
 .aethon-search-dim-layer {
+  appearance: none;
   position: fixed;
   inset: 0;
+  padding: 0;
+  border: 0;
   opacity: 0;
   pointer-events: none;
   z-index: var(--z-popover);
@@ -532,8 +535,10 @@ body.aethon-settings-search-engaged .aethon-search-dim-layer,
 body.aethon-home-search-engaged .aethon-search-dim-layer,
 body.aethon-library-search-engaged .aethon-search-dim-layer,
 body.aethon-browse-search-engaged .aethon-search-dim-layer,
-body.aethon-downloads-search-engaged .aethon-search-dim-layer {
+body.aethon-downloads-search-engaged .aethon-search-dim-layer,
+body.aethon-search-engaged .aethon-search-dim-layer {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .aethon-app-shell .material-symbols-outlined,
@@ -605,7 +610,8 @@ body.aethon-settings-search-engaged .n-sidebar::before,
 body.aethon-home-search-engaged .n-sidebar::before,
 body.aethon-library-search-engaged .n-sidebar::before,
 body.aethon-browse-search-engaged .n-sidebar::before,
-body.aethon-downloads-search-engaged .n-sidebar::before {
+body.aethon-downloads-search-engaged .n-sidebar::before,
+body.aethon-search-engaged .n-sidebar::before {
   opacity: 1;
 }
 
@@ -613,7 +619,8 @@ body.aethon-settings-search-engaged .n-sidebar::after,
 body.aethon-home-search-engaged .n-sidebar::after,
 body.aethon-library-search-engaged .n-sidebar::after,
 body.aethon-browse-search-engaged .n-sidebar::after,
-body.aethon-downloads-search-engaged .n-sidebar::after {
+body.aethon-downloads-search-engaged .n-sidebar::after,
+body.aethon-search-engaged .n-sidebar::after {
   opacity: 1;
 }
 
@@ -621,7 +628,8 @@ body.aethon-settings-search-engaged .n-sidebar,
 body.aethon-home-search-engaged .n-sidebar,
 body.aethon-library-search-engaged .n-sidebar,
 body.aethon-browse-search-engaged .n-sidebar,
-body.aethon-downloads-search-engaged .n-sidebar {
+body.aethon-downloads-search-engaged .n-sidebar,
+body.aethon-search-engaged .n-sidebar {
   z-index: var(--component-sidebar-search-z-index) !important;
 }
 
@@ -629,7 +637,8 @@ body.aethon-settings-search-engaged .n-topbar,
 body.aethon-home-search-engaged .n-topbar,
 body.aethon-library-search-engaged .n-topbar,
 body.aethon-browse-search-engaged .n-topbar,
-body.aethon-downloads-search-engaged .n-topbar {
+body.aethon-downloads-search-engaged .n-topbar,
+body.aethon-search-engaged .n-topbar {
   z-index: var(--component-topbar-search-z-index) !important;
 }
 
@@ -637,7 +646,8 @@ body.aethon-settings-search-engaged .n-topbar::after,
 body.aethon-home-search-engaged .n-topbar::after,
 body.aethon-library-search-engaged .n-topbar::after,
 body.aethon-browse-search-engaged .n-topbar::after,
-body.aethon-downloads-search-engaged .n-topbar::after {
+body.aethon-downloads-search-engaged .n-topbar::after,
+body.aethon-search-engaged .n-topbar::after {
   opacity: 1;
 }
 
@@ -650,7 +660,9 @@ body.aethon-library-search-engaged .n-search,
 body.aethon-browse-search-engaged .n-topbar__center,
 body.aethon-browse-search-engaged .n-search,
 body.aethon-downloads-search-engaged .n-topbar__center,
-body.aethon-downloads-search-engaged .n-search {
+body.aethon-downloads-search-engaged .n-search,
+body.aethon-search-engaged .n-topbar__center,
+body.aethon-search-engaged .n-search {
   position: relative !important;
   z-index: var(--component-topbar-search-content-z-index) !important;
 }
@@ -659,8 +671,42 @@ body.aethon-settings-search-engaged .n-topbar .n-search,
 body.aethon-home-search-engaged .n-topbar .n-search,
 body.aethon-library-search-engaged .n-topbar .n-search,
 body.aethon-browse-search-engaged .n-topbar .n-search,
-body.aethon-downloads-search-engaged .n-topbar .n-search {
+body.aethon-downloads-search-engaged .n-topbar .n-search,
+body.aethon-search-engaged .n-topbar .n-search {
   isolation: isolate;
+}
+
+body.aethon-search-engaged .n-topbar .n-search {
+  width: var(--shell-search-width-focus);
+  transform: translateY(calc(12px * var(--hud-scale))) scale(1.03);
+  box-shadow: var(--component-search-shadow-focus);
+}
+
+body.aethon-search-engaged .n-topbar .n-search .n-search__icon {
+  color: var(--component-search-icon-focus-fg);
+}
+
+body.aethon-search-engaged .n-topbar .n-search .n-search__input {
+  border-color: var(--component-search-border-focus) !important;
+  box-shadow: none !important;
+}
+
+/* Page-entry animations already end at the component's base styles. Keeping
+   their final frame creates a permanent stacking context around the topbar. */
+.main > .root,
+.page-keepalive > .root {
+  animation-fill-mode: none !important;
+}
+
+/* Settings adds isolation boundaries around both its host and page surface. */
+body.aethon-search-engaged .main--settings,
+body.aethon-search-engaged .settings-page {
+  isolation: auto !important;
+}
+
+/* Downloads hosts its relative topbar inside a sticky stacking context. */
+body.aethon-search-engaged .downloads-topbar-shell {
+  z-index: var(--component-topbar-search-z-index) !important;
 }
 
 .n-sidebar__brand {
@@ -950,16 +996,16 @@ html[data-aethon-motion="idle"] .n-topbar {
   height: var(--shell-search-height);
   border-radius: 9999px;
   transition:
-    width 200ms var(--easing-spring),
-    transform 200ms var(--easing-spring),
-    box-shadow 160ms ease,
-    background 160ms ease;
+    width 150ms var(--easing-standard),
+    transform 150ms var(--easing-standard),
+    box-shadow 120ms ease,
+    background 120ms ease;
   z-index: 52;
   margin: 0 auto;
   -webkit-app-region: no-drag;
 }
 
-.n-search:focus-within {
+.n-search:focus-within:not(.is-search-focus-restored) {
   width: var(--shell-search-width-focus);
   transform: translateY(calc(12px * var(--hud-scale))) scale(1.03);
   box-shadow: var(--component-search-shadow-focus);
@@ -988,13 +1034,18 @@ html[data-aethon-motion="idle"] .n-topbar {
   color: currentColor;
 }
 
-.n-search:focus-within .n-search__icon {
+.n-search:focus-within:not(.is-search-focus-restored) .n-search__icon {
   color: var(--component-search-icon-focus-fg);
 }
 
-.n-search:focus-within .n-search__input {
+.n-search:focus-within:not(.is-search-focus-restored) .n-search__input {
   border-color: var(--component-search-border-focus) !important;
   box-shadow: none !important;
+}
+
+.n-search.is-search-focus-restored .n-search__input:focus,
+.n-search.is-search-focus-restored .n-search__input:focus-visible {
+  outline: none;
 }
 
 .n-search__input {

@@ -213,7 +213,7 @@ async function verifySearchDim(driver) {
     await waitUntil(
       () => driver.executeScript(function searchDimEngaged() {
         const dim = document.querySelector(".aethon-search-dim-layer");
-        return document.body.classList.contains("aethon-library-search-engaged")
+        return document.body.classList.contains("aethon-search-engaged")
           && Number(dim ? getComputedStyle(dim).opacity : 0) >= 0.95;
       }),
       `Search dim did not engage on cycle ${cycle + 1}.`,
@@ -239,7 +239,7 @@ async function verifySearchDim(driver) {
     await waitUntil(
       () => driver.executeScript(function dimCleared() {
         const dim = document.querySelector(".aethon-search-dim-layer");
-        return !document.body.classList.contains("aethon-library-search-engaged")
+        return !document.body.classList.contains("aethon-search-engaged")
           && Number(dim ? getComputedStyle(dim).opacity : 0) === 0;
       }),
       `Search dim remained after blur on cycle ${cycle + 1}.`,
@@ -396,7 +396,7 @@ async function main() {
           await driver.executeScript("document.querySelector('.library-search .n-search__input')?.focus()");
           await waitUntil(() => driver.executeScript(function searchDimEngaged() {
             const dim = document.querySelector(".aethon-search-dim-layer");
-            return document.body.classList.contains("aethon-library-search-engaged")
+            return document.body.classList.contains("aethon-search-engaged")
               && Number(dim ? getComputedStyle(dim).opacity : 0) >= 0.95;
           }), "Search did not re-engage for screenshot.");
           const imageSearch = await driver.takeScreenshot();

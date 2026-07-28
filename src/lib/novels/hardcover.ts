@@ -75,6 +75,7 @@ export interface HardcoverBookSearchResult {
 }
 
 export interface HardcoverNovelTrackRecord {
+  userBookId?: number | null;
   bookId: number;
   title: string;
   authors: string[];
@@ -164,9 +165,9 @@ export interface HardcoverBookSearchOptions {
 
 interface RawHardcoverUserBook {
   id?: unknown;
+  book_id?: unknown;
   status_id?: unknown;
   rating?: unknown;
-  current_position?: unknown;
   updated_at?: unknown;
   book?: RawHardcoverBook | null;
   user_book_status?: {
@@ -416,6 +417,7 @@ export async function getHardcoverUserBooks(
         order_by: [{ book_id: asc }, { updated_at: desc }]
       ) {
         id
+        book_id
         status_id
         rating
         updated_at
@@ -458,6 +460,7 @@ export async function upsertHardcoverUserBook(
 
   const now = Date.now();
   const localRecord: HardcoverNovelTrackRecord = {
+    userBookId: null,
     bookId: input.book.id,
     title: input.book.title,
     authors: input.book.authors,
@@ -475,8 +478,16 @@ export async function upsertHardcoverUserBook(
     sourceTitleKey: recommendationTitleKey(input.book.title, "novel"),
   };
 
-  await tryWriteHardcoverUserBook(normalizeHardcoverAuthToken(token), localRecord).catch((error) => {
-    console.warn("Hardcover write failed; keeping local tracking record.", error);
+  const existing = state.records.find((record) =>
+    record.bookId === localRecord.bookId
+    || Boolean(localRecord.sourceNovelId && record.sourceNovelId === localRecord.sourceNovelId)
+  );
+  const normalizedToken = normalizeHardcoverAuthToken(token);
+  const userId = state.auth.userId ?? (await validateHardcoverToken(normalizedToken)).userId;
+  localRecord.userBookId = await writeHardcoverUserBook(normalizedToken, {
+    userId,
+    existingUserBookId: existing?.userBookId ?? null,
+    record: localRecord,
   });
 
   const records = [
@@ -508,6 +519,14 @@ export function findHardcoverRecordForNovel(
   if (input.novelId) {
     const exact = records.find((record) => record.sourceNovelId === input.novelId);
     if (exact) return exact;
+
+    const titleKey = input.title ? recommendationTitleKey(input.title, "novel") : null;
+    if (!titleKey) return null;
+    const legacyMatches = records.filter((record) =>
+      !record.sourceNovelId
+      && (record.sourceTitleKey === titleKey || recommendationTitleKey(record.title, "novel") === titleKey)
+    );
+    return legacyMatches.length === 1 ? legacyMatches[0] : null;
   }
   const titleKey = input.title ? recommendationTitleKey(input.title, "novel") : null;
   if (!titleKey) return null;
@@ -526,11 +545,13 @@ export function mergeHardcoverTrackRecords(
     if (!existing) return remote;
     return {
       ...remote,
+      userBookId: remote.userBookId ?? existing.userBookId ?? null,
       genres: remote.genres.length ? remote.genres : existing.genres,
       tags: remote.tags.length ? remote.tags : existing.tags,
       moods: remote.moods.length ? remote.moods : existing.moods,
       coverUrl: remote.coverUrl ?? existing.coverUrl,
       workStatus: remote.workStatus ?? existing.workStatus,
+      progress: remote.progress ?? existing.progress,
       sourceNovelId: existing.sourceNovelId ?? remote.sourceNovelId ?? null,
       sourceTitleKey: existing.sourceTitleKey ?? remote.sourceTitleKey ?? recommendationTitleKey(remote.title, "novel"),
     };
@@ -672,6 +693,7 @@ function normalizeHardcoverUserBook(value: unknown): HardcoverNovelTrackRecord |
   const book = normalizeHardcoverBook(record.book);
   if (!book) return null;
   return {
+    userBookId: coerceNumber(record.id),
     bookId: book.id,
     title: book.title,
     authors: book.authors,
@@ -682,7 +704,7 @@ function normalizeHardcoverUserBook(value: unknown): HardcoverNovelTrackRecord |
     status: normalizeText(record.user_book_status?.status) ?? normalizeHardcoverStatusId(coerceNumber(record.status_id)),
     workStatus: book.workStatus,
     rating: coerceNumber(record.rating) ?? book.rating,
-    progress: coerceNumber(record.current_position),
+    progress: null,
     remoteUrl: book.url,
     updatedAt: Date.parse(normalizeText(record.updated_at) ?? "") || Date.now(),
     sourceNovelId: normalizeText(record.sourceNovelId),
@@ -926,6 +948,7 @@ function normalizeHardcoverTrackRecord(value: unknown): HardcoverNovelTrackRecor
   const title = normalizeText(record.title);
   if (!bookId || !title) return null;
   return {
+    userBookId: coerceNumber(record.userBookId),
     bookId,
     title,
     authors: Array.isArray(record.authors)
@@ -1050,17 +1073,76 @@ function summarizeHardcoverResponse(body: string): string {
   return trimmed.slice(0, 220);
 }
 
-async function tryWriteHardcoverUserBook(token: string, record: HardcoverNovelTrackRecord): Promise<void> {
-  await hardcoverGraphql(token, `
-    mutation AethonHardcoverInsertUserBook($bookId: Int!, $rating: numeric) {
-      insert_user_book(object: { book_id: $bookId, rating: $rating }) {
+async function writeHardcoverUserBook(
+  token: string,
+  input: {
+    userId: number | null;
+    existingUserBookId: number | null;
+    record: HardcoverNovelTrackRecord;
+  },
+): Promise<number> {
+  const statusId = hardcoverStatusId(input.record.status);
+  let userBookId = input.existingUserBookId;
+
+  if (!userBookId && input.userId) {
+    const existing = await hardcoverGraphql<{ user_books?: Array<{ id?: unknown }> }>(token, `
+      query AethonHardcoverFindUserBook($userId: Int!, $bookId: Int!) {
+        user_books(
+          where: {
+            user_id: { _eq: $userId }
+            book_id: { _eq: $bookId }
+          }
+          limit: 1
+        ) {
+          id
+        }
+      }
+    `, {
+      userId: input.userId,
+      bookId: input.record.bookId,
+    });
+    userBookId = coerceNumber(existing.user_books?.[0]?.id);
+  }
+
+  if (userBookId) {
+    const updated = await hardcoverGraphql<{
+      update_user_book?: { id?: unknown; error?: unknown };
+    }>(token, `
+      mutation AethonHardcoverUpdateUserBook($id: Int!, $statusId: Int!, $rating: numeric) {
+        update_user_book(id: $id, object: { status_id: $statusId, rating: $rating }) {
+          id
+          error
+        }
+      }
+    `, {
+      id: userBookId,
+      statusId,
+      rating: input.record.rating,
+    });
+    const error = normalizeText(updated.update_user_book?.error);
+    if (error) throw new Error(`Hardcover could not update this book. ${error}`);
+    return coerceNumber(updated.update_user_book?.id) ?? userBookId;
+  }
+
+  const inserted = await hardcoverGraphql<{
+    insert_user_book?: { id?: unknown; error?: unknown };
+  }>(token, `
+    mutation AethonHardcoverInsertUserBook($bookId: Int!, $statusId: Int!, $rating: numeric) {
+      insert_user_book(object: { book_id: $bookId, status_id: $statusId, rating: $rating }) {
         id
+        error
       }
     }
   `, {
-    bookId: record.bookId,
-    rating: record.rating,
+    bookId: input.record.bookId,
+    statusId,
+    rating: input.record.rating,
   });
+  const error = normalizeText(inserted.insert_user_book?.error);
+  if (error) throw new Error(`Hardcover could not add this book. ${error}`);
+  const insertedId = coerceNumber(inserted.insert_user_book?.id);
+  if (!insertedId) throw new Error("Hardcover did not return the saved book.");
+  return insertedId;
 }
 
 function extractAuthors(record: RawHardcoverBook): string[] {
@@ -1337,6 +1419,14 @@ function normalizeHardcoverStatusId(statusId: number | null): string | null {
     case 4: return "Did Not Finish";
     default: return null;
   }
+}
+
+function hardcoverStatusId(status: string | null | undefined): number {
+  const normalized = status?.trim().toLowerCase() ?? "";
+  if (normalized === "currently reading") return 2;
+  if (normalized === "read") return 3;
+  if (normalized === "did not finish") return 4;
+  return 1;
 }
 
 function normalizeHardcoverWorkStatus(status: string | null | undefined): string | null {

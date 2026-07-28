@@ -1,4 +1,11 @@
 import type { Manga, Chapter, Category, Source } from "../lib/types";
+import type {
+  SearchBrowseContentType,
+  SearchBrowseSurface,
+  SearchContext,
+  SearchDownloadEntry,
+  SearchOpenOptions,
+} from "../lib/search/types";
 import { cache, CACHE_GROUPS, CACHE_KEYS } from "../lib/cache";
 import { DEFAULT_KEYBINDS, type Keybinds } from "../lib/keybinds";
 import type {
@@ -27,7 +34,12 @@ import { isCompletedCategory } from "../lib/library/categories";
 import type { TrackerCompletionTracker } from "../lib/library/completion";
 import type { LibraryPreferredGridColumns, LibraryViewMode } from "../lib/libraryDisplay";
 import type { MangaReaderPreference } from "../lib/reader/scanlator";
-import type { ActiveNovelDetailState, ActiveNovelReaderState } from "../lib/novels/domain";
+import type {
+  ActiveNovelDetailState,
+  ActiveNovelReaderState,
+  PersistedNovelChapterEntry,
+  PersistedNovelLibraryEntry,
+} from "../lib/novels/domain";
 import type { ComicsUpdateNotificationInput } from "../lib/library/comicsChapterSnapshot";
 import { normalizeAppLanguage, type AppLanguageCode } from "../lib/i18n/languages";
 import {
@@ -1302,6 +1314,7 @@ function clearSearchEngagedBodyClasses() {
     "aethon-library-search-engaged",
     "aethon-browse-search-engaged",
     "aethon-downloads-search-engaged",
+    "aethon-search-engaged",
   );
 }
 
@@ -1401,6 +1414,14 @@ class Store {
 
   genreFilter:       string           = $state("");
   searchPrefill:     string           = $state("");
+  searchEngaged:    boolean          = $state(false);
+  searchOpen:       boolean          = $state(false);
+  searchContext:    SearchContext    = $state("home");
+  searchQuery:      string           = $state("");
+  searchActiveResultId: string | null = $state(null);
+  searchRestoreFocusOnClose: boolean = $state(true);
+  searchBrowseContentType: SearchBrowseContentType = $state("manga");
+  searchBrowseSurface: SearchBrowseSurface = $state("keyword");
   activeManga:       Manga | null     = $state(null);
   activeBookId:      string | null    = $state(null);
   activeBookReaderId:string | null    = $state(null);
@@ -1428,6 +1449,7 @@ class Store {
   libraryReturnToMangaId: number | null = $state(null);
   activeDownloads:   ActiveDownload[] = $state([]);
   pausedDownloads:   PausedDownloadItem[] = $state([]);
+  searchDownloads:   SearchDownloadEntry[] = $state([]);
   toasts:            Toast[]          = $state([]);
   libraryUpdateProgress: LibraryUpdateProgress | null = $state(null);
   libraryUpdateInFlight: boolean = $state(false);
@@ -1457,6 +1479,8 @@ class Store {
   // No pub/sub or guard flags needed — both components share this $state ref.
   categories: Category[] = $state([]);
   libraryMangaSnapshot: Manga[] = $state([]);
+  searchNovelLibraryEntries: PersistedNovelLibraryEntry[] = $state([]);
+  searchNovelLibraryChapters: PersistedNovelChapterEntry[] = $state([]);
   libraryBootstrapStatus: LibraryBootstrapStatus = $state("idle");
   libraryBootstrapScopeKey: string | null = $state(null);
   libraryTrackingSummarySnapshot: TrackerCompletionTracker[] = $state([]);
@@ -2075,6 +2099,13 @@ class Store {
     cache.set(CACHE_KEYS.CATEGORIES, cats, CACHE_GROUPS.LIBRARY);
   }
   setLibraryMangaSnapshot(next: Manga[])       { this.libraryMangaSnapshot = next; }
+  setSearchNovelLibrarySnapshot(
+    entries: PersistedNovelLibraryEntry[],
+    chapters: PersistedNovelChapterEntry[],
+  ) {
+    this.searchNovelLibraryEntries = entries;
+    this.searchNovelLibraryChapters = chapters;
+  }
   syncLibraryMangaFromDetail(manga: Manga, chaps?: Chapter[]) {
     const existing =
       this.libraryMangaSnapshot.find((entry) => entry.id === manga.id)
@@ -2119,6 +2150,7 @@ class Store {
   }
   setActiveDownloads(next: ActiveDownload[])     { this.activeDownloads = next; }
   setPausedDownloads(next: PausedDownloadItem[]) { this.pausedDownloads = next; }
+  setSearchDownloads(next: SearchDownloadEntry[]) { this.searchDownloads = next; }
   clearActiveDetailState() {
     this.activeManga = null;
     this.activeBookId = null;
@@ -2140,6 +2172,7 @@ class Store {
     this.activityPanelReturnPage = null;
     this.homePanelHint = null;
     this.homePanelReturnPage = null;
+    this.closeSearchPalette(false);
   }
   setNavPage(next: NavPage) {
     this.preparePrimaryNavigation(next);
@@ -2193,6 +2226,65 @@ class Store {
   setLibraryFilter(next: LibraryFilter)          { this.libraryFilter    = next; }
   setGenreFilter(next: string)                   { this.genreFilter      = next; }
   setSearchPrefill(next: string)                 { this.searchPrefill    = next; }
+  engageSearch() {
+    if (this.searchFocusRestoreInProgress) return;
+    this.searchEngaged = true;
+    if (typeof document !== "undefined") {
+      document
+        .querySelectorAll(".n-search.is-search-focus-restored")
+        .forEach((element) => element.classList.remove("is-search-focus-restored"));
+      document.body.classList.add("aethon-search-engaged");
+    }
+  }
+  disengageSearch() {
+    if (this.searchOpen) return;
+    this.searchEngaged = false;
+    this.searchQuery = "";
+    clearSearchEngagedBodyClasses();
+  }
+  openSearchPalette(context: SearchContext, query = "", options: SearchOpenOptions = {}) {
+    if (this.searchFocusRestoreInProgress) return;
+    if (!query.trim()) return;
+    this.engageSearch();
+    this.searchContext = context;
+    this.searchQuery = query;
+    this.searchRestoreFocusOnClose = true;
+    if (options.browseContentType) this.searchBrowseContentType = options.browseContentType;
+    if (options.browseSurface) this.searchBrowseSurface = options.browseSurface;
+    this.searchOpen = true;
+  }
+  closeSearchPalette(restoreFocus = true) {
+    this.searchRestoreFocusOnClose = restoreFocus;
+    this.searchEngaged = false;
+    this.searchOpen = false;
+    this.searchQuery = "";
+    this.searchActiveResultId = null;
+    clearSearchEngagedBodyClasses();
+  }
+  clearSearchPaletteQuery() {
+    this.searchRestoreFocusOnClose = false;
+    this.searchOpen = false;
+    this.searchQuery = "";
+    this.searchActiveResultId = null;
+    this.engageSearch();
+  }
+  private searchFocusRestoreInProgress = false;
+  get isSearchFocusRestoreInProgress() {
+    return this.searchFocusRestoreInProgress;
+  }
+  restoreSearchFocus(target: HTMLElement) {
+    this.searchFocusRestoreInProgress = true;
+    try {
+      target.closest(".n-search")?.classList.add("is-search-focus-restored");
+      target.focus({ preventScroll: true });
+    } finally {
+      queueMicrotask(() => {
+        clearSearchEngagedBodyClasses();
+        this.searchFocusRestoreInProgress = false;
+      });
+    }
+  }
+  setSearchQuery(next: string) { this.searchQuery = next; }
   setActiveManga(next: Manga | null)             {
     this.activeManga = next;
     if (next) {
@@ -2579,6 +2671,12 @@ export function setLibraryUpdateInFlight(next: boolean) { store.setLibraryUpdate
 export function bumpLibraryCoverCacheGeneration() { store.bumpLibraryCoverCacheGeneration(); }
 export function setCategories(cats: Category[])                           { store.setCategories(cats); }
 export function setLibraryMangaSnapshot(next: Manga[])                    { store.setLibraryMangaSnapshot(next); }
+export function setSearchNovelLibrarySnapshot(
+  entries: PersistedNovelLibraryEntry[],
+  chapters: PersistedNovelChapterEntry[],
+) {
+  store.setSearchNovelLibrarySnapshot(entries, chapters);
+}
 export function syncLibraryMangaFromDetail(manga: Manga, chapters?: Chapter[]) { store.syncLibraryMangaFromDetail(manga, chapters); }
 export function setLibraryBootstrap(status: LibraryBootstrapStatus, scopeKey: string | null, trackingSummary: TrackerCompletionTracker[] | null = null) {
   store.setLibraryBootstrap(status, scopeKey, trackingSummary);
@@ -2588,11 +2686,20 @@ export function setLibraryTrackingSummarySnapshot(next: TrackerCompletionTracker
 }
 export function setActiveDownloads(next: ActiveDownload[])               { store.setActiveDownloads(next); }
 export function setPausedDownloads(next: PausedDownloadItem[])           { store.setPausedDownloads(next); }
+export function setSearchDownloads(next: SearchDownloadEntry[])           { store.setSearchDownloads(next); }
 export function setNavPage(next: NavPage)                                { store.setNavPage(next); }
 export function setLibrarySection(next: LibrarySection)                  { store.setLibrarySection(next); }
 export function setLibraryFilter(next: LibraryFilter)                    { store.setLibraryFilter(next); }
 export function setGenreFilter(next: string)                             { store.setGenreFilter(next); }
 export function setSearchPrefill(next: string)                           { store.setSearchPrefill(next); }
+export function engageSearch()                                          { store.engageSearch(); }
+export function disengageSearch()                                       { store.disengageSearch(); }
+export function openSearchPalette(context: SearchContext, query = "", options: SearchOpenOptions = {}) {
+  store.openSearchPalette(context, query, options);
+}
+export function closeSearchPalette()                                      { store.closeSearchPalette(); }
+export function clearSearchPaletteQuery()                                 { store.clearSearchPaletteQuery(); }
+export function setSearchQuery(next: string)                              { store.setSearchQuery(next); }
 export function setActiveManga(next: Manga | null)                       { store.setActiveManga(next); }
 export function openMangaDetail(next: Manga)                             { store.openMangaDetail(next); }
 export function setActiveBookId(next: string | null)                     { store.setActiveBookId(next); }

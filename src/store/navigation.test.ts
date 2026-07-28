@@ -241,7 +241,10 @@ describe("navigation subscriptions", () => {
     };
     Object.defineProperty(globalThis, "document", {
       configurable: true,
-      value: { body: { classList } },
+      value: {
+        body: { classList },
+        querySelectorAll: () => [],
+      },
     });
 
     classList.add(
@@ -250,7 +253,9 @@ describe("navigation subscriptions", () => {
       "aethon-library-search-engaged",
       "aethon-browse-search-engaged",
       "aethon-downloads-search-engaged",
+      "aethon-search-engaged",
     );
+    store.openSearchPalette("home", "stale query");
 
     setNavPage("downloads");
     expect(classList.contains("aethon-settings-search-engaged")).toBe(false);
@@ -258,6 +263,10 @@ describe("navigation subscriptions", () => {
     expect(classList.contains("aethon-library-search-engaged")).toBe(false);
     expect(classList.contains("aethon-browse-search-engaged")).toBe(false);
     expect(classList.contains("aethon-downloads-search-engaged")).toBe(false);
+    expect(classList.contains("aethon-search-engaged")).toBe(false);
+    expect(store.searchOpen).toBe(false);
+    expect(store.searchQuery).toBe("");
+    expect(store.searchRestoreFocusOnClose).toBe(false);
 
     document.body.classList.add("aethon-browse-search-engaged");
     openHomeDashboard();

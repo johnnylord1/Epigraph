@@ -181,6 +181,7 @@ import { setPausedDownloads, store } from "../../store/state.svelte";
 
 describe("Downloads", () => {
   beforeEach(() => {
+    store.closeSearchPalette(false);
     gqlMock.mockClear();
     resetFixture();
     setPausedDownloads([]);
@@ -188,6 +189,7 @@ describe("Downloads", () => {
   });
 
   afterEach(() => {
+    store.closeSearchPalette(false);
     cleanup();
     document.body.innerHTML = "";
     document.body.className = "";
@@ -218,6 +220,8 @@ describe("Downloads", () => {
 
     expect(screen.queryByText("Vagabond")).toBeNull();
     expect(screen.getByText("Vinland Saga")).toBeTruthy();
+    expect(store.searchOpen).toBe(true);
+    expect(store.searchContext).toBe("downloads");
   });
 
   test("filters the queue locally through the downloads filter menu", async () => {
