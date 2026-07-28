@@ -35,7 +35,11 @@ function Test-SourceRuntimeWhitespace {
 function Test-NoResidualCandidates {
   $temporaryRoots = @(
     Get-ChildItem -LiteralPath ([System.IO.Path]::GetTempPath()) -Directory -ErrorAction SilentlyContinue |
-      Where-Object { $_.Name -like "aethon-suwayomi-certification-*" -or $_.Name -like "aethon-suwayomi-migration-*" }
+      Where-Object {
+        $_.Name -like "aethon-suwayomi-certification-*" -or
+        $_.Name -like "aethon-suwayomi-migration-*" -or
+        $_.Name -like "aethon-suwayomi-workflow-*"
+      }
   )
   if ($temporaryRoots.Count -gt 0) {
     throw "Residual Suwayomi certification directories remain in the operating-system temp root."
@@ -46,7 +50,7 @@ function Test-NoResidualCandidates {
       Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         Where-Object {
           $_.Name -in @("java.exe", "javaw.exe") -and
-          $_.CommandLine -match "aethon-suwayomi-(certification|migration)-"
+          $_.CommandLine -match "aethon-suwayomi-(certification|migration|workflow)-"
         }
     )
     if ($candidateProcesses.Count -gt 0) {
@@ -71,6 +75,9 @@ try {
   }
 
   if (-not $ContractOnly) {
+    Invoke-SourceRuntimeStep "Deterministic extension and Local Source workflow" {
+      & node scripts/certify-suwayomi-extension-workflows.mjs
+    }
     Invoke-SourceRuntimeStep "Svelte diagnostics" { & pnpm exec svelte-check --tsconfig ./tsconfig.json }
     Invoke-SourceRuntimeStep "Rust runtime, updater, Core, and Syncd contracts" {
       & cargo test --locked --manifest-path src-tauri/Cargo.toml --jobs 1 -- --test-threads=1

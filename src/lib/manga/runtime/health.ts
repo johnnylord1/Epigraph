@@ -206,7 +206,7 @@ export function classifyExtensionFailure(error: unknown): SourceRuntimeError {
   if (isSourceRuntimeError(error) && error.code !== "UNKNOWN") return error;
   const text = errorText(error);
 
-  if (/AbstractMethodError|NoSuchMethodError|IncompatibleClassChangeError|NoClassDefFoundError|ClassNotFoundException|VerifyError|UnsupportedClassVersionError/i.test(text)) {
+  if (/LinkageError|AbstractMethodError|NoSuchMethodError|NoSuchFieldError|IncompatibleClassChangeError|NoClassDefFoundError|ClassNotFoundException|VerifyError|UnsupportedClassVersionError|ClassCastException[^\n]*(?:kotlin|okhttp)|does not implement[^\n]*kotlin\.jvm\.functions|cannot be cast to okhttp3\./i.test(text)) {
     return new SourceRuntimeError(
       "EXTENSION_INCOMPATIBLE",
       "The extension is incompatible with the active Suwayomi runtime.",

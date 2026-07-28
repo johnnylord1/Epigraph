@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
@@ -552,16 +553,20 @@ fn create_suwayomi_update_snapshot_unlocked(
     }
 
     let target = resolve_update_target(server_url, profile_id, profile_label, &app)?;
-    let plan = plan_snapshot_files(&target.root_dir)?;
-    ensure_snapshot_disk_space(&target.root_dir, &plan)?;
     let stopped_runtime = stop_managed_runtime_for_snapshot(&app, &target)?;
-    match create_snapshot_for_plan(
-        &target.root_dir,
-        plan,
-        Some(target.profile_key.clone()),
-        runtime.mode,
-        runtime.version,
-    ) {
+    let snapshot = (|| {
+        assert_profile_database_unlocked(&target.root_dir)?;
+        let plan = plan_snapshot_files(&target.root_dir)?;
+        ensure_snapshot_disk_space(&target.root_dir, &plan)?;
+        create_snapshot_for_plan(
+            &target.root_dir,
+            plan,
+            Some(target.profile_key.clone()),
+            runtime.mode,
+            runtime.version,
+        )
+    })();
+    match snapshot {
         Ok(mut result) => {
             result.stopped_runtime = stopped_runtime;
             result.restarted_runtime = if restart_after_success {
@@ -1394,6 +1399,7 @@ fn stop_managed_runtime_for_snapshot(
     let java_pid = prove_aethon_runtime_ownership(target)?;
     kill_tachidesk_target(app, target);
     wait_for_managed_runtime_stop(&target.root_dir, java_pid)?;
+    assert_local_port_released(target.port)?;
     Ok(true)
 }
 
@@ -1405,6 +1411,47 @@ fn wait_for_managed_runtime_stop(root_dir: &Path, java_pid: u32) -> Result<(), S
         thread::sleep(Duration::from_millis(100));
     }
     Err("Managed Suwayomi did not release its database before snapshot.".to_string())
+}
+
+fn assert_profile_database_unlocked(root_dir: &Path) -> Result<(), String> {
+    for name in ["database.mv.db", "database.trace.db"] {
+        let path = root_dir.join(name);
+        if !path.exists() {
+            continue;
+        }
+        assert_file_exclusively_openable(&path).map_err(|error| {
+            format!("Suwayomi database file {name} is still locked after shutdown: {error}")
+        })?;
+    }
+    Ok(())
+}
+
+fn assert_local_port_released(port: u16) -> Result<(), String> {
+    TcpListener::bind(("127.0.0.1", port))
+        .map(|_| ())
+        .map_err(|error| {
+            format!("Managed Suwayomi port {port} is still occupied after shutdown: {error}")
+        })
+}
+
+#[cfg(windows)]
+fn assert_file_exclusively_openable(path: &Path) -> std::io::Result<()> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(path)
+        .map(|_| ())
+}
+
+#[cfg(not(windows))]
+fn assert_file_exclusively_openable(path: &Path) -> std::io::Result<()> {
+    use fs2::FileExt;
+
+    let file = OpenOptions::new().read(true).open(path)?;
+    file.try_lock_exclusive()?;
+    FileExt::unlock(&file)
 }
 
 fn restart_managed_runtime(app: &AppHandle, target: &LocalServerTarget) -> Result<(), String> {
@@ -4047,6 +4094,36 @@ mod tests {
         assert_eq!(manifest.runtime_mode, SuwayomiRuntimeMode::Unknown);
         assert_eq!(manifest.files.len(), 4);
         assert!(manifest.files.iter().all(|file| file.sha256.len() == 64));
+    }
+
+    #[test]
+    fn database_lock_probe_accepts_quiescent_profile() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("database.mv.db"), b"h2").unwrap();
+        assert!(assert_profile_database_unlocked(temp.path()).is_ok());
+    }
+
+    #[test]
+    fn local_port_probe_requires_the_listener_to_be_released() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(assert_local_port_released(port).is_err());
+        drop(listener);
+        assert!(assert_local_port_released(port).is_ok());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn database_lock_probe_rejects_an_open_database_handle() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("database.mv.db");
+        std::fs::write(&path, b"h2").unwrap();
+        let _open = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        assert!(assert_profile_database_unlocked(temp.path()).is_err());
     }
 
     #[test]

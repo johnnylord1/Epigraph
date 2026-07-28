@@ -135,6 +135,9 @@ describe("extension structural health", () => {
 describe("extension failure classification", () => {
   test.each([
     ["java.lang.AbstractMethodError: parse response", "EXTENSION_INCOMPATIBLE", false],
+    ["java.lang.NoSuchFieldError: Companion", "EXTENSION_INCOMPATIBLE", false],
+    ["ClassCastException: okhttp3.Response cannot be cast to okhttp3.Response", "EXTENSION_INCOMPATIBLE", false],
+    ["DemoInterceptor does not implement kotlin.jvm.functions.Function1", "EXTENSION_INCOMPATIBLE", false],
     ["JsonDecodingException: missing field", "EXTENSION_INCOMPATIBLE", false],
     ["Cloudflare challenge returned HTTP 403", "ANTIBOT_CHALLENGE", true],
     ["HTTP 401 login required", "AUTHENTICATION_REQUIRED", false],
