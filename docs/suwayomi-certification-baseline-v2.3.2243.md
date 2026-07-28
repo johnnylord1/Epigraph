@@ -66,3 +66,41 @@ The virtual-memory value is address space, not committed resident memory. These 
 - The disposable-profile baseline runs the checksum-verified official JAR under the current user. It now verifies that the dynamic loopback listener belongs to the launched PID, but it is not an OS sandbox and is not promotion evidence.
 - WebView2 and JCEF were not exercised.
 - The gate emits `compatibility-review.json` with `promotionEligible: false`; it no longer emits an allowlist-shaped candidate.
+
+## SR7 Migration Certification
+
+The SR1 empty-profile limitations were addressed by a separate SR7 run on
+2026-07-27. The migration gate used Aethon's bundled Temurin 21.0.8 runtime and
+an allowlisted, read-only copy of the managed profile. It never started a JVM
+against the original profile.
+
+| Gate | Result |
+| --- | --- |
+| Original profile modified | No |
+| Normalized Library state | 4 titles preserved |
+| Normalized chapter state | 1,804 chapters; read, bookmark and progress state preserved |
+| Categories | 2 preserved |
+| Installed extension canaries | 4 preserved |
+| Registered sources | 37 preserved |
+| Installed content extension without a registered source | 0 |
+| Extension Store migration | Legacy JSON URL canonicalized to the V23 protobuf store |
+| V23 restart | Passed |
+| V21 rollback | Passed |
+| Residual candidate process or temporary root | None |
+
+The four sequential phases took 9.9 s (V21 baseline), 18.9 s (V23 migration),
+8.8 s (V23 restart), and 9.4 s (V21 rollback). The V23 working set sampled at
+approximately 467 MiB initially and 464 MiB after restart. These values are
+observations, not resource limits.
+
+The report stores package and store URL hashes rather than names or private
+configuration. Comix, Akuma and Webtoons were installed content canaries in the
+profile; Tachidesk was treated as a helper. Mangakakalot, MangaClash and Asura
+had artifacts on disk but were not marked installed by the profile, so this run
+does not classify their websites as healthy or unhealthy.
+
+This evidence certifies runtime compatibility, H2 migration, source
+registration, Extension Stores, restart and rollback. It does not certify
+website reachability, anti-bot behavior, login flows, or JCEF rendering. Those
+remain explicit Level 1/Level 2 or external-service checks and are not inferred
+from Level 0 structural health.

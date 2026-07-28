@@ -18,10 +18,10 @@ use crate::suwayomi_maintenance::{
     self, ExclusiveMaintenanceGuard, MaintenancePhase, UpdateJournalState,
 };
 use crate::{
-    find_java_pid_for_rootdir, is_loopback_http_url, kill_tachidesk_target, process_is_alive,
-    read_server_owner, resolve_local_server_target, server_owner_path, server_spawn_lock_path,
-    spawn_managed_server_for_update, strip_unc, suwayomi_data_dir, validate_server_owner,
-    LaunchTarget, LocalServerTarget, OwnerReuseDecision,
+    find_java_pid_for_rootdir, is_loopback_http_url, kill_tachidesk_target, patch_conf_key,
+    process_is_alive, read_conf_value, read_server_owner, resolve_local_server_target,
+    server_owner_path, server_spawn_lock_path, spawn_managed_server_for_update, strip_unc,
+    suwayomi_data_dir, validate_server_owner, LaunchTarget, LocalServerTarget, OwnerReuseDecision,
 };
 
 const SUWAYOMI_SERVER_JAR: &str = "Suwayomi-Server.jar";
@@ -862,6 +862,18 @@ async fn promote_suwayomi_runtime_update_unlocked(
             &snapshot_dir,
         );
     }
+    if let Err(error) = migrate_extension_store_config(&target.root_dir, &staging_manifest.version)
+    {
+        return rollback_after_journal_failure(
+            error,
+            &journal_path,
+            &mut journal,
+            &app,
+            &target,
+            &promotion,
+            &snapshot_dir,
+        );
+    }
     journal.transition(UpdateJournalState::PostCheckRunning);
     if let Err(error) = suwayomi_maintenance::write_update_journal(&journal_path, &journal) {
         return rollback_after_journal_failure(
@@ -935,6 +947,78 @@ async fn promote_suwayomi_runtime_update_unlocked(
             }
         }
     }
+}
+
+fn migrate_extension_store_config(root_dir: &Path, version: &str) -> Result<bool, String> {
+    if compare_versions(version, "v2.3.0") != Some(std::cmp::Ordering::Greater)
+        && compare_versions(version, "v2.3.0") != Some(std::cmp::Ordering::Equal)
+    {
+        return Ok(false);
+    }
+    let conf_path = root_dir.join("server.conf");
+    let contents = fs::read_to_string(&conf_path)
+        .map_err(|error| format!("Could not read Suwayomi configuration for migration: {error}"))?;
+    let Some(legacy_value) = read_conf_value(&contents, "server.extensionRepos") else {
+        return Ok(false);
+    };
+    let legacy = parse_store_list(&legacy_value, "server.extensionRepos")?;
+    if legacy.is_empty() {
+        return Ok(false);
+    }
+    let current = read_conf_value(&contents, "server.extensionStores")
+        .map(|value| parse_store_list(&value, "server.extensionStores"))
+        .transpose()?
+        .unwrap_or_default();
+    let mut merged = current;
+    for url in legacy {
+        let normalized = normalize_store_url(&url);
+        if !merged
+            .iter()
+            .any(|existing| normalize_store_url(existing) == normalized)
+        {
+            merged.push(url);
+        }
+    }
+    let serialized = serde_json::to_string(&merged)
+        .map_err(|error| format!("Could not serialize migrated Extension Stores: {error}"))?;
+    let patched = patch_conf_key(contents, "server.extensionStores", &serialized);
+    let patched = remove_conf_key(patched, "server.extensionRepos");
+    let temp_path = conf_path.with_extension(format!("conf.{}.tmp", Uuid::new_v4()));
+    let mut file = File::create(&temp_path)
+        .map_err(|error| format!("Could not create migrated Suwayomi configuration: {error}"))?;
+    file.write_all(patched.as_bytes())
+        .map_err(|error| format!("Could not write migrated Suwayomi configuration: {error}"))?;
+    file.sync_all()
+        .map_err(|error| format!("Could not sync migrated Suwayomi configuration: {error}"))?;
+    suwayomi_maintenance::atomic_replace_file(&temp_path, &conf_path)
+        .map_err(|error| format!("Could not publish migrated Suwayomi configuration: {error}"))?;
+    Ok(true)
+}
+
+fn parse_store_list(value: &str, key: &str) -> Result<Vec<String>, String> {
+    serde_json::from_str::<Vec<String>>(value)
+        .map_err(|error| format!("Could not parse {key} during Suwayomi migration: {error}"))
+}
+
+fn normalize_store_url(value: &str) -> String {
+    value.trim().trim_end_matches('/').to_ascii_lowercase()
+}
+
+fn remove_conf_key(text: String, key: &str) -> String {
+    let mut lines = text
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            !trimmed
+                .strip_prefix(key)
+                .is_some_and(|suffix| suffix.trim_start().starts_with('='))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if !lines.is_empty() {
+        lines.push('\n');
+    }
+    lines
 }
 
 fn restart_after_preparation_failure(
@@ -3684,7 +3768,7 @@ mod tests {
     #[test]
     fn manifest_preflight_blocks_above_maximum() {
         let manifest = test_manifest();
-        let result = manifest_preflight_block(&runtime(Some("v2.3.0"), true), &manifest)
+        let result = manifest_preflight_block(&runtime(Some("v2.4.0"), true), &manifest)
             .expect("above max tested version should be rejected");
 
         assert_eq!(result.status, UpdateCheckStatus::Blocked);
@@ -4661,6 +4745,56 @@ mod tests {
         assert!(promote_staging_directories(temp.path(), "v2.2.2100").is_err());
         assert!(!temp.path().join(SUWAYOMI_CURRENT_DIR).exists());
         assert!(!temp.path().join(SUWAYOMI_PREVIOUS_DIR).exists());
+    }
+
+    #[test]
+    fn v23_promotion_migrates_and_deduplicates_extension_stores() {
+        let temp = tempfile::tempdir().unwrap();
+        let conf = r#"server.extensionRepos = ["https://one.example/index.json", "https://two.example/index.json/"]
+server.extensionStores = ["https://two.example/index.json"]
+"#;
+        std::fs::write(temp.path().join("server.conf"), conf).unwrap();
+
+        assert!(migrate_extension_store_config(temp.path(), "v2.3.2243").unwrap());
+
+        let migrated = std::fs::read_to_string(temp.path().join("server.conf")).unwrap();
+        assert_eq!(read_conf_value(&migrated, "server.extensionRepos"), None);
+        let stores = parse_store_list(
+            &read_conf_value(&migrated, "server.extensionStores").unwrap(),
+            "server.extensionStores",
+        )
+        .unwrap();
+        assert_eq!(stores.len(), 2);
+        assert!(stores.contains(&"https://one.example/index.json".to_string()));
+        assert!(stores.contains(&"https://two.example/index.json".to_string()));
+    }
+
+    #[test]
+    fn pre_v23_promotion_preserves_legacy_extension_repositories() {
+        let temp = tempfile::tempdir().unwrap();
+        let conf = "server.extensionRepos = [\"https://one.example/index.json\"]\n";
+        std::fs::write(temp.path().join("server.conf"), conf).unwrap();
+
+        assert!(!migrate_extension_store_config(temp.path(), "v2.1.1867").unwrap());
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("server.conf")).unwrap(),
+            conf
+        );
+    }
+
+    #[test]
+    fn malformed_extension_repository_config_blocks_promotion_without_rewrite() {
+        let temp = tempfile::tempdir().unwrap();
+        let conf = "server.extensionRepos = not-a-list\n";
+        std::fs::write(temp.path().join("server.conf"), conf).unwrap();
+
+        let error = migrate_extension_store_config(temp.path(), "v2.3.2243").unwrap_err();
+
+        assert!(error.contains("Could not parse server.extensionRepos"));
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("server.conf")).unwrap(),
+            conf
+        );
     }
 
     fn clear_update_lock_for_tests() {

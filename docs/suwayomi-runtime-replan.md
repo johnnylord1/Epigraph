@@ -1,6 +1,6 @@
 # Replanejamento do runtime Suwayomi
 
-Status: SR3-SR6 implementados; SR7-SR8 ainda nao iniciados.
+Status: SR3-SR7 implementados; SR8 pendente.
 
 ## Resultado desta etapa
 
@@ -291,10 +291,27 @@ versoes nao aprovadas, e instalar somente uma versao exata apos SR7.
 
 ### SR7 - Promocao controlada de v2.3.2243
 
-- Repetir startup, restart, H2 migration, Extension Stores, extensoes canario,
-  biblioteca, progresso e rollback em perfil descartavel.
-- Promover somente com checksum, contrato semantico e health aprovados.
-- Atualizar allowlist e `maxTestedVersion` apenas neste marco.
+- Startup, restart, H2 migration, Extension Stores, extensoes canario,
+  biblioteca, progresso e rollback foram repetidos em perfil descartavel com
+  o JRE 21 empacotado.
+- O perfil original foi usado somente como fonte de uma copia allowlisted e
+  permaneceu byte a byte inalterado. O gate preservou 4 obras, 1.804 capitulos,
+  2 categorias, 4 extensoes instaladas e 37 sources nas quatro fases.
+- Todas as extensoes de conteudo instaladas registraram sources no V21, no V23,
+  depois do restart e no rollback. Nomes e URLs ficam fora do relatorio; apenas
+  hashes e contagens sao persistidos.
+- O store Legacy `index.min.json` foi canonicalizado pelo V23 para o store
+  protobuf `index.pb`, permaneceu estavel no restart e voltou ao formato Legacy
+  no rollback.
+- A promocao de producao agora converte `server.extensionRepos` em
+  `server.extensionStores` por escrita atomica. Falha de parse/escrita aciona o
+  rollback existente, que restaura runtime, H2, extensoes, settings e
+  `server.conf` pelo snapshot.
+- `v2.3.2243` foi adicionada a allowlist exata pelo SHA-256 publicado e passou a
+  ser `maxTestedVersion`. `v2.2.2100` permanece bloqueada.
+- Website, login, antibot e JCEF nao foram inferidos do Level 0. Comix foi
+  carregada como canario estrutural; Mangakakalot, MangaClash e Asura tinham
+  artefatos locais, mas nao estavam instaladas no estado GraphQL do perfil.
 - Commit: `test(sources): certify suwayomi 2.3 runtime migration`.
 
 ### SR8 - Gate final
@@ -324,6 +341,6 @@ arquivos inteiros ou usar operacoes destrutivas globais.
 - Os testes de SR4 exercitam stores legacy e oficiais sem tocar Syncd, Core,
   novels/LNReader ou persistencia de biblioteca.
 
-Pendencias: certificacao destrutiva controlada da promocao da `v2.3.2243` no
-SR7 e consolidacao do gate final no SR8. A versao permanece fora da allowlist
-ate essa evidencia existir.
+Pendencia: consolidacao do gate final no SR8. A `v2.3.2243` esta allowlisted
+apos a certificacao controlada do SR7; websites externos e JCEF permanecem
+checks explicitos, sem alterar a compatibilidade estrutural do runtime.

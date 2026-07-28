@@ -484,24 +484,28 @@ async function waitForPortRelease(port, timeoutMs = 10_000) {
   throw new Error("Candidate GraphQL port remained occupied after shutdown.");
 }
 
-function serverConfig(port) {
+export function serverConfig(port, { extensionRepos = [], extensionStores = [] } = {}) {
+  const stores = extensionStores.length > 0
+    ? `server.extensionStores = ${JSON.stringify(extensionStores)}`
+    : `server.extensionRepos = ${JSON.stringify(extensionRepos)}`;
   return [
     'server.ip = "127.0.0.1"',
     `server.port = ${port}`,
     "server.webUIEnabled = false",
     "server.initialOpenInBrowserEnabled = false",
     "server.systemTrayEnabled = false",
+    "server.kcefEnabled = false",
     "server.debugLogsEnabled = false",
     "server.globalUpdateInterval = 0",
     "server.webUIUpdateCheckInterval = 0",
     "server.autoDownloadNewChapters = false",
     "server.maxSourcesInParallel = 1",
-    "server.extensionRepos = []",
+    stores,
     "",
   ].join("\n");
 }
 
-function startRuntime(java, jarPath, rootDir) {
+export function startRuntime(java, jarPath, rootDir) {
   const args = [
     `-Dsuwayomi.tachidesk.config.server.rootDir=${rootDir}`,
     "-Djava.awt.headless=true",
@@ -528,7 +532,7 @@ function startRuntime(java, jarPath, rootDir) {
   return { child, output, get spawnError() { return spawnError; } };
 }
 
-async function stopRuntime(child, port) {
+export async function stopRuntime(child, port) {
   if (child.pid && child.exitCode === null) {
     child.kill("SIGTERM");
     await Promise.race([
@@ -560,7 +564,7 @@ async function runHealthCheck(endpoint, expectedKey, query) {
   return Date.now() - started;
 }
 
-async function graphqlRequest(endpoint, query, timeoutMs = 10_000) {
+export async function graphqlRequest(endpoint, query, timeoutMs = 10_000) {
   const response = await fetch(endpoint, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -647,7 +651,7 @@ async function collectRuntimeBaseline(endpoint, pid) {
   };
 }
 
-async function waitForHealth(endpoint, runtime, timeoutMs) {
+export async function waitForHealth(endpoint, runtime, timeoutMs) {
   const started = Date.now();
   const checks = [];
   let attempt = 0;

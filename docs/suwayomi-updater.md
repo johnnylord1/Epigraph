@@ -52,7 +52,10 @@ Checksum validation is integrity only. If Suwayomi publishes a verifiable signat
 
 Current compatibility decision:
 
-- `v2.1.1867` remains the supported and tested baseline.
+- `v2.1.1867` remains the supported baseline.
+- `v2.3.2243` is the maximum tested version after Windows x64/Java 21
+  certification of H2 migration, Extension Stores, installed extension
+  registration, restart and rollback on a disposable profile copy.
 - `v2.2.2100` is explicitly blocked after a managed-runtime smoke run failed to become GraphQL-healthy. Tests may use an isolated allowlist fixture for update-flow coverage, but production must continue to follow the bundled manifest.
 
 ## Release Certification
@@ -89,7 +92,7 @@ The SR1 baseline uses a new empty profile under the operating system temporary d
 
 This baseline is process isolation by disposable profile only. It verifies an official checksum, an empty generated profile, process/port ownership, restart stability, and the V23 semantic contract. It does not produce an allowlist entry and must not be treated as promotion evidence. The AppContainer experiment was retired because the official Suwayomi/JCEF runtime could not initialize reliably there; promotion remains blocked on the supervised SR7 data, extension, ownership, and rollback gates.
 
-The current fixed-target evidence is recorded in [`suwayomi-certification-baseline-v2.3.2243.md`](./suwayomi-certification-baseline-v2.3.2243.md).
+The current fixed-target and SR7 migration evidence is recorded in [`suwayomi-certification-baseline-v2.3.2243.md`](./suwayomi-certification-baseline-v2.3.2243.md).
 
 ## Directories
 
@@ -143,6 +146,12 @@ Invalid staging is removed and never promoted.
 ## Promotion And Rollback
 
 Promotion validates staging, stops only the Aethon-managed runtime, moves `current` to `previous`, then moves staging to `current`. Existing `previous` is kept as a temporary backup until success.
+
+When promoting to V23 or newer, Aethon migrates the allowlisted legacy
+`server.extensionRepos` value into `server.extensionStores`, deduplicates the
+URLs and publishes `server.conf` atomically. The pre-promotion snapshot includes
+the original configuration, so any parse, write, startup or health failure
+restores the previous runtime and configuration together.
 
 Rollback runs if promotion, restart, process stability, or health check fails. Rollback is complete only after:
 
@@ -201,5 +210,9 @@ Promotion or health-check failures are normalized in the Settings UI to explain 
 - No automatic update scheduling.
 - No background download.
 - No signature verification yet.
-- No deep data reconciliation after update; health checks validate availability and schema shape.
+- The production post-update health check validates availability and schema
+  shape. Deep H2/state reconciliation is performed by the release certification
+  gate, not on every user update.
+- Website reachability, anti-bot challenges, authentication and JCEF behavior
+  remain source-specific diagnostics and are not implied by runtime allowlisting.
 - The old snapshot and promotion commands remain available for diagnostics, but production UI uses the atomic install command.
