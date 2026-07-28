@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { invokeMock, gqlMock } = vi.hoisted(() => ({
+const { invokeMock, gqlMock, searchSourceMangaMock, fetchSourceMangaChaptersMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
   gqlMock: vi.fn(),
+  searchSourceMangaMock: vi.fn(),
+  fetchSourceMangaChaptersMock: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -11,6 +13,11 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 vi.mock("../client", () => ({
   gql: gqlMock,
+}));
+
+vi.mock("../manga/runtime", () => ({
+  searchSourceManga: searchSourceMangaMock,
+  fetchSourceMangaChapters: fetchSourceMangaChaptersMock,
 }));
 
 import { resetMigrationJournalStateCacheForTests } from "./journalState";
@@ -67,6 +74,8 @@ describe("manga migration services", () => {
     resetMigrationJournalStateCacheForTests();
     journalStateJson = null;
     gqlMock.mockReset();
+    searchSourceMangaMock.mockReset();
+    fetchSourceMangaChaptersMock.mockReset();
     invokeMock.mockReset();
     failUpdateMangaIds = new Set();
 
@@ -131,6 +140,26 @@ describe("manga migration services", () => {
       configurable: true,
       writable: true,
     });
+
+    searchSourceMangaMock.mockImplementation(async (variables: Record<string, unknown>, signal?: AbortSignal) => {
+      const queryText = String(variables.query ?? "");
+      if (queryText === "Slow Book") {
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+        });
+      }
+      const mangas = queryText === "Alpha Hero"
+        ? [mangaById.get(20)]
+        : queryText === "Blue Planet"
+          ? [mangaById.get(21)]
+          : [];
+      return { fetchSourceManga: { mangas, hasNextPage: false } };
+    });
+    fetchSourceMangaChaptersMock.mockImplementation(async (variables: Record<string, unknown>) => ({
+      fetchChapters: {
+        chapters: chaptersByMangaId.get(Number(variables.mangaId)) ?? [],
+      },
+    }));
 
     invokeMock.mockImplementation(async (command: string, payload?: Record<string, unknown>) => {
       switch (command) {

@@ -1,6 +1,7 @@
 import { gql } from "../client";
-import { FETCH_MANGA, GET_CHAPTERS } from "../queries";
+import { GET_CHAPTERS } from "../queries";
 import type { Extension, Manga, Source } from "../types";
+import { fetchSourceMangaDetails } from "../manga/runtime";
 import { findMissingSourceExtensionSuggestions } from "../extensionSourceMap";
 import type {
   AvailableExtensionEntry,
@@ -128,20 +129,16 @@ function combineSignals(...signals: AbortSignal[]): AbortSignal {
   return controller.signal;
 }
 
-async function fetchMangaDetails(mangaId: number, signal: AbortSignal): Promise<{ author: string | null; artist: string | null; chapterCount: number | null; realUrl: string | null }> {
+async function fetchMangaDetails(manga: Manga, signal: AbortSignal): Promise<{ author: string | null; artist: string | null; chapterCount: number | null; realUrl: string | null }> {
   const [mangaResult, chaptersResult] = await Promise.all([
-    gql<{ fetchManga: { manga: { author: string | null; artist: string | null; realUrl: string | null } } }>(
-      FETCH_MANGA,
-      { id: mangaId },
-      signal,
-    ),
-    gql<{ chapters: { nodes: { id: number }[] } }>(GET_CHAPTERS, { mangaId }, signal),
+    fetchSourceMangaDetails({ id: manga.id, sourceId: manga.source?.id }, signal),
+    gql<{ chapters: { nodes: { id: number }[] } }>(GET_CHAPTERS, { mangaId: manga.id }, signal),
   ]);
 
   return {
-    author: mangaResult.fetchManga.manga.author,
-    artist: mangaResult.fetchManga.manga.artist,
-    realUrl: mangaResult.fetchManga.manga.realUrl,
+    author: mangaResult.fetchManga.manga.author ?? null,
+    artist: mangaResult.fetchManga.manga.artist ?? null,
+    realUrl: mangaResult.fetchManga.manga.realUrl ?? null,
     chapterCount: chaptersResult.chapters.nodes.length,
   };
 }
@@ -188,7 +185,7 @@ async function scoreCandidateForSample(
 
   let best: CandidateEvidence | null = null;
   for (const entry of topResults) {
-    const details = await fetchMangaDetails(entry.result.id, signal).catch(() => null);
+    const details = await fetchMangaDetails(entry.result, signal).catch(() => null);
     const authorScore = stringEqualityScore(sample.author, details?.author ?? null);
     const artistScore = stringEqualityScore(sample.artist, details?.artist ?? null);
     const chapterScore = chapterSimilarity(sample.chapterCount, details?.chapterCount ?? null);

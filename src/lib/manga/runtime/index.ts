@@ -25,6 +25,14 @@ export {
   resetManagedSourceRuntime,
 } from "./managed";
 export {
+  fetchSourceChapterPages,
+  fetchSourceMangaChapters,
+  fetchSourceMangaDetails,
+  searchSourceManga,
+  type SourceMangaSearchVariables,
+} from "./sourceOperations";
+export { canonicalizeExtensionStoreUrl } from "./storeUrl";
+export {
   SourceHealthProbeCache,
   classifyExtensionFailure,
   collectStructuralExtensionHealth,

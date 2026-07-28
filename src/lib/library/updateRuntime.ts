@@ -1,6 +1,7 @@
 import { getServerAuthHeader, getServerUrl, gql } from "../client";
 import { cache, CACHE_GROUPS, CACHE_KEYS } from "../cache";
-import { FETCH_CHAPTERS, GET_CATEGORIES_WITH_MANGA_IDS, GET_LIBRARY_UPDATE_STATUS, SET_LIBRARY_UPDATE_RULES, UPDATE_STOP } from "../queries";
+import { GET_CATEGORIES_WITH_MANGA_IDS, GET_LIBRARY_UPDATE_STATUS, SET_LIBRARY_UPDATE_RULES, UPDATE_STOP } from "../queries";
+import { fetchSourceMangaChapters } from "../manga/runtime";
 import type { LibraryUpdateMangaPatch } from "../suwayomiUpdaterSubscription";
 import { ensureServerAwakeFor, type ServerWakeReason } from "../serverLifecycle";
 import { setLibraryMangaSnapshot, setLibraryUpdateProgress, store } from "../../store/state.svelte";
@@ -239,12 +240,10 @@ function sourceScopedManga(mangas: Manga[], sourceIds?: string[]) {
   return mangas.filter((manga) => allowed.has(sourceKeyForManga(manga)));
 }
 
-async function fetchChaptersForUpdate(mangaId: number, timeoutMs: number) {
-  const data = await gql<{ fetchChapters: { chapters: Chapter[] } }>(
-    FETCH_CHAPTERS,
-    { mangaId },
-    undefined,
-    timeoutMs,
+async function fetchChaptersForUpdate(manga: Manga, timeoutMs: number) {
+  const data = await fetchSourceMangaChapters(
+    { mangaId: manga.id, sourceId: manga.source?.id ?? manga.sourceId },
+    AbortSignal.timeout(timeoutMs),
   );
   return data.fetchChapters.chapters ?? [];
 }
@@ -354,7 +353,7 @@ async function runComicsSourceQueueUpdate(
         if (libraryUpdateStopRequested) break;
         publishProgress(manga.title, group.sourceName);
         try {
-          const chapters = await fetchChaptersForUpdate(manga.id, timeoutMs);
+          const chapters = await fetchChaptersForUpdate(manga, timeoutMs);
           preloadedChapters.set(manga.id, chapters);
           consecutiveFailures = 0;
           let changed = false;

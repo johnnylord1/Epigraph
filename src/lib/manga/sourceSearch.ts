@@ -1,7 +1,6 @@
-import { gql } from "../client";
-import { FETCH_SOURCE_MANGA } from "../queries";
 import type { Manga } from "../types";
 import { resolveSearchResultsWithFallback } from "../search/queryFallback";
+import { searchSourceManga } from "./runtime";
 
 export type SourceMangaSearchCapability =
   | { status: "ok" }
@@ -36,8 +35,7 @@ export async function fetchSourceMangaSearchWithFallback(input: {
 
   try {
     return await resolveSearchResultsWithFallback(input.query, async (attemptTerm) => {
-      const result = await gql<{ fetchSourceManga: { mangas: Manga[] } }>(
-        FETCH_SOURCE_MANGA,
+      const result = await searchSourceManga(
         { source: input.sourceId, type: "SEARCH", page: 1, query: attemptTerm },
         controller.signal,
       );

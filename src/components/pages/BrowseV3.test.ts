@@ -43,6 +43,8 @@ const {
   managedRuntimeListStoresMock,
   managedRuntimeAddStoreMock,
   managedRuntimeRemoveStoreMock,
+  managedRuntimeSearchSourceMangaMock,
+  runTransactionalExtensionUpdatesMock,
 } = vi.hoisted(() => {
   const mangaSourcesMock = [{
     id: "manga-src",
@@ -156,6 +158,37 @@ const {
   const managedRuntimeListStoresMock = vi.fn(async () => []);
   const managedRuntimeAddStoreMock = vi.fn(async () => {});
   const managedRuntimeRemoveStoreMock = vi.fn(async () => {});
+  const managedRuntimeSearchSourceMangaMock = vi.fn(async (variables: { type: string }) => {
+    if (sourceMangaFailureMock.value) throw sourceMangaFailureMock.value;
+    return {
+      fetchSourceManga: {
+        mangas: [{
+          id: variables.type === "LATEST" ? 2 : 1,
+          title: variables.type === "LATEST" ? "Latest Mock Manga" : "Popular Mock Manga",
+          thumbnailUrl: "/mock-cover.png",
+          inLibrary: false,
+          chapterCount: 12,
+          unreadCount: 0,
+          status: "ONGOING",
+          source: { id: "manga-src", displayName: "Manga Source" },
+        }],
+        hasNextPage: false,
+      },
+    };
+  });
+  const runTransactionalExtensionUpdatesMock = vi.fn(async (candidates: Array<{ packageName: string }>) => {
+    const approved: Array<{ packageName: string }> = [];
+    const rejected: Array<{ packageName: string }> = [];
+    for (const candidate of candidates) {
+      try {
+        await managedRuntimeUpdateExtensionMock({ packageName: candidate.packageName });
+        approved.push({ packageName: candidate.packageName });
+      } catch {
+        rejected.push({ packageName: candidate.packageName });
+      }
+    }
+    return { approved, rejected };
+  });
 
   return {
     addToastMock: vi.fn(),
@@ -207,6 +240,8 @@ const {
     managedRuntimeListStoresMock,
     managedRuntimeAddStoreMock,
     managedRuntimeRemoveStoreMock,
+    managedRuntimeSearchSourceMangaMock,
+    runTransactionalExtensionUpdatesMock,
     mangaSourcesMock,
     resetMangaSourcesMock,
     gqlMock: vi.fn(async (query: string, variables?: Record<string, unknown>) => {
@@ -509,6 +544,8 @@ vi.mock("../../lib/manga/runtime", async () => {
   const actual = await vi.importActual<typeof import("../../lib/manga/runtime")>("../../lib/manga/runtime");
   return {
     ...actual,
+    searchSourceManga: managedRuntimeSearchSourceMangaMock,
+    runTransactionalExtensionUpdates: runTransactionalExtensionUpdatesMock,
     getManagedSourceRuntime: vi.fn(async () => ({
       listExtensions: managedRuntimeListExtensionsMock,
       refreshExtensions: managedRuntimeRefreshExtensionsMock,
@@ -640,6 +677,8 @@ describe("BrowseV3", () => {
     managedRuntimeListStoresMock.mockClear();
     managedRuntimeAddStoreMock.mockClear();
     managedRuntimeRemoveStoreMock.mockClear();
+    managedRuntimeSearchSourceMangaMock.mockClear();
+    runTransactionalExtensionUpdatesMock.mockClear();
     resetMangaSourcesMock();
     sourceMangaFailureMock.value = null;
     sourceMangaSearchMock.mockReset();
@@ -948,7 +987,7 @@ describe("BrowseV3", () => {
       }));
     });
     await waitFor(() => {
-      expect(screen.getByText("Repository timeout")).toBeTruthy();
+      expect(screen.getByText("The update was preserved for review because compatibility checks failed.")).toBeTruthy();
     });
   });
 
@@ -1128,8 +1167,7 @@ describe("BrowseV3", () => {
       expect(screen.getByText("Latest Mock Manga")).toBeTruthy();
     });
 
-    expect(gqlMock).toHaveBeenCalledWith(
-      "FETCH_SOURCE_MANGA",
+    expect(managedRuntimeSearchSourceMangaMock).toHaveBeenCalledWith(
       expect.objectContaining({ type: "LATEST" }),
       expect.any(AbortSignal),
     );

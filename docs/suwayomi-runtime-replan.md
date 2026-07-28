@@ -379,3 +379,32 @@ checks explicitos, sem alterar a compatibilidade estrutural do runtime.
   termina de registrar as sources.
 - Nao foram criados classloader, scraper, conversor APK->JAR, formato de
   extensao, manipulacao de classpath ou acesso direto ao H2.
+
+### SR12 - Fronteira padrao e Extension Stores
+
+- Pesquisa, detalhes, capitulos e paginas das surfaces ativas agora atravessam
+  `SourceRuntime/SuwayomiAdapter`. A ponte tipada `sourceOperations.ts` preserva
+  os DTOs usados pela UI, cache, Reader, Library Update, migration e
+  reconciliation sem manter documentos GraphQL live nesses consumidores.
+- GraphQL direto permanece permitido para estado local do Suwayomi, downloads,
+  categorias, tracking e outras operacoes administrativas. O gate estatico
+  reprova qualquer nova referencia de producao a `FETCH_SOURCE_MANGA`,
+  `FETCH_MANGA`, `FETCH_CHAPTERS` ou `FETCH_CHAPTER_PAGES` fora da implementacao
+  do runtime e do catalogo Legacy de queries.
+- O profile V23 usa Extension Stores oficiais. `extensionRepos` permanece
+  somente no profile de compatibilidade V21 e no catalogo Legacy; nenhuma UI
+  ativa escreve essa configuracao diretamente.
+- URLs de stores usam canonicalizacao conservadora compartilhada: scheme, host,
+  porta padrao, fragmento e barra final sao normalizados. Paths e query values
+  distintos continuam distintos, e URLs com credenciais ou protocolos fora de
+  HTTP(S) sao rejeitadas.
+- A classificacao separa ABI/classloader, serialization, source obsoleta,
+  parser/site, anti-bot, autenticacao, rate limit e rede. Uma falha identica em
+  GraphQL e adapter apenas exclui a transformacao do adapter como causa unica;
+  nao determina sozinha o proprietario.
+- Library, progresso, bookmarks, categorias, downloads, paginacao, cancelamento
+  e source IDs nao foram migrados nem reescritos. O Extension Manager oficial
+  continua sendo o unico mecanismo de descoberta e instalacao.
+- Testes focados cobrem conversao dos DTOs, ordenacao de paginas, fronteira
+  estatica, canonicalizacao, classifications, Browse, migration e Library
+  Update. Nenhum website real e necessario para o gate do SR12.

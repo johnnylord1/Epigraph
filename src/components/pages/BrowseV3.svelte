@@ -5,8 +5,9 @@
   import { _ } from "../../lib/i18n/runtime";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
-  import { GET_SOURCES, FETCH_SOURCE_MANGA, GET_TRACKERS, SEARCH_TRACKER, GET_LIBRARY_SEARCH_SNAPSHOT, GET_ALL_TRACKER_RECORDS } from "../../lib/queries";
+  import { GET_SOURCES, GET_TRACKERS, SEARCH_TRACKER, GET_LIBRARY_SEARCH_SNAPSHOT, GET_ALL_TRACKER_RECORDS } from "../../lib/queries";
   import { fetchSourceMangaSearchWithFallback } from "../../lib/manga/sourceSearch";
+  import { searchSourceManga } from "../../lib/manga/runtime";
   import { setNavigationPresence, setSearchingPresence } from "../../lib/discord";
   import { cache, CACHE_KEYS, getPageSet } from "../../lib/cache";
   import { loadLibrarySnapshot } from "../../lib/library/snapshot";
@@ -2724,8 +2725,7 @@
 
           const settled = await Promise.allSettled(attemptSources.map(async (entry) => {
             if (!entry.mangaSource) return [] as Manga[];
-            const data = await gql<{ fetchSourceManga: { mangas: Manga[] } }>(
-              FETCH_SOURCE_MANGA,
+            const data = await searchSourceManga(
               { source: entry.mangaSource.id, type: fetchType, page: attemptRequest.sourcePage, query: null },
             );
             return withMangaSourceMetadata(
@@ -2807,8 +2807,7 @@
     try {
       const settled = await Promise.allSettled(sources.map(async (entry) => {
         if (!entry.mangaSource) return [] as Manga[];
-        const data = await gql<{ fetchSourceManga: { mangas: Manga[] } }>(
-          FETCH_SOURCE_MANGA,
+        const data = await searchSourceManga(
           { source: entry.mangaSource.id, type: "POPULAR", page: request.sourcePage, query: null },
         );
         return withMangaSourceMetadata(
@@ -3038,9 +3037,9 @@
       const result = await cache
         .get<{ mangas: Manga[]; hasNextPage: boolean }>(
           pageKey,
-          () => gql<{ fetchSourceManga: { mangas: Manga[]; hasNextPage: boolean } }>(
-            FETCH_SOURCE_MANGA, { source: src.id, type: "SEARCH", page: 1, query: primaryTag }, ctrl.signal,
-          ).then((d) => d.fetchSourceManga),
+            () => searchSourceManga(
+              { source: src.id, type: "SEARCH", page: 1, query: primaryTag }, ctrl.signal,
+            ).then((d) => d.fetchSourceManga),
         )
         .catch((e: any) => { if (e?.name !== "AbortError") console.error(e); return null; });
       if (!result || ctrl.signal.aborted) return;
@@ -3104,8 +3103,8 @@
         const result = await cache
           .get<{ mangas: Manga[]; hasNextPage: boolean }>(
             pageKey,
-            () => gql<{ fetchSourceManga: { mangas: Manga[]; hasNextPage: boolean } }>(
-              FETCH_SOURCE_MANGA, { source: src.id, type: "SEARCH", page, query: primaryTag }, ctrl.signal,
+            () => searchSourceManga(
+              { source: src.id, type: "SEARCH", page, query: primaryTag }, ctrl.signal,
             ).then((d) => d.fetchSourceManga),
           )
           .catch((e: any) => { if (e?.name !== "AbortError") tag_srcNextPage.set(src.id, -1); return null; });
@@ -3421,8 +3420,7 @@
       const settled = await Promise.allSettled(sources.map(async (entry) => {
         if (!entry.mangaSource || ctrl.signal.aborted) return [] as Manga[];
         try {
-          const data = await gql<{ fetchSourceManga: { mangas: Manga[] } }>(
-            FETCH_SOURCE_MANGA,
+          const data = await searchSourceManga(
             { source: entry.mangaSource.id, type: "POPULAR", page: 1, query: null },
             ctrl.signal,
           );
@@ -3472,8 +3470,7 @@
       const latestSources = sources;
       const latestSettled = await Promise.allSettled(latestSources.map(async (entry) => {
         if (!entry.mangaSource || ctrl.signal.aborted) return [] as Manga[];
-        const data = await gql<{ fetchSourceManga: { mangas: Manga[] } }>(
-          FETCH_SOURCE_MANGA,
+        const data = await searchSourceManga(
           { source: entry.mangaSource.id, type: "LATEST", page: 1, query: null },
           ctrl.signal,
         );
@@ -3544,8 +3541,7 @@
     const fetchSourcePage = async (entry: BrowseSourceEntry, type: "POPULAR" | "LATEST") => {
       if (!entry.mangaSource) return [] as Manga[];
       try {
-        const data = await gql<{ fetchSourceManga: { mangas: Manga[] } }>(
-          FETCH_SOURCE_MANGA,
+        const data = await searchSourceManga(
           { source: entry.mangaSource.id, type, page: request.sourcePage, query: null },
         );
         const visible = withMangaSourceMetadata(
@@ -4870,8 +4866,7 @@
       const settled = await Promise.allSettled(discoverFeedSources.map(async (entry) => {
         if (!entry.mangaSource || ctrl.signal.aborted) return [] as Manga[];
         try {
-          const d = await gql<{ fetchSourceManga: { mangas: Manga[]; hasNextPage: boolean } }>(
-            FETCH_SOURCE_MANGA,
+          const d = await searchSourceManga(
             { source: entry.mangaSource.id, type: fetchType, page: 1, query: null },
             ctrl.signal,
           );
@@ -4955,8 +4950,7 @@
       const fetchType = catalogFeed === "latest" ? "LATEST" : "POPULAR";
       const settled = await Promise.allSettled(discoverFeedSources.map(async (entry) => {
         if (!entry.mangaSource) return { mangas: [] as Manga[], hasNextPage: false };
-        const d = await gql<{ fetchSourceManga: { mangas: Manga[]; hasNextPage: boolean } }>(
-          FETCH_SOURCE_MANGA,
+        const d = await searchSourceManga(
           { source: entry.mangaSource.id, type: fetchType, page, query: null },
         );
         return {
@@ -5053,8 +5047,8 @@
     src_browseError = null;
     if (page === 1) { src_browseResults = []; }
     try {
-      const d = await gql<{ fetchSourceManga: { mangas: Manga[]; hasNextPage: boolean } }>(
-        FETCH_SOURCE_MANGA, { source: src.id, type, page, query: q ?? null }, ctrl.signal,
+      const d = await searchSourceManga(
+        { source: src.id, type, page, query: q ?? null }, ctrl.signal,
       );
       if (ctrl.signal.aborted) return;
       const incoming = withMangaSourceMetadata(

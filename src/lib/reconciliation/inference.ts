@@ -1,6 +1,7 @@
 import { gql } from "../client";
-import { FETCH_MANGA, GET_CHAPTERS } from "../queries";
+import { GET_CHAPTERS } from "../queries";
 import type { Manga } from "../types";
+import { fetchSourceMangaDetails } from "../manga/runtime";
 import { DEFAULT_CLUSTER_INFERENCE_CONFIG } from "./constants";
 import { diceCoefficient, extractSlug, normalizeText, safeNumberSimilarity, tokenize } from "./text";
 import type {
@@ -114,7 +115,7 @@ async function fetchSearchEvidence(
   const mangaId = result.manga.id;
   const [detail, chapters] = await Promise.all([
     withTimeout(
-      (signal) => gql<{ fetchManga: { manga: Manga } }>(FETCH_MANGA, { id: mangaId }, signal),
+      (signal) => fetchSourceMangaDetails({ id: mangaId, sourceId: result.manga.source?.id }, signal),
       config.requestTimeoutMs,
     ),
     withTimeout(

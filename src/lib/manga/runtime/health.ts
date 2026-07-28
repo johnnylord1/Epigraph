@@ -220,6 +220,20 @@ export function classifyExtensionFailure(error: unknown): SourceRuntimeError {
       { cause: error, details: { failureClass: "serialization" } },
     );
   }
+  if (/source (?:is )?(?:obsolete|removed|retired)|not implemented|UnsupportedOperationException|HTTP\s*404|status\s*404/i.test(text)) {
+    return new SourceRuntimeError(
+      "SOURCE_OBSOLETE",
+      "The source no longer provides this operation or endpoint.",
+      { cause: error, details: { failureClass: "obsolete-or-removed" } },
+    );
+  }
+  if (/parser|selector|parse(?:d|r|ing)?\s+(?:html|document|response)|unexpected\s+(?:html|document)|no element found/i.test(text)) {
+    return new SourceRuntimeError(
+      "SOURCE_PARSER_FAILURE",
+      "The source could not parse the current website response.",
+      { cause: error, details: { failureClass: "parser-or-site" } },
+    );
+  }
   if (/cloudflare|captcha|challenge|cf-chl|just a moment|status\s*403|http\s*403/i.test(text)) {
     return new SourceRuntimeError(
       "ANTIBOT_CHALLENGE",

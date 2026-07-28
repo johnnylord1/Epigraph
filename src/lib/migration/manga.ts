@@ -1,6 +1,5 @@
 import { gql } from "../client";
 import {
-  FETCH_CHAPTERS,
   GET_CATEGORIES,
   UPDATE_CHAPTERS_PROGRESS,
   UPDATE_MANGA,
@@ -8,6 +7,7 @@ import {
 } from "../queries";
 import type { Category, Chapter, Manga } from "../types";
 import { fetchSourceMangaSearchWithFallback } from "../manga/sourceSearch";
+import { fetchSourceMangaChapters } from "../manga/runtime";
 import { withSuwayomiOperationLease } from "../suwayomiUpdateLock.svelte";
 import {
   appendMigrationJournalEntry,
@@ -223,8 +223,9 @@ async function fetchBestMangaMatch(
   const best = scored[0];
   if (!best) return null;
 
-  const chaptersResult = await gql<{ fetchChapters: { chapters: Chapter[] } }>(FETCH_CHAPTERS, {
+  const chaptersResult = await fetchSourceMangaChapters({
     mangaId: best.manga.id,
+    sourceId: best.manga.source?.id,
   }, signal);
 
   return {
@@ -247,8 +248,9 @@ export async function buildMangaMigrationMatch(
   matchManga: Manga,
   similarity = titleSimilarity(currentManga.title, matchManga.title),
 ): Promise<MangaMigrationMatch> {
-  const chaptersResult = await gql<{ fetchChapters: { chapters: Chapter[] } }>(FETCH_CHAPTERS, {
+  const chaptersResult = await fetchSourceMangaChapters({
     mangaId: matchManga.id,
+    sourceId: matchManga.source?.id,
   });
 
   return {

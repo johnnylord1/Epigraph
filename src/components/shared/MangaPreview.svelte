@@ -4,11 +4,12 @@
   import { onMount, onDestroy } from "svelte";
   import { X, BookmarkSimple, ArrowSquareOut, Play, CircleNotch, Books, CaretDown, FolderSimplePlus, Folder, LinkSimpleHorizontalBreak } from "phosphor-svelte";
   import { gql } from "../../lib/client";
-  import { GET_MANGA, GET_CHAPTERS, FETCH_MANGA, FETCH_CHAPTERS, UPDATE_MANGA, ENQUEUE_CHAPTERS_DOWNLOAD, GET_CATEGORIES, CREATE_CATEGORY, UPDATE_MANGA_CATEGORIES } from "../../lib/queries";
+  import { GET_MANGA, GET_CHAPTERS, UPDATE_MANGA, ENQUEUE_CHAPTERS_DOWNLOAD, GET_CATEGORIES, CREATE_CATEGORY, UPDATE_MANGA_CATEGORIES } from "../../lib/queries";
   import { GET_ALL_MANGA } from "../../lib/queries";
   import { cache, CACHE_KEYS } from "../../lib/cache";
   import { getCategoryDisplayName, isCompletedCategory, normalizeCategories } from "../../lib/library/categories";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
+  import { fetchSourceMangaChapters, fetchSourceMangaDetails } from "../../lib/manga/runtime";
   import { store, openReader, addToast, linkManga, unlinkManga, setPreviewManga, openMangaDetail, openSearchBrowseFeatured, checkAndMarkCompleted as storeCheckAndMarkCompleted } from "../../store/state.svelte";
   import NocturneState from "./NocturneState.svelte";
   import type { Manga, Chapter, Category } from "../../lib/types";
@@ -116,7 +117,7 @@
       const key = CACHE_KEYS.MANGA(id);
       if (cache.has(key)) return cache.get(key, () => Promise.resolve(store.previewManga as Manga)) as Promise<Manga>;
       try {
-        const d = await gql<{ fetchManga: { manga: Manga } }>(FETCH_MANGA, { id }, dCtrl.signal);
+        const d = await fetchSourceMangaDetails({ id, sourceId: store.previewManga?.source?.id }, dCtrl.signal);
         return d.fetchManga.manga;
       } catch (e: any) {
         if (e?.name === "AbortError") throw e;
@@ -141,7 +142,7 @@
         let nodes = [...d.chapters.nodes].sort((a, b) => a.sourceOrder - b.sourceOrder);
         if (nodes.length === 0) {
           try {
-            const fetched = await gql<{ fetchChapters: { chapters: Chapter[] } }>(FETCH_CHAPTERS, { mangaId: id }, cCtrl.signal);
+            const fetched = await fetchSourceMangaChapters({ mangaId: id, sourceId: manga?.source?.id }, cCtrl.signal);
             if (!cCtrl.signal.aborted) nodes = [...fetched.fetchChapters.chapters].sort((a, b) => a.sourceOrder - b.sourceOrder);
           } catch (e: any) { if (e?.name === "AbortError") return; }
         }

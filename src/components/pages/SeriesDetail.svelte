@@ -4,7 +4,8 @@
   import { BookmarkSimple, Download, CheckCircle, Circle, ArrowSquareOut, CircleNotch, Play, SortAscending, SortDescending, CaretDown, ArrowsClockwise, ArrowsLeftRight, List, SquaresFour, FolderSimplePlus, Trash, DownloadSimple, X, LinkSimpleHorizontalBreak, ChartLineUp } from "phosphor-svelte";
   import { gql } from "../../lib/client";
   import { _ } from "../../lib/i18n/runtime";
-  import { GET_MANGA, GET_CHAPTERS, FETCH_CHAPTERS, ENQUEUE_DOWNLOAD, UPDATE_MANGA, MARK_CHAPTER_READ, MARK_CHAPTERS_READ, DELETE_DOWNLOADED_CHAPTERS, ENQUEUE_CHAPTERS_DOWNLOAD, GET_ALL_MANGA, GET_CATEGORIES, CREATE_CATEGORY, UPDATE_MANGA_CATEGORIES, GET_DOWNLOAD_STATUS, START_DOWNLOADER } from "../../lib/queries";
+  import { GET_MANGA, GET_CHAPTERS, ENQUEUE_DOWNLOAD, UPDATE_MANGA, MARK_CHAPTER_READ, MARK_CHAPTERS_READ, DELETE_DOWNLOADED_CHAPTERS, ENQUEUE_CHAPTERS_DOWNLOAD, GET_ALL_MANGA, GET_CATEGORIES, CREATE_CATEGORY, UPDATE_MANGA_CATEGORIES, GET_DOWNLOAD_STATUS, START_DOWNLOADER } from "../../lib/queries";
+  import { fetchSourceMangaChapters } from "../../lib/manga/runtime";
   import { cache, CACHE_KEYS, recordSourceAccess } from "../../lib/cache";
   import { getCategoryDisplayName, isCompletedCategory, normalizeCategories } from "../../lib/library/categories";
   import { dedupeMangaById, dedupeMangaByTitle } from "../../lib/util";
@@ -482,7 +483,7 @@
     if (cached) {
       applyChapters(cached.data); loadingChapters = false;
       if (Date.now() - cached.fetchedAt < CHAPTER_TTL_MS) return;
-      gql(FETCH_CHAPTERS, { mangaId: id }, ctrl.signal)
+      fetchSourceMangaChapters({ mangaId: id, sourceId: manga?.source?.id }, ctrl.signal)
         .then(() => gql<{ chapters: { nodes: Chapter[] } }>(GET_CHAPTERS, { mangaId: id }, ctrl.signal))
         .then(d => {
           if (ctrl.signal.aborted || loadingChaptersFor !== id) return;
@@ -496,7 +497,7 @@
     loadCachedChapters().then(d => {
       if (ctrl.signal.aborted || loadingChaptersFor !== id) return;
       applyChapters(d.chapters.nodes); loadingChapters = false;
-      return gql(FETCH_CHAPTERS, { mangaId: id }, ctrl.signal)
+      return fetchSourceMangaChapters({ mangaId: id, sourceId: manga?.source?.id }, ctrl.signal)
         .then(() => gql<{ chapters: { nodes: Chapter[] } }>(GET_CHAPTERS, { mangaId: id }, ctrl.signal))
         .then(fresh => {
           if (ctrl.signal.aborted || loadingChaptersFor !== id) return;
@@ -624,7 +625,7 @@
     if (!store.activeManga || refreshing) return;
     refreshing = true;
     chapterStore.delete(store.activeManga.id);
-    gql(FETCH_CHAPTERS, { mangaId: store.activeManga.id })
+    fetchSourceMangaChapters({ mangaId: store.activeManga.id, sourceId: store.activeManga.source?.id })
       .then(() => reloadChapters(store.activeManga!.id))
       .then(() => addToast({ kind: "success", title: translate("ui_chaptersRefreshed") }))
       .catch((error) => {

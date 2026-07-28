@@ -3,6 +3,13 @@ import { relative, resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 
 const COMPONENTS_ROOT = resolve(process.cwd(), "src/components");
+const SOURCE_ROOT = resolve(process.cwd(), "src");
+const LIVE_SOURCE_OPERATIONS = [
+  "FETCH_SOURCE_MANGA",
+  "FETCH_MANGA",
+  "FETCH_CHAPTERS",
+  "FETCH_CHAPTER_PAGES",
+] as const;
 
 // Existing callers migrate incrementally. Adding a new direct caller is forbidden.
 const LEGACY_DIRECT_GRAPHQL_COMPONENTS = new Set([
@@ -25,6 +32,16 @@ function walkSvelteFiles(directory: string): string[] {
     const path = resolve(directory, entry.name);
     if (entry.isDirectory()) return walkSvelteFiles(path);
     return entry.isFile() && entry.name.endsWith(".svelte") ? [path] : [];
+  });
+}
+
+function walkProductionFiles(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = resolve(directory, entry.name);
+    if (entry.isDirectory()) return walkProductionFiles(path);
+    if (!entry.isFile() || (!entry.name.endsWith(".ts") && !entry.name.endsWith(".svelte"))) return [];
+    if (entry.name.endsWith(".test.ts")) return [];
+    return [path];
   });
 }
 
@@ -58,5 +75,41 @@ describe("source runtime GraphQL boundary", () => {
       (path) => !LEGACY_DIRECT_GRAPHQL_COMPONENTS.has(path),
     );
     expect(unexpected).toEqual([]);
+  });
+
+  test("keeps all live source operations behind SourceRuntime", () => {
+    const allowed = new Set([
+      "lib/queries.ts",
+      "lib/manga/runtime/compatibility.ts",
+    ]);
+    const violations = walkProductionFiles(SOURCE_ROOT)
+      .map((path) => ({
+        path: relative(SOURCE_ROOT, path).replaceAll("\\", "/"),
+        source: readFileSync(path, "utf8"),
+      }))
+      .filter(({ path, source }) =>
+        !allowed.has(path) && LIVE_SOURCE_OPERATIONS.some((operation) => source.includes(operation)),
+      )
+      .map(({ path }) => path)
+      .sort();
+
+    expect(violations).toEqual([]);
+  });
+
+  test("keeps legacy repository settings inside compatibility code", () => {
+    const allowed = new Set([
+      "lib/queries.ts",
+      "lib/manga/runtime/compatibility.ts",
+    ]);
+    const violations = walkProductionFiles(SOURCE_ROOT)
+      .map((path) => ({
+        path: relative(SOURCE_ROOT, path).replaceAll("\\", "/"),
+        source: readFileSync(path, "utf8"),
+      }))
+      .filter(({ path, source }) => !allowed.has(path) && /\bextensionRepos\b/.test(source))
+      .map(({ path }) => path)
+      .sort();
+
+    expect(violations).toEqual([]);
   });
 });

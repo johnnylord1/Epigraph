@@ -21,6 +21,7 @@
     type ManagedExtension,
   } from "../../lib/managedExtensions";
   import {
+    canonicalizeExtensionStoreUrl,
     getManagedSourceRuntime,
     runTransactionalExtensionUpdates,
   } from "../../lib/manga/runtime";
@@ -452,8 +453,10 @@
       if (!(await ensureMangaServerAwake())) return;
       const runtime = await getManagedSourceRuntime();
       const current = await runtime.listStores();
-      const currentUrls = new Set(current.map((store) => store.indexUrl));
-      const updatedUrls = new Set(updated.map((url) => url.trim()).filter(Boolean));
+      const currentUrls = new Set(current.map((store) => canonicalizeExtensionStoreUrl(store.indexUrl)));
+      const updatedUrls = new Set(
+        updated.map((url) => url.trim()).filter(Boolean).map(canonicalizeExtensionStoreUrl),
+      );
       for (const url of currentUrls) {
         if (!updatedUrls.has(url)) await runtime.removeStore(url);
       }

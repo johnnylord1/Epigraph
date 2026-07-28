@@ -6,7 +6,8 @@
   import { gql } from "../../lib/client";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
-  import { GET_SOURCES, FETCH_CHAPTERS } from "../../lib/queries";
+  import { GET_SOURCES } from "../../lib/queries";
+  import { fetchSourceMangaChapters } from "../../lib/manga/runtime";
   import { fetchSourceMangaSearchWithFallback } from "../../lib/manga/sourceSearch";
   import { ensureServerAwakeFor } from "../../lib/serverLifecycle";
   import { waitForSuwayomiGraphqlReady } from "../../lib/suwayomiReadiness";
@@ -196,7 +197,7 @@
   async function selectMatch(m: Manga, similarity: number) {
     loadingMatchId = m.id; error = null;
     try {
-      const d = await gql<{ fetchChapters: { chapters: Chapter[] } }>(FETCH_CHAPTERS, { mangaId: m.id });
+      const d = await fetchSourceMangaChapters({ mangaId: m.id, sourceId: m.source?.id });
       const chapters = d.fetchChapters.chapters;
       const matchReadCount = chapters.filter((c) => {
         const old = currentChapters.find((o) => Math.abs(o.chapterNumber - c.chapterNumber) < 0.01);

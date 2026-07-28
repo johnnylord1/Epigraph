@@ -139,6 +139,8 @@ describe("extension failure classification", () => {
     ["ClassCastException: okhttp3.Response cannot be cast to okhttp3.Response", "EXTENSION_INCOMPATIBLE", false],
     ["DemoInterceptor does not implement kotlin.jvm.functions.Function1", "EXTENSION_INCOMPATIBLE", false],
     ["JsonDecodingException: missing field", "EXTENSION_INCOMPATIBLE", false],
+    ["Source is obsolete and operation is not implemented", "SOURCE_OBSOLETE", false],
+    ["Parser found no element in HTML document", "SOURCE_PARSER_FAILURE", false],
     ["Cloudflare challenge returned HTTP 403", "ANTIBOT_CHALLENGE", true],
     ["HTTP 401 login required", "AUTHENTICATION_REQUIRED", false],
     ["HTTP 429 too many requests", "RATE_LIMITED", true],

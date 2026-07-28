@@ -24,6 +24,7 @@ import type {
   SourceSearchResult,
 } from "./types";
 import type { GraphQLTransport } from "./transport";
+import { canonicalizeExtensionStoreUrl } from "./storeUrl";
 
 interface ContractInspection {
   report: RuntimeContractReport;
@@ -65,9 +66,9 @@ export class SuwayomiAdapter implements SourceRuntime {
 
   async addStore(input: ExtensionStoreInput): Promise<ExtensionStore> {
     await this.requireCompatible();
-    const indexUrl = normalizeStoreUrl(input.indexUrl);
+    const indexUrl = canonicalizeExtensionStoreUrl(input.indexUrl);
     const current = await this.listStores(input.signal);
-    const existing = current.find((store) => normalizeStoreUrl(store.indexUrl) === indexUrl);
+    const existing = current.find((store) => canonicalizeExtensionStoreUrl(store.indexUrl) === indexUrl);
     if (existing) return existing;
 
     if (this.profile.id === "suwayomi-v23") {
@@ -87,9 +88,9 @@ export class SuwayomiAdapter implements SourceRuntime {
 
   async removeStore(indexUrl: string, signal?: AbortSignal): Promise<ExtensionStore | null> {
     await this.requireCompatible();
-    const normalizedUrl = normalizeStoreUrl(indexUrl);
+    const normalizedUrl = canonicalizeExtensionStoreUrl(indexUrl);
     const current = await this.listStores(signal);
-    const existing = current.find((store) => normalizeStoreUrl(store.indexUrl) === normalizedUrl) ?? null;
+    const existing = current.find((store) => canonicalizeExtensionStoreUrl(store.indexUrl) === normalizedUrl) ?? null;
     if (!existing) return null;
 
     if (this.profile.id === "suwayomi-v23") {
@@ -230,21 +231,6 @@ export class SuwayomiAdapter implements SourceRuntime {
           missingTypes: Object.keys(report.missingFields).join(","),
         },
       },
-    );
-  }
-}
-
-function normalizeStoreUrl(value: string): string {
-  const trimmed = value.trim().replace(/\/+$/, "");
-  try {
-    const url = new URL(trimmed);
-    if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("unsupported protocol");
-    return url.toString().replace(/\/+$/, "");
-  } catch (cause) {
-    throw new SourceRuntimeError(
-      "CONFIGURATION_REQUIRED",
-      "Extension store URL must use http:// or https://.",
-      { cause },
     );
   }
 }

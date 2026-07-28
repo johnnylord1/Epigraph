@@ -13,7 +13,8 @@
   import { open } from "@tauri-apps/plugin-shell";
   import { getServerAuthHeader, getServerUrl, gql, thumbUrl } from "../../lib/client";
   import { acquireResolvedMediaUrl, preloadBlobUrls, resetImageCache, resolvedImage, warmResolvedMediaUrl } from "../../lib/imageCache";
-  import { FETCH_CHAPTER_PAGES, MARK_CHAPTER_READ, ENQUEUE_DOWNLOAD, ENQUEUE_CHAPTERS_DOWNLOAD } from "../../lib/queries";
+  import { MARK_CHAPTER_READ, ENQUEUE_DOWNLOAD, ENQUEUE_CHAPTERS_DOWNLOAD } from "../../lib/queries";
+  import { fetchSourceChapterPages } from "../../lib/manga/runtime";
   import { toSuwayomiWebViewUrl } from "../../lib/suwayomiWebView";
   import { store, closeReader, openReader, addHistory, updateSettings, checkAndMarkCompleted, setSettingsOpen, addBookmark, removeBookmark } from "../../store/state.svelte";
   import { isEditableKeyboardTarget, matchesKeybind, toggleFullscreen, DEFAULT_KEYBINDS } from "../../lib/keybinds";
@@ -73,7 +74,7 @@
     if (cached && cached.length === 0) pageCache.delete(chapterId);
     if (signal?.aborted) return Promise.reject(new DOMException("Aborted", "AbortError"));
     if (!inflight.has(chapterId)) {
-      const p = gql<{ fetchChapterPages: { pages: string[] } }>(FETCH_CHAPTER_PAGES, { chapterId })
+      const p = fetchSourceChapterPages({ chapterId })
         .then(d => {
           const urls = d.fetchChapterPages.pages.map(thumbUrl);
           if (urls.length) {
