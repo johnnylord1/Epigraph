@@ -842,7 +842,14 @@ async fn promote_suwayomi_runtime_update_unlocked(
     if let Err(error) = apply_runtime_promotion(&promotion) {
         journal.transition(UpdateJournalState::RollbackRunning);
         let _ = suwayomi_maintenance::write_update_journal(&journal_path, &journal);
-        let rollback = rollback_promoted_runtime(&app, &target, &promotion, &snapshot_dir);
+        let rollback = rollback_promoted_runtime(
+            &app,
+            &target,
+            &promotion,
+            &snapshot_dir,
+            auth_header.as_deref(),
+        )
+        .await;
         if rollback.is_ok() {
             journal.transition(UpdateJournalState::RolledBack);
             let _ = suwayomi_maintenance::write_update_journal(&journal_path, &journal);
@@ -865,7 +872,9 @@ async fn promote_suwayomi_runtime_update_unlocked(
             &target,
             &promotion,
             &snapshot_dir,
-        );
+            auth_header.as_deref(),
+        )
+        .await;
     }
     if let Err(error) = migrate_extension_store_config(&target.root_dir, &staging_manifest.version)
     {
@@ -877,7 +886,23 @@ async fn promote_suwayomi_runtime_update_unlocked(
             &target,
             &promotion,
             &snapshot_dir,
-        );
+            auth_header.as_deref(),
+        )
+        .await;
+    }
+    journal.transition(UpdateJournalState::ProfileMigrated);
+    if let Err(error) = suwayomi_maintenance::write_update_journal(&journal_path, &journal) {
+        return rollback_after_journal_failure(
+            error,
+            &journal_path,
+            &mut journal,
+            &app,
+            &target,
+            &promotion,
+            &snapshot_dir,
+            auth_header.as_deref(),
+        )
+        .await;
     }
     journal.transition(UpdateJournalState::PostCheckRunning);
     if let Err(error) = suwayomi_maintenance::write_update_journal(&journal_path, &journal) {
@@ -889,7 +914,9 @@ async fn promote_suwayomi_runtime_update_unlocked(
             &target,
             &promotion,
             &snapshot_dir,
-        );
+            auth_header.as_deref(),
+        )
+        .await;
     }
 
     let start_result = restart_managed_runtime(&app, &target).and_then(|_| {
@@ -931,14 +958,19 @@ async fn promote_suwayomi_runtime_update_unlocked(
         Err(error) => {
             journal.transition(UpdateJournalState::RollbackRunning);
             let _ = suwayomi_maintenance::write_update_journal(&journal_path, &journal);
-            let rollback_result =
-                rollback_promoted_runtime(&app, &target, &promotion, &snapshot_dir).map_err(
-                    |rollback_error| {
-                        format!(
+            let rollback_result = rollback_promoted_runtime(
+                &app,
+                &target,
+                &promotion,
+                &snapshot_dir,
+                auth_header.as_deref(),
+            )
+            .await
+            .map_err(|rollback_error| {
+                format!(
                     "Promotion failed: {error}. Automatic rollback also failed: {rollback_error}"
                 )
-                    },
-                );
+            });
             match rollback_result {
                 Ok(()) => {
                     journal.transition(UpdateJournalState::RolledBack);
@@ -1037,7 +1069,7 @@ fn restart_after_preparation_failure(
     Ok(())
 }
 
-fn rollback_after_journal_failure(
+async fn rollback_after_journal_failure(
     journal_error: String,
     journal_path: &Path,
     journal: &mut suwayomi_maintenance::SuwayomiUpdateJournal,
@@ -1045,10 +1077,19 @@ fn rollback_after_journal_failure(
     target: &LocalServerTarget,
     promotion: &RuntimePromotionState,
     snapshot_dir: &Path,
+    auth_header: Option<&str>,
 ) -> Result<SuwayomiUpdatePromotionResult, String> {
     journal.transition(UpdateJournalState::RollbackRunning);
     let _ = suwayomi_maintenance::write_update_journal(journal_path, journal);
-    match rollback_promoted_runtime(app, target, promotion, snapshot_dir) {
+    match rollback_promoted_runtime(
+        app,
+        target,
+        promotion,
+        snapshot_dir,
+        auth_header,
+    )
+    .await
+    {
         Ok(()) => {
             journal.transition(UpdateJournalState::RolledBack);
             let _ = suwayomi_maintenance::write_update_journal(journal_path, journal);
@@ -2617,14 +2658,17 @@ fn rename_same_parent(from: &Path, to: &Path) -> Result<(), String> {
     })
 }
 
-fn rollback_promoted_runtime(
+async fn rollback_promoted_runtime(
     app: &AppHandle,
     target: &LocalServerTarget,
     promotion: &RuntimePromotionState,
     snapshot_dir: &Path,
+    auth_header: Option<&str>,
 ) -> Result<(), String> {
     kill_tachidesk_target(app, target);
     wait_for_managed_runtime_stop(&target.root_dir, 0)?;
+    assert_local_port_released(target.port)?;
+    assert_profile_database_unlocked(&target.root_dir)?;
     rollback_promoted_directories(promotion)?;
     restore_snapshot_to_root(snapshot_dir, &target.root_dir)?;
     restart_managed_runtime(app, target)?;
@@ -2633,7 +2677,11 @@ fn rollback_promoted_runtime(
     } else {
         bundled_jar_path(app)
     };
-    wait_for_runtime_jar(target, &expected_jar, runtime_stability_window())
+    wait_for_runtime_jar(target, &expected_jar, runtime_stability_window())?;
+    let restored_version = read_suwayomi_jar_version(&expected_jar)
+        .and_then(|version| version.version)
+        .unwrap_or_else(|| "restored".to_string());
+    run_suwayomi_graphql_health_check(&target.server_url, auth_header, &restored_version).await
 }
 
 fn rollback_promoted_directories(promotion: &RuntimePromotionState) -> Result<(), String> {

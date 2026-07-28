@@ -138,7 +138,11 @@ aethon-update-snapshots/
 
 Snapshot uses an allowlist and records SHA-256 for every copied file. It excludes downloads, imports, cache, covers, thumbnails, books, and migration journals.
 
-The updater checks disk space before stopping the runtime. Temporary snapshot directories are finalized by rename within the same parent. Partial snapshots are not considered valid.
+The updater stops the owned runtime, proves that its loopback port is released
+and opens the H2 files exclusively before planning or copying the snapshot. It
+then checks disk space. Temporary snapshot directories are finalized by rename
+within the same parent. Partial snapshots are not considered valid. Any failure
+before publication restarts the previous runtime.
 
 ## Staging
 
@@ -172,6 +176,27 @@ Rollback runs if promotion, restart, process stability, or health check fails. R
 - snapshot files are restored and rehashed;
 - the previous runtime starts;
 - the previous process remains alive through the stability window.
+- Library, Sources and Extensions GraphQL checks pass on the restored runtime.
+
+The promotion journal records the stopped, promoted, profile-migrated,
+post-check, committed and rollback states atomically. A non-committed journal is
+recovered before the next managed spawn; runtime files and profile state are
+always restored as one logical unit.
+
+## Maintenance Mutation Policy
+
+Maintenance drains active Suwayomi operations before stopping the runtime and
+holds an exclusive cross-process lease until promotion or rollback has been
+revalidated. New UI mutations and remote Syncd Suwayomi-proxy mutations are
+rejected with a retryable maintenance result before Aethon accepts or forwards
+them. Reads cached outside Suwayomi and Core/Syncd replication remain available.
+
+Aethon intentionally does not persist arbitrary GraphQL requests as an outbox:
+many Suwayomi mutations do not expose an idempotency key, so replaying them
+could duplicate downloads or destructive actions. Mutations already accepted
+by Core remain in Core's durable state and are not interpreted as deletions
+while Suwayomi is unavailable. Maintenance ends only after the selected runtime
+has passed its final health check.
 
 On the next managed startup, Aethon prefers `suwayomi-runtime/current/Suwayomi-Server.jar` when it exists and otherwise falls back to the bundled JAR. Windows uses the bundled `javaw.exe` when available so the managed server remains background-only.
 

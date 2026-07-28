@@ -30,6 +30,7 @@ pub enum MaintenancePhase {
 pub enum UpdateJournalState {
     CurrentStopped,
     RuntimePromoted,
+    ProfileMigrated,
     PostCheckRunning,
     Committed,
     RollbackRunning,
@@ -443,7 +444,7 @@ mod tests {
     fn journal_round_trips_and_rejects_corruption() {
         let temp = tempdir().unwrap();
         let path = update_journal_path(temp.path());
-        let journal = new_update_journal(
+        let mut journal = new_update_journal(
             "operation".into(),
             "main".into(),
             "C:/profile".into(),
@@ -456,6 +457,7 @@ mod tests {
             "C:/runtime/staging/v2.3.2243".into(),
             true,
         );
+        journal.transition(UpdateJournalState::ProfileMigrated);
         write_update_journal(&path, &journal).unwrap();
         assert_eq!(read_update_journal(&path).unwrap(), Some(journal));
 
