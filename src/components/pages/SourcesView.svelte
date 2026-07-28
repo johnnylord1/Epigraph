@@ -20,7 +20,10 @@
     toManagedNovelCatalogEntry,
     type ManagedExtension,
   } from "../../lib/managedExtensions";
-  import { getManagedSourceRuntime } from "../../lib/manga/runtime";
+  import {
+    getManagedSourceRuntime,
+    runTransactionalExtensionUpdates,
+  } from "../../lib/manga/runtime";
   import {
     addNovelRepositoryToState,
     deriveNovelRepositoryUiState,
@@ -225,6 +228,16 @@
 
   function extensionErrorMessage(error: unknown) {
     return error instanceof Error ? error.message : String(error || "Extension operation failed");
+  }
+
+  async function certifyMangaExtensionUpdates(candidates: Parameters<typeof runTransactionalExtensionUpdates>[0]) {
+    try {
+      return await runTransactionalExtensionUpdates(candidates);
+    } catch {
+      throw new Error(
+        "Aethon could not verify this extension update safely. The previous version was preserved; check the Suwayomi update in Settings and try again.",
+      );
+    }
   }
 
   function extensionOperationLabel(operation: ExtensionOperation) {
@@ -919,13 +932,22 @@
       async () => {
         const runtime = await getManagedSourceRuntime();
         await runtime.refreshExtensions();
-        await runtime.updateExtension({ packageName: extension.pkgName });
+        const candidate = (await runtime.listExtensions())
+          .find((item) => item.packageName === extension.pkgName);
+        if (!candidate) throw new Error("The extension update is no longer available.");
+        const batchResult = await certifyMangaExtensionUpdates([candidate]);
+        const rejection = batchResult.rejected.find((item) => item.packageName === extension.pkgName);
+        if (rejection) {
+          throw new Error("The update was preserved for review because compatibility checks failed.");
+        }
       },
       extension.pkgName,
       "update",
       false,
     );
     if (!didUpdate) return;
+
+    await loadExtensions();
 
     const refreshed = {
       ...(extensions.find((item) => item.pkgName === extension.pkgName) ?? extension),
@@ -939,7 +961,7 @@
     addToast({
       kind: "success",
       title: translate("ui_extensionUpdated"),
-      body: `${extension.name} is installed. Suwayomi will load the new version after its next restart.`,
+      body: `${extension.name} passed compatibility checks and is ready.`,
     });
   }
 
@@ -998,18 +1020,29 @@
         }
         const runtime = await getManagedSourceRuntime();
         await runtime.refreshExtensions();
-        const updatedPkgNames = new Set<string>();
+        const candidateNames = new Set(candidates.map((extension) => extension.pkgName));
+        const runtimeCandidates = (await runtime.listExtensions())
+          .filter((extension) => candidateNames.has(extension.packageName));
+        const batchResult = await certifyMangaExtensionUpdates(runtimeCandidates);
+        const updatedPkgNames = new Set(batchResult.approved.map((item) => item.packageName));
+        const rejectedPkgNames = new Set(batchResult.rejected.map((item) => item.packageName));
+        failedUpdateCount = candidates.length - updatedPkgNames.size;
         for (const extension of candidates) {
-          try {
-            await runtime.updateExtension({ packageName: extension.pkgName });
-            updatedPkgNames.add(extension.pkgName);
+          if (updatedPkgNames.has(extension.pkgName)) {
             mockSettingsStore.refreshConfig(extension.pkgName, extension);
-          } catch (error) {
-            failedUpdateCount += 1;
-            console.error(error);
-            setExtensionOperationError(extension.pkgName, extensionErrorMessage(error));
+          } else if (rejectedPkgNames.has(extension.pkgName)) {
+            setExtensionOperationError(
+              extension.pkgName,
+              "The update was preserved for review because compatibility checks failed.",
+            );
+          } else {
+            setExtensionOperationError(
+              extension.pkgName,
+              "This update does not provide the artifact provenance required for automatic activation.",
+            );
           }
         }
+        await loadExtensions();
         extensions = extensions.map((extension) => (
           updatedPkgNames.has(extension.pkgName)
             ? { ...extension, hasUpdate: false }
@@ -1025,7 +1058,7 @@
         body:
           failedUpdateCount > 0
             ? `${succeededCount}/${candidates.length} extension${candidates.length === 1 ? "" : "s"} updated. Check the highlighted source errors.`
-            : `${candidates.length} extension${candidates.length === 1 ? "" : "s"} installed. Suwayomi will load the new version after its next restart.`,
+            : `${candidates.length} extension${candidates.length === 1 ? "" : "s"} passed compatibility checks and are ready.`,
       });
     } catch (error) {
       console.error(error);

@@ -3221,6 +3221,46 @@ pub(crate) fn novel_source_classification_state_path_for_target(
     Ok(novels_dir.join("source-classification-state.json"))
 }
 
+fn extension_compatibility_state_path_for_target(
+    launch_target: &LaunchTargetInfo,
+    profile_id: Option<&str>,
+    server_url: Option<&str>,
+) -> Result<PathBuf, String> {
+    let scope_root = if let Some(profile_key) = local_server_profile_key_from_id(profile_id) {
+        local_server_root_for_profile_key(&profile_key)
+    } else if let Ok(target) = resolve_local_server_target(launch_target, server_url, None, None) {
+        target.root_dir
+    } else {
+        let scope = server_url
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(sha256_hex)
+            .unwrap_or_else(|| "main".to_string());
+        suwayomi_data_dir().join("runtime-scopes").join(scope)
+    };
+    let metadata_dir = scope_root.join(".aethon");
+    std::fs::create_dir_all(&metadata_dir).map_err(|error| error.to_string())?;
+    Ok(metadata_dir.join("extension-compatibility.json"))
+}
+
+fn write_text_file_atomic(path: &Path, contents: &str) -> Result<(), String> {
+    let temp_path = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    {
+        let mut file = std::fs::File::create(&temp_path).map_err(|error| error.to_string())?;
+        file.write_all(contents.as_bytes())
+            .map_err(|error| error.to_string())?;
+        file.sync_all().map_err(|error| error.to_string())?;
+    }
+    let result = atomic_replace_file(&temp_path, path).map_err(|error| error.to_string());
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp_path);
+    }
+    result
+}
+
 pub(crate) fn novel_library_state_path_for_target(
     launch_target: &LaunchTargetInfo,
     profile_id: Option<&str>,
@@ -3357,6 +3397,55 @@ fn write_novel_source_classification_state(
             eprintln!("syncd replication novel classification notify failed: {error}");
         }
     });
+    Ok(path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn read_extension_compatibility_state(
+    profile_id: Option<String>,
+    server_url: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<Option<String>, String> {
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    let path = extension_compatibility_state_path_for_target(
+        &launch_target,
+        profile_id.as_deref(),
+        server_url.as_deref(),
+    )?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    std::fs::read_to_string(path)
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn write_extension_compatibility_state(
+    contents: String,
+    profile_id: Option<String>,
+    server_url: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    if contents.len() > 4 * 1024 * 1024 {
+        return Err("Extension compatibility state exceeds the supported size.".to_string());
+    }
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    let path = extension_compatibility_state_path_for_target(
+        &launch_target,
+        profile_id.as_deref(),
+        server_url.as_deref(),
+    )?;
+    let parsed = serde_json::from_str::<serde_json::Value>(&contents)
+        .map_err(|error| format!("Extension compatibility state is invalid JSON: {error}"))?;
+    if !parsed.is_object()
+        || !parsed
+            .get("records")
+            .is_some_and(serde_json::Value::is_array)
+    {
+        return Err("Extension compatibility state has an invalid shape.".to_string());
+    }
+    write_text_file_atomic(&path, &contents)?;
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -5625,6 +5714,8 @@ pub fn run() {
             write_novel_repository_state,
             read_novel_source_classification_state,
             write_novel_source_classification_state,
+            read_extension_compatibility_state,
+            write_extension_compatibility_state,
             read_book_library_state,
             write_book_library_state,
             read_migration_journal_state,
@@ -5674,6 +5765,7 @@ pub fn run() {
             suwayomi_update::stage_suwayomi_runtime_update,
             suwayomi_update::promote_suwayomi_runtime_update,
             suwayomi_update::install_suwayomi_runtime_update,
+            suwayomi_update::certify_suwayomi_extension_update_batch,
             download_and_install_update,
             probe_server_health,
             get_runtime_diagnostics,

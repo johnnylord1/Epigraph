@@ -356,3 +356,26 @@ arquivos inteiros ou usar operacoes destrutivas globais.
 SR1-SR8 estao concluidos. A `v2.3.2243` esta allowlisted apos a certificacao
 controlada do SR7 e protegida pelo gate SR8; websites externos e JCEF permanecem
 checks explicitos, sem alterar a compatibilidade estrutural do runtime.
+
+### SR11 - Atualizacoes transacionais de extensoes
+
+- `ExtensionUpdateCoordinator` atua somente como orquestrador tipado. Download
+  com limite, staging, snapshot, candidate, ativacao e rollback ficam no comando
+  nativo; carregamento e instalacao continuam no Extension Manager oficial.
+- Updates individuais e `Update all` da tela ativa de Sources usam um unico
+  lote sequencial. Nenhum update e mais ativado pela mutacao direta
+  `runtime.updateExtension()`.
+- O candidate e o runtime principal nunca executam simultaneamente. O H2 e
+  copiado apenas depois de shutdown, porta livre e lock exclusivo comprovados.
+- O journal separado de extensoes permite restaurar o snapshot no startup se o
+  Aethon for encerrado durante certificacao ou ativacao. Runtime, configuracao e
+  perfil voltam como uma unidade antes de novas mutacoes.
+- O registro de compatibilidade e atomico, versionado e escopado por perfil. A
+  identidade inclui hashes do artefato e do runtime, evitando considerar dois
+  binarios equivalentes apenas por package/version.
+- O gate real confirmou o APK exato pelo `installExternalExtension` oficial,
+  27 source IDs estaveis apos restart e zero requests a websites. A espera
+  limitada de readiness evita falso negativo enquanto o Extension Manager
+  termina de registrar as sources.
+- Nao foram criados classloader, scraper, conversor APK->JAR, formato de
+  extensao, manipulacao de classpath ou acesso direto ao H2.

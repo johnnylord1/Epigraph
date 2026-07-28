@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import {
+  DIRECT_INSTALL_CANARY,
   STRUCTURAL_CANARY,
   WORKFLOW_BASELINE,
   WORKFLOW_CANDIDATE,
@@ -19,6 +20,9 @@ test("pins the exact runtime and structural extension canary", () => {
   assert.match(WORKFLOW_CANDIDATE.sha256, /^[a-f0-9]{64}$/);
   assert.equal(STRUCTURAL_CANARY.packageName, "eu.kanade.tachiyomi.extension.all.akuma");
   assert.match(STRUCTURAL_CANARY.sha256, /^[a-f0-9]{64}$/);
+  assert.equal(DIRECT_INSTALL_CANARY.versionCode, "10");
+  assert.match(DIRECT_INSTALL_CANARY.sha256, /^[a-f0-9]{64}$/);
+  assert.match(DIRECT_INSTALL_CANARY.url, new RegExp(DIRECT_INSTALL_CANARY.storeCommit));
 });
 
 test("rejects structural runtime and extension ABI errors", () => {

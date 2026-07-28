@@ -131,10 +131,47 @@ derived byte stream non-reproducible; it is not used as the artifact identity.
 The V23 candidate loads it only through the supported profile-migration path.
 
 Direct upload of the migrated JAR through V23 `installExternalExtension` raised
-an upstream `NullPointerException` while parsing the Android manifest. The gate
-therefore does not claim that exact-version JAR staging is supported by that
-mutation. SR11 must stop if no official Suwayomi operation can provide staging
-and rollback without manipulating extension files, classpaths or H2 directly.
+an upstream `NullPointerException` while parsing the Android manifest. That JAR
+path remains unsupported. A follow-up SR11 proof pinned the original Akuma
+`1.4.10` APK from Keiyoushi commit
+`4aee126a1b34faa4224ba1646585712d9bee043a`, verified SHA-256
+`3ae4751efb075495235f67233b14c0207d921cf00d214736a5d23a6e23450aaa`,
+and submitted those exact bytes through the official V23
+`installExternalExtension` operation. Suwayomi performed its own supported APK
+handling, registered 27 sources and preserved the same package, version and
+source IDs after restart. Aethon does not convert APKs or edit extension files.
 
 Live sources remain observational. The deterministic gate does not infer
 website health, Cloudflare behavior, authentication or parser compatibility.
+
+## SR11 Transactional Extension Updates
+
+On 2026-07-28, automatic manga-extension updates were moved behind
+`ExtensionUpdateCoordinator` and a native, single-batch transaction.
+
+- Update metadata and artifact URLs come from the active Suwayomi Extension
+  Store inventory. Automatic activation requires credential-free HTTPS store
+  provenance; manual artifacts are not silently promoted.
+- Artifacts stream sequentially to a bounded temporary directory (64 MiB per
+  artifact). The renderer does not download or retain APK/JAR bytes.
+- The current runtime is drained and stopped before the H2/profile snapshot.
+  The candidate receives only the validated snapshot allowlist and runs with
+  `maxSourcesInParallel = 1`.
+- Exact APK/JAR bytes are installed only through Suwayomi's official
+  `installExternalExtension` operation. Registration is polled for at most 15
+  seconds because GraphQL readiness can precede Extension Manager readiness.
+- Approved artifacts are activated as one logical batch. Any activation or
+  source-identity divergence restores the runtime profile snapshot before
+  maintenance is released.
+- A separate atomic journal covers `PREPARED`, `SNAPSHOT_CREATED`,
+  `CERTIFYING`, `ACTIVATING`, `COMMITTED`, `ROLLBACK_RUNNING` and
+  `ROLLED_BACK`. Startup recovery restores an incomplete batch before spawning
+  the managed runtime.
+- Compatibility evidence is versioned per profile and keyed by profile,
+  package, version code, artifact hash, store, runtime version and runtime JAR
+  hash. Persisted failures use stable codes and do not contain private paths,
+  URLs, credentials or exception text.
+
+The deterministic workflow passed exact V23 install/restart, the V21-to-V23
+profile workflow, search, details, chapters and pages with zero website source
+requests and no residual JVM. Live website health remains outside this gate.

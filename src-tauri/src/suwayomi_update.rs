@@ -55,6 +55,9 @@ const SUWAYOMI_SNAPSHOT_ALLOWLIST: &[&str] = &[
 ];
 const SUWAYOMI_SNAPSHOT_DIRECTORY_ALLOWLIST: &[&str] = &["extensions", "settings"];
 const SUWAYOMI_SERVER_OWNER_FILE: &str = "server.owner.json";
+const EXTENSION_BATCH_ROOT: &str = "extension-update-batches";
+const EXTENSION_BATCH_JOURNAL: &str = "extension-update-journal.json";
+const MAX_EXTENSION_ARTIFACT_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -307,6 +310,99 @@ pub struct SuwayomiUpdateLockStatus {
     pub in_progress: bool,
     pub owner: Option<String>,
     pub started_at_ms: Option<u128>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionUpdateBatchItem {
+    package_name: String,
+    version_code: String,
+    version_name: String,
+    store_id: String,
+    store_url_canonical: String,
+    artifact_url: String,
+    artifact_type: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionUpdateBatchEvidence {
+    package_name: String,
+    version_code: String,
+    version_name: String,
+    artifact_sha256: String,
+    store_id: String,
+    store_url_canonical: String,
+    source_ids: Vec<String>,
+    status: String,
+    failure_owner: String,
+    failure_code: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionUpdateBatchResult {
+    batch_id: String,
+    runtime_version: String,
+    runtime_artifact_sha256: String,
+    approved: Vec<ExtensionUpdateBatchEvidence>,
+    rejected: Vec<ExtensionUpdateBatchEvidence>,
+    restarted_runtime: bool,
+}
+
+#[derive(Clone, Debug)]
+struct StagedExtensionArtifact {
+    input: ExtensionUpdateBatchItem,
+    file_name: String,
+    path: PathBuf,
+    sha256: String,
+}
+
+struct ExtensionBatchCleanup {
+    root: PathBuf,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum ExtensionBatchJournalState {
+    Prepared,
+    SnapshotCreated,
+    Certifying,
+    Activating,
+    Committed,
+    RollbackRunning,
+    RolledBack,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExtensionBatchJournal {
+    schema_version: u32,
+    operation_id: String,
+    state: ExtensionBatchJournalState,
+    profile_id: String,
+    root_dir: String,
+    server_url: String,
+    runtime_version: String,
+    snapshot_path: String,
+    batch_root: String,
+    candidate_profile_id: String,
+    candidate_root_dir: String,
+    candidate_server_url: String,
+    updated_at_ms: u128,
+}
+
+impl ExtensionBatchJournal {
+    fn transition(&mut self, state: ExtensionBatchJournalState) {
+        self.state = state;
+        self.updated_at_ms = unix_now_ms();
+    }
+}
+
+impl Drop for ExtensionBatchCleanup {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
 }
 
 pub(crate) struct SuwayomiUpdateLockGuard {
@@ -1108,6 +1204,7 @@ pub(crate) fn recover_suwayomi_update_before_spawn(
     app: &AppHandle,
     requested_target: &LocalServerTarget,
 ) -> Result<(), String> {
+    recover_extension_batch_before_spawn(app, requested_target)?;
     let runtime_root = managed_runtime_root();
     let journal_path = suwayomi_maintenance::update_journal_path(&runtime_root);
     let Some(mut journal) = suwayomi_maintenance::read_update_journal(&journal_path)? else {
@@ -2747,6 +2844,868 @@ fn wait_for_runtime_jar(
         return Err("Suwayomi process exited during the stability window.".to_string());
     }
     Ok(())
+}
+
+fn allocate_extension_candidate_port() -> Result<u16, String> {
+    TcpListener::bind(("127.0.0.1", 0))
+        .and_then(|listener| listener.local_addr())
+        .map(|address| address.port())
+        .map_err(|error| format!("Could not allocate extension candidate port: {error}"))
+}
+
+fn validate_extension_batch_item(item: &ExtensionUpdateBatchItem) -> Result<Url, String> {
+    if item.package_name.trim().is_empty()
+        || item.version_code.trim().is_empty()
+        || item.version_name.trim().is_empty()
+    {
+        return Err("Extension update metadata is incomplete.".to_string());
+    }
+    if item.artifact_type != "apk" && item.artifact_type != "jar" {
+        return Err("Extension artifact type must be apk or jar.".to_string());
+    }
+    if item.store_id.trim().is_empty() || item.store_id == "manual" {
+        return Err("Automatic extension updates require known store provenance.".to_string());
+    }
+    let store_url = Url::parse(&item.store_url_canonical)
+        .map_err(|_| "Extension store provenance URL is invalid.".to_string())?;
+    if store_url.scheme() != "https" || store_url.username() != "" || store_url.password().is_some()
+    {
+        return Err("Extension store provenance must be credential-free HTTPS.".to_string());
+    }
+    let url = Url::parse(&item.artifact_url)
+        .map_err(|error| format!("Extension artifact URL is invalid: {error}"))?;
+    if url.scheme() != "https" || url.username() != "" || url.password().is_some() {
+        return Err("Extension artifact URL must be credential-free HTTPS.".to_string());
+    }
+    let suffix = format!(".{}", item.artifact_type);
+    if !url.path().to_ascii_lowercase().ends_with(&suffix) {
+        return Err(format!("Extension artifact URL must end with {suffix}."));
+    }
+    Ok(url)
+}
+
+async fn stage_extension_artifact(
+    client: &reqwest::Client,
+    root: &Path,
+    item: ExtensionUpdateBatchItem,
+) -> Result<StagedExtensionArtifact, String> {
+    let url = validate_extension_batch_item(&item)?;
+    let file_name = url
+        .path_segments()
+        .and_then(|segments| segments.last())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Extension artifact URL has no file name.".to_string())?
+        .to_string();
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| format!("Could not download extension artifact: {error}"))?;
+    if response.url().scheme() != "https"
+        || response.url().username() != ""
+        || response.url().password().is_some()
+    {
+        return Err("Extension artifact redirect left credential-free HTTPS.".to_string());
+    }
+    if !response.status().is_success() {
+        return Err(format!(
+            "Extension artifact download returned HTTP {}.",
+            response.status()
+        ));
+    }
+    if response
+        .content_length()
+        .is_some_and(|size| size > MAX_EXTENSION_ARTIFACT_BYTES)
+    {
+        return Err("Extension artifact exceeds the staging size limit.".to_string());
+    }
+    fs::create_dir_all(root)
+        .map_err(|error| format!("Could not create extension staging directory: {error}"))?;
+    let path = root.join(format!("{}-{}", Uuid::new_v4(), file_name));
+    let mut file = File::create(&path)
+        .map_err(|error| format!("Could not create staged extension artifact: {error}"))?;
+    let mut hasher = Sha256::new();
+    let mut total = 0u64;
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk =
+            chunk.map_err(|error| format!("Extension artifact download failed: {error}"))?;
+        total = total.saturating_add(chunk.len() as u64);
+        if total > MAX_EXTENSION_ARTIFACT_BYTES {
+            let _ = fs::remove_file(&path);
+            return Err("Extension artifact exceeds the staging size limit.".to_string());
+        }
+        hasher.update(&chunk);
+        file.write_all(&chunk)
+            .map_err(|error| format!("Could not write staged extension artifact: {error}"))?;
+    }
+    if total == 0 {
+        let _ = fs::remove_file(&path);
+        return Err("Extension artifact download was empty.".to_string());
+    }
+    file.sync_all()
+        .map_err(|error| format!("Could not flush staged extension artifact: {error}"))?;
+    Ok(StagedExtensionArtifact {
+        input: item,
+        file_name,
+        path,
+        sha256: hasher
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
+    })
+}
+
+fn materialize_snapshot_for_candidate(
+    snapshot_dir: &Path,
+    candidate_root: &Path,
+) -> Result<(), String> {
+    let manifest = validate_snapshot_for_restore(snapshot_dir)?;
+    if candidate_root.exists() {
+        fs::remove_dir_all(candidate_root)
+            .map_err(|error| format!("Could not reset extension candidate profile: {error}"))?;
+    }
+    fs::create_dir_all(candidate_root)
+        .map_err(|error| format!("Could not create extension candidate profile: {error}"))?;
+    for entry in manifest.files {
+        validate_snapshot_relative_path(&entry.name)?;
+        let source = snapshot_dir.join(&entry.name);
+        let destination = candidate_root.join(&entry.name);
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                format!("Could not create candidate profile directory: {error}")
+            })?;
+        }
+        fs::copy(&source, &destination)
+            .map_err(|error| format!("Could not materialize candidate profile: {error}"))?;
+        if sha256_file(&destination)? != entry.sha256 {
+            return Err(format!(
+                "Candidate profile file {} failed SHA-256 validation.",
+                entry.name
+            ));
+        }
+    }
+    remove_server_owner_files_for_update(candidate_root);
+    Ok(())
+}
+
+fn remove_server_owner_files_for_update(root: &Path) {
+    let _ = fs::remove_file(server_owner_path(root));
+    let _ = fs::remove_file(server_spawn_lock_path(root));
+    let _ = fs::remove_file(root.join("server.owner.json.tmp"));
+}
+
+fn write_extension_candidate_config(root: &Path, port: u16) -> Result<(), String> {
+    let config = format!(
+        "server.ip = \"127.0.0.1\"\nserver.port = {port}\nserver.webUIEnabled = false\nserver.initialOpenInBrowserEnabled = false\nserver.systemTrayEnabled = false\nserver.debugLogsEnabled = false\nserver.autoDownloadNewChapters = false\nserver.globalUpdateInterval = 0\nserver.webUIUpdateCheckInterval = 0\nserver.maxSourcesInParallel = 1\nserver.extensionStores = []\n"
+    );
+    fs::write(root.join("server.conf"), config)
+        .map_err(|error| format!("Could not write extension candidate config: {error}"))
+}
+
+async fn upload_exact_extension_artifact(
+    client: &reqwest::Client,
+    server_url: &str,
+    auth_header: Option<&str>,
+    artifact: &StagedExtensionArtifact,
+) -> Result<Vec<String>, String> {
+    let endpoint = graphql_endpoint(server_url)?;
+    let part = reqwest::multipart::Part::file(&artifact.path)
+        .await
+        .map_err(|error| format!("Could not open staged extension artifact: {error}"))?
+        .file_name(artifact.file_name.clone());
+    let operations = json!({
+        "operationName": "AethonInstallExactExtension",
+        "query": "mutation AethonInstallExactExtension($extensionFile: Upload!) { installExternalExtension(input: { extensionFile: $extensionFile }) { extension { pkgName versionName versionCodeLong isInstalled } } }",
+        "variables": { "extensionFile": Value::Null }
+    });
+    let form = reqwest::multipart::Form::new()
+        .text("operations", operations.to_string())
+        .text(
+            "map",
+            json!({ "0": ["variables.extensionFile"] }).to_string(),
+        )
+        .part("0", part);
+    let mut request = client.post(&endpoint).multipart(form);
+    if let Some(auth) = auth_header.filter(|value| !value.trim().is_empty()) {
+        request = request.header(reqwest::header::AUTHORIZATION, auth);
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|error| format!("Exact extension install failed: {error}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Exact extension install returned HTTP {}.",
+            response.status()
+        ));
+    }
+    let payload = response
+        .json::<Value>()
+        .await
+        .map_err(|error| format!("Exact extension install returned invalid JSON: {error}"))?;
+    if payload
+        .get("errors")
+        .and_then(Value::as_array)
+        .is_some_and(|errors| !errors.is_empty())
+    {
+        return Err("Suwayomi rejected the exact extension artifact.".to_string());
+    }
+    let installed = payload
+        .pointer("/data/installExternalExtension/extension")
+        .ok_or_else(|| "Exact extension install returned no extension identity.".to_string())?;
+    if installed.get("pkgName").and_then(Value::as_str) != Some(&artifact.input.package_name)
+        || installed.get("isInstalled").and_then(Value::as_bool) != Some(true)
+        || installed
+            .get("versionCodeLong")
+            .map(|value| value.to_string())
+            != Some(artifact.input.version_code.clone())
+    {
+        return Err("Exact extension install returned an unexpected identity.".to_string());
+    }
+    extension_source_ids(
+        client,
+        server_url,
+        auth_header,
+        &artifact.input.package_name,
+        &artifact.input.version_code,
+    )
+    .await
+}
+
+async fn query_extension_source_ids_once(
+    client: &reqwest::Client,
+    server_url: &str,
+    auth_header: Option<&str>,
+    package_name: &str,
+    expected_version_code: &str,
+) -> Result<Vec<String>, String> {
+    let endpoint = graphql_endpoint(server_url)?;
+    let mut request = client.post(endpoint).json(&json!({
+        "query": "query AethonExtensionIdentity { extensions { nodes { pkgName versionCodeLong isInstalled } } sources { nodes { id extension { pkgName } } } }"
+    }));
+    if let Some(auth) = auth_header.filter(|value| !value.trim().is_empty()) {
+        request = request.header(reqwest::header::AUTHORIZATION, auth);
+    }
+    let payload = request
+        .send()
+        .await
+        .map_err(|error| format!("Could not verify extension identity: {error}"))?
+        .json::<Value>()
+        .await
+        .map_err(|error| format!("Extension identity response was invalid: {error}"))?;
+    if payload
+        .get("errors")
+        .and_then(Value::as_array)
+        .is_some_and(|errors| !errors.is_empty())
+    {
+        return Err("Suwayomi could not verify extension source registration.".to_string());
+    }
+    let extension_matches = payload
+        .pointer("/data/extensions/nodes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|extension| {
+            extension.get("pkgName").and_then(Value::as_str) == Some(package_name)
+                && extension.get("isInstalled").and_then(Value::as_bool) == Some(true)
+                && extension
+                    .get("versionCodeLong")
+                    .map(Value::to_string)
+                    .as_deref()
+                    == Some(expected_version_code)
+        });
+    if !extension_matches {
+        return Err("Installed extension identity does not match the staged artifact.".to_string());
+    }
+    let mut source_ids = payload
+        .pointer("/data/sources/nodes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|source| {
+            source.pointer("/extension/pkgName").and_then(Value::as_str) == Some(package_name)
+        })
+        .filter_map(|source| {
+            source.get("id").map(|id| {
+                id.as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| id.to_string())
+            })
+        })
+        .collect::<Vec<_>>();
+    source_ids.sort();
+    source_ids.dedup();
+    Ok(source_ids)
+}
+
+async fn extension_source_ids(
+    client: &reqwest::Client,
+    server_url: &str,
+    auth_header: Option<&str>,
+    package_name: &str,
+    expected_version_code: &str,
+) -> Result<Vec<String>, String> {
+    let mut last_error = None;
+    for attempt in 0..30 {
+        match query_extension_source_ids_once(
+            client,
+            server_url,
+            auth_header,
+            package_name,
+            expected_version_code,
+        )
+        .await
+        {
+            Ok(source_ids) if !source_ids.is_empty() => return Ok(source_ids),
+            Ok(_) => last_error = Some("Installed extension registered no sources.".to_string()),
+            Err(error) => last_error = Some(error),
+        }
+        if attempt < 29 {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+    Err(last_error.unwrap_or_else(|| "Installed extension registered no sources.".to_string()))
+}
+
+fn extension_evidence(
+    artifact: &StagedExtensionArtifact,
+    source_ids: Vec<String>,
+    status: &str,
+    failure_code: Option<String>,
+) -> ExtensionUpdateBatchEvidence {
+    ExtensionUpdateBatchEvidence {
+        package_name: artifact.input.package_name.clone(),
+        version_code: artifact.input.version_code.clone(),
+        version_name: artifact.input.version_name.clone(),
+        artifact_sha256: artifact.sha256.clone(),
+        store_id: artifact.input.store_id.clone(),
+        store_url_canonical: artifact.input.store_url_canonical.clone(),
+        source_ids,
+        status: status.to_string(),
+        // Structural rejection alone does not prove whether the runtime or the
+        // extension owns the failure. Detailed diagnostics classify it later.
+        failure_owner: "unknown".to_string(),
+        failure_code,
+    }
+}
+
+fn stop_target_if_running(app: &AppHandle, target: &LocalServerTarget) -> Result<(), String> {
+    if let Some(pid) = find_java_pid_for_rootdir(&target.root_dir) {
+        kill_tachidesk_target(app, target);
+        wait_for_managed_runtime_stop(&target.root_dir, pid)?;
+    }
+    assert_local_port_released(target.port)?;
+    assert_profile_database_unlocked(&target.root_dir)
+}
+
+fn extension_batch_journal_path() -> PathBuf {
+    managed_runtime_root().join(EXTENSION_BATCH_JOURNAL)
+}
+
+fn write_extension_batch_journal_at(
+    path: &Path,
+    journal: &ExtensionBatchJournal,
+) -> Result<(), String> {
+    fs::create_dir_all(path.parent().unwrap_or_else(|| Path::new(".")))
+        .map_err(|error| format!("Could not create extension journal directory: {error}"))?;
+    let temp_path = path.with_extension(format!("{}.tmp", journal.operation_id));
+    let bytes = serde_json::to_vec_pretty(journal)
+        .map_err(|error| format!("Could not serialize extension update journal: {error}"))?;
+    let mut file = File::create(&temp_path)
+        .map_err(|error| format!("Could not create extension update journal: {error}"))?;
+    file.write_all(&bytes)
+        .map_err(|error| format!("Could not write extension update journal: {error}"))?;
+    file.sync_all()
+        .map_err(|error| format!("Could not flush extension update journal: {error}"))?;
+    suwayomi_maintenance::atomic_replace_file(&temp_path, &path)
+        .map_err(|error| format!("Could not publish extension update journal: {error}"))
+}
+
+fn write_extension_batch_journal(journal: &ExtensionBatchJournal) -> Result<(), String> {
+    write_extension_batch_journal_at(&extension_batch_journal_path(), journal)
+}
+
+fn read_extension_batch_journal_at(path: &Path) -> Result<Option<ExtensionBatchJournal>, String> {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("Could not read extension update journal: {error}")),
+    };
+    let journal = serde_json::from_str::<ExtensionBatchJournal>(&text)
+        .map_err(|error| format!("Could not parse extension update journal: {error}"))?;
+    if journal.schema_version != 1 {
+        return Err("Extension update journal has an unsupported schema.".to_string());
+    }
+    Ok(Some(journal))
+}
+
+fn read_extension_batch_journal() -> Result<Option<ExtensionBatchJournal>, String> {
+    read_extension_batch_journal_at(&extension_batch_journal_path())
+}
+
+fn remove_extension_batch_journal() -> Result<(), String> {
+    match fs::remove_file(extension_batch_journal_path()) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "Could not remove extension update journal: {error}"
+        )),
+    }
+}
+
+fn validate_extension_batch_journal_paths(
+    journal: &ExtensionBatchJournal,
+    requested_target: &LocalServerTarget,
+    app: &AppHandle,
+) -> Result<LocalServerTarget, String> {
+    if journal.profile_id != requested_target.profile_key
+        || comparable_path(Path::new(&journal.root_dir))
+            != comparable_path(&requested_target.root_dir)
+        || normalize_server_url(Some(&journal.server_url))
+            != normalize_server_url(Some(&requested_target.server_url))
+    {
+        return Err("Extension update journal does not match the requested profile.".to_string());
+    }
+    let expected_batch_parent = suwayomi_data_dir().join(EXTENSION_BATCH_ROOT);
+    let batch_root = PathBuf::from(&journal.batch_root);
+    if batch_root.parent().map(comparable_path) != Some(comparable_path(&expected_batch_parent)) {
+        return Err("Extension update journal contains an invalid batch path.".to_string());
+    }
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    let candidate = resolve_local_server_target(
+        &launch_target,
+        Some(&journal.candidate_server_url),
+        Some(&journal.candidate_profile_id),
+        Some("Extension staging"),
+    )
+    .map_err(|error| format!("Could not resolve extension recovery candidate: {error:?}"))?;
+    if comparable_path(&candidate.root_dir)
+        != comparable_path(Path::new(&journal.candidate_root_dir))
+    {
+        return Err("Extension update journal contains an invalid candidate path.".to_string());
+    }
+    if !journal.snapshot_path.is_empty() {
+        validate_snapshot_for_restore(Path::new(&journal.snapshot_path))?;
+    }
+    Ok(candidate)
+}
+
+fn recover_extension_batch_before_spawn(
+    app: &AppHandle,
+    requested_target: &LocalServerTarget,
+) -> Result<(), String> {
+    let Some(mut journal) = read_extension_batch_journal()? else {
+        return Ok(());
+    };
+    let mut guard = try_acquire_suwayomi_update_lock("extension-recovery")?;
+    guard.begin_maintenance("extension-recovery", MaintenancePhase::Recovering)?;
+    let candidate = validate_extension_batch_journal_paths(&journal, requested_target, app)?;
+    stop_target_if_running(app, &candidate)?;
+    if journal.state != ExtensionBatchJournalState::Committed {
+        stop_target_if_running(app, requested_target)?;
+        if journal.state != ExtensionBatchJournalState::Prepared {
+            journal.transition(ExtensionBatchJournalState::RollbackRunning);
+            write_extension_batch_journal(&journal)?;
+            restore_snapshot_to_root(
+                Path::new(&journal.snapshot_path),
+                &requested_target.root_dir,
+            )?;
+            journal.transition(ExtensionBatchJournalState::RolledBack);
+            write_extension_batch_journal(&journal)?;
+        }
+    }
+    let _ = fs::remove_dir_all(&candidate.root_dir);
+    let _ = fs::remove_dir_all(&journal.batch_root);
+    remove_extension_batch_journal()
+}
+
+async fn rollback_extension_batch(
+    app: &AppHandle,
+    target: &LocalServerTarget,
+    snapshot_dir: &Path,
+    auth_header: Option<&str>,
+    runtime_version: &str,
+) -> Result<(), String> {
+    stop_target_if_running(app, target)?;
+    restore_snapshot_to_root(snapshot_dir, &target.root_dir)?;
+    restart_managed_runtime(app, target)?;
+    run_suwayomi_graphql_health_check(&target.server_url, auth_header, runtime_version).await
+}
+
+async fn restore_extension_candidate_after_rejection(
+    app: &AppHandle,
+    target: &LocalServerTarget,
+    snapshot_dir: &Path,
+    port: u16,
+    runtime_version: &str,
+    client: &reqwest::Client,
+    approved: &[(StagedExtensionArtifact, Vec<String>)],
+) -> Result<(), String> {
+    stop_target_if_running(app, target)?;
+    materialize_snapshot_for_candidate(snapshot_dir, &target.root_dir)?;
+    write_extension_candidate_config(&target.root_dir, port)?;
+    restart_managed_runtime(app, target)?;
+    run_suwayomi_graphql_health_check(&target.server_url, None, runtime_version).await?;
+    for (artifact, expected_source_ids) in approved {
+        let source_ids =
+            upload_exact_extension_artifact(client, &target.server_url, None, artifact).await?;
+        if &source_ids != expected_source_ids {
+            return Err(
+                "An approved extension changed identity while rebuilding staging.".to_string(),
+            );
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn certify_suwayomi_extension_update_batch(
+    server_url: Option<String>,
+    binary: Option<String>,
+    profile_id: Option<String>,
+    profile_label: Option<String>,
+    authorization: Option<String>,
+    items: Vec<ExtensionUpdateBatchItem>,
+    app: AppHandle,
+) -> Result<ExtensionUpdateBatchResult, String> {
+    if items.is_empty() {
+        return Err("Extension update batch is empty.".to_string());
+    }
+    if items.len() > 100 {
+        return Err("Extension update batch exceeds the supported size.".to_string());
+    }
+    let unique_packages = items
+        .iter()
+        .map(|item| item.package_name.trim())
+        .collect::<std::collections::HashSet<_>>();
+    if unique_packages.len() != items.len() {
+        return Err("Extension update batch contains duplicate packages.".to_string());
+    }
+    if read_extension_batch_journal()?.is_some() {
+        return Err(
+            "An interrupted extension update must be recovered before starting another batch."
+                .to_string(),
+        );
+    }
+    let mut guard = try_acquire_suwayomi_update_lock("extension-batch")?;
+    let runtime = get_suwayomi_runtime_status(
+        server_url.clone(),
+        binary.clone(),
+        profile_id.clone(),
+        profile_label.clone(),
+        app.clone(),
+    );
+    if !runtime.update_allowed {
+        return Err(runtime.block_reason.unwrap_or_else(|| {
+            "This Suwayomi runtime cannot certify extension updates.".to_string()
+        }));
+    }
+    let runtime_version = runtime.version.clone().unwrap_or_default();
+    if normalize_version_tag(&runtime_version) != "v2.3.2243" {
+        return Err(
+            "Transactional extension updates require the certified Suwayomi v2.3.2243 runtime."
+                .to_string(),
+        );
+    }
+    let runtime_jar = runtime
+        .jar_path
+        .as_deref()
+        .map(PathBuf::from)
+        .ok_or_else(|| "Managed Suwayomi JAR path is unavailable.".to_string())?;
+    let runtime_artifact_sha256 = sha256_file(&runtime_jar)?;
+    let batch_id = Uuid::new_v4().to_string();
+    let batch_root = suwayomi_data_dir()
+        .join(EXTENSION_BATCH_ROOT)
+        .join(&batch_id);
+    let _batch_cleanup = ExtensionBatchCleanup {
+        root: batch_root.clone(),
+    };
+    let artifacts_root = batch_root.join("artifacts");
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()
+        .map_err(|error| format!("Could not create extension update client: {error}"))?;
+    let mut artifacts = Vec::with_capacity(items.len());
+    for item in items {
+        match stage_extension_artifact(&client, &artifacts_root, item).await {
+            Ok(artifact) => artifacts.push(artifact),
+            Err(error) => return Err(error),
+        }
+    }
+
+    // Resolve every owned resource before stopping the current runtime. From the
+    // snapshot onward, all failures are handled by the transaction rollback.
+    let target = resolve_update_target(
+        server_url.clone(),
+        profile_id.clone(),
+        profile_label.clone(),
+        &app,
+    )?;
+    let candidate_port = allocate_extension_candidate_port()?;
+    let compact_batch_id = batch_id.replace('-', "");
+    let candidate_profile = format!("ext-stage-{}", &compact_batch_id[..20]);
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    let candidate_url = format!("http://127.0.0.1:{candidate_port}");
+    let candidate_target = resolve_local_server_target(
+        &launch_target,
+        Some(&candidate_url),
+        Some(&candidate_profile),
+        Some("Extension staging"),
+    )
+    .map_err(|error| format!("Could not resolve extension candidate profile: {error:?}"))?;
+
+    guard.begin_maintenance("extension-batch", MaintenancePhase::Updating)?;
+    let mut journal = ExtensionBatchJournal {
+        schema_version: 1,
+        operation_id: batch_id.clone(),
+        state: ExtensionBatchJournalState::Prepared,
+        profile_id: target.profile_key.clone(),
+        root_dir: path_to_string(&target.root_dir),
+        server_url: target.server_url.clone(),
+        runtime_version: runtime_version.clone(),
+        snapshot_path: String::new(),
+        batch_root: path_to_string(&batch_root),
+        candidate_profile_id: candidate_target.profile_key.clone(),
+        candidate_root_dir: path_to_string(&candidate_target.root_dir),
+        candidate_server_url: candidate_target.server_url.clone(),
+        updated_at_ms: unix_now_ms(),
+    };
+    write_extension_batch_journal(&journal)?;
+    let snapshot = match create_suwayomi_update_snapshot_unlocked(
+        Some(target.server_url.clone()),
+        binary,
+        Some(target.profile_key.clone()),
+        None,
+        false,
+        app.clone(),
+    ) {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            let _ = remove_extension_batch_journal();
+            return Err(error);
+        }
+    };
+    let snapshot_dir = PathBuf::from(&snapshot.snapshot_path);
+    journal.snapshot_path = snapshot.snapshot_path.clone();
+    journal.transition(ExtensionBatchJournalState::SnapshotCreated);
+    if let Err(error) = write_extension_batch_journal(&journal) {
+        let restart = restart_managed_runtime(&app, &target);
+        let _ = remove_extension_batch_journal();
+        return match restart {
+            Ok(()) => Err(error),
+            Err(restart_error) => Err(format!(
+                "{error}. The managed runtime could not be restarted: {restart_error}"
+            )),
+        };
+    }
+
+    let transaction = async {
+        journal.transition(ExtensionBatchJournalState::Certifying);
+        write_extension_batch_journal(&journal)?;
+        materialize_snapshot_for_candidate(&snapshot_dir, &candidate_target.root_dir)?;
+        write_extension_candidate_config(&candidate_target.root_dir, candidate_port)?;
+        spawn_managed_server_for_update(
+            candidate_target.server_url.clone(),
+            Some(candidate_target.profile_key.clone()),
+            app.clone(),
+        )
+        .map_err(|error| format!("Could not start extension candidate: {error:?}"))?;
+        run_suwayomi_graphql_health_check(&candidate_target.server_url, None, &runtime_version)
+            .await?;
+
+        let mut candidate_approved: Vec<(StagedExtensionArtifact, Vec<String>)> = Vec::new();
+        let mut rejected = Vec::new();
+        for artifact in &artifacts {
+            match upload_exact_extension_artifact(
+                &client,
+                &candidate_target.server_url,
+                None,
+                artifact,
+            )
+            .await
+            {
+                Ok(source_ids) => candidate_approved.push((artifact.clone(), source_ids)),
+                Err(error) => {
+                    rejected.push(extension_evidence(
+                        artifact,
+                        Vec::new(),
+                        "INCOMPATIBLE",
+                        Some(
+                            if error.contains("unexpected identity") {
+                                "ARTIFACT_IDENTITY_MISMATCH"
+                            } else if error.contains("registered no sources") {
+                                "NO_SOURCES_REGISTERED"
+                            } else {
+                                "STRUCTURAL_CERTIFICATION_FAILED"
+                            }
+                            .to_string(),
+                        ),
+                    ));
+                    restore_extension_candidate_after_rejection(
+                        &app,
+                        &candidate_target,
+                        &snapshot_dir,
+                        candidate_port,
+                        &runtime_version,
+                        &client,
+                        &candidate_approved,
+                    )
+                    .await?;
+                }
+            }
+        }
+
+        stop_target_if_running(&app, &candidate_target)?;
+        restart_managed_runtime(&app, &candidate_target)?;
+        run_suwayomi_graphql_health_check(&candidate_target.server_url, None, &runtime_version)
+            .await?;
+        let mut approved = Vec::new();
+        let mut approved_artifacts = Vec::new();
+        for (artifact, expected_source_ids) in candidate_approved {
+            match extension_source_ids(
+                &client,
+                &candidate_target.server_url,
+                None,
+                &artifact.input.package_name,
+                &artifact.input.version_code,
+            )
+            .await
+            {
+                Ok(source_ids) if source_ids == expected_source_ids => {
+                    approved.push(extension_evidence(&artifact, source_ids, "HEALTHY", None));
+                    approved_artifacts.push(artifact);
+                }
+                Ok(_) => rejected.push(extension_evidence(
+                    &artifact,
+                    Vec::new(),
+                    "INCOMPATIBLE",
+                    Some("SOURCE_IDENTITY_CHANGED_AFTER_RESTART".to_string()),
+                )),
+                Err(error) => rejected.push(extension_evidence(
+                    &artifact,
+                    Vec::new(),
+                    "INCOMPATIBLE",
+                    Some(
+                        if error.contains("registered no sources") {
+                            "NO_SOURCES_AFTER_RESTART"
+                        } else {
+                            "RESTART_CERTIFICATION_FAILED"
+                        }
+                        .to_string(),
+                    ),
+                )),
+            }
+        }
+        stop_target_if_running(&app, &candidate_target)?;
+
+        journal.transition(ExtensionBatchJournalState::Activating);
+        write_extension_batch_journal(&journal)?;
+        restart_managed_runtime(&app, &target)?;
+        run_suwayomi_graphql_health_check(
+            &target.server_url,
+            authorization.as_deref(),
+            &runtime_version,
+        )
+        .await?;
+        for artifact in &approved_artifacts {
+            upload_exact_extension_artifact(
+                &client,
+                &target.server_url,
+                authorization.as_deref(),
+                artifact,
+            )
+            .await?;
+        }
+        stop_target_if_running(&app, &target)?;
+        restart_managed_runtime(&app, &target)?;
+        run_suwayomi_graphql_health_check(
+            &target.server_url,
+            authorization.as_deref(),
+            &runtime_version,
+        )
+        .await?;
+        for evidence in &approved {
+            let source_ids = extension_source_ids(
+                &client,
+                &target.server_url,
+                authorization.as_deref(),
+                &evidence.package_name,
+                &evidence.version_code,
+            )
+            .await?;
+            if source_ids != evidence.source_ids {
+                return Err(format!(
+                    "Extension {} diverged during activation.",
+                    evidence.package_name
+                ));
+            }
+        }
+        journal.transition(ExtensionBatchJournalState::Committed);
+        write_extension_batch_journal(&journal)?;
+        Ok::<_, String>((approved, rejected))
+    }
+    .await;
+
+    let candidate_stop = stop_target_if_running(&app, &candidate_target);
+    if let Err(stop_error) = candidate_stop {
+        return Err(format!(
+            "Extension staging could not be stopped safely; startup recovery is required: {stop_error}"
+        ));
+    }
+    let candidate_cleanup_error = match fs::remove_dir_all(&candidate_target.root_dir) {
+        Ok(()) => None,
+        Err(error) if error.kind() == ErrorKind::NotFound => None,
+        Err(error) => Some(format!(
+            "Could not remove extension staging profile: {error}"
+        )),
+    };
+    let result = match transaction {
+        Ok((approved, rejected)) => {
+            if let Some(error) = candidate_cleanup_error {
+                return Err(format!("{error}. Startup cleanup is required."));
+            }
+            let _ = remove_extension_batch_journal();
+            Ok(ExtensionUpdateBatchResult {
+                batch_id,
+                runtime_version,
+                runtime_artifact_sha256,
+                approved,
+                rejected,
+                restarted_runtime: true,
+            })
+        }
+        Err(error) => {
+            journal.transition(ExtensionBatchJournalState::RollbackRunning);
+            let _ = write_extension_batch_journal(&journal);
+            match rollback_extension_batch(
+                &app,
+                &target,
+                &snapshot_dir,
+                authorization.as_deref(),
+                &runtime_version,
+            )
+            .await
+            {
+                Ok(()) => {
+                    journal.transition(ExtensionBatchJournalState::RolledBack);
+                    let _ = write_extension_batch_journal(&journal);
+                    if let Some(cleanup_error) = candidate_cleanup_error {
+                        return Err(format!(
+                            "Extension update batch failed and was rolled back, but staging cleanup failed: {cleanup_error}"
+                        ));
+                    }
+                    let _ = remove_extension_batch_journal();
+                    Err(format!("Extension update batch failed and was rolled back: {error}"))
+                }
+                Err(rollback_error) => Err(format!(
+                    "Extension update batch failed: {error}. Automatic rollback also failed: {rollback_error}"
+                )),
+            }
+        }
+    };
+    result
 }
 
 async fn run_suwayomi_graphql_health_check(
@@ -4981,5 +5940,104 @@ server.extensionStores = ["https://two.example/index.json"]
         assert!(release_suwayomi_update_lock(&guard.token));
         std::mem::forget(guard);
         assert!(!current_suwayomi_update_lock_status().in_progress);
+    }
+
+    #[test]
+    fn extension_batch_requires_exact_https_artifacts() {
+        let valid = ExtensionUpdateBatchItem {
+            package_name: "eu.kanade.tachiyomi.extension.en.demo".to_string(),
+            version_code: "2".to_string(),
+            version_name: "1.4.2".to_string(),
+            store_id: "keiyoushi".to_string(),
+            store_url_canonical: "https://store.example/index.json".to_string(),
+            artifact_url: "https://store.example/demo.apk".to_string(),
+            artifact_type: "apk".to_string(),
+        };
+        assert!(validate_extension_batch_item(&valid).is_ok());
+        assert!(validate_extension_batch_item(&ExtensionUpdateBatchItem {
+            artifact_url: "http://store.example/demo.apk".to_string(),
+            ..valid.clone()
+        })
+        .is_err());
+        assert!(validate_extension_batch_item(&ExtensionUpdateBatchItem {
+            artifact_url: "https://user:secret@store.example/demo.apk".to_string(),
+            ..valid.clone()
+        })
+        .is_err());
+        assert!(validate_extension_batch_item(&ExtensionUpdateBatchItem {
+            artifact_url: "https://store.example/demo.zip".to_string(),
+            ..valid
+        })
+        .is_err());
+    }
+
+    #[test]
+    fn extension_candidate_materializes_only_the_validated_snapshot() {
+        let source = tempfile::tempdir().unwrap();
+        std::fs::write(source.path().join("server.conf"), b"server").unwrap();
+        std::fs::write(source.path().join("database.mv.db"), b"database").unwrap();
+        std::fs::create_dir(source.path().join("extensions")).unwrap();
+        std::fs::write(
+            source.path().join("extensions").join("demo.jar"),
+            b"extension",
+        )
+        .unwrap();
+        std::fs::create_dir(source.path().join("downloads")).unwrap();
+        std::fs::write(
+            source.path().join("downloads").join("user.cbz"),
+            b"user-data",
+        )
+        .unwrap();
+        let snapshot = create_snapshot_for_root(source.path()).unwrap();
+        let candidate = tempfile::tempdir().unwrap();
+        materialize_snapshot_for_candidate(Path::new(&snapshot.snapshot_path), candidate.path())
+            .unwrap();
+
+        assert_eq!(
+            std::fs::read(candidate.path().join("database.mv.db")).unwrap(),
+            b"database"
+        );
+        assert!(candidate
+            .path()
+            .join("extensions")
+            .join("demo.jar")
+            .is_file());
+        assert!(!candidate.path().join("downloads").exists());
+    }
+
+    #[test]
+    fn extension_batch_journal_round_trips_crash_recovery_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("extension-update-journal.json");
+        let mut journal = ExtensionBatchJournal {
+            schema_version: 1,
+            operation_id: "batch-test".to_string(),
+            state: ExtensionBatchJournalState::Prepared,
+            profile_id: "main".to_string(),
+            root_dir: "profile".to_string(),
+            server_url: "http://127.0.0.1:4567".to_string(),
+            runtime_version: "v2.3.2243".to_string(),
+            snapshot_path: String::new(),
+            batch_root: "batch".to_string(),
+            candidate_profile_id: "ext-stage-test".to_string(),
+            candidate_root_dir: "candidate".to_string(),
+            candidate_server_url: "http://127.0.0.1:4568".to_string(),
+            updated_at_ms: 1,
+        };
+        write_extension_batch_journal_at(&path, &journal).unwrap();
+        assert_eq!(
+            read_extension_batch_journal_at(&path)
+                .unwrap()
+                .unwrap()
+                .state,
+            ExtensionBatchJournalState::Prepared
+        );
+
+        journal.snapshot_path = "snapshot".to_string();
+        journal.transition(ExtensionBatchJournalState::Activating);
+        write_extension_batch_journal_at(&path, &journal).unwrap();
+        let recovered = read_extension_batch_journal_at(&path).unwrap().unwrap();
+        assert_eq!(recovered.state, ExtensionBatchJournalState::Activating);
+        assert_eq!(recovered.snapshot_path, "snapshot");
     }
 }

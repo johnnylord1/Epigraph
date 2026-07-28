@@ -39,6 +39,16 @@ export const STRUCTURAL_CANARY = Object.freeze({
   sha256: "a449e87e4636451d5f80a600366e07f621cdb8e231835d11abca136862015081",
 });
 
+export const DIRECT_INSTALL_CANARY = Object.freeze({
+  packageName: "eu.kanade.tachiyomi.extension.all.akuma",
+  versionCode: "10",
+  versionName: "1.4.10",
+  fileName: "tachiyomi-all.akuma-v1.4.10.apk",
+  url: "https://raw.githubusercontent.com/keiyoushi/extensions/4aee126a1b34faa4224ba1646585712d9bee043a/apk/tachiyomi-all.akuma-v1.4.10.apk",
+  sha256: "3ae4751efb075495235f67233b14c0207d921cf00d214736a5d23a6e23450aaa",
+  storeCommit: "4aee126a1b34faa4224ba1646585712d9bee043a",
+});
+
 const STRUCTURAL_ERROR_PATTERN = /(?:LinkageError|AbstractMethodError|NoSuchMethodError|NoSuchFieldError|IncompatibleClassChangeError|NoClassDefFoundError|ClassNotFoundException|VerifyError|UnsupportedClassVersionError|does not implement[^\n]*kotlin\.jvm\.functions|cannot be cast to okhttp3\.|ClassCastException[^\n]*(?:kotlin|okhttp))/i;
 const PNG_1X1 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zr0sAAAAASUVORK5CYII=",
@@ -173,7 +183,7 @@ async function graphqlOperation(endpoint, query, variables = {}, timeoutMs = 20_
   return payload.data;
 }
 
-async function installCanary(endpoint, artifactPath, v23) {
+async function installCanary(endpoint, artifactPath, v23, descriptor = STRUCTURAL_CANARY) {
   const bytes = await readFile(artifactPath);
   const form = new FormData();
   form.append("operations", JSON.stringify({ query: installExternalExtensionMutation(v23), variables: { extensionFile: null } }));
@@ -192,9 +202,42 @@ async function installCanary(endpoint, artifactPath, v23) {
     throw new Error(`Extension upload failed: ${payload.errors.map((item) => item.message).join("; ")}`);
   }
   const extension = payload?.data?.installExternalExtension?.extension;
-  if (extension?.pkgName !== STRUCTURAL_CANARY.packageName || extension?.isInstalled !== true) {
+  if (extension?.pkgName !== descriptor.packageName || extension?.isInstalled !== true) {
     throw new Error("Suwayomi did not register the pinned extension canary.");
   }
+}
+
+async function collectInstalledExtensionIdentityOnce(endpoint, descriptor) {
+  const inventory = await graphqlOperation(endpoint, INVENTORY_QUERY);
+  const extension = inventory.extensions?.nodes?.find(
+    (item) => item.pkgName === descriptor.packageName && item.isInstalled === true,
+  );
+  const sourceIds = inventory.sources?.nodes
+    ?.filter((source) => source.extension?.pkgName === descriptor.packageName)
+    .map((source) => String(source.id))
+    .sort() ?? [];
+  if (!extension || String(extension.versionCodeLong) !== descriptor.versionCode || sourceIds.length === 0) {
+    throw new Error("The exact V23 extension artifact did not register its expected sources.");
+  }
+  return {
+    packageName: extension.pkgName,
+    versionName: extension.versionName,
+    versionCode: String(extension.versionCodeLong),
+    sourceIds,
+  };
+}
+
+async function collectInstalledExtensionIdentity(endpoint, descriptor) {
+  let lastError = null;
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    try {
+      return await collectInstalledExtensionIdentityOnce(endpoint, descriptor);
+    } catch (error) {
+      lastError = error;
+      if (attempt < 29) await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+  throw lastError ?? new Error("The exact V23 extension identity did not become ready.");
 }
 
 async function findGeneratedCanaryJar(root) {
@@ -338,6 +381,7 @@ async function main() {
     canaryPackageName: STRUCTURAL_CANARY.packageName,
     canaryVersionCode: STRUCTURAL_CANARY.versionCode,
     canaryArtifactSha256: STRUCTURAL_CANARY.sha256,
+    directInstallCanaryArtifactSha256: DIRECT_INSTALL_CANARY.sha256,
     websiteRequests: 0,
     maxSourcesInParallel: 1,
     phases: [],
@@ -356,6 +400,42 @@ async function main() {
       fileName: `Suwayomi-Server-${WORKFLOW_CANDIDATE.version}.jar`,
     });
     const canaryArtifact = await ensurePinnedFile(options["canary-artifact"], tempRoot, STRUCTURAL_CANARY);
+    const directInstallArtifact = await ensurePinnedFile(
+      options["direct-install-artifact"],
+      tempRoot,
+      DIRECT_INSTALL_CANARY,
+    );
+
+    const directRoot = path.join(tempRoot, "direct-v23-profile");
+    await mkdir(directRoot, { recursive: true });
+    const directPort = await allocateLoopbackPort();
+    await writeFile(path.join(directRoot, "server.conf"), serverConfig(directPort, { extensionStores: [] }));
+    const directEndpoint = `http://127.0.0.1:${directPort}/api/graphql`;
+    let directIdentity = null;
+    for (const name of ["exact-v23-install", "exact-v23-restart"]) {
+      const runtime = startRuntime(java, candidateJar, directRoot);
+      try {
+        await waitForHealth(directEndpoint, runtime, timeoutMs);
+        await assertPortOwnedByProcess(directPort, runtime.child.pid);
+        if (name === "exact-v23-install") {
+          await installCanary(directEndpoint, directInstallArtifact, true, DIRECT_INSTALL_CANARY);
+        }
+        const identity = await collectInstalledExtensionIdentity(directEndpoint, DIRECT_INSTALL_CANARY);
+        if (directIdentity && JSON.stringify(directIdentity) !== JSON.stringify(identity)) {
+          throw new Error("Exact V23 extension identity changed after restart.");
+        }
+        directIdentity = identity;
+        assertNoStructuralRuntimeErrors(runtime.output);
+        report.phases.push({ name, passed: true, identity });
+      } catch (error) {
+        const tail = runtime.output.slice(-40).join("\n").replaceAll(tempRoot, "<temp-root>");
+        throw new Error(`${name} phase failed: ${errorChain(error)}\n${tail}`, { cause: error });
+      } finally {
+        await stopRuntime(runtime.child, directPort);
+        await assertNoRuntimeForRoot(directRoot);
+      }
+    }
+
     const converterPort = await allocateLoopbackPort();
     await writeFile(path.join(runtimeRoot, "server.conf"), serverConfig(converterPort, { extensionRepos: [] }));
     const converterEndpoint = `http://127.0.0.1:${converterPort}/api/graphql`;
@@ -396,7 +476,9 @@ async function main() {
         await assertNoRuntimeForRoot(runtimeRoot);
       }
     }
-    if (JSON.stringify(report.phases[1]?.workflow) !== JSON.stringify(report.phases[2]?.workflow)) {
+    const candidatePhase = report.phases.find((phase) => phase.name === "candidate");
+    const restartPhase = report.phases.find((phase) => phase.name === "restart");
+    if (JSON.stringify(candidatePhase?.workflow) !== JSON.stringify(restartPhase?.workflow)) {
       throw new Error("Deterministic workflow identity changed after restart.");
     }
     report.passed = true;
