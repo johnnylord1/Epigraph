@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
@@ -43,10 +44,10 @@ export const DIRECT_INSTALL_CANARY = Object.freeze({
   packageName: "eu.kanade.tachiyomi.extension.all.akuma",
   versionCode: "10",
   versionName: "1.4.10",
-  fileName: "tachiyomi-all.akuma-v1.4.10.apk",
-  url: "https://raw.githubusercontent.com/keiyoushi/extensions/4aee126a1b34faa4224ba1646585712d9bee043a/apk/tachiyomi-all.akuma-v1.4.10.apk",
-  sha256: "3ae4751efb075495235f67233b14c0207d921cf00d214736a5d23a6e23450aaa",
-  storeCommit: "4aee126a1b34faa4224ba1646585712d9bee043a",
+  fileName: "tachiyomi-all.akuma-v1.4.10.jar",
+  storeCommit: "193dffcb8505b83858759e53f23e9157e708fd6b",
+  url: "https://raw.githubusercontent.com/keiyoushi/extensions/193dffcb8505b83858759e53f23e9157e708fd6b/jar/tachiyomi-all.akuma-v1.4.10.jar",
+  sha256: "6dc723db4b10eabfd006978b54407faec410405c5b23d213ebfc90fe3bb23d6d",
 });
 
 const STRUCTURAL_ERROR_PATTERN = /(?:LinkageError|AbstractMethodError|NoSuchMethodError|NoSuchFieldError|IncompatibleClassChangeError|NoClassDefFoundError|ClassNotFoundException|VerifyError|UnsupportedClassVersionError|does not implement[^\n]*kotlin\.jvm\.functions|cannot be cast to okhttp3\.|ClassCastException[^\n]*(?:kotlin|okhttp))/i;
@@ -97,6 +98,20 @@ const LOCAL_CHAPTERS = `
 const LOCAL_PAGES = `
   mutation AethonCertificationPages($chapterId: Int!) {
     fetchChapterPages(input: { chapterId: $chapterId }) { pages }
+  }
+`;
+const REFRESH_EXTENSIONS = `
+  mutation AethonRefreshCertificationExtensions {
+    fetchExtensions(input: {}) {
+      extensions { pkgName versionName versionCodeLong isInstalled jarUrl }
+    }
+  }
+`;
+const INSTALL_STORE_EXTENSION = `
+  mutation AethonInstallCertificationStoreExtension($id: String!) {
+    updateExtension(input: { id: $id, patch: { install: true } }) {
+      extension { pkgName versionName versionCodeLong isInstalled }
+    }
   }
 `;
 
@@ -206,6 +221,120 @@ async function installCanary(endpoint, artifactPath, v23, descriptor = STRUCTURA
   if (extension?.pkgName !== descriptor.packageName || extension?.isInstalled !== true) {
     throw new Error("Suwayomi did not register the pinned extension canary.");
   }
+}
+
+async function installStoreCanary(endpoint, descriptor, expectedJarUrl) {
+  const refreshed = await graphqlOperation(endpoint, REFRESH_EXTENSIONS, {}, 30_000);
+  const available = refreshed.fetchExtensions?.extensions?.find(
+    (item) => item.pkgName === descriptor.packageName,
+  );
+  if (
+    !available
+    || String(available.versionCodeLong) !== descriptor.versionCode
+    || available.jarUrl !== expectedJarUrl
+  ) {
+    throw new Error("The deterministic Extension Store did not expose the pinned JAR.");
+  }
+  const installed = await graphqlOperation(endpoint, INSTALL_STORE_EXTENSION, {
+    id: descriptor.packageName,
+  }, 30_000);
+  const extension = installed.updateExtension?.extension;
+  if (
+    extension?.pkgName !== descriptor.packageName
+    || String(extension.versionCodeLong) !== descriptor.versionCode
+    || extension.isInstalled !== true
+  ) {
+    throw new Error("Suwayomi did not install the deterministic store extension.");
+  }
+}
+
+async function refreshStoreExtensions(endpoint) {
+  await graphqlOperation(endpoint, REFRESH_EXTENSIONS, {}, 30_000);
+}
+
+export async function startFixtureStoreServer(artifactPath, descriptor) {
+  const artifact = await readFile(artifactPath);
+  let indexJson = "";
+  const requests = [];
+  const server = createServer((request, response) => {
+    const requestUrl = request.url ?? "/";
+    requests.push(requestUrl);
+    if (requestUrl === "/index.json") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(indexJson);
+      return;
+    }
+    if (requestUrl === "/fixture.jar") {
+      response.writeHead(200, {
+        "content-type": "application/java-archive",
+        "content-length": String(artifact.byteLength),
+      });
+      response.end(artifact);
+      return;
+    }
+    if (requestUrl === "/icon.png") {
+      response.writeHead(200, {
+        "content-type": "image/png",
+        "content-length": String(PNG_1X1.byteLength),
+      });
+      response.end(PNG_1X1);
+      return;
+    }
+    response.writeHead(404);
+    response.end();
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    server.close();
+    throw new Error("The deterministic Extension Store did not bind to loopback.");
+  }
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const jarUrl = `${baseUrl}/fixture.jar`;
+  indexJson = `${JSON.stringify({
+    name: "Aethon Certification",
+    badgeLabel: "Fixture",
+    signingKey: "",
+    contact: {
+      website: baseUrl,
+      discord: null,
+    },
+    extensionList: {
+      extensions: [{
+        name: "Akuma",
+        packageName: descriptor.packageName,
+        resources: {
+          apkUrl: "",
+          iconUrl: `${baseUrl}/icon.png`,
+          jarUrl,
+        },
+        extensionLib: "1.4",
+        versionCode: Number(descriptor.versionCode),
+        versionName: descriptor.versionName,
+        contentWarning: "NSFW",
+        sources: [{
+          id: 7,
+          name: "Akuma",
+          language: "all",
+          homeUrl: "https://akuma.moe",
+          mirrorUrls: [],
+          message: null,
+        }],
+      }],
+    },
+    extensionListUrl: null,
+  }, null, 2)}\n`;
+  return {
+    indexUrl: `${baseUrl}/index.json`,
+    jarUrl,
+    requests,
+    close: () => new Promise((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    }),
+  };
 }
 
 async function collectInstalledExtensionIdentityOnce(endpoint, descriptor) {
@@ -385,12 +514,15 @@ async function main() {
     canaryVersionCode: STRUCTURAL_CANARY.versionCode,
     canaryArtifactSha256: STRUCTURAL_CANARY.sha256,
     directInstallCanaryArtifactSha256: DIRECT_INSTALL_CANARY.sha256,
+    structuralFixtureProvider: "SUWAYOMI_EXTENSION_MANAGER",
+    contentFixtureProvider: "SUWAYOMI_LOCAL_SOURCE",
     websiteRequests: 0,
     maxSourcesInParallel: 1,
     phases: [],
     passed: false,
   };
   let port = null;
+  let fixtureStore = null;
   try {
     await mkdir(runtimeRoot, { recursive: true });
     await createLocalSourceFixture(runtimeRoot);
@@ -408,37 +540,6 @@ async function main() {
       tempRoot,
       DIRECT_INSTALL_CANARY,
     );
-
-    const directRoot = path.join(tempRoot, "direct-v23-profile");
-    await mkdir(directRoot, { recursive: true });
-    const directPort = await allocateLoopbackPort();
-    await writeFile(path.join(directRoot, "server.conf"), serverConfig(directPort, { extensionStores: [] }));
-    const directEndpoint = `http://127.0.0.1:${directPort}/api/graphql`;
-    let directIdentity = null;
-    for (const name of ["exact-v23-install", "exact-v23-restart"]) {
-      const runtime = startRuntime(java, candidateJar, directRoot);
-      try {
-        await waitForHealth(directEndpoint, runtime, timeoutMs);
-        await assertPortOwnedByProcess(directPort, runtime.child.pid);
-        if (name === "exact-v23-install") {
-          await installCanary(directEndpoint, directInstallArtifact, true, DIRECT_INSTALL_CANARY);
-        }
-        const identity = await collectInstalledExtensionIdentity(directEndpoint, DIRECT_INSTALL_CANARY);
-        if (directIdentity && JSON.stringify(directIdentity) !== JSON.stringify(identity)) {
-          throw new Error("Exact V23 extension identity changed after restart.");
-        }
-        directIdentity = identity;
-        assertNoStructuralRuntimeErrors(runtime.output);
-        report.phases.push({ name, passed: true, identity });
-      } catch (error) {
-        const tail = runtime.output.slice(-40).join("\n").replaceAll(tempRoot, "<temp-root>");
-        throw new Error(`${name} phase failed: ${errorChain(error)}\n${tail}`, { cause: error });
-      } finally {
-        await stopRuntime(runtime.child, directPort);
-        await assertNoRuntimeForRoot(directRoot);
-      }
-    }
-
     const converterPort = await allocateLoopbackPort();
     await writeFile(path.join(runtimeRoot, "server.conf"), serverConfig(converterPort, { extensionRepos: [] }));
     const converterEndpoint = `http://127.0.0.1:${converterPort}/api/graphql`;
@@ -458,6 +559,52 @@ async function main() {
     }
     const generatedCanaryJar = await findGeneratedCanaryJar(runtimeRoot);
     report.canaryGeneratedJarSha256 = generatedCanaryJar.sha256;
+
+    fixtureStore = await startFixtureStoreServer(
+      directInstallArtifact,
+      DIRECT_INSTALL_CANARY,
+    );
+    const directRoot = path.join(tempRoot, "direct-v23-profile");
+    await mkdir(directRoot, { recursive: true });
+    const directPort = await allocateLoopbackPort();
+    await writeFile(path.join(directRoot, "server.conf"), serverConfig(directPort, {
+      extensionStores: [fixtureStore.indexUrl],
+    }));
+    const directEndpoint = `http://127.0.0.1:${directPort}/api/graphql`;
+    let directIdentity = null;
+    for (const name of ["exact-v23-jar-install", "exact-v23-jar-restart"]) {
+      const runtime = startRuntime(java, candidateJar, directRoot);
+      try {
+        await waitForHealth(directEndpoint, runtime, timeoutMs);
+        await assertPortOwnedByProcess(directPort, runtime.child.pid);
+        if (name === "exact-v23-jar-install") {
+          await installStoreCanary(
+            directEndpoint,
+            DIRECT_INSTALL_CANARY,
+            fixtureStore.jarUrl,
+          );
+        } else {
+          await refreshStoreExtensions(directEndpoint);
+        }
+        const identity = await collectInstalledExtensionIdentity(
+          directEndpoint,
+          DIRECT_INSTALL_CANARY,
+        );
+        if (directIdentity && JSON.stringify(directIdentity) !== JSON.stringify(identity)) {
+          throw new Error("Exact V23 JAR extension identity changed after restart.");
+        }
+        directIdentity = identity;
+        assertNoStructuralRuntimeErrors(runtime.output);
+        report.phases.push({ name, passed: true, identity });
+      } catch (error) {
+        const tail = runtime.output.slice(-40).join("\n").replaceAll(tempRoot, "<temp-root>");
+        throw new Error(`${name} phase failed: ${errorChain(error)}\n${tail}`, { cause: error });
+      } finally {
+        await stopRuntime(runtime.child, directPort);
+        await assertNoRuntimeForRoot(directRoot);
+      }
+    }
+    report.fixtureStoreRequests = [...fixtureStore.requests];
 
     port = await allocateLoopbackPort();
     await writeFile(path.join(runtimeRoot, "server.conf"), serverConfig(port, { extensionStores: [] }));
@@ -489,11 +636,15 @@ async function main() {
     report.error = errorChain(error);
     throw error;
   } finally {
-    if (artifactDir) {
-      await mkdir(artifactDir, { recursive: true });
-      await writeFile(path.join(artifactDir, "extension-workflow-certification.json"), `${JSON.stringify(report, null, 2)}\n`);
+    try {
+      await fixtureStore?.close();
+      if (artifactDir) {
+        await mkdir(artifactDir, { recursive: true });
+        await writeFile(path.join(artifactDir, "extension-workflow-certification.json"), `${JSON.stringify(report, null, 2)}\n`);
+      }
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
     }
-    await rm(tempRoot, { recursive: true, force: true });
   }
   process.stdout.write(`${JSON.stringify(report)}\n`);
 }

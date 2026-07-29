@@ -567,3 +567,36 @@ Evidencia do lote:
 
 - 23/23 testes focados de diagnostics, transport, schema, adapter e cache.
 - 67 testes do runtime aprovados e 1 contrato live opt-in ignorado.
+
+### 72B1 - Contratos e fixture deterministica
+
+Implementado em 29/07/2026:
+
+- O contrato reutilizavel `runDeterministicSourceContract` valida identidade
+  de source e manga, duas paginas de pesquisa, details, chapters, pages em
+  ordem e propagacao do `AbortSignal`.
+- Profiles V21 e V23 produzem o mesmo DTO normalizado para o fixture. As
+  diferencas de fields, operations e decoders permanecem encapsuladas em
+  `CompatibilityProfileV21` e `CompatibilityProfileV23`.
+- Nao foi criado um scraper ou classloader de teste. O gate usa duas provas
+  oficiais e complementares:
+  - extension estrutural Akuma instalada pelo Extension Manager;
+  - conteudo deterministico servido pela Local Source do Suwayomi.
+- Para o V23, um Extension Store JSON descartavel em loopback serve o JAR
+  oficial Akuma `1.4.10`, fixado na revisao
+  `193dffcb8505b83858759e53f23e9157e708fd6b` e no SHA-256
+  `6dc723db4b10eabfd006978b54407faec410405c5b23d213ebfc90fe3bb23d6d`.
+  A instalacao usa `fetchExtensions` e `updateExtension`; upload externo sem
+  store foi rejeitado como fixture porque nao sobrevivia a reconciliacao no
+  restart.
+- O harness continua exclusivo de perfis locais descartaveis: uma JVM e uma
+  source por vez. Nenhuma regra de restart, shutdown ou quantidade de JVM e
+  aplicada a runtimes remotos ou compartilhados.
+
+Evidencia do lote:
+
+- 6/6 contratos Node do fixture/store.
+- 16/16 contratos Vitest de DTO, profiles, transport e pagination.
+- Workflow nativo V23 aprovado com install e restart, 27 source IDs estaveis,
+  fluxo Local Source completo, `websiteRequests=0` e
+  `maxSourcesInParallel=1`.

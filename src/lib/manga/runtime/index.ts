@@ -31,6 +31,11 @@ export {
   searchSourceManga,
   type SourceMangaSearchVariables,
 } from "./sourceOperations";
+export { runDeterministicSourceContract } from "./sourceContract";
+export type {
+  DeterministicSourceContractEvidence,
+  DeterministicSourceContractInput,
+} from "./sourceContract";
 export { canonicalizeExtensionStoreUrl } from "./storeUrl";
 export {
   SourceHealthProbeCache,

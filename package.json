@@ -12,6 +12,7 @@
     "test:browser": "vitest run --project browser-components",
     "test:suwayomi-certification": "node --test scripts/certify-suwayomi-release.test.mjs scripts/certify-suwayomi-migration.test.mjs scripts/certify-suwayomi-extension-workflows.test.mjs",
     "test:suwayomi-workflows": "node scripts/certify-suwayomi-extension-workflows.mjs",
+    "test:source-contracts": "node --test scripts/certify-suwayomi-extension-workflows.test.mjs && vitest run --project unit src/lib/manga/runtime/sourceContract.test.ts src/lib/manga/runtime/compatibility.test.ts src/lib/manga/runtime/transport.test.ts --maxWorkers=1 --minWorkers=1",
     "release:certify-data": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-local-data-release-certification.ps1",
     "release:test-data-contracts": "node --test scripts/certify-local-data.test.mjs",
     "release:smoke-native-viewports": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-native-viewport-smoke.ps1",

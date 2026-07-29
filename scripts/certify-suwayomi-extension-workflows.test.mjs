@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -10,6 +10,7 @@ import {
   WORKFLOW_CANDIDATE,
   assertNoStructuralRuntimeErrors,
   createLocalSourceFixture,
+  startFixtureStoreServer,
   summarizeDeterministicWorkflow,
 } from "./certify-suwayomi-extension-workflows.mjs";
 
@@ -23,6 +24,7 @@ test("pins the exact runtime and structural extension canary", () => {
   assert.equal(DIRECT_INSTALL_CANARY.versionCode, "10");
   assert.match(DIRECT_INSTALL_CANARY.sha256, /^[a-f0-9]{64}$/);
   assert.match(DIRECT_INSTALL_CANARY.url, new RegExp(DIRECT_INSTALL_CANARY.storeCommit));
+  assert.match(DIRECT_INSTALL_CANARY.fileName, /\.jar$/);
 });
 
 test("rejects structural runtime and extension ABI errors", () => {
@@ -61,4 +63,32 @@ test("requires extension registration and the complete local content workflow", 
   });
   assert.deepEqual(summary.extension.sourceIds, ["7"]);
   assert.equal(summary.pageCount, 1);
+});
+
+test("keeps structural and content fixtures inside official Suwayomi mechanisms", async () => {
+  const source = await readFile(
+    new URL("./certify-suwayomi-extension-workflows.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /structuralFixtureProvider: "SUWAYOMI_EXTENSION_MANAGER"/);
+  assert.match(source, /contentFixtureProvider: "SUWAYOMI_LOCAL_SOURCE"/);
+  assert.doesNotMatch(source, /puppeteer|playwright|cheerio|htmlparser2/);
+});
+
+test("serves a deterministic V23 store and exact JAR from loopback", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "aethon-extension-store-test-"));
+  const artifactPath = path.join(root, "fixture.jar");
+  await writeFile(artifactPath, Buffer.from("fixture"));
+  const store = await startFixtureStoreServer(artifactPath, DIRECT_INSTALL_CANARY);
+  try {
+    const index = await (await fetch(store.indexUrl)).json();
+    const extension = index.extensionList.extensions[0];
+    assert.equal(extension.packageName, DIRECT_INSTALL_CANARY.packageName);
+    assert.equal(extension.resources.jarUrl, store.jarUrl);
+    assert.equal(Buffer.from(await (await fetch(store.jarUrl)).arrayBuffer()).toString(), "fixture");
+    assert.ok(store.indexUrl.startsWith("http://127.0.0.1:"));
+  } finally {
+    await store.close();
+    await rm(root, { recursive: true, force: true });
+  }
 });
