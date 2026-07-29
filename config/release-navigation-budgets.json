@@ -1,10 +1,31 @@
 {
-  "version": 1,
+  "version": 2,
   "maxMedianRegressionPercent": 15,
-  "baselineMethod": "Conservative maximum from two five-session WebView2 passes after Marco 70; this blocks future regressions because earlier builds did not expose equivalent native timing telemetry",
+  "baselineMethod": "Marco 70 wall-clock medians remain diagnostic; Marco 72G blocks app-owned shell activation and directional Library phases. Cold references use four balanced post-GC calibration runs; compositor-only p95 remains observational because WebView2 scheduling is environment-sensitive.",
   "baseline": {
     "startupMedianMs": 3816,
     "librarySectionMedianMs": 80,
     "searchCycleMedianMs": 457
+  },
+  "startup": {
+    "totalWallClockBlocking": false,
+    "shellActivationMaxMs": 1000
+  },
+  "search": {
+    "stateCycleMaxMs": 100
+  },
+  "library": {
+    "warmCachedTotalP50MaxMs": 92,
+    "warmCachedAppOwnedP95MaxMs": 120,
+    "coldMaxRegressionPercent": 15,
+    "coldAppOwnedP50BaselineMs": {
+      "comics-to-books": 30,
+      "books-to-comics": 30
+    },
+    "maxLongTaskDurationMs": 100,
+    "maxLongTaskTotalDurationMs": 200,
+    "maxPendingRafsAfterCycles": 0,
+    "maxRetainedHeapGrowthBytes": 2097152,
+    "maxRetainedHeapGrowthPercent": 15
   }
 }

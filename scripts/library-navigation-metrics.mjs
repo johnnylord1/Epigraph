@@ -24,10 +24,22 @@ export function classifyThermalState(targetActivationCount) {
 
 function summarizeSamples(samples) {
   const durations = samples.map((sample) => sample.durationMs);
+  const appOwnedDurations = samples.map((sample) => {
+    const inputToStateUpdateMs = sample.phases?.inputToStateUpdateMs;
+    const stateUpdateToCommitMs = sample.phases?.stateUpdateToCommitMs;
+    return Number.isFinite(inputToStateUpdateMs) && Number.isFinite(stateUpdateToCommitMs)
+      ? inputToStateUpdateMs + stateUpdateToCommitMs
+      : null;
+  });
+  const presentationDurations = samples.map((sample) => sample.phases?.commitToStableFrameMs);
   return {
     count: samples.length,
     p50Ms: percentile(durations, 0.5),
     p95Ms: percentile(durations, 0.95),
+    appOwnedP50Ms: percentile(appOwnedDurations, 0.5),
+    appOwnedP95Ms: percentile(appOwnedDurations, 0.95),
+    presentationP50Ms: percentile(presentationDurations, 0.5),
+    presentationP95Ms: percentile(presentationDurations, 0.95),
     samplesMs: durations,
   };
 }

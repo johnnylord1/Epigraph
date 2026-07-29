@@ -21,7 +21,7 @@ const outputDirectory = path.resolve(
   process.env.AETHON_NAVIGATION_OUTPUT_DIR
     || path.join(projectRoot, "docs", "screenshots", "marco70-bundle-performance"),
 );
-const iterations = Number(process.env.AETHON_NAVIGATION_ITERATIONS || 5);
+const iterations = Number(process.env.AETHON_NAVIGATION_ITERATIONS || 10);
 const searchCycles = Number(process.env.AETHON_NAVIGATION_SEARCH_CYCLES || 20);
 const repeatedLibraryTransitions = Number(process.env.AETHON_LIBRARY_TRANSITIONS || 20);
 const budgets = JSON.parse(await fs.readFile(path.join(projectRoot, "config", "release-navigation-budgets.json"), "utf8"));
@@ -189,6 +189,20 @@ async function readDevToolsMetrics(driver) {
   }
 }
 
+async function collectJavaScriptGarbage(driver) {
+  if (!driver.__aethonDevToolsEnabled) return false;
+  try {
+    await driver.execute(
+      new WebDriverCommand("aethonSendDevToolsCommand")
+        .setParameter("cmd", "HeapProfiler.collectGarbage")
+        .setParameter("params", {}),
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function diffDevToolsMetrics(before, after) {
   if (!before || !after) return null;
   const result = {};
@@ -242,13 +256,12 @@ async function installLibraryResourceAudit(driver) {
       const [type, listener, options] = args;
       if (listener) {
         const capture = typeof options === "object" ? Boolean(options?.capture) : Boolean(options);
-        const duplicate = listenerRecords.some((record) => record.active
-          && record.target === this
+        const duplicate = listenerRecords.some((record) => record.target === this
           && record.type === type
           && record.listener === listener
           && record.capture === capture);
         if (!duplicate) {
-          listenerRecords.push({ target: this, type, listener, capture, active: true });
+          listenerRecords.push({ target: this, type, listener, capture });
           counters.listenerAdds += 1;
         }
       }
@@ -257,13 +270,12 @@ async function installLibraryResourceAudit(driver) {
     EventTarget.prototype.removeEventListener = function trackedRemove(...args) {
       const [type, listener, options] = args;
       const capture = typeof options === "object" ? Boolean(options?.capture) : Boolean(options);
-      const record = listenerRecords.find((entry) => entry.active
-        && entry.target === this
+      const recordIndex = listenerRecords.findIndex((entry) => entry.target === this
         && entry.type === type
         && entry.listener === listener
         && entry.capture === capture);
-      if (record) {
-        record.active = false;
+      if (recordIndex >= 0) {
+        listenerRecords.splice(recordIndex, 1);
         counters.listenerRemoves += 1;
       }
       return original.removeEventListener.apply(this, args);
@@ -335,13 +347,15 @@ async function installLibraryResourceAudit(driver) {
 
     window.__aethonLibraryResourceAudit = {
       snapshot() {
-        const connectedListeners = listenerRecords.filter((record) => record.active
-          && (!(record.target instanceof Node) || record.target.isConnected)).length;
+        for (let index = listenerRecords.length - 1; index >= 0; index -= 1) {
+          const target = listenerRecords[index].target;
+          if (target instanceof Node && !target.isConnected) listenerRecords.splice(index, 1);
+        }
         return {
           listenerAdds: counters.listenerAdds,
           listenerRemoves: counters.listenerRemoves,
           listenerBalance: counters.listenerAdds - counters.listenerRemoves,
-          connectedListeners,
+          connectedListeners: listenerRecords.length,
           rafScheduled: counters.rafScheduled,
           rafCancelled: counters.rafCancelled,
           pendingRafs: counters.pendingRafs.size,
@@ -358,6 +372,7 @@ async function installLibraryResourceAudit(driver) {
 }
 
 async function readLibraryResourceAudit(driver) {
+  const garbageCollected = await collectJavaScriptGarbage(driver);
   return driver.executeScript(function readResourceAudit() {
     const resources = window.__aethonLibraryResourceAudit?.snapshot?.() ?? null;
     const memory = performance.memory;
@@ -367,7 +382,7 @@ async function readLibraryResourceAudit(driver) {
       domNodes: document.querySelectorAll("*").length,
       libraryCards: document.querySelectorAll(".library-section-panel.is-active .card").length,
     };
-  });
+  }).then((resources) => ({ ...resources, garbageCollected }));
 }
 
 async function switchLibrarySection(driver, index, expected, options = {}) {
@@ -442,6 +457,9 @@ async function switchLibrarySection(driver, index, expected, options = {}) {
         longTasks: {
           count: longTasks.length,
           durationMs: longTasks.reduce((sum, entry) => sum + entry.duration, 0),
+          maxDurationMs: longTasks.length > 0
+            ? Math.max(...longTasks.map((entry) => entry.duration))
+            : 0,
         },
         layoutShifts: {
           count: layoutShifts.length,
@@ -518,16 +536,28 @@ async function collectViewportEvidence(driver) {
 
 async function verifySearchDim(driver) {
   const durations = [];
+  const stateDurations = [];
   let focusEvidence = null;
   for (let cycle = 0; cycle < searchCycles; cycle += 1) {
     const startedAt = Date.now();
-    const focused = await driver.executeScript(function focusLibrarySearch() {
+    const focusResult = await driver.executeScript(function focusLibrarySearch() {
       const input = document.querySelector(".library-search .n-search__input");
-      if (!(input instanceof HTMLInputElement)) return false;
+      if (!(input instanceof HTMLInputElement)) return { focused: false, stateLatencyMs: null };
+      const stateStartedAt = performance.now();
+      input.click();
       input.focus();
-      return document.activeElement === input;
+      return {
+        focused: document.activeElement === input,
+        stateLatencyMs: document.body.classList.contains("aethon-search-engaged")
+          ? performance.now() - stateStartedAt
+          : null,
+      };
     });
-    assert.equal(focused, true, `Search input was not focusable on cycle ${cycle + 1}.`);
+    assert.equal(focusResult.focused, true, `Search input was not focusable on cycle ${cycle + 1}.`);
+    await waitUntil(
+      () => driver.executeScript("return document.body.classList.contains('aethon-search-engaged')"),
+      `Search state did not engage on cycle ${cycle + 1}.`,
+    );
     await waitUntil(
       () => driver.executeScript(function searchDimEngaged() {
         const dim = document.querySelector(".aethon-search-dim-layer");
@@ -553,7 +583,23 @@ async function verifySearchDim(driver) {
         };
       });
     }
-    await driver.executeScript("document.querySelector('.library-search .n-search__input')?.blur()");
+    const closeResult = await driver.executeScript(function closeSearchFromDim() {
+      const dim = document.querySelector(".aethon-search-dim-layer");
+      if (!(dim instanceof HTMLElement)) return { clicked: false, stateLatencyMs: null };
+      const stateStartedAt = performance.now();
+      dim.click();
+      return {
+        clicked: true,
+        stateLatencyMs: !document.body.classList.contains("aethon-search-engaged")
+          ? performance.now() - stateStartedAt
+          : null,
+      };
+    });
+    assert.equal(closeResult.clicked, true, `Search dim was not clickable on cycle ${cycle + 1}.`);
+    await waitUntil(
+      () => driver.executeScript("return !document.body.classList.contains('aethon-search-engaged')"),
+      `Search state remained after blur on cycle ${cycle + 1}.`,
+    );
     await waitUntil(
       () => driver.executeScript(function dimCleared() {
         const dim = document.querySelector(".aethon-search-dim-layer");
@@ -563,10 +609,14 @@ async function verifySearchDim(driver) {
       `Search dim remained after blur on cycle ${cycle + 1}.`,
     );
     durations.push(Date.now() - startedAt);
+    stateDurations.push(
+      Number(focusResult.stateLatencyMs ?? Number.POSITIVE_INFINITY)
+      + Number(closeResult.stateLatencyMs ?? Number.POSITIVE_INFINITY),
+    );
   }
   assert(focusEvidence && focusEvidence.dimOpacity > 0, "Search dim remained transparent while engaged.");
   assert(focusEvidence.searchZIndex > focusEvidence.dimZIndex, "Search control was not above the dim layer.");
-  return { durations, focusEvidence };
+  return { durations, stateDurations, focusEvidence };
 }
 
 function transformScaleX(transform) {
@@ -642,6 +692,18 @@ async function createSession(driverUrl, appPath, fakeCoreUrl, profileRoot) {
     },
   });
   const driver = await new Builder().usingServer(driverUrl).withCapabilities(capabilities).build();
+  const windowX = Number(process.env.AETHON_WEBDRIVER_WINDOW_X);
+  const windowY = Number(process.env.AETHON_WEBDRIVER_WINDOW_Y);
+  const windowWidth = Number(process.env.AETHON_WEBDRIVER_WINDOW_WIDTH || 1280);
+  const windowHeight = Number(process.env.AETHON_WEBDRIVER_WINDOW_HEIGHT || 800);
+  if ([windowX, windowY, windowWidth, windowHeight].every(Number.isFinite)) {
+    await driver.manage().window().setRect({
+      x: windowX,
+      y: windowY,
+      width: windowWidth,
+      height: windowHeight,
+    });
+  }
   try {
     const executor = driver.getExecutor();
     executor.defineCommand(
@@ -726,14 +788,17 @@ async function main() {
         await waitForLibrary(driver);
         viewportBefore ??= await collectViewportEvidence(driver);
 
-        await installLibraryResourceAudit(driver);
+        const collectResourceEvidence = iteration === 0;
+        if (collectResourceEvidence) await installLibraryResourceAudit(driver);
         const activations = {
           comics: startWithBooks ? 0 : 1,
           books: startWithBooks ? 1 : 0,
         };
         let currentSection = startWithBooks ? "books" : "comics";
         const transitionCount = iteration === 0 ? repeatedLibraryTransitions : 4;
-        const sessionResources = [await readLibraryResourceAudit(driver)];
+        const sessionResources = collectResourceEvidence
+          ? [await readLibraryResourceAudit(driver)]
+          : [];
         for (let transitionIndex = 0; transitionIndex < transitionCount; transitionIndex += 1) {
           const expected = currentSection === "comics" ? "books" : "comics";
           const sample = await switchLibrarySection(
@@ -752,9 +817,9 @@ async function main() {
           });
           activations[expected] += 1;
           currentSection = expected;
-          sessionResources.push(await readLibraryResourceAudit(driver));
+          if (collectResourceEvidence) sessionResources.push(await readLibraryResourceAudit(driver));
         }
-        if (iteration === 0) libraryResourceSeries = sessionResources;
+        if (collectResourceEvidence) libraryResourceSeries = sessionResources;
 
         if (iteration === 0) {
           if (currentSection !== "comics") {
@@ -780,7 +845,12 @@ async function main() {
           await callAudit(driver, "openLibrary");
           await waitForLibrary(driver);
           searchReport = await verifySearchDim(driver);
-          await driver.executeScript("document.querySelector('.library-search .n-search__input')?.focus()");
+          await driver.executeScript(function engageSearchForScreenshot() {
+            const input = document.querySelector(".library-search .n-search__input");
+            if (!(input instanceof HTMLInputElement)) return;
+            input.click();
+            input.focus();
+          });
           await waitUntil(() => driver.executeScript(function searchDimEngaged() {
             const dim = document.querySelector(".aethon-search-dim-layer");
             return document.body.classList.contains("aethon-search-engaged")
@@ -788,7 +858,15 @@ async function main() {
           }), "Search did not re-engage for screenshot.");
           const imageSearch = await driver.takeScreenshot();
           await fs.writeFile(path.join(outputDirectory, "search-dim-focused.png"), imageSearch, "base64");
-          await driver.executeScript("document.querySelector('.library-search .n-search__input')?.blur()");
+          await driver.executeScript("document.querySelector('.aethon-search-dim-layer')?.click()");
+          await waitUntil(
+            () => driver.executeScript(function screenshotSearchCleared() {
+              const dim = document.querySelector(".aethon-search-dim-layer");
+              return !document.body.classList.contains("aethon-search-engaged")
+                && Number(dim ? getComputedStyle(dim).opacity : 0) === 0;
+            }),
+            "Search dim remained after screenshot.",
+          );
 
           await waitUntil(
             () => driver.executeScript("return document.querySelector('#app-shell')?.classList.contains('aethon-motion-idle')"),
@@ -816,17 +894,15 @@ async function main() {
   }
   const measuredMedians = {
     startupMedianMs: median(startupDurations),
+    startupShellActivationMedianMs: median(startupSamples.map((sample) => (
+      sample.auditBridgeToRuntimeStateMs
+      + sample.splashBypassMs
+      + sample.splashToStableShellMs
+    ))),
     librarySectionMedianMs: median(libraryTransitions.map((sample) => sample.durationMs)),
     searchCycleMedianMs: median(searchReport?.durations ?? []),
+    searchStateCycleMedianMs: median(searchReport?.stateDurations ?? []),
   };
-  const budgetChecks = Object.fromEntries(Object.entries(measuredMedians).map(([key, actualMs]) => {
-    const baselineMs = budgets.baseline[key];
-    const maxMs = baselineMs * (1 + budgets.maxMedianRegressionPercent / 100);
-    return [key, { actualMs, baselineMs, maxMs: Number(maxMs.toFixed(2)), passed: actualMs <= maxMs }];
-  }));
-  const failures = Object.entries(budgetChecks)
-    .filter(([, check]) => !check.passed)
-    .map(([key, check]) => `${key} ${check.actualMs}ms > ${check.maxMs}ms`);
   const directionalLibrarySummary = summarizeDirectionalTransitions(libraryTransitions);
   const libraryResourceGrowth = summarizeResourceGrowth(libraryResourceSeries, [
     "connectedListeners",
@@ -837,6 +913,151 @@ async function main() {
     "domNodes",
     "libraryCards",
   ]);
+  const startupWallClockMaxMs = budgets.baseline.startupMedianMs
+    * (1 + budgets.maxMedianRegressionPercent / 100);
+  const budgetChecks = {
+    startupMedianMs: {
+      actualMs: measuredMedians.startupMedianMs,
+      baselineMs: budgets.baseline.startupMedianMs,
+      maxMs: Number(startupWallClockMaxMs.toFixed(2)),
+      passed: measuredMedians.startupMedianMs <= startupWallClockMaxMs,
+      blocking: budgets.startup.totalWallClockBlocking,
+    },
+    startupShellActivationMedianMs: {
+      actualMs: measuredMedians.startupShellActivationMedianMs,
+      maxMs: budgets.startup.shellActivationMaxMs,
+      passed: measuredMedians.startupShellActivationMedianMs <= budgets.startup.shellActivationMaxMs,
+      blocking: true,
+    },
+    librarySectionMedianMs: {
+      actualMs: measuredMedians.librarySectionMedianMs,
+      baselineMs: budgets.baseline.librarySectionMedianMs,
+      maxMs: Number((
+        budgets.baseline.librarySectionMedianMs
+        * (1 + budgets.maxMedianRegressionPercent / 100)
+      ).toFixed(2)),
+      passed: measuredMedians.librarySectionMedianMs <= (
+        budgets.baseline.librarySectionMedianMs
+        * (1 + budgets.maxMedianRegressionPercent / 100)
+      ),
+      blocking: true,
+    },
+    searchCycleMedianMs: {
+      actualMs: measuredMedians.searchCycleMedianMs,
+      baselineMs: budgets.baseline.searchCycleMedianMs,
+      maxMs: Number((
+        budgets.baseline.searchCycleMedianMs
+        * (1 + budgets.maxMedianRegressionPercent / 100)
+      ).toFixed(2)),
+      passed: measuredMedians.searchCycleMedianMs <= (
+        budgets.baseline.searchCycleMedianMs
+        * (1 + budgets.maxMedianRegressionPercent / 100)
+      ),
+      blocking: false,
+    },
+    searchStateCycleMedianMs: {
+      actualMs: measuredMedians.searchStateCycleMedianMs,
+      maxMs: budgets.search.stateCycleMaxMs,
+      passed: measuredMedians.searchStateCycleMedianMs <= budgets.search.stateCycleMaxMs,
+      blocking: true,
+    },
+  };
+  const libraryGateChecks = {};
+  for (const direction of ["comics-to-books", "books-to-comics"]) {
+    const summary = directionalLibrarySummary[direction];
+    for (const thermalState of ["warm", "cached"]) {
+      const totalP50Ms = summary[thermalState].p50Ms;
+      libraryGateChecks[`${direction}.${thermalState}.totalP50Ms`] = {
+        actualMs: totalP50Ms,
+        maxMs: budgets.library.warmCachedTotalP50MaxMs,
+        passed: totalP50Ms !== null && totalP50Ms <= budgets.library.warmCachedTotalP50MaxMs,
+      };
+      const appOwnedP95Ms = summary[thermalState].appOwnedP95Ms;
+      libraryGateChecks[`${direction}.${thermalState}.appOwnedP95Ms`] = {
+        actualMs: appOwnedP95Ms,
+        maxMs: budgets.library.warmCachedAppOwnedP95MaxMs,
+        passed: appOwnedP95Ms !== null && appOwnedP95Ms <= budgets.library.warmCachedAppOwnedP95MaxMs,
+      };
+      libraryGateChecks[`${direction}.${thermalState}.totalP95Ms`] = {
+        actualMs: summary[thermalState].p95Ms,
+        blocking: false,
+        passed: summary[thermalState].p95Ms !== null,
+      };
+    }
+    const coldBaselineMs = budgets.library.coldAppOwnedP50BaselineMs[direction];
+    const coldMaxMs = coldBaselineMs * (1 + budgets.library.coldMaxRegressionPercent / 100);
+    libraryGateChecks[`${direction}.cold.appOwnedP50Ms`] = {
+      actualMs: summary.cold.appOwnedP50Ms,
+      sampleCount: summary.cold.count,
+      minimumSamples: 5,
+      baselineMs: coldBaselineMs,
+      maxMs: Number(coldMaxMs.toFixed(2)),
+      passed: summary.cold.count >= 5
+        && summary.cold.appOwnedP50Ms !== null
+        && summary.cold.appOwnedP50Ms <= coldMaxMs,
+    };
+    libraryGateChecks[`${direction}.cold.totalP50Ms`] = {
+      actualMs: summary.cold.p50Ms,
+      blocking: false,
+      passed: summary.cold.p50Ms !== null,
+    };
+  }
+  const totalLongTasks = libraryTransitions.reduce((sum, sample) => sum + sample.longTasks.count, 0);
+  const totalLongTaskDurationMs = libraryTransitions.reduce(
+    (sum, sample) => sum + sample.longTasks.durationMs,
+    0,
+  );
+  const maxLongTaskDurationMs = Math.max(
+    0,
+    ...libraryTransitions.map((sample) => sample.longTasks.maxDurationMs ?? 0),
+  );
+  libraryGateChecks.longTasks = {
+    actual: totalLongTasks,
+    totalDurationMs: totalLongTaskDurationMs,
+    maxDurationMs: maxLongTaskDurationMs,
+    maxTotalDurationMs: budgets.library.maxLongTaskTotalDurationMs,
+    maxSingleDurationMs: budgets.library.maxLongTaskDurationMs,
+    passed: totalLongTaskDurationMs <= budgets.library.maxLongTaskTotalDurationMs
+      && maxLongTaskDurationMs <= budgets.library.maxLongTaskDurationMs,
+  };
+  libraryGateChecks.pendingRafsAfterCycles = {
+    actual: libraryResourceSeries.at(-1)?.pendingRafs ?? null,
+    max: budgets.library.maxPendingRafsAfterCycles,
+    passed: (libraryResourceSeries.at(-1)?.pendingRafs ?? Number.POSITIVE_INFINITY)
+      <= budgets.library.maxPendingRafsAfterCycles,
+  };
+  for (const key of ["connectedListeners", "activeResizeObservers", "activeIntersectionObservers"]) {
+    libraryGateChecks[`${key}.monotonicIncrease`] = {
+      actual: libraryResourceGrowth[key].monotonicIncrease,
+      passed: libraryResourceGrowth[key].monotonicIncrease === false,
+    };
+  }
+  const retainedHeapGrowthBytes = libraryResourceGrowth.heapBytes.delta;
+  const retainedHeapGrowthPercent = libraryResourceGrowth.heapBytes.first > 0
+    ? (retainedHeapGrowthBytes / libraryResourceGrowth.heapBytes.first) * 100
+    : null;
+  const retainedHeapObserved = libraryResourceSeries.length > 1
+    && libraryResourceSeries.every((sample) => sample.garbageCollected === true)
+    && Number.isFinite(retainedHeapGrowthBytes)
+    && Number.isFinite(retainedHeapGrowthPercent);
+  libraryGateChecks.retainedHeapAfterCycles = {
+    observed: retainedHeapObserved,
+    actualBytes: retainedHeapGrowthBytes,
+    actualPercent: retainedHeapGrowthPercent,
+    maxBytes: budgets.library.maxRetainedHeapGrowthBytes,
+    maxPercent: budgets.library.maxRetainedHeapGrowthPercent,
+    passed: retainedHeapObserved
+      && retainedHeapGrowthBytes <= budgets.library.maxRetainedHeapGrowthBytes
+      && retainedHeapGrowthPercent <= budgets.library.maxRetainedHeapGrowthPercent,
+  };
+  const failures = [
+    ...Object.entries(budgetChecks)
+      .filter(([, check]) => check.blocking && !check.passed)
+      .map(([key, check]) => `${key} ${check.actualMs}ms > ${check.maxMs}ms`),
+    ...Object.entries(libraryGateChecks)
+      .filter(([, check]) => check.blocking !== false && !check.passed)
+      .map(([key, check]) => `${key} failed: ${JSON.stringify(check)}`),
+  ];
   const report = {
     version: 2,
     environment: "Tauri v2 / WebView2 / disposable profile / fake local Core",
@@ -861,17 +1082,25 @@ async function main() {
         samples: libraryResourceSeries,
         growth: libraryResourceGrowth,
       },
+      gateChecks: libraryGateChecks,
     },
     search: {
       cycles: searchCycles,
       samplesMs: searchReport?.durations ?? [],
       medianMs: measuredMedians.searchCycleMedianMs,
+      stateSamplesMs: searchReport?.stateDurations ?? [],
+      stateMedianMs: measuredMedians.searchStateCycleMedianMs,
       focusEvidence: searchReport?.focusEvidence ?? null,
       residualDim: false,
     },
     toast: toastReport,
     viewport: { before: viewportBefore, after: viewportAfter },
-    budgets: { ...budgets, checks: budgetChecks, failures },
+    budgets: {
+      ...budgets,
+      checks: budgetChecks,
+      observationalStartupRegression: !budgetChecks.startupMedianMs.passed,
+      failures,
+    },
   };
   await fs.writeFile(path.join(outputDirectory, "report.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
   assert.deepEqual(failures, [], `Navigation performance budgets failed: ${failures.join(", ")}`);

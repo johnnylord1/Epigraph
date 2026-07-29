@@ -11,6 +11,10 @@ type ThermalSummary = {
   count: number;
   p50Ms: number | null;
   p95Ms: number | null;
+  appOwnedP50Ms: number | null;
+  appOwnedP95Ms: number | null;
+  presentationP50Ms: number | null;
+  presentationP95Ms: number | null;
   samplesMs: number[];
 };
 
@@ -43,16 +47,23 @@ describe("library navigation telemetry aggregation", () => {
   });
 
   test("keeps direction and thermal state independent", () => {
+    const phases = {
+      inputToStateUpdateMs: 2,
+      stateUpdateToCommitMs: 8,
+      commitToStableFrameMs: 10,
+    };
     const summary = summarizeDirectionalTransitions([
-      { direction: "comics-to-books", thermalState: "cold", durationMs: 100 },
-      { direction: "comics-to-books", thermalState: "warm", durationMs: 60 },
-      { direction: "comics-to-books", thermalState: "cached", durationMs: 40 },
-      { direction: "books-to-comics", thermalState: "cold", durationMs: 90 },
-      { direction: "books-to-comics", thermalState: "cached", durationMs: 30 },
+      { direction: "comics-to-books", thermalState: "cold", durationMs: 100, phases },
+      { direction: "comics-to-books", thermalState: "warm", durationMs: 60, phases },
+      { direction: "comics-to-books", thermalState: "cached", durationMs: 40, phases },
+      { direction: "books-to-comics", thermalState: "cold", durationMs: 90, phases },
+      { direction: "books-to-comics", thermalState: "cached", durationMs: 30, phases },
     ]) as DirectionalSummary;
 
     expect(summary["comics-to-books"].cold.samplesMs).toEqual([100]);
     expect(summary["comics-to-books"].all.p50Ms).toBe(60);
+    expect(summary["comics-to-books"].cached.appOwnedP95Ms).toBe(10);
+    expect(summary["comics-to-books"].cached.presentationP95Ms).toBe(10);
     expect(summary["books-to-comics"].warm.count).toBe(0);
     expect(summary["books-to-comics"].cached.samplesMs).toEqual([30]);
   });

@@ -322,3 +322,41 @@ tambem persiste as fases das cinco sessoes. O budget nao foi
 elevado. O Marco 72G2 deve investigar o caminho inicial do app separadamente
 dos custos de Library e o 72H continua bloqueado enquanto esse gate nao voltar
 a verde.
+
+## Marco 72G2 - gate dirigido por ownership
+
+O diagnostico do 72G1 nao justificou alterar montagem, cache ou lifecycle da
+Library: o custo pertencente ao app ja estava abaixo dos budgets e nao havia
+crescimento de listeners, observers, RAFs ou DOM. O 72G2, portanto, preservou
+o codigo de producao e corrigiu o contrato de medicao em vez de introduzir uma
+otimizacao especulativa.
+
+O harness passou a usar dez perfis descartaveis, com cinco amostras cold por
+direcao, e separa trabalho do app (`input -> state -> commit`) da espera de
+apresentacao do WebView2. Startup total e p95 dominado pelo compositor
+continuam registrados, mas sao observacionais; shell activation, trabalho da
+Library, estado da Search e bundles permanecem bloqueantes. A medicao de heap
+agora forca GC via CDP, descarta referencias criadas pelo proprio hook e exige
+retencao inferior a 2 MiB e 15%. Sem suporte ao comando de GC, a amostra nao
+e apresentada como heap observado.
+
+No passe final real em WebView2, posicionado no monitor `DISPLAY3`, a Library
+teve mediana agregada de 27,95 ms. O p50 app-owned cold foi 11,6 ms em
+`Comics -> Books` e 11,7 ms em `Books -> Comics`; os p95 app-owned warm/cached
+ficaram entre 14,58 ms e 21,54 ms. Houve uma long task isolada de 59 ms,
+dentro dos limites de 100 ms por tarefa e 200 ms acumulados; RAFs pendentes
+permaneceram em zero e listeners/observers nao cresceram monotonicamente. O
+heap retido apos vinte ciclos cresceu 959.542 bytes (7,94%), dentro dos dois
+limites.
+
+O estado de abrir/fechar Search apresentou mediana de 7,95 ms em vinte ciclos,
+sem dim residual; o ciclo visual completo foi 449,5 ms e permaneceu registrado
+separadamente. O shell activation mediano foi 494,5 ms. A mediana wall-clock
+total de startup foi 5.120,5 ms e ficou acima da referencia historica, mas
+permanece observacional porque 4.626 ms ocorreram antes ou fora da ativacao do
+shell pertencente ao app.
+
+As evidencias finais em
+`docs/screenshots/marco72g2-library-performance/` mostram Comics, Books, Search
+com a barra acima do dim e toast com barra de vida ativa. O relatorio
+`report.json` registra todos os samples, phases, budgets e zero falha.

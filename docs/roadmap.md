@@ -28,16 +28,17 @@ This roadmap records known development priorities without committing to dates or
 - Library navigation now has directional cold/warm/cached telemetry in native
   WebView2, including commit/frame phases, CDP layout/style metrics, long tasks,
   CLS, heap, DOM, network, listeners, observers, and RAF growth over 20 cycles.
-  Cached section changes are stable; the aggregate startup budget remains a
-  measured blocker and was not relaxed.
+  The 72G2 gate separates app-owned work from environment-sensitive compositor
+  and process startup time, balances five cold samples per direction, measures
+  retained heap after GC, and keeps Search state latency blocking. No speculative
+  Library lifecycle change was needed; the final native pass is green.
 - EPUB/PDF local-data round trips, backup/restore, integration contracts,
   accessibility focus isolation, bundle budgets, and aggregate release gates.
 
 ## Short Term
 
-- Continue the verified 72A-72H sequence with 72G2 optimization driven by the
-  Library report, and isolate the pre-audit-bridge startup regression before
-  the 72H gate.
+- Complete the verified 72A-72H sequence with the consolidated 72H structural
+  gate and current-head release verification.
 - Re-run `pnpm release:verify` on the current HEAD after the SR9-SR13 source
   runtime sequence.
 - Exercise the real Docker FlareSolverr lifecycle when Docker is available;
