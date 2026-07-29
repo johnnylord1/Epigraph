@@ -1,0 +1,25 @@
+{
+  "activeElement": "DIV.extensionCard svelte-goaan4 selected",
+  "aggregate": "Degraded",
+  "bodyClasses": "",
+  "coveringLayers": [
+    {
+      "background": "color(srgb 0 0 0 / 0.54)",
+      "className": "aethon-search-dim-layer",
+      "opacity": "0",
+      "pointerEvents": "none",
+      "zIndex": "90"
+    },
+    {
+      "background": "rgba(0, 0, 0, 0)",
+      "className": "search-palette-backdrop svelte-rkiqp4",
+      "opacity": "1",
+      "pointerEvents": "none",
+      "zIndex": "90"
+    }
+  ],
+  "detailsWidth": 273.6875,
+  "horizontalOverflow": 0,
+  "panelWithinViewport": true,
+  "stageCount": 4
+}

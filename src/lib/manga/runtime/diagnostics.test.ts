@@ -33,6 +33,9 @@ describe("source runtime diagnostics", () => {
     expect(redactDiagnosticText("/home/private-user/.config/aethon")).toBe(
       "[PRIVATE_PATH]/.config/aethon",
     );
+    expect(redactDiagnosticText(
+      "Authorization: Bearer secret-value token=private-value",
+    )).toBe("Authorization: Bearer [REDACTED] token=[REDACTED]");
   });
 
   test("bounds depth, collection size and circular values", () => {

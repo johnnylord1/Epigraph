@@ -117,6 +117,8 @@ describe("ExtensionUpdateCoordinator", () => {
     expect(runBatch).toHaveBeenCalledOnce();
     expect(runBatch.mock.calls[0]?.[0]).toHaveLength(2);
     expect(batch.state.records.map((record) => record.status).sort()).toEqual(["HEALTHY", "INCOMPATIBLE"]);
+    expect(batch.state.reports.map((report) => report.aggregateStatus).sort()).toEqual(["FAIL", "PASS"]);
+    expect(batch.state.reports.every((report) => report.trigger === "AUTOMATIC_STRUCTURAL")).toBe(true);
     expect(service.getPhase()).toBe("COMPLETED");
   });
 

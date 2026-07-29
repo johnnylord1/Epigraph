@@ -6,12 +6,16 @@ import {
   type SuwayomiRuntimeStatusInput,
 } from "../../suwayomiRuntimeUpdate";
 import {
+  aggregateObservedCompatibilityStages,
   loadExtensionCompatibilityState,
   saveExtensionCompatibilityState,
   upsertExtensionCompatibilityRecord,
+  upsertObservedCompatibilityReport,
   type ExtensionCompatibilityState,
   type ExtensionFailureOwner,
+  type ObservedCompatibilityStage,
 } from "./extensionCompatibility";
+import { canonicalEndpointIdentity } from "./diagnostics";
 import type { ExtensionRef } from "./types";
 import { resetManagedSourceRuntime } from "./managed";
 
@@ -61,6 +65,8 @@ export interface ExtensionUpdateCoordinatorOptions {
   profileId: string;
   state: ExtensionCompatibilityState;
   driver: ExtensionBatchDriver;
+  endpointIdentity?: string;
+  runtimeScope?: "LOCAL_OWNED" | "REMOTE_SHARED";
   now?: () => number;
   onState?: (phase: ExtensionUpdatePhase) => void;
 }
@@ -189,6 +195,53 @@ export class ExtensionUpdateCoordinator {
       checkedAt,
       lastHealthyAt: evidence.status === "HEALTHY" ? checkedAt : null,
     });
+    const stages: ObservedCompatibilityStage[] = [
+      {
+        id: "artifact-provenance",
+        label: "Artifact provenance",
+        kind: "DETERMINISTIC",
+        status: "PASS",
+        durationMs: null,
+        failureCode: null,
+      },
+      {
+        id: "extension-load",
+        label: "Extension load",
+        kind: "DETERMINISTIC",
+        status: evidence.status === "HEALTHY" ? "PASS" : "FAIL",
+        durationMs: null,
+        failureCode: evidence.failureCode,
+      },
+      {
+        id: "source-registration",
+        label: "Source registration",
+        kind: "DETERMINISTIC",
+        status: evidence.sourceIds.length > 0 ? "PASS" : "FAIL",
+        durationMs: null,
+        failureCode: evidence.sourceIds.length > 0 ? null : "SOURCE_NOT_REGISTERED",
+      },
+    ];
+    this.state = upsertObservedCompatibilityReport(this.state, {
+      schemaVersion: 1,
+      reportId: `${result.batchId}:${evidence.packageName}:${evidence.versionCode}`,
+      profileId: this.options.profileId,
+      packageName: evidence.packageName,
+      versionCode: evidence.versionCode,
+      artifactSha256: evidence.artifactSha256,
+      runtimeVersion: result.runtimeVersion,
+      runtimeArtifactSha256: result.runtimeArtifactSha256,
+      adapterProfile: result.runtimeVersion.startsWith("v2.3")
+        ? "suwayomi-v23"
+        : "suwayomi-v21",
+      endpointIdentity: this.options.endpointIdentity ?? "local-managed-runtime",
+      runtimeScope: this.options.runtimeScope ?? "LOCAL_OWNED",
+      trigger: "AUTOMATIC_STRUCTURAL",
+      sourceId: null,
+      startedAt: checkedAt,
+      completedAt: checkedAt,
+      aggregateStatus: aggregateObservedCompatibilityStages(stages),
+      stages,
+    });
   }
 
   private setPhase(phase: ExtensionUpdatePhase): void {
@@ -205,10 +258,16 @@ export async function runTransactionalExtensionUpdates(
   const profileId = input.profileId ?? fallback.profileId ?? "main";
   const serverUrl = input.serverUrl ?? fallback.serverUrl;
   const state = await loadExtensionCompatibilityState({ profileId, serverUrl });
+  const endpointIdentity = canonicalEndpointIdentity(serverUrl ?? fallback.serverUrl ?? "");
+  const loopback = endpointIdentity.includes("://127.0.0.1")
+    || endpointIdentity.includes("://localhost")
+    || endpointIdentity.includes("://[::1]");
   const coordinator = new ExtensionUpdateCoordinator({
     profileId,
     state,
     driver: createNativeExtensionBatchDriver(input),
+    endpointIdentity,
+    runtimeScope: loopback ? "LOCAL_OWNED" : "REMOTE_SHARED",
   });
   try {
     const result = await coordinator.run(extensions);

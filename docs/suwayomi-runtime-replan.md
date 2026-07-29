@@ -600,3 +600,74 @@ Evidencia do lote:
 - Workflow nativo V23 aprovado com install e restart, 27 source IDs estaveis,
   fluxo Local Source completo, `websiteRequests=0` e
   `maxSourcesInParallel=1`.
+
+### 72B2 - Relatorios de compatibilidade observada
+
+Implementado em 29/07/2026:
+
+- O estado atomico de compatibilidade foi migrado do schema V1 para V2. Os
+  registros fortes de artefato/runtime permanecem intactos e uma nova colecao
+  limitada a 64 relatorios por perfil guarda execucoes observadas. Estados V1
+  sao carregados sem inventar relatorios ou evidencias.
+- Cada relatorio identifica perfil, package, versao, adapter, runtime,
+  endpoint canonico, escopo local/remoto, trigger, source e timestamps. Hashes
+  desconhecidos permanecem `null`; nao sao substituidos por valores
+  presumidos.
+- Estagios deterministas usam `PASS`, `FAIL`, `SKIPPED`, `UNSUPPORTED`,
+  `NOT_OBSERVED`, `TIMED_OUT`, `CANCELLED` ou `INCONCLUSIVE`. O agregado usa
+  `PASS`, `FAIL`, `DEGRADED`, `INCONCLUSIVE` ou `CANCELLED`.
+- Falha determinista bloqueia o agregado. Falha, timeout ou informacao
+  indisponivel em estagio observacional produz no maximo `DEGRADED` ou
+  `INCONCLUSIVE`; nao transforma website live em gate estrutural.
+- O `ExtensionUpdateCoordinator` cria relatorio estrutural somente para a
+  combinacao runtime/artefato que acabou de passar pela certificacao oficial.
+  O coordinator continua apenas orquestrando o Extension Manager do Suwayomi.
+- O probe live e iniciado exclusivamente pelo usuario em Sources. Ele consulta
+  uma source registrada por vez, usa o endpoint existente e nunca reinicia,
+  limita ou cria staging em runtime remoto/compartilhado.
+- Escopo `LOCAL_OWNED` nao e inferido por loopback: o frontend consulta o status
+  nativo, que comprova ownership e JAR efetivo. Falha, evidencia incompleta ou
+  runtime attach-only usam o fallback conservador `REMOTE_SHARED`.
+- Falha ao ler o arquivo opcional de evidencias nao impede o carregamento do
+  inventario oficial de extensions.
+- HTTP interno, cookies, redirects e parser da extension nao sao expostos pela
+  API oficial. O relatorio registra esses dados como `NOT_OBSERVED`, sem proxy,
+  parser ou scraper paralelo no Aethon.
+- Sources mostra somente o resumo mais recente. Runtime, adapter e estagios
+  ficam dentro do painel progressivo de configuracao da extension. Nenhum
+  stack trace, payload, token, cookie ou caminho privado e mostrado no fluxo
+  principal.
+- Strings de evidencia recebem limites e redaction antes da persistencia. O
+  sanitizador central passou a remover tambem secrets embutidos em texto, como
+  `Authorization: Bearer ...` e `token=...`.
+
+Limitacoes:
+
+- O perfil descartavel de componente nao possui historico real de
+  certificacao; a presenca e a atualizacao do resumo sao cobertas por testes de
+  modelo/coordinator. Screenshots reais nao devem receber registros
+  artificiais apenas para forcar o estado.
+- O probe live certifica apenas a execucao observada da primeira source
+  registrada para a extension. Ele nao declara todas as sources ou websites
+  universalmente funcionais.
+
+Evidencia:
+
+- 38/38 testes focados de health, redaction, registro, coordinator e probe.
+- 19/19 testes de montagem `BrowseV3 -> SourcesView` e 3/3 gates de tokens de
+  Sources.
+- `docs/screenshots/marco72b2-compatibility/before-observed-report.png` mostra
+  o painel ativo antes da nova execucao observacional.
+- `docs/screenshots/marco72b2-compatibility/after-observed-report.png` mostra
+  o mesmo painel com resumo `DEGRADED` e estagios expandidos. O agregado
+  degradado e esperado: pesquisa live passou, enquanto HTTP/parser internos
+  ficaram corretamente `NOT_OBSERVED`.
+- O smoke WebView2 mediu painel integralmente dentro do viewport,
+  `horizontalOverflow=0`, largura visivel de detalhes `273.6875px` e quatro
+  estagios. O primeiro screenshot imediato apresentou repaint incompleto e foi
+  substituido; a evidencia final aguarda dois frames e 500 ms de estabilidade.
+- O smoke usa uma unica source, fecha driver/app e remove o perfil temporario.
+  O processo Suwayomi preexistente nao e reiniciado nem encerrado.
+- `--local-app-data-dir` redefine `APPDATA` e `LOCALAPPDATA` antes do estado
+  Tauri; o relatorio do smoke foi persistido somente no perfil descartavel e
+  removido com ele.

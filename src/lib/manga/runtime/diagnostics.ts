@@ -23,6 +23,9 @@ const SENSITIVE_KEY_PATTERN =
 const PERSONAL_KEY_PATTERN = /^(?:query|description|content|body|html|username|email)$/i;
 const WINDOWS_PRIVATE_PATH_PATTERN = /[A-Za-z]:\\Users\\[^\\\s]+/g;
 const UNIX_PRIVATE_PATH_PATTERN = /\/(?:home|Users)\/[^/\s]+/g;
+const AUTHORIZATION_VALUE_PATTERN = /(\bauthorization\s*:\s*(?:bearer|basic)\s+)[^\s,;]+/gi;
+const INLINE_SECRET_VALUE_PATTERN =
+  /(\b(?:cookie|password|passwd|secret|token|api[-_]?key|credential)\s*[=:]\s*)[^\s,;]+/gi;
 
 interface RedactionOptions {
   maxDepth?: number;
@@ -43,7 +46,9 @@ export function redactDiagnosticText(
   return truncate(
     value
       .replace(WINDOWS_PRIVATE_PATH_PATTERN, "[PRIVATE_PATH]")
-      .replace(UNIX_PRIVATE_PATH_PATTERN, "[PRIVATE_PATH]"),
+      .replace(UNIX_PRIVATE_PATH_PATTERN, "[PRIVATE_PATH]")
+      .replace(AUTHORIZATION_VALUE_PATTERN, "$1[REDACTED]")
+      .replace(INLINE_SECRET_VALUE_PATTERN, "$1[REDACTED]"),
     maxLength,
   );
 }

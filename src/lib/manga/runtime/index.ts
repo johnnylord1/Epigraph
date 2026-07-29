@@ -36,6 +36,8 @@ export type {
   DeterministicSourceContractEvidence,
   DeterministicSourceContractInput,
 } from "./sourceContract";
+export { runExplicitCompatibilityProbe } from "./observedCompatibility";
+export type { ExplicitCompatibilityProbeInput } from "./observedCompatibility";
 export { canonicalizeExtensionStoreUrl } from "./storeUrl";
 export {
   SourceHealthProbeCache,
@@ -57,13 +59,19 @@ export type {
 export { createExtensionProvenance } from "./provenance";
 export {
   EXTENSION_COMPATIBILITY_SCHEMA_VERSION,
+  MAX_OBSERVED_COMPATIBILITY_REPORTS,
+  OBSERVED_COMPATIBILITY_REPORT_SCHEMA_VERSION,
+  aggregateObservedCompatibilityStages,
   extensionCompatibilityIdentity,
+  latestObservedCompatibilityReport,
   loadExtensionCompatibilityState,
   normalizeExtensionCompatibilityRecord,
   normalizeExtensionCompatibilityState,
+  normalizeObservedCompatibilityReport,
   resetExtensionCompatibilityStateCacheForTests,
   saveExtensionCompatibilityState,
   upsertExtensionCompatibilityRecord,
+  upsertObservedCompatibilityReport,
 } from "./extensionCompatibility";
 export {
   createNativeExtensionBatchDriver,
@@ -88,6 +96,13 @@ export type {
   ExtensionCompatibilityState,
   ExtensionCompatibilityStatus,
   ExtensionFailureOwner,
+  CompatibilityAggregateStatus,
+  CompatibilityReportTrigger,
+  CompatibilityRuntimeScope,
+  CompatibilityStageKind,
+  CompatibilityStageStatus,
+  ObservedCompatibilityReport,
+  ObservedCompatibilityStage,
 } from "./extensionCompatibility";
 export {
   INTROSPECTION_OPERATION,

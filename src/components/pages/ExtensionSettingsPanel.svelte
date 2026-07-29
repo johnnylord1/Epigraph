@@ -3,13 +3,17 @@
   import { StackSimple, X } from "phosphor-svelte";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import type { ManagedExtension } from "../../lib/managedExtensions";
+  import type { ObservedCompatibilityReport } from "../../lib/manga/runtime";
   import type { MockExtensionSettings, MockExtensionSettingsPatch } from "../../store/mockSettingsStore";
 
   let {
     extension,
     config,
     busy = false,
+    compatibilityReport = null,
+    compatibilityBusy = false,
     onClose,
+    onCheckCompatibility,
     onInstall,
     onMassMigration,
     onUpdateConfig,
@@ -17,7 +21,10 @@
     extension: ManagedExtension;
     config: MockExtensionSettings;
     busy?: boolean;
+    compatibilityReport?: ObservedCompatibilityReport | null;
+    compatibilityBusy?: boolean;
     onClose: () => void;
+    onCheckCompatibility?: (extension: ManagedExtension) => void;
     onInstall: (extension: ManagedExtension) => void;
     onMassMigration?: (extension: ManagedExtension) => void;
     onUpdateConfig: (pkgName: string, patch: MockExtensionSettingsPatch) => void;
@@ -52,6 +59,18 @@
   }
 
   const canMassMigrate = $derived(extension.kind === "manga" && extension.isInstalled);
+
+  function reportStatusLabel(status: ObservedCompatibilityReport["aggregateStatus"]): string {
+    return status === "PASS"
+      ? "Passed"
+      : status === "DEGRADED"
+        ? "Degraded"
+        : status === "FAIL"
+          ? "Failed"
+          : status === "CANCELLED"
+            ? "Cancelled"
+            : "Inconclusive";
+  }
 </script>
 
 <div class="settingsBackdrop" onclick={onClose} aria-hidden="true"></div>
@@ -125,6 +144,52 @@
       {/if}
     </div>
   </section>
+
+  {#if compatibilityReport}
+    <details class="compatibilitySection">
+      <summary>
+        <span>Observed compatibility</span>
+        <strong
+          class:reportFailed={compatibilityReport.aggregateStatus === "FAIL"}
+          class:reportDegraded={compatibilityReport.aggregateStatus !== "PASS" && compatibilityReport.aggregateStatus !== "FAIL"}
+        >{reportStatusLabel(compatibilityReport.aggregateStatus)}</strong>
+      </summary>
+      <div class="compatibilityMeta">
+        <span>{compatibilityReport.adapterProfile}</span>
+        <span>{compatibilityReport.runtimeVersion}</span>
+        <span>{compatibilityReport.runtimeScope === "REMOTE_SHARED" ? "Remote runtime" : "Local runtime"}</span>
+      </div>
+      <div class="compatibilityStages">
+        {#each compatibilityReport.stages as stage}
+          <div>
+            <span>{stage.label}</span>
+            <strong>{stage.status}</strong>
+          </div>
+        {/each}
+      </div>
+      {#if onCheckCompatibility}
+        <button
+          class="compatibilityProbeButton"
+          type="button"
+          disabled={compatibilityBusy}
+          onclick={() => onCheckCompatibility?.(extension)}
+        >{compatibilityBusy ? "Checking..." : "Check again"}</button>
+      {/if}
+    </details>
+  {:else if extension.kind === "manga" && extension.isInstalled && onCheckCompatibility}
+    <section class="compatibilitySection compatibilityEmpty">
+      <div>
+        <strong>Observed compatibility</strong>
+        <span>No compatibility execution has been recorded for this extension yet.</span>
+      </div>
+      <button
+        class="compatibilityProbeButton"
+        type="button"
+        disabled={compatibilityBusy}
+        onclick={() => onCheckCompatibility?.(extension)}
+      >{compatibilityBusy ? "Checking..." : "Check compatibility"}</button>
+    </section>
+  {/if}
 
   {#if !extension.isInstalled}
     <section class="availablePanel">
@@ -353,6 +418,127 @@
     display: grid;
     gap: 8px;
     margin-bottom: 8px;
+  }
+
+  .compatibilitySection {
+    margin-bottom: 8px;
+    border: 1px solid var(--component-sources-panel-border);
+    border-radius: var(--component-sources-settings-section-radius);
+    background: var(--component-sources-panel-bg);
+    padding: 10px;
+  }
+
+  .compatibilitySection summary,
+  .compatibilityStages div,
+  .compatibilityMeta {
+    display: flex;
+    align-items: center;
+  }
+
+  .compatibilitySection summary {
+    justify-content: space-between;
+    gap: 10px;
+    color: var(--component-sources-strong-fg);
+    font-size: 11px;
+    font-weight: 850;
+    cursor: pointer;
+  }
+
+  .compatibilitySection summary strong {
+    color: var(--component-sources-installed-fg);
+    font-family: var(--font-ui);
+    font-size: 9px;
+    text-transform: uppercase;
+  }
+
+  .compatibilitySection summary strong.reportFailed {
+    color: var(--component-sources-danger-fg);
+  }
+
+  .compatibilitySection summary strong.reportDegraded {
+    color: var(--component-sources-warning-fg);
+  }
+
+  .compatibilityMeta {
+    gap: 5px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+  }
+
+  .compatibilityMeta span {
+    border: 1px solid var(--component-sources-settings-icon-border);
+    border-radius: var(--component-sources-settings-meta-radius);
+    padding: 1px 6px;
+    color: var(--component-sources-muted-fg);
+    background: var(--component-sources-badge-bg);
+    font-family: var(--font-ui);
+    font-size: 9px;
+  }
+
+  .compatibilityStages {
+    display: grid;
+    gap: 5px;
+    margin-top: 8px;
+  }
+
+  .compatibilityStages div {
+    justify-content: space-between;
+    gap: 10px;
+    padding: 6px 7px;
+    border-radius: var(--component-sources-settings-item-radius);
+    border: 1px solid var(--component-sources-available-border);
+    background: var(--component-sources-variant-bg);
+    color: var(--component-sources-cell-fg);
+    font-size: 10px;
+  }
+
+  .compatibilityStages strong {
+    color: var(--component-sources-muted-fg);
+    font-family: var(--font-ui);
+    font-size: 9px;
+  }
+
+  .compatibilityEmpty {
+    display: grid;
+    gap: 8px;
+  }
+
+  .compatibilityEmpty div {
+    display: grid;
+    gap: 3px;
+    color: var(--component-sources-strong-fg);
+    font-size: 11px;
+  }
+
+  .compatibilityEmpty span {
+    color: var(--component-sources-body-fg);
+    font-size: 10px;
+    line-height: 1.35;
+  }
+
+  .compatibilityProbeButton {
+    min-height: 28px;
+    border-radius: var(--component-sources-settings-item-radius);
+    border: 1px solid var(--component-sources-control-border);
+    background: var(--component-sources-control-bg);
+    color: var(--component-sources-control-fg);
+    font-size: 10px;
+    font-weight: 850;
+  }
+
+  .compatibilityProbeButton:hover:not(:disabled) {
+    border-color: var(--component-sources-control-hover-border);
+    background: var(--component-sources-control-hover-bg);
+    color: var(--component-sources-strong-fg);
+  }
+
+  .compatibilityProbeButton:focus-visible {
+    outline: 2px solid var(--component-sources-card-focus-outline);
+    outline-offset: 2px;
+  }
+
+  .compatibilityProbeButton:disabled {
+    opacity: 0.55;
   }
 
   .detailTopline {

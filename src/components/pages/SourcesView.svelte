@@ -23,7 +23,12 @@
   import {
     canonicalizeExtensionStoreUrl,
     getManagedSourceRuntime,
+    loadExtensionCompatibilityState,
+    runExplicitCompatibilityProbe,
     runTransactionalExtensionUpdates,
+    saveExtensionCompatibilityState,
+    type ObservedCompatibilityReport,
+    upsertObservedCompatibilityReport,
   } from "../../lib/manga/runtime";
   import {
     addNovelRepositoryToState,
@@ -47,6 +52,7 @@
   import { ensureExtensionRepo, RECOMMENDED_EXTENSION_REPO } from "../../lib/defaultRepos";
   import { ensureServerAwakeFor, maybeStandbyLocalServer, SERVER_READY_EVENT } from "../../lib/serverLifecycle";
   import { waitForSuwayomiGraphqlReady } from "../../lib/suwayomiReadiness";
+  import { getSuwayomiRuntimeStatus } from "../../lib/suwayomiRuntimeUpdate";
   import { detectSetupState, type SetupState } from "../../lib/setupState";
   import { mockSettingsStore, type MockExtensionSettingsPatch } from "../../store/mockSettingsStore";
   import NocturneState from "../shared/NocturneState.svelte";
@@ -112,6 +118,8 @@
   let lastNovelExtensions: ManagedExtension[] = $state([]);
   let massMigrationExtension: ManagedExtension | null = $state(null);
   let mangaExtensionCatalogLoaded = $state(false);
+  let compatibilityReports: ObservedCompatibilityReport[] = $state([]);
+  let checkingCompatibilityPkg = $state<string | null>(null);
   let extensionLoadRun = 0;
 
   const isNovelMode = $derived(contentType === "novels");
@@ -328,12 +336,19 @@
 
   async function loadMangaExtensions(run = ++extensionLoadRun) {
     try {
-      const nodes = await fetchMangaExtensionNodes();
+      const [nodes, compatibilityState] = await Promise.all([
+        fetchMangaExtensionNodes(),
+        loadExtensionCompatibilityState({
+          profileId: store.runtimeResolvedLocalProfileId ?? "main",
+          serverUrl: store.runtimeServerUrl ?? store.settings.serverUrl,
+        }).catch(() => null),
+      ]);
       if (isCurrentExtensionLoad(run, "manga")) {
         const next = nodes.map(toManagedMangaRuntimeExtension);
         mangaExtensionCatalogLoaded = true;
         lastMangaExtensions = next;
         extensions = next;
+        compatibilityReports = compatibilityState?.reports ?? [];
         extensionLoadError = null;
       }
     } catch (error) {
@@ -354,6 +369,7 @@
         serverUrl: store.runtimeServerUrl,
       });
       if (!isCurrentExtensionLoad(run, "novels")) return;
+      compatibilityReports = [];
       novelRepositoryState = state;
       const next = state.catalogEntries
         .slice()
@@ -377,6 +393,80 @@
       }
     } finally {
       if (isCurrentExtensionLoad(run, "novels")) setupState = null;
+    }
+  }
+
+  function latestCompatibilityReport(packageName: string): ObservedCompatibilityReport | null {
+    return compatibilityReports.find((report) => report.packageName === packageName) ?? null;
+  }
+
+  function compatibilityStatusLabel(report: ObservedCompatibilityReport): string {
+    return report.aggregateStatus === "PASS"
+      ? "Compatibility passed"
+      : report.aggregateStatus === "DEGRADED"
+        ? "Compatibility degraded"
+        : report.aggregateStatus === "FAIL"
+          ? "Compatibility failed"
+          : report.aggregateStatus === "CANCELLED"
+            ? "Compatibility cancelled"
+            : "Compatibility inconclusive";
+  }
+
+  async function compatibilityRuntimeScope(): Promise<"LOCAL_OWNED" | "REMOTE_SHARED"> {
+    try {
+      const status = await getSuwayomiRuntimeStatus();
+      return status.updateAllowed
+        && (status.mode === "managed-bundled" || status.mode === "managed-runtime")
+        ? "LOCAL_OWNED"
+        : "REMOTE_SHARED";
+    } catch {
+      return "REMOTE_SHARED";
+    }
+  }
+
+  async function checkCompatibility(extension: ManagedExtension) {
+    if (extension.kind !== "manga" || checkingCompatibilityPkg) return;
+    checkingCompatibilityPkg = extension.pkgName;
+    try {
+      const profileId = store.runtimeResolvedLocalProfileId ?? "main";
+      const serverUrl = store.runtimeServerUrl ?? store.settings.serverUrl;
+      const runtime = await getManagedSourceRuntime();
+      const state = await loadExtensionCompatibilityState({ profileId, serverUrl });
+      const identity = state.records.find((record) => (
+        record.packageName === extension.pkgName
+        && record.versionCode === String(extension.versionCode ?? extension.versionName)
+      ));
+      const runtimeScope = await compatibilityRuntimeScope();
+      const report = await runExplicitCompatibilityProbe(runtime, {
+        profileId,
+        packageName: extension.pkgName,
+        versionCode: String(extension.versionCode ?? extension.versionName),
+        artifactSha256: identity?.artifactSha256 ?? extension.provenance?.artifactDigest ?? null,
+        runtimeArtifactSha256: identity?.runtimeArtifactSha256 ?? null,
+        runtimeScope,
+      });
+      const saved = await saveExtensionCompatibilityState(
+        upsertObservedCompatibilityReport(state, report),
+        { profileId, serverUrl },
+      );
+      compatibilityReports = saved.reports;
+      addToast({
+        kind: report.aggregateStatus === "FAIL" ? "error" : "info",
+        title: compatibilityStatusLabel(report),
+        body: report.aggregateStatus === "PASS"
+          ? `${extension.name} responded to the observed source probe.`
+          : `${extension.name} kept its current state; review compatibility details for the observed run.`,
+        duration: 5000,
+      });
+    } catch (error) {
+      addToast({
+        kind: "error",
+        title: "Compatibility check did not complete",
+        body: extensionErrorMessage(error),
+        duration: 6000,
+      });
+    } finally {
+      checkingCompatibilityPkg = null;
     }
   }
 
@@ -1480,6 +1570,7 @@
         {#each visibleGroups as { base, primary, variants }}
           {@const isExpanded = expanded.has(base)}
           {@const hasVariants = variants.length > 0}
+          {@const compatibilityReport = latestCompatibilityReport(primary.pkgName)}
           <div
             class="extensionCard"
             class:selected={selectedPkgName === primary.pkgName}
@@ -1519,6 +1610,11 @@
                 <span class="installedBadge">{$_("sources.status.installed")}</span>
               {:else}
                 <span class="availableBadge">{$_("sources.status.available")}</span>
+              {/if}
+              {#if compatibilityReport}
+                <small class:compatibilityPassed={compatibilityReport.aggregateStatus === "PASS"}>
+                  {compatibilityStatusLabel(compatibilityReport)}
+                </small>
               {/if}
             </div>
 
@@ -1609,6 +1705,9 @@
       onInstall={installExtension}
       onMassMigration={openMassMigration}
       onUpdateConfig={updateConfig}
+      compatibilityReport={latestCompatibilityReport(selectedExtension.pkgName)}
+      compatibilityBusy={checkingCompatibilityPkg === selectedExtension.pkgName}
+      onCheckCompatibility={checkCompatibility}
     />
   {/if}
 
@@ -2255,6 +2354,10 @@
     color: var(--component-sources-cell-muted-fg);
     font-size: 9px;
     font-weight: 700;
+  }
+
+  .tableCell small.compatibilityPassed {
+    color: var(--component-sources-installed-fg);
   }
 
   .tableCellLang span {
