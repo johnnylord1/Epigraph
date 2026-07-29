@@ -14,6 +14,7 @@ import { withSuwayomiOperationLease } from "../suwayomiUpdateLock.svelte";
 import { getMigrationJournalEntry, getMigrationOperation } from "./journalState";
 import {
   beginMigrationOperation,
+  checkpointMigrationPayload,
   checkpointMigrationStep,
   commitMigrationOperation,
   markMigrationCompensated,
@@ -23,6 +24,22 @@ import {
   withMigrationProfileLock,
 } from "./coordinator";
 import { matchMangaChapters } from "./chapterMapping";
+import {
+  migrationIdentityMatchesSlice,
+  migrationIdentityRevision,
+  prepareMangaIdentityMigration,
+  restoreMigrationIdentitySlice,
+  type MigrationIdentityBridge,
+  type MigrationIdentityRevision,
+} from "./identity";
+import {
+  applyMangaTrackerBindingPlan,
+  compensateMangaTrackerBindingPlan,
+  createGraphqlMangaTrackerBindingPort,
+  prepareMangaTrackerBindingPlan,
+  verifyMangaTrackerBindingPlan,
+  type MangaTrackerBindingPlan,
+} from "./trackerBindings";
 import type {
   MangaMassMigrationUndoPayload,
   MangaMigrationStateSlice,
@@ -42,6 +59,7 @@ export interface ApplyMangaMigrationInput {
   match: MangaMigrationMatch;
   mode?: "migrate" | "copy";
   profileId?: string | null;
+  identityBridge?: MigrationIdentityBridge;
 }
 
 export type MassMangaMigrationStatus = "matched" | "needs_review" | "no_match" | "search_failed";
@@ -83,6 +101,7 @@ export interface ApplyMassMangaMigrationInput {
   selectedMangaIds?: number[];
   mode?: "migrate" | "copy";
   profileId?: string | null;
+  identityBridge?: MigrationIdentityBridge;
 }
 
 async function mapWithConcurrency<T, R>(
@@ -360,10 +379,14 @@ interface PreparedMangaMigrationOperation {
   currentMangaId: number;
   targetMangaId: number;
   oldCategoryIds: number[];
+  targetCategoryIds: number[];
+  identity?: ReturnType<typeof prepareMangaIdentityMigration>;
+  trackerPlan: MangaTrackerBindingPlan;
 }
 
 async function prepareMangaMigrationOperation(
   input: ApplyMangaMigrationInput,
+  identityRevision?: MigrationIdentityRevision,
 ): Promise<PreparedMangaMigrationOperation> {
   const oldCategoryIds = await loadCategoryIdsForManga(input.currentManga.id);
   const newCategoryIds = await loadCategoryIdsForManga(input.match.manga.id);
@@ -402,6 +425,27 @@ async function prepareMangaMigrationOperation(
   }
 
   const mode = input.mode ?? "migrate";
+  const identity = identityRevision
+    ? prepareMangaIdentityMigration({
+        current: identityRevision.settings,
+        sourceMangaId: input.currentManga.id,
+        targetMangaId: input.match.manga.id,
+        mode,
+      })
+    : undefined;
+  const trackerPlan = await prepareMangaTrackerBindingPlan(
+    createGraphqlMangaTrackerBindingPort(gql),
+    {
+      sourceMangaId: input.currentManga.id,
+      targetMangaId: input.match.manga.id,
+      mode,
+    },
+  );
+  oldState.localIdentity = identity?.previous;
+  oldState.trackerBindingPlan = trackerPlan;
+  newState.localIdentity = identity?.applied;
+  newState.trackerBindingPlan = trackerPlan;
+  const targetCategoryIds = [...new Set([...newCategoryIds, ...oldCategoryIds])];
 
   return {
     oldState,
@@ -426,10 +470,13 @@ async function prepareMangaMigrationOperation(
     currentMangaId: input.currentManga.id,
     targetMangaId: input.match.manga.id,
     oldCategoryIds,
+    targetCategoryIds,
+    identity,
+    trackerPlan,
   };
 }
 
-async function applyPreparedMangaMigration(prepared: PreparedMangaMigrationOperation): Promise<void> {
+async function applyPreparedMangaTarget(prepared: PreparedMangaMigrationOperation): Promise<void> {
   if (prepared.toMarkRead.length) {
     await gql(UPDATE_CHAPTERS_PROGRESS, { ids: prepared.toMarkRead, isRead: true });
   }
@@ -440,14 +487,43 @@ async function applyPreparedMangaMigration(prepared: PreparedMangaMigrationOpera
     await gql(UPDATE_CHAPTERS_PROGRESS, { ids: [update.id], lastPageRead: update.lastPageRead });
   }
   await gql(UPDATE_MANGA, { id: prepared.targetMangaId, inLibrary: true });
-  await setCategoryIdsForManga(prepared.targetMangaId, prepared.oldCategoryIds);
+  await setCategoryIdsForManga(prepared.targetMangaId, prepared.targetCategoryIds);
+}
+
+async function cleanupPreparedMangaSource(prepared: PreparedMangaMigrationOperation): Promise<void> {
   if (prepared.mode === "migrate") {
     await gql(UPDATE_MANGA, { id: prepared.currentMangaId, inLibrary: false });
     await setCategoryIdsForManga(prepared.currentMangaId, []);
   }
 }
 
-async function compensatePreparedMangaMigration(prepared: PreparedMangaMigrationOperation): Promise<void> {
+async function restorePreparedMangaIdentity(
+  prepared: PreparedMangaMigrationOperation,
+  identityBridge?: MigrationIdentityBridge,
+): Promise<void> {
+  await compensateMangaTrackerBindingPlan(
+    createGraphqlMangaTrackerBindingPort(gql),
+    prepared.trackerPlan,
+  );
+  if (identityBridge && prepared.identity) {
+    const current = await identityBridge.read();
+    if (!migrationIdentityMatchesSlice(current.settings, prepared.identity.previous)) {
+      if (!migrationIdentityMatchesSlice(current.settings, prepared.identity.applied)) {
+        throw new Error("Manga links changed after migration; automatic compensation was stopped.");
+      }
+      await identityBridge.write({
+        expectedRevision: current.revision,
+        next: restoreMigrationIdentitySlice(current.settings, prepared.identity.previous),
+      });
+    }
+  }
+}
+
+async function compensatePreparedMangaMigration(
+  prepared: PreparedMangaMigrationOperation,
+  identityBridge?: MigrationIdentityBridge,
+): Promise<void> {
+  await restorePreparedMangaIdentity(prepared, identityBridge);
   const results = await Promise.allSettled([
     restoreMangaSnapshot(prepared.oldState),
     restoreMangaSnapshot(prepared.newState),
@@ -469,7 +545,7 @@ async function verifyAppliedMangaMigration(prepared: PreparedMangaMigrationOpera
     readMangaState(prepared.currentMangaId),
     readMangaState(prepared.targetMangaId),
   ]);
-  if (!targetState.inLibrary || !sameNumberSet(targetState.categoryIds, prepared.oldCategoryIds)) {
+  if (!targetState.inLibrary || !sameNumberSet(targetState.categoryIds, prepared.targetCategoryIds)) {
     throw new Error("Target manga state was not persisted after migration.");
   }
   if (
@@ -499,11 +575,12 @@ async function verifyAppliedMangaMigration(prepared: PreparedMangaMigrationOpera
 async function compensateMangaOperation(
   operationId: string,
   preparedItems: PreparedMangaMigrationOperation[],
+  identityBridge?: MigrationIdentityBridge,
 ): Promise<void> {
   await transitionMigrationOperation(operationId, "compensating");
   try {
     for (const prepared of [...preparedItems].reverse()) {
-      await compensatePreparedMangaMigration(prepared);
+      await compensatePreparedMangaMigration(prepared, identityBridge);
     }
     await markMigrationCompensated(operationId);
   } catch (compensationError) {
@@ -520,7 +597,10 @@ export async function applyMangaMigrationWithJournal(
 ): Promise<{ journalEntryId: string; newManga: Manga }> {
   const profileId = input.profileId?.trim() || "main";
   return withMigrationProfileLock(profileId, () => withSuwayomiOperationLease("migration", async () => {
-    const prepared = await prepareMangaMigrationOperation(input);
+    const identityRevision = input.identityBridge
+      ? await input.identityBridge.read()
+      : undefined;
+    const prepared = await prepareMangaMigrationOperation(input, identityRevision);
     const operation = await beginMigrationOperation({
       profileId,
       contentKind: "manga",
@@ -528,20 +608,76 @@ export async function applyMangaMigrationWithJournal(
       sourceTo: input.targetSourceId,
       transferSummary: prepared.transferSummary,
       payload: { oldState: prepared.oldState, newState: prepared.newState },
-      steps: [{ stepId: "suwayomi-state-transfer", kind: "suwayomi" }],
+      steps: [
+        { stepId: "suwayomi-target-state", kind: "suwayomi" },
+        { stepId: "tracker-bindings", kind: "tracker" },
+        ...(prepared.identity ? [{ stepId: "manga-local-identity", kind: "link" as const }] : []),
+        ...(prepared.mode === "migrate"
+          ? [{ stepId: "suwayomi-source-cleanup", kind: "suwayomi" as const }]
+          : []),
+      ],
     });
     await transitionMigrationOperation(operation.operationId, "preparing");
     await transitionMigrationOperation(operation.operationId, "applying");
     try {
       await runMigrationStep({
         operationId: operation.operationId,
-        stepId: "suwayomi-state-transfer",
-        apply: () => applyPreparedMangaMigration(prepared),
-        verify: () => verifyAppliedMangaMigration(prepared),
+        stepId: "suwayomi-target-state",
+        apply: () => applyPreparedMangaTarget(prepared),
+        verify: async () => {
+          const target = await readMangaState(prepared.targetMangaId);
+          if (!target.inLibrary || !sameNumberSet(target.categoryIds, prepared.targetCategoryIds)) {
+            throw new Error("Target manga library state was not persisted.");
+          }
+        },
       });
+      await runMigrationStep({
+        operationId: operation.operationId,
+        stepId: "tracker-bindings",
+        apply: () => applyMangaTrackerBindingPlan(
+          createGraphqlMangaTrackerBindingPort(gql),
+          prepared.trackerPlan,
+        ),
+        verify: () => verifyMangaTrackerBindingPlan(
+          createGraphqlMangaTrackerBindingPort(gql),
+          prepared.trackerPlan,
+        ),
+      });
+      if (prepared.identity) {
+        await runMigrationStep({
+          operationId: operation.operationId,
+          stepId: "manga-local-identity",
+          apply: async () => {
+            await input.identityBridge!.write({
+              expectedRevision: identityRevision!.revision,
+              next: prepared.identity!.next,
+            });
+          },
+          verify: async () => {
+            const current = await input.identityBridge!.read();
+            if (!migrationIdentityMatchesSlice(current.settings, prepared.identity!.applied)) {
+              throw new Error("Manga links were not persisted.");
+            }
+          },
+        });
+      }
+      if (prepared.mode === "migrate") {
+        await runMigrationStep({
+          operationId: operation.operationId,
+          stepId: "suwayomi-source-cleanup",
+          apply: () => cleanupPreparedMangaSource(prepared),
+          verify: () => verifyAppliedMangaMigration(prepared),
+        });
+      } else {
+        await verifyAppliedMangaMigration(prepared);
+      }
       await commitMigrationOperation(operation.operationId);
     } catch (error) {
-      await compensateMangaOperation(operation.operationId, [prepared]).catch(() => undefined);
+      await compensateMangaOperation(
+        operation.operationId,
+        [prepared],
+        input.identityBridge,
+      ).catch(() => undefined);
       throw error;
     }
     return {
@@ -641,10 +777,17 @@ export async function applyMassMangaMigrationWithJournal(
       item: MassMangaMigrationPreviewItem;
       prepared: PreparedMangaMigrationOperation;
     }> = [];
+    const initialIdentityRevision = input.identityBridge
+      ? await input.identityBridge.read()
+      : undefined;
     let transferredChapterCount = 0;
     let transferredReadCount = 0;
     let transferredBookmarkCount = 0;
     const failedItems: Array<{ mangaId: number; message: string }> = [];
+    const targetIds = readyItems.map((item) => item.match!.manga.id);
+    if (new Set(targetIds).size !== targetIds.length) {
+      throw new Error("Mass migration cannot map multiple manga to the same target identity.");
+    }
 
     for (const item of readyItems) {
       try {
@@ -697,35 +840,82 @@ export async function applyMassMangaMigrationWithJournal(
           newState: prepared.newState,
         })),
       },
-      steps: preparedItems.map(({ item }) => ({
-        stepId: `manga-${item.currentManga.id}`,
-        kind: "suwayomi" as const,
-      })),
+      steps: [
+        ...preparedItems.flatMap(({ item, prepared }) => [
+          { stepId: `manga-${item.currentManga.id}-target`, kind: "suwayomi" as const },
+          { stepId: `manga-${item.currentManga.id}-tracker`, kind: "tracker" as const },
+          ...(prepared.mode === "migrate"
+            ? [{ stepId: `manga-${item.currentManga.id}-cleanup`, kind: "suwayomi" as const }]
+            : []),
+        ]),
+        ...(input.identityBridge
+          ? [{ stepId: "mass-manga-identity", kind: "link" as const }]
+          : []),
+      ],
     });
     await transitionMigrationOperation(operation.operationId, "preparing");
     await transitionMigrationOperation(operation.operationId, "applying");
 
     const successful: typeof preparedItems = [];
     for (const preparedItem of preparedItems) {
-      const stepId = `manga-${preparedItem.item.currentManga.id}`;
+      const stepPrefix = `manga-${preparedItem.item.currentManga.id}`;
       try {
         await runMigrationStep({
           operationId: operation.operationId,
-          stepId,
-          apply: () => applyPreparedMangaMigration(preparedItem.prepared),
-          verify: () => verifyAppliedMangaMigration(preparedItem.prepared),
+          stepId: `${stepPrefix}-target`,
+          apply: () => applyPreparedMangaTarget(preparedItem.prepared),
+          verify: async () => {
+            const target = await readMangaState(preparedItem.prepared.targetMangaId);
+            if (
+              !target.inLibrary
+              || !sameNumberSet(target.categoryIds, preparedItem.prepared.targetCategoryIds)
+            ) {
+              throw new Error("Target manga library state was not persisted.");
+            }
+          },
         });
+        await runMigrationStep({
+          operationId: operation.operationId,
+          stepId: `${stepPrefix}-tracker`,
+          apply: () => applyMangaTrackerBindingPlan(
+            createGraphqlMangaTrackerBindingPort(gql),
+            preparedItem.prepared.trackerPlan,
+          ),
+          verify: () => verifyMangaTrackerBindingPlan(
+            createGraphqlMangaTrackerBindingPort(gql),
+            preparedItem.prepared.trackerPlan,
+          ),
+        });
+        if (preparedItem.prepared.mode === "migrate") {
+          await runMigrationStep({
+            operationId: operation.operationId,
+            stepId: `${stepPrefix}-cleanup`,
+            apply: () => cleanupPreparedMangaSource(preparedItem.prepared),
+            verify: () => verifyAppliedMangaMigration(preparedItem.prepared),
+          });
+        } else {
+          await verifyAppliedMangaMigration(preparedItem.prepared);
+        }
         successful.push(preparedItem);
         transferredChapterCount += preparedItem.prepared.transferSummary.transferredChapterCount;
         transferredReadCount += preparedItem.prepared.transferSummary.transferredReadCount;
         transferredBookmarkCount += preparedItem.prepared.transferSummary.transferredBookmarkCount;
       } catch (error) {
         try {
-          await compensatePreparedMangaMigration(preparedItem.prepared);
-          await checkpointMigrationStep(operation.operationId, stepId, {
-            status: "skipped",
-            completedAt: Date.now(),
-          });
+          await compensatePreparedMangaMigration(
+            preparedItem.prepared,
+            input.identityBridge,
+          );
+          for (const suffix of [
+            "target",
+            "tracker",
+            ...(preparedItem.prepared.mode === "migrate" ? ["cleanup"] : []),
+          ]) {
+            await checkpointMigrationStep(operation.operationId, `${stepPrefix}-${suffix}`, {
+              status: "skipped",
+              completedAt: Date.now(),
+            });
+          }
         } catch (compensationError) {
           await markMigrationNeedsManualRecovery(
             operation.operationId,
@@ -752,10 +942,65 @@ export async function applyMassMangaMigrationWithJournal(
       };
     }
 
-    const payloadItems: MangaMigrationUndoPayload[] = successful.map(({ prepared }) => ({
+    let payloadItems: MangaMigrationUndoPayload[] = successful.map(({ prepared }) => ({
       oldState: prepared.oldState,
       newState: prepared.newState,
     }));
+    await checkpointMigrationPayload(operation.operationId, {
+      items: payloadItems,
+    } satisfies MangaMassMigrationUndoPayload);
+
+    if (input.identityBridge && initialIdentityRevision) {
+      let nextIdentitySettings = initialIdentityRevision.settings;
+      for (const { prepared } of successful) {
+        const identity = prepareMangaIdentityMigration({
+          current: nextIdentitySettings,
+          sourceMangaId: prepared.currentMangaId,
+          targetMangaId: prepared.targetMangaId,
+          mode: prepared.mode,
+        });
+        prepared.identity = identity;
+        prepared.oldState.localIdentity = identity.previous;
+        prepared.newState.localIdentity = identity.applied;
+        nextIdentitySettings = identity.next;
+      }
+      payloadItems = successful.map(({ prepared }) => ({
+        oldState: prepared.oldState,
+        newState: prepared.newState,
+      }));
+      await checkpointMigrationPayload(operation.operationId, {
+        items: payloadItems,
+      } satisfies MangaMassMigrationUndoPayload);
+      try {
+        await runMigrationStep({
+          operationId: operation.operationId,
+          stepId: "mass-manga-identity",
+          apply: async () => {
+            await input.identityBridge!.write({
+              expectedRevision: initialIdentityRevision.revision,
+              next: nextIdentitySettings,
+            });
+          },
+          verify: async () => {
+            const current = await input.identityBridge!.read();
+            if (
+              migrationIdentityRevision(current.settings)
+              !== migrationIdentityRevision(nextIdentitySettings)
+            ) {
+              throw new Error("Mass migration manga links were not persisted.");
+            }
+          },
+        });
+      } catch (error) {
+        await compensateMangaOperation(
+          operation.operationId,
+          successful.map(({ prepared }) => prepared),
+          input.identityBridge,
+        ).catch(() => undefined);
+        throw error;
+      }
+    }
+
     try {
       await commitMigrationOperation(operation.operationId, {
         transferSummary: {
@@ -773,6 +1018,7 @@ export async function applyMassMangaMigrationWithJournal(
       await compensateMangaOperation(
         operation.operationId,
         successful.map(({ prepared }) => prepared),
+        input.identityBridge,
       ).catch(() => undefined);
       throw error;
     }
@@ -788,7 +1034,10 @@ export async function applyMassMangaMigrationWithJournal(
   }));
 }
 
-export async function undoMangaMigration(journalEntryId: string): Promise<void> {
+export async function undoMangaMigration(
+  journalEntryId: string,
+  identityBridge?: MigrationIdentityBridge,
+): Promise<void> {
   const operation = await getMigrationOperation(journalEntryId);
   const profileId = operation?.profileId ?? "main";
   return withMigrationProfileLock(profileId, () => withSuwayomiOperationLease("migration", async () => {
@@ -808,6 +1057,28 @@ export async function undoMangaMigration(journalEntryId: string): Promise<void> 
     await transitionMigrationOperation(entry.id, "compensating");
     try {
       for (const item of [...items].reverse()) {
+        const trackerPlan = item.newState.trackerBindingPlan ?? item.oldState.trackerBindingPlan;
+        if (trackerPlan) {
+          await compensateMangaTrackerBindingPlan(
+            createGraphqlMangaTrackerBindingPort(gql),
+            trackerPlan,
+          );
+        }
+        if (identityBridge && item.oldState.localIdentity && item.newState.localIdentity) {
+          const current = await identityBridge.read();
+          if (!migrationIdentityMatchesSlice(current.settings, item.oldState.localIdentity)) {
+            if (!migrationIdentityMatchesSlice(current.settings, item.newState.localIdentity)) {
+              throw new Error("Manga links changed after migration; undo requires manual recovery.");
+            }
+            await identityBridge.write({
+              expectedRevision: current.revision,
+              next: restoreMigrationIdentitySlice(
+                current.settings,
+                item.oldState.localIdentity,
+              ),
+            });
+          }
+        }
         await restoreMangaSnapshot(item.oldState);
         await restoreMangaSnapshot(item.newState);
       }

@@ -309,11 +309,14 @@ describe("navigation subscriptions", () => {
         appLanguage: "pt-BR",
         libraryViewMode: "grid",
         libraryShowProgress: true,
+        mangaLinks: { 1: [2], 2: [1] },
+        novelLinks: { old: ["related"], related: ["old"] },
       });
       updateSettings({
         defaultLocalProfileId: "profile-a",
         serverUrl: "http://127.0.0.1:4777",
       });
+      store.runtimeResolvedLocalProfileId = "profile-a";
       updateSettings({
         appLanguage: "ja",
         libraryViewMode: "compact_grid",
@@ -322,20 +325,64 @@ describe("navigation subscriptions", () => {
 
       expect(store.settings.profileScopedSettings.main?.appLanguage).toBe("pt-BR");
       expect(store.settings.profileScopedSettings.main?.libraryViewMode).toBe("grid");
+      expect(store.settings.profileScopedSettings.main?.mangaLinks).toEqual({ 1: [2], 2: [1] });
+      expect(store.settings.profileScopedSettings.main?.novelLinks).toEqual({ old: ["related"], related: ["old"] });
       expect(store.settings.profileScopedSettings["profile-a"]?.appLanguage).toBe("ja");
       expect(store.settings.profileScopedSettings["profile-a"]?.libraryViewMode).toBe("compact_grid");
+      expect(store.settings.mangaLinks).toEqual({});
+      expect(store.settings.novelLinks).toEqual({});
       expect(store.settings.serverAuthEnabled).toBe(true);
 
       updateSettings({
         defaultLocalProfileId: "main",
         serverUrl: "http://127.0.0.1:4567",
       });
+      store.runtimeResolvedLocalProfileId = "main";
 
       expect(store.settings.defaultLocalProfileId).toBe("main");
       expect(store.settings.appLanguage).toBe("pt-BR");
       expect(store.settings.libraryViewMode).toBe("grid");
       expect(store.settings.libraryShowProgress).toBe(true);
+      expect(store.settings.mangaLinks).toEqual({ 1: [2], 2: [1] });
+      expect(store.settings.novelLinks).toEqual({ old: ["related"], related: ["old"] });
       expect(store.settings.serverAuthEnabled).toBe(true);
+    } finally {
+      store.settings = previousSettings;
+      store.runtimeResolvedLocalProfileId = previousRuntimeProfileId;
+    }
+  });
+
+  test("runtime profile overrides the saved default for scoped migration settings", () => {
+    const previousSettings = store.settings;
+    const previousRuntimeProfileId = store.runtimeResolvedLocalProfileId;
+
+    try {
+      store.settings = {
+        ...previousSettings,
+        defaultLocalProfileId: "main",
+        customLocalProfiles: [
+          { id: "profile-a", label: "Profile A", port: 4777 },
+        ],
+        mangaLinks: { 1: [2], 2: [1] },
+        profileScopedSettings: {
+          main: {
+            ...previousSettings.profileScopedSettings.main,
+            mangaLinks: { 1: [2], 2: [1] },
+          },
+          "profile-a": {
+            ...previousSettings.profileScopedSettings["profile-a"],
+            mangaLinks: { 7: [8], 8: [7] },
+          },
+        },
+      };
+      store.runtimeResolvedLocalProfileId = "profile-a";
+
+      updateSettings({ mangaLinks: { 9: [10], 10: [9] } });
+
+      expect(store.settings.profileScopedSettings.main?.mangaLinks)
+        .toEqual({ 1: [2], 2: [1] });
+      expect(store.settings.profileScopedSettings["profile-a"]?.mangaLinks)
+        .toEqual({ 9: [10], 10: [9] });
     } finally {
       store.settings = previousSettings;
       store.runtimeResolvedLocalProfileId = previousRuntimeProfileId;

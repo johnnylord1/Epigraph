@@ -796,9 +796,11 @@ Implementado em 29/07/2026:
 - Mass manga preserva o comportamento parcial seguro: cada item possui step
   proprio; falha compensada vira `skipped`, sucessos sao commitados e somente
   seus snapshots entram no payload de undo.
-- O startup inspeciona operacoes interrompidas. `planned/preparing` sem efeitos
-  viram `cancelled`; etapas posteriores viram `recovery_pending`. O Aethon nao
-  executa compensacao automatica sem contexto suficiente para prova.
+- O startup inspeciona operacoes interrompidas. Operacoes sem step iniciado
+  viram `cancelled`; quando efeitos podem ter ocorrido, snapshots completos
+  levam a `needs_manual_recovery` e snapshots incompletos levam a `corrupt`.
+  O profile fica bloqueado para novas migracoes ate uma recuperacao contextual
+  ser verificada explicitamente.
 - A UI continua chamando as mesmas funcoes e recebendo os mesmos resultados.
   Os modais apenas passaram o profile ativo para o coordinator.
 
@@ -814,8 +816,9 @@ Riscos encaminhados:
 - Mass Migration recebera operacao-pai e operacoes-filhas explicitas no 72E3.
 - Trackers, links, folders, downloads e assets ainda nao fazem parte dos steps;
   entram somente nos lotes 72E2/72E3.
-- `recovery_pending` exige diagnostico/acao contextual. O startup nao tenta
-  restaurar efeitos externos apenas com base no ultimo status gravado.
+- O startup nao tenta restaurar efeitos externos apenas com base no ultimo
+  status gravado. A confirmacao de recovery exige verificacao contextual; um
+  callback sem ownership de dominio nao e executado automaticamente.
 
 ### 72E1 - Chapter mapping
 
@@ -857,3 +860,71 @@ Riscos encaminhados:
   entram no 72E3.
 - Referencias novel sem par permanecem preservadas para evitar perda; sua
   apresentacao e resolucao explicita pertencem ao lote de identidade/links.
+
+### 72E2 - Identidade, trackers, links e folders
+
+Implementado:
+
+- `mangaLinks` e `novelLinks` passaram a acompanhar o perfil local ativo. O
+  carregamento migra os links Legacy para o perfil anteriormente ativo e
+  inicializa perfis distintos sem compartilhar IDs Suwayomi ou LNReader.
+- O writer de identidade possui revision/CAS, releitura e verificacao. A fila
+  de persistencia da Books Library foi serializada para impedir que um save
+  reativo antigo restaure categorias anteriores depois da migracao.
+- Manga preserva a identidade remota exata `trackerId + remoteId`. O destino e
+  vinculado e verificado por `GET_MANGA_TRACK_RECORDS`/`BIND_TRACK` antes de
+  `UNBIND_TRACK` e da remocao da origem. `UPDATE_TRACK` nao e usado.
+- Conflito entre dois `remoteId` do mesmo tracker bloqueia antes da primeira
+  mutation. Duplicatas inconsistentes tambem bloqueiam.
+- Categorias manga agora usam uniao entre origem e destino. Categorias
+  exclusivas do destino nao sao mais sobrescritas.
+- `copy` preserva a origem, copia bindings quando a operacao oficial permite e
+  cria o link simetrico direto origem-destino. `migrate` substitui apenas o
+  source binding depois de validar o destino.
+- Novel move `novelLinks`, une `booksCategoryAssignments` e religa apenas o
+  `sourceNovelId` local do Hardcover. `bookId`, `userBookId`, status, rating e
+  progresso remoto permanecem inalterados; nenhuma chamada Hardcover de rede
+  ocorre durante a troca de source.
+- `bookId` diferentes na origem e no destino sao tratados como edicoes
+  conflitantes e exigem decisao explicita. `userBookId` divergentes tambem
+  bloqueiam a troca. Titulo semelhante nunca e usado sozinho para alterar um
+  binding Hardcover.
+- A persistencia Hardcover substitui somente o slice origem/destino sobre o
+  estado relido imediatamente antes do save. Auth, cache, tracking concorrente
+  e um terceiro binding legitimo para o mesmo `bookId` sao preservados.
+- Journal e Undo carregam slices de identidade e planos de tracker. A
+  compensacao restaura somente o subgrafo afetado e interrompe com recovery
+  manual se detectar mudanca concorrente.
+- Single e Mass Migration usam os mesmos contratos. Mass bloqueia multiplas
+  origens apontando para o mesmo destino e persiste links/Hardcover em lote
+  verificavel.
+- Mass manga atualiza o payload de recovery com os itens realmente bem-sucedidos
+  e com seus slices de identidade antes de gravar `mangaLinks`; uma interrupcao
+  nessa janela nao deixa o journal sem os dados necessarios para diagnostico e
+  compensacao contextual.
+
+Validacao:
+
+- 72/72 testes focados de migration, journal, coordinator, profile scoping e
+  modais.
+- Casos cobertos: bind/unbind oficial, noop, conflito de tracker, falha parcial,
+  compensacao, categorias em uniao, links simetricos, CAS, relink Hardcover,
+  conflito de edicao, restart-safe journal e Undo.
+- `svelte-check`: zero erros e zero warnings.
+- Nenhum CSS, token, layout, Reader, Syncd ou protocolo AethonCore foi
+  alterado.
+
+Riscos encaminhados:
+
+- Downloads, assets offline, manifests de integridade, referencias pendentes e
+  Mass Migration pai/filhas permanecem no 72E3.
+- Journals antigos sem slices de identidade continuam legiveis e restauram o
+  estado historicamente disponivel, mas nao podem reconstruir dados que nunca
+  foram capturados.
+- Alteracoes concorrentes em chapters/categorias Suwayomi ainda pertencem ao
+  contrato geral de recovery do coordinator; links locais e bindings de
+  tracker deste lote ja falham de forma conservadora.
+- O startup encaminha efeitos interrompidos para `needs_manual_recovery` em vez
+  de executar mutacoes externas sem o profile/runtime correto. Os snapshots do
+  72E2 estao completos e o profile fica bloqueado ate verificacao contextual,
+  sem inferir exclusao por indisponibilidade.

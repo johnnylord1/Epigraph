@@ -19,6 +19,7 @@
     undoMangaMigration,
   } from "../../lib/migration/manga";
   import { createDialogFocusBoundary } from "../../lib/accessibility/dialogFocus";
+  import { createStoreMigrationIdentityBridge } from "../../lib/migration/storeIdentity.svelte";
 
   interface Props {
     manga:           Manga;
@@ -217,12 +218,16 @@
     migrating = true; error = null;
     void setMigrationPresence(true, store.settings, "library");
     try {
+      const identityBridge = createStoreMigrationIdentityBridge(
+        store.runtimeResolvedLocalProfileId ?? store.settings.defaultLocalProfileId,
+      );
       const result = await applyMangaMigrationWithJournal({
         currentManga: manga,
         currentChapters,
         targetSourceId: selectedSource?.id ?? selectedMatch.manga.source?.id ?? "unknown",
         match: selectedMatch,
         profileId: store.runtimeResolvedLocalProfileId,
+        identityBridge,
       });
 
       addToast({
@@ -233,7 +238,7 @@
         action: {
           label: translate("ui_undo"),
           run: () => {
-            void undoMangaMigration(result.journalEntryId).then(() => {
+            void undoMangaMigration(result.journalEntryId, identityBridge).then(() => {
               addToast({
                 kind: "info",
                 title: translate("ui_migrationUndone"),

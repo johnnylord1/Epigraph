@@ -227,6 +227,8 @@ const PROFILE_SCOPED_SETTING_KEYS = [
   "libraryPreferredGridColumns",
   "libraryShowProgress",
   "libraryShowCardOutline",
+  "mangaLinks",
+  "novelLinks",
   "defaultLibrarySection",
   "extraScanDirs",
   "serverDownloadsPath",
@@ -760,12 +762,19 @@ function applyProfileScopedSettings(settings: Settings, profileId = resolveSetti
   const scoped = normalizeProfileScopedSettings(settings.profileScopedSettings);
   const profileSettings = scoped[profileId];
   if (!profileSettings) {
-    return rememberProfileScopedSettings({ ...settings, profileScopedSettings: scoped }, profileId);
+    return rememberProfileScopedSettings({
+      ...settings,
+      mangaLinks: {},
+      novelLinks: {},
+      profileScopedSettings: scoped,
+    }, profileId);
   }
 
   return rememberProfileScopedSettings({
     ...settings,
     ...profileSettings,
+    mangaLinks: profileSettings.mangaLinks ?? {},
+    novelLinks: profileSettings.novelLinks ?? {},
     defaultLocalProfileId: settings.defaultLocalProfileId,
     customLocalProfiles: settings.customLocalProfiles,
     profileScopedSettings: scoped,
@@ -802,8 +811,16 @@ function updateSettingsWithProfileScope(
   patch: Partial<Settings>,
   runtimeProfileId: LocalProfileId | null = null,
 ): Settings {
-  const currentProfileId = resolveSettingsProfileId(current) ?? normalizeLocalProfileId(runtimeProfileId) ?? DEFAULT_SETTINGS.defaultLocalProfileId;
-  const rememberedCurrent = rememberProfileScopedSettings(current, currentProfileId);
+  const settingsProfileId = resolveSettingsProfileId(current);
+  const resolvedRuntimeProfileId = normalizeLocalProfileId(runtimeProfileId);
+  const currentProfileId = resolvedRuntimeProfileId
+    ?? settingsProfileId
+    ?? DEFAULT_SETTINGS.defaultLocalProfileId;
+  const currentProfileSettings = resolvedRuntimeProfileId
+    && resolvedRuntimeProfileId !== settingsProfileId
+    ? applyProfileScopedSettings(current, resolvedRuntimeProfileId)
+    : current;
+  const rememberedCurrent = rememberProfileScopedSettings(currentProfileSettings, currentProfileId);
   const requestedProfileId = "defaultLocalProfileId" in patch
     ? normalizeLocalProfileId(patch.defaultLocalProfileId)
     : null;
@@ -920,6 +937,24 @@ function mergeSettings(saved: any): Settings {
       ? DEFAULT_SETTINGS.flareSolverrSessionName
       : savedFlareSolverrSessionName;
 
+  const normalizedProfileSettings = normalizeProfileScopedSettings(saved?.settings?.profileScopedSettings);
+  const allowedProfileIds = [
+    coercedDefaultProfileId,
+    ...customLocalProfiles.map((profile) => profile.id),
+  ];
+  const profileScopedSettings = Object.fromEntries(
+    allowedProfileIds.map((profileId) => {
+      const existing = normalizedProfileSettings[profileId] ?? {};
+      const isLegacyActiveProfile = profileId === coercedDefaultProfileId;
+      return [profileId, {
+        ...existing,
+        mangaLinks: existing.mangaLinks
+          ?? (isLegacyActiveProfile ? saved?.settings?.mangaLinks ?? {} : {}),
+        novelLinks: existing.novelLinks
+          ?? (isLegacyActiveProfile ? saved?.settings?.novelLinks ?? {} : {}),
+      }];
+    }),
+  );
   const merged: Settings = {
     ...DEFAULT_SETTINGS,
     ...saved?.settings,
@@ -947,7 +982,7 @@ function mergeSettings(saved: any): Settings {
       : {},
     libraryTabSort:    saved?.settings?.libraryTabSort    ?? {},
     libraryTabStatus:  saved?.settings?.libraryTabStatus  ?? {},
-    profileScopedSettings: normalizeProfileScopedSettings(saved?.settings?.profileScopedSettings),
+    profileScopedSettings,
     booksLibraryUi: {
       ...savedBooksLibraryState.booksLibraryUi,
     },
@@ -1471,7 +1506,7 @@ class Store {
   private booksStateHydrated = !canUseDesktopBookStorage();
   booksLibraryHydrated: boolean = $state(!canUseDesktopBookStorage());
   private booksStatePersistQueued = false;
-  private booksStatePersistRunning = false;
+  private booksStatePersistTask: Promise<void> | null = null;
 
   // ── Shared category list ──────────────────────────────────────────────────
   // Single source of truth for the category list, shared between Library and
@@ -1580,7 +1615,7 @@ class Store {
   private queuePersistBooksLibraryState() {
     if (!this.booksStateHydrated) return;
     this.booksStatePersistQueued = true;
-    if (this.booksStatePersistRunning) return;
+    if (this.booksStatePersistTask) return;
 
     queueMicrotask(() => {
       void this.flushPersistBooksLibraryState();
@@ -1588,26 +1623,27 @@ class Store {
   }
 
   private async flushPersistBooksLibraryState() {
-    if (this.booksStatePersistRunning) return;
-    this.booksStatePersistRunning = true;
-
-    try {
-      while (this.booksStatePersistQueued) {
-        this.booksStatePersistQueued = false;
-        await saveBookLibraryState({
-          version: 1 as const,
-          books: this.books.map(toPersistedBookEntry),
-          bookProgress: this.bookProgress,
-          bookBookmarks: this.bookBookmarks,
-          booksCategories: this.settings.booksCategories,
-          booksCategoryAssignments: this.settings.booksCategoryAssignments,
-          booksLibraryUi: this.settings.booksLibraryUi,
-          updatedAtMs: Date.now(),
-        }, { profileId: this.booksStateScopeKey ?? this.runtimeResolvedLocalProfileId ?? resolveSettingsProfileId(this.settings) });
+    if (this.booksStatePersistTask) return this.booksStatePersistTask;
+    this.booksStatePersistTask = (async () => {
+      try {
+        while (this.booksStatePersistQueued) {
+          this.booksStatePersistQueued = false;
+          await saveBookLibraryState({
+            version: 1 as const,
+            books: this.books.map(toPersistedBookEntry),
+            bookProgress: this.bookProgress,
+            bookBookmarks: this.bookBookmarks,
+            booksCategories: this.settings.booksCategories,
+            booksCategoryAssignments: this.settings.booksCategoryAssignments,
+            booksLibraryUi: this.settings.booksLibraryUi,
+            updatedAtMs: Date.now(),
+          }, { profileId: this.booksStateScopeKey ?? this.runtimeResolvedLocalProfileId ?? resolveSettingsProfileId(this.settings) });
+        }
+      } finally {
+        this.booksStatePersistTask = null;
       }
-    } finally {
-      this.booksStatePersistRunning = false;
-    }
+    })();
+    return this.booksStatePersistTask;
   }
 
   queueCanonicalBookMigration() {
@@ -2361,6 +2397,30 @@ class Store {
   updateSettings(patch: Partial<Settings>)       {
     this.settings = updateSettingsWithProfileScope(this.settings, patch, this.runtimeResolvedLocalProfileId);
   }
+  async persistMigrationIdentitySettings(input: {
+    profileId: string;
+    mangaLinks: Record<number, number[]>;
+    novelLinks: Record<string, string[]>;
+    booksCategoryAssignments: Record<string, string[]>;
+  }) {
+    const activeProfileId = this.runtimeResolvedLocalProfileId ?? resolveSettingsProfileId(this.settings);
+    if (input.profileId !== activeProfileId) {
+      throw new Error("The active profile changed while migration identity was being persisted.");
+    }
+
+    this.settings = updateSettingsWithProfileScope(this.settings, {
+      mangaLinks: input.mangaLinks,
+      novelLinks: input.novelLinks,
+      booksCategoryAssignments: input.booksCategoryAssignments,
+    }, this.runtimeResolvedLocalProfileId);
+
+    if (!persist({ settings: sanitizeSettingsForPersistence(this.settings) })) {
+      throw new Error("Migration links could not be persisted.");
+    }
+
+    this.booksStatePersistQueued = true;
+    await this.flushPersistBooksLibraryState();
+  }
   resetSettings()                                {
     const profileId = resolveSettingsProfileId(this.settings);
     const reset = {
@@ -2728,6 +2788,14 @@ export function setLibraryVisibleCount(next: number)                     { store
 export function setLibraryReturnToMangaId(next: number | null)           { store.setLibraryReturnToMangaId(next); }
 export function setExtensionsPanelHint(next: "repos" | null)             { store.setExtensionsPanelHint(next); }
 export function updateSettings(patch: Partial<Settings>)                 { store.updateSettings(patch); }
+export function persistMigrationIdentitySettings(input: {
+  profileId: string;
+  mangaLinks: Record<number, number[]>;
+  novelLinks: Record<string, string[]>;
+  booksCategoryAssignments: Record<string, string[]>;
+}) {
+  return store.persistMigrationIdentitySettings(input);
+}
 export function resetSettings()                                          { store.resetSettings(); }
 export function resetKeybinds()                                          { store.resetKeybinds(); }
 export function clearDiscoverCache()                                       { store.clearDiscoverCache(); }

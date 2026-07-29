@@ -37,10 +37,45 @@ import {
   resetNovelLibraryStateCacheForTests,
   upsertNovelInLibrary,
 } from "../novels/libraryState";
+import {
+  createEmptyHardcoverState,
+  loadHardcoverState,
+  saveHardcoverState,
+} from "../novels/hardcover";
+import {
+  migrationIdentityRevision,
+  type MigrationIdentityBridge,
+  type MigrationIdentitySettings,
+} from "./identity";
 
 const SCOPE = { profileId: "test" } as const;
 const OLD_ID = createNovelLibraryId("archiveofourown", "/works/1");
 const NEW_ID = createNovelLibraryId("royalroad", "fiction/21220");
+
+function createMemoryIdentityBridge(initial: MigrationIdentitySettings) {
+  let settings = structuredClone(initial);
+  const bridge: MigrationIdentityBridge = {
+    profileId: "test",
+    async read() {
+      return {
+        profileId: "test",
+        revision: migrationIdentityRevision(settings),
+        settings: structuredClone(settings),
+      };
+    },
+    async write(input) {
+      if (input.expectedRevision !== migrationIdentityRevision(settings)) {
+        throw new Error("identity revision mismatch");
+      }
+      settings = structuredClone(input.next);
+      return this.read();
+    },
+  };
+  return {
+    bridge,
+    read: () => structuredClone(settings),
+  };
+}
 
 function createInitialState(): PersistedNovelLibraryState {
   return {
@@ -220,6 +255,58 @@ describe("novel migration with journal", () => {
   });
 
   it("previews, applies, and undoes a novel migration through authoritative state and journal", async () => {
+    const identity = createMemoryIdentityBridge({
+      mangaLinks: {},
+      novelLinks: {
+        [OLD_ID]: ["related"],
+        related: [OLD_ID],
+      },
+      booksCategoryAssignments: {
+        [OLD_ID]: ["favorites"],
+        [NEW_ID]: ["reading"],
+      },
+    });
+    saveHardcoverState({
+      ...createEmptyHardcoverState(SCOPE),
+      records: [
+        {
+          userBookId: 10,
+          bookId: 20,
+          title: "MANACLED",
+          authors: ["senlinyu"],
+          genres: [],
+          tags: [],
+          moods: [],
+          coverUrl: null,
+          status: "Reading",
+          workStatus: "Ongoing",
+          rating: 4,
+          progress: 37,
+          remoteUrl: null,
+          updatedAt: 100,
+          sourceNovelId: OLD_ID,
+          sourceTitleKey: "manacled",
+        },
+        {
+          userBookId: 11,
+          bookId: 99,
+          title: "Unrelated",
+          authors: [],
+          genres: [],
+          tags: [],
+          moods: [],
+          coverUrl: null,
+          status: "Read",
+          workStatus: null,
+          rating: null,
+          progress: 100,
+          remoteUrl: null,
+          updatedAt: 101,
+          sourceNovelId: "unrelated",
+          sourceTitleKey: "unrelated",
+        },
+      ],
+    }, SCOPE);
     const preview = await previewNovelMigration({
       scopeInput: SCOPE,
       currentNovelId: OLD_ID,
@@ -236,6 +323,7 @@ describe("novel migration with journal", () => {
       scopeInput: SCOPE,
       currentNovelId: OLD_ID,
       targetDetail: createTargetDetail(),
+      identityBridge: identity.bridge,
     });
 
     expect(applied.journalEntryId).toMatch(/^migration-/);
@@ -247,6 +335,19 @@ describe("novel migration with journal", () => {
     expect(migratedState.progress[0]?.novelId).toBe(NEW_ID);
     expect(migratedState.bookmarks[0]?.novelId).toBe(NEW_ID);
     expect(migratedState.history[0]?.novelId).toBe(NEW_ID);
+    expect(identity.read().novelLinks[OLD_ID]).toBeUndefined();
+    expect(identity.read().novelLinks[NEW_ID]).toContain("related");
+    expect(identity.read().booksCategoryAssignments[NEW_ID]).toEqual(["reading", "favorites"]);
+    expect(loadHardcoverState(SCOPE).records.find((record) => (
+      record.sourceNovelId === NEW_ID
+    ))).toMatchObject({
+      bookId: 20,
+      sourceNovelId: NEW_ID,
+      progress: 37,
+    });
+    expect(loadHardcoverState(SCOPE).records.find((record) => (
+      record.sourceNovelId === "unrelated"
+    ))).toMatchObject({ bookId: 99, progress: 100 });
 
     const journalState = JSON.parse(String(journalStateJson));
     expect(journalState.version).toBe(2);
@@ -257,6 +358,7 @@ describe("novel migration with journal", () => {
     const restored = await undoNovelMigration({
       scopeInput: SCOPE,
       journalEntryId: applied.journalEntryId,
+      identityBridge: identity.bridge,
     });
 
     expect(restored.entries.find((entry) => entry.id === OLD_ID)?.title).toBe("MANACLED");
@@ -264,6 +366,18 @@ describe("novel migration with journal", () => {
     expect(restored.progress[0]?.novelId).toBe(OLD_ID);
     expect(restored.bookmarks[0]?.novelId).toBe(OLD_ID);
     expect(restored.history[0]?.novelId).toBe(OLD_ID);
+    expect(identity.read().novelLinks[OLD_ID]).toEqual(["related"]);
+    expect(identity.read().booksCategoryAssignments[OLD_ID]).toEqual(["favorites"]);
+    expect(loadHardcoverState(SCOPE).records.find((record) => (
+      record.sourceNovelId === OLD_ID
+    ))).toMatchObject({
+      bookId: 20,
+      sourceNovelId: OLD_ID,
+      progress: 37,
+    });
+    expect(loadHardcoverState(SCOPE).records.find((record) => (
+      record.sourceNovelId === "unrelated"
+    ))).toMatchObject({ bookId: 99, progress: 100 });
 
     const finalJournalState = JSON.parse(String(journalStateJson));
     expect(finalJournalState.operations[0].status).toBe("compensated");
@@ -301,6 +415,43 @@ describe("novel migration with journal", () => {
       chapterId: target.chapters[1]!.id,
       progressPercent: 0.75,
     });
+  });
+
+  it("blocks a different Hardcover edition before changing novel state", async () => {
+    const baseRecord = {
+      userBookId: 10,
+      title: "MANACLED",
+      authors: ["senlinyu"],
+      genres: [],
+      tags: [],
+      moods: [],
+      coverUrl: null,
+      status: "Reading",
+      workStatus: "Ongoing",
+      rating: 4,
+      progress: 37,
+      remoteUrl: null,
+      updatedAt: 100,
+      sourceTitleKey: "manacled",
+    };
+    saveHardcoverState({
+      ...createEmptyHardcoverState(SCOPE),
+      records: [
+        { ...baseRecord, bookId: 20, sourceNovelId: OLD_ID },
+        { ...baseRecord, bookId: 21, sourceNovelId: NEW_ID },
+      ],
+    }, SCOPE);
+
+    await expect(applyNovelMigrationWithJournal({
+      scopeInput: SCOPE,
+      currentNovelId: OLD_ID,
+      targetDetail: createTargetDetail(),
+    })).rejects.toThrow("different Hardcover editions");
+
+    const state = await loadNovelLibraryState(SCOPE);
+    expect(state.entries.some((entry) => entry.id === OLD_ID)).toBe(true);
+    expect(state.entries.some((entry) => entry.id === NEW_ID)).toBe(false);
+    expect(journalStateJson).toBeNull();
   });
 
   it("preserves unmatched chapter references without attaching them to the target", async () => {

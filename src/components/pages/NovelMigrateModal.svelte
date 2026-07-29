@@ -40,6 +40,7 @@
   import NocturneState from "../shared/NocturneState.svelte";
   import { getNovelMigrationBlocker, hasMinimumNovelMigrationSafeCohort, isNovelSourceMigrationSafe } from "../../lib/novels/migrationSafe";
   import { createDialogFocusBoundary } from "../../lib/accessibility/dialogFocus";
+  import { createStoreMigrationIdentityBridge } from "../../lib/migration/storeIdentity.svelte";
 
   interface Props {
     active: ActiveNovelDetailState;
@@ -197,10 +198,14 @@
     error = null;
     void setMigrationPresence(true, store.settings, "library");
     try {
+      const identityBridge = createStoreMigrationIdentityBridge(
+        store.runtimeResolvedLocalProfileId ?? store.settings.defaultLocalProfileId,
+      );
       const result = await applyNovelMigrationWithJournal({
         scopeInput,
         currentNovelId: active.novel.id,
         targetDetail: selectedTarget,
+        identityBridge,
       });
 
       addToast({
@@ -214,6 +219,7 @@
             void undoNovelMigration({
               scopeInput,
               journalEntryId: result.journalEntryId,
+              identityBridge,
             }).then(async (state) => {
               const restoredEntry = getNovelLibraryEntry(state, active.novel.id);
               const restoredChapters = getNovelLibraryChapters(state, active.novel.id);
@@ -258,10 +264,14 @@
     error = null;
     void setMigrationPresence(true, store.settings, "library");
     try {
+      const identityBridge = createStoreMigrationIdentityBridge(
+        store.runtimeResolvedLocalProfileId ?? store.settings.defaultLocalProfileId,
+      );
       const result = await applyMassNovelMigrationWithJournal({
         scopeInput,
         preview: massPreview,
         selectedNovelIds: [...massSelectedIds],
+        identityBridge,
       });
 
       addToast({
@@ -275,6 +285,7 @@
             void undoNovelMigration({
               scopeInput,
               journalEntryId: result.journalEntryId,
+              identityBridge,
             }).then((state) => {
               const restoredEntry = getNovelLibraryEntry(state, active.novel.id);
               const restoredChapters = getNovelLibraryChapters(state, active.novel.id);

@@ -29,6 +29,11 @@ import {
   undoMangaMigration,
 } from "./manga";
 import type { Chapter, Manga } from "../types";
+import {
+  migrationIdentityRevision,
+  type MigrationIdentityBridge,
+  type MigrationIdentitySettings,
+} from "./identity";
 
 function createManga(id: number, title: string, sourceId: string, inLibrary = true): Manga {
   return {
@@ -63,6 +68,31 @@ function createChapter(id: number, mangaId: number, chapterNumber: number, overr
   };
 }
 
+function createMemoryIdentityBridge(initial: MigrationIdentitySettings) {
+  let settings = structuredClone(initial);
+  const bridge: MigrationIdentityBridge = {
+    profileId: "main",
+    async read() {
+      return {
+        profileId: "main",
+        revision: migrationIdentityRevision(settings),
+        settings: structuredClone(settings),
+      };
+    },
+    async write(input) {
+      if (input.expectedRevision !== migrationIdentityRevision(settings)) {
+        throw new Error("identity revision mismatch");
+      }
+      settings = structuredClone(input.next);
+      return this.read();
+    },
+  };
+  return {
+    bridge,
+    read: () => structuredClone(settings),
+  };
+}
+
 describe("manga migration services", () => {
   let journalStateJson: string | null;
   let mangaById: Map<number, Manga>;
@@ -70,6 +100,8 @@ describe("manga migration services", () => {
   let categoryMembership: Map<number, number[]>;
   let failUpdateMangaIds: Set<number>;
   let journalStatusAtFirstMutation: string | null;
+  let trackerRecordsByMangaId: Map<number, Array<{ id: number; trackerId: number; remoteId: string }>>;
+  let nextTrackerRecordId: number;
 
   beforeEach(() => {
     resetMigrationJournalStateCacheForTests();
@@ -80,6 +112,8 @@ describe("manga migration services", () => {
     invokeMock.mockReset();
     failUpdateMangaIds = new Set();
     journalStatusAtFirstMutation = null;
+    trackerRecordsByMangaId = new Map();
+    nextTrackerRecordId = 1000;
 
     mangaById = new Map([
       [10, createManga(10, "Alpha Hero", "source-old", true)],
@@ -212,6 +246,41 @@ describe("manga migration services", () => {
         };
       }
 
+      if (query.includes("query GetMangaTrackRecords")) {
+        return {
+          manga: {
+            trackRecords: {
+              nodes: trackerRecordsByMangaId.get(Number(variables.mangaId)) ?? [],
+            },
+          },
+        };
+      }
+
+      if (query.includes("mutation BindTrack")) {
+        const mangaId = Number(variables.mangaId);
+        const record = {
+          id: nextTrackerRecordId++,
+          trackerId: Number(variables.trackerId),
+          remoteId: String(variables.remoteId),
+        };
+        trackerRecordsByMangaId.set(mangaId, [
+          ...(trackerRecordsByMangaId.get(mangaId) ?? []),
+          record,
+        ]);
+        return { bindTrack: { trackRecord: record } };
+      }
+
+      if (query.includes("mutation UnbindTrack")) {
+        const recordId = Number(variables.recordId);
+        for (const [mangaId, records] of trackerRecordsByMangaId) {
+          trackerRecordsByMangaId.set(
+            mangaId,
+            records.filter((record) => record.id !== recordId),
+          );
+        }
+        return { unbindTrack: { trackRecord: { id: recordId } } };
+      }
+
       if (query.includes("mutation UpdateMangaCategories")) {
         journalStatusAtFirstMutation ??= journalStateJson
           ? JSON.parse(journalStateJson).operations[0]?.status ?? null
@@ -319,6 +388,12 @@ describe("manga migration services", () => {
   });
 
   it("applies and undoes a single manga migration with category transfer", async () => {
+    trackerRecordsByMangaId.set(10, [{ id: 70, trackerId: 1, remoteId: "remote-alpha" }]);
+    const identity = createMemoryIdentityBridge({
+      mangaLinks: { 10: [30], 30: [10] },
+      novelLinks: {},
+      booksCategoryAssignments: {},
+    });
     const result = await applyMangaMigrationWithJournal({
       currentManga: mangaById.get(10)!,
       currentChapters: chaptersByMangaId.get(10)!,
@@ -328,6 +403,7 @@ describe("manga migration services", () => {
         chapters: chaptersByMangaId.get(20)!,
         similarity: 1,
       },
+      identityBridge: identity.bridge,
     });
 
     expect(mangaById.get(10)?.inLibrary).toBe(false);
@@ -336,19 +412,31 @@ describe("manga migration services", () => {
     expect(categoryMembership.get(2)).toContain(20);
     expect(categoryMembership.get(1)).not.toContain(10);
     expect(categoryMembership.get(2)).not.toContain(10);
+    expect(trackerRecordsByMangaId.get(10)).toEqual([]);
+    expect(trackerRecordsByMangaId.get(20)).toEqual([
+      expect.objectContaining({ trackerId: 1, remoteId: "remote-alpha" }),
+    ]);
+    expect(identity.read().mangaLinks[10]).toBeUndefined();
+    expect(identity.read().mangaLinks[20]).toContain(30);
+    expect(identity.read().mangaLinks[30]).toContain(20);
     expect(journalStatusAtFirstMutation).toBe("applying");
     expect(chaptersByMangaId.get(20)?.[0]?.isRead).toBe(false);
     expect(chaptersByMangaId.get(20)?.[0]?.isBookmarked).toBe(true);
     expect(chaptersByMangaId.get(20)?.[0]?.lastPageRead).toBe(7);
     expect(chaptersByMangaId.get(20)?.[1]?.isRead).toBe(true);
 
-    await undoMangaMigration(result.journalEntryId);
+    await undoMangaMigration(result.journalEntryId, identity.bridge);
 
     expect(mangaById.get(10)?.inLibrary).toBe(true);
     expect(mangaById.get(20)?.inLibrary).toBe(false);
     expect(categoryMembership.get(1)).toContain(10);
     expect(categoryMembership.get(2)).toContain(10);
     expect(categoryMembership.get(3)).toContain(20);
+    expect(trackerRecordsByMangaId.get(10)).toEqual([
+      expect.objectContaining({ trackerId: 1, remoteId: "remote-alpha" }),
+    ]);
+    expect(trackerRecordsByMangaId.get(20)).toEqual([]);
+    expect(identity.read().mangaLinks).toEqual({ 10: [30], 30: [10] });
   });
 
   it("never reduces chapter state already present on the target", async () => {
@@ -371,6 +459,26 @@ describe("manga migration services", () => {
     expect(targetChapter.isRead).toBe(true);
     expect(targetChapter.isBookmarked).toBe(true);
     expect(targetChapter.lastPageRead).toBe(9);
+  });
+
+  it("blocks conflicting tracker identities before changing library state", async () => {
+    trackerRecordsByMangaId.set(10, [{ id: 70, trackerId: 1, remoteId: "source-edition" }]);
+    trackerRecordsByMangaId.set(20, [{ id: 71, trackerId: 1, remoteId: "target-edition" }]);
+
+    await expect(applyMangaMigrationWithJournal({
+      currentManga: mangaById.get(10)!,
+      currentChapters: chaptersByMangaId.get(10)!,
+      targetSourceId: "source-new",
+      match: {
+        manga: mangaById.get(20)!,
+        chapters: chaptersByMangaId.get(20)!,
+        similarity: 1,
+      },
+    })).rejects.toMatchObject({ code: "TARGET_TRACKER_CONFLICT" });
+
+    expect(mangaById.get(10)?.inLibrary).toBe(true);
+    expect(mangaById.get(20)?.inLibrary).toBe(false);
+    expect(journalStateJson).toBeNull();
   });
 
   it("transfers partial progress proportionally when page counts differ", async () => {
@@ -425,6 +533,19 @@ describe("manga migration services", () => {
   });
 
   it("previews and applies a mass manga migration for selected matched items", async () => {
+    const identity = createMemoryIdentityBridge({
+      mangaLinks: { 10: [30], 30: [10] },
+      novelLinks: {},
+      booksCategoryAssignments: {},
+    });
+    const writeIdentity = identity.bridge.write.bind(identity.bridge);
+    identity.bridge.write = async (input) => {
+      const journalAtWrite = JSON.parse(String(journalStateJson));
+      expect(
+        journalAtWrite.operations[0].snapshots.payload.items[0].oldState.localIdentity,
+      ).toBeDefined();
+      return writeIdentity(input);
+    };
     const preview = await previewMassMangaMigration({
       sourceFrom: "source-old",
       sourceTo: "source-new",
@@ -442,7 +563,10 @@ describe("manga migration services", () => {
     expect(preview.items.find((item) => item.currentManga.id === 11)?.status).toBe("needs_review");
     expect(preview.items.find((item) => item.currentManga.id === 12)?.status).toBe("no_match");
 
-    const applied = await applyMassMangaMigrationWithJournal({ preview });
+    const applied = await applyMassMangaMigrationWithJournal({
+      preview,
+      identityBridge: identity.bridge,
+    });
 
     expect(applied.migratedCount).toBe(2);
     expect(applied.skippedCount).toBe(1);
@@ -458,7 +582,7 @@ describe("manga migration services", () => {
     expect(journalState.operations[0].snapshots.payload.items).toHaveLength(2);
 
     expect(applied.journalEntryId).not.toBeNull();
-    await undoMangaMigration(applied.journalEntryId!);
+    await undoMangaMigration(applied.journalEntryId!, identity.bridge);
 
     expect(mangaById.get(10)?.inLibrary).toBe(true);
     expect(mangaById.get(20)?.inLibrary).toBe(false);

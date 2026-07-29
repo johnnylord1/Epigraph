@@ -20,8 +20,13 @@ const TERMINAL_STATUSES = new Set<MigrationOperationStatus>([
   "committed",
   "compensated",
   "rolled_back",
-  "recovery_pending",
   "cancelled",
+  "needs_manual_recovery",
+  "corrupt",
+]);
+const BLOCKING_RECOVERY_STATUSES = new Set<MigrationOperationStatus>([
+  "recovery_pending",
+  "recovering",
   "needs_manual_recovery",
   "corrupt",
 ]);
@@ -108,11 +113,22 @@ export async function beginMigrationOperation(
   input: BeginMigrationOperationInput,
 ): Promise<MigrationOperationV2> {
   const now = Date.now();
+  const profileId = normalizeProfileId(input.profileId);
+  const journal = await loadMigrationJournalState();
+  const unresolved = journal.operations.find((operation) => (
+    operation.profileId === profileId
+    && BLOCKING_RECOVERY_STATUSES.has(operation.status)
+  ));
+  if (unresolved) {
+    throw new Error(
+      `Migration ${unresolved.operationId} requires recovery before another migration can start for this profile.`,
+    );
+  }
   const sides = snapshotSides(input.payload);
   const operation: MigrationOperationV2 = {
     schemaVersion: 2,
     operationId: createOperationId(),
-    profileId: normalizeProfileId(input.profileId),
+    profileId,
     expectedRevision: input.expectedRevision ?? null,
     revision: 1,
     contentKind: input.contentKind,
@@ -209,6 +225,22 @@ export async function runMigrationStep(input: {
   }
 }
 
+export async function checkpointMigrationPayload(
+  operationId: string,
+  payload: MigrationPayload,
+): Promise<MigrationOperationV2> {
+  const operation = await requireOperation(operationId);
+  const sides = snapshotSides(payload);
+  await updateMigrationOperation(operationId, {
+    snapshots: {
+      oldStateSha256: await sha256Json(sides.oldState),
+      newStateSha256: await sha256Json(sides.newState),
+      payload: structuredClone(payload),
+    },
+  }, operation.revision);
+  return requireOperation(operationId);
+}
+
 export async function commitMigrationOperation(
   operationId: string,
   patch: {
@@ -261,21 +293,48 @@ export async function recoverInterruptedMigrationOperations(): Promise<Migration
   const recovered: MigrationOperationV2[] = [];
   for (const operation of state.operations) {
     if (TERMINAL_STATUSES.has(operation.status)) continue;
-    if (operation.steps.length === 0 && operation.snapshots.oldStateSha256 === null) {
+    const effectsMayHaveStarted = operation.status === "recovery_pending"
+      || operation.status === "recovering"
+      || operation.steps.some((step) => step.status !== "pending");
+    if (!effectsMayHaveStarted) {
+      const next = await transitionMigrationOperation(operation.operationId, "cancelled", {
+        failureReason: "Migration was interrupted before any effect started.",
+        undoUntil: null,
+      });
+      recovered.push(next);
       continue;
     }
-    const nextStatus: MigrationOperationStatus = operation.status === "planned" || operation.status === "preparing"
-      ? "cancelled"
-      : "recovery_pending";
-    const next = await transitionMigrationOperation(operation.operationId, nextStatus, {
-      failureReason: nextStatus === "recovery_pending"
-        ? "Migration was interrupted after effects may have started."
-        : "Migration was interrupted before any effect started.",
-      undoUntil: null,
-    });
+
+    const snapshotsAvailable = operation.snapshots.oldStateSha256 != null
+      && operation.snapshots.newStateSha256 != null;
+    const next = await transitionMigrationOperation(
+      operation.operationId,
+      snapshotsAvailable ? "needs_manual_recovery" : "corrupt",
+      {
+        failureReason: snapshotsAvailable
+          ? "Migration was interrupted after effects may have started. Its preserved snapshots require contextual recovery before this profile can migrate again."
+          : "Migration was interrupted after effects may have started, but its recovery snapshots are incomplete.",
+        undoUntil: null,
+      },
+    );
     recovered.push(next);
   }
   return recovered;
+}
+
+export async function acknowledgeMigrationManualRecovery(
+  operationId: string,
+  verification: () => Promise<void>,
+): Promise<MigrationOperationV2> {
+  const operation = await requireOperation(operationId);
+  if (operation.status !== "needs_manual_recovery") {
+    throw new Error("Only a migration awaiting manual recovery can be acknowledged.");
+  }
+  await verification();
+  return transitionMigrationOperation(operationId, "compensated", {
+    failureReason: "Recovery was verified explicitly.",
+      undoUntil: null,
+  });
 }
 
 export function resetMigrationCoordinatorForTests() {

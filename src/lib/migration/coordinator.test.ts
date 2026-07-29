@@ -5,7 +5,9 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 import {
+  acknowledgeMigrationManualRecovery,
   beginMigrationOperation,
+  checkpointMigrationPayload,
   commitMigrationOperation,
   recoverInterruptedMigrationOperations,
   resetMigrationCoordinatorForTests,
@@ -17,6 +19,7 @@ import {
   getMigrationOperation,
   resetMigrationJournalStateCacheForTests,
 } from "./journalState";
+import type { MangaMigrationUndoPayload } from "./types";
 
 function installMemoryStorage() {
   const data = new Map<string, string>();
@@ -114,19 +117,87 @@ describe("migration coordinator", () => {
     expect(order).toEqual(["first-start", "first-end", "second"]);
   });
 
-  it("marks interrupted post-effect work as recovery pending", async () => {
+  it("blocks the profile when interrupted work may have produced effects", async () => {
     const operation = await begin();
     await transitionMigrationOperation(operation.operationId, "applying");
+    await runMigrationStep({
+      operationId: operation.operationId,
+      stepId: "suwayomi-state",
+      apply: async () => {
+        throw new Error("interrupted");
+      },
+    }).catch(() => undefined);
 
     const recovered = await recoverInterruptedMigrationOperations();
     const recoveredRevision = recovered[0]?.revision;
     const repeated = await recoverInterruptedMigrationOperations();
 
-    expect(recovered[0]?.status).toBe("recovery_pending");
+    expect(recovered[0]?.status).toBe("needs_manual_recovery");
     expect(repeated).toEqual([]);
     expect(await getMigrationOperation(operation.operationId)).toMatchObject({
-      status: "recovery_pending",
+      status: "needs_manual_recovery",
       revision: recoveredRevision,
     });
+    await expect(begin()).rejects.toThrow("requires recovery");
+
+    const acknowledged = await acknowledgeMigrationManualRecovery(
+      operation.operationId,
+      async () => undefined,
+    );
+    expect(acknowledged.status).toBe("compensated");
+    await expect(begin()).resolves.toMatchObject({ status: "planned" });
+  });
+
+  it("cancels interrupted work when no effect started", async () => {
+    const operation = await begin();
+
+    const recovered = await recoverInterruptedMigrationOperations();
+
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]).toMatchObject({
+      operationId: operation.operationId,
+      status: "cancelled",
+    });
+  });
+
+  it("checkpoints updated recovery payload before later effects", async () => {
+    const operation = await begin();
+    const payload: MangaMigrationUndoPayload = {
+      oldState: {
+        mangaId: 1,
+        inLibrary: true,
+        title: "Old",
+        categoryIds: [],
+        chapters: [],
+        localIdentity: {
+          mangaLinks: {
+            affectedKeys: ["1", "2"],
+            values: { 1: [2], 2: [1] },
+          },
+        },
+      },
+      newState: {
+        mangaId: 2,
+        inLibrary: true,
+        title: "New",
+        categoryIds: [],
+        chapters: [],
+        localIdentity: {
+          mangaLinks: {
+            affectedKeys: ["1", "2"],
+            values: { 2: [1] },
+          },
+        },
+      },
+    };
+
+    const checkpointed = await checkpointMigrationPayload(
+      operation.operationId,
+      payload,
+    );
+
+    expect(checkpointed.snapshots.payload).toEqual(payload);
+    expect(checkpointed.snapshots.oldStateSha256).not.toBe(operation.snapshots.oldStateSha256);
+    expect(checkpointed.snapshots.newStateSha256).not.toBe(operation.snapshots.newStateSha256);
   });
 });

@@ -33,6 +33,26 @@ import type {
   NovelMigrationUndoPayload,
 } from "./types";
 import { readInstalledNovelDetails, searchInstalledNovelSource } from "../novels/sources";
+import {
+  loadHardcoverState,
+  saveHardcoverState,
+  type HardcoverTrackingState,
+} from "../novels/hardcover";
+import {
+  hardcoverBindingMatchesSlice,
+  prepareHardcoverBindingMigration,
+  replaceHardcoverBindingSlice,
+  type HardcoverBindingSlice,
+  type PreparedHardcoverBindingMigration,
+} from "./hardcoverBinding";
+import {
+  migrationIdentityMatchesSlice,
+  migrationIdentityRevision,
+  prepareNovelIdentityMigration,
+  restoreMigrationIdentitySlice,
+  type MigrationIdentityBridge,
+  type MigrationIdentityRevision,
+} from "./identity";
 
 function migrationProfileId(scopeInput: NovelRepositoryScopeInput): string {
   return scopeInput.profileId?.trim()
@@ -326,9 +346,12 @@ function remapNovelState(
 }
 
 async function prepareNovelMigrationOperation(input: {
+  scopeInput: NovelRepositoryScopeInput;
   currentState: PersistedNovelLibraryState;
   currentNovelId: string;
   targetDetail: NovelDetailRecord;
+  identityRevision?: MigrationIdentityRevision;
+  hardcoverState?: HardcoverTrackingState;
 }): Promise<{
   preview: NovelMigrationPreview;
   oldSlice: NovelMigrationStateSlice;
@@ -343,6 +366,8 @@ async function prepareNovelMigrationOperation(input: {
     transferredReadCount: number;
     transferredBookmarkCount: number;
   };
+  identity?: ReturnType<typeof prepareNovelIdentityMigration>;
+  hardcover: PreparedHardcoverBindingMigration;
 }> {
   const oldSlice = snapshotNovelLibraryStateSlice(input.currentState, input.currentNovelId);
   if (!oldSlice.entry) {
@@ -351,13 +376,32 @@ async function prepareNovelMigrationOperation(input: {
 
   const preview = buildPreview(oldSlice.entry.title, oldSlice.chapters, input.currentState, input.targetDetail);
   const nextState = remapNovelState(input.currentState, input.currentNovelId, input.targetDetail);
+  const identity = input.identityRevision
+    ? prepareNovelIdentityMigration({
+        current: input.identityRevision.settings,
+        sourceNovelId: input.currentNovelId,
+        targetNovelId: input.targetDetail.id,
+      })
+    : undefined;
+  const hardcoverState = input.hardcoverState ?? loadHardcoverState(input.scopeInput);
+  const hardcover = prepareHardcoverBindingMigration({
+    records: hardcoverState.records,
+    sourceNovelId: input.currentNovelId,
+    targetNovelId: input.targetDetail.id,
+  });
   const newSlice = snapshotNovelLibraryStateSlice(nextState, input.targetDetail.id);
+  oldSlice.localIdentity = identity?.previous;
+  oldSlice.hardcoverBinding = hardcover.previous;
+  newSlice.localIdentity = identity?.applied;
+  newSlice.hardcoverBinding = hardcover.applied;
 
   return {
     preview,
     oldSlice,
     newSlice,
     nextState,
+    identity,
+    hardcover,
     transferSummary: {
       oldItemTitle: oldSlice.entry.title,
       newItemTitle: input.targetDetail.title,
@@ -368,6 +412,97 @@ async function prepareNovelMigrationOperation(input: {
       transferredBookmarkCount: preview.transferredBookmarkCount,
     },
   };
+}
+
+function saveVerifiedHardcoverSlice(
+  scopeInput: NovelRepositoryScopeInput,
+  expected: HardcoverBindingSlice,
+  next: HardcoverBindingSlice,
+): HardcoverTrackingState {
+  const current = loadHardcoverState(scopeInput);
+  const records = replaceHardcoverBindingSlice(current.records, expected, next);
+  const saved = saveHardcoverState({ ...current, records }, scopeInput);
+  const reloaded = loadHardcoverState(scopeInput);
+  if (!hardcoverBindingMatchesSlice(saved.records, next)
+    || !hardcoverBindingMatchesSlice(reloaded.records, next)) {
+    throw new Error("The Hardcover source binding could not be persisted.");
+  }
+  return reloaded;
+}
+
+async function restoreNovelIdentityState(input: {
+  bridge?: MigrationIdentityBridge;
+  prepared: Awaited<ReturnType<typeof prepareNovelMigrationOperation>>;
+  scopeInput: NovelRepositoryScopeInput;
+}): Promise<void> {
+  const currentHardcover = loadHardcoverState(input.scopeInput);
+  if (!hardcoverBindingMatchesSlice(currentHardcover.records, input.prepared.hardcover.previous)) {
+    if (!hardcoverBindingMatchesSlice(currentHardcover.records, input.prepared.hardcover.applied)) {
+      throw new Error("Hardcover identity changed after migration; automatic compensation was stopped.");
+    }
+    const restored = saveVerifiedHardcoverSlice(
+      input.scopeInput,
+      input.prepared.hardcover.applied,
+      input.prepared.hardcover.previous,
+    );
+    if (!hardcoverBindingMatchesSlice(restored.records, input.prepared.hardcover.previous)) {
+      throw new Error("The previous Hardcover binding could not be restored.");
+    }
+  }
+
+  if (input.bridge && input.prepared.identity) {
+    const current = await input.bridge.read();
+    if (!migrationIdentityMatchesSlice(current.settings, input.prepared.identity.previous)) {
+      if (!migrationIdentityMatchesSlice(current.settings, input.prepared.identity.applied)) {
+        throw new Error("Migration links or folders changed after migration; automatic compensation was stopped.");
+      }
+      const restored = restoreMigrationIdentitySlice(
+        current.settings,
+        input.prepared.identity.previous,
+      );
+      await input.bridge.write({
+        expectedRevision: current.revision,
+        next: restored,
+      });
+    }
+  }
+}
+
+async function restoreNovelJournalIdentity(input: {
+  bridge?: MigrationIdentityBridge;
+  oldState: NovelMigrationStateSlice;
+  newState: NovelMigrationStateSlice;
+  scopeInput: NovelRepositoryScopeInput;
+}): Promise<void> {
+  if (input.oldState.hardcoverBinding && input.newState.hardcoverBinding) {
+    const current = loadHardcoverState(input.scopeInput);
+    if (!hardcoverBindingMatchesSlice(current.records, input.oldState.hardcoverBinding)) {
+      if (!hardcoverBindingMatchesSlice(current.records, input.newState.hardcoverBinding)) {
+        throw new Error("Hardcover identity changed after migration; undo requires manual recovery.");
+      }
+      const restored = saveVerifiedHardcoverSlice(
+        input.scopeInput,
+        input.newState.hardcoverBinding,
+        input.oldState.hardcoverBinding,
+      );
+      if (!hardcoverBindingMatchesSlice(restored.records, input.oldState.hardcoverBinding)) {
+        throw new Error("The previous Hardcover binding could not be restored.");
+      }
+    }
+  }
+
+  if (input.bridge && input.oldState.localIdentity && input.newState.localIdentity) {
+    const current = await input.bridge.read();
+    if (!migrationIdentityMatchesSlice(current.settings, input.oldState.localIdentity)) {
+      if (!migrationIdentityMatchesSlice(current.settings, input.newState.localIdentity)) {
+        throw new Error("Migration links or folders changed after migration; undo requires manual recovery.");
+      }
+      await input.bridge.write({
+        expectedRevision: current.revision,
+        next: restoreMigrationIdentitySlice(current.settings, input.oldState.localIdentity),
+      });
+    }
+  }
 }
 
 async function fetchBestNovelMatch(input: {
@@ -420,14 +555,22 @@ export async function applyNovelMigrationWithJournal(input: {
   scopeInput: NovelRepositoryScopeInput;
   currentNovelId: string;
   targetDetail: NovelDetailRecord;
+  identityBridge?: MigrationIdentityBridge;
 }): Promise<{ journalEntryId: string; nextState: PersistedNovelLibraryState }> {
   const profileId = migrationProfileId(input.scopeInput);
   return withMigrationProfileLock(profileId, async () => {
     const currentState = await loadNovelLibraryState(input.scopeInput);
+    const identityRevision = input.identityBridge
+      ? await input.identityBridge.read()
+      : undefined;
+    const hardcoverState = loadHardcoverState(input.scopeInput);
     const prepared = await prepareNovelMigrationOperation({
+      scopeInput: input.scopeInput,
       currentState,
       currentNovelId: input.currentNovelId,
       targetDetail: input.targetDetail,
+      identityRevision,
+      hardcoverState,
     });
     const operation = await beginMigrationOperation({
       profileId,
@@ -436,7 +579,11 @@ export async function applyNovelMigrationWithJournal(input: {
       sourceTo: input.targetDetail.source.sourceId ?? input.targetDetail.source.pluginId ?? "unknown",
       transferSummary: prepared.transferSummary,
       payload: { oldState: prepared.oldSlice, newState: prepared.newSlice },
-      steps: [{ stepId: "novel-library-state", kind: "local" }],
+      steps: [
+        { stepId: "novel-library-state", kind: "local" },
+        ...(prepared.identity ? [{ stepId: "novel-local-identity", kind: "link" as const }] : []),
+        { stepId: "novel-hardcover-binding", kind: "tracker" },
+      ],
     });
     await transitionMigrationOperation(operation.operationId, "preparing");
     await transitionMigrationOperation(operation.operationId, "applying");
@@ -457,9 +604,52 @@ export async function applyNovelMigrationWithJournal(input: {
           }
         },
       });
+      if (prepared.identity) {
+        await runMigrationStep({
+          operationId: operation.operationId,
+          stepId: "novel-local-identity",
+          apply: async () => {
+            await input.identityBridge!.write({
+              expectedRevision: identityRevision!.revision,
+              next: prepared.identity!.next,
+            });
+          },
+          verify: async () => {
+            const current = await input.identityBridge!.read();
+            if (!migrationIdentityMatchesSlice(current.settings, prepared.identity!.applied)) {
+              throw new Error("Novel links or folders were not persisted.");
+            }
+          },
+        });
+      }
+      await runMigrationStep({
+        operationId: operation.operationId,
+        stepId: "novel-hardcover-binding",
+        apply: async () => {
+          const persisted = saveVerifiedHardcoverSlice(
+            input.scopeInput,
+            prepared.hardcover.previous,
+            prepared.hardcover.applied,
+          );
+          if (!hardcoverBindingMatchesSlice(persisted.records, prepared.hardcover.applied)) {
+            throw new Error("The Hardcover source binding could not be persisted.");
+          }
+        },
+        verify: async () => {
+          const current = loadHardcoverState(input.scopeInput);
+          if (!hardcoverBindingMatchesSlice(current.records, prepared.hardcover.applied)) {
+            throw new Error("The Hardcover source binding could not be verified.");
+          }
+        },
+      });
       await commitMigrationOperation(operation.operationId);
     } catch (error) {
       await compensateNovelOperation(operation.operationId, async () => {
+        await restoreNovelIdentityState({
+          bridge: input.identityBridge,
+          prepared,
+          scopeInput: input.scopeInput,
+        });
         await saveNovelLibraryState(currentState, input.scopeInput);
       }).catch(() => undefined);
       throw error;
@@ -554,6 +744,7 @@ export async function applyMassNovelMigrationWithJournal(input: {
   scopeInput: NovelRepositoryScopeInput;
   preview: MassNovelMigrationPreview;
   selectedNovelIds?: string[];
+  identityBridge?: MigrationIdentityBridge;
 }): Promise<{
   journalEntryId: string;
   migratedCount: number;
@@ -571,23 +762,49 @@ export async function applyMassNovelMigrationWithJournal(input: {
     ));
 
     const initialState = await loadNovelLibraryState(input.scopeInput);
+    const initialIdentityRevision = input.identityBridge
+      ? await input.identityBridge.read()
+      : undefined;
+    let plannedIdentityRevision = initialIdentityRevision;
+    const initialHardcoverState = loadHardcoverState(input.scopeInput);
+    let plannedHardcoverState = initialHardcoverState;
     let currentState = initialState;
     const payloadItems: NovelMigrationUndoPayload[] = [];
+    const preparedItems: Array<Awaited<ReturnType<typeof prepareNovelMigrationOperation>>> = [];
     let transferredChapterCount = 0;
     let transferredReadCount = 0;
     let transferredBookmarkCount = 0;
 
+    const targetIds = readyItems.map((item) => item.match!.detail.id);
+    if (new Set(targetIds).size !== targetIds.length) {
+      throw new Error("Mass migration cannot map multiple novels to the same target identity.");
+    }
+
     for (const item of readyItems) {
       const prepared = await prepareNovelMigrationOperation({
+        scopeInput: input.scopeInput,
         currentState,
         currentNovelId: item.currentNovelId,
         targetDetail: item.match!.detail,
+        identityRevision: plannedIdentityRevision,
+        hardcoverState: plannedHardcoverState,
       });
+      preparedItems.push(prepared);
       payloadItems.push({ oldState: prepared.oldSlice, newState: prepared.newSlice });
       transferredChapterCount += prepared.transferSummary.transferredChapterCount;
       transferredReadCount += prepared.transferSummary.transferredReadCount;
       transferredBookmarkCount += prepared.transferSummary.transferredBookmarkCount;
       currentState = prepared.nextState;
+      if (plannedIdentityRevision && prepared.identity) {
+        plannedIdentityRevision = {
+          ...plannedIdentityRevision,
+          settings: prepared.identity.next,
+        };
+      }
+      plannedHardcoverState = {
+        ...plannedHardcoverState,
+        records: prepared.hardcover.nextRecords,
+      };
     }
 
     const operation = await beginMigrationOperation({
@@ -606,7 +823,11 @@ export async function applyMassNovelMigrationWithJournal(input: {
         transferredBookmarkCount,
       },
       payload: { items: payloadItems } satisfies NovelMassMigrationUndoPayload,
-      steps: [{ stepId: "novel-library-state", kind: "local" }],
+      steps: [
+        { stepId: "novel-library-state", kind: "local" },
+        ...(plannedIdentityRevision ? [{ stepId: "novel-local-identity", kind: "link" as const }] : []),
+        { stepId: "novel-hardcover-binding", kind: "tracker" },
+      ],
     });
     await transitionMigrationOperation(operation.operationId, "preparing");
     await transitionMigrationOperation(operation.operationId, "applying");
@@ -630,9 +851,61 @@ export async function applyMassNovelMigrationWithJournal(input: {
           }
         },
       });
+      if (plannedIdentityRevision && initialIdentityRevision) {
+        await runMigrationStep({
+          operationId: operation.operationId,
+          stepId: "novel-local-identity",
+          apply: async () => {
+            await input.identityBridge!.write({
+              expectedRevision: initialIdentityRevision.revision,
+              next: plannedIdentityRevision!.settings,
+            });
+          },
+          verify: async () => {
+            const current = await input.identityBridge!.read();
+            if (
+              migrationIdentityRevision(current.settings)
+              !== migrationIdentityRevision(plannedIdentityRevision!.settings)
+            ) {
+              throw new Error("Mass migration links or folders were not persisted.");
+            }
+          },
+        });
+      }
+      await runMigrationStep({
+        operationId: operation.operationId,
+        stepId: "novel-hardcover-binding",
+        apply: async () => {
+          for (const prepared of preparedItems) {
+            saveVerifiedHardcoverSlice(
+              input.scopeInput,
+              prepared.hardcover.previous,
+              prepared.hardcover.applied,
+            );
+          }
+        },
+        verify: async () => {
+          const current = loadHardcoverState(input.scopeInput);
+          if (!preparedItems.every((prepared) => (
+            hardcoverBindingMatchesSlice(
+              current.records,
+              prepared.hardcover.applied,
+            )
+          ))) {
+            throw new Error("Mass migration Hardcover bindings were not persisted.");
+          }
+        },
+      });
       await commitMigrationOperation(operation.operationId);
     } catch (error) {
       await compensateNovelOperation(operation.operationId, async () => {
+        for (const prepared of [...preparedItems].reverse()) {
+          await restoreNovelIdentityState({
+            bridge: input.identityBridge,
+            prepared,
+            scopeInput: input.scopeInput,
+          });
+        }
         await saveNovelLibraryState(initialState, input.scopeInput);
       }).catch(() => undefined);
       throw error;
@@ -651,6 +924,7 @@ export async function applyMassNovelMigrationWithJournal(input: {
 export async function undoNovelMigration(input: {
   scopeInput: NovelRepositoryScopeInput;
   journalEntryId: string;
+  identityBridge?: MigrationIdentityBridge;
 }): Promise<PersistedNovelLibraryState> {
   const operation = await getMigrationOperation(input.journalEntryId);
   const profileId = operation?.profileId ?? migrationProfileId(input.scopeInput);
@@ -671,6 +945,12 @@ export async function undoNovelMigration(input: {
     await transitionMigrationOperation(entry.id, "compensating");
     try {
       for (const item of [...items].reverse()) {
+        await restoreNovelJournalIdentity({
+          bridge: input.identityBridge,
+          oldState: item.oldState,
+          newState: item.newState,
+          scopeInput: input.scopeInput,
+        });
         const targetNovelId = item.newState.entry?.id;
         const withoutNew = targetNovelId
           ? removeNovelFromLibraryState(currentState, targetNovelId)

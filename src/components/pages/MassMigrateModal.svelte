@@ -41,6 +41,7 @@
   import type { Chapter, Manga, Source } from "../../lib/types";
   import type { ManagedExtension } from "../../lib/managedExtensions";
   import { createDialogFocusBoundary } from "../../lib/accessibility/dialogFocus";
+  import { createStoreMigrationIdentityBridge } from "../../lib/migration/storeIdentity.svelte";
 
   interface Props {
     extension: ManagedExtension;
@@ -694,11 +695,15 @@
       ...[...selectedMigrationIds].map((id) => [id, "migrating"] satisfies [number, RuntimeStatus]),
     ]);
     try {
+      const identityBridge = createStoreMigrationIdentityBridge(
+        store.runtimeResolvedLocalProfileId ?? store.settings.defaultLocalProfileId,
+      );
       const result = await applyMassMangaMigrationWithJournal({
         preview,
         selectedMangaIds: [...selectedMigrationIds],
         mode,
         profileId: store.runtimeResolvedLocalProfileId,
+        identityBridge,
       });
       const completedDraftKey = storageKey(preview.sourceFrom, preview.sourceTo);
       runtimeStatuses = new Map([
@@ -729,7 +734,7 @@
         action: result.journalEntryId ? {
           label: translate("ui_undo"),
           run: () => {
-            void undoMangaMigration(result.journalEntryId!).then(() => {
+            void undoMangaMigration(result.journalEntryId!, identityBridge).then(() => {
               safeLocalStorage()?.removeItem(completedDraftKey);
               addToast({
                 kind: "info",

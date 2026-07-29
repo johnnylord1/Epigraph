@@ -1,3 +1,7 @@
+import type { HardcoverBindingSlice } from "./hardcoverBinding";
+import type { MigrationIdentitySlice } from "./identity";
+import type { MangaTrackerBindingPlan } from "./trackerBindings";
+
 export type MigrationContentKind = "manga" | "novel";
 export type MigrationMode = "single" | "mass";
 export type MigrationJournalStatus = "planned" | "applied" | "undone" | "failed" | "expired";
@@ -107,6 +111,8 @@ export interface NovelMigrationStateSlice {
   progress: Array<Record<string, unknown>>;
   bookmarks: Array<Record<string, unknown>>;
   history: Array<Record<string, unknown>>;
+  localIdentity?: MigrationIdentitySlice;
+  hardcoverBinding?: HardcoverBindingSlice;
 }
 
 export interface MangaMigrationChapterSnapshot {
@@ -122,6 +128,8 @@ export interface MangaMigrationStateSlice {
   title: string;
   categoryIds: number[];
   chapters: MangaMigrationChapterSnapshot[];
+  localIdentity?: MigrationIdentitySlice;
+  trackerBindingPlan?: MangaTrackerBindingPlan;
 }
 
 export interface MigrationTransferSummary {
