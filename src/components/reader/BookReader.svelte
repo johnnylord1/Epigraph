@@ -720,15 +720,17 @@
     currentSectionLabel = resolvePdfSectionLabel(pdfSections, pageNumber);
     canPrev = pageNumber > 1;
     canNext = pageNumber < totalPages;
-    persistProgress({
-      location: currentLocation,
-      href: null,
-      progressPercent,
-      pageIndex: pageNumber,
-      totalPages,
-      sectionLabel: currentSectionLabel,
-      renderer: "pdf",
-    });
+    if (!loading) {
+      persistProgress({
+        location: currentLocation,
+        href: null,
+        progressPercent,
+        pageIndex: pageNumber,
+        totalPages,
+        sectionLabel: currentSectionLabel,
+        renderer: "pdf",
+      });
+    }
   }
 
   function getReflowPage(pageNum: number) {
@@ -1126,14 +1128,18 @@
     });
     totalPages = pdf.numPages || 1;
     pageNumber = Math.max(1, Math.min(totalPages, activeProgress?.pageIndex ?? 1));
-    await tick();
     if (pdfReflowMode) {
       await loadReflowPagesAround(pageNumber);
       await tick();
       scrollToPdfPage(pageNumber, "auto");
       syncPdfProgress(pageNumber);
       setStage("pdf.reflow.ready");
+    } else if (store.settings.bookReaderFlow === "scrolled") {
+      syncPdfProgress(pageNumber);
+      await tick();
+      scrollToPdfPage(pageNumber, "auto");
     } else {
+      await tick();
       await renderPdfPage(pageNumber);
     }
     auditReader("books.reader.loaded", {
@@ -1369,7 +1375,12 @@
       });
     }
     if (book.subtype === "epub" && !hostEl) return;
-    if (book.subtype === "pdf" && !canvasEl && !pdfReflowMode) return;
+    if (
+      book.subtype === "pdf"
+      && !canvasEl
+      && !pdfReflowMode
+      && flow !== "scrolled"
+    ) return;
     untrack(() => {
       void loadActiveBook();
     });
@@ -1551,7 +1562,7 @@
       entries.forEach((entry) => {
         isIntersecting = entry.isIntersecting;
         if (isIntersecting) {
-          syncPdfProgress(pageNum);
+          if (!loading) syncPdfProgress(pageNum);
           void render();
         } else {
           cleanup();
