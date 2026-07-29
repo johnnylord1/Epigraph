@@ -723,3 +723,49 @@ Limitacoes e riscos:
   Search, sem erro JavaScript e sem relacao com a consulta de preferences. A
   repeticao final carregou os recursos em milissegundos e aprovou o smoke. Essa
   variacao permanece registrada para a instrumentacao de startup do 72G1/72H.
+
+### 72D1 - Journal e transacao local
+
+Implementado em 29/07/2026:
+
+- O estado persistido foi promovido de V1 para V2. Operacoes V2 possuem
+  `operationId`, `profileId`, revision, expected revision, status granular,
+  steps tipados e manifesto de snapshots.
+- Journals V1 continuam legiveis e seus payloads de undo sao convertidos em
+  memoria sem perda. A gravacao seguinte usa V2; nenhuma reescrita ocorre
+  apenas por abrir o arquivo.
+- Os estados agora distinguem planejamento, aplicacao, verificacao, commit,
+  cancelamento, compensacao, rollback local, recovery, necessidade de reparo
+  manual e corrupcao.
+- A compatibilidade de UI ainda traduz `committed` para `applied` e
+  `compensated` para `undone`, preservando os fluxos existentes enquanto o
+  coordinator V2 e introduzido no 72D2.
+- A persistencia nativa deixou de truncar diretamente o JSON. Um modulo Rust
+  dedicado valida o schema, serializa writes dentro e entre processos, grava
+  WAL `PREPARED`, sincroniza WAL e target, publica por replace atomico com
+  write-through no Windows, confirma `COMMITTED` e remove o WAL.
+- Recovery compara o SHA-256 atual com as revisoes anterior e nova. Uma
+  interrupcao antes da publicacao conclui a escrita preparada; uma revisao
+  desconhecida interrompe o fluxo e preserva o WAL para diagnostico.
+- O command usa compare-and-swap pelo SHA-256 lido pelo frontend. Uma segunda
+  janela com revisao antiga nao sobrescreve uma operacao mais recente.
+- Updates de operacao tambem podem exigir revision exata. Steps malformados
+  nao sao descartados: a operacao e preservada e marcada como `corrupt`.
+- JSON, WAL ou schema corrompido agora produz erro. O frontend nao converte
+  mais falha de leitura ou parse em journal vazio.
+
+Evidencia:
+
+- 16/16 testes focados de journal, manga e novel migration.
+- 5/5 testes Rust de write/read, recovery `PREPARED`, compare-and-swap, hash
+  divergente e schema corrompido.
+- `svelte-check`: zero erros e zero warnings.
+- `cargo fmt --check`: aprovado.
+
+Limite intencional do lote:
+
+- Os fluxos existentes ainda constroem o registro de compatibilidade depois
+  dos efeitos. O 72D1 entrega o contrato e a durabilidade; o 72D2 movera
+  `planned` para antes de qualquer mutation, adicionara mutex por perfil,
+  checkpoints idempotentes e recovery/compensacao pelo coordinator. Ate esse
+  lote, nenhuma promessa de transacao distribuida e feita.

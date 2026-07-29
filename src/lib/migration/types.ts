@@ -1,6 +1,41 @@
 export type MigrationContentKind = "manga" | "novel";
 export type MigrationMode = "single" | "mass";
 export type MigrationJournalStatus = "planned" | "applied" | "undone" | "failed" | "expired";
+export type MigrationOperationStatus =
+  | "planned"
+  | "preparing"
+  | "applying"
+  | "verifying"
+  | "committing"
+  | "committed"
+  | "cancellation_requested"
+  | "compensating"
+  | "compensated"
+  | "rolling_back"
+  | "rolled_back"
+  | "recovery_pending"
+  | "recovering"
+  | "cancelled"
+  | "needs_manual_recovery"
+  | "corrupt";
+
+export type MigrationStepKind =
+  | "local"
+  | "suwayomi"
+  | "tracker"
+  | "link"
+  | "filesystem";
+
+export type MigrationStepStatus =
+  | "pending"
+  | "applying"
+  | "applied"
+  | "verifying"
+  | "verified"
+  | "compensating"
+  | "compensated"
+  | "failed"
+  | "skipped";
 
 export interface MigratableLibraryItem {
   contentKind: MigrationContentKind;
@@ -132,8 +167,53 @@ export interface MigrationJournalEntry {
   payload: MangaMigrationUndoPayload | MangaMassMigrationUndoPayload | NovelMigrationUndoPayload | NovelMassMigrationUndoPayload;
 }
 
-export interface MigrationJournalState {
+export interface MigrationJournalStateV1 {
   version: 1;
   entries: MigrationJournalEntry[];
   updatedAtMs: number | null;
 }
+
+export interface MigrationStepRecord {
+  stepId: string;
+  kind: MigrationStepKind;
+  status: MigrationStepStatus;
+  attempt: number;
+  startedAt: number | null;
+  completedAt: number | null;
+  failureCode: string | null;
+}
+
+export interface MigrationSnapshotManifest {
+  oldStateSha256: string | null;
+  newStateSha256: string | null;
+  payload: MangaMigrationUndoPayload | MangaMassMigrationUndoPayload | NovelMigrationUndoPayload | NovelMassMigrationUndoPayload;
+}
+
+export interface MigrationOperationV2 {
+  schemaVersion: 2;
+  operationId: string;
+  profileId: string;
+  expectedRevision: string | null;
+  revision: number;
+  contentKind: MigrationContentKind;
+  mode: MigrationMode;
+  sourceFrom: string;
+  sourceTo: string;
+  createdAt: number;
+  updatedAt: number;
+  committedAt: number | null;
+  undoUntil: number | null;
+  status: MigrationOperationStatus;
+  transferSummary: MigrationTransferSummary;
+  failureReason: string | null;
+  steps: MigrationStepRecord[];
+  snapshots: MigrationSnapshotManifest;
+}
+
+export interface MigrationJournalState {
+  version: 2;
+  operations: MigrationOperationV2[];
+  updatedAtMs: number | null;
+}
+
+export type PersistedMigrationJournalState = MigrationJournalStateV1 | MigrationJournalState;

@@ -1,5 +1,6 @@
 mod discord_cover;
 mod discord_rpc;
+mod migration_journal;
 mod suwayomi_lan;
 mod suwayomi_maintenance;
 mod suwayomi_runtime;
@@ -4210,19 +4211,16 @@ fn write_book_library_state(
 #[tauri::command]
 fn read_migration_journal_state() -> Result<Option<String>, String> {
     let path = migration_journal_state_path()?;
-
-    if !path.exists() {
-        return Ok(None);
-    }
-
-    let text = std::fs::read_to_string(path).map_err(|err| err.to_string())?;
-    Ok(Some(text))
+    migration_journal::read(&path)
 }
 
 #[tauri::command]
-fn write_migration_journal_state(contents: String) -> Result<String, String> {
+fn write_migration_journal_state(
+    contents: String,
+    expected_sha256: Option<String>,
+) -> Result<String, String> {
     let path = migration_journal_state_path()?;
-    std::fs::write(&path, contents).map_err(|err| err.to_string())?;
+    migration_journal::write(&path, &contents, expected_sha256.as_deref())?;
     Ok(path.to_string_lossy().into_owned())
 }
 

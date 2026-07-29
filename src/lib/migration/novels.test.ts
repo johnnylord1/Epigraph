@@ -248,9 +248,10 @@ describe("novel migration with journal", () => {
     expect(migratedState.history[0]?.novelId).toBe(NEW_ID);
 
     const journalState = JSON.parse(String(journalStateJson));
-    expect(journalState.entries).toHaveLength(1);
-    expect(journalState.entries[0].contentKind).toBe("novel");
-    expect(journalState.entries[0].status).toBe("applied");
+    expect(journalState.version).toBe(2);
+    expect(journalState.operations).toHaveLength(1);
+    expect(journalState.operations[0].contentKind).toBe("novel");
+    expect(journalState.operations[0].status).toBe("committed");
 
     const restored = await undoNovelMigration({
       scopeInput: SCOPE,
@@ -264,7 +265,7 @@ describe("novel migration with journal", () => {
     expect(restored.history[0]?.novelId).toBe(OLD_ID);
 
     const finalJournalState = JSON.parse(String(journalStateJson));
-    expect(finalJournalState.entries[0].status).toBe("undone");
+    expect(finalJournalState.operations[0].status).toBe("compensated");
   });
 
   it("previews, applies, and undoes mass novel migration for ready items only", async () => {
@@ -375,8 +376,8 @@ describe("novel migration with journal", () => {
     expect(migratedState.entries.find((entry) => entry.id === secondNewId)?.title).toBe("Shadow Slave");
 
     const journalState = JSON.parse(String(journalStateJson));
-    expect(journalState.entries[0].mode).toBe("mass");
-    expect(journalState.entries[0].contentKind).toBe("novel");
+    expect(journalState.operations[0].mode).toBe("mass");
+    expect(journalState.operations[0].contentKind).toBe("novel");
 
     const restored = await undoNovelMigration({
       scopeInput: SCOPE,

@@ -383,9 +383,10 @@ describe("manga migration services", () => {
     expect(mangaById.get(21)?.inLibrary).toBe(true);
 
     const journalState = JSON.parse(String(journalStateJson));
-    expect(journalState.entries[0].mode).toBe("mass");
-    expect(journalState.entries[0].status).toBe("applied");
-    expect(journalState.entries[0].payload.items).toHaveLength(2);
+    expect(journalState.version).toBe(2);
+    expect(journalState.operations[0].mode).toBe("mass");
+    expect(journalState.operations[0].status).toBe("committed");
+    expect(journalState.operations[0].snapshots.payload.items).toHaveLength(2);
 
     expect(applied.journalEntryId).not.toBeNull();
     await undoMangaMigration(applied.journalEntryId!);
@@ -470,7 +471,7 @@ describe("manga migration services", () => {
     expect(mangaById.get(21)?.inLibrary).toBe(false);
 
     const journalState = JSON.parse(String(journalStateJson));
-    expect(journalState.entries[0].payload.items).toHaveLength(1);
+    expect(journalState.operations[0].snapshots.payload.items).toHaveLength(1);
   });
 
   it("does not leave the target in the library when cleanup of the source fails", async () => {
