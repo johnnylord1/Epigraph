@@ -4,25 +4,52 @@ import {
   getNovelLibraryChapters,
   getNovelLibraryEntry,
   loadNovelLibraryState,
+  reloadNovelLibraryState,
   removeNovelFromLibraryState,
   restoreNovelLibraryStateSlice,
   saveNovelLibraryState,
   snapshotNovelLibraryStateSlice,
   upsertNovelInLibrary,
 } from "../novels/libraryState";
+import { getMigrationJournalEntry, getMigrationOperation } from "./journalState";
 import {
-  appendMigrationJournalEntry,
-  buildMigrationJournalEntry,
-  getMigrationJournalEntry,
-  markMigrationJournalEntryFailed,
-  markMigrationJournalEntryUndone,
-} from "./journalState";
+  beginMigrationOperation,
+  commitMigrationOperation,
+  markMigrationCompensated,
+  markMigrationNeedsManualRecovery,
+  runMigrationStep,
+  transitionMigrationOperation,
+  withMigrationProfileLock,
+} from "./coordinator";
 import type {
   NovelMassMigrationUndoPayload,
   NovelMigrationStateSlice,
   NovelMigrationUndoPayload,
 } from "./types";
 import { readInstalledNovelDetails, searchInstalledNovelSource } from "../novels/sources";
+
+function migrationProfileId(scopeInput: NovelRepositoryScopeInput): string {
+  return scopeInput.profileId?.trim()
+    || scopeInput.serverUrl?.trim()
+    || "main";
+}
+
+async function compensateNovelOperation(
+  operationId: string,
+  restore: () => Promise<void>,
+): Promise<void> {
+  await transitionMigrationOperation(operationId, "compensating");
+  try {
+    await restore();
+    await markMigrationCompensated(operationId);
+  } catch (error) {
+    await markMigrationNeedsManualRecovery(
+      operationId,
+      error instanceof Error ? error.message : String(error),
+    );
+    throw error;
+  }
+}
 
 export interface NovelMigrationPreview {
   transferredReadCount: number;
@@ -310,31 +337,54 @@ export async function applyNovelMigrationWithJournal(input: {
   currentNovelId: string;
   targetDetail: NovelDetailRecord;
 }): Promise<{ journalEntryId: string; nextState: PersistedNovelLibraryState }> {
-  const currentState = await loadNovelLibraryState(input.scopeInput);
-  const prepared = await prepareNovelMigrationOperation({
-    currentState,
-    currentNovelId: input.currentNovelId,
-    targetDetail: input.targetDetail,
+  const profileId = migrationProfileId(input.scopeInput);
+  return withMigrationProfileLock(profileId, async () => {
+    const currentState = await loadNovelLibraryState(input.scopeInput);
+    const prepared = await prepareNovelMigrationOperation({
+      currentState,
+      currentNovelId: input.currentNovelId,
+      targetDetail: input.targetDetail,
+    });
+    const operation = await beginMigrationOperation({
+      profileId,
+      contentKind: "novel",
+      sourceFrom: prepared.oldSlice.entry?.source?.sourceId ?? prepared.oldSlice.entry?.source?.pluginId ?? "unknown",
+      sourceTo: input.targetDetail.source.sourceId ?? input.targetDetail.source.pluginId ?? "unknown",
+      transferSummary: prepared.transferSummary,
+      payload: { oldState: prepared.oldSlice, newState: prepared.newSlice },
+      steps: [{ stepId: "novel-library-state", kind: "local" }],
+    });
+    await transitionMigrationOperation(operation.operationId, "preparing");
+    await transitionMigrationOperation(operation.operationId, "applying");
+    try {
+      await runMigrationStep({
+        operationId: operation.operationId,
+        stepId: "novel-library-state",
+        apply: async () => {
+          await saveNovelLibraryState(prepared.nextState, input.scopeInput);
+        },
+        verify: async () => {
+          const reloaded = await reloadNovelLibraryState(input.scopeInput);
+          if (
+            !getNovelLibraryEntry(reloaded, input.targetDetail.id)
+            || getNovelLibraryEntry(reloaded, input.currentNovelId)
+          ) {
+            throw new Error("Novel migration state could not be verified after persistence.");
+          }
+        },
+      });
+      await commitMigrationOperation(operation.operationId);
+    } catch (error) {
+      await compensateNovelOperation(operation.operationId, async () => {
+        await saveNovelLibraryState(currentState, input.scopeInput);
+      }).catch(() => undefined);
+      throw error;
+    }
+    return {
+      journalEntryId: operation.operationId,
+      nextState: prepared.nextState,
+    };
   });
-
-  await saveNovelLibraryState(prepared.nextState, input.scopeInput);
-
-  const entry = buildMigrationJournalEntry({
-    contentKind: "novel",
-    sourceFrom: prepared.oldSlice.entry?.source?.sourceId ?? prepared.oldSlice.entry?.source?.pluginId ?? "unknown",
-    sourceTo: input.targetDetail.source.sourceId ?? input.targetDetail.source.pluginId ?? "unknown",
-    transferSummary: prepared.transferSummary,
-    payload: {
-      oldState: prepared.oldSlice,
-      newState: prepared.newSlice,
-    },
-  });
-
-  await appendMigrationJournalEntry(entry);
-  return {
-    journalEntryId: entry.id,
-    nextState: prepared.nextState,
-  };
 }
 
 export async function previewMassNovelMigration(input: {
@@ -427,98 +477,128 @@ export async function applyMassNovelMigrationWithJournal(input: {
   migratedNovelIds: string[];
   nextState: PersistedNovelLibraryState;
 }> {
-  const selectedIds = new Set(input.selectedNovelIds ?? input.preview.items.map((item) => item.currentNovelId));
-  const readyItems = input.preview.items.filter((item) => (
-    item.status === "ready"
-    && item.match
-    && selectedIds.has(item.currentNovelId)
-  ));
+  const profileId = migrationProfileId(input.scopeInput);
+  return withMigrationProfileLock(profileId, async () => {
+    const selectedIds = new Set(input.selectedNovelIds ?? input.preview.items.map((item) => item.currentNovelId));
+    const readyItems = input.preview.items.filter((item) => (
+      item.status === "ready"
+      && item.match
+      && selectedIds.has(item.currentNovelId)
+    ));
 
-  let currentState = await loadNovelLibraryState(input.scopeInput);
-  const payloadItems: NovelMigrationUndoPayload[] = [];
-  let transferredChapterCount = 0;
-  let transferredReadCount = 0;
-  let transferredBookmarkCount = 0;
+    const initialState = await loadNovelLibraryState(input.scopeInput);
+    let currentState = initialState;
+    const payloadItems: NovelMigrationUndoPayload[] = [];
+    let transferredChapterCount = 0;
+    let transferredReadCount = 0;
+    let transferredBookmarkCount = 0;
 
-  for (const item of readyItems) {
-    const prepared = await prepareNovelMigrationOperation({
-      currentState,
-      currentNovelId: item.currentNovelId,
-      targetDetail: item.match!.detail,
+    for (const item of readyItems) {
+      const prepared = await prepareNovelMigrationOperation({
+        currentState,
+        currentNovelId: item.currentNovelId,
+        targetDetail: item.match!.detail,
+      });
+      payloadItems.push({ oldState: prepared.oldSlice, newState: prepared.newSlice });
+      transferredChapterCount += prepared.transferSummary.transferredChapterCount;
+      transferredReadCount += prepared.transferSummary.transferredReadCount;
+      transferredBookmarkCount += prepared.transferSummary.transferredBookmarkCount;
+      currentState = prepared.nextState;
+    }
+
+    const operation = await beginMigrationOperation({
+      profileId,
+      contentKind: "novel",
+      mode: "mass",
+      sourceFrom: input.preview.sourceFrom,
+      sourceTo: input.preview.sourceTo,
+      transferSummary: {
+        oldItemTitle: `${readyItems.length} novels`,
+        newItemTitle: `${readyItems.length} migrated`,
+        oldSourceId: input.preview.sourceFrom,
+        newSourceId: input.preview.sourceTo,
+        transferredChapterCount,
+        transferredReadCount,
+        transferredBookmarkCount,
+      },
+      payload: { items: payloadItems } satisfies NovelMassMigrationUndoPayload,
+      steps: [{ stepId: "novel-library-state", kind: "local" }],
     });
+    await transitionMigrationOperation(operation.operationId, "preparing");
+    await transitionMigrationOperation(operation.operationId, "applying");
+    try {
+      await runMigrationStep({
+        operationId: operation.operationId,
+        stepId: "novel-library-state",
+        apply: async () => {
+          await saveNovelLibraryState(currentState, input.scopeInput);
+        },
+        verify: async () => {
+          const reloaded = await reloadNovelLibraryState(input.scopeInput);
+          const allTargetsPresent = readyItems.every((item) => (
+            item.match && getNovelLibraryEntry(reloaded, item.match.detail.id)
+          ));
+          const allSourcesRemoved = readyItems.every((item) => (
+            !getNovelLibraryEntry(reloaded, item.currentNovelId)
+          ));
+          if (!allTargetsPresent || !allSourcesRemoved) {
+            throw new Error("Mass novel migration state could not be verified after persistence.");
+          }
+        },
+      });
+      await commitMigrationOperation(operation.operationId);
+    } catch (error) {
+      await compensateNovelOperation(operation.operationId, async () => {
+        await saveNovelLibraryState(initialState, input.scopeInput);
+      }).catch(() => undefined);
+      throw error;
+    }
 
-    payloadItems.push({
-      oldState: prepared.oldSlice,
-      newState: prepared.newSlice,
-    });
-    transferredChapterCount += prepared.transferSummary.transferredChapterCount;
-    transferredReadCount += prepared.transferSummary.transferredReadCount;
-    transferredBookmarkCount += prepared.transferSummary.transferredBookmarkCount;
-    currentState = prepared.nextState;
-  }
-
-  await saveNovelLibraryState(currentState, input.scopeInput);
-
-  const journalEntry = buildMigrationJournalEntry({
-    contentKind: "novel",
-    mode: "mass",
-    sourceFrom: input.preview.sourceFrom,
-    sourceTo: input.preview.sourceTo,
-    transferSummary: {
-      oldItemTitle: `${readyItems.length} novels`,
-      newItemTitle: `${readyItems.length} migrated`,
-      oldSourceId: input.preview.sourceFrom,
-      newSourceId: input.preview.sourceTo,
-      transferredChapterCount,
-      transferredReadCount,
-      transferredBookmarkCount,
-    },
-    payload: {
-      items: payloadItems,
-    } satisfies NovelMassMigrationUndoPayload,
+    return {
+      journalEntryId: operation.operationId,
+      migratedCount: readyItems.length,
+      skippedCount: input.preview.items.length - readyItems.length,
+      migratedNovelIds: readyItems.map((item) => item.match!.detail.id),
+      nextState: currentState,
+    };
   });
-
-  await appendMigrationJournalEntry(journalEntry);
-
-  return {
-    journalEntryId: journalEntry.id,
-    migratedCount: readyItems.length,
-    skippedCount: input.preview.items.length - readyItems.length,
-    migratedNovelIds: readyItems.map((item) => item.match!.detail.id),
-    nextState: currentState,
-  };
 }
 
 export async function undoNovelMigration(input: {
   scopeInput: NovelRepositoryScopeInput;
   journalEntryId: string;
 }): Promise<PersistedNovelLibraryState> {
-  const entry = await getMigrationJournalEntry(input.journalEntryId);
-  if (!entry || entry.contentKind !== "novel") {
-    throw new Error("The requested novel migration journal entry was not found.");
-  }
-  if (entry.status !== "applied") {
-    throw new Error("This novel migration can no longer be undone.");
-  }
-
-  const payload = entry.payload as NovelMigrationUndoPayload | NovelMassMigrationUndoPayload;
-  const items = "items" in payload
-    ? payload.items
-    : [payload];
-  let currentState = await loadNovelLibraryState(input.scopeInput);
-  try {
-    for (const item of items) {
-      const targetNovelId = item.newState.entry?.id;
-      const withoutNew = targetNovelId
-        ? removeNovelFromLibraryState(currentState, targetNovelId)
-        : currentState;
-      currentState = restoreNovelLibraryStateSlice(withoutNew, item.oldState);
+  const operation = await getMigrationOperation(input.journalEntryId);
+  const profileId = operation?.profileId ?? migrationProfileId(input.scopeInput);
+  return withMigrationProfileLock(profileId, async () => {
+    const entry = await getMigrationJournalEntry(input.journalEntryId);
+    if (!entry || entry.contentKind !== "novel") {
+      throw new Error("The requested novel migration journal entry was not found.");
     }
-    const saved = await saveNovelLibraryState(currentState, input.scopeInput);
-    await markMigrationJournalEntryUndone(entry.id);
-    return saved;
-  } catch (error) {
-    await markMigrationJournalEntryFailed(entry.id, error instanceof Error ? error.message : String(error));
-    throw error;
-  }
+    if (entry.status !== "applied") {
+      throw new Error("This novel migration can no longer be undone.");
+    }
+
+    const payload = entry.payload as NovelMigrationUndoPayload | NovelMassMigrationUndoPayload;
+    const items = "items" in payload
+      ? payload.items
+      : [payload];
+    let currentState = await loadNovelLibraryState(input.scopeInput);
+    await transitionMigrationOperation(entry.id, "compensating");
+    try {
+      for (const item of [...items].reverse()) {
+        const targetNovelId = item.newState.entry?.id;
+        const withoutNew = targetNovelId
+          ? removeNovelFromLibraryState(currentState, targetNovelId)
+          : currentState;
+        currentState = restoreNovelLibraryStateSlice(withoutNew, item.oldState);
+      }
+      const saved = await saveNovelLibraryState(currentState, input.scopeInput);
+      await markMigrationCompensated(entry.id);
+      return saved;
+    } catch (error) {
+      await markMigrationNeedsManualRecovery(entry.id, error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  });
 }

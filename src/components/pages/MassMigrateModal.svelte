@@ -698,6 +698,7 @@
         preview,
         selectedMangaIds: [...selectedMigrationIds],
         mode,
+        profileId: store.runtimeResolvedLocalProfileId,
       });
       const completedDraftKey = storageKey(preview.sourceFrom, preview.sourceTo);
       runtimeStatuses = new Map([

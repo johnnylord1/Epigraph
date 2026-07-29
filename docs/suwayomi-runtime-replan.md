@@ -769,3 +769,50 @@ Limite intencional do lote:
   `planned` para antes de qualquer mutation, adicionara mutex por perfil,
   checkpoints idempotentes e recovery/compensacao pelo coordinator. Ate esse
   lote, nenhuma promessa de transacao distribuida e feita.
+
+### 72D2 - Coordinator e recovery
+
+Implementado em 29/07/2026:
+
+- Um coordinator independente dos modais serializa migracoes por perfil e
+  persiste `planned` antes do primeiro efeito em manga individual, manga em
+  massa, novel individual e novel em massa.
+- Cada operacao possui steps tipados com attempt, timestamps, status e failure
+  code. O coordinator grava checkpoints antes e depois de apply e verify, e so
+  permite commit quando todos os steps foram verificados ou compensados e
+  marcados como skipped.
+- Manga usa as queries oficiais do Suwayomi para verificar Library,
+  categorias, read state, bookmarks e pagina depois das mutations. Uma mutation
+  de compensacao que retorna erro so e aceita quando uma leitura posterior
+  comprova exatamente os dois snapshots.
+- Novel state e relido do armazenamento autoritativo depois da gravacao. A
+  origem deve ter desaparecido e o destino deve existir antes do commit.
+- Falha depois do inicio de efeitos entra em `compensating`. Compensacao
+  comprovada termina em `compensated`; ausencia de prova termina em
+  `needs_manual_recovery`. O erro nunca e escondido e nenhuma exclusao e
+  inferida por indisponibilidade.
+- Undo posterior ao commit e tratado como nova compensacao. `rolled_back`
+  permanece reservado a estado local ainda nao publicado.
+- Mass manga preserva o comportamento parcial seguro: cada item possui step
+  proprio; falha compensada vira `skipped`, sucessos sao commitados e somente
+  seus snapshots entram no payload de undo.
+- O startup inspeciona operacoes interrompidas. `planned/preparing` sem efeitos
+  viram `cancelled`; etapas posteriores viram `recovery_pending`. O Aethon nao
+  executa compensacao automatica sem contexto suficiente para prova.
+- A UI continua chamando as mesmas funcoes e recebendo os mesmos resultados.
+  Os modais apenas passaram o profile ativo para o coordinator.
+
+Evidencia:
+
+- 19/19 testes de coordinator, journal e migracoes manga/novel.
+- 4/4 testes dos modais ativos e do isolamento de foco.
+- `svelte-check`: zero erros e zero warnings.
+- Nenhum CSS, token, layout ou screenshot foi alterado neste lote.
+
+Riscos encaminhados:
+
+- Mass Migration recebera operacao-pai e operacoes-filhas explicitas no 72E3.
+- Trackers, links, folders, downloads e assets ainda nao fazem parte dos steps;
+  entram somente nos lotes 72E2/72E3.
+- `recovery_pending` exige diagnostico/acao contextual. O startup nao tenta
+  restaurar efeitos externos apenas com base no ultimo status gravado.

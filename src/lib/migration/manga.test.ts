@@ -69,6 +69,7 @@ describe("manga migration services", () => {
   let chaptersByMangaId: Map<number, Chapter[]>;
   let categoryMembership: Map<number, number[]>;
   let failUpdateMangaIds: Set<number>;
+  let journalStatusAtFirstMutation: string | null;
 
   beforeEach(() => {
     resetMigrationJournalStateCacheForTests();
@@ -78,6 +79,7 @@ describe("manga migration services", () => {
     fetchSourceMangaChaptersMock.mockReset();
     invokeMock.mockReset();
     failUpdateMangaIds = new Set();
+    journalStatusAtFirstMutation = null;
 
     mangaById = new Map([
       [10, createManga(10, "Alpha Hero", "source-old", true)],
@@ -178,6 +180,18 @@ describe("manga migration services", () => {
     });
 
     gqlMock.mockImplementation(async (query: string, variables: Record<string, unknown> = {}, signal?: AbortSignal) => {
+      if (query.includes("query GetManga(")) {
+        return { manga: mangaById.get(Number(variables.id)) };
+      }
+
+      if (query.includes("query GetChapters(")) {
+        return {
+          chapters: {
+            nodes: chaptersByMangaId.get(Number(variables.mangaId)) ?? [],
+          },
+        };
+      }
+
       if (query.includes("query GetCategories")) {
         return {
           categories: {
@@ -199,6 +213,9 @@ describe("manga migration services", () => {
       }
 
       if (query.includes("mutation UpdateMangaCategories")) {
+        journalStatusAtFirstMutation ??= journalStateJson
+          ? JSON.parse(journalStateJson).operations[0]?.status ?? null
+          : null;
         const mangaId = Number(variables.mangaId);
         const addTo = Array.isArray(variables.addTo) ? variables.addTo.map(Number) : [];
         const removeFrom = Array.isArray(variables.removeFrom) ? variables.removeFrom.map(Number) : [];
@@ -222,6 +239,9 @@ describe("manga migration services", () => {
       }
 
       if (query.includes("mutation UpdateManga(")) {
+        journalStatusAtFirstMutation ??= journalStateJson
+          ? JSON.parse(journalStateJson).operations[0]?.status ?? null
+          : null;
         const id = Number(variables.id);
         if (failUpdateMangaIds.has(id)) {
           throw new Error(`Update manga ${id} failed`);
@@ -241,6 +261,9 @@ describe("manga migration services", () => {
       }
 
       if (query.includes("mutation UpdateChaptersProgress")) {
+        journalStatusAtFirstMutation ??= journalStateJson
+          ? JSON.parse(journalStateJson).operations[0]?.status ?? null
+          : null;
         const ids = Array.isArray(variables.ids) ? variables.ids.map(Number) : [];
         for (const chapters of chaptersByMangaId.values()) {
           for (const chapter of chapters) {
@@ -313,6 +336,7 @@ describe("manga migration services", () => {
     expect(categoryMembership.get(2)).toContain(20);
     expect(categoryMembership.get(1)).not.toContain(10);
     expect(categoryMembership.get(2)).not.toContain(10);
+    expect(journalStatusAtFirstMutation).toBe("applying");
     expect(chaptersByMangaId.get(20)?.[0]?.isRead).toBe(true);
     expect(chaptersByMangaId.get(20)?.[0]?.isBookmarked).toBe(true);
     expect(chaptersByMangaId.get(20)?.[0]?.lastPageRead).toBe(7);
@@ -490,6 +514,8 @@ describe("manga migration services", () => {
     expect(applied.failedItems).toEqual([{ mangaId: 10, message: "Update manga 10 failed" }]);
     expect(mangaById.get(10)?.inLibrary).toBe(true);
     expect(mangaById.get(20)?.inLibrary).toBe(false);
-    expect(journalStateJson).toBeNull();
+    const journalState = JSON.parse(String(journalStateJson));
+    expect(journalState.operations[0].status).toBe("compensated");
+    expect(journalState.operations[0].steps[0].status).toBe("skipped");
   });
 });

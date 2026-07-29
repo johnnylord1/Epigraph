@@ -1,6 +1,8 @@
 import { gql } from "../client";
 import {
   GET_CATEGORIES,
+  GET_CHAPTERS,
+  GET_MANGA,
   UPDATE_CHAPTERS_PROGRESS,
   UPDATE_MANGA,
   UPDATE_MANGA_CATEGORIES,
@@ -9,13 +11,17 @@ import type { Category, Chapter, Manga } from "../types";
 import { fetchSourceMangaSearchWithFallback } from "../manga/sourceSearch";
 import { fetchSourceMangaChapters } from "../manga/runtime";
 import { withSuwayomiOperationLease } from "../suwayomiUpdateLock.svelte";
+import { getMigrationJournalEntry, getMigrationOperation } from "./journalState";
 import {
-  appendMigrationJournalEntry,
-  buildMigrationJournalEntry,
-  getMigrationJournalEntry,
-  markMigrationJournalEntryFailed,
-  markMigrationJournalEntryUndone,
-} from "./journalState";
+  beginMigrationOperation,
+  checkpointMigrationStep,
+  commitMigrationOperation,
+  markMigrationCompensated,
+  markMigrationNeedsManualRecovery,
+  runMigrationStep,
+  transitionMigrationOperation,
+  withMigrationProfileLock,
+} from "./coordinator";
 import type {
   MangaMassMigrationUndoPayload,
   MangaMigrationStateSlice,
@@ -34,6 +40,7 @@ export interface ApplyMangaMigrationInput {
   targetSourceId: string;
   match: MangaMigrationMatch;
   mode?: "migrate" | "copy";
+  profileId?: string | null;
 }
 
 export type MassMangaMigrationStatus = "matched" | "needs_review" | "no_match" | "search_failed";
@@ -74,6 +81,7 @@ export interface ApplyMassMangaMigrationInput {
   preview: MassMangaMigrationPreview;
   selectedMangaIds?: number[];
   mode?: "migrate" | "copy";
+  profileId?: string | null;
 }
 
 async function mapWithConcurrency<T, R>(
@@ -200,6 +208,44 @@ async function restoreMangaSnapshot(snapshot: MangaMigrationStateSlice) {
   await setCategoryIdsForManga(snapshot.mangaId, snapshot.categoryIds);
 }
 
+async function readMangaState(mangaId: number): Promise<MangaMigrationStateSlice> {
+  const [mangaData, chapterData, categoryIds] = await Promise.all([
+    gql<{ manga: Manga }>(GET_MANGA, { id: mangaId }),
+    gql<{ chapters: { nodes: Chapter[] } }>(GET_CHAPTERS, { mangaId }),
+    loadCategoryIdsForManga(mangaId),
+  ]);
+  return snapshotMangaState(
+    mangaData.manga,
+    chapterData.chapters.nodes ?? [],
+    categoryIds,
+  );
+}
+
+function sameNumberSet(left: number[], right: number[]): boolean {
+  if (left.length !== right.length) return false;
+  const expected = new Set(right);
+  return left.every((value) => expected.has(value));
+}
+
+async function verifyMangaSnapshot(snapshot: MangaMigrationStateSlice): Promise<void> {
+  const actual = await readMangaState(snapshot.mangaId);
+  if (actual.inLibrary !== snapshot.inLibrary || !sameNumberSet(actual.categoryIds, snapshot.categoryIds)) {
+    throw new Error(`Manga ${snapshot.mangaId} library state does not match its migration snapshot.`);
+  }
+  const actualById = new Map(actual.chapters.map((chapter) => [chapter.id, chapter]));
+  for (const expected of snapshot.chapters) {
+    const chapter = actualById.get(expected.id);
+    if (
+      !chapter
+      || chapter.isRead !== expected.isRead
+      || chapter.isBookmarked !== expected.isBookmarked
+      || chapter.lastPageRead !== expected.lastPageRead
+    ) {
+      throw new Error(`Chapter ${expected.id} does not match its migration snapshot.`);
+    }
+  }
+}
+
 async function fetchBestMangaMatch(
   currentManga: Manga,
   targetSourceId: string,
@@ -295,9 +341,7 @@ export function updateMassMangaMigrationPreviewItem(
   };
 }
 
-async function prepareMangaMigrationOperation(
-  input: ApplyMangaMigrationInput,
-): Promise<{
+interface PreparedMangaMigrationOperation {
   oldState: MangaMigrationStateSlice;
   newState: MangaMigrationStateSlice;
   transferSummary: {
@@ -310,7 +354,18 @@ async function prepareMangaMigrationOperation(
     transferredBookmarkCount: number;
   };
   newManga: Manga;
-}> {
+  toMarkRead: number[];
+  toMarkBookmarked: number[];
+  progressUpdates: Array<{ id: number; lastPageRead: number }>;
+  mode: "migrate" | "copy";
+  currentMangaId: number;
+  targetMangaId: number;
+  oldCategoryIds: number[];
+}
+
+async function prepareMangaMigrationOperation(
+  input: ApplyMangaMigrationInput,
+): Promise<PreparedMangaMigrationOperation> {
   const oldCategoryIds = await loadCategoryIdsForManga(input.currentManga.id);
   const newCategoryIds = await loadCategoryIdsForManga(input.match.manga.id);
   const oldState = snapshotMangaState(input.currentManga, input.currentChapters, oldCategoryIds);
@@ -341,31 +396,6 @@ async function prepareMangaMigrationOperation(
 
   const mode = input.mode ?? "migrate";
 
-  try {
-    if (toMarkRead.length) {
-      await gql(UPDATE_CHAPTERS_PROGRESS, { ids: toMarkRead, isRead: true });
-    }
-    if (toMarkBookmarked.length) {
-      await gql(UPDATE_CHAPTERS_PROGRESS, { ids: toMarkBookmarked, isBookmarked: true });
-    }
-    for (const update of progressUpdates) {
-      await gql(UPDATE_CHAPTERS_PROGRESS, { ids: [update.id], lastPageRead: update.lastPageRead });
-    }
-
-    await gql(UPDATE_MANGA, { id: input.match.manga.id, inLibrary: true });
-    await setCategoryIdsForManga(input.match.manga.id, oldCategoryIds);
-    if (mode === "migrate") {
-      await gql(UPDATE_MANGA, { id: input.currentManga.id, inLibrary: false });
-      await setCategoryIdsForManga(input.currentManga.id, []);
-    }
-  } catch (error) {
-    await Promise.allSettled([
-      restoreMangaSnapshot(oldState),
-      restoreMangaSnapshot(newState),
-    ]);
-    throw error;
-  }
-
   return {
     oldState,
     newState,
@@ -382,33 +412,136 @@ async function prepareMangaMigrationOperation(
       ...input.match.manga,
       inLibrary: true,
     },
+    toMarkRead,
+    toMarkBookmarked,
+    progressUpdates,
+    mode,
+    currentMangaId: input.currentManga.id,
+    targetMangaId: input.match.manga.id,
+    oldCategoryIds,
   };
+}
+
+async function applyPreparedMangaMigration(prepared: PreparedMangaMigrationOperation): Promise<void> {
+  if (prepared.toMarkRead.length) {
+    await gql(UPDATE_CHAPTERS_PROGRESS, { ids: prepared.toMarkRead, isRead: true });
+  }
+  if (prepared.toMarkBookmarked.length) {
+    await gql(UPDATE_CHAPTERS_PROGRESS, { ids: prepared.toMarkBookmarked, isBookmarked: true });
+  }
+  for (const update of prepared.progressUpdates) {
+    await gql(UPDATE_CHAPTERS_PROGRESS, { ids: [update.id], lastPageRead: update.lastPageRead });
+  }
+  await gql(UPDATE_MANGA, { id: prepared.targetMangaId, inLibrary: true });
+  await setCategoryIdsForManga(prepared.targetMangaId, prepared.oldCategoryIds);
+  if (prepared.mode === "migrate") {
+    await gql(UPDATE_MANGA, { id: prepared.currentMangaId, inLibrary: false });
+    await setCategoryIdsForManga(prepared.currentMangaId, []);
+  }
+}
+
+async function compensatePreparedMangaMigration(prepared: PreparedMangaMigrationOperation): Promise<void> {
+  const results = await Promise.allSettled([
+    restoreMangaSnapshot(prepared.oldState),
+    restoreMangaSnapshot(prepared.newState),
+  ]);
+  const failures = results.filter((result) => result.status === "rejected");
+  if (failures.length > 0) {
+    const verification = await Promise.allSettled([
+      verifyMangaSnapshot(prepared.oldState),
+      verifyMangaSnapshot(prepared.newState),
+    ]);
+    if (verification.some((result) => result.status === "rejected")) {
+      throw new Error(`Could not compensate ${failures.length} Suwayomi migration snapshot(s).`);
+    }
+  }
+}
+
+async function verifyAppliedMangaMigration(prepared: PreparedMangaMigrationOperation): Promise<void> {
+  const [oldState, targetState] = await Promise.all([
+    readMangaState(prepared.currentMangaId),
+    readMangaState(prepared.targetMangaId),
+  ]);
+  if (!targetState.inLibrary || !sameNumberSet(targetState.categoryIds, prepared.oldCategoryIds)) {
+    throw new Error("Target manga state was not persisted after migration.");
+  }
+  if (
+    prepared.mode === "migrate"
+    && (oldState.inLibrary || oldState.categoryIds.length > 0)
+  ) {
+    throw new Error("Source manga cleanup was not persisted after migration.");
+  }
+  const targetChapters = new Map(targetState.chapters.map((chapter) => [chapter.id, chapter]));
+  for (const chapterId of prepared.toMarkRead) {
+    if (!targetChapters.get(chapterId)?.isRead) {
+      throw new Error(`Read state was not persisted for target chapter ${chapterId}.`);
+    }
+  }
+  for (const chapterId of prepared.toMarkBookmarked) {
+    if (!targetChapters.get(chapterId)?.isBookmarked) {
+      throw new Error(`Bookmark state was not persisted for target chapter ${chapterId}.`);
+    }
+  }
+  for (const update of prepared.progressUpdates) {
+    if (targetChapters.get(update.id)?.lastPageRead !== update.lastPageRead) {
+      throw new Error(`Page progress was not persisted for target chapter ${update.id}.`);
+    }
+  }
+}
+
+async function compensateMangaOperation(
+  operationId: string,
+  preparedItems: PreparedMangaMigrationOperation[],
+): Promise<void> {
+  await transitionMigrationOperation(operationId, "compensating");
+  try {
+    for (const prepared of [...preparedItems].reverse()) {
+      await compensatePreparedMangaMigration(prepared);
+    }
+    await markMigrationCompensated(operationId);
+  } catch (compensationError) {
+    await markMigrationNeedsManualRecovery(
+      operationId,
+      compensationError instanceof Error ? compensationError.message : String(compensationError),
+    );
+    throw compensationError;
+  }
 }
 
 export async function applyMangaMigrationWithJournal(
   input: ApplyMangaMigrationInput,
 ): Promise<{ journalEntryId: string; newManga: Manga }> {
-  return withSuwayomiOperationLease("migration", async () => {
+  const profileId = input.profileId?.trim() || "main";
+  return withMigrationProfileLock(profileId, () => withSuwayomiOperationLease("migration", async () => {
     const prepared = await prepareMangaMigrationOperation(input);
-
-    const journalEntry = buildMigrationJournalEntry({
+    const operation = await beginMigrationOperation({
+      profileId,
       contentKind: "manga",
       sourceFrom: input.currentManga.source?.id ?? "unknown",
       sourceTo: input.targetSourceId,
       transferSummary: prepared.transferSummary,
-      payload: {
-        oldState: prepared.oldState,
-        newState: prepared.newState,
-      },
+      payload: { oldState: prepared.oldState, newState: prepared.newState },
+      steps: [{ stepId: "suwayomi-state-transfer", kind: "suwayomi" }],
     });
-
-    await appendMigrationJournalEntry(journalEntry);
-
+    await transitionMigrationOperation(operation.operationId, "preparing");
+    await transitionMigrationOperation(operation.operationId, "applying");
+    try {
+      await runMigrationStep({
+        operationId: operation.operationId,
+        stepId: "suwayomi-state-transfer",
+        apply: () => applyPreparedMangaMigration(prepared),
+        verify: () => verifyAppliedMangaMigration(prepared),
+      });
+      await commitMigrationOperation(operation.operationId);
+    } catch (error) {
+      await compensateMangaOperation(operation.operationId, [prepared]).catch(() => undefined);
+      throw error;
+    }
     return {
-      journalEntryId: journalEntry.id,
+      journalEntryId: operation.operationId,
       newManga: prepared.newManga,
     };
-  });
+  }));
 }
 
 export async function previewMassMangaMigration(
@@ -485,7 +618,8 @@ export async function applyMassMangaMigrationWithJournal(
   migratedSourceMangaIds: number[];
   failedItems: Array<{ mangaId: number; message: string }>;
 }> {
-  return withSuwayomiOperationLease("migration", async () => {
+  const profileId = input.profileId?.trim() || "main";
+  return withMigrationProfileLock(profileId, () => withSuwayomiOperationLease("migration", async () => {
     const selectedIds = new Set(
       input.selectedMangaIds ?? input.preview.items.map((item) => item.currentManga.id),
     );
@@ -496,12 +630,13 @@ export async function applyMassMangaMigrationWithJournal(
       && selectedIds.has(item.currentManga.id)
     ));
 
-    const payloadItems: MangaMigrationUndoPayload[] = [];
+    const preparedItems: Array<{
+      item: MassMangaMigrationPreviewItem;
+      prepared: PreparedMangaMigrationOperation;
+    }> = [];
     let transferredChapterCount = 0;
     let transferredReadCount = 0;
     let transferredBookmarkCount = 0;
-    const migratedMangaIds: number[] = [];
-    const migratedSourceMangaIds: number[] = [];
     const failedItems: Array<{ mangaId: number; message: string }> = [];
 
     for (const item of readyItems) {
@@ -512,17 +647,9 @@ export async function applyMassMangaMigrationWithJournal(
           targetSourceId: input.preview.sourceTo,
           match: item.match!,
           mode: input.mode ?? "migrate",
+          profileId,
         });
-
-        payloadItems.push({
-          oldState: prepared.oldState,
-          newState: prepared.newState,
-        });
-        migratedMangaIds.push(item.match!.manga.id);
-        migratedSourceMangaIds.push(item.currentManga.id);
-        transferredChapterCount += prepared.transferSummary.transferredChapterCount;
-        transferredReadCount += prepared.transferSummary.transferredReadCount;
-        transferredBookmarkCount += prepared.transferSummary.transferredBookmarkCount;
+        preparedItems.push({ item, prepared });
       } catch (error) {
         failedItems.push({
           mangaId: item.currentManga.id,
@@ -531,44 +658,133 @@ export async function applyMassMangaMigrationWithJournal(
       }
     }
 
-    let journalEntryId: string | null = null;
-    if (payloadItems.length) {
-      const journalEntry = buildMigrationJournalEntry({
-        contentKind: "manga",
-        mode: "mass",
-        sourceFrom: input.preview.sourceFrom,
-        sourceTo: input.preview.sourceTo,
+    if (preparedItems.length === 0) {
+      return {
+        journalEntryId: null,
+        migratedCount: 0,
+        skippedCount: input.preview.items.length - readyItems.length,
+        migratedMangaIds: [],
+        migratedSourceMangaIds: [],
+        failedItems,
+      };
+    }
+
+    const operation = await beginMigrationOperation({
+      profileId,
+      contentKind: "manga",
+      mode: "mass",
+      sourceFrom: input.preview.sourceFrom,
+      sourceTo: input.preview.sourceTo,
+      transferSummary: {
+        oldItemTitle: `${preparedItems.length} manga`,
+        newItemTitle: `${preparedItems.length} pending`,
+        oldSourceId: input.preview.sourceFrom,
+        newSourceId: input.preview.sourceTo,
+        transferredChapterCount: 0,
+        transferredReadCount: 0,
+        transferredBookmarkCount: 0,
+      },
+      payload: {
+        items: preparedItems.map(({ prepared }) => ({
+          oldState: prepared.oldState,
+          newState: prepared.newState,
+        })),
+      },
+      steps: preparedItems.map(({ item }) => ({
+        stepId: `manga-${item.currentManga.id}`,
+        kind: "suwayomi" as const,
+      })),
+    });
+    await transitionMigrationOperation(operation.operationId, "preparing");
+    await transitionMigrationOperation(operation.operationId, "applying");
+
+    const successful: typeof preparedItems = [];
+    for (const preparedItem of preparedItems) {
+      const stepId = `manga-${preparedItem.item.currentManga.id}`;
+      try {
+        await runMigrationStep({
+          operationId: operation.operationId,
+          stepId,
+          apply: () => applyPreparedMangaMigration(preparedItem.prepared),
+          verify: () => verifyAppliedMangaMigration(preparedItem.prepared),
+        });
+        successful.push(preparedItem);
+        transferredChapterCount += preparedItem.prepared.transferSummary.transferredChapterCount;
+        transferredReadCount += preparedItem.prepared.transferSummary.transferredReadCount;
+        transferredBookmarkCount += preparedItem.prepared.transferSummary.transferredBookmarkCount;
+      } catch (error) {
+        try {
+          await compensatePreparedMangaMigration(preparedItem.prepared);
+          await checkpointMigrationStep(operation.operationId, stepId, {
+            status: "skipped",
+            completedAt: Date.now(),
+          });
+        } catch (compensationError) {
+          await markMigrationNeedsManualRecovery(
+            operation.operationId,
+            compensationError instanceof Error ? compensationError.message : String(compensationError),
+          );
+          throw compensationError;
+        }
+        failedItems.push({
+          mangaId: preparedItem.item.currentManga.id,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    if (successful.length === 0) {
+      await markMigrationCompensated(operation.operationId);
+      return {
+        journalEntryId: null,
+        migratedCount: 0,
+        skippedCount: input.preview.items.length - readyItems.length,
+        migratedMangaIds: [],
+        migratedSourceMangaIds: [],
+        failedItems,
+      };
+    }
+
+    const payloadItems: MangaMigrationUndoPayload[] = successful.map(({ prepared }) => ({
+      oldState: prepared.oldState,
+      newState: prepared.newState,
+    }));
+    try {
+      await commitMigrationOperation(operation.operationId, {
         transferSummary: {
-          oldItemTitle: `${payloadItems.length} manga`,
-          newItemTitle: `${payloadItems.length} migrated`,
+          oldItemTitle: `${successful.length} manga`,
+          newItemTitle: `${successful.length} migrated`,
           oldSourceId: input.preview.sourceFrom,
           newSourceId: input.preview.sourceTo,
           transferredChapterCount,
           transferredReadCount,
           transferredBookmarkCount,
         },
-        payload: {
-          items: payloadItems,
-        } satisfies MangaMassMigrationUndoPayload,
+        payload: { items: payloadItems } satisfies MangaMassMigrationUndoPayload,
       });
-
-      await appendMigrationJournalEntry(journalEntry);
-      journalEntryId = journalEntry.id;
+    } catch (error) {
+      await compensateMangaOperation(
+        operation.operationId,
+        successful.map(({ prepared }) => prepared),
+      ).catch(() => undefined);
+      throw error;
     }
 
     return {
-      journalEntryId,
-      migratedCount: payloadItems.length,
+      journalEntryId: operation.operationId,
+      migratedCount: successful.length,
       skippedCount: input.preview.items.length - readyItems.length,
-      migratedMangaIds,
-      migratedSourceMangaIds,
+      migratedMangaIds: successful.map(({ item }) => item.match!.manga.id),
+      migratedSourceMangaIds: successful.map(({ item }) => item.currentManga.id),
       failedItems,
     };
-  });
+  }));
 }
 
 export async function undoMangaMigration(journalEntryId: string): Promise<void> {
-  return withSuwayomiOperationLease("migration", async () => {
+  const operation = await getMigrationOperation(journalEntryId);
+  const profileId = operation?.profileId ?? "main";
+  return withMigrationProfileLock(profileId, () => withSuwayomiOperationLease("migration", async () => {
     const entry = await getMigrationJournalEntry(journalEntryId);
     if (!entry || entry.contentKind !== "manga") {
       throw new Error("The requested manga migration journal entry was not found.");
@@ -582,18 +798,19 @@ export async function undoMangaMigration(journalEntryId: string): Promise<void> 
       ? payload.items
       : [payload];
 
+    await transitionMigrationOperation(entry.id, "compensating");
     try {
-      for (const item of items) {
+      for (const item of [...items].reverse()) {
         await restoreMangaSnapshot(item.oldState);
         await restoreMangaSnapshot(item.newState);
       }
-      await markMigrationJournalEntryUndone(entry.id);
+      await markMigrationCompensated(entry.id);
     } catch (error) {
-      await markMigrationJournalEntryFailed(
+      await markMigrationNeedsManualRecovery(
         entry.id,
         error instanceof Error ? error.message : String(error),
       );
       throw error;
     }
-  });
+  }));
 }

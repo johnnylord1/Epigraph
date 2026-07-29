@@ -2423,6 +2423,12 @@
       };
     }
 
+    void import("./lib/migration/coordinator")
+      .then(({ recoverInterruptedMigrationOperations }) => recoverInterruptedMigrationOperations())
+      .catch((error) => {
+        console.error("Migration recovery inspection failed:", error);
+      });
+
     const updatePageBackgroundState = () => {
       const webviewFocused = document.hasFocus();
       pageHidden = document.hidden || !(appWindowFocused || webviewFocused);

@@ -189,6 +189,12 @@ export interface MigrationSnapshotManifest {
   payload: MangaMigrationUndoPayload | MangaMassMigrationUndoPayload | NovelMigrationUndoPayload | NovelMassMigrationUndoPayload;
 }
 
+export type MigrationPayload =
+  | MangaMigrationUndoPayload
+  | MangaMassMigrationUndoPayload
+  | NovelMigrationUndoPayload
+  | NovelMassMigrationUndoPayload;
+
 export interface MigrationOperationV2 {
   schemaVersion: 2;
   operationId: string;

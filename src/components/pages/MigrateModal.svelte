@@ -222,6 +222,7 @@
         currentChapters,
         targetSourceId: selectedSource?.id ?? selectedMatch.manga.source?.id ?? "unknown",
         match: selectedMatch,
+        profileId: store.runtimeResolvedLocalProfileId,
       });
 
       addToast({
