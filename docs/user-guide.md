@@ -213,7 +213,11 @@ O Aethon gerencia automaticamente os recursos necessários para cada instância.
 - Browse/Discover/Search reais: dependem de Suwayomi, sources ou plugins.
 - Tracking e Hardcover: dependem de credenciais/configuração ausente.
 - Discord Rich Presence: depende do Discord e configuração local.
-- FlareSolverr: depende de serviço local ou Docker configurado.
+- FlareSolverr: é opcional e desativado por padrão. Pode ser habilitado em
+  **Settings > Security** quando uma source apresentar proteção anti-bot
+  confirmada. O Aethon pode gerenciar uma instância local ou Docker; ele não
+  corrige source obsoleta, login obrigatório, parser quebrado ou extensão
+  incompatível.
 - Updater: depende de release, rede e assinatura.
 - Importação EPUB/PDF, backup e restore: exigem permissões de arquivo e um destino de armazenamento acessível.
 - Migração individual/em massa: depende de sources de origem e destino.

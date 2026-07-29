@@ -99,15 +99,17 @@ More real screenshots are available in [docs/screenshots](docs/screenshots).
 
 These items are planned work, not completed functionality:
 
-- Aethon Syncd productization and cross-device synchronization.
-- PC-hosted Core services and contracts consumed by the separate Flutter/Sorayomi Aethon Mobile project.
-- Design System consolidation.
-- Reader improvements.
-- TTS improvements.
-- Performance improvements and startup profiling.
-- Plugin workflow expansion.
-- Updater UX and release automation improvements.
-- Expanded source/extension support and diagnostics.
+- Complete the conditional release checks that require signed packages, live
+  services, an accessible manga catalog, or manual screen-reader validation.
+- Continue LNReader source compatibility diagnostics without introducing a
+  proprietary plugin format or synchronizing credentials and chapter content.
+- Improve reader and TTS ergonomics while preserving the existing EPUB, PDF,
+  manga, prose, progress, keyboard, fullscreen, and offline contracts.
+- Keep source, extension, updater, bundle, navigation, storage, and Syncd
+  certification gates current as their implementations evolve.
+- Productize the PC-hosted Core boundary consumed by the separate
+  Flutter/Sorayomi Aethon Mobile project without adding mobile UI or packaging
+  to this repository.
 
 See [docs/roadmap.md](docs/roadmap.md) for the current roadmap.
 

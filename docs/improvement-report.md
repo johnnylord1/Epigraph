@@ -90,3 +90,18 @@ Este documento não redefine os bugs confirmados de `bug-report.md`. Os itens ab
 - Dados e perfis de automação permaneceram em `%TEMP%`; capturas transitórias e logs de sucesso foram removidos. O status do worktree ao final foi igual ao status inicial do gate.
 - Riscos ainda abertos: `IMP-001`/`IMP-007` (manga fullscreen e leitor de tela), `IMP-010` (tempo dos testes de capas Discord), `IMP-011` (copy histórica do splash), `IMP-012` (inventário frontend↔Tauri), `IMP-013` (diagnóstico dos gates de tema), `IMP-014` (capability report), `IMP-017` (concorrência Syncd futura) e `IMP-018` (política contínua de armazenamento).
 - Instalação assinada e serviços externos reais permanecem condicionais; `release:smoke-live` é opcional e nunca faz parte do gate reproduzível sem opt-in.
+
+## Atualização SR9-SR13
+
+- A atualização automática segura de runtime e extensions está consolidada
+  atrás das operações oficiais do Suwayomi.
+- `ExtensionUpdateCoordinator` permanece somente como orquestrador; não foram
+  adicionados scraper, classloader, manipulação de H2/classpath ou APK→JAR.
+- O gate estático concentra scraping ativo em
+  `SourceRuntime/SuwayomiAdapter`.
+- FlareSolverr ganhou classificação estrita, ownership, contenção local e
+  policy Docker determinística. O lifecycle Docker real permanece uma
+  validação condicional por indisponibilidade do CLI.
+- A prioridade imediata é repetir `pnpm release:verify` no HEAD atual. Os
+  demais itens abertos continuam melhorias ou evidências condicionais, não
+  regressões confirmadas.

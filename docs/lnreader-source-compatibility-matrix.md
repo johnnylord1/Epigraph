@@ -1,8 +1,15 @@
 # LNReader Source Compatibility Matrix
 
-Status date: `2026-04-12`
+Historical live observation date: `2026-04-12`
+
+Documentation review date: `2026-07-28`
 
 This matrix tracks real Aethon runtime compatibility against official LNReader sources.
+
+The rows below preserve the last live observations and must not be interpreted
+as a current guarantee that an external website is available. Current blocking
+gates validate the LNReader runtime deterministically; live source checks are
+observational and update a row only when the complete action is reproduced.
 
 Rules:
 
@@ -44,7 +51,7 @@ Rules:
 | `69shu` | not the focus | proven | proven | `working-with-known-limitations` | Trusted desktop smoke anchor for details + chapter. Useful for runtime boundary validation, but not a priority language cohort. |
 | `hotnovelpub` | not yet proven | blocked in direct probe | blocked in direct probe | `blocked-by-site` | Direct live probe hit redirect / anti-bot HTML. |
 
-## Next Execution Order
+## Future Live Revalidation Order
 
 1. `scribblehub`
 2. `webnovel`
@@ -65,12 +72,16 @@ Rules:
 
 ## Evidence Anchors
 
-- [acceptance-flow.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\tmp\novels-product-acceptance\acceptance-flow.json)
-- [persistence-check.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\tmp\novels-product-acceptance\persistence-check.json)
-- [live-search-probe.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\tmp\lnreader-live-search-probe\live-search-probe.json)
-- [ao3-live-search-probe.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\tmp\lnreader-live-search-probe\ao3-live-search-probe.json)
-- [runtime-lifecycle-audit.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\tmp\lnreader-runtime-audit-lifecycle\runtime-lifecycle-audit.json)
-- [illusia-probe.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\tmp\lnreader-source-matrix\illusia-probe.json)
-- [royalroad-probe.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\tmp\lnreader-source-matrix\royalroad-probe.json)
-- [lightnovelbrasil-probe.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\tmp\lnreader-source-matrix\lightnovelbrasil-probe.json)
-- [centralnovel-probe.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\tmp\lnreader-source-matrix\centralnovel-probe.json)
+- [pluginRuntime.test.ts](../src/lib/novels/pluginRuntime.test.ts):
+  plugin execution, fetch shims, encoding, anti-bot recovery, and failure paths.
+- [runtimeHost.test.ts](../src/lib/novels/runtimeHost.test.ts): isolated host,
+  whitelist, invocation, cancellation, health, and shutdown.
+- [repositories.test.ts](../src/lib/novels/repositories.test.ts): published
+  repository parsing, canonicalization, and artifact metadata.
+- [migrationSafe.test.ts](../src/lib/novels/migrationSafe.test.ts): minimum
+  source cohort and migration eligibility.
+- [offlineChapters.test.ts](../src/lib/novels/offlineChapters.test.ts): bounded
+  offline chapter storage and fallback.
+
+The JSON files from the original probes lived under disposable `tmp/`
+directories and are intentionally not durable documentation.

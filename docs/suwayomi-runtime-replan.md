@@ -457,3 +457,79 @@ checks explicitos, sem alterar a compatibilidade estrutural do runtime.
   Local Source, `websiteRequests=0` e `maxSourcesInParallel=1`. A readiness do
   Extension Manager admite ate 45 segundos apos restart por polling, sem
   aumentar workers, JVMs ou sources concorrentes.
+
+## Estado consolidado apos o SR13
+
+Em 28/07/2026, SR1-SR13 estao implementados e commitados. O ultimo commit da
+sequencia e `40f48e5` (`test(sources): enforce extension runtime
+compatibility`). O worktree e o indice estavam limpos na verificacao posterior,
+sem arquivos untracked ou diff pendente.
+
+Entregas concluidas:
+
+- `SourceRuntime/SuwayomiAdapter` e profiles V21/V23 concentram as operacoes
+  ativas de pesquisa, detalhes, capitulos e paginas.
+- `v2.3.2243` permanece candidate fixado e certificado pelo SHA-256 exato; nao
+  e tratada como latest nem substituida automaticamente.
+- Promocao de runtime e atualizacao de extensoes usam maintenance, snapshot,
+  journal, rollback e validacao sequencial, sem duas JVMs sobre o mesmo H2.
+- `ExtensionUpdateCoordinator` apenas orquestra operacoes oficiais do
+  Extension Manager. Nao existem classloader, scraper, conversor APK->JAR ou
+  instalador paralelo no Aethon.
+- Extension Stores usam canonicalizacao conservadora e preservam stores
+  distintas. Proveniencia e registros de compatibilidade incluem hashes do
+  runtime e do artefato.
+- FlareSolverr continua opcional e desativado por padrao. Para manga, o Aethon
+  configura o endpoint e o Suwayomi continua responsavel pelas requisicoes das
+  extensions. Para novels, o runtime LNReader separado possui recuperacao
+  propria no fetch shim quando identifica um desafio anti-bot.
+- O lifecycle local do FlareSolverr valida ownership e mantem a arvore em
+  Windows Job Object. O backend Docker usa imagem por digest, loopback e limites
+  de CPU, memoria e processos.
+- O workflow Suwayomi controlado passou com restart, 27 source IDs estaveis,
+  fluxo Local Source completo, uma source por vez e zero acesso a websites.
+- Os gates focados passaram com 97 testes de runtime/adapter/anti-bot, 62 testes
+  frontend, 12 testes de Settings e 48 testes browser. `svelte-check` terminou
+  com 0 erros e 0 avisos; Cargo, formatacao Rust e build frontend passaram.
+
+## Pendencias atuais
+
+### Gate local obrigatorio
+
+- Reexecutar `pnpm release:verify` no HEAD atual para consolidar todos os gates
+  de release depois dos commits SR9-SR13. Os testes proporcionais dos marcos
+  passaram, mas esta execucao agregada final ainda deve produzir a evidencia
+  unica do estado atual.
+
+### Validacoes condicionais ou observacionais
+
+- Exercitar o lifecycle real do container FlareSolverr quando Docker estiver
+  disponivel. A policy deterministica passou, mas o Docker CLI nao estava
+  instalado no ambiente da validacao SR13.
+- Executar canarios live de sources somente como diagnostico observacional.
+  Website, Cloudflare, login, rate limit, parser ou source obsoleta nao devem
+  reprovar o runtime sem regressao causal comprovada contra a versao anterior.
+- Validar instalacao real assinada do updater apenas no processo de release com
+  manifesto, pacote e chave de producao.
+- Fazer smoke opt-in de Trackers, Hardcover, Discord e proxies com servicos
+  reais; transports falsos e servidores locais continuam sendo o gate
+  deterministico bloqueante.
+- Validar manga/fullscreen com catalogo acessivel e completar auditoria manual
+  com leitor de tela.
+
+### Melhorias futuras nao bloqueantes
+
+- Reduzir o tempo dos testes Rust de composicao de capas Discord sem perder
+  cobertura.
+- Melhorar diagnosticos dos gates de tema, inventario frontend/Tauri e
+  capability report.
+- Continuar a politica de crescimento limitado de logs, caches, locks e
+  manifests.
+- Manter a concorrencia do harness Syncd como trabalho futuro, sem limitar a
+  replicacao de comics, books e repositorios LNReader pelo AethonCore.
+
+### Publicacao Git
+
+- Na verificacao de 28/07/2026, `main` estava 155 commits a frente de
+  `origin/main`. Isso nao representa codigo sem commit, mas a sequencia ainda
+  precisa ser enviada ao remoto quando a publicacao for autorizada.

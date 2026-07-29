@@ -15,8 +15,8 @@ This document freezes what "shared reader" means in Aethon and what it does not 
 ## Shared shell
 
 The shared reader shell grows from the existing reader chrome in:
-- [ReaderHud.svelte](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\reader\ReaderHud.svelte)
-- [BookReader.svelte](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\reader\BookReader.svelte)
+- [ReaderHud.svelte](../src/components/reader/ReaderHud.svelte)
+- [BookReader.svelte](../src/components/reader/BookReader.svelte)
 
 The shell owns:
 - top bar
@@ -112,12 +112,17 @@ Reader preference persistence must separate:
 
 Capability selection happens at runtime per adapter.
 
-## Phase target
+## Current status
 
-This contract is the target for:
-- Phase 4: shared reader shell
-- Phase 5: content adapters
+Reviewed on `2026-07-28`.
 
-It does not require immediate parity with every LNReader internal implementation detail.
+- Novel prose, EPUB, PDF, and manga keep separate rendering and progress
+  semantics behind the current reader surfaces.
+- Universal, reflow, and PDF-specific preferences are persisted separately;
+  unsupported controls remain capability-dependent.
+- Import/restart, progress, bookmark, backup/restore, offline, viewport, and
+  token contracts have deterministic coverage.
+- Accessible manga/fullscreen with a real catalog and a manual screen-reader
+  audit remain conditional validations.
 
 The target is parity of UX contract, not foreign implementation coupling.

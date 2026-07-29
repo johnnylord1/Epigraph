@@ -7,6 +7,21 @@ It will not invent a new novels plugin format, and it will not collapse plugin r
 
 This document freezes the architecture for the desktop-first novels/books reader program and records the exact primary sources audited on April 8, 2026.
 
+## Implementation Status
+
+Reviewed on `2026-07-28`.
+
+- The LNReader-compatible repository catalog, isolated runtime host, action
+  whitelist, source browsing, details, chapter loading, Library state, backup,
+  migration checks, and Syncd metadata contracts are implemented.
+- `source.settings.read` remains available on demand.
+  `source.settings.write` is intentionally not exposed.
+- The runtime continues to consume final published plugin artifacts. It does
+  not execute upstream multisrc build tooling and does not define a proprietary
+  Aethon plugin format.
+- Live website compatibility remains observational and is tracked separately
+  in `lnreader-source-compatibility-matrix.md`.
+
 ## Primary Sources
 
 Audit date: `2026-04-08`
@@ -67,7 +82,7 @@ Audit date: `2026-04-08`
      - per-window and per-webview permission isolation
      - minimal permission strategy for the hidden plugin runtime host
    - Confirmed against Aethon:
-     - current broad capability lives in [default.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src-tauri\capabilities\default.json)
+     - the main-window capability lives in [default.json](../src-tauri/capabilities/default.json)
      - the plugin runtime host must not reuse the broad default capability
 
 2. `Runtime Authority`
@@ -93,7 +108,7 @@ Audit date: `2026-04-08`
      - the plugin host bridge must be strictly whitelisted
 
 5. `Current Aethon default capability`
-   - File: [default.json](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src-tauri\capabilities\default.json)
+   - File: [default.json](../src-tauri/capabilities/default.json)
    - Used for:
      - baseline comparison against the future novels runtime host capability
    - Confirmed against Aethon:
@@ -128,8 +143,8 @@ If the LNReader documentation and a real published plugin disagree:
 ### Reader shell boundary
 
 The shared reader shell grows from:
-- [ReaderHud.svelte](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\reader\ReaderHud.svelte)
-- [BookReader.svelte](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src\components\reader\BookReader.svelte)
+- [ReaderHud.svelte](../src/components/reader/ReaderHud.svelte)
+- [BookReader.svelte](../src/components/reader/BookReader.svelte)
 
 This shell owns:
 - chrome
@@ -215,7 +230,7 @@ Hidden UI status alone is not a sandbox.
 
 ## Repository compatibility target
 
-Phase 1 must support:
+The implemented repository boundary supports:
 - adding repository URLs
 - removing repository URLs
 - refreshing repositories

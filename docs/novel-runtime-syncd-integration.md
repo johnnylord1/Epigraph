@@ -2,7 +2,7 @@
 
 ## Summary
 
-Aethon will integrate novels runtime state into the existing syncd model without widening sync semantics.
+Aethon integrates novels runtime state into the existing Syncd model without widening sync semantics.
 
 The existing scope rules remain authoritative:
 - novels are `novels:profile:<id>`
@@ -11,10 +11,10 @@ The existing scope rules remain authoritative:
 ## Primary scope references
 
 Confirmed against:
-- [mutations.rs](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src-tauri\src\syncd\routes\mutations.rs)
-- [middleware.rs](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src-tauri\src\syncd\middleware.rs)
-- [0001_init.sql](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\src-tauri\migrations-syncd\0001_init.sql)
-- [syncd-mutations-phase-gate.md](C:\Users\jhow-\Documents\Projetos\ForkAethon\Aethon\docs\syncd-mutations-phase-gate.md)
+- [mutations.rs](../src-tauri/src/syncd/routes/mutations.rs)
+- [middleware.rs](../src-tauri/src/syncd/middleware.rs)
+- [0001_init.sql](../src-tauri/migrations-syncd/0001_init.sql)
+- [contracts.ts](../src/lib/novels/contracts.ts)
 
 ## What novels sync in v1
 
@@ -88,7 +88,16 @@ Novels runtime state must never leak across profiles:
 
 Books remain global and intentionally separate from novels profile scope.
 
-## Phase target
+## Current status
 
-This document is the contract target for Phase 6.
-It is not a request to reopen the syncd replay core.
+Reviewed on `2026-07-28`.
+
+- Scope validation, novel/book mutation handling, snapshots, replay, tombstone
+  behavior, reconnect, pause/resume, and two-instance desktop scenarios are
+  covered by the current Rust and WebView2 gates.
+- Syncd remains part of AethonCore and continues to replicate repository and
+  plugin snapshot metadata allowed by this contract.
+- Chapter content, plugin binaries, cookies, tokens, credentials, and arbitrary
+  plugin storage remain excluded.
+- Harness port/process concurrency is future automation work and must not
+  narrow the production scopes for comics, novels, or books.

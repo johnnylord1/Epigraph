@@ -175,3 +175,48 @@ On 2026-07-28, automatic manga-extension updates were moved behind
 The deterministic workflow passed exact V23 install/restart, the V21-to-V23
 profile workflow, search, details, chapters and pages with zero website source
 requests and no residual JVM. Live website health remains outside this gate.
+
+The final readiness gate was subsequently increased to bounded polling for at
+most 45 seconds after restart. This addresses slow Extension Manager
+registration without increasing worker, JVM, or source concurrency.
+
+## SR12 Managed Source Boundary
+
+On 2026-07-28, active manga search, details, chapters, and pages were moved
+behind `SourceRuntime/SuwayomiAdapter`.
+
+- Profiles V21 and V23 share transport, retry, redaction, and typed error
+  handling.
+- Component, Library Update, migration, reconciliation, Reader, and cache
+  consumers use typed source-operation DTOs rather than live GraphQL documents.
+- A static gate rejects active scraping operations outside the runtime adapter.
+- GraphQL remains available internally for administrative state such as
+  categories, tracking, downloads, and extension inventory.
+- Store URL canonicalization is conservative and never merges distinct path or
+  query values.
+
+No Library identity, source ID, progress, bookmark, category, download, or
+pagination contract was changed.
+
+## SR13 Anti-bot And Lifecycle Gate
+
+On 2026-07-28, FlareSolverr eligibility and lifecycle controls passed the
+deterministic gate.
+
+- Manga errors must contain confirmed anti-bot evidence. ABI/classloader,
+  serialization, obsolete source, parser, authentication, 404, and ordinary
+  network failures remain ineligible.
+- For manga extensions, Suwayomi remains the only runtime that requests
+  websites through FlareSolverr. The Aethon controller performs only the local
+  `sessions.list` health probe.
+- The local backend has atomic ownership identity and a Windows Job Object with
+  kill-on-close. Unknown or externally owned processes are not adopted or
+  terminated.
+- The Docker backend is pinned by image digest, loopback-only, single-CPU,
+  1-GiB, 256-process, and no-restart policy.
+- Lifecycle operations are serialized in-process and cross-process. Cleanup
+  failures are explicit.
+
+The real Docker container lifecycle was not exercised because Docker CLI was
+unavailable. Deterministic policy tests passed; a real Docker lifecycle remains
+conditional evidence.

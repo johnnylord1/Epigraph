@@ -394,3 +394,14 @@ QR, pairing, restart, reconnect, sessões persistidas e replicação entre deskt
 Em 22/07/2026, `pnpm release:verify` concluiu os 16 gates bloqueantes em uma única execução serial. Passaram `svelte-check` (0 erros/0 warnings), 151 arquivos e 852 testes unit/jsdom, 10 arquivos e 48 testes browser, contratos de tema, certificações Suwayomi e de integrações, budgets de bundle, 324 testes Rust do app, 172 testes Rust do binário, builds frontend/Tauri e os smokes WebView2 de dados, viewport e navegação.
 
 Nenhum bug novo foi promovido. Os seis bugs confirmados permanecem resolvidos. Os riscos residuais são validações condicionais ou manuais, não regressões observadas: instalação assinada do updater, sucesso contra serviços externos reais, manga/fullscreen dependente de catálogo e auditoria completa com leitor de tela.
+
+## Atualização SR9-SR13 — sources e extensions
+
+Em 28/07/2026, os gates determinísticos de candidate, promoção, updates
+transacionais, fronteira do adapter e anti-bot passaram sem promover novo bug.
+O workflow controlado preservou identidades após restart, executou com uma JVM
+e uma source por vez e não acessou websites.
+
+Pendências não promovidas a bug: repetir `pnpm release:verify` no HEAD atual,
+exercitar Docker FlareSolverr quando disponível e executar as validações live,
+assinadas ou manuais já classificadas como condicionais.

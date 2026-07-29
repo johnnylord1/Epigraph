@@ -241,3 +241,22 @@ A tela Settings > About passou em 6/6 testes browser. A baseline foi atualizada 
 | Manual residual | Leitor de tela e manga/fullscreen com catálogo real | Pendente, sem regressão comprovada nos smokes disponíveis |
 
 Evidências visuais versionadas permanecem em `docs/screenshots/marco60-final-runtime/`, `marco61-syncd-pairing/`, `marco62-syncd-hardening/`, `marco67-native-viewports/`, `marco70-bundle-performance/` e nas baselines revisadas em `src/test/browser/__screenshots__/custom/`. O Marco 71 reexecutou a build atual e validou estado e geometria em capturas temporárias WebView2, descartadas depois do gate para não versionar duplicatas ou artefatos de perfil. Comparação pixel automatizada permanece restrita às baselines browser revisadas.
+
+## SR9-SR13 — runtime e extensions Suwayomi
+
+Em 28/07/2026, a sequência SR9-SR13 foi concluída e commitada. O gate
+determinístico instalou extensions somente pelas operações oficiais do
+Suwayomi, manteve uma JVM e uma source por vez, repetiu restart com 27 source
+IDs estáveis e validou Local Source em pesquisa, detalhes, capítulos e páginas
+sem acessar websites.
+
+Promoção de runtime e updates de extensions usam maintenance, snapshot,
+journal e rollback conjunto. As operações ativas de scraping atravessam
+`SourceRuntime/SuwayomiAdapter`. FlareSolverr permanece opcional: Suwayomi o
+utiliza para manga e o runtime LNReader separado mantém sua própria recuperação
+anti-bot.
+
+Os testes proporcionais, browser, `svelte-check`, Cargo e build passaram. O
+gate agregado `pnpm release:verify` deve ser repetido no HEAD atual. Docker
+FlareSolverr real, instalação assinada, serviços live opt-in,
+manga/fullscreen e leitor de tela permanecem condicionais.
