@@ -34,6 +34,8 @@
   import { resolveHardcoverNovelDiscordCover } from "../../lib/discord/trackerCoverResolver";
   import { startLocalFlareSolverrAndEnable } from "../../lib/flaresolverr";
   import { isSourceChallengeMessage } from "../../lib/sourceAccess";
+  import { matchesKeybind, toggleFullscreen, DEFAULT_KEYBINDS } from "../../lib/keybinds";
+  import { isReaderControlKeyboardTarget, registerReaderCommandHandler } from "../../lib/reader/commands";
   import {
     DEFAULT_PROSE_READER_BACKGROUND_COLOR,
     DEFAULT_PROSE_READER_TEXT_COLOR,
@@ -324,6 +326,40 @@
     updateSettings({ proseReaderFontSize: Math.max(12, Math.min(32, proseFontSize + delta)) });
   }
 
+  function onKey(event: KeyboardEvent) {
+    if (isReaderControlKeyboardTarget(event.target)) return;
+    const keybinds = store.settings.keybinds ?? DEFAULT_KEYBINDS;
+    if (event.key === "Escape" || matchesKeybind(event, keybinds.exitReader)) {
+      event.preventDefault();
+      requestClose();
+      return;
+    }
+    if (event.ctrlKey && (event.key === "=" || event.key === "+")) {
+      event.preventDefault();
+      updateFontSize(1);
+      return;
+    }
+    if (event.ctrlKey && event.key === "-") {
+      event.preventDefault();
+      updateFontSize(-1);
+      return;
+    }
+    if (event.ctrlKey && event.key === "0") {
+      event.preventDefault();
+      updateSettings({ proseReaderFontSize: 18 });
+      return;
+    }
+    if (matchesKeybind(event, keybinds.toggleFullscreen)) {
+      event.preventDefault();
+      void toggleFullscreen();
+      return;
+    }
+    if (matchesKeybind(event, keybinds.toggleBookmark)) {
+      event.preventDefault();
+      toggleCurrentChapterBookmark();
+    }
+  }
+
   function updateLineHeight(delta: number) {
     updateSettings({ proseReaderLineHeight: Math.round(Math.max(1.2, Math.min(2.4, proseLineHeight + delta)) * 100) / 100 });
   }
@@ -480,6 +516,7 @@
   });
 
   onMount(() => {
+    const unregisterCommands = registerReaderCommandHandler("novel", onKey);
     if (!activeReader) {
       addToast({
         kind: "error",
@@ -487,6 +524,7 @@
         body: translate("ui_noActiveChapterWasSelected"),
       });
     }
+    return unregisterCommands;
   });
 
   onDestroy(() => {

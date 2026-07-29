@@ -17,8 +17,9 @@
   import { fetchSourceChapterPages } from "../../lib/manga/runtime";
   import { toSuwayomiWebViewUrl } from "../../lib/suwayomiWebView";
   import { store, closeReader, openReader, addHistory, updateSettings, checkAndMarkCompleted, setSettingsOpen, addBookmark, removeBookmark } from "../../store/state.svelte";
-  import { isEditableKeyboardTarget, matchesKeybind, toggleFullscreen, DEFAULT_KEYBINDS } from "../../lib/keybinds";
+  import { matchesKeybind, toggleFullscreen, DEFAULT_KEYBINDS } from "../../lib/keybinds";
   import { loadOfflineMangaChapter, revokeOfflineMangaPages } from "../../lib/reader/offlineManga";
+  import { isReaderControlKeyboardTarget, registerReaderCommandHandler } from "../../lib/reader/commands";
   import { setReading } from "../../lib/discord";
   import { canResolveDiscordCover, canRunDiscordCoverImprovement } from "../../lib/discord/coverImprovementGate";
   import { isDiscordPublicImageUrl } from "../../lib/discord/coverResolver";
@@ -1019,7 +1020,7 @@
   }
 
   function onKey(e: KeyboardEvent) {
-    if (isEditableKeyboardTarget(e.target)) return;
+    if (isReaderControlKeyboardTarget(e.target)) return;
     const kb = store.settings.keybinds ?? DEFAULT_KEYBINDS;
     const r  = store.settings.readingDirection === "rtl";
     if (e.key === "Escape") {
@@ -1078,7 +1079,7 @@
 
   onMount(() => {
     showUi();
-    window.addEventListener("keydown", onKey);
+    const unregisterCommands = registerReaderCommandHandler("manga", onKey);
     window.addEventListener("wheel", onWheel, { passive: false });
     containerEl?.focus({ preventScroll: true });
     refreshReaderWebViewState().catch(() => {});
@@ -1111,7 +1112,7 @@
       abortCtrl?.abort();
       if (hideTimer) clearTimeout(hideTimer);
       if (emptyReaderRecoveryTimer) clearTimeout(emptyReaderRecoveryTimer);
-      window.removeEventListener("keydown", onKey);
+      unregisterCommands();
       window.removeEventListener("wheel", onWheel);
       cleanupScroll();
       ro.disconnect();

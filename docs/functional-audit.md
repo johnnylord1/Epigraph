@@ -260,3 +260,16 @@ Os testes proporcionais, browser, `svelte-check`, Cargo e build passaram. O
 gate agregado `pnpm release:verify` deve ser repetido no HEAD atual. Docker
 FlareSolverr real, instalação assinada, serviços live opt-in,
 manga/fullscreen e leitor de tela permanecem condicionais.
+
+## Marco 72F1 - ownership de comandos do Reader
+
+O shell e os readers deixaram de processar simultaneamente zoom e fullscreen.
+Um dispatcher mantem exatamente um scope ativo (`manga`, `book` ou `novel`),
+ignora cleanup atrasado de um reader anterior e remove o listener global quando
+o reader ativo desmonta. Manga, EPUB/PDF e novels usam os keybinds existentes;
+controles interativos e conteudo editavel nao disparam navegacao de pagina.
+
+O comportamento de `Escape` em fullscreen permanece sob a prioridade ja
+existente do shell. `overlayBars` nao foi alterado, ocultado, depreciado nem
+removido. RAFs, respostas assincronas antigas, pagina PDF predominante,
+deduplicacao de progresso e `autoNextChapter` pertencem ao Marco 72F2.

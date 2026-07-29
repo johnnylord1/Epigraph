@@ -66,6 +66,7 @@
   import { setLibraryMotionEnvironment } from "./lib/library/motionGate";
   import { getLibraryVisibilityRegistryStats } from "./lib/library/visibilityRegistry";
   import { isEditableKeyboardTarget } from "./lib/keybinds";
+  import { hasActiveReaderCommandScope } from "./lib/reader/commands";
   import {
     configureLocalServerRuntime,
     ensureServerAwakeFor,
@@ -2896,6 +2897,7 @@
   });
 
   function handleZoomKey(e: KeyboardEvent) {
+    if (hasActiveReaderCommandScope()) return;
     if (!e.ctrlKey) return;
     if (e.key === "=" || e.key === "+") {
       e.preventDefault();
@@ -2934,6 +2936,7 @@
       void exitFullscreen();
       return;
     }
+    if (hasActiveReaderCommandScope()) return;
     const bind = store.settings.keybinds?.toggleFullscreen ?? "f";
     if (!e.ctrlKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === bind.toLowerCase()) {
       e.preventDefault();

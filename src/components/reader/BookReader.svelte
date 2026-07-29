@@ -64,7 +64,8 @@
   import { discordPublicCoverResolver } from "../../lib/discord/discordPublicCoverResolver";
   import { createOpenLibraryBookDiscordTrackerKey, resolveOpenLibraryBookDiscordCover } from "../../lib/discord/openLibraryCoverResolver";
   import { createHardcoverBookDiscordTrackerKey, resolveHardcoverBookDiscordCover } from "../../lib/discord/trackerCoverResolver";
-  import { isEditableKeyboardTarget } from "../../lib/keybinds";
+  import { matchesKeybind, toggleFullscreen, DEFAULT_KEYBINDS } from "../../lib/keybinds";
+  import { isReaderControlKeyboardTarget, registerReaderCommandHandler } from "../../lib/reader/commands";
   import TtsControls from "./TtsControls.svelte";
   import {
     DEFAULT_PROSE_READER_BACKGROUND_COLOR,
@@ -1312,7 +1313,8 @@
   }
 
   function onKey(event: KeyboardEvent) {
-    if (isEditableKeyboardTarget(event.target)) return;
+    if (isReaderControlKeyboardTarget(event.target)) return;
+    const keybinds = store.settings.keybinds ?? DEFAULT_KEYBINDS;
     showUi();
     if (event.key === "Escape" || event.key === "Backspace") {
       event.preventDefault();
@@ -1354,7 +1356,12 @@
       resetZoom();
       return;
     }
-    if (event.key.toLowerCase() === "m") {
+    if (matchesKeybind(event, keybinds.toggleFullscreen)) {
+      event.preventDefault();
+      void toggleFullscreen();
+      return;
+    }
+    if (matchesKeybind(event, keybinds.toggleBookmark)) {
       event.preventDefault();
       toggleBookmark();
     }
@@ -1451,9 +1458,9 @@
 
   onMount(() => {
     showUi();
-    window.addEventListener("keydown", onKey);
+    const unregisterCommands = registerReaderCommandHandler("book", onKey);
     return () => {
-      window.removeEventListener("keydown", onKey);
+      unregisterCommands();
       if (hideTimer) clearTimeout(hideTimer);
       disposeReader();
     };
