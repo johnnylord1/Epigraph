@@ -1,4 +1,9 @@
 import type { NovelRepositoryScopeInput } from "../novels/repositoryState";
+import type {
+  AethonNovelBookmarkEntry,
+  AethonNovelHistoryEntry,
+  AethonNovelProgressEntry,
+} from "../backup/novelsBackup";
 import type { NovelDetailRecord, PersistedNovelChapterEntry, PersistedNovelLibraryState } from "../novels/domain";
 import {
   getNovelLibraryChapters,
@@ -21,6 +26,7 @@ import {
   transitionMigrationOperation,
   withMigrationProfileLock,
 } from "./coordinator";
+import { matchNovelChapters } from "./chapterMapping";
 import type {
   NovelMassMigrationUndoPayload,
   NovelMigrationStateSlice,
@@ -85,11 +91,6 @@ export interface MassNovelMigrationPreview {
   blockedCount: number;
 }
 
-interface MatchedChapterPair {
-  oldChapter: PersistedNovelChapterEntry;
-  newChapter: NovelDetailRecord["chapters"][number];
-}
-
 function normalizeLookupText(value: string | null | undefined): string {
   return String(value ?? "")
     .normalize("NFKD")
@@ -108,44 +109,36 @@ function titleSimilarity(left: string, right: string): number {
   return union === 0 ? 0 : intersection / union;
 }
 
-function matchNovelChapters(
-  oldChapters: PersistedNovelChapterEntry[],
-  newDetail: NovelDetailRecord,
-): MatchedChapterPair[] {
-  const unmatched = [...newDetail.chapters];
-  const pairs: MatchedChapterPair[] = [];
-
-  for (const oldChapter of oldChapters) {
-    let index = unmatched.findIndex((candidate) => candidate.path === oldChapter.path);
-    if (index < 0) {
-      const normalizedOldTitle = normalizeLookupText(oldChapter.title);
-      index = unmatched.findIndex((candidate) => normalizeLookupText(candidate.title) === normalizedOldTitle);
-    }
-    if (index < 0 && oldChapter.order < unmatched.length) {
-      index = unmatched.findIndex((candidate) => candidate.order === oldChapter.order);
-    }
-    if (index < 0) continue;
-
-    const [newChapter] = unmatched.splice(index, 1);
-    if (!newChapter) continue;
-    pairs.push({ oldChapter, newChapter });
-  }
-
-  return pairs;
-}
-
 function buildPreview(
   oldTitle: string,
   oldChapters: PersistedNovelChapterEntry[],
   oldState: PersistedNovelLibraryState,
   targetDetail: NovelDetailRecord,
 ): NovelMigrationPreview {
-  const matched = matchNovelChapters(oldChapters, targetDetail);
-  const matchedIds = new Set(matched.map((pair) => pair.oldChapter.id));
-  const transferredReadCount = oldChapters.filter((chapter) => matchedIds.has(chapter.id) && !chapter.unread).length;
-  const transferredBookmarkCount = oldState.bookmarks.filter((bookmark) => (
-    bookmark.novelId === targetDetail.id || matched.some((pair) => pair.oldChapter.id === bookmark.chapterId)
-  )).length;
+  const matched = matchNovelChapters(oldChapters, targetDetail.chapters);
+  const targetStateById = new Map(
+    oldState.chapters
+      .filter((chapter) => chapter.novelId === targetDetail.id)
+      .map((chapter) => [chapter.id, chapter] as const),
+  );
+  const matchedByOldId = new Map(matched.map((pair) => [pair.oldChapter.id, pair] as const));
+  const transferredReadCount = matched.filter(({ oldChapter, newChapter }) => {
+    const targetState = targetStateById.get(newChapter.id);
+    return !oldChapter.unread && (targetState?.unread ?? newChapter.unread);
+  }).length;
+  const existingTargetBookmarkKeys = new Set(
+    oldState.bookmarks
+      .filter((bookmark) => bookmark.novelId === targetDetail.id)
+      .map((bookmark) => `${bookmark.chapterId ?? ""}|${bookmark.label ?? ""}`),
+  );
+  const transferredBookmarkCount = oldState.bookmarks.filter((bookmark) => {
+    const pair = bookmark.chapterId ? matchedByOldId.get(bookmark.chapterId) : null;
+    return Boolean(
+      pair
+      && bookmark.novelId === pair.oldChapter.novelId
+      && !existingTargetBookmarkKeys.has(`${pair.newChapter.id}|${bookmark.label ?? ""}`),
+    );
+  }).length;
   return {
     transferredReadCount,
     transferredBookmarkCount,
@@ -155,6 +148,68 @@ function buildPreview(
   };
 }
 
+function chooseFurthestProgress(
+  existing: AethonNovelProgressEntry | null,
+  migrated: AethonNovelProgressEntry | null,
+  targetDetail: NovelDetailRecord,
+): AethonNovelProgressEntry | null {
+  if (!existing) return migrated;
+  if (!migrated) return existing;
+
+  const orderByChapterId = new Map(
+    targetDetail.chapters.flatMap((chapter) => [
+      [chapter.id, chapter.order] as const,
+      [chapter.path, chapter.order] as const,
+    ]),
+  );
+  const existingOrder = existing.chapterId ? orderByChapterId.get(existing.chapterId) : undefined;
+  const migratedOrder = migrated.chapterId ? orderByChapterId.get(migrated.chapterId) : undefined;
+
+  if (existingOrder === undefined || migratedOrder === undefined) {
+    return existing;
+  }
+  if (migratedOrder !== existingOrder) {
+    return migratedOrder > existingOrder ? migrated : existing;
+  }
+  if (migrated.progressPercent !== existing.progressPercent) {
+    return migrated.progressPercent > existing.progressPercent ? migrated : existing;
+  }
+  return migrated.updatedAt > existing.updatedAt ? migrated : existing;
+}
+
+function deduplicateBookmarks(entries: AethonNovelBookmarkEntry[]): AethonNovelBookmarkEntry[] {
+  const seen = new Set<string>();
+  return entries.filter((entry) => {
+    const key = [
+      entry.novelId,
+      entry.chapterId ?? "",
+      entry.locator ?? "",
+      entry.label ?? "",
+    ].join("|");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function deduplicateHistory(entries: AethonNovelHistoryEntry[]): AethonNovelHistoryEntry[] {
+  const seen = new Set<string>();
+  return entries
+    .sort((left, right) => right.readAt - left.readAt)
+    .filter((entry) => {
+      const key = [
+        entry.novelId,
+        entry.chapterId ?? "",
+        entry.locator ?? "",
+        entry.readAt,
+      ].join("|");
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 200);
+}
+
 function remapNovelState(
   oldState: PersistedNovelLibraryState,
   currentNovelId: string,
@@ -162,7 +217,7 @@ function remapNovelState(
 ): PersistedNovelLibraryState {
   const oldSlice = snapshotNovelLibraryStateSlice(oldState, currentNovelId);
   const currentChapters = oldSlice.chapters;
-  const matches = matchNovelChapters(currentChapters, targetDetail);
+  const matches = matchNovelChapters(currentChapters, targetDetail.chapters);
   const mappedByOldId = new Map(matches.map((pair) => [pair.oldChapter.id, pair.newChapter] as const));
   const nextState = upsertNovelInLibrary(oldState, targetDetail);
 
@@ -178,48 +233,72 @@ function remapNovelState(
 
     return {
       ...chapter,
-      unread: oldMatch.oldChapter.unread,
+      unread: chapter.unread && oldMatch.oldChapter.unread,
     };
   });
 
-  const oldProgress = oldState.progress.find((entry) => entry.novelId === currentNovelId) ?? null;
+  const oldProgressEntries = oldState.progress.filter((entry) => entry.novelId === currentNovelId);
+  const existingTargetProgressEntries = oldState.progress.filter((entry) => entry.novelId === targetDetail.id);
   const oldBookmarks = oldState.bookmarks.filter((entry) => entry.novelId === currentNovelId);
+  const existingTargetBookmarks = oldState.bookmarks.filter((entry) => entry.novelId === targetDetail.id);
   const oldHistory = oldState.history.filter((entry) => entry.novelId === currentNovelId);
+  const existingTargetHistory = oldState.history.filter((entry) => entry.novelId === targetDetail.id);
 
-  const progress = oldProgress
-    ? (() => {
-        const mapped = oldProgress.chapterId ? mappedByOldId.get(oldProgress.chapterId) : null;
-        return [{
-          ...oldProgress,
-          novelId: targetDetail.id,
-          chapterId: mapped?.id ?? mapped?.path ?? oldProgress.chapterId,
-          chapterTitle: mapped?.title ?? oldProgress.chapterTitle,
-          locator: mapped?.id ?? oldProgress.locator,
-        }];
-      })()
-    : [];
+  const mappedProgressEntries: AethonNovelProgressEntry[] = [];
+  const preservedUnmappedProgress: AethonNovelProgressEntry[] = [];
+  for (const progressEntry of oldProgressEntries) {
+    const mapped = progressEntry.chapterId ? mappedByOldId.get(progressEntry.chapterId) : null;
+    if (!mapped) {
+      preservedUnmappedProgress.push(progressEntry);
+      continue;
+    }
+    mappedProgressEntries.push({
+      ...progressEntry,
+      novelId: targetDetail.id,
+      chapterId: mapped.id || mapped.path,
+      chapterTitle: mapped.title,
+      locator: mapped.id || mapped.path,
+    });
+  }
+  const targetProgress = [...existingTargetProgressEntries, ...mappedProgressEntries]
+    .reduce<AethonNovelProgressEntry | null>(
+      (selected, candidate) => chooseFurthestProgress(selected, candidate, targetDetail),
+      null,
+    );
 
-  const bookmarks = oldBookmarks.map((bookmark) => {
+  const mappedBookmarks: AethonNovelBookmarkEntry[] = [];
+  const preservedUnmappedBookmarks: AethonNovelBookmarkEntry[] = [];
+  for (const bookmark of oldBookmarks) {
     const mapped = bookmark.chapterId ? mappedByOldId.get(bookmark.chapterId) : null;
-    return {
+    if (!mapped) {
+      preservedUnmappedBookmarks.push(bookmark);
+      continue;
+    }
+    mappedBookmarks.push({
       ...bookmark,
       novelId: targetDetail.id,
-      chapterId: mapped?.id ?? bookmark.chapterId,
-      chapterTitle: mapped?.title ?? bookmark.chapterTitle,
-      locator: mapped?.id ?? bookmark.locator,
-    };
-  });
+      chapterId: mapped.id || mapped.path,
+      chapterTitle: mapped.title,
+      locator: mapped.id || mapped.path,
+    });
+  }
 
-  const history = oldHistory.map((entry) => {
+  const mappedHistory: AethonNovelHistoryEntry[] = [];
+  const preservedUnmappedHistory: AethonNovelHistoryEntry[] = [];
+  for (const entry of oldHistory) {
     const mapped = entry.chapterId ? mappedByOldId.get(entry.chapterId) : null;
-    return {
+    if (!mapped) {
+      preservedUnmappedHistory.push(entry);
+      continue;
+    }
+    mappedHistory.push({
       ...entry,
       novelId: targetDetail.id,
-      chapterId: mapped?.id ?? entry.chapterId,
-      chapterTitle: mapped?.title ?? entry.chapterTitle,
-      locator: mapped?.id ?? entry.locator,
-    };
-  });
+      chapterId: mapped.id || mapped.path,
+      chapterTitle: mapped.title,
+      locator: mapped.id || mapped.path,
+    });
+  }
 
   return {
     ...nextState,
@@ -227,16 +306,21 @@ function remapNovelState(
     chapters: remappedChapters.filter((chapter) => chapter.novelId !== currentNovelId),
     progress: [
       ...nextState.progress.filter((entry) => entry.novelId !== currentNovelId && entry.novelId !== targetDetail.id),
-      ...progress,
+      ...preservedUnmappedProgress,
+      ...(targetProgress ? [targetProgress] : []),
     ],
-    bookmarks: [
+    bookmarks: deduplicateBookmarks([
       ...nextState.bookmarks.filter((entry) => entry.novelId !== currentNovelId && entry.novelId !== targetDetail.id),
-      ...bookmarks,
-    ],
-    history: [
-      ...history,
+      ...preservedUnmappedBookmarks,
+      ...existingTargetBookmarks,
+      ...mappedBookmarks,
+    ]),
+    history: deduplicateHistory([
+      ...preservedUnmappedHistory,
+      ...existingTargetHistory,
+      ...mappedHistory,
       ...nextState.history.filter((entry) => entry.novelId !== currentNovelId && entry.novelId !== targetDetail.id),
-    ].slice(0, 200),
+    ]),
     updatedAtMs: Date.now(),
   };
 }

@@ -816,3 +816,44 @@ Riscos encaminhados:
   entram somente nos lotes 72E2/72E3.
 - `recovery_pending` exige diagnostico/acao contextual. O startup nao tenta
   restaurar efeitos externos apenas com base no ultimo status gravado.
+
+### 72E1 - Chapter mapping
+
+Implementado:
+
+- Manga deixa de inferir um intervalo continuo pelo maior capitulo lido.
+  Apenas pares comprovados recebem leitura, bookmark ou progresso.
+- Numeros decimais usam sua identidade numerica exata, sem arredondamento para
+  duas casas. Gaps e estados nao contiguos permanecem intactos.
+- Duplicados manga sao resolvidos somente por evidencias unicas dentro do
+  mesmo numero (titulo e/ou scanlator). `sourceOrder` nao prova identidade
+  entre sources e nao e usado isoladamente.
+- O merge manga e monotonico: leitura e bookmark nunca voltam para `false`;
+  progresso nunca diminui e, quando a quantidade de paginas difere, usa a
+  proporcao observada em vez de copiar um indice incompativel.
+- Novels deixam de usar `order` isoladamente. O matcher aceita path+titulo,
+  titulo Unicode unico ou numero de capitulo extraido; ordem serve apenas para
+  desempatar identidades duplicadas previamente delimitadas.
+- Estado novel existente no destino e unido ao estado migrado. Leitura,
+  progresso, bookmarks e historico nao sao reduzidos; referencias sem par
+  comprovado permanecem associadas a origem, sem receber um `novelId` novo com
+  `chapterId` antigo.
+- Preview e apply compartilham o mesmo matcher, e as contagens representam
+  apenas pares e mudancas efetivamente transferiveis.
+
+Validacao:
+
+- 28/28 testes de chapter mapping, manga/novel migration, coordinator e
+  journal.
+- Casos cobertos: gaps, decimais, duplicados resolvidos e ambiguos, titulos
+  nao latinos, diferenca de page count, destino ja lido e progresso de destino
+  mais avancado.
+- Nenhuma alteracao visual, de layout, de source runtime ou de Syncd.
+
+Riscos encaminhados:
+
+- Identidade da obra, trackers, folders e links entram no 72E2.
+- Downloads e assets offline, inclusive pendencias sem remapeamento seguro,
+  entram no 72E3.
+- Referencias novel sem par permanecem preservadas para evitar perda; sua
+  apresentacao e resolucao explicita pertencem ao lote de identidade/links.

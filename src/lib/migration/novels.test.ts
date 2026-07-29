@@ -35,6 +35,7 @@ import {
 import {
   loadNovelLibraryState,
   resetNovelLibraryStateCacheForTests,
+  upsertNovelInLibrary,
 } from "../novels/libraryState";
 
 const SCOPE = { profileId: "test" } as const;
@@ -266,6 +267,112 @@ describe("novel migration with journal", () => {
 
     const finalJournalState = JSON.parse(String(journalStateJson));
     expect(finalJournalState.operations[0].status).toBe("compensated");
+  });
+
+  it("merges matched chapter state without reducing an existing target position", async () => {
+    const target = createTargetDetail();
+    const state = upsertNovelInLibrary(createInitialState(), target);
+    const targetChapterOne = state.chapters.find((chapter) => (
+      chapter.novelId === NEW_ID && chapter.order === 0
+    ))!;
+    targetChapterOne.unread = false;
+    state.progress.push({
+      novelId: NEW_ID,
+      chapterId: target.chapters[1]!.id,
+      chapterTitle: target.chapters[1]!.title,
+      progressPercent: 0.75,
+      locator: target.chapters[1]!.id,
+      updatedAt: 20,
+    });
+    novelStateJson = JSON.stringify(state);
+
+    await applyNovelMigrationWithJournal({
+      scopeInput: SCOPE,
+      currentNovelId: OLD_ID,
+      targetDetail: target,
+    });
+
+    const migrated = await loadNovelLibraryState(SCOPE);
+    const targetChapters = migrated.chapters
+      .filter((chapter) => chapter.novelId === NEW_ID)
+      .sort((left, right) => left.order - right.order);
+    expect(targetChapters.map((chapter) => chapter.unread)).toEqual([false, true]);
+    expect(migrated.progress.find((entry) => entry.novelId === NEW_ID)).toMatchObject({
+      chapterId: target.chapters[1]!.id,
+      progressPercent: 0.75,
+    });
+  });
+
+  it("preserves unmatched chapter references without attaching them to the target", async () => {
+    const state = createInitialState();
+    const unmatchedChapterId = createNovelChapterId(OLD_ID, "/works/1/side-story");
+    state.chapters.push({
+      id: unmatchedChapterId,
+      novelId: OLD_ID,
+      path: "/works/1/side-story",
+      title: "Side Story: Rain",
+      order: 2,
+      releaseTime: null,
+      unread: false,
+    });
+    state.progress = [{
+      novelId: OLD_ID,
+      chapterId: unmatchedChapterId,
+      chapterTitle: "Side Story: Rain",
+      progressPercent: 0.8,
+      locator: unmatchedChapterId,
+      updatedAt: 30,
+    }];
+    state.bookmarks = [{
+      novelId: OLD_ID,
+      chapterId: unmatchedChapterId,
+      chapterTitle: "Side Story: Rain",
+      locator: unmatchedChapterId,
+      label: "keep",
+      savedAt: 31,
+    }];
+    state.history = [{
+      novelId: OLD_ID,
+      chapterId: unmatchedChapterId,
+      chapterTitle: "Side Story: Rain",
+      locator: unmatchedChapterId,
+      readAt: 32,
+    }];
+    novelStateJson = JSON.stringify(state);
+    const target = createTargetDetail();
+    target.chapters.push({
+      id: createNovelChapterId(NEW_ID, "fiction/21220/appendix"),
+      novelId: NEW_ID,
+      path: "fiction/21220/appendix",
+      title: "Appendix",
+      order: 2,
+      releaseTime: null,
+      unread: true,
+    });
+    target.chapterCount = target.chapters.length;
+
+    await applyNovelMigrationWithJournal({
+      scopeInput: SCOPE,
+      currentNovelId: OLD_ID,
+      targetDetail: target,
+    });
+
+    const migrated = await loadNovelLibraryState(SCOPE);
+    expect(migrated.progress).toContainEqual(expect.objectContaining({
+      novelId: OLD_ID,
+      chapterId: unmatchedChapterId,
+    }));
+    expect(migrated.bookmarks).toContainEqual(expect.objectContaining({
+      novelId: OLD_ID,
+      chapterId: unmatchedChapterId,
+    }));
+    expect(migrated.history).toContainEqual(expect.objectContaining({
+      novelId: OLD_ID,
+      chapterId: unmatchedChapterId,
+    }));
+    expect(migrated.progress.some((entry) => (
+      entry.novelId === NEW_ID && entry.chapterId === unmatchedChapterId
+    ))).toBe(false);
   });
 
   it("previews, applies, and undoes mass novel migration for ready items only", async () => {

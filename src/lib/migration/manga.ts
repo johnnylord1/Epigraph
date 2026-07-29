@@ -22,6 +22,7 @@ import {
   transitionMigrationOperation,
   withMigrationProfileLock,
 } from "./coordinator";
+import { matchMangaChapters } from "./chapterMapping";
 import type {
   MangaMassMigrationUndoPayload,
   MangaMigrationStateSlice,
@@ -282,11 +283,9 @@ async function fetchBestMangaMatch(
 }
 
 function summarizeMatchedReadCount(oldChapters: Chapter[], newChapters: Chapter[]): number {
-  const highestReadChapterNumber = oldChapters.reduce((highest, chapter) => (
-    chapter.isRead && chapter.chapterNumber > highest ? chapter.chapterNumber : highest
-  ), Number.NEGATIVE_INFINITY);
-  if (!Number.isFinite(highestReadChapterNumber)) return 0;
-  return newChapters.filter((chapter) => chapter.chapterNumber <= highestReadChapterNumber).length;
+  return matchMangaChapters(oldChapters, newChapters)
+    .filter(({ oldChapter, newChapter }) => oldChapter.isRead && !newChapter.isRead)
+    .length;
 }
 
 export async function buildMangaMigrationMatch(
@@ -370,27 +369,35 @@ async function prepareMangaMigrationOperation(
   const newCategoryIds = await loadCategoryIdsForManga(input.match.manga.id);
   const oldState = snapshotMangaState(input.currentManga, input.currentChapters, oldCategoryIds);
   const newState = snapshotMangaState(input.match.manga, input.match.chapters, newCategoryIds);
-  const oldByNum = new Map(
-    input.currentChapters.map((chapter) => [Math.round(chapter.chapterNumber * 100), chapter] as const),
-  );
+  const matches = matchMangaChapters(input.currentChapters, input.match.chapters);
 
   const toMarkRead: number[] = [];
   const toMarkBookmarked: number[] = [];
   const progressUpdates: Array<{ id: number; lastPageRead: number }> = [];
 
-  const highestReadChapterNumber = input.currentChapters.reduce((highest, chapter) => (
-    chapter.isRead && chapter.chapterNumber > highest ? chapter.chapterNumber : highest
-  ), Number.NEGATIVE_INFINITY);
-
-  for (const newChapter of input.match.chapters) {
-    const key = Math.round(newChapter.chapterNumber * 100);
-    const oldChapter = oldByNum.get(key);
-    if (Number.isFinite(highestReadChapterNumber) && newChapter.chapterNumber <= highestReadChapterNumber) {
+  for (const { oldChapter, newChapter } of matches) {
+    if (oldChapter.isRead && !newChapter.isRead) {
       toMarkRead.push(newChapter.id);
     }
-    if (oldChapter?.isBookmarked) toMarkBookmarked.push(newChapter.id);
-    if (oldChapter && (oldChapter.lastPageRead ?? 0) > 0 && !oldChapter.isRead) {
-      progressUpdates.push({ id: newChapter.id, lastPageRead: oldChapter.lastPageRead ?? 0 });
+    if (oldChapter.isBookmarked && !newChapter.isBookmarked) {
+      toMarkBookmarked.push(newChapter.id);
+    }
+    const oldLastPageRead = oldChapter.lastPageRead ?? 0;
+    const newLastPageRead = newChapter.lastPageRead ?? 0;
+    if (oldChapter.isRead || newChapter.isRead || oldLastPageRead <= 0) {
+      continue;
+    }
+    if (oldChapter.pageCount > 1 && newChapter.pageCount > 1) {
+      const oldRatio = Math.min(1, oldLastPageRead / (oldChapter.pageCount - 1));
+      const newRatio = Math.min(1, newLastPageRead / (newChapter.pageCount - 1));
+      if (oldRatio > newRatio) {
+        progressUpdates.push({
+          id: newChapter.id,
+          lastPageRead: Math.round(oldRatio * (newChapter.pageCount - 1)),
+        });
+      }
+    } else if (newLastPageRead === 0) {
+      progressUpdates.push({ id: newChapter.id, lastPageRead: oldLastPageRead });
     }
   }
 
@@ -404,7 +411,7 @@ async function prepareMangaMigrationOperation(
       newItemTitle: input.match.manga.title,
       oldSourceId: input.currentManga.source?.id ?? "unknown",
       newSourceId: input.targetSourceId,
-      transferredChapterCount: input.match.chapters.length,
+      transferredChapterCount: matches.length,
       transferredReadCount: toMarkRead.length,
       transferredBookmarkCount: toMarkBookmarked.length,
     },

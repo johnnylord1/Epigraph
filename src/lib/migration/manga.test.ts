@@ -337,7 +337,7 @@ describe("manga migration services", () => {
     expect(categoryMembership.get(1)).not.toContain(10);
     expect(categoryMembership.get(2)).not.toContain(10);
     expect(journalStatusAtFirstMutation).toBe("applying");
-    expect(chaptersByMangaId.get(20)?.[0]?.isRead).toBe(true);
+    expect(chaptersByMangaId.get(20)?.[0]?.isRead).toBe(false);
     expect(chaptersByMangaId.get(20)?.[0]?.isBookmarked).toBe(true);
     expect(chaptersByMangaId.get(20)?.[0]?.lastPageRead).toBe(7);
     expect(chaptersByMangaId.get(20)?.[1]?.isRead).toBe(true);
@@ -349,6 +349,51 @@ describe("manga migration services", () => {
     expect(categoryMembership.get(1)).toContain(10);
     expect(categoryMembership.get(2)).toContain(10);
     expect(categoryMembership.get(3)).toContain(20);
+  });
+
+  it("never reduces chapter state already present on the target", async () => {
+    const targetChapter = chaptersByMangaId.get(20)![0]!;
+    targetChapter.isRead = true;
+    targetChapter.lastPageRead = 9;
+
+    await applyMangaMigrationWithJournal({
+      currentManga: mangaById.get(10)!,
+      currentChapters: chaptersByMangaId.get(10)!,
+      targetSourceId: "source-new",
+      mode: "copy",
+      match: {
+        manga: mangaById.get(20)!,
+        chapters: chaptersByMangaId.get(20)!,
+        similarity: 1,
+      },
+    });
+
+    expect(targetChapter.isRead).toBe(true);
+    expect(targetChapter.isBookmarked).toBe(true);
+    expect(targetChapter.lastPageRead).toBe(9);
+  });
+
+  it("transfers partial progress proportionally when page counts differ", async () => {
+    const sourceChapter = chaptersByMangaId.get(10)![0]!;
+    const targetChapter = chaptersByMangaId.get(20)![0]!;
+    sourceChapter.pageCount = 20;
+    sourceChapter.lastPageRead = 10;
+    targetChapter.pageCount = 10;
+    targetChapter.lastPageRead = 2;
+
+    await applyMangaMigrationWithJournal({
+      currentManga: mangaById.get(10)!,
+      currentChapters: chaptersByMangaId.get(10)!,
+      targetSourceId: "source-new",
+      mode: "copy",
+      match: {
+        manga: mangaById.get(20)!,
+        chapters: chaptersByMangaId.get(20)!,
+        similarity: 1,
+      },
+    });
+
+    expect(targetChapter.lastPageRead).toBe(5);
   });
 
   it("can copy a single manga migration without removing the source title", async () => {
