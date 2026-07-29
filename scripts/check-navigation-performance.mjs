@@ -9,14 +9,21 @@ import path from "node:path";
 import process from "node:process";
 
 import { Builder, Capabilities } from "selenium-webdriver";
+import { Command as WebDriverCommand } from "selenium-webdriver/lib/command.js";
+import {
+  classifyThermalState,
+  summarizeDirectionalTransitions,
+  summarizeResourceGrowth,
+} from "./library-navigation-metrics.mjs";
 
 const projectRoot = path.resolve(import.meta.dirname, "..");
 const outputDirectory = path.resolve(
   process.env.AETHON_NAVIGATION_OUTPUT_DIR
     || path.join(projectRoot, "docs", "screenshots", "marco70-bundle-performance"),
 );
-const iterations = 5;
-const searchCycles = 20;
+const iterations = Number(process.env.AETHON_NAVIGATION_ITERATIONS || 5);
+const searchCycles = Number(process.env.AETHON_NAVIGATION_SEARCH_CYCLES || 20);
+const repeatedLibraryTransitions = Number(process.env.AETHON_LIBRARY_TRANSITIONS || 20);
 const budgets = JSON.parse(await fs.readFile(path.join(projectRoot, "config", "release-navigation-budgets.json"), "utf8"));
 
 function parseArgs(argv) {
@@ -51,7 +58,9 @@ function median(values) {
 }
 
 async function createFakeCore() {
+  let requestCount = 0;
   const server = http.createServer((request, response) => {
+    requestCount += 1;
     response.setHeader("Access-Control-Allow-Origin", "*");
     response.setHeader("Access-Control-Allow-Headers", "content-type,authorization");
     if (request.method === "OPTIONS") return response.writeHead(204).end();
@@ -100,6 +109,7 @@ async function createFakeCore() {
   assert(address && typeof address === "object");
   return {
     url: `http://127.0.0.1:${address.port}`,
+    getRequestCount: () => requestCount,
     close: () => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
   };
 }
@@ -160,29 +170,337 @@ async function waitForLibrary(driver) {
   }
 }
 
-async function switchLibrarySection(driver, index, expected) {
-  const startedAt = Date.now();
-  const clicked = await driver.executeScript(function clickSection(targetIndex) {
+async function readDevToolsMetrics(driver) {
+  if (!driver.__aethonDevToolsEnabled) return null;
+  try {
+    await driver.execute(
+      new WebDriverCommand("aethonSendDevToolsCommand")
+        .setParameter("cmd", "Performance.enable")
+        .setParameter("params", {}),
+    );
+    const response = await driver.execute(
+      new WebDriverCommand("aethonSendAndGetDevToolsCommand")
+        .setParameter("cmd", "Performance.getMetrics")
+        .setParameter("params", {}),
+    );
+    return Object.fromEntries((response?.metrics ?? []).map((metric) => [metric.name, metric.value]));
+  } catch {
+    return null;
+  }
+}
+
+function diffDevToolsMetrics(before, after) {
+  if (!before || !after) return null;
+  const result = {};
+  for (const key of [
+    "LayoutCount",
+    "LayoutDuration",
+    "RecalcStyleCount",
+    "RecalcStyleDuration",
+    "ScriptDuration",
+    "TaskDuration",
+    "JSHeapUsedSize",
+    "Nodes",
+    "Documents",
+  ]) {
+    if (Number.isFinite(before[key]) && Number.isFinite(after[key])) {
+      result[key] = after[key] - before[key];
+    }
+  }
+  return result;
+}
+
+async function installLibraryResourceAudit(driver) {
+  return driver.executeScript(function installResourceAudit() {
+    if (window.__aethonLibraryResourceAudit) {
+      return window.__aethonLibraryResourceAudit.snapshot();
+    }
+
+    const original = {
+      addEventListener: EventTarget.prototype.addEventListener,
+      removeEventListener: EventTarget.prototype.removeEventListener,
+      requestAnimationFrame: window.requestAnimationFrame.bind(window),
+      cancelAnimationFrame: window.cancelAnimationFrame.bind(window),
+      ResizeObserver: window.ResizeObserver,
+      IntersectionObserver: window.IntersectionObserver,
+    };
+    const counters = {
+      listenerAdds: 0,
+      listenerRemoves: 0,
+      rafScheduled: 0,
+      rafCancelled: 0,
+      pendingRafs: new Set(),
+      maxPendingRafs: 0,
+      activeResizeObservers: 0,
+      resizeObserversCreated: 0,
+      activeIntersectionObservers: 0,
+      intersectionObserversCreated: 0,
+    };
+    const listenerRecords = [];
+
+    EventTarget.prototype.addEventListener = function trackedAdd(...args) {
+      const [type, listener, options] = args;
+      if (listener) {
+        const capture = typeof options === "object" ? Boolean(options?.capture) : Boolean(options);
+        const duplicate = listenerRecords.some((record) => record.active
+          && record.target === this
+          && record.type === type
+          && record.listener === listener
+          && record.capture === capture);
+        if (!duplicate) {
+          listenerRecords.push({ target: this, type, listener, capture, active: true });
+          counters.listenerAdds += 1;
+        }
+      }
+      return original.addEventListener.apply(this, args);
+    };
+    EventTarget.prototype.removeEventListener = function trackedRemove(...args) {
+      const [type, listener, options] = args;
+      const capture = typeof options === "object" ? Boolean(options?.capture) : Boolean(options);
+      const record = listenerRecords.find((entry) => entry.active
+        && entry.target === this
+        && entry.type === type
+        && entry.listener === listener
+        && entry.capture === capture);
+      if (record) {
+        record.active = false;
+        counters.listenerRemoves += 1;
+      }
+      return original.removeEventListener.apply(this, args);
+    };
+    window.requestAnimationFrame = function trackedRaf(callback) {
+      let frameId = 0;
+      frameId = original.requestAnimationFrame((time) => {
+        counters.pendingRafs.delete(frameId);
+        callback(time);
+      });
+      counters.rafScheduled += 1;
+      counters.pendingRafs.add(frameId);
+      counters.maxPendingRafs = Math.max(counters.maxPendingRafs, counters.pendingRafs.size);
+      return frameId;
+    };
+    window.cancelAnimationFrame = function trackedCancel(frameId) {
+      if (counters.pendingRafs.delete(frameId)) counters.rafCancelled += 1;
+      return original.cancelAnimationFrame(frameId);
+    };
+
+    if (original.ResizeObserver) {
+      window.ResizeObserver = class TrackedResizeObserver extends original.ResizeObserver {
+        #active = true;
+        constructor(callback) {
+          super(callback);
+          counters.resizeObserversCreated += 1;
+          counters.activeResizeObservers += 1;
+        }
+        observe(...args) {
+          if (!this.#active) {
+            this.#active = true;
+            counters.activeResizeObservers += 1;
+          }
+          return super.observe(...args);
+        }
+        disconnect() {
+          if (this.#active) {
+            this.#active = false;
+            counters.activeResizeObservers -= 1;
+          }
+          return super.disconnect();
+        }
+      };
+    }
+    if (original.IntersectionObserver) {
+      window.IntersectionObserver = class TrackedIntersectionObserver extends original.IntersectionObserver {
+        #active = true;
+        constructor(callback, options) {
+          super(callback, options);
+          counters.intersectionObserversCreated += 1;
+          counters.activeIntersectionObservers += 1;
+        }
+        observe(...args) {
+          if (!this.#active) {
+            this.#active = true;
+            counters.activeIntersectionObservers += 1;
+          }
+          return super.observe(...args);
+        }
+        disconnect() {
+          if (this.#active) {
+            this.#active = false;
+            counters.activeIntersectionObservers -= 1;
+          }
+          return super.disconnect();
+        }
+      };
+    }
+
+    window.__aethonLibraryResourceAudit = {
+      snapshot() {
+        const connectedListeners = listenerRecords.filter((record) => record.active
+          && (!(record.target instanceof Node) || record.target.isConnected)).length;
+        return {
+          listenerAdds: counters.listenerAdds,
+          listenerRemoves: counters.listenerRemoves,
+          listenerBalance: counters.listenerAdds - counters.listenerRemoves,
+          connectedListeners,
+          rafScheduled: counters.rafScheduled,
+          rafCancelled: counters.rafCancelled,
+          pendingRafs: counters.pendingRafs.size,
+          maxPendingRafs: counters.maxPendingRafs,
+          activeResizeObservers: counters.activeResizeObservers,
+          resizeObserversCreated: counters.resizeObserversCreated,
+          activeIntersectionObservers: counters.activeIntersectionObservers,
+          intersectionObserversCreated: counters.intersectionObserversCreated,
+        };
+      },
+    };
+    return window.__aethonLibraryResourceAudit.snapshot();
+  });
+}
+
+async function readLibraryResourceAudit(driver) {
+  return driver.executeScript(function readResourceAudit() {
+    const resources = window.__aethonLibraryResourceAudit?.snapshot?.() ?? null;
+    const memory = performance.memory;
+    return {
+      ...resources,
+      heapBytes: Number.isFinite(memory?.usedJSHeapSize) ? memory.usedJSHeapSize : null,
+      domNodes: document.querySelectorAll("*").length,
+      libraryCards: document.querySelectorAll(".library-section-panel.is-active .card").length,
+    };
+  });
+}
+
+async function switchLibrarySection(driver, index, expected, options = {}) {
+  const devToolsBefore = await readDevToolsMetrics(driver);
+  const coreRequestsBefore = options.getCoreRequestCount?.() ?? null;
+  const sample = await driver.executeAsyncScript(function measureSectionSwitch(targetIndex, section, done) {
+    const startedAt = performance.now();
+    const tabs = document.querySelector(".section-tabs");
     const buttons = [...document.querySelectorAll(".section-tabs .section-tab")];
     const target = buttons[targetIndex];
-    if (!(target instanceof HTMLButtonElement)) return false;
-    target.click();
-    return true;
-  }, index);
-  assert.equal(clicked, true, `Missing ${expected} library section button.`);
-  await waitUntil(
-    () => driver.executeScript(function sectionReady(section) {
+    if (!(target instanceof HTMLButtonElement) || !tabs) {
+      done({ error: `Missing ${section} library section button.` });
+      return;
+    }
+
+    const resourceCountBefore = performance.getEntriesByType("resource").length;
+    const heapBefore = Number.isFinite(performance.memory?.usedJSHeapSize)
+      ? performance.memory.usedJSHeapSize
+      : null;
+    const longTasks = [];
+    const layoutShifts = [];
+    const observers = [];
+    let commitAt = null;
+    let settled = false;
+
+    if (typeof PerformanceObserver !== "undefined") {
+      for (const [entryType, sink] of [["longtask", longTasks], ["layout-shift", layoutShifts]]) {
+        if (!PerformanceObserver.supportedEntryTypes?.includes(entryType)) continue;
+        try {
+          const observer = new PerformanceObserver((list) => sink.push(...list.getEntries().map((entry) => ({
+            duration: entry.duration,
+            value: Number(entry.value ?? 0),
+            hadRecentInput: Boolean(entry.hadRecentInput),
+          }))));
+          observer.observe({ type: entryType, buffered: false });
+          observers.push(observer);
+        } catch {}
+      }
+    }
+
+    const mutationObserver = new MutationObserver(() => {
       const activePanel = document.querySelector(".library-section-panel.is-active");
-      return document.querySelector(".section-tabs")?.getAttribute("data-active") === section
+      if (tabs.getAttribute("data-active") === section
+        && activePanel?.querySelector(".content")
+        && !activePanel.querySelector(".grid-skeleton")) {
+        commitAt ??= performance.now();
+      }
+    });
+    mutationObserver.observe(document.body, {
+      attributes: true,
+      attributeFilter: ["class", "data-active", "aria-hidden"],
+      childList: true,
+      subtree: true,
+    });
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      mutationObserver.disconnect();
+      for (const observer of observers) observer.disconnect();
+      const stableFrameAt = performance.now();
+      const activePanel = document.querySelector(".library-section-panel.is-active");
+      const memory = performance.memory;
+      done({
+        durationMs: stableFrameAt - startedAt,
+        phases: {
+          inputToHandlerReturnMs: handlerReturnedAt - startedAt,
+          inputToStateUpdateMs: stateUpdatedAt === null ? null : stateUpdatedAt - startedAt,
+          stateUpdateToCommitMs: stateUpdatedAt === null || commitAt === null ? null : commitAt - stateUpdatedAt,
+          commitToStableFrameMs: commitAt === null ? null : stableFrameAt - commitAt,
+        },
+        longTasks: {
+          count: longTasks.length,
+          durationMs: longTasks.reduce((sum, entry) => sum + entry.duration, 0),
+        },
+        layoutShifts: {
+          count: layoutShifts.length,
+          score: layoutShifts.reduce((sum, entry) => sum + entry.value, 0),
+          unexpectedScore: layoutShifts
+            .filter((entry) => !entry.hadRecentInput)
+            .reduce((sum, entry) => sum + entry.value, 0),
+        },
+        resourceEntriesDelta: performance.getEntriesByType("resource").length - resourceCountBefore,
+        heapBefore,
+        heapAfter: Number.isFinite(memory?.usedJSHeapSize) ? memory.usedJSHeapSize : null,
+        domNodes: activePanel?.querySelectorAll("*").length ?? 0,
+        cardCount: activePanel?.querySelectorAll(".card").length ?? 0,
+      });
+    };
+
+    let handlerReturnedAt = startedAt;
+    let stateUpdatedAt = null;
+    target.click();
+    handlerReturnedAt = performance.now();
+    if (window.__aethonAudit?.getState?.().librarySection === section) {
+      stateUpdatedAt = performance.now();
+    }
+
+    const waitForStablePanel = () => {
+      const activePanel = document.querySelector(".library-section-panel.is-active");
+      const ready = tabs.getAttribute("data-active") === section
         && Boolean(activePanel?.querySelector(".content"))
         && !activePanel?.querySelector(".grid-skeleton");
-    }, expected),
-    `${expected} library section did not become active.`,
-  );
-  await driver.executeAsyncScript(function afterPaint(done) {
-    requestAnimationFrame(() => requestAnimationFrame(done));
-  });
-  return Date.now() - startedAt;
+      if (!ready) {
+        requestAnimationFrame(waitForStablePanel);
+        return;
+      }
+      commitAt ??= performance.now();
+      requestAnimationFrame(() => requestAnimationFrame(finish));
+    };
+    requestAnimationFrame(waitForStablePanel);
+    setTimeout(() => {
+      if (!settled) {
+        mutationObserver.disconnect();
+        for (const observer of observers) observer.disconnect();
+        settled = true;
+        done({ error: `${section} library section did not become stable.` });
+      }
+    }, 10_000);
+  }, index, expected);
+
+  if (sample?.error) throw new Error(sample.error);
+  const devToolsAfter = await readDevToolsMetrics(driver);
+  const coreRequestsAfter = options.getCoreRequestCount?.() ?? null;
+  return {
+    ...sample,
+    direction: expected === "books" ? "comics-to-books" : "books-to-comics",
+    thermalState: options.thermalState ?? "cached",
+    devTools: diffDevToolsMetrics(devToolsBefore, devToolsAfter),
+    coreRequests: coreRequestsBefore === null || coreRequestsAfter === null
+      ? null
+      : coreRequestsAfter - coreRequestsBefore,
+  };
 }
 
 async function collectViewportEvidence(driver) {
@@ -323,7 +641,24 @@ async function createSession(driverUrl, appPath, fakeCoreUrl, profileRoot) {
       additionalBrowserArguments: ["--remote-debugging-port=0"],
     },
   });
-  return new Builder().usingServer(driverUrl).withCapabilities(capabilities).build();
+  const driver = await new Builder().usingServer(driverUrl).withCapabilities(capabilities).build();
+  try {
+    const executor = driver.getExecutor();
+    executor.defineCommand(
+      "aethonSendDevToolsCommand",
+      "POST",
+      "/session/:sessionId/chromium/send_command",
+    );
+    executor.defineCommand(
+      "aethonSendAndGetDevToolsCommand",
+      "POST",
+      "/session/:sessionId/chromium/send_command_and_get_result",
+    );
+    driver.__aethonDevToolsEnabled = true;
+  } catch {
+    driver.__aethonDevToolsEnabled = false;
+  }
+  return driver;
 }
 
 async function main() {
@@ -343,7 +678,9 @@ async function main() {
 
   const fakeCore = await createFakeCore();
   const startupDurations = [];
-  const librarySectionDurations = [];
+  const startupSamples = [];
+  const libraryTransitions = [];
+  let libraryResourceSeries = [];
   let searchReport = null;
   let toastReport = null;
   let viewportBefore = null;
@@ -356,33 +693,83 @@ async function main() {
       try {
         const startupStartedAt = Date.now();
         driver = await createSession(driverUrl, appPath, fakeCore.url, profileRoot);
+        const sessionCreatedAt = Date.now();
         await driver.manage().setTimeouts({ implicit: 0, pageLoad: 120_000, script: 120_000 });
         await waitForAuditBridge(driver);
+        const auditBridgeReadyAt = Date.now();
         await waitUntil(async () => {
           const state = await callAudit(driver, "getState");
           return Boolean(state?.profileId && state?.serverUrl);
         }, "Aethon launch target did not become ready.", 120_000);
+        const runtimeStateReadyAt = Date.now();
         await callAudit(driver, "bypassStartupSplash");
+        const splashBypassedAt = Date.now();
         await waitUntil(async () => {
           const state = await callAudit(driver, "getState");
           const shellRendered = await driver.executeScript("return Boolean(document.querySelector('#app-shell .n-sidebar')) && !document.querySelector('.page-loading')");
           return state?.shellReady === true && shellRendered;
         }, "Aethon shell did not become ready.", 120_000);
-        startupDurations.push(Date.now() - startupStartedAt);
+        const shellReadyAt = Date.now();
+        const startupSample = {
+          totalMs: shellReadyAt - startupStartedAt,
+          sessionCreationMs: sessionCreatedAt - startupStartedAt,
+          sessionToAuditBridgeMs: auditBridgeReadyAt - sessionCreatedAt,
+          auditBridgeToRuntimeStateMs: runtimeStateReadyAt - auditBridgeReadyAt,
+          splashBypassMs: splashBypassedAt - runtimeStateReadyAt,
+          splashToStableShellMs: shellReadyAt - splashBypassedAt,
+        };
+        startupSamples.push(startupSample);
+        startupDurations.push(startupSample.totalMs);
         await callAudit(driver, "prepareLibrary");
-        await callAudit(driver, "openLibrary");
+        const startWithBooks = iteration % 2 === 1;
+        await callAudit(driver, startWithBooks ? "openBooksLibrary" : "openLibrary");
         await waitForLibrary(driver);
         viewportBefore ??= await collectViewportEvidence(driver);
 
-        librarySectionDurations.push(await switchLibrarySection(driver, 1, "books"));
-        await waitForLibrary(driver);
-        librarySectionDurations.push(await switchLibrarySection(driver, 0, "comics"));
-        await waitForLibrary(driver);
+        await installLibraryResourceAudit(driver);
+        const activations = {
+          comics: startWithBooks ? 0 : 1,
+          books: startWithBooks ? 1 : 0,
+        };
+        let currentSection = startWithBooks ? "books" : "comics";
+        const transitionCount = iteration === 0 ? repeatedLibraryTransitions : 4;
+        const sessionResources = [await readLibraryResourceAudit(driver)];
+        for (let transitionIndex = 0; transitionIndex < transitionCount; transitionIndex += 1) {
+          const expected = currentSection === "comics" ? "books" : "comics";
+          const sample = await switchLibrarySection(
+            driver,
+            expected === "books" ? 1 : 0,
+            expected,
+            {
+              thermalState: classifyThermalState(activations[expected]),
+              getCoreRequestCount: fakeCore.getRequestCount,
+            },
+          );
+          libraryTransitions.push({
+            ...sample,
+            iteration,
+            transitionIndex,
+          });
+          activations[expected] += 1;
+          currentSection = expected;
+          sessionResources.push(await readLibraryResourceAudit(driver));
+        }
+        if (iteration === 0) libraryResourceSeries = sessionResources;
 
         if (iteration === 0) {
+          if (currentSection !== "comics") {
+            await switchLibrarySection(driver, 0, "comics", {
+              thermalState: classifyThermalState(activations.comics),
+              getCoreRequestCount: fakeCore.getRequestCount,
+            });
+            await waitForLibrary(driver);
+          }
           const imageComics = await driver.takeScreenshot();
           await fs.writeFile(path.join(outputDirectory, "library-comics.png"), imageComics, "base64");
-          await switchLibrarySection(driver, 1, "books");
+          await switchLibrarySection(driver, 1, "books", {
+            thermalState: classifyThermalState(activations.books),
+            getCoreRequestCount: fakeCore.getRequestCount,
+          });
           await waitForLibrary(driver);
           await new Promise((resolve) => setTimeout(resolve, 300));
           const imageBooks = await driver.takeScreenshot();
@@ -429,7 +816,7 @@ async function main() {
   }
   const measuredMedians = {
     startupMedianMs: median(startupDurations),
-    librarySectionMedianMs: median(librarySectionDurations),
+    librarySectionMedianMs: median(libraryTransitions.map((sample) => sample.durationMs)),
     searchCycleMedianMs: median(searchReport?.durations ?? []),
   };
   const budgetChecks = Object.fromEntries(Object.entries(measuredMedians).map(([key, actualMs]) => {
@@ -440,16 +827,41 @@ async function main() {
   const failures = Object.entries(budgetChecks)
     .filter(([, check]) => !check.passed)
     .map(([key, check]) => `${key} ${check.actualMs}ms > ${check.maxMs}ms`);
+  const directionalLibrarySummary = summarizeDirectionalTransitions(libraryTransitions);
+  const libraryResourceGrowth = summarizeResourceGrowth(libraryResourceSeries, [
+    "connectedListeners",
+    "pendingRafs",
+    "activeResizeObservers",
+    "activeIntersectionObservers",
+    "heapBytes",
+    "domNodes",
+    "libraryCards",
+  ]);
   const report = {
-    version: 1,
+    version: 2,
     environment: "Tauri v2 / WebView2 / disposable profile / fake local Core",
     build: buildIdentity,
     visualLimitations: [
       "The timing baseline was established after the Marco 70 implementation and is intended to block future regressions; earlier releases did not expose equivalent native timing telemetry.",
+      "Chromium Performance metrics are reported when WebView2Driver exposes the DevTools bridge; the stable-frame phase remains the paint boundary when it does not.",
+      "Listener, observer, and RAF counters cover resources created after the automation-only hook is installed, which is sufficient to detect growth across repeated section changes but is not a process-wide inventory.",
     ],
     iterations,
-    startup: { samplesMs: startupDurations, medianMs: measuredMedians.startupMedianMs },
-    librarySection: { samplesMs: librarySectionDurations, medianMs: measuredMedians.librarySectionMedianMs },
+    startup: {
+      samplesMs: startupDurations,
+      medianMs: measuredMedians.startupMedianMs,
+      phases: startupSamples,
+    },
+    librarySection: {
+      samplesMs: libraryTransitions.map((sample) => sample.durationMs),
+      medianMs: measuredMedians.librarySectionMedianMs,
+      directional: directionalLibrarySummary,
+      transitions: libraryTransitions,
+      twentyCycleResources: {
+        samples: libraryResourceSeries,
+        growth: libraryResourceGrowth,
+      },
+    },
     search: {
       cycles: searchCycles,
       samplesMs: searchReport?.durations ?? [],

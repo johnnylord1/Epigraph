@@ -1,0 +1,2166 @@
+{
+  "version": 2,
+  "environment": "Tauri v2 / WebView2 / disposable profile / fake local Core",
+  "build": {
+    "app": "src-tauri/target/release/aethon.exe",
+    "sha256": "2d3767e2f1fc27917b981420ce6bb484c49b64f12c6af6b03b425bcd49079e80",
+    "commit": "3975bae833cc00241c6b7e9f85f020e7e684e2aa",
+    "dirty": true
+  },
+  "visualLimitations": [
+    "The timing baseline was established after the Marco 70 implementation and is intended to block future regressions; earlier releases did not expose equivalent native timing telemetry.",
+    "Chromium Performance metrics are reported when WebView2Driver exposes the DevTools bridge; the stable-frame phase remains the paint boundary when it does not.",
+    "Listener, observer, and RAF counters cover resources created after the automation-only hook is installed, which is sufficient to detect growth across repeated section changes but is not a process-wide inventory."
+  ],
+  "iterations": 5,
+  "startup": {
+    "samplesMs": [
+      6149,
+      6105,
+      4815,
+      5119,
+      5116
+    ],
+    "medianMs": 5119,
+    "phases": [
+      {
+        "totalMs": 6149,
+        "sessionCreationMs": 1043,
+        "sessionToAuditBridgeMs": 4553,
+        "auditBridgeToRuntimeStateMs": 244,
+        "splashBypassMs": 252,
+        "splashToStableShellMs": 57
+      },
+      {
+        "totalMs": 6105,
+        "sessionCreationMs": 1218,
+        "sessionToAuditBridgeMs": 4731,
+        "auditBridgeToRuntimeStateMs": 82,
+        "splashBypassMs": 43,
+        "splashToStableShellMs": 31
+      },
+      {
+        "totalMs": 4815,
+        "sessionCreationMs": 1269,
+        "sessionToAuditBridgeMs": 3444,
+        "auditBridgeToRuntimeStateMs": 31,
+        "splashBypassMs": 31,
+        "splashToStableShellMs": 40
+      },
+      {
+        "totalMs": 5119,
+        "sessionCreationMs": 1241,
+        "sessionToAuditBridgeMs": 3356,
+        "auditBridgeToRuntimeStateMs": 238,
+        "splashBypassMs": 205,
+        "splashToStableShellMs": 79
+      },
+      {
+        "totalMs": 5116,
+        "sessionCreationMs": 1329,
+        "sessionToAuditBridgeMs": 3359,
+        "auditBridgeToRuntimeStateMs": 197,
+        "splashBypassMs": 189,
+        "splashToStableShellMs": 42
+      }
+    ]
+  },
+  "librarySection": {
+    "samplesMs": [
+      165,
+      24.699999999720603,
+      18.899999999906868,
+      17.200000000186265,
+      23.90000000037253,
+      15.5,
+      48,
+      16.899999999906868,
+      18,
+      16.40000000037253,
+      20,
+      18.90000000037253,
+      32.700000000186265,
+      16.100000000093132,
+      19.700000000186265,
+      28.299999999813735,
+      15.399999999906868,
+      12.5,
+      12.200000000186265,
+      12.399999999906868,
+      71.70000000018626,
+      117.79999999981374,
+      22.59999999962747,
+      15.200000000186265,
+      262.5,
+      27.800000000279397,
+      25.600000000093132,
+      30.899999999906868,
+      139.10000000009313,
+      15.100000000093132,
+      18.899999999906868,
+      21,
+      28.899999999906868,
+      43.799999999813735,
+      116.6999999997206,
+      21.700000000186265
+    ],
+    "medianMs": 21.350000000093132,
+    "directional": {
+      "comics-to-books": {
+        "all": {
+          "count": 18,
+          "p50Ms": 22.450000000186265,
+          "p95Ms": 179.62499999999986,
+          "samplesMs": [
+            165,
+            18.899999999906868,
+            23.90000000037253,
+            48,
+            18,
+            20,
+            32.700000000186265,
+            19.700000000186265,
+            15.399999999906868,
+            12.200000000186265,
+            117.79999999981374,
+            15.200000000186265,
+            262.5,
+            25.600000000093132,
+            15.100000000093132,
+            21,
+            28.899999999906868,
+            116.6999999997206
+          ]
+        },
+        "cold": {
+          "count": 3,
+          "p50Ms": 165,
+          "p95Ms": 252.75,
+          "samplesMs": [
+            165,
+            262.5,
+            28.899999999906868
+          ]
+        },
+        "warm": {
+          "count": 5,
+          "p50Ms": 25.600000000093132,
+          "p95Ms": 117.5799999997951,
+          "samplesMs": [
+            18.899999999906868,
+            117.79999999981374,
+            25.600000000093132,
+            15.100000000093132,
+            116.6999999997206
+          ]
+        },
+        "cached": {
+          "count": 10,
+          "p50Ms": 19.850000000093132,
+          "p95Ms": 41.1150000000838,
+          "samplesMs": [
+            23.90000000037253,
+            48,
+            18,
+            20,
+            32.700000000186265,
+            19.700000000186265,
+            15.399999999906868,
+            12.200000000186265,
+            15.200000000186265,
+            21
+          ]
+        }
+      },
+      "books-to-comics": {
+        "all": {
+          "count": 18,
+          "p50Ms": 20.300000000279397,
+          "p95Ms": 81.8100000001722,
+          "samplesMs": [
+            24.699999999720603,
+            17.200000000186265,
+            15.5,
+            16.899999999906868,
+            16.40000000037253,
+            18.90000000037253,
+            16.100000000093132,
+            28.299999999813735,
+            12.5,
+            12.399999999906868,
+            71.70000000018626,
+            22.59999999962747,
+            27.800000000279397,
+            30.899999999906868,
+            139.10000000009313,
+            18.899999999906868,
+            43.799999999813735,
+            21.700000000186265
+          ]
+        },
+        "cold": {
+          "count": 2,
+          "p50Ms": 105.4000000001397,
+          "p95Ms": 135.7300000000978,
+          "samplesMs": [
+            71.70000000018626,
+            139.10000000009313
+          ]
+        },
+        "warm": {
+          "count": 5,
+          "p50Ms": 24.699999999720603,
+          "p95Ms": 40.59999999990686,
+          "samplesMs": [
+            24.699999999720603,
+            22.59999999962747,
+            27.800000000279397,
+            18.899999999906868,
+            43.799999999813735
+          ]
+        },
+        "cached": {
+          "count": 11,
+          "p50Ms": 16.899999999906868,
+          "p95Ms": 29.5999999998603,
+          "samplesMs": [
+            17.200000000186265,
+            15.5,
+            16.899999999906868,
+            16.40000000037253,
+            18.90000000037253,
+            16.100000000093132,
+            28.299999999813735,
+            12.5,
+            12.399999999906868,
+            30.899999999906868,
+            21.700000000186265
+          ]
+        }
+      }
+    },
+    "transitions": [
+      {
+        "cardCount": 0,
+        "domNodes": 12,
+        "durationMs": 165,
+        "heapAfter": 15267736,
+        "heapBefore": 15082977,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 153.8000000002794,
+          "inputToHandlerReturnMs": 0.8999999999068677,
+          "inputToStateUpdateMs": 1,
+          "stateUpdateToCommitMs": 10.199999999720603
+        },
+        "resourceEntriesDelta": 0,
+        "direction": "comics-to-books",
+        "thermalState": "cold",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.001539,
+          "RecalcStyleCount": 4,
+          "RecalcStyleDuration": 0.005016,
+          "ScriptDuration": 0.006739,
+          "TaskDuration": 0.024924,
+          "JSHeapUsedSize": 193636,
+          "Nodes": 13,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 0,
+        "transitionIndex": 0
+      },
+      {
+        "cardCount": 1,
+        "domNodes": 21,
+        "durationMs": 24.699999999720603,
+        "heapAfter": 15429836,
+        "heapBefore": 15267736,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 17.399999999906868,
+          "inputToHandlerReturnMs": 0.39999999990686774,
+          "inputToStateUpdateMs": 0.39999999990686774,
+          "stateUpdateToCommitMs": 6.899999999906868
+        },
+        "resourceEntriesDelta": 0,
+        "direction": "books-to-comics",
+        "thermalState": "warm",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.0005909999999999999,
+          "RecalcStyleCount": 6,
+          "RecalcStyleDuration": 0.0034260000000000002,
+          "ScriptDuration": 0.005068,
+          "TaskDuration": 0.0226,
+          "JSHeapUsedSize": 126888,
+          "Nodes": 20,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 0,
+        "transitionIndex": 1
+      },
+      {
+        "cardCount": 0,
+        "domNodes": 12,
+        "durationMs": 18.899999999906868,
+        "heapAfter": 15547172,
+        "heapBefore": 15429836,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 10,
+          "inputToHandlerReturnMs": 0.7000000001862645,
+          "inputToStateUpdateMs": 0.8000000002793968,
+          "stateUpdateToCommitMs": 8.099999999627471
+        },
+        "resourceEntriesDelta": 0,
+        "direction": "comics-to-books",
+        "thermalState": "warm",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.0005809999999999999,
+          "RecalcStyleCount": 5,
+          "RecalcStyleDuration": 0.0049960000000000004,
+          "ScriptDuration": 0.005620999999999999,
+          "TaskDuration": 0.024156999999999998,
+          "JSHeapUsedSize": 88900,
+          "Nodes": 8,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 0,
+        "transitionIndex": 2
+      },
+      {
+        "cardCount": 1,
+        "domNodes": 21,
+        "durationMs": 17.200000000186265,
+        "heapAfter": 15603992,
+        "heapBefore": 15603992,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 9.5,
+          "inputToHandlerReturnMs": 0.8000000002793968,
+          "inputToStateUpdateMs": 0.900000000372529,
+          "stateUpdateToCommitMs": 6.7999999998137355
+        },
+        "resourceEntriesDelta": 0,
+        "direction": "books-to-comics",
+        "thermalState": "cached",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.0006670000000000001,
+          "RecalcStyleCount": 15,
+          "RecalcStyleDuration": 0.011303,
+          "ScriptDuration": 0.003804000000000002,
+          "TaskDuration": 0.06949799999999999,
+          "JSHeapUsedSize": 100888,
+          "Nodes": 26,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 0,
+        "transitionIndex": 3
+      },
+      {
+        "cardCount": 0,
+        "domNodes": 12,
+        "durationMs": 23.90000000037253,
+        "heapAfter": 15729288,
+        "heapBefore": 15729288,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 14.600000000093132,
+          "inputToHandlerReturnMs": 1.1000000000931323,
+          "inputToStateUpdateMs": 1.2000000001862645,
+          "stateUpdateToCommitMs": 8.100000000093132
+        },
+        "resourceEntriesDelta": 0,
+        "direction": "comics-to-books",
+        "thermalState": "cached",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.0005890000000000001,
+          "RecalcStyleCount": 12,
+          "RecalcStyleDuration": 0.006075999999999998,
+          "ScriptDuration": 0.005535999999999999,
+          "TaskDuration": 0.05642999999999998,
+          "JSHeapUsedSize": 109244,
+          "Nodes": 6,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 0,
+        "transitionIndex": 4
+      },
+      {
+        "cardCount": 1,
+        "domNodes": 21,
+        "durationMs": 15.5,
+        "heapAfter": 15821658,
+        "heapBefore": 15821658,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 8.400000000372529,
+          "inputToHandlerReturnMs": 0.599999999627471,
+          "inputToStateUpdateMs": 0.6999999997206032,
+          "stateUpdateToCommitMs": 6.399999999906868
+        },
+        "resourceEntriesDelta": 0,
+        "direction": "books-to-comics",
+        "thermalState": "cached",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.0006049999999999996,
+          "RecalcStyleCount": 13,
+          "RecalcStyleDuration": 0.007087000000000003,
+          "ScriptDuration": 0.004175999999999999,
+          "TaskDuration": 0.03826500000000005,
+          "JSHeapUsedSize": 100824,
+          "Nodes": 16,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 0,
+        "transitionIndex": 5
+      },
+      {
+        "cardCount": 0,
+        "domNodes": 12,
+        "durationMs": 48,
+        "heapAfter": 13363827,
+        "heapBefore": 15942806,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 32,
+          "inputToHandlerReturnMs": 0.5,
+          "inputToStateUpdateMs": 0.5,
+          "stateUpdateToCommitMs": 15.5
+        },
+        "resourceEntriesDelta": 0,
+        "direction": "comics-to-books",
+        "thermalState": "cached",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.0008350000000000007,
+          "RecalcStyleCount": 20,
+          "RecalcStyleDuration": 0.007427000000000003,
+          "ScriptDuration": 0.014141,
+          "TaskDuration": 0.08606199999999997,
+          "JSHeapUsedSize": -2569348,
+          "Nodes": 6,
+          "Documents": 0
+        },
+        "coreRequests": 1,
+        "iteration": 0,
+        "transitionIndex": 6
+      },
+      {
+        "cardCount": 1,
+        "domNodes": 21,
+        "durationMs": 16.899999999906868,
+        "heapAfter": 13508623,
+        "heapBefore": 13394067,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 9.899999999906868,
+          "inputToHandlerReturnMs": 0.39999999990686774,
+          "inputToStateUpdateMs": 0.5,
+          "stateUpdateToCommitMs": 6.5
+        },
+        "resourceEntriesDelta": 0,
+        "direction": "books-to-comics",
+        "thermalState": "cached",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.0006909999999999998,
+          "RecalcStyleCount": 8,
+          "RecalcStyleDuration": 0.003602000000000001,
+          "ScriptDuration": 0.004145000000000003,
+          "TaskDuration": 0.024146,
+          "JSHeapUsedSize": 118112,
+          "Nodes": 16,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 0,
+        "transitionIndex": 7
+      },
+      {
+        "cardCount": 0,
+        "domNodes": 12,
+        "durationMs": 18,
+        "heapAfter": 13832013,
+        "heapBefore": 13832013,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 9,
+          "inputToHandlerReturnMs": 0.6000000000931323,
+          "inputToStateUpdateMs": 0.6000000000931323,
+          "stateUpdateToCommitMs": 8.399999999906868
+        },
+        "resourceEntriesDelta": 0,
+        "direction": "comics-to-books",
+        "thermalState": "cached",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.001405,
+          "RecalcStyleCount": 13,
+          "RecalcStyleDuration": 0.006110000000000004,
+          "ScriptDuration": 0.0039879999999999985,
+          "TaskDuration": 0.03854999999999997,
+          "JSHeapUsedSize": 100880,
+          "Nodes": 6,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 0,
+        "transitionIndex": 8
+      },
+      {
+        "cardCount": 1,
+        "domNodes": 21,
+        "durationMs": 16.40000000037253,
+        "heapAfter": 13842108,
+        "heapBefore": 13753616,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 10.800000000279397,
+          "inputToHandlerReturnMs": 0.3000000002793968,
+          "inputToStateUpdateMs": 0.3000000002793968,
+          "stateUpdateToCommitMs": 5.2999999998137355
+        },
+        "resourceEntriesDelta": 0,
+        "direction": "books-to-comics",
+        "thermalState": "cached",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.0007549999999999996,
+          "RecalcStyleCount": 14,
+          "RecalcStyleDuration": 0.0073659999999999975,
+          "ScriptDuration": 0.003245999999999999,
+          "TaskDuration": 0.03683499999999995,
+          "JSHeapUsedSize": 91712,
+          "Nodes": 16,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 0,
+        "transitionIndex": 9
+      },
+      {
+        "cardCount": 0,
+        "domNodes": 12,
+        "durationMs": 20,
+        "heapAfter": 13898652,
+        "heapBefore": 13898652,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 11.900000000372529,
+          "inputToHandlerReturnMs": 0.599999999627471,
+          "inputToStateUpdateMs": 0.599999999627471,
+          "stateUpdateToCommitMs": 7.5
+        },
+        "resourceEntriesDelta": 0,
+        "direction": "comics-to-books",
+        "thermalState": "cached",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.0005529999999999997,
+          "RecalcStyleCount": 15,
+          "RecalcStyleDuration": 0.007746000000000003,
+          "ScriptDuration": 0.004118999999999998,
+          "TaskDuration": 0.05006200000000005,
+          "JSHeapUsedSize": 98172,
+          "Nodes": 6,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 0,
+        "transitionIndex": 10
+      },
+      {
+        "cardCount": 1,
+        "domNodes": 21,
+        "durationMs": 18.90000000037253,
+        "heapAfter": 14069666,
+        "heapBefore": 13984286,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 11.300000000279397,
+          "inputToHandlerReturnMs": 0.40000000037252903,
+          "inputToStateUpdateMs": 0.40000000037252903,
+          "stateUpdateToCommitMs": 7.199999999720603
+        },
+        "resourceEntriesDelta": 0,
+        "direction": "books-to-comics",
+        "thermalState": "cached",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.0009350000000000001,
+          "RecalcStyleCount": 15,
+          "RecalcStyleDuration": 0.006877999999999995,
+          "ScriptDuration": 0.004671999999999996,
+          "TaskDuration": 0.05055100000000001,
+          "JSHeapUsedSize": 88676,
+          "Nodes": 16,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 0,
+        "transitionIndex": 11
+      },
+      {
+        "cardCount": 0,
+        "domNodes": 12,
+        "durationMs": 32.700000000186265,
+        "heapAfter": 14140870,
+        "heapBefore": 14140870,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 23.800000000279397,
+          "inputToHandlerReturnMs": 0.8999999999068677,
+          "inputToStateUpdateMs": 1.1000000000931323,
+          "stateUpdateToCommitMs": 7.7999999998137355
+        },
+        "resourceEntriesDelta": 0,
+        "direction": "comics-to-books",
+        "thermalState": "cached",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.0006960000000000004,
+          "RecalcStyleCount": 15,
+          "RecalcStyleDuration": 0.007739999999999997,
+          "ScriptDuration": 0.004538,
+          "TaskDuration": 0.05977500000000002,
+          "JSHeapUsedSize": 101228,
+          "Nodes": 6,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 0,
+        "transitionIndex": 12
+      },
+      {
+        "cardCount": 1,
+        "domNodes": 21,
+        "durationMs": 16.100000000093132,
+        "heapAfter": 14215294,
+        "heapBefore": 14215294,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 9.899999999906868,
+          "inputToHandlerReturnMs": 0.39999999990686774,
+          "inputToStateUpdateMs": 0.39999999990686774,
+          "stateUpdateToCommitMs": 5.800000000279397
+        },
+        "resourceEntriesDelta": 0,
+        "direction": "books-to-comics",
+        "thermalState": "cached",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.0009119999999999996,
+          "RecalcStyleCount": 9,
+          "RecalcStyleDuration": 0.004122999999999988,
+          "ScriptDuration": 0.0029829999999999995,
+          "TaskDuration": 0.025644,
+          "JSHeapUsedSize": 87476,
+          "Nodes": 16,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 0,
+        "transitionIndex": 13
+      },
+      {
+        "cardCount": 0,
+        "domNodes": 12,
+        "durationMs": 19.700000000186265,
+        "heapAfter": 14431386,
+        "heapBefore": 14323106,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 9.5,
+          "inputToHandlerReturnMs": 0.3000000002793968,
+          "inputToStateUpdateMs": 0.3000000002793968,
+          "stateUpdateToCommitMs": 9.899999999906868
+        },
+        "resourceEntriesDelta": 0,
+        "direction": "comics-to-books",
+        "thermalState": "cached",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.0021400000000000013,
+          "RecalcStyleCount": 13,
+          "RecalcStyleDuration": 0.007198999999999983,
+          "ScriptDuration": 0.004358000000000001,
+          "TaskDuration": 0.04443100000000011,
+          "JSHeapUsedSize": 111512,
+          "Nodes": 6,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 0,
+        "transitionIndex": 14
+      },
+      {
+        "cardCount": 1,
+        "domNodes": 21,
+        "durationMs": 28.299999999813735,
+        "heapAfter": 14487914,
+        "heapBefore": 14487914,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 17.100000000093132,
+          "inputToHandlerReturnMs": 2.5,
+          "inputToStateUpdateMs": 2.5,
+          "stateUpdateToCommitMs": 8.699999999720603
+        },
+        "resourceEntriesDelta": 0,
+        "direction": "books-to-comics",
+        "thermalState": "cached",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.001372,
+          "RecalcStyleCount": 13,
+          "RecalcStyleDuration": 0.0070380000000000165,
+          "ScriptDuration": 0.006282999999999997,
+          "TaskDuration": 0.047736,
+          "JSHeapUsedSize": 111196,
+          "Nodes": 16,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 0,
+        "transitionIndex": 15
+      },
+      {
+        "cardCount": 0,
+        "domNodes": 12,
+        "durationMs": 15.399999999906868,
+        "heapAfter": 14586534,
+        "heapBefore": 14586534,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 9.799999999813735,
+          "inputToHandlerReturnMs": 0.19999999972060323,
+          "inputToStateUpdateMs": 0.2999999998137355,
+          "stateUpdateToCommitMs": 5.300000000279397
+        },
+        "resourceEntriesDelta": 0,
+        "direction": "comics-to-books",
+        "thermalState": "cached",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.0004979999999999984,
+          "RecalcStyleCount": 10,
+          "RecalcStyleDuration": 0.003283000000000008,
+          "ScriptDuration": 0.0036559999999999926,
+          "TaskDuration": 0.024578999999999906,
+          "JSHeapUsedSize": 117772,
+          "Nodes": 6,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 0,
+        "transitionIndex": 16
+      },
+      {
+        "cardCount": 1,
+        "domNodes": 21,
+        "durationMs": 12.5,
+        "heapAfter": 14724852,
+        "heapBefore": 14724852,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 8.600000000093132,
+          "inputToHandlerReturnMs": 0.2999999998137355,
+          "inputToStateUpdateMs": 0.2999999998137355,
+          "stateUpdateToCommitMs": 3.6000000000931323
+        },
+        "resourceEntriesDelta": 0,
+        "direction": "books-to-comics",
+        "thermalState": "cached",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.0005129999999999996,
+          "RecalcStyleCount": 9,
+          "RecalcStyleDuration": 0.002834000000000003,
+          "ScriptDuration": 0.0019770000000000065,
+          "TaskDuration": 0.01625499999999991,
+          "JSHeapUsedSize": 88540,
+          "Nodes": 16,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 0,
+        "transitionIndex": 17
+      },
+      {
+        "cardCount": 0,
+        "domNodes": 12,
+        "durationMs": 12.200000000186265,
+        "heapAfter": 14866640,
+        "heapBefore": 14866640,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 7.7000000001862645,
+          "inputToHandlerReturnMs": 0.3000000002793968,
+          "inputToStateUpdateMs": 0.3000000002793968,
+          "stateUpdateToCommitMs": 4.199999999720603
+        },
+        "resourceEntriesDelta": 0,
+        "direction": "comics-to-books",
+        "thermalState": "cached",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.0005170000000000001,
+          "RecalcStyleCount": 11,
+          "RecalcStyleDuration": 0.003270999999999996,
+          "ScriptDuration": 0.002454999999999999,
+          "TaskDuration": 0.02203400000000011,
+          "JSHeapUsedSize": 91728,
+          "Nodes": 6,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 0,
+        "transitionIndex": 18
+      },
+      {
+        "cardCount": 1,
+        "domNodes": 21,
+        "durationMs": 12.399999999906868,
+        "heapAfter": 15031779,
+        "heapBefore": 14866640,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 8.699999999720603,
+          "inputToHandlerReturnMs": 0.3000000002793968,
+          "inputToStateUpdateMs": 0.3000000002793968,
+          "stateUpdateToCommitMs": 3.3999999999068677
+        },
+        "resourceEntriesDelta": 0,
+        "direction": "books-to-comics",
+        "thermalState": "cached",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.0004930000000000004,
+          "RecalcStyleCount": 15,
+          "RecalcStyleDuration": 0.003697000000000006,
+          "ScriptDuration": 0.002149999999999999,
+          "TaskDuration": 0.027395000000000058,
+          "JSHeapUsedSize": 88040,
+          "Nodes": 16,
+          "Documents": 0
+        },
+        "coreRequests": 1,
+        "iteration": 0,
+        "transitionIndex": 19
+      },
+      {
+        "cardCount": 1,
+        "domNodes": 21,
+        "durationMs": 71.70000000018626,
+        "heapAfter": 13855660,
+        "heapBefore": 13682135,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 58.10000000009313,
+          "inputToHandlerReturnMs": 1.2999999998137355,
+          "inputToStateUpdateMs": 1.5,
+          "stateUpdateToCommitMs": 12.100000000093132
+        },
+        "resourceEntriesDelta": 0,
+        "direction": "books-to-comics",
+        "thermalState": "cold",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.001212,
+          "RecalcStyleCount": 6,
+          "RecalcStyleDuration": 0.010717,
+          "ScriptDuration": 0.009011,
+          "TaskDuration": 0.044493000000000005,
+          "JSHeapUsedSize": 187140,
+          "Nodes": 24,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 1,
+        "transitionIndex": 0
+      },
+      {
+        "cardCount": 0,
+        "domNodes": 12,
+        "durationMs": 117.79999999981374,
+        "heapAfter": 13996664,
+        "heapBefore": 13933869,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 107.79999999981374,
+          "inputToHandlerReturnMs": 0.6999999997206032,
+          "inputToStateUpdateMs": 0.6999999997206032,
+          "stateUpdateToCommitMs": 9.300000000279397
+        },
+        "resourceEntriesDelta": 0,
+        "direction": "comics-to-books",
+        "thermalState": "warm",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.0011879999999999998,
+          "RecalcStyleCount": 8,
+          "RecalcStyleDuration": 0.006207000000000001,
+          "ScriptDuration": 0.006513,
+          "TaskDuration": 0.042749,
+          "JSHeapUsedSize": 114516,
+          "Nodes": 20,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 1,
+        "transitionIndex": 1
+      },
+      {
+        "cardCount": 1,
+        "domNodes": 21,
+        "durationMs": 22.59999999962747,
+        "heapAfter": 14068468,
+        "heapBefore": 14068468,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 13.199999999720603,
+          "inputToHandlerReturnMs": 1.6999999997206032,
+          "inputToStateUpdateMs": 1.8999999999068677,
+          "stateUpdateToCommitMs": 7.5
+        },
+        "resourceEntriesDelta": 0,
+        "direction": "books-to-comics",
+        "thermalState": "warm",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.001079,
+          "RecalcStyleCount": 14,
+          "RecalcStyleDuration": 0.00689,
+          "ScriptDuration": 0.006270999999999999,
+          "TaskDuration": 0.04990700000000001,
+          "JSHeapUsedSize": 93592,
+          "Nodes": 27,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 1,
+        "transitionIndex": 2
+      },
+      {
+        "cardCount": 0,
+        "domNodes": 12,
+        "durationMs": 15.200000000186265,
+        "heapAfter": 14184760,
+        "heapBefore": 14184760,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 9,
+          "inputToHandlerReturnMs": 0.40000000037252903,
+          "inputToStateUpdateMs": 0.40000000037252903,
+          "stateUpdateToCommitMs": 5.7999999998137355
+        },
+        "resourceEntriesDelta": 0,
+        "direction": "comics-to-books",
+        "thermalState": "cached",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.0006229999999999999,
+          "RecalcStyleCount": 9,
+          "RecalcStyleDuration": 0.004055000000000003,
+          "ScriptDuration": 0.004052,
+          "TaskDuration": 0.029920000000000002,
+          "JSHeapUsedSize": 88752,
+          "Nodes": 6,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 1,
+        "transitionIndex": 3
+      },
+      {
+        "cardCount": 0,
+        "domNodes": 12,
+        "durationMs": 262.5,
+        "heapAfter": 14503145,
+        "heapBefore": 14216787,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 246.10000000009313,
+          "inputToHandlerReturnMs": 1.1000000000931323,
+          "inputToStateUpdateMs": 1.1000000000931323,
+          "stateUpdateToCommitMs": 15.299999999813735
+        },
+        "resourceEntriesDelta": 4,
+        "direction": "comics-to-books",
+        "thermalState": "cold",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.001629,
+          "RecalcStyleCount": 6,
+          "RecalcStyleDuration": 0.00758,
+          "ScriptDuration": 0.01333,
+          "TaskDuration": 0.050481,
+          "JSHeapUsedSize": 282460,
+          "Nodes": 11,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 2,
+        "transitionIndex": 0
+      },
+      {
+        "cardCount": 1,
+        "domNodes": 21,
+        "durationMs": 27.800000000279397,
+        "heapAfter": 14580542,
+        "heapBefore": 14580542,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 14,
+          "inputToHandlerReturnMs": 0.5,
+          "inputToStateUpdateMs": 0.5,
+          "stateUpdateToCommitMs": 13.300000000279397
+        },
+        "resourceEntriesDelta": 2,
+        "direction": "books-to-comics",
+        "thermalState": "warm",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.0006369999999999998,
+          "RecalcStyleCount": 8,
+          "RecalcStyleDuration": 0.006444999999999999,
+          "ScriptDuration": 0.008964000000000001,
+          "TaskDuration": 0.043487,
+          "JSHeapUsedSize": 131320,
+          "Nodes": 27,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 2,
+        "transitionIndex": 1
+      },
+      {
+        "cardCount": 0,
+        "domNodes": 12,
+        "durationMs": 25.600000000093132,
+        "heapAfter": 14857137,
+        "heapBefore": 14699143,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 18.5,
+          "inputToHandlerReturnMs": 0.6000000000931323,
+          "inputToStateUpdateMs": 0.6000000000931323,
+          "stateUpdateToCommitMs": 6.5
+        },
+        "resourceEntriesDelta": 1,
+        "direction": "comics-to-books",
+        "thermalState": "warm",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.0007870000000000004,
+          "RecalcStyleCount": 8,
+          "RecalcStyleDuration": 0.00409,
+          "ScriptDuration": 0.005727999999999997,
+          "TaskDuration": 0.040359000000000006,
+          "JSHeapUsedSize": 164104,
+          "Nodes": 6,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 2,
+        "transitionIndex": 2
+      },
+      {
+        "cardCount": 1,
+        "domNodes": 21,
+        "durationMs": 30.899999999906868,
+        "heapAfter": 14916727,
+        "heapBefore": 14916727,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 22.200000000186265,
+          "inputToHandlerReturnMs": 0.39999999990686774,
+          "inputToStateUpdateMs": 0.39999999990686774,
+          "stateUpdateToCommitMs": 8.299999999813735
+        },
+        "resourceEntriesDelta": 2,
+        "direction": "books-to-comics",
+        "thermalState": "cached",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.0007160000000000001,
+          "RecalcStyleCount": 13,
+          "RecalcStyleDuration": 0.004542000000000001,
+          "ScriptDuration": 0.0062439999999999996,
+          "TaskDuration": 0.04982400000000001,
+          "JSHeapUsedSize": 125280,
+          "Nodes": 16,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 2,
+        "transitionIndex": 3
+      },
+      {
+        "cardCount": 0,
+        "domNodes": 2,
+        "durationMs": 139.10000000009313,
+        "heapAfter": 15002577,
+        "heapBefore": 14753555,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.00010441818237304687,
+          "unexpectedScore": 0.00010441818237304687
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 13.300000000279397,
+          "inputToHandlerReturnMs": 1,
+          "inputToStateUpdateMs": 1,
+          "stateUpdateToCommitMs": 124.79999999981374
+        },
+        "resourceEntriesDelta": 3,
+        "direction": "books-to-comics",
+        "thermalState": "cold",
+        "devTools": {
+          "LayoutCount": 2,
+          "LayoutDuration": 0.000717,
+          "RecalcStyleCount": 14,
+          "RecalcStyleDuration": 0.010083,
+          "ScriptDuration": 0.015962,
+          "TaskDuration": 0.077927,
+          "JSHeapUsedSize": 263268,
+          "Nodes": 31,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 3,
+        "transitionIndex": 0
+      },
+      {
+        "cardCount": 0,
+        "domNodes": 12,
+        "durationMs": 15.100000000093132,
+        "heapAfter": 15084619,
+        "heapBefore": 15084619,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.00010518035888671876,
+          "unexpectedScore": 0.00010518035888671876
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 11.800000000279397,
+          "inputToHandlerReturnMs": 1,
+          "inputToStateUpdateMs": 1,
+          "stateUpdateToCommitMs": 2.2999999998137355
+        },
+        "resourceEntriesDelta": 0,
+        "direction": "comics-to-books",
+        "thermalState": "warm",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.00032400000000000007,
+          "RecalcStyleCount": 10,
+          "RecalcStyleDuration": 0.0036550000000000003,
+          "ScriptDuration": 0.00597,
+          "TaskDuration": 0.032132999999999995,
+          "JSHeapUsedSize": 187732,
+          "Nodes": 23,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 3,
+        "transitionIndex": 1
+      },
+      {
+        "cardCount": 0,
+        "domNodes": 2,
+        "durationMs": 18.899999999906868,
+        "heapAfter": 15283610,
+        "heapBefore": 15283610,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.00010441818237304687,
+          "unexpectedScore": 0.00010441818237304687
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 10.600000000093132,
+          "inputToHandlerReturnMs": 0.6000000000931323,
+          "inputToStateUpdateMs": 0.6000000000931323,
+          "stateUpdateToCommitMs": 7.699999999720603
+        },
+        "resourceEntriesDelta": 2,
+        "direction": "books-to-comics",
+        "thermalState": "warm",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.000559,
+          "RecalcStyleCount": 10,
+          "RecalcStyleDuration": 0.003869000000000001,
+          "ScriptDuration": 0.006654,
+          "TaskDuration": 0.03089800000000001,
+          "JSHeapUsedSize": 83224,
+          "Nodes": 20,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 3,
+        "transitionIndex": 2
+      },
+      {
+        "cardCount": 0,
+        "domNodes": 12,
+        "durationMs": 21,
+        "heapAfter": 15387253,
+        "heapBefore": 15387253,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.00010518035888671876,
+          "unexpectedScore": 0.00010518035888671876
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 16,
+          "inputToHandlerReturnMs": 0.7999999998137355,
+          "inputToStateUpdateMs": 0.8999999999068677,
+          "stateUpdateToCommitMs": 4.100000000093132
+        },
+        "resourceEntriesDelta": 0,
+        "direction": "comics-to-books",
+        "thermalState": "cached",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.00043099999999999974,
+          "RecalcStyleCount": 13,
+          "RecalcStyleDuration": 0.005461999999999998,
+          "ScriptDuration": 0.006261999999999997,
+          "TaskDuration": 0.04496699999999998,
+          "JSHeapUsedSize": 160172,
+          "Nodes": 28,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 3,
+        "transitionIndex": 3
+      },
+      {
+        "cardCount": 0,
+        "domNodes": 12,
+        "durationMs": 28.899999999906868,
+        "heapAfter": 14081918,
+        "heapBefore": 14081918,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.00010518035888671876,
+          "unexpectedScore": 0.00010518035888671876
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 20.600000000093132,
+          "inputToHandlerReturnMs": 0.7000000001862645,
+          "inputToStateUpdateMs": 0.7999999998137355,
+          "stateUpdateToCommitMs": 7.5
+        },
+        "resourceEntriesDelta": 3,
+        "direction": "comics-to-books",
+        "thermalState": "cold",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.000872,
+          "RecalcStyleCount": 4,
+          "RecalcStyleDuration": 0.003515,
+          "ScriptDuration": 0.007745,
+          "TaskDuration": 0.029434,
+          "JSHeapUsedSize": 300912,
+          "Nodes": 13,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 4,
+        "transitionIndex": 0
+      },
+      {
+        "cardCount": 1,
+        "domNodes": 21,
+        "durationMs": 43.799999999813735,
+        "heapAfter": 14595003,
+        "heapBefore": 14416823,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 37.1999999997206,
+          "inputToHandlerReturnMs": 0.2999999998137355,
+          "inputToStateUpdateMs": 0.2999999998137355,
+          "stateUpdateToCommitMs": 6.300000000279397
+        },
+        "resourceEntriesDelta": 2,
+        "direction": "books-to-comics",
+        "thermalState": "warm",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.000571,
+          "RecalcStyleCount": 6,
+          "RecalcStyleDuration": 0.002822,
+          "ScriptDuration": 0.004817999999999999,
+          "TaskDuration": 0.026396,
+          "JSHeapUsedSize": 185824,
+          "Nodes": 24,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 4,
+        "transitionIndex": 1
+      },
+      {
+        "cardCount": 0,
+        "domNodes": 12,
+        "durationMs": 116.6999999997206,
+        "heapAfter": 14800316,
+        "heapBefore": 14595003,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 112.29999999981374,
+          "inputToHandlerReturnMs": 0.2999999998137355,
+          "inputToStateUpdateMs": 0.5,
+          "stateUpdateToCommitMs": 3.8999999999068677
+        },
+        "resourceEntriesDelta": 3,
+        "direction": "comics-to-books",
+        "thermalState": "warm",
+        "devTools": {
+          "LayoutCount": 2,
+          "LayoutDuration": 0.000714,
+          "RecalcStyleCount": 9,
+          "RecalcStyleDuration": 0.003757000000000001,
+          "ScriptDuration": 0.004170999999999999,
+          "TaskDuration": 0.039044,
+          "JSHeapUsedSize": 174504,
+          "Nodes": 20,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 4,
+        "transitionIndex": 2
+      },
+      {
+        "cardCount": 1,
+        "domNodes": 21,
+        "durationMs": 21.700000000186265,
+        "heapAfter": 14857140,
+        "heapBefore": 14857140,
+        "layoutShifts": {
+          "count": 1,
+          "score": 0.0234506721496582,
+          "unexpectedScore": 0.0234506721496582
+        },
+        "longTasks": {
+          "count": 0,
+          "durationMs": 0
+        },
+        "phases": {
+          "commitToStableFrameMs": 13.399999999906868,
+          "inputToHandlerReturnMs": 0.5,
+          "inputToStateUpdateMs": 0.5,
+          "stateUpdateToCommitMs": 7.800000000279397
+        },
+        "resourceEntriesDelta": 0,
+        "direction": "books-to-comics",
+        "thermalState": "cached",
+        "devTools": {
+          "LayoutCount": 1,
+          "LayoutDuration": 0.000984,
+          "RecalcStyleCount": 43,
+          "RecalcStyleDuration": 0.013262,
+          "ScriptDuration": 0.005186,
+          "TaskDuration": 0.166152,
+          "JSHeapUsedSize": 128368,
+          "Nodes": 48,
+          "Documents": 0
+        },
+        "coreRequests": 0,
+        "iteration": 4,
+        "transitionIndex": 3
+      }
+    ],
+    "twentyCycleResources": {
+      "samples": [
+        {
+          "activeIntersectionObservers": 0,
+          "activeResizeObservers": 0,
+          "connectedListeners": 0,
+          "domNodes": 211,
+          "heapBytes": 15082977,
+          "intersectionObserversCreated": 0,
+          "libraryCards": 1,
+          "listenerAdds": 0,
+          "listenerBalance": 0,
+          "listenerRemoves": 0,
+          "maxPendingRafs": 0,
+          "pendingRafs": 0,
+          "rafCancelled": 0,
+          "rafScheduled": 0,
+          "resizeObserversCreated": 0
+        },
+        {
+          "activeIntersectionObservers": 0,
+          "activeResizeObservers": 1,
+          "connectedListeners": 2,
+          "domNodes": 208,
+          "heapBytes": 15267736,
+          "intersectionObserversCreated": 0,
+          "libraryCards": 0,
+          "listenerAdds": 2,
+          "listenerBalance": 2,
+          "listenerRemoves": 0,
+          "maxPendingRafs": 2,
+          "pendingRafs": 0,
+          "rafCancelled": 0,
+          "rafScheduled": 5,
+          "resizeObserversCreated": 1
+        },
+        {
+          "activeIntersectionObservers": 1,
+          "activeResizeObservers": 1,
+          "connectedListeners": 4,
+          "domNodes": 212,
+          "heapBytes": 15429836,
+          "intersectionObserversCreated": 1,
+          "libraryCards": 1,
+          "listenerAdds": 6,
+          "listenerBalance": 4,
+          "listenerRemoves": 2,
+          "maxPendingRafs": 4,
+          "pendingRafs": 0,
+          "rafCancelled": 0,
+          "rafScheduled": 13,
+          "resizeObserversCreated": 2
+        },
+        {
+          "activeIntersectionObservers": 0,
+          "activeResizeObservers": 1,
+          "connectedListeners": 2,
+          "domNodes": 208,
+          "heapBytes": 15547172,
+          "intersectionObserversCreated": 1,
+          "libraryCards": 0,
+          "listenerAdds": 8,
+          "listenerBalance": 4,
+          "listenerRemoves": 4,
+          "maxPendingRafs": 4,
+          "pendingRafs": 0,
+          "rafCancelled": 0,
+          "rafScheduled": 18,
+          "resizeObserversCreated": 3
+        },
+        {
+          "activeIntersectionObservers": 1,
+          "activeResizeObservers": 1,
+          "connectedListeners": 4,
+          "domNodes": 212,
+          "heapBytes": 15603992,
+          "intersectionObserversCreated": 2,
+          "libraryCards": 1,
+          "listenerAdds": 12,
+          "listenerBalance": 6,
+          "listenerRemoves": 6,
+          "maxPendingRafs": 4,
+          "pendingRafs": 0,
+          "rafCancelled": 0,
+          "rafScheduled": 26,
+          "resizeObserversCreated": 4
+        },
+        {
+          "activeIntersectionObservers": 0,
+          "activeResizeObservers": 1,
+          "connectedListeners": 2,
+          "domNodes": 208,
+          "heapBytes": 15821658,
+          "intersectionObserversCreated": 2,
+          "libraryCards": 0,
+          "listenerAdds": 14,
+          "listenerBalance": 6,
+          "listenerRemoves": 8,
+          "maxPendingRafs": 4,
+          "pendingRafs": 0,
+          "rafCancelled": 0,
+          "rafScheduled": 31,
+          "resizeObserversCreated": 5
+        },
+        {
+          "activeIntersectionObservers": 1,
+          "activeResizeObservers": 1,
+          "connectedListeners": 4,
+          "domNodes": 212,
+          "heapBytes": 15942806,
+          "intersectionObserversCreated": 3,
+          "libraryCards": 1,
+          "listenerAdds": 18,
+          "listenerBalance": 8,
+          "listenerRemoves": 10,
+          "maxPendingRafs": 4,
+          "pendingRafs": 0,
+          "rafCancelled": 0,
+          "rafScheduled": 39,
+          "resizeObserversCreated": 6
+        },
+        {
+          "activeIntersectionObservers": 0,
+          "activeResizeObservers": 1,
+          "connectedListeners": 2,
+          "domNodes": 208,
+          "heapBytes": 13394067,
+          "intersectionObserversCreated": 3,
+          "libraryCards": 0,
+          "listenerAdds": 20,
+          "listenerBalance": 8,
+          "listenerRemoves": 12,
+          "maxPendingRafs": 4,
+          "pendingRafs": 0,
+          "rafCancelled": 0,
+          "rafScheduled": 44,
+          "resizeObserversCreated": 7
+        },
+        {
+          "activeIntersectionObservers": 1,
+          "activeResizeObservers": 1,
+          "connectedListeners": 4,
+          "domNodes": 212,
+          "heapBytes": 13508623,
+          "intersectionObserversCreated": 4,
+          "libraryCards": 1,
+          "listenerAdds": 24,
+          "listenerBalance": 10,
+          "listenerRemoves": 14,
+          "maxPendingRafs": 4,
+          "pendingRafs": 0,
+          "rafCancelled": 0,
+          "rafScheduled": 52,
+          "resizeObserversCreated": 8
+        },
+        {
+          "activeIntersectionObservers": 0,
+          "activeResizeObservers": 1,
+          "connectedListeners": 2,
+          "domNodes": 208,
+          "heapBytes": 13753616,
+          "intersectionObserversCreated": 4,
+          "libraryCards": 0,
+          "listenerAdds": 26,
+          "listenerBalance": 10,
+          "listenerRemoves": 16,
+          "maxPendingRafs": 4,
+          "pendingRafs": 0,
+          "rafCancelled": 0,
+          "rafScheduled": 57,
+          "resizeObserversCreated": 9
+        },
+        {
+          "activeIntersectionObservers": 1,
+          "activeResizeObservers": 1,
+          "connectedListeners": 4,
+          "domNodes": 212,
+          "heapBytes": 13842108,
+          "intersectionObserversCreated": 5,
+          "libraryCards": 1,
+          "listenerAdds": 30,
+          "listenerBalance": 12,
+          "listenerRemoves": 18,
+          "maxPendingRafs": 4,
+          "pendingRafs": 0,
+          "rafCancelled": 0,
+          "rafScheduled": 65,
+          "resizeObserversCreated": 10
+        },
+        {
+          "activeIntersectionObservers": 0,
+          "activeResizeObservers": 1,
+          "connectedListeners": 2,
+          "domNodes": 208,
+          "heapBytes": 13984286,
+          "intersectionObserversCreated": 5,
+          "libraryCards": 0,
+          "listenerAdds": 32,
+          "listenerBalance": 12,
+          "listenerRemoves": 20,
+          "maxPendingRafs": 4,
+          "pendingRafs": 0,
+          "rafCancelled": 0,
+          "rafScheduled": 70,
+          "resizeObserversCreated": 11
+        },
+        {
+          "activeIntersectionObservers": 1,
+          "activeResizeObservers": 1,
+          "connectedListeners": 4,
+          "domNodes": 212,
+          "heapBytes": 14093298,
+          "intersectionObserversCreated": 6,
+          "libraryCards": 1,
+          "listenerAdds": 36,
+          "listenerBalance": 14,
+          "listenerRemoves": 22,
+          "maxPendingRafs": 4,
+          "pendingRafs": 0,
+          "rafCancelled": 0,
+          "rafScheduled": 78,
+          "resizeObserversCreated": 12
+        },
+        {
+          "activeIntersectionObservers": 0,
+          "activeResizeObservers": 1,
+          "connectedListeners": 2,
+          "domNodes": 208,
+          "heapBytes": 14215294,
+          "intersectionObserversCreated": 6,
+          "libraryCards": 0,
+          "listenerAdds": 38,
+          "listenerBalance": 14,
+          "listenerRemoves": 24,
+          "maxPendingRafs": 4,
+          "pendingRafs": 0,
+          "rafCancelled": 0,
+          "rafScheduled": 83,
+          "resizeObserversCreated": 13
+        },
+        {
+          "activeIntersectionObservers": 1,
+          "activeResizeObservers": 1,
+          "connectedListeners": 4,
+          "domNodes": 212,
+          "heapBytes": 14323106,
+          "intersectionObserversCreated": 7,
+          "libraryCards": 1,
+          "listenerAdds": 42,
+          "listenerBalance": 16,
+          "listenerRemoves": 26,
+          "maxPendingRafs": 4,
+          "pendingRafs": 0,
+          "rafCancelled": 0,
+          "rafScheduled": 91,
+          "resizeObserversCreated": 14
+        },
+        {
+          "activeIntersectionObservers": 0,
+          "activeResizeObservers": 1,
+          "connectedListeners": 2,
+          "domNodes": 208,
+          "heapBytes": 14431386,
+          "intersectionObserversCreated": 7,
+          "libraryCards": 0,
+          "listenerAdds": 44,
+          "listenerBalance": 16,
+          "listenerRemoves": 28,
+          "maxPendingRafs": 4,
+          "pendingRafs": 0,
+          "rafCancelled": 0,
+          "rafScheduled": 96,
+          "resizeObserversCreated": 15
+        },
+        {
+          "activeIntersectionObservers": 1,
+          "activeResizeObservers": 1,
+          "connectedListeners": 4,
+          "domNodes": 212,
+          "heapBytes": 14586534,
+          "intersectionObserversCreated": 8,
+          "libraryCards": 1,
+          "listenerAdds": 48,
+          "listenerBalance": 18,
+          "listenerRemoves": 30,
+          "maxPendingRafs": 4,
+          "pendingRafs": 0,
+          "rafCancelled": 0,
+          "rafScheduled": 104,
+          "resizeObserversCreated": 16
+        },
+        {
+          "activeIntersectionObservers": 0,
+          "activeResizeObservers": 1,
+          "connectedListeners": 2,
+          "domNodes": 208,
+          "heapBytes": 14724852,
+          "intersectionObserversCreated": 8,
+          "libraryCards": 0,
+          "listenerAdds": 50,
+          "listenerBalance": 18,
+          "listenerRemoves": 32,
+          "maxPendingRafs": 4,
+          "pendingRafs": 0,
+          "rafCancelled": 0,
+          "rafScheduled": 109,
+          "resizeObserversCreated": 17
+        },
+        {
+          "activeIntersectionObservers": 1,
+          "activeResizeObservers": 1,
+          "connectedListeners": 4,
+          "domNodes": 212,
+          "heapBytes": 14724852,
+          "intersectionObserversCreated": 9,
+          "libraryCards": 1,
+          "listenerAdds": 54,
+          "listenerBalance": 20,
+          "listenerRemoves": 34,
+          "maxPendingRafs": 4,
+          "pendingRafs": 0,
+          "rafCancelled": 0,
+          "rafScheduled": 117,
+          "resizeObserversCreated": 18
+        },
+        {
+          "activeIntersectionObservers": 0,
+          "activeResizeObservers": 1,
+          "connectedListeners": 2,
+          "domNodes": 208,
+          "heapBytes": 14866640,
+          "intersectionObserversCreated": 9,
+          "libraryCards": 0,
+          "listenerAdds": 56,
+          "listenerBalance": 20,
+          "listenerRemoves": 36,
+          "maxPendingRafs": 4,
+          "pendingRafs": 0,
+          "rafCancelled": 0,
+          "rafScheduled": 122,
+          "resizeObserversCreated": 19
+        },
+        {
+          "activeIntersectionObservers": 1,
+          "activeResizeObservers": 1,
+          "connectedListeners": 4,
+          "domNodes": 212,
+          "heapBytes": 15031779,
+          "intersectionObserversCreated": 10,
+          "libraryCards": 1,
+          "listenerAdds": 60,
+          "listenerBalance": 22,
+          "listenerRemoves": 38,
+          "maxPendingRafs": 4,
+          "pendingRafs": 0,
+          "rafCancelled": 0,
+          "rafScheduled": 130,
+          "resizeObserversCreated": 20
+        }
+      ],
+      "growth": {
+        "connectedListeners": {
+          "first": 0,
+          "last": 4,
+          "max": 4,
+          "delta": 4,
+          "monotonicIncrease": false
+        },
+        "pendingRafs": {
+          "first": 0,
+          "last": 0,
+          "max": 0,
+          "delta": 0,
+          "monotonicIncrease": false
+        },
+        "activeResizeObservers": {
+          "first": 0,
+          "last": 1,
+          "max": 1,
+          "delta": 1,
+          "monotonicIncrease": false
+        },
+        "activeIntersectionObservers": {
+          "first": 0,
+          "last": 1,
+          "max": 1,
+          "delta": 1,
+          "monotonicIncrease": false
+        },
+        "heapBytes": {
+          "first": 15082977,
+          "last": 15031779,
+          "max": 15942806,
+          "delta": -51198,
+          "monotonicIncrease": false
+        },
+        "domNodes": {
+          "first": 211,
+          "last": 212,
+          "max": 212,
+          "delta": 1,
+          "monotonicIncrease": false
+        },
+        "libraryCards": {
+          "first": 1,
+          "last": 1,
+          "max": 1,
+          "delta": 0,
+          "monotonicIncrease": false
+        }
+      }
+    }
+  },
+  "search": {
+    "cycles": 20,
+    "samplesMs": [
+      557,
+      475,
+      474,
+      511,
+      447,
+      567,
+      392,
+      436,
+      442,
+      522,
+      468,
+      523,
+      457,
+      465,
+      450,
+      403,
+      517,
+      485,
+      467,
+      440
+    ],
+    "medianMs": 467.5,
+    "focusEvidence": {
+      "dimOpacity": 0.999033,
+      "dimZIndex": 90,
+      "inputBackground": "color(srgb 0.141176 0.129412 0.168627 / 0.8)",
+      "inputColor": "rgb(229, 226, 225)",
+      "searchZIndex": 540
+    },
+    "residualDim": false
+  },
+  "toast": {
+    "first": {
+      "animationName": "svelte-1y084fj-toastLife",
+      "playState": "running",
+      "transform": "matrix(0.953312, 0, 0, 1, 0, 0)"
+    },
+    "second": {
+      "animationName": "svelte-1y084fj-toastLife",
+      "playState": "running",
+      "transform": "matrix(0.842205, 0, 0, 1, 0, 0)"
+    }
+  },
+  "viewport": {
+    "before": {
+      "height": 800,
+      "loadingVisible": false,
+      "scrollWidth": 1280,
+      "shell": {
+        "height": 800,
+        "width": 1280,
+        "x": 0,
+        "y": 0
+      },
+      "width": 1280
+    },
+    "after": {
+      "height": 800,
+      "loadingVisible": false,
+      "scrollWidth": 1280,
+      "shell": {
+        "height": 800,
+        "width": 1280,
+        "x": 0,
+        "y": 0
+      },
+      "width": 1280
+    }
+  },
+  "budgets": {
+    "version": 1,
+    "maxMedianRegressionPercent": 15,
+    "baselineMethod": "Conservative maximum from two five-session WebView2 passes after Marco 70; this blocks future regressions because earlier builds did not expose equivalent native timing telemetry",
+    "baseline": {
+      "startupMedianMs": 3816,
+      "librarySectionMedianMs": 80,
+      "searchCycleMedianMs": 457
+    },
+    "checks": {
+      "startupMedianMs": {
+        "actualMs": 5119,
+        "baselineMs": 3816,
+        "maxMs": 4388.4,
+        "passed": false
+      },
+      "librarySectionMedianMs": {
+        "actualMs": 21.350000000093132,
+        "baselineMs": 80,
+        "maxMs": 92,
+        "passed": true
+      },
+      "searchCycleMedianMs": {
+        "actualMs": 467.5,
+        "baselineMs": 457,
+        "maxMs": 525.55,
+        "passed": true
+      }
+    },
+    "failures": [
+      "startupMedianMs 5119ms > 4388.4ms"
+    ]
+  }
+}

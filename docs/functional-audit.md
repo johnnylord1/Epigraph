@@ -294,3 +294,31 @@ tambem reconhece o NovelReader ativo.
 marcar novel como lida apos carga bem-sucedida foram preservados. Qualquer
 implementacao, depreciacao ou remocao de `overlayBars` continua fora deste
 marco e exige decisao de produto separada.
+
+## Marco 72G1 - telemetria direcional da Library
+
+O gate WebView2 da Library agora separa `Comics -> Books` de
+`Books -> Comics` e classifica cada destino como cold, warm ou cached. Cada
+amostra registra clique, atualizacao observada do store, commit visual, dois
+frames estaveis, long tasks, layout shifts, recursos, heap, DOM, cards e
+requests ao Core local. Quando WebView2Driver disponibiliza CDP, o relatorio
+inclui contagens e duracoes de layout, recalc style, script e task.
+
+Na rodada final com cinco perfis descartaveis, a mediana agregada da troca foi
+21,35 ms. `Comics -> Books` apresentou p50 cold de 165 ms e cached de 19,85 ms;
+`Books -> Comics`, p50 cold de 105,4 ms e cached de 16,9 ms. Nao houve long task.
+Depois de vinte trocas, RAFs pendentes permaneceram em zero, cards ficaram
+estaveis e listeners/observers alternaram apenas com o painel ativo, sem
+crescimento monotonicamente acumulado. O heap apresentou GC durante o ciclo e
+terminou 51.198 bytes abaixo da primeira amostra.
+
+As capturas reais de Comics e Books permaneceram geometricamente integras em
+`docs/screenshots/marco72g1-library-telemetry/`. O gate historico de startup,
+entretanto, permaneceu vermelho nas repeticoes: mediana final de 5.119 ms
+contra limite de 4.388,4 ms. Uma amostra de diagnostico localizou 4.332 ms
+entre a criacao da sessao e a disponibilidade da bridge de auditoria; depois
+disso, runtime state, splash e shell estabilizaram em 435 ms. O relatorio final
+tambem persiste as fases das cinco sessoes. O budget nao foi
+elevado. O Marco 72G2 deve investigar o caminho inicial do app separadamente
+dos custos de Library e o 72H continua bloqueado enquanto esse gate nao voltar
+a verde.
