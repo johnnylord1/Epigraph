@@ -201,6 +201,52 @@ describe("migration journal state", () => {
     expect(state.operations[0]?.snapshots.payload).toEqual(legacyState.entries[0].payload);
   });
 
+  it("reconciles a child persisted before its parent link checkpoint", async () => {
+    const oldState = {
+      mangaId: 1,
+      inLibrary: true,
+      title: "Old",
+      categoryIds: [],
+      chapters: [],
+    };
+    const newState = {
+      mangaId: 2,
+      inLibrary: true,
+      title: "New",
+      categoryIds: [],
+      chapters: [],
+    };
+    invokeMock.mockResolvedValueOnce(JSON.stringify({
+      version: 2,
+      operations: [
+        {
+          operationId: "parent",
+          mode: "mass",
+          contentKind: "manga",
+          childOperationIds: [],
+          createdAt: 1,
+          snapshots: { payload: { items: [{ oldState, newState }] } },
+          steps: [],
+        },
+        {
+          operationId: "child",
+          parentOperationId: "parent",
+          mode: "single",
+          contentKind: "manga",
+          createdAt: 2,
+          snapshots: { payload: { oldState, newState } },
+          steps: [],
+        },
+      ],
+      updatedAtMs: 2,
+    }));
+
+    const state = await loadMigrationJournalState();
+    const parent = state.operations.find((operation) => operation.operationId === "parent");
+
+    expect(parent?.childOperationIds).toEqual(["child"]);
+  });
+
   it("does not turn a corrupt desktop journal into an empty state", async () => {
     invokeMock.mockResolvedValueOnce("{not-json");
 

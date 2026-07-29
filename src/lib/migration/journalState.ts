@@ -160,6 +160,13 @@ function normalizeOperation(value: unknown): MigrationOperationV2 | null {
   return {
     schemaVersion: 2,
     operationId,
+    parentOperationId: normalizeText(record.parentOperationId),
+    childOperationIds: Array.isArray(record.childOperationIds)
+      ? [...new Set(record.childOperationIds.flatMap((value) => {
+          const normalized = normalizeText(value);
+          return normalized ? [normalized] : [];
+        }))]
+      : [],
     profileId: normalizeText(record.profileId) ?? "main",
     expectedRevision: normalizeText(record.expectedRevision),
     revision: typeof record.revision === "number" ? Math.max(1, Math.trunc(record.revision)) : 1,
@@ -213,6 +220,8 @@ function legacyEntryToOperation(entry: MigrationJournalEntry): MigrationOperatio
   return {
     schemaVersion: 2,
     operationId: entry.id,
+    parentOperationId: null,
+    childOperationIds: [],
     profileId: "main",
     expectedRevision: null,
     revision: 1,
@@ -290,6 +299,21 @@ function createEmptyState(): MigrationJournalState {
   };
 }
 
+function reconcileOperationRelationships(
+  operations: MigrationOperationV2[],
+): MigrationOperationV2[] {
+  const byId = new Map(operations.map((operation) => [operation.operationId, operation]));
+  for (const child of operations) {
+    if (!child.parentOperationId) continue;
+    const parent = byId.get(child.parentOperationId);
+    if (!parent || parent.mode !== "mass") continue;
+    if (!parent.childOperationIds.includes(child.operationId)) {
+      parent.childOperationIds = [...parent.childOperationIds, child.operationId];
+    }
+  }
+  return operations;
+}
+
 function normalizeMigrationJournalState(value: unknown): MigrationJournalState {
   if (!value || typeof value !== "object") {
     throw new Error("Migration journal is corrupt: expected an object.");
@@ -315,7 +339,7 @@ function normalizeMigrationJournalState(value: unknown): MigrationJournalState {
 
   return {
     version: MIGRATION_JOURNAL_STATE_VERSION,
-    operations: operations
+    operations: reconcileOperationRelationships(operations)
       .sort((left, right) => right.createdAt - left.createdAt)
       .slice(0, MAX_JOURNAL_OPERATIONS),
     updatedAtMs: typeof record.updatedAtMs === "number" ? record.updatedAtMs : null,

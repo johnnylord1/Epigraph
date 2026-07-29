@@ -928,3 +928,61 @@ Riscos encaminhados:
   de executar mutacoes externas sem o profile/runtime correto. Os snapshots do
   72E2 estao completos e o profile fica bloqueado ate verificacao contextual,
   sem inferir exclusao por indisponibilidade.
+
+### 72E3 - Offline assets e Mass Migration
+
+Implementado:
+
+- O journal V2 passou a representar explicitamente operacoes pai e filhas por
+  `parentOperationId` e `childOperationIds`. Registros V1/V2 anteriores
+  continuam legiveis e recebem relacoes vazias durante a normalizacao.
+- Mass Migration de manga e novel processa filhos sequencialmente sob o lock
+  do perfil. Cada filho possui snapshots, steps, commit e compensacao proprios;
+  o pai so confirma um filho depois de reler seu estado `committed`.
+- Undo e falhas agregadas compensam filhos commitados em ordem reversa. Uma
+  falha de compensacao continua levando o pai a `needs_manual_recovery`; ela
+  nunca e convertida em sucesso parcial silencioso.
+- Snapshots manga agora carregam um manifesto para cada capitulo baixado com
+  mapeamento comprovado. Como o arquivo pertence ao Suwayomi, o manifesto
+  preserva a referencia de origem e marca o destino como `pending`; nenhum CBZ
+  e movido, copiado, apagado ou inspecionado em base64 pelo Aethon.
+- O cache offline de novel pertence ao Aethon. Conteudo de capitulos
+  comprovadamente pareados e copiado para a identidade de destino, relido e
+  validado por SHA-256 e tamanho. Ausencia, erro de storage ou divergencia
+  preservam a origem e registram `pending`/`corrupt` sem bloquear a migracao.
+- Um cache valido ja existente no destino nunca e sobrescrito por conteudo
+  diferente. O conflito permanece `pending`, com origem e destino preservados.
+- O manifesto nao persiste caminhos absolutos. Cada referencia contem apenas
+  perfil implicito do journal, source, obra, chapter ID e chapter path logico.
+- Compensacao e Undo nao apagam assets de origem nem copias. Isso impede perda
+  de leitura offline quando uma operacao externa ou uma source fica
+  indisponivel durante a recuperacao.
+- EPUBs, PDFs, imports e downloads escolhidos pelo usuario permanecem fora da
+  migracao de source. Seus stores gerenciados e hashes existentes nao foram
+  alterados.
+
+Validacao:
+
+- Testes focados cobrem parent/children, compatibilidade de journal, manifesto
+  manga pendente, copia novel com releitura, SHA-256, origem ausente, copia
+  divergente e preservacao integral da origem.
+- Mass manga e Mass novel continuam preservando os resultados e Undo
+  anteriores, agora com estados terminais verificaveis para cada filho.
+- `svelte-check`: zero erros e zero warnings.
+- Nenhum CSS, layout, Reader, protocolo Syncd/AethonCore ou lifecycle de
+  runtime remoto foi alterado.
+
+Limites e riscos encaminhados:
+
+- Reenfileirar automaticamente downloads manga no destino exigiria uma decisao
+  de produto e observacao de rede. O 72E3 registra a pendencia e preserva o
+  download original; ele nao inventa um gerenciador paralelo ao Suwayomi.
+- O cache Legacy de novel ainda usa o endereco historico baseado em hash curto.
+  A copia verifica o conteudo relido, mas uma futura evolucao
+  content-addressed deve ser feita com migracao lazy e compatibilidade de
+  leitura, nao com limpeza destrutiva.
+- Garbage collection permanece futuro e explicito: mark-and-sweep, periodo de
+  carencia e prova de ownership. Nenhum import, EPUB, PDF, cache ou download de
+  usuario sera coletado automaticamente por este marco.
+- Referencias offline `pending` precisam de uma superficie futura de
+  diagnostico/resolucao. A ausencia dessa UI nao autoriza apagar a origem.

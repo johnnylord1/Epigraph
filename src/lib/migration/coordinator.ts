@@ -39,6 +39,7 @@ export interface MigrationStepDefinition {
 
 export interface BeginMigrationOperationInput {
   profileId: string;
+  parentOperationId?: string | null;
   expectedRevision?: string | null;
   contentKind: MigrationContentKind;
   mode?: MigrationMode;
@@ -128,6 +129,8 @@ export async function beginMigrationOperation(
   const operation: MigrationOperationV2 = {
     schemaVersion: 2,
     operationId: createOperationId(),
+    parentOperationId: input.parentOperationId ?? null,
+    childOperationIds: [],
     profileId,
     expectedRevision: input.expectedRevision ?? null,
     revision: 1,
@@ -151,6 +154,36 @@ export async function beginMigrationOperation(
   };
   await appendMigrationOperation(operation);
   return operation;
+}
+
+export async function beginMigrationChildOperation(
+  parentOperationId: string,
+  input: Omit<BeginMigrationOperationInput, "profileId" | "parentOperationId" | "mode">,
+): Promise<MigrationOperationV2> {
+  const parent = await requireOperation(parentOperationId);
+  if (parent.mode !== "mass") {
+    throw new Error("Migration children require a mass parent operation.");
+  }
+  const child = await beginMigrationOperation({
+    ...input,
+    profileId: parent.profileId,
+    parentOperationId,
+    mode: "single",
+  });
+  const currentParent = await requireOperation(parentOperationId);
+  try {
+    await updateMigrationOperation(parentOperationId, {
+      childOperationIds: [
+        ...new Set([...currentParent.childOperationIds, child.operationId]),
+      ],
+    }, currentParent.revision);
+  } catch (error) {
+    await transitionMigrationOperation(child.operationId, "cancelled", {
+      failureReason: "The child could not be checkpointed on its mass parent.",
+    }).catch(() => undefined);
+    throw error;
+  }
+  return requireOperation(child.operationId);
 }
 
 async function requireOperation(operationId: string): Promise<MigrationOperationV2> {

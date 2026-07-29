@@ -634,8 +634,11 @@ describe("novel migration with journal", () => {
     expect(migratedState.entries.find((entry) => entry.id === secondNewId)?.title).toBe("Shadow Slave");
 
     const journalState = JSON.parse(String(journalStateJson));
-    expect(journalState.operations[0].mode).toBe("mass");
-    expect(journalState.operations[0].contentKind).toBe("novel");
+    const parentOperation = journalState.operations.find(
+      (operation: { mode: string }) => operation.mode === "mass",
+    );
+    expect(parentOperation?.contentKind).toBe("novel");
+    expect(parentOperation?.childOperationIds).toHaveLength(2);
 
     const restored = await undoNovelMigration({
       scopeInput: SCOPE,
@@ -646,5 +649,17 @@ describe("novel migration with journal", () => {
     expect(restored.entries.find((entry) => entry.id === secondOldId)?.title).toBe("Shadow Slave");
     expect(restored.entries.find((entry) => entry.id === NEW_ID)).toBeUndefined();
     expect(restored.entries.find((entry) => entry.id === secondNewId)).toBeUndefined();
+    const finalJournalState = JSON.parse(String(journalStateJson));
+    const compensatedParent = finalJournalState.operations.find(
+      (operation: { operationId: string }) => operation.operationId === applied.journalEntryId,
+    );
+    expect(compensatedParent.status).toBe("compensated");
+    expect(
+      finalJournalState.operations
+        .filter((operation: { parentOperationId: string | null }) => (
+          operation.parentOperationId === applied.journalEntryId
+        ))
+        .map((operation: { status: string }) => operation.status),
+    ).toEqual(["compensated", "compensated"]);
   });
 });

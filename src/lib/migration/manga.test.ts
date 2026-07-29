@@ -505,6 +505,7 @@ describe("manga migration services", () => {
   });
 
   it("can copy a single manga migration without removing the source title", async () => {
+    chaptersByMangaId.get(10)![0]!.isDownloaded = true;
     const result = await applyMangaMigrationWithJournal({
       currentManga: mangaById.get(10)!,
       currentChapters: chaptersByMangaId.get(10)!,
@@ -523,6 +524,18 @@ describe("manga migration services", () => {
     expect(categoryMembership.get(1)).toContain(20);
     expect(categoryMembership.get(2)).toContain(10);
     expect(categoryMembership.get(2)).toContain(20);
+    const committed = JSON.parse(String(journalStateJson)).operations.find(
+      (operation: { operationId: string }) => operation.operationId === result.journalEntryId,
+    );
+    expect(committed.snapshots.payload.offlineAssets).toEqual([
+      expect.objectContaining({
+        kind: "manga",
+        status: "pending",
+        sourcePreserved: true,
+        source: expect.objectContaining({ chapterId: "101" }),
+        target: expect.objectContaining({ chapterId: "201" }),
+      }),
+    ]);
 
     await undoMangaMigration(result.journalEntryId);
 
@@ -541,8 +554,11 @@ describe("manga migration services", () => {
     const writeIdentity = identity.bridge.write.bind(identity.bridge);
     identity.bridge.write = async (input) => {
       const journalAtWrite = JSON.parse(String(journalStateJson));
+      const parent = journalAtWrite.operations.find((operation: any) => (
+        operation.mode === "mass"
+      ));
       expect(
-        journalAtWrite.operations[0].snapshots.payload.items[0].oldState.localIdentity,
+        parent.snapshots.payload.items[0].oldState.localIdentity,
       ).toBeDefined();
       return writeIdentity(input);
     };
@@ -577,9 +593,10 @@ describe("manga migration services", () => {
 
     const journalState = JSON.parse(String(journalStateJson));
     expect(journalState.version).toBe(2);
-    expect(journalState.operations[0].mode).toBe("mass");
-    expect(journalState.operations[0].status).toBe("committed");
-    expect(journalState.operations[0].snapshots.payload.items).toHaveLength(2);
+    const parent = journalState.operations.find((operation: any) => operation.mode === "mass");
+    expect(parent.status).toBe("committed");
+    expect(parent.childOperationIds).toHaveLength(2);
+    expect(parent.snapshots.payload.items).toHaveLength(2);
 
     expect(applied.journalEntryId).not.toBeNull();
     await undoMangaMigration(applied.journalEntryId!, identity.bridge);
@@ -664,7 +681,8 @@ describe("manga migration services", () => {
     expect(mangaById.get(21)?.inLibrary).toBe(false);
 
     const journalState = JSON.parse(String(journalStateJson));
-    expect(journalState.operations[0].snapshots.payload.items).toHaveLength(1);
+    const parent = journalState.operations.find((operation: any) => operation.mode === "mass");
+    expect(parent.snapshots.payload.items).toHaveLength(1);
   });
 
   it("does not leave the target in the library when cleanup of the source fails", async () => {
@@ -684,7 +702,8 @@ describe("manga migration services", () => {
     expect(mangaById.get(10)?.inLibrary).toBe(true);
     expect(mangaById.get(20)?.inLibrary).toBe(false);
     const journalState = JSON.parse(String(journalStateJson));
-    expect(journalState.operations[0].status).toBe("compensated");
-    expect(journalState.operations[0].steps[0].status).toBe("skipped");
+    const parent = journalState.operations.find((operation: any) => operation.mode === "mass");
+    expect(parent.status).toBe("compensated");
+    expect(parent.steps[0].status).toBe("skipped");
   });
 });

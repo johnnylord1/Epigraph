@@ -6,6 +6,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import {
   acknowledgeMigrationManualRecovery,
+  beginMigrationChildOperation,
   beginMigrationOperation,
   checkpointMigrationPayload,
   commitMigrationOperation,
@@ -199,5 +200,47 @@ describe("migration coordinator", () => {
     expect(checkpointed.snapshots.payload).toEqual(payload);
     expect(checkpointed.snapshots.oldStateSha256).not.toBe(operation.snapshots.oldStateSha256);
     expect(checkpointed.snapshots.newStateSha256).not.toBe(operation.snapshots.newStateSha256);
+  });
+
+  it("links explicit child operations to a mass parent", async () => {
+    const parent = await beginMigrationOperation({
+      profileId: "main",
+      contentKind: "manga",
+      mode: "mass",
+      sourceFrom: "1",
+      sourceTo: "2",
+      transferSummary: {
+        oldItemTitle: "Batch",
+        newItemTitle: "Batch",
+        oldSourceId: "1",
+        newSourceId: "2",
+        transferredChapterCount: 0,
+        transferredReadCount: 0,
+        transferredBookmarkCount: 0,
+      },
+      payload: {
+        items: [{
+          oldState: { mangaId: 1, inLibrary: true, title: "Old", categoryIds: [], chapters: [] },
+          newState: { mangaId: 2, inLibrary: false, title: "New", categoryIds: [], chapters: [] },
+        }],
+      },
+      steps: [{ stepId: "child-1", kind: "local" }],
+    });
+
+    const child = await beginMigrationChildOperation(parent.operationId, {
+      contentKind: "manga",
+      sourceFrom: "1",
+      sourceTo: "2",
+      transferSummary: parent.transferSummary,
+      payload: {
+        oldState: { mangaId: 1, inLibrary: true, title: "Old", categoryIds: [], chapters: [] },
+        newState: { mangaId: 2, inLibrary: false, title: "New", categoryIds: [], chapters: [] },
+      },
+      steps: [{ stepId: "target", kind: "suwayomi" }],
+    });
+    const reloadedParent = await getMigrationOperation(parent.operationId);
+
+    expect(child.parentOperationId).toBe(parent.operationId);
+    expect(reloadedParent?.childOperationIds).toEqual([child.operationId]);
   });
 });

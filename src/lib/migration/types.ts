@@ -145,6 +145,7 @@ export interface MigrationTransferSummary {
 export interface MangaMigrationUndoPayload {
   oldState: MangaMigrationStateSlice;
   newState: MangaMigrationStateSlice;
+  offlineAssets?: OfflineAssetManifestEntry[];
 }
 
 export interface MangaMassMigrationUndoPayload {
@@ -154,10 +155,44 @@ export interface MangaMassMigrationUndoPayload {
 export interface NovelMigrationUndoPayload {
   oldState: NovelMigrationStateSlice;
   newState: NovelMigrationStateSlice;
+  offlineAssets?: OfflineAssetManifestEntry[];
 }
 
 export interface NovelMassMigrationUndoPayload {
   items: NovelMigrationUndoPayload[];
+}
+
+export type OfflineAssetKind = "manga" | "novel";
+
+export type OfflineAssetIntegrity =
+  | "verified"
+  | "not_observed"
+  | "corrupt";
+
+export type OfflineAssetStatus =
+  | "preserved"
+  | "copied"
+  | "already_present"
+  | "pending"
+  | "unsupported";
+
+export interface OfflineAssetReference {
+  sourceId: string;
+  titleId: string;
+  chapterId: string;
+  chapterPath: string | null;
+}
+
+export interface OfflineAssetManifestEntry {
+  version: 1;
+  kind: OfflineAssetKind;
+  source: OfflineAssetReference;
+  target: OfflineAssetReference;
+  sha256: string | null;
+  size: number | null;
+  integrity: OfflineAssetIntegrity;
+  status: OfflineAssetStatus;
+  sourcePreserved: true;
 }
 
 export interface MigrationJournalEntry {
@@ -206,6 +241,8 @@ export type MigrationPayload =
 export interface MigrationOperationV2 {
   schemaVersion: 2;
   operationId: string;
+  parentOperationId: string | null;
+  childOperationIds: string[];
   profileId: string;
   expectedRevision: string | null;
   revision: number;
