@@ -260,6 +260,7 @@
       && lockEnabled
       && !store.activeChapter
       && !store.activeBookReaderId
+      && !store.activeNovelReader
       && store.navPage !== "downloads",
   );
 

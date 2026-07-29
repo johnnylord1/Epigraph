@@ -178,6 +178,7 @@
   let containerWidth = $state(0);
   let zoomAnchorEl:     HTMLElement | null = null;
   let zoomAnchorOffset: number             = 0;
+  let zoomRestoreRafId: number | null = null;
 
   function captureZoomAnchor() {
     if (!containerEl || style !== "longstrip") return;
@@ -197,7 +198,10 @@
     if (!zoomAnchorEl || !containerEl) return;
     const el = zoomAnchorEl;
     zoomAnchorEl = null;
-    requestAnimationFrame(() => {
+    if (zoomRestoreRafId !== null) cancelAnimationFrame(zoomRestoreRafId);
+    zoomRestoreRafId = requestAnimationFrame(() => {
+      zoomRestoreRafId = null;
+      if (!containerEl || !el.isConnected) return;
       const containerTop = containerEl.getBoundingClientRect().top;
       const newRect      = el.getBoundingClientRect();
       containerEl.scrollTop += (newRect.top - containerTop) - zoomAnchorOffset;
@@ -232,6 +236,11 @@
   let retryingAfterWebViewClose = false;
   let emptyReaderRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
   let pointerInsideHud = false;
+  let readerSessionGeneration = 0;
+  let resumeRafId: number | null = null;
+  let scrollTrackingRafId: number | null = null;
+  let preloadedChapterIds = new Set<number>();
+  let autoAppendedChapterIds = new Set<number>();
 
   function scheduleResumeDismiss() {
     if (resumeTimer)     clearTimeout(resumeTimer);
@@ -506,12 +515,15 @@
   });
 
   async function loadChapter(id: number) {
+    readerSessionGeneration += 1;
     abortCtrl?.abort();
     const ctrl = new AbortController();
     abortCtrl  = ctrl;
     hasNavigated     = false;
     appending        = false;
     markedRead       = new Set();
+    preloadedChapterIds = new Set();
+    autoAppendedChapterIds = new Set();
     loading          = true;
     error            = null;
     pageGroups       = [];
@@ -573,14 +585,32 @@
         if (!containerEl) return;
         if (targetPg > 1) {
           const chId = ch.id;
+          const generation = readerSessionGeneration;
+          let attempts = 0;
           const scrollToResumePage = () => {
+            resumeRafId = null;
+            if (
+              generation !== readerSessionGeneration
+              || store.activeChapter?.id !== chId
+              || style !== "longstrip"
+              || !containerEl
+            ) return;
             const target = containerEl.querySelector<HTMLImageElement>(`img[data-local-page="${targetPg}"][data-chapter="${chId}"]`);
-            if (!target) { requestAnimationFrame(scrollToResumePage); return; }
+            if (!target) {
+              attempts += 1;
+              if (attempts < 120) resumeRafId = requestAnimationFrame(scrollToResumePage);
+              return;
+            }
             containerEl.querySelectorAll<HTMLImageElement>(`img[data-chapter="${chId}"]`).forEach((img, i) => { if (i < targetPg) img.loading = "eager"; });
-            const doScroll = () => { target.scrollIntoView({ block: "start" }); stripResumeReady = true; };
+            const doScroll = () => {
+              if (generation !== readerSessionGeneration || !target.isConnected) return;
+              target.scrollIntoView({ block: "start" });
+              stripResumeReady = true;
+            };
             if (target.complete && target.naturalHeight > 0) { doScroll(); }
             else { target.loading = "eager"; target.addEventListener("load", doScroll, { once: true }); }
           };
+          if (resumeRafId !== null) cancelAnimationFrame(resumeRafId);
           scrollToResumePage();
           return;
         }
@@ -611,6 +641,18 @@
   }
 
   function resetReaderSessionCaches() {
+    if (resumeRafId !== null) {
+      cancelAnimationFrame(resumeRafId);
+      resumeRafId = null;
+    }
+    if (scrollTrackingRafId !== null) {
+      cancelAnimationFrame(scrollTrackingRafId);
+      scrollTrackingRafId = null;
+    }
+    if (zoomRestoreRafId !== null) {
+      cancelAnimationFrame(zoomRestoreRafId);
+      zoomRestoreRafId = null;
+    }
     pageCache.clear();
     inflight.clear();
     aspectCache.clear();
@@ -646,7 +688,12 @@
     const lastIdx   = list.findIndex(c => c.id === lastChunk.chapterId);
     if (lastIdx < 0 || lastIdx >= list.length - 1) return;
     const next = list[lastIdx + 1];
-    if (!next || stripChapters.some(c => c.chapterId === next.id)) return;
+    if (
+      !next
+      || stripChapters.some(c => c.chapterId === next.id)
+      || autoAppendedChapterIds.has(next.id)
+    ) return;
+    const generation = readerSessionGeneration;
     appending = true;
     fetchPages(next.id)
       .then(urls => {
@@ -654,12 +701,36 @@
         return urls;
       })
       .then(urls => {
+        if (generation !== readerSessionGeneration || !autoNext) {
+          appending = false;
+          return;
+        }
         if (stripChapters.some(c => c.chapterId === next.id)) { appending = false; return; }
+        autoAppendedChapterIds.add(next.id);
         stripChapters = [...stripChapters, { chapterId: next.id, chapterName: next.name, urls }];
         pruneStripWindow(visibleChapterId ?? next.id);
         appending = false;
       })
       .catch(() => { appending = false; });
+  }
+
+  function preloadNextChapter() {
+    if (!stripChapters.length) return;
+    const lastChunk = stripChapters[stripChapters.length - 1];
+    const list = store.activeChapterList;
+    const lastIndex = list.findIndex((chapter) => chapter.id === lastChunk.chapterId);
+    const next = lastIndex >= 0 ? list[lastIndex + 1] : null;
+    if (!next || preloadedChapterIds.has(next.id)) return;
+    const generation = readerSessionGeneration;
+    preloadedChapterIds.add(next.id);
+    void fetchPages(next.id)
+      .then((urls) => {
+        if (generation !== readerSessionGeneration) return;
+        urls.slice(0, PRELOAD_FORWARD_PAGES).forEach(preloadImage);
+      })
+      .catch(() => {
+        if (generation === readerSessionGeneration) preloadedChapterIds.delete(next.id);
+      });
   }
 
   let stripChaptersRef: StripChapter[] = [];
@@ -726,7 +797,8 @@
     if (!containerEl || style !== "longstrip") return () => {};
     const scrollEl = containerEl;
 
-    function onScroll() {
+    function processScroll() {
+      scrollTrackingRafId = null;
       const imgs = scrollEl.querySelectorAll<HTMLElement>("img[data-local-page]");
       if (!imgs.length) return;
       const containerTop = scrollEl.getBoundingClientRect().top;
@@ -750,22 +822,28 @@
         const total = chunk ? chunk.urls.length : store.pageUrls.length;
         if (total > 0 && activePage >= total) markChapterRead(activeChId);
       }
-      if (scrollEl.scrollTop + scrollEl.clientHeight >= scrollEl.scrollHeight - 40) {
+      const atChapterEnd = scrollEl.scrollTop + scrollEl.clientHeight >= scrollEl.scrollHeight - 40;
+      if (atChapterEnd) {
         const last = stripChaptersRef[stripChaptersRef.length - 1];
         if (last && store.settings.autoMarkRead) markChapterRead(last.chapterId);
+        if (autoNext) appendNextChapter();
       }
-    }
-
-    function onScrollAppend() {
       const pct = (scrollEl.scrollTop + scrollEl.clientHeight) / scrollEl.scrollHeight;
-      if (pct >= 0.80) appendNextChapter();
+      if (pct >= 0.80) preloadNextChapter();
     }
 
-    scrollEl.addEventListener("scroll", onScroll,       { passive: true });
-    scrollEl.addEventListener("scroll", onScrollAppend, { passive: true });
+    function onScroll() {
+      if (scrollTrackingRafId !== null) return;
+      scrollTrackingRafId = requestAnimationFrame(processScroll);
+    }
+
+    scrollEl.addEventListener("scroll", onScroll, { passive: true });
     return () => {
       scrollEl.removeEventListener("scroll", onScroll);
-      scrollEl.removeEventListener("scroll", onScrollAppend);
+      if (scrollTrackingRafId !== null) {
+        cancelAnimationFrame(scrollTrackingRafId);
+        scrollTrackingRafId = null;
+      }
     };
   }
 
@@ -879,8 +957,10 @@
   }
 
   async function animateFade(fn: () => void) {
+    const generation = readerSessionGeneration;
     fadingOut = true;
     await new Promise(r => setTimeout(r, 100));
+    if (generation !== readerSessionGeneration) return;
     fn();
     fadingOut = false;
   }
@@ -1108,10 +1188,13 @@
 
     return () => {
       cleanedUp = true;
+      readerSessionGeneration += 1;
       readerWebViewUnlisten?.();
       abortCtrl?.abort();
       if (hideTimer) clearTimeout(hideTimer);
       if (emptyReaderRecoveryTimer) clearTimeout(emptyReaderRecoveryTimer);
+      if (resumeTimer) clearTimeout(resumeTimer);
+      if (resumeFadeTimer) clearTimeout(resumeFadeTimer);
       unregisterCommands();
       window.removeEventListener("wheel", onWheel);
       cleanupScroll();

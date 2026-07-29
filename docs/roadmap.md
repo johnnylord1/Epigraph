@@ -20,13 +20,18 @@ This roadmap records known development priorities without committing to dates or
   Shell zoom and fullscreen shortcuts no longer race the active reader, while
   each reader owns content zoom, bookmark and fullscreen commands and cleans
   its registration on teardown.
+- Reader runtime work is session-bound: longstrip scroll measurement is
+  coalesced, resume RAFs are bounded, next chapters are preloaded separately
+  from one-time auto append, PDF progress follows one dominant visible page,
+  duplicate progress writes are suppressed, and stale EPUB/PDF/novel work is
+  ignored after reader or chapter changes.
 - EPUB/PDF local-data round trips, backup/restore, integration contracts,
   accessibility focus isolation, bundle budgets, and aggregate release gates.
 
 ## Short Term
 
-- Continue the verified 72A-72H sequence with Reader runtime hardening,
-  measured Library instrumentation and optimization.
+- Continue the verified 72A-72H sequence with measured Library instrumentation
+  and optimization.
 - Re-run `pnpm release:verify` on the current HEAD after the SR9-SR13 source
   runtime sequence.
 - Exercise the real Docker FlareSolverr lifecycle when Docker is available;

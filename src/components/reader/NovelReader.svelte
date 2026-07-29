@@ -66,6 +66,8 @@
   let discordCoverLookupKey: string | null = null;
   let discordCoverLookupVersion = 0;
   let discordPublicCoverUrl: string | null = null;
+  let chapterLoadGeneration = 0;
+  let scopeLoadGeneration = 0;
   let libraryState = $state(peekNovelLibraryState({
     profileId: store.runtimeResolvedLocalProfileId,
     serverUrl: store.runtimeServerUrl,
@@ -399,40 +401,55 @@
 
   async function loadChapter() {
     if (!activeReader) return;
+    const generation = ++chapterLoadGeneration;
+    const reader = { ...activeReader };
+    const requestScope = { ...scopeInput };
+    const isCurrent = () => (
+      generation === chapterLoadGeneration
+      && activeReader?.novelId === reader.novelId
+      && activeReader?.chapterId === reader.chapterId
+    );
     loading = true;
     error = null;
     try {
-      libraryState = await loadNovelLibraryState(scopeInput);
-      const cached = await loadCachedNovelChapter(scopeInput, activeReader.sourceId, activeReader.chapterPath);
+      const nextLibraryState = await loadNovelLibraryState(requestScope);
+      if (!isCurrent()) return;
+      libraryState = nextLibraryState;
+      const cached = await loadCachedNovelChapter(requestScope, reader.sourceId, reader.chapterPath);
+      if (!isCurrent()) return;
       if (cached) {
         chapterHtml = sanitizeChapterHtml(cached.content);
       } else {
-        const result = await readInstalledNovelChapter(scopeInput, activeReader.sourceId, activeReader.chapterPath);
+        const result = await readInstalledNovelChapter(requestScope, reader.sourceId, reader.chapterPath);
+        if (!isCurrent()) return;
         chapterHtml = sanitizeChapterHtml(result.content);
-        await saveCachedNovelChapter(scopeInput, {
-          sourceId: activeReader.sourceId,
-          novelId: activeReader.novelId,
-          chapterId: activeReader.chapterId,
-          chapterPath: activeReader.chapterPath,
-          chapterTitle: activeReader.chapterTitle,
+        await saveCachedNovelChapter(requestScope, {
+          sourceId: reader.sourceId,
+          novelId: reader.novelId,
+          chapterId: reader.chapterId,
+          chapterPath: reader.chapterPath,
+          chapterTitle: reader.chapterTitle,
           content: result.content,
         }).catch(() => null);
+        if (!isCurrent()) return;
       }
 
-      if (getNovelLibraryEntry(libraryState, activeReader.novelId)) {
+      if (getNovelLibraryEntry(libraryState, reader.novelId)) {
         libraryState = await saveNovelLibraryState(markNovelChapterRead(libraryState, {
-          novelId: activeReader.novelId,
-          chapterId: activeReader.chapterId,
-          chapterTitle: activeReader.chapterTitle,
-        }), scopeInput);
+          novelId: reader.novelId,
+          chapterId: reader.chapterId,
+          chapterTitle: reader.chapterTitle,
+        }), requestScope);
+        if (!isCurrent()) return;
         syncActiveDetail(libraryState);
         bumpContentSetupVersion();
       }
     } catch (chapterError) {
+      if (!isCurrent()) return;
       error = chapterError instanceof Error ? chapterError.message : String(chapterError);
       chapterHtml = "";
     } finally {
-      loading = false;
+      if (isCurrent()) loading = false;
     }
   }
 
@@ -490,8 +507,15 @@
   $effect(() => {
     store.runtimeResolvedLocalProfileId;
     store.runtimeServerUrl;
+    const generation = ++scopeLoadGeneration;
+    const requestScope = { ...scopeInput };
     untrack(() => {
-      void loadNovelLibraryState(scopeInput).then((state) => {
+      void loadNovelLibraryState(requestScope).then((state) => {
+        if (
+          generation !== scopeLoadGeneration
+          || requestScope.profileId !== store.runtimeResolvedLocalProfileId
+          || requestScope.serverUrl !== store.runtimeServerUrl
+        ) return;
         libraryState = state;
       });
     });
@@ -528,6 +552,8 @@
   });
 
   onDestroy(() => {
+    chapterLoadGeneration += 1;
+    scopeLoadGeneration += 1;
     tts.destroy();
   });
 </script>

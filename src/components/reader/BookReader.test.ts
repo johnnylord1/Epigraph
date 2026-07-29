@@ -15,7 +15,7 @@ describe("BookReader PDF initialization", () => {
   });
 
   it("does not let initial scroll observers persist placeholder progress", () => {
-    expect(source).toContain("if (!loading) syncPdfProgress(pageNum)");
-    expect(source).toContain("if (!loading) {");
+    expect(source).toContain("if (loading || Date.now() < suspendReflowProgressUntil) return");
+    expect(source).toContain("selectDominantReaderPage(visiblePdfPages.values())");
   });
 });

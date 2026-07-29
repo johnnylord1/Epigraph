@@ -57,6 +57,7 @@
   import NocturneState from "../shared/NocturneState.svelte";
   import ReaderHud from "./ReaderHud.svelte";
   import { createDomTtsTextProvider, createTtsController } from "../../lib/reader/tts";
+  import { clampReaderPage, selectDominantReaderPage, type VisibleReaderPage } from "../../lib/reader/runtime";
   import { setGenericReading, setTtsPresence } from "../../lib/discord";
   import { canResolveDiscordCover, canRunDiscordCoverImprovement } from "../../lib/discord/coverImprovementGate";
   import { isDiscordPublicImageUrl } from "../../lib/discord/coverResolver";
@@ -341,10 +342,15 @@
   let currentPdfDoc: any = null;
   let currentPdfJsLib: typeof import("pdfjs-dist") | null = null;
   let pdfRenderTask: any = null;
-  let pendingPdfPage = false;
+  let pendingPdfPage: number | null = null;
   let reflowedPages = $state<ReflowedPage[]>([]);
   let reflowLoadingPages = $state<Set<number>>(new Set());
   let suspendReflowProgressUntil = 0;
+  let lastProgressSignature: string | null = null;
+  let visiblePdfPages = new Map<number, VisibleReaderPage>();
+  let visiblePdfProgressRafId: number | null = null;
+  let reflowAnchorRafId: number | null = null;
+  let resolveReflowAnchorFrame: (() => void) | null = null;
   let auditOpenBookId: string | null = null;
   let auditCloseSent = false;
   let currentStage: BookRuntimeStage = $state("idle");
@@ -363,7 +369,7 @@
   const bookmarkPct = $derived.by(() => {
     if (!currentBookmark) return 0;
     if (activeBook?.subtype === "pdf" && currentBookmark.pageIndex && totalPages > 1) {
-      return ((currentBookmark.pageIndex - 1) / (totalPages - 1)) * 100;
+      return ((clampReaderPage(currentBookmark.pageIndex, totalPages) - 1) / (totalPages - 1)) * 100;
     }
     return Math.max(0, Math.min(100, currentBookmark.progressPercent * 100));
   });
@@ -581,8 +587,21 @@
 
   async function preserveReflowScroll(anchor: ReturnType<typeof getReflowScrollAnchor>) {
     if (!anchor) return;
+    const token = loadToken;
     await tick();
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    if (reflowAnchorRafId !== null) {
+      cancelAnimationFrame(reflowAnchorRafId);
+      resolveReflowAnchorFrame?.();
+    }
+    await new Promise<void>((resolve) => {
+      resolveReflowAnchorFrame = resolve;
+      reflowAnchorRafId = requestAnimationFrame(() => {
+        reflowAnchorRafId = null;
+        resolveReflowAnchorFrame = null;
+        resolve();
+      });
+    });
+    if (token !== loadToken) return;
     const viewer = document.querySelector(".book-viewer") as HTMLElement | null;
     const element = document.getElementById(anchor.id);
     if (!viewer || !element) return;
@@ -664,6 +683,19 @@
       currentPdfDoc?.destroy?.();
     } catch {}
     pdfRenderTask = null;
+    pendingPdfPage = null;
+    lastProgressSignature = null;
+    visiblePdfPages.clear();
+    if (visiblePdfProgressRafId !== null) {
+      cancelAnimationFrame(visiblePdfProgressRafId);
+      visiblePdfProgressRafId = null;
+    }
+    if (reflowAnchorRafId !== null) {
+      cancelAnimationFrame(reflowAnchorRafId);
+      reflowAnchorRafId = null;
+      resolveReflowAnchorFrame?.();
+      resolveReflowAnchorFrame = null;
+    }
     currentRendition = null;
     currentBookRef = null;
     currentPdfDoc = null;
@@ -693,18 +725,21 @@
 
   function persistProgress(patch: Partial<BookProgress>) {
     if (!activeBook) return;
-    setBookProgress({
+    const nextProgress = {
       bookId: activeBook.id,
       location: currentLocation,
       href: currentHref,
       progressPercent,
-      lastReadAt: Date.now(),
       pageIndex: activeBook.subtype === "pdf" ? pageNumber : null,
       totalPages: activeBook.subtype === "pdf" ? totalPages : null,
       sectionLabel: currentSectionLabel,
       renderer: activeBook.subtype,
       ...patch,
-    });
+    };
+    const signature = JSON.stringify(nextProgress);
+    if (signature === lastProgressSignature) return;
+    lastProgressSignature = signature;
+    setBookProgress({ ...nextProgress, lastReadAt: Date.now() });
     auditReader("books.reader.progress", {
       location: patch.location ?? currentLocation,
       href: patch.href ?? currentHref,
@@ -714,7 +749,7 @@
 
   function syncPdfProgress(nextPage = pageNumber, elementIndex = 0) {
     if (!activeBook || activeBook.subtype !== "pdf") return;
-    pageNumber = Math.max(1, Math.min(totalPages, nextPage));
+    pageNumber = clampReaderPage(nextPage, totalPages);
     progressPercent = totalPages > 1 ? (pageNumber - 1) / (totalPages - 1) : 1;
     currentLocation = pdfReflowMode ? getReflowElementKey(pageNumber, elementIndex) : null;
     currentHref = null;
@@ -741,12 +776,18 @@
   async function loadReflowPage(pageNum: number) {
     if (!currentPdfDoc || !currentPdfJsLib || pageNum < 1 || pageNum > totalPages) return;
     if (getReflowPage(pageNum) || reflowLoadingPages.has(pageNum)) return;
+    const token = loadToken;
+    const documentRef = currentPdfDoc;
+    const pdfJsRef = currentPdfJsLib;
+    const bookId = activeBook?.id ?? null;
     reflowLoadingPages = new Set(reflowLoadingPages).add(pageNum);
     try {
-      const page = await currentPdfDoc.getPage(pageNum);
-      const reflowed = await extractReflowedPage(page, pageNum, currentPdfJsLib, {
+      const page = await documentRef.getPage(pageNum);
+      if (token !== loadToken || documentRef !== currentPdfDoc || bookId !== activeBook?.id) return;
+      const reflowed = await extractReflowedPage(page, pageNum, pdfJsRef, {
         removeDecorativeBackgrounds: pdfReflowCleanBackgrounds,
       });
+      if (token !== loadToken || documentRef !== currentPdfDoc || bookId !== activeBook?.id) return;
       if (!getReflowPage(pageNum)) {
         reflowedPages = pruneReflowedPages(
           [...reflowedPages, reflowed],
@@ -755,8 +796,10 @@
         );
       }
     } catch (err) {
+      if (token !== loadToken) return;
       console.error("Failed to reflow PDF page", pageNum, err);
     } finally {
+      if (token !== loadToken) return;
       const next = new Set(reflowLoadingPages);
       next.delete(pageNum);
       reflowLoadingPages = next;
@@ -944,6 +987,7 @@
         tts.setProvider(createDomTtsTextProvider(doc.body, "p, li, blockquote, h1, h2, h3, h4, h5, h6"));
       });
       doc.addEventListener("click", (e: MouseEvent) => {
+        if (token !== loadToken || currentRendition !== rendition) return;
         if ((e.target as HTMLElement).closest("a, button")) return;
         const width = doc.documentElement.clientWidth;
         const x = e.clientX;
@@ -960,6 +1004,7 @@
         }
       });
       doc.addEventListener("keydown", (e: KeyboardEvent) => {
+        if (token !== loadToken || currentRendition !== rendition) return;
         onKey(e);
       });
     });
@@ -968,6 +1013,7 @@
     currentRendition = rendition;
     applyEpubTheme();
     rendition.on("relocated", (location: any) => {
+      if (token !== loadToken || currentRendition !== rendition) return;
       updateEpubProgress(location);
       const contents = rendition.getContents();
       if (contents && contents.length > 0) {
@@ -1003,24 +1049,29 @@
   }
 
   async function renderPdfPage(nextPage = pageNumber) {
+    const targetPage = clampReaderPage(nextPage, totalPages);
     if (pdfReflowMode) {
-      syncPdfProgress(nextPage);
-      await loadReflowPagesAround(nextPage);
+      syncPdfProgress(targetPage);
+      await loadReflowPagesAround(targetPage);
       await tick();
-      scrollToPdfPage(nextPage, "auto");
+      scrollToPdfPage(targetPage, "auto");
       setStage("pdf.reflow.ready");
       return;
     }
     if (!currentPdfDoc || !canvasEl || !activeBook) return;
     if (pdfRenderTask) {
-      pendingPdfPage = true;
+      pendingPdfPage = targetPage;
       try {
         pdfRenderTask.cancel();
       } catch {}
       return;
     }
 
-    const page = await currentPdfDoc.getPage(nextPage);
+    const token = loadToken;
+    const documentRef = currentPdfDoc;
+    const bookId = activeBook.id;
+    const page = await documentRef.getPage(targetPage);
+    if (token !== loadToken || documentRef !== currentPdfDoc || bookId !== activeBook?.id) return;
     const canvas = canvasEl;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
@@ -1049,25 +1100,30 @@
     canvas.style.height = `${viewport.height}px`;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    pdfRenderTask = page.render({ canvasContext: ctx, viewport });
+    const renderTask = page.render({ canvasContext: ctx, viewport });
+    pdfRenderTask = renderTask;
     try {
-      await pdfRenderTask.promise;
+      await renderTask.promise;
     } catch (err: any) {
       if (err?.name !== "RenderingCancelledException") throw err;
     } finally {
+      if (pdfRenderTask !== renderTask) return;
       pdfRenderTask = null;
-      if (pendingPdfPage) {
-        pendingPdfPage = false;
-        await renderPdfPage(pageNumber);
+      const queuedPage = pendingPdfPage;
+      pendingPdfPage = null;
+      if (queuedPage !== null) {
+        await renderPdfPage(queuedPage);
+        return;
       }
     }
 
-    syncPdfProgress(pageNumber);
+    if (token !== loadToken || documentRef !== currentPdfDoc || bookId !== activeBook?.id) return;
+    syncPdfProgress(targetPage);
     setStage("pdf.page.rendered");
     auditReader("books.reader.pdf.page.rendered", {
       stage: currentStage,
       sourceUrl: currentSourceUrl,
-      pageNumber,
+      pageNumber: targetPage,
       totalPages,
       sectionLabel: currentSectionLabel,
     });
@@ -1128,7 +1184,7 @@
       totalPages: pdf.numPages || 1,
     });
     totalPages = pdf.numPages || 1;
-    pageNumber = Math.max(1, Math.min(totalPages, activeProgress?.pageIndex ?? 1));
+    pageNumber = clampReaderPage(activeProgress?.pageIndex ?? 1, totalPages);
     if (pdfReflowMode) {
       await loadReflowPagesAround(pageNumber);
       await tick();
@@ -1496,6 +1552,47 @@
     }
   }
 
+  function scheduleDominantPdfProgress() {
+    if (visiblePdfProgressRafId !== null) return;
+    visiblePdfProgressRafId = requestAnimationFrame(() => {
+      visiblePdfProgressRafId = null;
+      if (loading || Date.now() < suspendReflowProgressUntil) return;
+      const dominantPage = selectDominantReaderPage(visiblePdfPages.values());
+      if (dominantPage !== null) syncPdfProgress(dominantPage);
+    });
+  }
+
+  function trackPdfPageVisibility(pageNum: number, entry: IntersectionObserverEntry) {
+    const viewerRect = (entry.target as Element).closest(".book-viewer")?.getBoundingClientRect();
+    const rootTop = Math.max(0, viewerRect?.top ?? 0);
+    const rootBottom = Math.min(window.innerHeight, viewerRect?.bottom ?? window.innerHeight);
+    const rect = entry.boundingClientRect;
+    const visiblePixels = Math.max(0, Math.min(rect.bottom, rootBottom) - Math.max(rect.top, rootTop));
+    const denominator = Math.max(1, Math.min(rect.height, rootBottom - rootTop));
+    if (visiblePixels <= 0) {
+      visiblePdfPages.delete(pageNum);
+    } else {
+      visiblePdfPages.set(pageNum, {
+        pageNumber: pageNum,
+        visibleRatio: visiblePixels / denominator,
+        centerDistance: Math.abs(((rect.top + rect.bottom) / 2) - ((rootTop + rootBottom) / 2)),
+      });
+    }
+    scheduleDominantPdfProgress();
+  }
+
+  function forgetPdfPageVisibility(pageNum: number) {
+    visiblePdfPages.delete(pageNum);
+    if (visiblePdfPages.size === 0) {
+      if (visiblePdfProgressRafId !== null) {
+        cancelAnimationFrame(visiblePdfProgressRafId);
+        visiblePdfProgressRafId = null;
+      }
+      return;
+    }
+    scheduleDominantPdfProgress();
+  }
+
   function lazyRenderPdfPage(
     node: HTMLElement,
     params: { pageNum: number; zoom: number; pdfFitMode: PdfFitMode },
@@ -1505,15 +1602,26 @@
     let canvas: HTMLCanvasElement | null = null;
     let isIntersecting = false;
     let pageNum = params.pageNum;
+    let renderGeneration = 0;
 
     async function render() {
       if (!currentPdfDoc || canvas) return;
+      const generation = ++renderGeneration;
+      const token = loadToken;
+      const documentRef = currentPdfDoc;
+      const targetPage = pageNum;
 
       canvas = document.createElement("canvas");
       node.appendChild(canvas);
 
       try {
-        const page = await currentPdfDoc.getPage(pageNum);
+        const page = await documentRef.getPage(targetPage);
+        if (
+          generation !== renderGeneration
+          || token !== loadToken
+          || documentRef !== currentPdfDoc
+          || !canvas?.isConnected
+        ) return;
         const ctx = canvas.getContext("2d");
         if (!ctx) return;
 
@@ -1541,18 +1649,20 @@
         canvas.style.height = `${viewport.height}px`;
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-        localRenderTask = page.render({ canvasContext: ctx, viewport });
-        await localRenderTask.promise;
+        const renderTask = page.render({ canvasContext: ctx, viewport });
+        localRenderTask = renderTask;
+        await renderTask.promise;
       } catch (err: any) {
         if (err?.name !== "RenderingCancelledException") {
           console.error(err);
         }
       } finally {
-        localRenderTask = null;
+        if (generation === renderGeneration) localRenderTask = null;
       }
     }
 
     function cleanup() {
+      renderGeneration += 1;
       if (localRenderTask) {
         try {
           localRenderTask.cancel();
@@ -1568,8 +1678,8 @@
     observer = new IntersectionObserver((entries) => {
       entries.forEach((entry) => {
         isIntersecting = entry.isIntersecting;
+        trackPdfPageVisibility(pageNum, entry);
         if (isIntersecting) {
-          if (!loading) syncPdfProgress(pageNum);
           void render();
         } else {
           cleanup();
@@ -1583,8 +1693,10 @@
     observer.observe(node);
 
     return {
-      update(params: any) {
-        pageNum = params.pageNum;
+      update(nextParams: { pageNum: number; zoom: number; pdfFitMode: PdfFitMode }) {
+        forgetPdfPageVisibility(pageNum);
+        params = nextParams;
+        pageNum = nextParams.pageNum;
         cleanup();
         if (isIntersecting) {
           void render();
@@ -1592,6 +1704,7 @@
       },
       destroy() {
         observer?.disconnect();
+        forgetPdfPageVisibility(pageNum);
         cleanup();
       }
     };
@@ -1602,9 +1715,8 @@
 
     observer = new IntersectionObserver((entries) => {
       entries.forEach((entry) => {
+        trackPdfPageVisibility(pageNum, entry);
         if (!entry.isIntersecting) return;
-        if (Date.now() < suspendReflowProgressUntil) return;
-        syncPdfProgress(pageNum);
         if (pageNum >= (reflowPageNumbers[reflowPageNumbers.length - 1] ?? pageNum)) {
           loadNextReflowPages();
         }
@@ -1618,10 +1730,12 @@
 
     return {
       update(nextPage: number) {
+        forgetPdfPageVisibility(pageNum);
         pageNum = nextPage;
       },
       destroy() {
         observer?.disconnect();
+        forgetPdfPageVisibility(pageNum);
       },
     };
   }
@@ -1631,8 +1745,11 @@
 
     async function render() {
       if (!currentPdfDoc || objectId.startsWith("inline:")) return;
+      const token = loadToken;
+      const documentRef = currentPdfDoc;
       const sourcePage = Number(node.closest("[data-page]")?.getAttribute("data-page") ?? pageNumber);
-      const page = await currentPdfDoc.getPage(sourcePage);
+      const page = await documentRef.getPage(sourcePage);
+      if (cancelled || token !== loadToken || documentRef !== currentPdfDoc) return;
       const image = await new Promise<any>((resolve) => {
         try {
           if (page.objs?.has?.(objectId)) {
@@ -1644,7 +1761,7 @@
           resolve(null);
         }
       });
-      if (cancelled || !image) return;
+      if (cancelled || token !== loadToken || documentRef !== currentPdfDoc || !image) return;
       const width = Number(image.width ?? image.bitmap?.width ?? node.width);
       const height = Number(image.height ?? image.bitmap?.height ?? node.height);
       if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;

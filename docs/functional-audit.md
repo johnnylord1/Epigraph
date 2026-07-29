@@ -273,3 +273,24 @@ O comportamento de `Escape` em fullscreen permanece sob a prioridade ja
 existente do shell. `overlayBars` nao foi alterado, ocultado, depreciado nem
 removido. RAFs, respostas assincronas antigas, pagina PDF predominante,
 deduplicacao de progresso e `autoNextChapter` pertencem ao Marco 72F2.
+
+## Marco 72F2 - runtime do Reader
+
+O longstrip mede pagina/chapter uma vez por frame, limita e cancela a retomada
+por RAF e mantem preload em 80% separado do auto-append no fim real do
+capitulo. Cada capitulo pode ser anexado automaticamente apenas uma vez por
+sessao. Timers, RAFs, fetches e continuations de fade deixam de alterar uma
+sessao desmontada.
+
+O BookReader limita paginas restauradas, escolhe deterministicamente a pagina
+PDF com maior area visivel, desempata pela proximidade do centro e deduplica
+persistencia logicamente identica. Render, reflow, imagens e eventos EPUB
+validam token, documento e livro antes de publicar estado. O NovelReader usa
+snapshot imutavel do capitulo e generation IDs para impedir que uma resposta
+antiga sobrescreva HTML, cache ou progresso do capitulo atual. O idle lock
+tambem reconhece o NovelReader ativo.
+
+`overlayBars`, `markReadOnNext`, prefetch, HUD, TTS e a regra historica de
+marcar novel como lida apos carga bem-sucedida foram preservados. Qualquer
+implementacao, depreciacao ou remocao de `overlayBars` continua fora deste
+marco e exige decisao de produto separada.
