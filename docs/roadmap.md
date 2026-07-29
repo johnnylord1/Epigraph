@@ -10,14 +10,15 @@ This roadmap records known development priorities without committing to dates or
   transactional runtime promotion, and transactional extension updates.
 - Typed search palette and tracker-aware Library, Browse, Settings, Downloads,
   and Home workflows.
+- Runtime fingerprint diagnostics, deterministic source contracts, observed
+  compatibility reports, and official Suwayomi source preferences.
 - EPUB/PDF local-data round trips, backup/restore, integration contracts,
   accessibility focus isolation, bundle budgets, and aggregate release gates.
 
 ## Short Term
 
-- Continue the verified 72A-72H sequence: deterministic source contracts,
-  observed compatibility reports, official preferences, recoverable
-  migrations, Reader ownership, and measured Library optimization.
+- Continue the verified 72A-72H sequence from recoverable migrations through
+  Reader ownership and measured Library optimization.
 - Re-run `pnpm release:verify` on the current HEAD after the SR9-SR13 source
   runtime sequence.
 - Exercise the real Docker FlareSolverr lifecycle when Docker is available;

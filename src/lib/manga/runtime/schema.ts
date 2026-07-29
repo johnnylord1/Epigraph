@@ -125,10 +125,64 @@ const CAPABILITY_REQUIREMENTS: Readonly<
     },
   },
   sourcePreferences: {
-    requiredQueries: [],
+    requiredQueries: ["source"],
     requiredMutations: [],
     requiredFields: {
       SourceType: ["preferences"],
+      CheckBoxPreference: ["key", "title", "summary", "enabled", "visible", "default", "currentValue"],
+      SwitchPreference: ["key", "title", "summary", "enabled", "visible", "default", "currentValue"],
+      ListPreference: [
+        "key",
+        "title",
+        "summary",
+        "enabled",
+        "visible",
+        "default",
+        "currentValue",
+        "entries",
+        "entryValues",
+      ],
+      EditTextPreference: [
+        "key",
+        "title",
+        "summary",
+        "enabled",
+        "visible",
+        "default",
+        "currentValue",
+        "text",
+        "dialogTitle",
+        "dialogMessage",
+      ],
+      MultiSelectListPreference: [
+        "key",
+        "title",
+        "summary",
+        "enabled",
+        "visible",
+        "default",
+        "currentValue",
+        "entries",
+        "entryValues",
+        "dialogTitle",
+        "dialogMessage",
+      ],
+    },
+  },
+  sourcePreferenceWrite: {
+    requiredQueries: ["source"],
+    requiredMutations: ["updateSourcePreference"],
+    requiredFields: {
+      UpdateSourcePreferencePayload: ["preferences", "source"],
+      UpdateSourcePreferenceInput: ["source", "change"],
+      SourcePreferenceChangeInput: [
+        "position",
+        "checkBoxState",
+        "switchState",
+        "listState",
+        "editTextState",
+        "multiSelectState",
+      ],
     },
   },
 };
@@ -270,6 +324,8 @@ export function canonicalRuntimeCapabilitiesJson(capabilities: RuntimeCapabiliti
     extensionApi16: capabilities.extensionApi16,
     extensionStoresV2: capabilities.extensionStoresV2,
     sourcePreferences: capabilities.sourcePreferences,
+    sourcePreferenceWrite: capabilities.sourcePreferenceWrite,
+    sourcePreferenceAccess: capabilities.sourcePreferenceAccess,
     supported: [...capabilities.supported].sort((left, right) => left.localeCompare(right)),
   });
 }
@@ -292,7 +348,11 @@ function evaluateRequirements(
   const missingFields: Record<string, readonly string[]> = {};
 
   for (const [typeName, fields] of Object.entries(requirements.requiredFields)) {
-    const available = new Set(typeMap.get(typeName)?.fields.map((item) => item.name) ?? []);
+    const type = typeMap.get(typeName);
+    const available = new Set([
+      ...(type?.fields.map((item) => item.name) ?? []),
+      ...(type?.inputFields.map((item) => item.name) ?? []),
+    ]);
     const missing = fields.filter((name) => !available.has(name));
     if (missing.length > 0) missingFields[typeName] = missing;
   }
@@ -309,18 +369,28 @@ export function evaluateRuntimeContract(
   contract: RuntimeContract,
 ): RuntimeContractReport {
   const missing = evaluateRequirements(schema, contract);
-  const supported = contract.optionalCapabilities.filter((capability) => {
+  const initiallySupported = contract.optionalCapabilities.filter((capability) => {
     const result = evaluateRequirements(schema, CAPABILITY_REQUIREMENTS[capability]);
     return result.missingQueries.length === 0
       && result.missingMutations.length === 0
       && Object.keys(result.missingFields).length === 0;
   });
+  const readPreferencesSupported = initiallySupported.includes("sourcePreferences");
+  const supported = initiallySupported.filter(
+    (capability) => capability !== "sourcePreferenceWrite" || readPreferencesSupported,
+  );
   const capabilitySet = new Set(supported);
   const capabilities: RuntimeCapabilities = {
     extensionStoresV2: capabilitySet.has("extensionStoresV2"),
     directJarInstall: capabilitySet.has("directJarInstall"),
     extensionApi16: capabilitySet.has("extensionApi16"),
     sourcePreferences: capabilitySet.has("sourcePreferences"),
+    sourcePreferenceWrite: capabilitySet.has("sourcePreferenceWrite"),
+    sourcePreferenceAccess: capabilitySet.has("sourcePreferenceWrite")
+      ? "read-write"
+      : capabilitySet.has("sourcePreferences")
+        ? "read-only"
+        : "unsupported",
     supported,
   };
 

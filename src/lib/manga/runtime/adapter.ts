@@ -21,6 +21,8 @@ import type {
   SourceItemDetails,
   SourceItemRef,
   SourcePage,
+  SourcePreference,
+  SourcePreferenceUpdateInput,
   SourceRuntime,
   SourceSearchInput,
   SourceSearchResult,
@@ -158,6 +160,128 @@ export class SuwayomiAdapter implements SourceRuntime {
     return this.transport.execute(this.profile.operations.listSources, {}, { signal });
   }
 
+  async getSourcePreferences(
+    sourceId: string,
+    signal?: AbortSignal,
+  ): Promise<readonly SourcePreference[]> {
+    await this.requireCompatible();
+    const capabilities = await this.getCapabilities();
+    if (capabilities.sourcePreferenceAccess === "unsupported") {
+      throw new SourceRuntimeError(
+        "PREFERENCE_UNSUPPORTED",
+        "This Suwayomi runtime does not expose source preferences.",
+      );
+    }
+    if (!sourceId.trim()) {
+      throw new SourceRuntimeError(
+        "PREFERENCE_VALIDATION_FAILED",
+        "A source ID is required to load preferences.",
+      );
+    }
+    return this.transport.execute(
+      this.profile.operations.sourcePreferences,
+      { id: sourceId },
+      { signal },
+    );
+  }
+
+  async updateSourcePreference(
+    input: SourcePreferenceUpdateInput,
+  ): Promise<readonly SourcePreference[]> {
+    await this.requireCompatible();
+    const capabilities = await this.getCapabilities();
+    if (capabilities.sourcePreferenceAccess !== "read-write") {
+      throw new SourceRuntimeError(
+        "PREFERENCE_UNSUPPORTED",
+        "This Suwayomi runtime exposes source preferences as read-only.",
+      );
+    }
+    if (!input.sourceId.trim() || !Number.isSafeInteger(input.position) || input.position < 0) {
+      throw new SourceRuntimeError(
+        "PREFERENCE_VALIDATION_FAILED",
+        "The source preference target is invalid.",
+      );
+    }
+
+    const before = await this.getSourcePreferences(input.sourceId, input.signal);
+    const preference = before[input.position];
+    if (!preference) {
+      throw new SourceRuntimeError(
+        "PREFERENCE_VALIDATION_FAILED",
+        "The source preference position no longer exists.",
+        { details: { position: input.position } },
+      );
+    }
+    if (preference.key !== input.expectedKey || preference.type !== input.expectedType) {
+      throw new SourceRuntimeError(
+        "PREFERENCE_VALIDATION_FAILED",
+        "The source preference changed before the update could be applied.",
+        {
+          details: {
+            position: input.position,
+            expectedKey: input.expectedKey,
+            actualKey: preference.key,
+            expectedType: input.expectedType,
+            actualType: preference.type,
+          },
+        },
+      );
+    }
+    if (!preference.enabled) {
+      throw new SourceRuntimeError(
+        "PREFERENCE_VALIDATION_FAILED",
+        "The source preference is disabled.",
+        { details: { position: input.position, key: preference.key } },
+      );
+    }
+
+    const change = this.preferenceChange(preference, input);
+    let mutationError: unknown = null;
+    try {
+      await this.transport.execute(
+        this.profile.operations.updateSourcePreference,
+        { input: { source: input.sourceId, change } },
+        { signal: input.signal, timeoutMs: 60_000 },
+      );
+    } catch (error) {
+      mutationError = error;
+    }
+
+    if (input.signal?.aborted) {
+      throw mutationError ?? new DOMException("The source preference update was cancelled.", "AbortError");
+    }
+
+    let refreshed: readonly SourcePreference[];
+    try {
+      refreshed = await this.getSourcePreferences(input.sourceId, input.signal);
+    } catch (confirmationError) {
+      if (mutationError) throw mutationError;
+      throw new SourceRuntimeError(
+        "PREFERENCE_CONFIRMATION_FAILED",
+        "Suwayomi could not confirm the source preference update.",
+        {
+          cause: confirmationError,
+          details: { position: input.position, key: preference.key },
+        },
+      );
+    }
+    const confirmed = refreshed[input.position];
+    if (
+      !confirmed
+      || confirmed.key !== input.expectedKey
+      || confirmed.type !== input.expectedType
+      || !this.preferenceValueMatches(confirmed, input.value)
+    ) {
+      if (mutationError) throw mutationError;
+      throw new SourceRuntimeError(
+        "PREFERENCE_CONFIRMATION_FAILED",
+        "Suwayomi did not confirm the source preference update.",
+        { details: { position: input.position, key: preference.key } },
+      );
+    }
+    return refreshed;
+  }
+
   async installExtension(input: ExtensionInstallInput): Promise<void> {
     await this.requireCompatible();
     await this.transport.execute(
@@ -165,6 +289,61 @@ export class SuwayomiAdapter implements SourceRuntime {
       { id: input.packageName },
       { signal: input.signal, timeoutMs: 60_000 },
     );
+  }
+
+  private preferenceChange(
+    preference: SourcePreference,
+    input: SourcePreferenceUpdateInput,
+  ) {
+    const position = input.position;
+    switch (preference.type) {
+      case "CheckBoxPreference":
+        if (typeof input.value === "boolean") return { position, checkBoxState: input.value };
+        break;
+      case "SwitchPreference":
+        if (typeof input.value === "boolean") return { position, switchState: input.value };
+        break;
+      case "ListPreference":
+        if (typeof input.value === "string" && preference.entryValues.includes(input.value)) {
+          return { position, listState: input.value };
+        }
+        break;
+      case "EditTextPreference":
+        if (typeof input.value === "string") return { position, editTextState: input.value };
+        break;
+      case "MultiSelectListPreference":
+        if (Array.isArray(input.value)
+          && input.value.every((entry) => (
+            typeof entry === "string" && preference.entryValues.includes(entry)
+          ))) {
+          return { position, multiSelectState: [...new Set(input.value)] };
+        }
+        break;
+      case "UnsupportedPreference":
+        throw new SourceRuntimeError(
+          "PREFERENCE_UNSUPPORTED",
+          `Preference type ${preference.upstreamType} is not supported by this Aethon version.`,
+          { details: { position, key: preference.key } },
+        );
+    }
+    throw new SourceRuntimeError(
+      "PREFERENCE_VALIDATION_FAILED",
+      "The source preference value is invalid.",
+      { details: { position, key: preference.key, type: preference.type } },
+    );
+  }
+
+  private preferenceValueMatches(
+    preference: SourcePreference,
+    expected: SourcePreferenceUpdateInput["value"],
+  ): boolean {
+    if (preference.type === "UnsupportedPreference") return false;
+    const actual = preference.currentValue ?? preference.defaultValue;
+    if (Array.isArray(expected)) {
+      return Array.isArray(actual)
+        && [...actual].sort().join("\u0000") === [...expected].sort().join("\u0000");
+    }
+    return actual === expected;
   }
 
   async updateExtension(input: ExtensionUpdateInput): Promise<void> {

@@ -24,8 +24,17 @@ function field(name: string) {
 }
 
 function introspectionData(order: "forward" | "reverse" = "forward") {
-  const queryFields = [field("sources"), field("extensions")];
+  const queryFields = [field("sources"), field("extensions"), field("source")];
   const sourceFields = [field("displayName"), field("id"), field("preferences")];
+  const commonPreferenceFields = [
+    field("key"),
+    field("title"),
+    field("summary"),
+    field("enabled"),
+    field("visible"),
+    field("default"),
+    field("currentValue"),
+  ];
   const types = [
     {
       kind: "OBJECT",
@@ -45,6 +54,52 @@ function introspectionData(order: "forward" | "reverse" = "forward") {
       kind: "OBJECT",
       name: "SourceType",
       fields: order === "forward" ? sourceFields : [...sourceFields].reverse(),
+      inputFields: null,
+      enumValues: null,
+    },
+    {
+      kind: "OBJECT",
+      name: "CheckBoxPreference",
+      fields: commonPreferenceFields,
+      inputFields: null,
+      enumValues: null,
+    },
+    {
+      kind: "OBJECT",
+      name: "SwitchPreference",
+      fields: commonPreferenceFields,
+      inputFields: null,
+      enumValues: null,
+    },
+    {
+      kind: "OBJECT",
+      name: "ListPreference",
+      fields: [...commonPreferenceFields, field("entries"), field("entryValues")],
+      inputFields: null,
+      enumValues: null,
+    },
+    {
+      kind: "OBJECT",
+      name: "EditTextPreference",
+      fields: [
+        ...commonPreferenceFields,
+        field("text"),
+        field("dialogTitle"),
+        field("dialogMessage"),
+      ],
+      inputFields: null,
+      enumValues: null,
+    },
+    {
+      kind: "OBJECT",
+      name: "MultiSelectListPreference",
+      fields: [
+        ...commonPreferenceFields,
+        field("entries"),
+        field("entryValues"),
+        field("dialogTitle"),
+        field("dialogMessage"),
+      ],
       inputFields: null,
       enumValues: null,
     },
@@ -84,6 +139,7 @@ describe("GraphQL runtime contract", () => {
 
     expect(report.compatible).toBe(true);
     expect(report.capabilities.sourcePreferences).toBe(true);
+    expect(report.capabilities.sourcePreferenceAccess).toBe("read-only");
     expect(report.capabilities.extensionStoresV2).toBe(false);
     expect(report.capabilities.supported).toEqual(["sourcePreferences"]);
   });
@@ -97,6 +153,8 @@ describe("GraphQL runtime contract", () => {
       extensionApi16: false,
       extensionStoresV2: false,
       sourcePreferences: true,
+      sourcePreferenceWrite: false,
+      sourcePreferenceAccess: "read-only",
       supported: ["sourcePreferences"],
     }));
     await expect(runtimeCapabilitiesSha256(capabilities)).resolves.toMatch(

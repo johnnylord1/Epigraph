@@ -1,38 +1,61 @@
 <script lang="ts">
   import { _ } from "../../lib/i18n/runtime";
-  import { StackSimple, X } from "phosphor-svelte";
+  import { CircleNotch, StackSimple, X } from "phosphor-svelte";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import type { ManagedExtension } from "../../lib/managedExtensions";
-  import type { ObservedCompatibilityReport } from "../../lib/manga/runtime";
-  import type { MockExtensionSettings, MockExtensionSettingsPatch } from "../../store/mockSettingsStore";
+  import type {
+    ObservedCompatibilityReport,
+    SourcePreference,
+    SourcePreferenceAccess,
+    SourcePreferenceGroup,
+    SourcePreferenceUpdateInput,
+  } from "../../lib/manga/runtime";
 
   let {
     extension,
-    config,
     busy = false,
     compatibilityReport = null,
     compatibilityBusy = false,
+    preferenceGroups = [],
+    preferenceAccess = "unsupported",
+    preferenceLoading = false,
+    preferenceLoadError = null,
+    preferenceBusyKey = null,
+    preferenceErrors = {},
+    novelPreferenceKeys = [],
+    selectedPreferenceSourceId = "",
     onClose,
     onCheckCompatibility,
     onInstall,
     onMassMigration,
-    onUpdateConfig,
+    onSelectPreferenceSource,
+    onUpdatePreference,
   }: {
     extension: ManagedExtension;
-    config: MockExtensionSettings;
     busy?: boolean;
     compatibilityReport?: ObservedCompatibilityReport | null;
     compatibilityBusy?: boolean;
+    preferenceGroups?: readonly SourcePreferenceGroup[];
+    preferenceAccess?: SourcePreferenceAccess;
+    preferenceLoading?: boolean;
+    preferenceLoadError?: string | null;
+    preferenceBusyKey?: string | null;
+    preferenceErrors?: Readonly<Record<string, string>>;
+    novelPreferenceKeys?: readonly string[];
+    selectedPreferenceSourceId?: string;
     onClose: () => void;
     onCheckCompatibility?: (extension: ManagedExtension) => void;
     onInstall: (extension: ManagedExtension) => void;
     onMassMigration?: (extension: ManagedExtension) => void;
-    onUpdateConfig: (pkgName: string, patch: MockExtensionSettingsPatch) => void;
+    onSelectPreferenceSource: (sourceId: string) => void;
+    onUpdatePreference: (input: SourcePreferenceUpdateInput) => void;
   } = $props();
 
   const description = $derived(
     extension.isInstalled
-      ? `Manage runtime preferences, sync behavior, and credentials for ${extension.name}.`
+      ? extension.kind === "novels"
+        ? `Review the settings declared by ${extension.name}. LNReader settings remain read-only in Aethon.`
+        : `Manage the source preferences exposed by ${extension.name} through Suwayomi.`
       : `${extension.name} is available from your configured repositories. Install it before changing extension preferences.`,
   );
   const originLabel = $derived(extension.kind === "novels" ? "LNReader source" : "Suwayomi extension");
@@ -54,11 +77,47 @@
         : "Available",
   );
 
-  function update(patch: MockExtensionSettingsPatch) {
-    onUpdateConfig(extension.pkgName, patch);
+  function preferenceKey(sourceId: string, position: number): string {
+    return `${sourceId}:${position}`;
+  }
+
+  function currentPreferenceValue(preference: SourcePreference) {
+    if (preference.type === "UnsupportedPreference") return null;
+    return preference.currentValue ?? preference.defaultValue;
+  }
+
+  function updatePreference(
+    group: SourcePreferenceGroup,
+    position: number,
+    preference: SourcePreference,
+    value: boolean | string | readonly string[],
+  ) {
+    if (preference.type === "UnsupportedPreference") return;
+    onUpdatePreference({
+      sourceId: group.source.id,
+      position,
+      expectedKey: preference.key,
+      expectedType: preference.type,
+      value,
+    });
+  }
+
+  function selectedValues(event: Event): string[] {
+    return Array.from((event.currentTarget as HTMLSelectElement).selectedOptions)
+      .map((option) => option.value);
+  }
+
+  function isSelectedPreferenceValue(preference: SourcePreference, value: string): boolean {
+    const current = currentPreferenceValue(preference);
+    return Array.isArray(current) && current.includes(value);
   }
 
   const canMassMigrate = $derived(extension.kind === "manga" && extension.isInstalled);
+  const selectedPreferenceGroup = $derived(
+    preferenceGroups.find((group) => group.source.id === selectedPreferenceSourceId)
+      ?? preferenceGroups[0]
+      ?? null,
+  );
 
   function reportStatusLabel(status: ObservedCompatibilityReport["aggregateStatus"]): string {
     return status === "PASS"
@@ -209,87 +268,182 @@
 
     <section class="settingsSection">
       <div class="sectionTitle">
-        <span>{$_("ui_runtime")}</span>
-        <small>{$_("ui_autosaved")}</small>
+        <span>Source preferences</span>
+        <small>
+          {extension.kind === "novels"
+            ? "LNReader read-only"
+            : preferenceAccess === "read-write"
+              ? "Suwayomi managed"
+              : preferenceAccess === "read-only"
+                ? "Read-only"
+                : "Unavailable"}
+        </small>
       </div>
 
-      <label class="toggleRow">
-        <span>
-          <strong>{$_("ui_enabled")}</strong>
-          <small>{$_("ui_allowThisExtensionToAppearAcrossSourceAware")}</small>
-        </span>
-        <input
-          type="checkbox"
-          checked={config.isEnabled}
-          onchange={(event) => update({ isEnabled: (event.currentTarget as HTMLInputElement).checked })}
-        />
-      </label>
+      {#if preferenceLoading}
+        <div class="preferenceState" aria-live="polite">
+          <span class="preferenceSpinner"><CircleNotch size={15} weight="bold" /></span>
+          <span>Loading official source preferences...</span>
+        </div>
+      {:else if preferenceLoadError}
+        <div class="preferenceState preferenceStateError" role="alert">
+          <strong>Preferences could not be loaded.</strong>
+          <span>{preferenceLoadError}</span>
+        </div>
+      {:else if extension.kind === "novels"}
+        <div class="preferenceState">
+          <strong>Read-only source settings</strong>
+          <span>
+            Aethon can inspect the settings declared by this LNReader plugin, but it will not
+            write them until a dedicated host mutation is available.
+          </span>
+        </div>
+        {#if novelPreferenceKeys.length > 0}
+          <div class="novelPreferenceList" aria-label="LNReader preference keys">
+            {#each novelPreferenceKeys as key}
+              <span>{key}</span>
+            {/each}
+          </div>
+        {:else}
+          <p class="preferenceEmpty">This plugin does not declare configurable preferences.</p>
+        {/if}
+      {:else if preferenceAccess === "unsupported"}
+        <p class="preferenceEmpty">
+          This Suwayomi runtime does not expose the official source preference contract.
+        </p>
+      {:else if preferenceGroups.length === 0}
+        <p class="preferenceEmpty">No configurable sources are registered for this extension.</p>
+      {:else if selectedPreferenceGroup}
+        {#if preferenceGroups.length > 1}
+          <label class="preferenceSourcePicker">
+            <span>Source</span>
+            <select
+              value={selectedPreferenceSourceId}
+              onchange={(event) => {
+                onSelectPreferenceSource((event.currentTarget as HTMLSelectElement).value);
+              }}
+            >
+              {#each preferenceGroups as group}
+                <option value={group.source.id}>
+                  {group.source.displayName || group.source.name} ({group.source.language.toUpperCase()})
+                </option>
+              {/each}
+            </select>
+          </label>
+        {/if}
 
-      <label class="formRow">
-        <span>{$_("ui_syncInterval")}</span>
-        <select
-          value={config.syncInterval}
-          onchange={(event) => update({ syncInterval: (event.currentTarget as HTMLSelectElement).value as MockExtensionSettings["syncInterval"] })}
-        >
-          <option value="manual">{$_("ui_manual")}</option>
-          <option value="hourly">{$_("ui_hourly")}</option>
-          <option value="daily">{$_("ui_daily")}</option>
-          <option value="weekly">{$_("ui_weekly")}</option>
-        </select>
-      </label>
+        {@const group = selectedPreferenceGroup}
+          <div class="preferenceGroup">
+            <div class="preferenceGroupHeader">
+              <span>
+                <strong>{group.source.displayName || group.source.name}</strong>
+                <small>{group.source.language.toUpperCase()}</small>
+              </span>
+              <small>{group.preferences.length} settings</small>
+            </div>
 
-      <label class="formRow">
-        <span>{$_("ui_languagePreference")}</span>
-        <input
-          value={config.languagePref}
-          placeholder={extension.lang}
-          oninput={(event) => update({ languagePref: (event.currentTarget as HTMLInputElement).value })}
-        />
-      </label>
+            {#if group.status === "pending" || group.status === "loading"}
+              <div class="preferenceState" aria-live="polite">
+                <span class="preferenceSpinner"><CircleNotch size={15} weight="bold" /></span>
+                <span>Loading this source's preferences...</span>
+              </div>
+            {:else if group.error}
+              <div class="preferenceState preferenceStateError" role="alert">
+                <strong>This source could not load its preferences.</strong>
+                <span>{group.error}</span>
+              </div>
+            {:else if group.preferences.length === 0}
+              <p class="preferenceEmpty">This source does not expose preferences.</p>
+            {:else}
+              {#each group.preferences as preference, position (`${group.source.id}:${position}:${preference.key}`)}
+                {@const key = preferenceKey(group.source.id, position)}
+                {@const isBusy = preferenceBusyKey === key}
+                {@const isEditable = preferenceAccess === "read-write" && preference.enabled && !isBusy}
+                <div class="preferenceRow" class:preferenceDisabled={!preference.enabled}>
+                  <div class="preferenceCopy">
+                    <strong>{preference.title}</strong>
+                    {#if preference.summary}<small>{preference.summary}</small>{/if}
+                  </div>
 
-      <label class="toggleRow">
-        <span>
-          <strong>{$_("ui_autoUpdate")}</strong>
-          <small>{$_("ui_keepThisExtensionUpdatedWhenRepositoryMetadataChanges")}</small>
-        </span>
-        <input
-          type="checkbox"
-          checked={config.autoUpdate}
-          onchange={(event) => update({ autoUpdate: (event.currentTarget as HTMLInputElement).checked })}
-        />
-      </label>
+                  {#if preference.type === "CheckBoxPreference" || preference.type === "SwitchPreference"}
+                    <input
+                      aria-label={preference.title}
+                      type="checkbox"
+                      checked={currentPreferenceValue(preference) === true}
+                      disabled={!isEditable}
+                      onchange={(event) => updatePreference(
+                        group,
+                        position,
+                        preference,
+                        (event.currentTarget as HTMLInputElement).checked,
+                      )}
+                    />
+                  {:else if preference.type === "ListPreference"}
+                    <select
+                      aria-label={preference.title}
+                      value={String(currentPreferenceValue(preference) ?? "")}
+                      disabled={!isEditable}
+                      onchange={(event) => updatePreference(
+                        group,
+                        position,
+                        preference,
+                        (event.currentTarget as HTMLSelectElement).value,
+                      )}
+                    >
+                      {#each preference.entryValues as value, index}
+                        <option {value}>{preference.entries[index] ?? value}</option>
+                      {/each}
+                    </select>
+                  {:else if preference.type === "EditTextPreference"}
+                    <input
+                      aria-label={preference.title}
+                      value={String(currentPreferenceValue(preference) ?? preference.text ?? "")}
+                      disabled={!isEditable}
+                      onchange={(event) => updatePreference(
+                        group,
+                        position,
+                        preference,
+                        (event.currentTarget as HTMLInputElement).value,
+                      )}
+                    />
+                  {:else if preference.type === "MultiSelectListPreference"}
+                    <select
+                      aria-label={preference.title}
+                      multiple
+                      disabled={!isEditable}
+                      onchange={(event) => updatePreference(
+                        group,
+                        position,
+                        preference,
+                        selectedValues(event),
+                      )}
+                    >
+                      {#each preference.entryValues as value, index}
+                        <option
+                          {value}
+                          selected={isSelectedPreferenceValue(preference, value)}
+                        >{preference.entries[index] ?? value}</option>
+                      {/each}
+                    </select>
+                  {:else}
+                    <span class="unsupportedPreference">
+                      Unsupported type: {preference.upstreamType}
+                    </span>
+                  {/if}
+
+                  {#if isBusy}
+                    <span class="preferenceFeedback" aria-live="polite">Saving and verifying...</span>
+                  {:else if preferenceErrors[key]}
+                    <span class="preferenceFeedback preferenceFeedbackError" role="alert">
+                      {preferenceErrors[key]}
+                    </span>
+                  {/if}
+                </div>
+              {/each}
+            {/if}
+          </div>
+      {/if}
     </section>
-
-    <section class="settingsSection">
-      <div class="sectionTitle">
-        <span>{$_("ui_credentials")}</span>
-        <small>{$_("ui_mockLocalState")}</small>
-      </div>
-
-      <label class="formRow">
-        <span>{$_("ui_username")}</span>
-        <input
-          value={config.credentials.username}
-          placeholder={$_("ui_optionalUsername")}
-          oninput={(event) => update({ credentials: { username: (event.currentTarget as HTMLInputElement).value } })}
-        />
-      </label>
-
-      <label class="formRow">
-        <span>{$_("ui_token")}</span>
-        <input
-          value={config.credentials.token}
-          placeholder={$_("ui_optionalToken")}
-          type="password"
-          oninput={(event) => update({ credentials: { token: (event.currentTarget as HTMLInputElement).value } })}
-        />
-      </label>
-    </section>
-
-    <footer class="settingsFooter">
-      <span>{$_("ui_lastLocalSave")}</span>
-      <strong>{new Date(config.updatedAt).toLocaleString()}</strong>
-    </footer>
   {/if}
 </aside>
 
@@ -312,8 +466,7 @@
   .settingsHeader,
   .extensionIdentity,
   .extensionMeta,
-  .sectionTitle,
-  .settingsFooter {
+  .sectionTitle {
     display: flex;
     align-items: center;
   }
@@ -344,8 +497,7 @@
   .eyebrow,
   .fieldLabel,
   .detailTopline small,
-  .sectionTitle small,
-  .settingsFooter span {
+  .sectionTitle small {
     font-family: var(--font-ui);
     font-size: 9px;
     font-weight: 800;
@@ -590,8 +742,7 @@
     line-height: 1.35;
   }
 
-  .detailItem strong,
-  .settingsFooter strong {
+  .detailItem strong {
     color: var(--component-sources-cell-fg);
     font-size: 11px;
     font-weight: 700;
@@ -628,28 +779,6 @@
     color: var(--component-sources-strong-fg);
   }
 
-  .toggleRow,
-  .formRow {
-    display: grid;
-    gap: 6px;
-    color: var(--component-sources-cell-fg);
-    font-size: 11px;
-    font-weight: 800;
-  }
-
-  .toggleRow {
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-  }
-
-  .toggleRow small {
-    display: block;
-    margin-top: 3px;
-    color: var(--component-sources-table-head-fg);
-    font-weight: 600;
-    line-height: 1.35;
-  }
-
   input,
   select {
     min-height: 30px;
@@ -665,6 +794,12 @@
   input:focus,
   select:focus {
     border-color: var(--component-sources-control-hover-border);
+  }
+
+  input:focus-visible,
+  select:focus-visible {
+    outline: 2px solid var(--component-sources-card-focus-outline);
+    outline-offset: 2px;
   }
 
   input[type="checkbox"] {
@@ -699,12 +834,179 @@
     transform: translateX(14px);
   }
 
-  .settingsFooter {
-    justify-content: space-between;
-    gap: 12px;
-    margin-top: 10px;
-    padding-top: 9px;
+  .preferenceState,
+  .preferenceGroupHeader,
+  .preferenceRow {
+    display: flex;
+    align-items: center;
+  }
+
+  .preferenceState {
+    gap: 8px;
+    min-width: 0;
+    padding: 8px;
+    border-radius: var(--component-sources-settings-item-radius);
+    border: 1px solid var(--component-sources-available-border);
+    background: var(--component-sources-variant-bg);
+    color: var(--component-sources-cell-fg);
+    font-size: 10px;
+    line-height: 1.4;
+  }
+
+  .preferenceState > span,
+  .preferenceState > strong {
+    min-width: 0;
+  }
+
+  .preferenceStateError,
+  .preferenceFeedbackError {
+    color: var(--component-sources-danger-fg);
+  }
+
+  .preferenceStateError {
+    align-items: flex-start;
+    flex-direction: column;
+    border-color: var(--component-sources-danger-border);
+    background: var(--component-sources-danger-bg);
+  }
+
+  .preferenceSpinner {
+    flex: 0 0 auto;
+    animation: spin 800ms linear infinite;
+  }
+
+  .novelPreferenceList {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+
+  .novelPreferenceList span,
+  .unsupportedPreference {
+    border: 1px solid var(--component-sources-settings-icon-border);
+    border-radius: var(--component-sources-settings-meta-radius);
+    padding: 3px 7px;
+    color: var(--component-sources-muted-fg);
+    background: var(--component-sources-badge-bg);
+    font-family: var(--font-ui);
+    font-size: 9px;
+    overflow-wrap: anywhere;
+  }
+
+  .preferenceEmpty {
+    margin: 0;
+    color: var(--component-sources-body-fg);
+    font-size: 10px;
+    line-height: 1.4;
+  }
+
+  .preferenceSourcePicker {
+    display: grid;
+    gap: 5px;
+    color: var(--component-sources-cell-fg);
+    font-size: 10px;
+    font-weight: 800;
+  }
+
+  .preferenceSourcePicker select {
+    width: 100%;
+  }
+
+  .preferenceGroup {
+    display: grid;
+    gap: 0;
+    padding-top: 8px;
     border-top: 1px solid var(--component-sources-settings-panel-border);
+  }
+
+  .preferenceGroup:first-of-type {
+    padding-top: 0;
+    border-top: 0;
+  }
+
+  .preferenceGroupHeader {
+    justify-content: space-between;
+    gap: 8px;
+    padding-bottom: 6px;
+    color: var(--component-sources-strong-fg);
+    font-size: 10px;
+  }
+
+  .preferenceGroupHeader > span {
+    display: flex;
+    align-items: baseline;
+    min-width: 0;
+    gap: 5px;
+  }
+
+  .preferenceGroupHeader small {
+    color: var(--component-sources-subtle-fg);
+    font-family: var(--font-ui);
+    font-size: 8px;
+    font-weight: 800;
+    text-transform: uppercase;
+  }
+
+  .preferenceRow {
+    position: relative;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
+    padding: 8px 0;
+    border-top: 1px solid var(--component-sources-settings-panel-border);
+  }
+
+  .preferenceRow select:not([multiple]),
+  .preferenceRow input:not([type="checkbox"]) {
+    width: min(132px, 45%);
+  }
+
+  .preferenceRow select[multiple] {
+    width: min(150px, 50%);
+    min-height: 64px;
+    padding: 4px 7px;
+  }
+
+  .preferenceCopy {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .preferenceCopy strong {
+    color: var(--component-sources-cell-fg);
+    font-size: 10px;
+    overflow-wrap: anywhere;
+  }
+
+  .preferenceCopy small,
+  .preferenceFeedback {
+    color: var(--component-sources-table-head-fg);
+    font-size: 9px;
+    font-weight: 600;
+    line-height: 1.35;
+  }
+
+  .preferenceDisabled {
+    opacity: 0.65;
+  }
+
+  .preferenceFeedback {
+    position: absolute;
+    inset: auto 0 1px;
+    text-align: right;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .settingsPanel,
+    .settingsBackdrop,
+    .preferenceSpinner {
+      animation: none;
+    }
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 
   @media (max-width: 760px) {

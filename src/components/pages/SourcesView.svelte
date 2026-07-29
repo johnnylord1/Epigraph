@@ -28,6 +28,10 @@
     runTransactionalExtensionUpdates,
     saveExtensionCompatibilityState,
     type ObservedCompatibilityReport,
+    type SourcePreferenceAccess,
+    type SourcePreferenceGroup,
+    type SourcePreferenceUpdateInput,
+    type SourceRuntime,
     upsertObservedCompatibilityReport,
   } from "../../lib/manga/runtime";
   import {
@@ -47,6 +51,7 @@
     installNovelCatalogPlugin,
     removeInstalledNovelPlugin,
   } from "../../lib/novels/packages";
+  import { readInstalledNovelSourceRuntimeSummary } from "../../lib/novels/sources";
   import { addToast, bumpContentSetupVersion, setExtensionsPanelHint, store } from "../../store/state.svelte";
   import { _ } from "../../lib/i18n/runtime";
   import { ensureExtensionRepo, RECOMMENDED_EXTENSION_REPO } from "../../lib/defaultRepos";
@@ -54,7 +59,6 @@
   import { waitForSuwayomiGraphqlReady } from "../../lib/suwayomiReadiness";
   import { getSuwayomiRuntimeStatus } from "../../lib/suwayomiRuntimeUpdate";
   import { detectSetupState, type SetupState } from "../../lib/setupState";
-  import { mockSettingsStore, type MockExtensionSettingsPatch } from "../../store/mockSettingsStore";
   import NocturneState from "../shared/NocturneState.svelte";
   import SetupStatusCard from "../shared/SetupStatusCard.svelte";
   import ExtensionSettingsPanel from "./ExtensionSettingsPanel.svelte";
@@ -120,7 +124,17 @@
   let mangaExtensionCatalogLoaded = $state(false);
   let compatibilityReports: ObservedCompatibilityReport[] = $state([]);
   let checkingCompatibilityPkg = $state<string | null>(null);
+  let preferenceGroups: SourcePreferenceGroup[] = $state([]);
+  let preferenceAccess: SourcePreferenceAccess = $state("unsupported");
+  let preferenceLoading = $state(false);
+  let preferenceLoadError: string | null = $state(null);
+  let preferenceBusyKey: string | null = $state(null);
+  let preferenceErrors: Record<string, string> = $state({});
+  let novelPreferenceKeys: string[] = $state([]);
+  let selectedPreferenceSourceId = $state("");
   let extensionLoadRun = 0;
+  let preferenceLoadRun = 0;
+  let preferenceAbort: AbortController | null = null;
 
   const isNovelMode = $derived(contentType === "novels");
   const activeFilters = $derived(FILTERS.map((item) => ({ ...item, label: $_(item.labelKey) })));
@@ -141,10 +155,6 @@
 
   const selectedExtension = $derived(
     selectedPkgName ? extensions.find((extension) => extension.pkgName === selectedPkgName) ?? null : null,
-  );
-
-  const selectedConfig = $derived(
-    selectedExtension ? mockSettingsStore.getConfig(selectedExtension.pkgName, selectedExtension) : null,
   );
 
   $effect(() => {
@@ -237,6 +247,167 @@
 
   function extensionErrorMessage(error: unknown) {
     return error instanceof Error ? error.message : String(error || "Extension operation failed");
+  }
+
+  function preferenceKey(sourceId: string, position: number): string {
+    return `${sourceId}:${position}`;
+  }
+
+  function resetPreferenceState() {
+    preferenceAbort?.abort();
+    preferenceAbort = null;
+    preferenceGroups = [];
+    preferenceAccess = "unsupported";
+    preferenceLoading = false;
+    preferenceLoadError = null;
+    preferenceBusyKey = null;
+    preferenceErrors = {};
+    novelPreferenceKeys = [];
+    selectedPreferenceSourceId = "";
+  }
+
+  async function hydratePreferenceGroup(
+    runtime: SourceRuntime,
+    sourceId: string,
+    run: number,
+    signal: AbortSignal,
+  ) {
+    const current = preferenceGroups.find((group) => group.source.id === sourceId);
+    if (!current || current.status === "loading" || current.status === "ready") return;
+    preferenceGroups = preferenceGroups.map((group) => (
+      group.source.id === sourceId
+        ? { ...group, status: "loading", error: null }
+        : group
+    ));
+
+    try {
+      const preferences = await runtime.getSourcePreferences(sourceId, signal);
+      if (run !== preferenceLoadRun || signal.aborted) return;
+      preferenceGroups = preferenceGroups.map((group) => (
+        group.source.id === sourceId
+          ? { ...group, preferences, status: "ready", error: null }
+          : group
+      ));
+    } catch (error) {
+      if (run !== preferenceLoadRun || signal.aborted) return;
+      preferenceGroups = preferenceGroups.map((group) => (
+        group.source.id === sourceId
+          ? {
+              ...group,
+              preferences: [],
+              status: "error",
+              error: extensionErrorMessage(error),
+            }
+          : group
+      ));
+    }
+  }
+
+  async function loadPreferenceSource(sourceId: string) {
+    selectedPreferenceSourceId = sourceId;
+    const group = preferenceGroups.find((item) => item.source.id === sourceId);
+    if (!group || group.status === "loading" || group.status === "ready") return;
+    const run = preferenceLoadRun;
+    const controller = preferenceAbort;
+    if (!controller || controller.signal.aborted) return;
+    const runtime = await getManagedSourceRuntime();
+    await hydratePreferenceGroup(runtime, sourceId, run, controller.signal);
+  }
+
+  async function loadExtensionPreferences(extension: ManagedExtension) {
+    const run = ++preferenceLoadRun;
+    preferenceAbort?.abort();
+    const controller = new AbortController();
+    preferenceAbort = controller;
+    preferenceGroups = [];
+    preferenceAccess = extension.kind === "novels" ? "read-only" : "unsupported";
+    preferenceLoading = extension.isInstalled;
+    preferenceLoadError = null;
+    preferenceBusyKey = null;
+    preferenceErrors = {};
+    novelPreferenceKeys = [];
+
+    if (!extension.isInstalled) {
+      preferenceLoading = false;
+      return;
+    }
+
+    try {
+      if (extension.kind === "novels") {
+        if (!extension.novelPluginId) {
+          throw new Error("The installed LNReader source has no stable plugin identity.");
+        }
+        const summary = await readInstalledNovelSourceRuntimeSummary({}, extension.novelPluginId);
+        if (run !== preferenceLoadRun || controller.signal.aborted) return;
+        novelPreferenceKeys = [...new Set(summary.pluginSettingsKeys)].sort((left, right) =>
+          left.localeCompare(right),
+        );
+        preferenceAccess = "read-only";
+        return;
+      }
+
+      const runtime = await getManagedSourceRuntime();
+      const [capabilities, sources] = await Promise.all([
+        runtime.getCapabilities(),
+        runtime.listSources(controller.signal),
+      ]);
+      if (run !== preferenceLoadRun || controller.signal.aborted) return;
+
+      preferenceAccess = capabilities.sourcePreferenceAccess;
+      if (preferenceAccess === "unsupported") return;
+
+      const extensionSources = sources
+        .filter((source) => source.extensionPackageName === extension.pkgName)
+        .sort((left, right) => {
+          const leftPreferred = left.language === extension.lang || left.language === "en";
+          const rightPreferred = right.language === extension.lang || right.language === "en";
+          if (leftPreferred !== rightPreferred) return leftPreferred ? -1 : 1;
+          return left.displayName.localeCompare(right.displayName);
+        });
+      preferenceGroups = extensionSources.map((source) => ({
+        source,
+        preferences: [],
+        status: "pending",
+        error: null,
+      }));
+      if (extensionSources[0]) {
+        selectedPreferenceSourceId = extensionSources[0].id;
+        await hydratePreferenceGroup(runtime, extensionSources[0].id, run, controller.signal);
+      }
+    } catch (error) {
+      if (run !== preferenceLoadRun || controller.signal.aborted) return;
+      preferenceLoadError = extensionErrorMessage(error);
+    } finally {
+      if (run === preferenceLoadRun && !controller.signal.aborted) {
+        preferenceLoading = false;
+      }
+    }
+  }
+
+  async function updateSourcePreference(input: SourcePreferenceUpdateInput) {
+    if (preferenceAccess !== "read-write" || preferenceBusyKey) return;
+    const key = preferenceKey(input.sourceId, input.position);
+    preferenceBusyKey = key;
+    const nextErrors = { ...preferenceErrors };
+    delete nextErrors[key];
+    preferenceErrors = nextErrors;
+
+    try {
+      const runtime = await getManagedSourceRuntime();
+      const preferences = await runtime.updateSourcePreference(input);
+      preferenceGroups = preferenceGroups.map((group) => (
+        group.source.id === input.sourceId
+          ? { ...group, preferences, status: "ready", error: null }
+          : group
+      ));
+    } catch (error) {
+      preferenceErrors = {
+        ...preferenceErrors,
+        [key]: extensionErrorMessage(error),
+      };
+    } finally {
+      preferenceBusyKey = null;
+    }
   }
 
   async function certifyMangaExtensionUpdates(candidates: Parameters<typeof runTransactionalExtensionUpdates>[0]) {
@@ -854,8 +1025,8 @@
 
     if (!installedExtension) return;
 
-    mockSettingsStore.refreshConfig(extension.pkgName, installedExtension);
     selectedPkgName = extension.pkgName;
+    void loadExtensionPreferences(installedExtension);
     addToast({
       kind: "success",
       title: translate("ui_extensionInstalled"),
@@ -941,7 +1112,7 @@
     // Card clicks only open settings. Catalog routing intentionally lives in Discover.
     selectedPkgName = extension.pkgName;
     utilityPanel = null;
-    mockSettingsStore.getConfig(extension.pkgName, extension);
+    void loadExtensionPreferences(extension);
   }
 
   function openMassMigration(extension: ManagedExtension) {
@@ -949,8 +1120,10 @@
     massMigrationExtension = extension;
   }
 
-  function updateConfig(pkgName: string, patch: MockExtensionSettingsPatch) {
-    mockSettingsStore.updateConfig(pkgName, patch);
+  function closeExtensionSettings() {
+    preferenceLoadRun += 1;
+    resetPreferenceState();
+    selectedPkgName = null;
   }
 
   async function removeExtension(event: MouseEvent, extension: ManagedExtension) {
@@ -1050,7 +1223,9 @@
       item.pkgName === extension.pkgName ? refreshed : item
     ));
     lastMangaExtensions = extensions.filter((item) => item.kind === "manga");
-    mockSettingsStore.refreshConfig(extension.pkgName, refreshed);
+    if (selectedPkgName === extension.pkgName) {
+      void loadExtensionPreferences(refreshed);
+    }
     addToast({
       kind: "success",
       title: translate("ui_extensionUpdated"),
@@ -1122,7 +1297,9 @@
         failedUpdateCount = candidates.length - updatedPkgNames.size;
         for (const extension of candidates) {
           if (updatedPkgNames.has(extension.pkgName)) {
-            mockSettingsStore.refreshConfig(extension.pkgName, extension);
+            if (selectedPkgName === extension.pkgName) {
+              void loadExtensionPreferences(extension);
+            }
           } else if (rejectedPkgNames.has(extension.pkgName)) {
             setExtensionOperationError(
               extension.pkgName,
@@ -1696,15 +1873,23 @@
     {/if}
   </section>
 
-  {#if selectedExtension && selectedConfig}
+  {#if selectedExtension}
     <ExtensionSettingsPanel
       extension={selectedExtension}
-      config={selectedConfig}
       busy={isExtensionWorking(selectedExtension.pkgName)}
-      onClose={() => (selectedPkgName = null)}
+      onClose={closeExtensionSettings}
       onInstall={installExtension}
       onMassMigration={openMassMigration}
-      onUpdateConfig={updateConfig}
+      {preferenceGroups}
+      {preferenceAccess}
+      {preferenceLoading}
+      {preferenceLoadError}
+      {preferenceBusyKey}
+      {preferenceErrors}
+      {novelPreferenceKeys}
+      {selectedPreferenceSourceId}
+      onSelectPreferenceSource={loadPreferenceSource}
+      onUpdatePreference={updateSourcePreference}
       compatibilityReport={latestCompatibilityReport(selectedExtension.pkgName)}
       compatibilityBusy={checkingCompatibilityPkg === selectedExtension.pkgName}
       onCheckCompatibility={checkCompatibility}

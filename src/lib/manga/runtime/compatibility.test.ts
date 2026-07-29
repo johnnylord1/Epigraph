@@ -125,4 +125,25 @@ describe("Suwayomi compatibility profiles", () => {
       ]));
     }
   });
+
+  test("preserves unknown future preference types as read-only presentation data", () => {
+    const profile = new CompatibilityProfileV23();
+    const preferences = profile.operations.sourcePreferences.decode({
+      source: {
+        preferences: [{
+          __typename: "FuturePreference",
+        }],
+      },
+    });
+
+    expect(preferences).toEqual([{
+      type: "UnsupportedPreference",
+      upstreamType: "FuturePreference",
+      key: "position:0",
+      title: "position:0",
+      summary: null,
+      enabled: true,
+      visible: true,
+    }]);
+  });
 });

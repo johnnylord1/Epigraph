@@ -17,8 +17,30 @@ function schemaField(name: string) {
   };
 }
 
-function compatibleSchema() {
-  const queryFields = ["aboutServer", "settings", "extensions", "sources"];
+function schemaInputField(name: string) {
+  return {
+    name,
+    defaultValue: null,
+    type: namedType("String"),
+  };
+}
+
+interface SchemaFixtureType {
+  kind: string;
+  name: string;
+  fields: ReturnType<typeof schemaField>[];
+  inputFields: ReturnType<typeof schemaInputField>[] | null;
+  enumValues: null;
+}
+
+function compatibleSchema(): {
+  __schema: {
+    queryType: { name: string };
+    mutationType: { name: string };
+    types: SchemaFixtureType[];
+  };
+} {
+  const queryFields = ["aboutServer", "settings", "extensions", "sources", "source"];
   const mutationFields = [
     "fetchExtensions",
     "updateExtension",
@@ -53,6 +75,15 @@ function compatibleSchema() {
     "extension",
     "preferences",
   ];
+  const commonPreferenceFields = [
+    "key",
+    "title",
+    "summary",
+    "enabled",
+    "visible",
+    "default",
+    "currentValue",
+  ];
   return {
     __schema: {
       queryType: { name: "Query" },
@@ -86,9 +117,89 @@ function compatibleSchema() {
           inputFields: null,
           enumValues: null,
         },
+        {
+          kind: "OBJECT",
+          name: "CheckBoxPreference",
+          fields: commonPreferenceFields.map(schemaField),
+          inputFields: null,
+          enumValues: null,
+        },
+        {
+          kind: "OBJECT",
+          name: "SwitchPreference",
+          fields: commonPreferenceFields.map(schemaField),
+          inputFields: null,
+          enumValues: null,
+        },
+        {
+          kind: "OBJECT",
+          name: "ListPreference",
+          fields: [...commonPreferenceFields, "entries", "entryValues"].map(schemaField),
+          inputFields: null,
+          enumValues: null,
+        },
+        {
+          kind: "OBJECT",
+          name: "EditTextPreference",
+          fields: [
+            ...commonPreferenceFields,
+            "text",
+            "dialogTitle",
+            "dialogMessage",
+          ].map(schemaField),
+          inputFields: null,
+          enumValues: null,
+        },
+        {
+          kind: "OBJECT",
+          name: "MultiSelectListPreference",
+          fields: [
+            ...commonPreferenceFields,
+            "entries",
+            "entryValues",
+            "dialogTitle",
+            "dialogMessage",
+          ].map(schemaField),
+          inputFields: null,
+          enumValues: null,
+        },
       ],
     },
   };
+}
+
+function writablePreferencesSchema() {
+  const schema = compatibleSchema();
+  schema.__schema.types[1]!.fields.push(schemaField("updateSourcePreference"));
+  schema.__schema.types.push({
+    kind: "OBJECT",
+    name: "UpdateSourcePreferencePayload",
+    fields: [schemaField("preferences"), schemaField("source")],
+    inputFields: null,
+    enumValues: null,
+  });
+  schema.__schema.types.push({
+    kind: "INPUT_OBJECT",
+    name: "UpdateSourcePreferenceInput",
+    fields: [],
+    inputFields: [schemaInputField("source"), schemaInputField("change")],
+    enumValues: null,
+  });
+  schema.__schema.types.push({
+    kind: "INPUT_OBJECT",
+    name: "SourcePreferenceChangeInput",
+    fields: [],
+    inputFields: [
+      "position",
+      "checkBoxState",
+      "switchState",
+      "listState",
+      "editTextState",
+      "multiSelectState",
+    ].map(schemaInputField),
+    enumValues: null,
+  });
+  return schema;
 }
 
 class FixtureTransport implements GraphQLTransport {
@@ -106,7 +217,11 @@ class FixtureTransport implements GraphQLTransport {
     _options?: GraphQLExecuteOptions,
   ): Promise<TResult> {
     this.calls.push(operation.name);
-    return operation.decode(this.fixtures[operation.name]);
+    const fixture = this.fixtures[operation.name];
+    const value = typeof fixture === "function"
+      ? (fixture as () => unknown)()
+      : fixture;
+    return operation.decode(value);
   }
 }
 
@@ -226,6 +341,138 @@ describe("SuwayomiAdapter", () => {
       { id: "eu.kanade.tachiyomi.extension.en.demo" },
       { signal: undefined, timeoutMs: 60_000 },
     );
+  });
+
+  test("updates an official source preference and confirms it with a fresh query", async () => {
+    const preference = {
+      __typename: "SwitchPreference",
+      key: "showUploaded",
+      title: "Show uploaded",
+      summary: "Include uploaded titles",
+      enabled: true,
+      visible: false,
+      switchDefault: false,
+      switchCurrent: true,
+    };
+    const transport = new FixtureTransport({
+      AethonRuntimeContract: writablePreferencesSchema(),
+      AethonSourcePreferences: {
+        source: { preferences: [preference] },
+      },
+      AethonUpdateSourcePreference: {
+        updateSourcePreference: { preferences: [preference] },
+      },
+    });
+    const executeSpy = vi.spyOn(transport, "execute");
+    const adapter = new SuwayomiAdapter(transport, new CompatibilityProfileV21());
+
+    const refreshed = await adapter.updateSourcePreference({
+      sourceId: "7",
+      position: 0,
+      expectedKey: "showUploaded",
+      expectedType: "SwitchPreference",
+      value: true,
+    });
+
+    expect(refreshed[0]).toMatchObject({
+      type: "SwitchPreference",
+      currentValue: true,
+    });
+    expect(executeSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "AethonUpdateSourcePreference" }),
+      {
+        input: {
+          source: "7",
+          change: { position: 0, switchState: true },
+        },
+      },
+      expect.objectContaining({ timeoutMs: 60_000 }),
+    );
+    expect(transport.calls.filter((name) => name === "AethonSourcePreferences")).toHaveLength(2);
+  });
+
+  test("keeps source preferences read-only when the official mutation is unavailable", async () => {
+    const transport = new FixtureTransport({
+      AethonRuntimeContract: compatibleSchema(),
+    });
+    const adapter = new SuwayomiAdapter(transport, new CompatibilityProfileV21());
+
+    await expect(adapter.updateSourcePreference({
+      sourceId: "7",
+      position: 0,
+      expectedKey: "showUploaded",
+      expectedType: "SwitchPreference",
+      value: true,
+    })).rejects.toMatchObject({ code: "PREFERENCE_UNSUPPORTED" });
+    expect(transport.calls).not.toContain("AethonUpdateSourcePreference");
+  });
+
+  test("rejects a stale preference position before sending the mutation", async () => {
+    const transport = new FixtureTransport({
+      AethonRuntimeContract: writablePreferencesSchema(),
+      AethonSourcePreferences: {
+        source: {
+          preferences: [{
+            __typename: "SwitchPreference",
+            key: "newKey",
+            title: "Reordered preference",
+            summary: null,
+            enabled: true,
+            visible: true,
+            switchDefault: false,
+            switchCurrent: false,
+          }],
+        },
+      },
+    });
+    const adapter = new SuwayomiAdapter(transport, new CompatibilityProfileV21());
+
+    await expect(adapter.updateSourcePreference({
+      sourceId: "7",
+      position: 0,
+      expectedKey: "oldKey",
+      expectedType: "SwitchPreference",
+      value: true,
+    })).rejects.toMatchObject({ code: "PREFERENCE_VALIDATION_FAILED" });
+    expect(transport.calls).not.toContain("AethonUpdateSourcePreference");
+  });
+
+  test("accepts an ambiguous mutation response only after a fresh query confirms the value", async () => {
+    let queryCount = 0;
+    const preference = (currentValue: boolean) => ({
+      source: {
+        preferences: [{
+          __typename: "SwitchPreference",
+          key: "showUploaded",
+          title: "Show uploaded",
+          summary: null,
+          enabled: true,
+          visible: true,
+          switchDefault: false,
+          switchCurrent: currentValue,
+        }],
+      },
+    });
+    const transport = new FixtureTransport({
+      AethonRuntimeContract: writablePreferencesSchema(),
+      AethonSourcePreferences: () => preference(queryCount++ > 0),
+      AethonUpdateSourcePreference: () => {
+        throw new Error("The response was lost after Suwayomi accepted the mutation.");
+      },
+    });
+    const adapter = new SuwayomiAdapter(transport, new CompatibilityProfileV21());
+
+    await expect(adapter.updateSourcePreference({
+      sourceId: "7",
+      position: 0,
+      expectedKey: "showUploaded",
+      expectedType: "SwitchPreference",
+      value: true,
+    })).resolves.toMatchObject([{
+      type: "SwitchPreference",
+      currentValue: true,
+    }]);
+    expect(transport.calls.filter((name) => name === "AethonSourcePreferences")).toHaveLength(2);
   });
 
   test("manages legacy repositories through the runtime boundary", async () => {

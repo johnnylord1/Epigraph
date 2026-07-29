@@ -671,3 +671,55 @@ Evidencia:
 - `--local-app-data-dir` redefine `APPDATA` e `LOCALAPPDATA` antes do estado
   Tauri; o relatorio do smoke foi persistido somente no perfil descartavel e
   removido com ele.
+
+### 72C - Preferences oficiais
+
+Implementado em 29/07/2026:
+
+- O adapter passou a consultar e atualizar as preferences oficiais expostas
+  pelo Suwayomi. O contrato cobre checkbox, switch, list, edit text e
+  multi-select; tipos futuros desconhecidos sao preservados como
+  `UnsupportedPreference`, sem coerção ou perda silenciosa.
+- As capabilities distinguem `unsupported`, `read-only` e `read-write`. A
+  escrita somente e habilitada quando schema, query, mutation, payload e inputs
+  necessarios estao presentes.
+- Toda mutation valida source, position, key, tipo, valor e opcoes permitidas.
+  Depois da tentativa, uma nova query confirma o estado efetivo. Resposta
+  ambigua so e aceita quando o refresh comprova o valor solicitado.
+- A UI de Sources deixou de usar `mockSettingsStore` e `sessionStorage` para
+  controles ficticios. O arquivo Legacy foi removido somente depois da busca
+  global confirmar zero consumidores.
+- Extensoes com varias sources carregam sob demanda apenas o grupo selecionado.
+  A extensao Comick observada possuia 41 sources, mas o DOM manteve somente um
+  grupo ativo com 11 controles, evitando hidratar centenas de campos.
+- LNReader continua read-only e usa `source.settings.read` apenas quando o
+  usuario abre o painel. `source.settings.write` permanece fora da allowlist e
+  nao foi substituido por outra mutation generica.
+- `visible` e preservado no DTO, mas nao esconde automaticamente preferences:
+  o runtime observado reporta esse campo como falso para controles validos.
+- Nenhuma mutation foi enviada ao perfil real durante a validacao visual.
+
+Evidencia:
+
+- 28/28 testes focados de schema, decoder, adapter, relatorio e runtime LNReader.
+- 6/6 testes de UI e contrato de tokens de Sources.
+- `svelte-check`: zero erros e zero warnings.
+- Build web e build nativa de automacao aprovadas com um job.
+- Smoke WebView2 aprovado com `availableSourceCount=41`,
+  `preferenceGroupCount=1`, `preferenceRowCount=11`,
+  `editableControlCount=11`, zero campos de credencial ficticios, zero overflow
+  horizontal e painel integralmente dentro do viewport.
+- `docs/screenshots/marco72c-preferences/before-fake-settings.png` registra o
+  painel anterior com configuracoes locais sem efeito no runtime.
+- `docs/screenshots/marco72c-preferences/after-manga-preferences.png` registra
+  os controles oficiais do Suwayomi no Nocturne.
+
+Limitacoes e riscos:
+
+- O perfil descartavel nao possuia plugin LNReader instalado. O estado visual
+  read-only nao foi artificialmente fabricado; o boundary e coberto pelos
+  testes do runtime host e pelo gate que proibe `source.settings.write`.
+- Algumas execucoes iniciais do harness demoraram ao importar a rota lazy de
+  Search, sem erro JavaScript e sem relacao com a consulta de preferences. A
+  repeticao final carregou os recursos em milissegundos e aprovou o smoke. Essa
+  variacao permanece registrada para a instrumentacao de startup do 72G1/72H.

@@ -4,13 +4,18 @@ export type RuntimeCapability =
   | "extensionStoresV2"
   | "directJarInstall"
   | "extensionApi16"
-  | "sourcePreferences";
+  | "sourcePreferences"
+  | "sourcePreferenceWrite";
+
+export type SourcePreferenceAccess = "unsupported" | "read-only" | "read-write";
 
 export interface RuntimeCapabilities {
   extensionStoresV2: boolean;
   directJarInstall: boolean;
   extensionApi16: boolean;
   sourcePreferences: boolean;
+  sourcePreferenceWrite: boolean;
+  sourcePreferenceAccess: SourcePreferenceAccess;
   supported: readonly RuntimeCapability[];
 }
 
@@ -116,6 +121,82 @@ export interface SourceRef {
   extensionPackageName: string | null;
 }
 
+interface SourcePreferenceBase {
+  key: string;
+  title: string;
+  summary: string | null;
+  enabled: boolean;
+  visible: boolean;
+}
+
+export interface CheckboxSourcePreference extends SourcePreferenceBase {
+  type: "CheckBoxPreference";
+  defaultValue: boolean;
+  currentValue: boolean | null;
+}
+
+export interface SwitchSourcePreference extends SourcePreferenceBase {
+  type: "SwitchPreference";
+  defaultValue: boolean;
+  currentValue: boolean | null;
+}
+
+export interface ListSourcePreference extends SourcePreferenceBase {
+  type: "ListPreference";
+  defaultValue: string | null;
+  currentValue: string | null;
+  entries: readonly string[];
+  entryValues: readonly string[];
+}
+
+export interface EditTextSourcePreference extends SourcePreferenceBase {
+  type: "EditTextPreference";
+  defaultValue: string | null;
+  currentValue: string | null;
+  text: string | null;
+  dialogTitle: string | null;
+  dialogMessage: string | null;
+}
+
+export interface MultiSelectSourcePreference extends SourcePreferenceBase {
+  type: "MultiSelectListPreference";
+  defaultValue: readonly string[] | null;
+  currentValue: readonly string[] | null;
+  entries: readonly string[];
+  entryValues: readonly string[];
+  dialogTitle: string | null;
+  dialogMessage: string | null;
+}
+
+export interface UnsupportedSourcePreference extends SourcePreferenceBase {
+  type: "UnsupportedPreference";
+  upstreamType: string;
+}
+
+export type SourcePreference =
+  | CheckboxSourcePreference
+  | SwitchSourcePreference
+  | ListSourcePreference
+  | EditTextSourcePreference
+  | MultiSelectSourcePreference
+  | UnsupportedSourcePreference;
+
+export interface SourcePreferenceUpdateInput {
+  sourceId: string;
+  position: number;
+  expectedKey: string;
+  expectedType: Exclude<SourcePreference["type"], "UnsupportedPreference">;
+  value: boolean | string | readonly string[];
+  signal?: AbortSignal;
+}
+
+export interface SourcePreferenceGroup {
+  source: SourceRef;
+  preferences: readonly SourcePreference[];
+  status: "pending" | "loading" | "ready" | "error";
+  error: string | null;
+}
+
 export type SourceSearchMode = "SEARCH" | "POPULAR" | "LATEST";
 
 export interface SourceSearchInput {
@@ -196,6 +277,8 @@ export interface SourceRuntime {
   listExtensions(signal?: AbortSignal): Promise<readonly ExtensionRef[]>;
   refreshExtensions(signal?: AbortSignal): Promise<readonly ExtensionRef[]>;
   listSources(signal?: AbortSignal): Promise<readonly SourceRef[]>;
+  getSourcePreferences(sourceId: string, signal?: AbortSignal): Promise<readonly SourcePreference[]>;
+  updateSourcePreference(input: SourcePreferenceUpdateInput): Promise<readonly SourcePreference[]>;
   installExtension(input: ExtensionInstallInput): Promise<void>;
   updateExtension(input: ExtensionUpdateInput): Promise<void>;
   uninstallExtension(packageName: string, signal?: AbortSignal): Promise<void>;

@@ -20,6 +20,7 @@ import type {
   SourceChapter,
   SourceItemDetails,
   SourcePage,
+  SourcePreference,
   SourceRef,
   SourceSearchResult,
 } from "./types";
@@ -56,6 +57,24 @@ interface PageVariables {
   chapterId: number;
 }
 
+interface SourcePreferencesVariables {
+  id: string;
+}
+
+interface SourcePreferenceChangeVariables {
+  input: {
+    source: string;
+    change: {
+      position: number;
+      checkBoxState?: boolean;
+      switchState?: boolean;
+      listState?: string;
+      editTextState?: string;
+      multiSelectState?: readonly string[];
+    };
+  };
+}
+
 interface ExtensionStoreVariables {
   indexUrl: string;
 }
@@ -72,6 +91,11 @@ export interface CompatibilityProfileOperations {
   listExtensions: GraphQLOperation<Readonly<Record<string, never>>, readonly ExtensionRef[]>;
   refreshExtensions: GraphQLOperation<Readonly<Record<string, never>>, readonly ExtensionRef[]>;
   listSources: GraphQLOperation<Readonly<Record<string, never>>, readonly SourceRef[]>;
+  sourcePreferences: GraphQLOperation<SourcePreferencesVariables, readonly SourcePreference[]>;
+  updateSourcePreference: GraphQLOperation<
+    SourcePreferenceChangeVariables,
+    readonly SourcePreference[]
+  >;
   installExtension: GraphQLOperation<ExtensionActionVariables, void>;
   updateExtension: GraphQLOperation<ExtensionActionVariables, void>;
   uninstallExtension: GraphQLOperation<ExtensionActionVariables, void>;
@@ -135,6 +159,125 @@ function decodeSource(value: unknown, path: string): SourceRef {
     extensionPackageName,
   };
 }
+
+function decodeStringList(value: unknown, path: string): readonly string[] {
+  return array(value, path).map((entry, index) => string(entry, `${path}[${index}]`));
+}
+
+function decodeNullableStringList(value: unknown, path: string): readonly string[] | null {
+  return value === null || value === undefined ? null : decodeStringList(value, path);
+}
+
+function decodePreference(value: unknown, path: string, position: number): SourcePreference {
+  const raw = record(value, path);
+  const upstreamType = string(field(raw, "__typename", path), `${path}.__typename`);
+  const key = nullableString(raw.key, `${path}.key`) ?? `position:${position}`;
+  const title = nullableString(raw.title, `${path}.title`) ?? key;
+  const summary = nullableString(raw.summary, `${path}.summary`);
+  const enabled = raw.enabled === undefined ? true : boolean(raw.enabled, `${path}.enabled`);
+  const visible = raw.visible === undefined ? true : boolean(raw.visible, `${path}.visible`);
+  const base = { key, title, summary, enabled, visible };
+
+  switch (upstreamType) {
+    case "CheckBoxPreference":
+      return {
+        ...base,
+        type: upstreamType,
+        defaultValue: boolean(
+          field(raw, "checkBoxDefault", path),
+          `${path}.checkBoxDefault`,
+        ),
+        currentValue: nullableBoolean(raw.checkBoxCurrent, `${path}.checkBoxCurrent`),
+      };
+    case "SwitchPreference":
+      return {
+        ...base,
+        type: upstreamType,
+        defaultValue: boolean(
+          field(raw, "switchDefault", path),
+          `${path}.switchDefault`,
+        ),
+        currentValue: nullableBoolean(raw.switchCurrent, `${path}.switchCurrent`),
+      };
+    case "ListPreference":
+      return {
+        ...base,
+        type: upstreamType,
+        defaultValue: nullableString(raw.listDefault, `${path}.listDefault`),
+        currentValue: nullableString(raw.listCurrent, `${path}.listCurrent`),
+        entries: decodeStringList(field(raw, "entries", path), `${path}.entries`),
+        entryValues: decodeStringList(
+          field(raw, "entryValues", path),
+          `${path}.entryValues`,
+        ),
+      };
+    case "EditTextPreference":
+      return {
+        ...base,
+        type: upstreamType,
+        defaultValue: nullableString(raw.editTextDefault, `${path}.editTextDefault`),
+        currentValue: nullableString(raw.editTextCurrent, `${path}.editTextCurrent`),
+        text: nullableString(raw.text, `${path}.text`),
+        dialogTitle: nullableString(raw.dialogTitle, `${path}.dialogTitle`),
+        dialogMessage: nullableString(raw.dialogMessage, `${path}.dialogMessage`),
+      };
+    case "MultiSelectListPreference":
+      return {
+        ...base,
+        type: upstreamType,
+        defaultValue: decodeNullableStringList(raw.multiSelectDefault, `${path}.multiSelectDefault`),
+        currentValue: decodeNullableStringList(raw.multiSelectCurrent, `${path}.multiSelectCurrent`),
+        entries: decodeStringList(field(raw, "entries", path), `${path}.entries`),
+        entryValues: decodeStringList(
+          field(raw, "entryValues", path),
+          `${path}.entryValues`,
+        ),
+        dialogTitle: nullableString(raw.dialogTitle, `${path}.dialogTitle`),
+        dialogMessage: nullableString(raw.dialogMessage, `${path}.dialogMessage`),
+      };
+    default:
+      return {
+        ...base,
+        type: "UnsupportedPreference",
+        upstreamType,
+      };
+  }
+}
+
+function decodePreferences(value: unknown, path: string): readonly SourcePreference[] {
+  return array(value, path).map(
+    (entry, index) => decodePreference(entry, `${path}[${index}]`, index),
+  );
+}
+
+const SOURCE_PREFERENCE_FIELDS = `
+  __typename
+  ... on CheckBoxPreference {
+    key title summary enabled visible
+    checkBoxDefault: default
+    checkBoxCurrent: currentValue
+  }
+  ... on SwitchPreference {
+    key title summary enabled visible
+    switchDefault: default
+    switchCurrent: currentValue
+  }
+  ... on ListPreference {
+    key title summary enabled visible entries entryValues
+    listDefault: default
+    listCurrent: currentValue
+  }
+  ... on EditTextPreference {
+    key title summary enabled visible text dialogTitle dialogMessage
+    editTextDefault: default
+    editTextCurrent: currentValue
+  }
+  ... on MultiSelectListPreference {
+    key title summary enabled visible entries entryValues dialogTitle dialogMessage
+    multiSelectDefault: default
+    multiSelectCurrent: currentValue
+  }
+`;
 
 function decodeExtension(value: unknown, path: string, v23: boolean): ExtensionRef {
   const raw = record(value, path);
@@ -258,6 +401,47 @@ function commonOperations(v23: boolean): Omit<CompatibilityProfileOperations, "l
         const root = record(value, "data");
         return nodes(field(root, "sources", "data"), "data.sources").map(
           (item, index) => decodeSource(item, `data.sources.nodes[${index}]`),
+        );
+      },
+    },
+    sourcePreferences: {
+      name: "AethonSourcePreferences",
+      kind: "query",
+      document: `
+        query AethonSourcePreferences($id: LongString!) {
+          source(id: $id) {
+            preferences { ${SOURCE_PREFERENCE_FIELDS} }
+          }
+        }
+      `,
+      decode(value) {
+        const root = record(value, "data");
+        const source = record(field(root, "source", "data"), "data.source");
+        return decodePreferences(
+          field(source, "preferences", "data.source"),
+          "data.source.preferences",
+        );
+      },
+    },
+    updateSourcePreference: {
+      name: "AethonUpdateSourcePreference",
+      kind: "mutation",
+      document: `
+        mutation AethonUpdateSourcePreference($input: UpdateSourcePreferenceInput!) {
+          updateSourcePreference(input: $input) {
+            preferences { ${SOURCE_PREFERENCE_FIELDS} }
+          }
+        }
+      `,
+      decode(value) {
+        const root = record(value, "data");
+        const payload = record(
+          field(root, "updateSourcePreference", "data"),
+          "data.updateSourcePreference",
+        );
+        return decodePreferences(
+          field(payload, "preferences", "data.updateSourcePreference"),
+          "data.updateSourcePreference.preferences",
         );
       },
     },
@@ -457,7 +641,7 @@ const V21_CONTRACT: RuntimeContract = {
       "extension",
     ],
   },
-  optionalCapabilities: ["sourcePreferences"],
+  optionalCapabilities: ["sourcePreferences", "sourcePreferenceWrite"],
 };
 
 const V23_CONTRACT: RuntimeContract = {
@@ -515,6 +699,7 @@ const V23_CONTRACT: RuntimeContract = {
     "directJarInstall",
     "extensionApi16",
     "sourcePreferences",
+    "sourcePreferenceWrite",
   ],
 };
 

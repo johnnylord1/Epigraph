@@ -64,6 +64,7 @@ export default defineWorkspace([
         "src/components/pages/MigrationModalsAccessibility.test.ts",
         "src/components/pages/MigrationModalsThemeTokens.test.ts",
         "src/components/pages/SourcesThemeTokens.test.ts",
+        "src/components/pages/SourcePreferences.test.ts",
         "src/components/shared/SeriesDetailV3Shell.test.ts",
         "src/components/shared/DetailSurfacesThemeTokens.test.ts",
         "src/components/settings/SyncdConnectionThemeTokens.test.ts",

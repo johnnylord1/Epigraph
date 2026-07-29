@@ -29,6 +29,8 @@ function runtime(): SourceRuntime {
     removeStore: vi.fn(),
     listExtensions: vi.fn(),
     refreshExtensions: vi.fn(),
+    getSourcePreferences: vi.fn(async () => []),
+    updateSourcePreference: vi.fn(async () => []),
     listSources: vi.fn(async () => [{
       id: "7",
       name: "Fixture",
