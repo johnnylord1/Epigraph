@@ -10,6 +10,7 @@ mod syncd_replication;
 mod syncd_sidecar;
 
 use base64::Engine;
+use fs2::FileExt;
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
 use percent_encoding::percent_decode;
@@ -22,7 +23,9 @@ use std::net::{Shutdown, TcpStream, ToSocketAddrs};
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
+#[cfg(not(windows))]
+use std::process::Stdio;
 use std::sync::{mpsc, Mutex, Once};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use sysinfo::{Disks, Pid, System};
@@ -40,6 +43,21 @@ use walkdir::WalkDir;
 #[cfg(windows)]
 use windows_sys::Win32::Storage::FileSystem::{
     MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+};
+#[cfg(windows)]
+use windows_sys::Win32::{
+    Foundation::{CloseHandle, HANDLE},
+    System::{
+        JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+            SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        },
+        Threading::{
+            CreateProcessW, ResumeThread, TerminateProcess, CREATE_NO_WINDOW, CREATE_SUSPENDED,
+            PROCESS_INFORMATION, STARTUPINFOW,
+        },
+    },
 };
 
 #[derive(Clone, Serialize)]
@@ -388,6 +406,8 @@ struct DockerFlareSolverrStatus {
     running: bool,
     version: Option<String>,
     message: Option<String>,
+    started_now: bool,
+    endpoint_owned: bool,
 }
 
 #[derive(Serialize)]
@@ -397,11 +417,81 @@ struct LocalFlareSolverrStatus {
     running: bool,
     path: Option<String>,
     message: Option<String>,
+    started_now: bool,
+    endpoint_owned: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalFlareSolverrOwner {
+    pid: u32,
+    process_creation_time: u64,
+    executable_path: String,
+    #[serde(default)]
+    job_bound: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LocalFlareSolverrOwnerState {
+    CurrentInstance,
+    OtherInstance,
+    Stale,
+}
+
+fn classify_local_flaresolverr_owner(
+    identity_matches: bool,
+    job_bound: bool,
+    current_job_owns: bool,
+) -> LocalFlareSolverrOwnerState {
+    if identity_matches && job_bound && current_job_owns {
+        LocalFlareSolverrOwnerState::CurrentInstance
+    } else if identity_matches {
+        LocalFlareSolverrOwnerState::OtherInstance
+    } else {
+        LocalFlareSolverrOwnerState::Stale
+    }
+}
+
+#[cfg(windows)]
+struct LocalFlareSolverrJob {
+    pid: u32,
+    handle: usize,
 }
 
 const FLARESOLVERR_CONTAINER_NAME: &str = "aethon-flaresolverr";
-const FLARESOLVERR_IMAGE: &str = "ghcr.io/flaresolverr/flaresolverr:latest";
+const FLARESOLVERR_IMAGE: &str = "ghcr.io/flaresolverr/flaresolverr@sha256:7962759d99d7e125e108e0f5e7f3cdbcd36161776d058d1d9b7153b92ef1af9e";
 const FLARESOLVERR_LOCAL_VERSION: &str = "v3.4.6";
+const FLARESOLVERR_DOCKER_OWNER_LABEL: &str = "com.aethon.managed";
+const FLARESOLVERR_DOCKER_OWNER_VALUE: &str = "flaresolverr";
+const FLARESOLVERR_DOCKER_LEASE_LABEL: &str = "com.aethon.owner";
+const FLARESOLVERR_DOCKER_MEMORY_BYTES: u64 = 1024 * 1024 * 1024;
+const FLARESOLVERR_DOCKER_NANO_CPUS: u64 = 1_000_000_000;
+const FLARESOLVERR_DOCKER_PIDS_LIMIT: u64 = 256;
+static FLARESOLVERR_LIFECYCLE_LOCK: Mutex<()> = Mutex::new(());
+#[cfg(windows)]
+static FLARESOLVERR_LOCAL_JOB: Mutex<Option<LocalFlareSolverrJob>> = Mutex::new(None);
+
+struct FlareSolverrLifecycleFileLock {
+    file: fs::File,
+}
+
+impl Drop for FlareSolverrLifecycleFileLock {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self.file);
+    }
+}
+
+fn acquire_flaresolverr_lifecycle_file_lock() -> Result<FlareSolverrLifecycleFileLock, String> {
+    fs::create_dir_all(local_flaresolverr_tools_dir()).map_err(|error| error.to_string())?;
+    let file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(local_flaresolverr_tools_dir().join("lifecycle.lock"))
+        .map_err(|error| error.to_string())?;
+    file.lock_exclusive().map_err(|error| error.to_string())?;
+    Ok(FlareSolverrLifecycleFileLock { file })
+}
 
 fn run_docker(args: &[&str]) -> Result<std::process::Output, String> {
     Command::new("docker")
@@ -428,6 +518,112 @@ fn inspect_flaresolverr_running() -> bool {
         return false;
     };
     output.status.success() && docker_output_text(&output).eq_ignore_ascii_case("true")
+}
+
+fn local_flaresolverr_docker_lease_path() -> PathBuf {
+    local_flaresolverr_tools_dir().join("docker-owner-token")
+}
+
+fn read_flaresolverr_docker_lease() -> Option<String> {
+    let token = fs::read_to_string(local_flaresolverr_docker_lease_path()).ok()?;
+    let token = token.trim();
+    (!token.is_empty()).then(|| token.to_string())
+}
+
+fn create_flaresolverr_docker_lease() -> Result<String, String> {
+    if let Some(token) = read_flaresolverr_docker_lease() {
+        return Ok(token);
+    }
+    fs::create_dir_all(local_flaresolverr_tools_dir()).map_err(|error| error.to_string())?;
+    let token = uuid::Uuid::new_v4().to_string();
+    write_text_file_atomic(&local_flaresolverr_docker_lease_path(), &token)?;
+    Ok(token)
+}
+
+fn docker_container_has_ownership_lease(inspect: &serde_json::Value, lease: &str) -> bool {
+    let container = inspect
+        .as_array()
+        .and_then(|items| items.first())
+        .unwrap_or(inspect);
+    let labels = container.pointer("/Config/Labels");
+
+    labels
+        .and_then(|value| value.get(FLARESOLVERR_DOCKER_OWNER_LABEL))
+        .and_then(serde_json::Value::as_str)
+        == Some(FLARESOLVERR_DOCKER_OWNER_VALUE)
+        && labels
+            .and_then(|value| value.get(FLARESOLVERR_DOCKER_LEASE_LABEL))
+            .and_then(serde_json::Value::as_str)
+            == Some(lease)
+}
+
+fn docker_container_matches_policy(inspect: &serde_json::Value, lease: &str) -> bool {
+    let container = inspect
+        .as_array()
+        .and_then(|items| items.first())
+        .unwrap_or(inspect);
+    let port_bindings = container.pointer("/HostConfig/PortBindings/8191~1tcp");
+    let host_port_matches = port_bindings
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|bindings| {
+            bindings.iter().any(|binding| {
+                binding.get("HostIp").and_then(serde_json::Value::as_str) == Some("127.0.0.1")
+                    && binding.get("HostPort").and_then(serde_json::Value::as_str) == Some("8191")
+            })
+        });
+
+    docker_container_has_ownership_lease(inspect, lease)
+        && container
+            .pointer("/Config/Image")
+            .and_then(serde_json::Value::as_str)
+            == Some(FLARESOLVERR_IMAGE)
+        && container
+            .pointer("/HostConfig/Memory")
+            .and_then(serde_json::Value::as_u64)
+            == Some(FLARESOLVERR_DOCKER_MEMORY_BYTES)
+        && container
+            .pointer("/HostConfig/NanoCpus")
+            .and_then(serde_json::Value::as_u64)
+            == Some(FLARESOLVERR_DOCKER_NANO_CPUS)
+        && container
+            .pointer("/HostConfig/PidsLimit")
+            .and_then(serde_json::Value::as_u64)
+            == Some(FLARESOLVERR_DOCKER_PIDS_LIMIT)
+        && container
+            .pointer("/HostConfig/RestartPolicy/Name")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|name| name.is_empty() || name.eq_ignore_ascii_case("no"))
+        && host_port_matches
+}
+
+fn inspect_flaresolverr_container() -> Option<serde_json::Value> {
+    let output = run_docker(&["inspect", FLARESOLVERR_CONTAINER_NAME]).ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    serde_json::from_slice(&output.stdout).ok()
+}
+
+fn inspect_flaresolverr_owned() -> bool {
+    let Some(lease) = read_flaresolverr_docker_lease() else {
+        return false;
+    };
+    inspect_flaresolverr_container()
+        .is_some_and(|inspect| docker_container_has_ownership_lease(&inspect, &lease))
+}
+
+fn inspect_flaresolverr_policy_compliant() -> bool {
+    let Some(lease) = read_flaresolverr_docker_lease() else {
+        return false;
+    };
+    inspect_flaresolverr_container()
+        .is_some_and(|inspect| docker_container_matches_policy(&inspect, &lease))
+}
+
+fn inspect_flaresolverr_container_exists() -> bool {
+    run_docker(&["inspect", FLARESOLVERR_CONTAINER_NAME])
+        .map(|output| output.status.success())
+        .unwrap_or(false)
 }
 
 fn local_flaresolverr_exe_path() -> PathBuf {
@@ -500,77 +696,405 @@ fn local_flaresolverr_stdout_log_path() -> PathBuf {
     local_flaresolverr_logs_dir().join("flaresolverr.out.log")
 }
 
+#[cfg(not(windows))]
 fn local_flaresolverr_stderr_log_path() -> PathBuf {
     local_flaresolverr_logs_dir().join("flaresolverr.err.log")
 }
 
-fn local_flaresolverr_running() -> bool {
-    let system = System::new_all();
-    system.processes().values().any(|process| {
-        process.name().eq_ignore_ascii_case("flaresolverr.exe")
-            || process.name().eq_ignore_ascii_case("flaresolverr")
-    })
+fn local_flaresolverr_owner_path() -> PathBuf {
+    local_flaresolverr_tools_dir().join("owner.json")
 }
 
-#[tauri::command]
-fn get_flaresolverr_local_status() -> LocalFlareSolverrStatus {
+fn normalized_process_path(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn process_paths_match(left: &Path, right: &Path) -> bool {
+    let left = normalized_process_path(left);
+    let right = normalized_process_path(right);
+    #[cfg(windows)]
+    {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    }
+    #[cfg(not(windows))]
+    {
+        left == right
+    }
+}
+
+fn process_matches_local_flaresolverr(process: &sysinfo::Process, expected_path: &Path) -> bool {
+    process
+        .exe()
+        .map(|path| process_paths_match(path, expected_path))
+        .unwrap_or(false)
+}
+
+fn discovered_local_flaresolverr_pid(system: &System, expected_path: &Path) -> Option<u32> {
+    system
+        .processes()
+        .values()
+        .find(|process| process_matches_local_flaresolverr(process, expected_path))
+        .map(|process| process.pid().as_u32())
+}
+
+fn read_local_flaresolverr_owner() -> Option<LocalFlareSolverrOwner> {
+    let text = fs::read_to_string(local_flaresolverr_owner_path()).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+fn write_local_flaresolverr_owner(owner: &LocalFlareSolverrOwner) -> Result<(), String> {
+    let contents = serde_json::to_string_pretty(owner).map_err(|error| error.to_string())?;
+    write_text_file_atomic(&local_flaresolverr_owner_path(), &contents)
+}
+
+#[cfg(windows)]
+fn local_flaresolverr_job_owns(pid: u32) -> bool {
+    FLARESOLVERR_LOCAL_JOB
+        .lock()
+        .ok()
+        .and_then(|job| job.as_ref().map(|job| job.pid == pid))
+        .unwrap_or(false)
+}
+
+#[cfg(not(windows))]
+fn local_flaresolverr_job_owns(_pid: u32) -> bool {
+    true
+}
+
+#[cfg(windows)]
+fn assign_local_flaresolverr_job(pid: u32, process: HANDLE) -> Result<(), String> {
+    let mut job_guard = FLARESOLVERR_LOCAL_JOB
+        .lock()
+        .map_err(|_| "FlareSolverr Job Object state is unavailable.".to_string())?;
+    if job_guard.is_some() {
+        return Err("A FlareSolverr Job Object is already active.".to_string());
+    }
+
+    unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job.is_null() {
+            return Err("Could not create the FlareSolverr Job Object.".to_string());
+        }
+
+        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &limits as *const _ as *const std::ffi::c_void,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        ) == 0
+        {
+            CloseHandle(job);
+            return Err("Could not configure the FlareSolverr Job Object.".to_string());
+        }
+
+        let assigned = AssignProcessToJobObject(job, process) != 0;
+        if !assigned {
+            CloseHandle(job);
+            return Err("Could not contain the FlareSolverr process tree.".to_string());
+        }
+
+        *job_guard = Some(LocalFlareSolverrJob {
+            pid,
+            handle: job as usize,
+        });
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn assign_local_flaresolverr_job(_pid: u32) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(windows)]
+fn spawn_local_flaresolverr_contained(path: &Path) -> Result<u32, String> {
+    let application: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let current_dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let current_dir: Vec<u16> = current_dir
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut startup: STARTUPINFOW = unsafe { std::mem::zeroed() };
+    startup.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+    let mut process_info: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
+
+    let created = unsafe {
+        CreateProcessW(
+            application.as_ptr(),
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            std::ptr::null(),
+            0,
+            CREATE_SUSPENDED | CREATE_NO_WINDOW,
+            std::ptr::null(),
+            current_dir.as_ptr(),
+            &startup,
+            &mut process_info,
+        )
+    };
+    if created == 0 {
+        return Err("Could not start the local FlareSolverr process.".to_string());
+    }
+
+    let pid = process_info.dwProcessId;
+    if let Err(error) = assign_local_flaresolverr_job(pid, process_info.hProcess) {
+        unsafe {
+            TerminateProcess(process_info.hProcess, 1);
+            CloseHandle(process_info.hThread);
+            CloseHandle(process_info.hProcess);
+        }
+        return Err(error);
+    }
+
+    let resumed = unsafe { ResumeThread(process_info.hThread) };
+    unsafe {
+        CloseHandle(process_info.hThread);
+        CloseHandle(process_info.hProcess);
+    }
+    if resumed == u32::MAX {
+        release_local_flaresolverr_job(pid);
+        return Err("Could not resume the contained FlareSolverr process.".to_string());
+    }
+    Ok(pid)
+}
+
+#[cfg(not(windows))]
+fn spawn_local_flaresolverr_contained(path: &Path) -> Result<u32, String> {
+    fs::create_dir_all(local_flaresolverr_logs_dir()).map_err(|err| err.to_string())?;
+    let stdout_log = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(local_flaresolverr_stdout_log_path())
+        .map_err(|err| err.to_string())?;
+    let stderr_log = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(local_flaresolverr_stderr_log_path())
+        .map_err(|err| err.to_string())?;
+    let child = Command::new(path)
+        .current_dir(path.parent().unwrap_or_else(|| Path::new(".")))
+        .stdout(Stdio::from(stdout_log))
+        .stderr(Stdio::from(stderr_log))
+        .spawn()
+        .map_err(|err| err.to_string())?;
+    let pid = child.id();
+    assign_local_flaresolverr_job(pid)?;
+    Ok(pid)
+}
+
+#[cfg(windows)]
+fn terminate_local_flaresolverr_job(pid: u32) -> Result<(), String> {
+    let job = FLARESOLVERR_LOCAL_JOB
+        .lock()
+        .map_err(|_| "FlareSolverr Job Object state is unavailable.".to_string())?
+        .take();
+    let Some(job) = job else {
+        return Err("The FlareSolverr process tree has no active Job Object.".to_string());
+    };
+    if job.pid != pid {
+        unsafe { CloseHandle(job.handle as HANDLE) };
+        return Err("The FlareSolverr Job Object does not match the ownership lease.".to_string());
+    }
+    let terminated = unsafe {
+        let handle = job.handle as HANDLE;
+        let result = TerminateJobObject(handle, 1) != 0;
+        CloseHandle(handle);
+        result
+    };
+    if !terminated {
+        return Err(
+            "Could not terminate the Aethon-managed FlareSolverr process tree.".to_string(),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn terminate_local_flaresolverr_job(pid: u32) -> Result<(), String> {
+    let system = System::new_all();
+    if let Some(process) = system.process(Pid::from_u32(pid)) {
+        let _ = process.kill();
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn release_local_flaresolverr_job(pid: u32) {
+    if !local_flaresolverr_job_owns(pid) {
+        return;
+    }
+    let _ = terminate_local_flaresolverr_job(pid);
+}
+
+#[cfg(not(windows))]
+fn release_local_flaresolverr_job(_pid: u32) {}
+
+fn validated_owned_local_flaresolverr_pid() -> Option<u32> {
+    let expected_path = local_flaresolverr_exe_path();
+    let system = System::new_all();
+    if let Some(owner) = read_local_flaresolverr_owner() {
+        let identity_matches = system
+            .process(Pid::from_u32(owner.pid))
+            .map(|process| {
+                process.start_time() == owner.process_creation_time
+                    && process_matches_local_flaresolverr(process, &expected_path)
+                    && process_paths_match(Path::new(&owner.executable_path), &expected_path)
+            })
+            .unwrap_or(false);
+        match classify_local_flaresolverr_owner(
+            identity_matches,
+            owner.job_bound,
+            local_flaresolverr_job_owns(owner.pid),
+        ) {
+            LocalFlareSolverrOwnerState::CurrentInstance => return Some(owner.pid),
+            LocalFlareSolverrOwnerState::OtherInstance => {
+                // Another Aethon instance may own the in-memory Job Object.
+                // Preserve its lease so only the creating instance can stop it.
+                return None;
+            }
+            LocalFlareSolverrOwnerState::Stale => {}
+        }
+        release_local_flaresolverr_job(owner.pid);
+        let _ = fs::remove_file(local_flaresolverr_owner_path());
+    }
+    None
+}
+
+fn get_flaresolverr_local_status_unlocked() -> LocalFlareSolverrStatus {
     let path = local_flaresolverr_exe_path();
     let installed = path.exists();
+    let system = System::new_all();
+    let discovered_pid = discovered_local_flaresolverr_pid(&system, &path);
+    let owned_pid = validated_owned_local_flaresolverr_pid();
+    let listener_pid = listener_pid_for_port(8191);
+    let endpoint_owned = owned_pid.is_some() && listener_pid == owned_pid;
     LocalFlareSolverrStatus {
         installed,
-        running: local_flaresolverr_running(),
+        running: discovered_pid.is_some(),
         path: installed.then(|| path.to_string_lossy().to_string()),
-        message: if installed {
+        message: if discovered_pid.is_some() && owned_pid.is_none() {
+            Some(
+                "A matching FlareSolverr process is running without an Aethon ownership lease."
+                    .to_string(),
+            )
+        } else if installed {
             None
         } else {
             Some("Not installed".to_string())
         },
+        started_now: false,
+        endpoint_owned,
     }
+}
+
+#[tauri::command]
+fn get_flaresolverr_local_status() -> Result<LocalFlareSolverrStatus, String> {
+    let _lifecycle_guard = FLARESOLVERR_LIFECYCLE_LOCK
+        .lock()
+        .map_err(|_| "FlareSolverr lifecycle is unavailable.".to_string())?;
+    let _file_guard = acquire_flaresolverr_lifecycle_file_lock()?;
+    Ok(get_flaresolverr_local_status_unlocked())
 }
 
 #[tauri::command]
 fn start_flaresolverr_local() -> Result<LocalFlareSolverrStatus, String> {
+    let _lifecycle_guard = FLARESOLVERR_LIFECYCLE_LOCK
+        .lock()
+        .map_err(|_| "FlareSolverr lifecycle is unavailable.".to_string())?;
+    let _file_guard = acquire_flaresolverr_lifecycle_file_lock()?;
     let path = local_flaresolverr_exe_path();
+    let mut started_now = false;
     if !path.exists() {
-        return Ok(get_flaresolverr_local_status());
+        return Ok(get_flaresolverr_local_status_unlocked());
     }
-    if !local_flaresolverr_running() {
-        fs::create_dir_all(local_flaresolverr_logs_dir()).map_err(|err| err.to_string())?;
-        let stdout_log = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(local_flaresolverr_stdout_log_path())
-            .map_err(|err| err.to_string())?;
-        let stderr_log = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(local_flaresolverr_stderr_log_path())
-            .map_err(|err| err.to_string())?;
-        Command::new(&path)
-            .current_dir(path.parent().unwrap_or_else(|| Path::new(".")))
-            .stdout(Stdio::from(stdout_log))
-            .stderr(Stdio::from(stderr_log))
-            .spawn()
-            .map_err(|err| err.to_string())?;
+    if validated_owned_local_flaresolverr_pid().is_none() {
+        let system = System::new_all();
+        if discovered_local_flaresolverr_pid(&system, &path).is_some() {
+            return Err(
+                "A matching FlareSolverr process is already running without an Aethon ownership lease."
+                    .to_string(),
+            );
+        }
+        if let Some(listener_pid) = listener_pid_for_port(8191) {
+            return Err(format!(
+                "FlareSolverr port 8191 is already owned by process {listener_pid}."
+            ));
+        }
+        let pid = spawn_local_flaresolverr_contained(&path)?;
+        let mut identity = None;
+        for _ in 0..20 {
+            let system = System::new_all();
+            identity = system.process(Pid::from_u32(pid)).and_then(|process| {
+                process_matches_local_flaresolverr(process, &path).then(|| LocalFlareSolverrOwner {
+                    pid,
+                    process_creation_time: process.start_time(),
+                    executable_path: path.to_string_lossy().into_owned(),
+                    job_bound: true,
+                })
+            });
+            if identity.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let Some(owner) = identity else {
+            release_local_flaresolverr_job(pid);
+            return Err("FlareSolverr started without a verifiable process identity.".to_string());
+        };
+        if let Err(error) = write_local_flaresolverr_owner(&owner) {
+            release_local_flaresolverr_job(pid);
+            return Err(error);
+        }
+        started_now = true;
     }
-    Ok(get_flaresolverr_local_status())
+    let mut status = get_flaresolverr_local_status_unlocked();
+    status.started_now = started_now;
+    Ok(status)
 }
 
 #[tauri::command]
 fn stop_flaresolverr_local() -> Result<LocalFlareSolverrStatus, String> {
-    let system = System::new_all();
-    for process in system.processes().values() {
-        if process.name().eq_ignore_ascii_case("flaresolverr.exe")
-            || process.name().eq_ignore_ascii_case("flaresolverr")
-        {
-            let _ = process.kill();
+    let _lifecycle_guard = FLARESOLVERR_LIFECYCLE_LOCK
+        .lock()
+        .map_err(|_| "FlareSolverr lifecycle is unavailable.".to_string())?;
+    let _file_guard = acquire_flaresolverr_lifecycle_file_lock()?;
+    let Some(pid) = validated_owned_local_flaresolverr_pid() else {
+        let system = System::new_all();
+        if discovered_local_flaresolverr_pid(&system, &local_flaresolverr_exe_path()).is_some() {
+            return Err(
+                "Refusing to stop a FlareSolverr process without an Aethon ownership lease."
+                    .to_string(),
+            );
         }
+        return Ok(get_flaresolverr_local_status_unlocked());
+    };
+
+    terminate_local_flaresolverr_job(pid)?;
+    let _ = fs::remove_file(local_flaresolverr_owner_path());
+
+    for _ in 0..20 {
+        let system = System::new_all();
+        if discovered_local_flaresolverr_pid(&system, &local_flaresolverr_exe_path()).is_none() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
     }
-    Ok(get_flaresolverr_local_status())
+    let system = System::new_all();
+    if discovered_local_flaresolverr_pid(&system, &local_flaresolverr_exe_path()).is_some() {
+        return Err("FlareSolverr did not stop within the ownership timeout.".to_string());
+    }
+    Ok(get_flaresolverr_local_status_unlocked())
 }
 
-#[tauri::command]
-fn get_flaresolverr_docker_status() -> DockerFlareSolverrStatus {
+fn get_flaresolverr_docker_status_unlocked() -> DockerFlareSolverrStatus {
     let version_output = match run_docker(&["--version"]) {
         Ok(output) => output,
         Err(_) => {
@@ -580,6 +1104,8 @@ fn get_flaresolverr_docker_status() -> DockerFlareSolverrStatus {
                 running: false,
                 version: None,
                 message: Some("Docker not found".to_string()),
+                started_now: false,
+                endpoint_owned: false,
             };
         }
     };
@@ -591,6 +1117,8 @@ fn get_flaresolverr_docker_status() -> DockerFlareSolverrStatus {
             running: false,
             version: None,
             message: Some("Docker not found".to_string()),
+            started_now: false,
+            endpoint_owned: false,
         };
     }
 
@@ -604,6 +1132,8 @@ fn get_flaresolverr_docker_status() -> DockerFlareSolverrStatus {
                 running: false,
                 version,
                 message: Some(err),
+                started_now: false,
+                endpoint_owned: false,
             };
         }
     };
@@ -615,51 +1145,142 @@ fn get_flaresolverr_docker_status() -> DockerFlareSolverrStatus {
             running: false,
             version,
             message: Some("Docker unavailable".to_string()),
+            started_now: false,
+            endpoint_owned: false,
         };
     }
 
     let names = docker_output_text(&ps_output);
+    let owned = inspect_flaresolverr_owned();
+    let policy_compliant = owned && inspect_flaresolverr_policy_compliant();
+    let named_container_running = names
+        .lines()
+        .any(|name| name.trim() == FLARESOLVERR_CONTAINER_NAME);
     DockerFlareSolverrStatus {
         installed: true,
         daemon: true,
-        running: names
-            .lines()
-            .any(|name| name.trim() == FLARESOLVERR_CONTAINER_NAME),
+        running: named_container_running && policy_compliant,
         version,
-        message: None,
+        message: if named_container_running && !owned {
+            Some(
+                "A Docker container with the Aethon FlareSolverr name is not owned by Aethon."
+                    .to_string(),
+            )
+        } else if named_container_running && !policy_compliant {
+            Some(
+                "The Aethon-owned FlareSolverr container does not match the current safety policy."
+                    .to_string(),
+            )
+        } else {
+            None
+        },
+        started_now: false,
+        endpoint_owned: named_container_running && policy_compliant,
     }
 }
 
 #[tauri::command]
+fn get_flaresolverr_docker_status() -> Result<DockerFlareSolverrStatus, String> {
+    let _lifecycle_guard = FLARESOLVERR_LIFECYCLE_LOCK
+        .lock()
+        .map_err(|_| "FlareSolverr lifecycle is unavailable.".to_string())?;
+    let _file_guard = acquire_flaresolverr_lifecycle_file_lock()?;
+    Ok(get_flaresolverr_docker_status_unlocked())
+}
+
+#[tauri::command]
 fn start_flaresolverr_docker() -> Result<DockerFlareSolverrStatus, String> {
-    let existing = run_docker(&["start", FLARESOLVERR_CONTAINER_NAME]);
-    if !matches!(existing, Ok(ref output) if output.status.success()) {
+    let _lifecycle_guard = FLARESOLVERR_LIFECYCLE_LOCK
+        .lock()
+        .map_err(|_| "FlareSolverr lifecycle is unavailable.".to_string())?;
+    let _file_guard = acquire_flaresolverr_lifecycle_file_lock()?;
+    let mut existing_container = inspect_flaresolverr_container_exists();
+    if existing_container && !inspect_flaresolverr_owned() {
+        return Err(
+            "Refusing to reuse a Docker container without the Aethon ownership label.".to_string(),
+        );
+    }
+
+    if existing_container && !inspect_flaresolverr_policy_compliant() {
+        if inspect_flaresolverr_running() {
+            return Err(
+                "Stop the Aethon-owned FlareSolverr container before applying the current safety policy."
+                    .to_string(),
+            );
+        }
+        let output = run_docker(&["rm", FLARESOLVERR_CONTAINER_NAME])?;
+        if !output.status.success() {
+            return Err(
+                "Docker could not replace the outdated Aethon FlareSolverr container.".to_string(),
+            );
+        }
+        existing_container = false;
+    }
+
+    let was_running = existing_container && inspect_flaresolverr_running();
+    let started_now = if existing_container {
+        let output = run_docker(&["start", FLARESOLVERR_CONTAINER_NAME])?;
+        if !output.status.success() {
+            return Err("Docker start failed".to_string());
+        }
+        !was_running
+    } else {
+        let lease = create_flaresolverr_docker_lease()?;
+        let owner_label =
+            format!("{FLARESOLVERR_DOCKER_OWNER_LABEL}={FLARESOLVERR_DOCKER_OWNER_VALUE}");
+        let lease_label = format!("{FLARESOLVERR_DOCKER_LEASE_LABEL}={lease}");
         let output = run_docker(&[
             "run",
             "-d",
             "--name",
             FLARESOLVERR_CONTAINER_NAME,
+            "--label",
+            owner_label.as_str(),
+            "--label",
+            lease_label.as_str(),
             "-p",
-            "8191:8191",
+            "127.0.0.1:8191:8191",
             "--restart",
-            "unless-stopped",
+            "no",
+            "--memory",
+            "1g",
+            "--cpus",
+            "1.0",
+            "--pids-limit",
+            "256",
             FLARESOLVERR_IMAGE,
         ])?;
         if !output.status.success() {
             return Err("Docker start failed".to_string());
         }
-    }
+        true
+    };
 
-    Ok(get_flaresolverr_docker_status())
+    let mut status = get_flaresolverr_docker_status_unlocked();
+    status.started_now = started_now;
+    Ok(status)
 }
 
 #[tauri::command]
 fn stop_flaresolverr_docker() -> Result<DockerFlareSolverrStatus, String> {
-    let output = run_docker(&["stop", FLARESOLVERR_CONTAINER_NAME])?;
-    if !output.status.success() && inspect_flaresolverr_running() {
-        return Err("Docker stop failed".to_string());
+    let _lifecycle_guard = FLARESOLVERR_LIFECYCLE_LOCK
+        .lock()
+        .map_err(|_| "FlareSolverr lifecycle is unavailable.".to_string())?;
+    let _file_guard = acquire_flaresolverr_lifecycle_file_lock()?;
+    if !inspect_flaresolverr_container_exists() {
+        return Ok(get_flaresolverr_docker_status_unlocked());
     }
-    Ok(get_flaresolverr_docker_status())
+    if !inspect_flaresolverr_owned() {
+        return Err("Refusing to stop a Docker container not owned by Aethon.".to_string());
+    }
+    let output = run_docker(&["stop", FLARESOLVERR_CONTAINER_NAME])?;
+    if !output.status.success() {
+        return Err(format!(
+            "Docker stop failed: {}",
+            docker_output_text(&output)
+        ));
+    }
+    Ok(get_flaresolverr_docker_status_unlocked())
 }
 
 #[tauri::command]
@@ -1452,6 +2073,89 @@ mod tests {
         assert!(!is_public_stable_release("v1.2.3", false, true));
         assert!(!is_public_stable_release("v1.2.3-beta.1", false, false));
         assert!(!is_public_stable_release("latest", false, false));
+    }
+
+    #[test]
+    fn flaresolverr_runtime_artifacts_are_pinned_and_owned() {
+        assert_eq!(
+            FLARESOLVERR_IMAGE,
+            "ghcr.io/flaresolverr/flaresolverr@sha256:7962759d99d7e125e108e0f5e7f3cdbcd36161776d058d1d9b7153b92ef1af9e"
+        );
+        assert_eq!(FLARESOLVERR_DOCKER_OWNER_LABEL, "com.aethon.managed");
+        assert_eq!(FLARESOLVERR_DOCKER_OWNER_VALUE, "flaresolverr");
+
+        let owner = LocalFlareSolverrOwner {
+            pid: 42,
+            process_creation_time: 100,
+            executable_path: r"C:\Aethon\tools\flaresolverr.exe".to_string(),
+            job_bound: true,
+        };
+        let serialized = serde_json::to_string(&owner).unwrap();
+        let restored: LocalFlareSolverrOwner = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(restored.pid, owner.pid);
+        assert_eq!(restored.process_creation_time, owner.process_creation_time);
+        assert_eq!(restored.executable_path, owner.executable_path);
+        assert!(restored.job_bound);
+
+        assert_eq!(
+            classify_local_flaresolverr_owner(true, true, true),
+            LocalFlareSolverrOwnerState::CurrentInstance
+        );
+        assert_eq!(
+            classify_local_flaresolverr_owner(true, true, false),
+            LocalFlareSolverrOwnerState::OtherInstance
+        );
+        assert_eq!(
+            classify_local_flaresolverr_owner(false, true, false),
+            LocalFlareSolverrOwnerState::Stale
+        );
+    }
+
+    #[test]
+    fn flaresolverr_docker_policy_rejects_spoofed_or_unbounded_containers() {
+        let lease = "lease-123";
+        let valid = serde_json::json!([{
+            "Config": {
+                "Image": FLARESOLVERR_IMAGE,
+                "Labels": {
+                    "com.aethon.managed": FLARESOLVERR_DOCKER_OWNER_VALUE,
+                    "com.aethon.owner": lease,
+                }
+            },
+            "HostConfig": {
+                "Memory": FLARESOLVERR_DOCKER_MEMORY_BYTES,
+                "NanoCpus": FLARESOLVERR_DOCKER_NANO_CPUS,
+                "PidsLimit": FLARESOLVERR_DOCKER_PIDS_LIMIT,
+                "RestartPolicy": { "Name": "no" },
+                "PortBindings": { "8191/tcp": [{ "HostIp": "127.0.0.1", "HostPort": "8191" }] }
+            }
+        }]);
+        assert!(docker_container_has_ownership_lease(&valid, lease));
+        assert!(docker_container_matches_policy(&valid, lease));
+
+        let mut wrong_image = valid.clone();
+        wrong_image[0]["Config"]["Image"] =
+            serde_json::json!("ghcr.io/flaresolverr/flaresolverr:latest");
+        assert!(docker_container_has_ownership_lease(&wrong_image, lease));
+        assert!(!docker_container_matches_policy(&wrong_image, lease));
+
+        let mut wrong_lease = valid.clone();
+        wrong_lease[0]["Config"]["Labels"][FLARESOLVERR_DOCKER_LEASE_LABEL] =
+            serde_json::json!("other-install");
+        assert!(!docker_container_has_ownership_lease(&wrong_lease, lease));
+        assert!(!docker_container_matches_policy(&wrong_lease, lease));
+
+        let mut public_binding = valid.clone();
+        public_binding[0]["HostConfig"]["PortBindings"]["8191/tcp"][0]["HostIp"] =
+            serde_json::json!("0.0.0.0");
+        assert!(docker_container_has_ownership_lease(&public_binding, lease));
+        assert!(!docker_container_matches_policy(&public_binding, lease));
+
+        let mut unbounded = valid;
+        unbounded[0]["HostConfig"]["Memory"] = serde_json::json!(0);
+        assert!(docker_container_has_ownership_lease(&unbounded, lease));
+        assert!(!docker_container_matches_policy(&unbounded, lease));
     }
 
     #[test]

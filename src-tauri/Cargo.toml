@@ -38,7 +38,13 @@ url = "2"
 percent-encoding = "2"
 sha2 = "0.10"
 mdns-sd = "0.19"
-windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Storage_FileSystem",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+] }
 anyhow = "1"
 async-stream = "0.3"
 axum = { version = "0.7", features = ["http2", "macros", "ws"] }

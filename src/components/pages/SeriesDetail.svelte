@@ -18,7 +18,7 @@
   import NocturneState from "../shared/NocturneState.svelte";
   import TrackingPanel from "../shared/TrackingPanel.svelte";
   import SeriesDetailV3Shell from "../shared/SeriesDetailV3Shell.svelte";
-  import { isSourceChallengeMessage, sourceAccessErrorMessage } from "../../lib/sourceAccess";
+  import { isConfirmedAntibotChallengeMessage, sourceAccessErrorMessage } from "../../lib/sourceAccess";
   import { waitForSuwayomiGraphqlReady } from "../../lib/suwayomiReadiness";
 
   type MenuEntry = any;
@@ -206,9 +206,9 @@
 
   function downloadErrorBody(error?: unknown) {
     const message = error instanceof Error ? error.message : String(error ?? "");
-    if (!message) return store.settings.flareSolverrEnabled ? $_("detail.errors.checkSourceRetry") : $_("detail.errors.sourceMayNeedFlareSolverr");
-    const cloudflare = /cloudflare|challenge|flaresolverr/i.test(message);
-    if (cloudflare) return store.settings.flareSolverrEnabled ? $_("detail.errors.checkFlareSolverrRetry") : $_("detail.errors.sourceNeedsFlareSolverr");
+    if (!message) return $_("detail.errors.checkSourceRetry");
+    const challenge = isConfirmedAntibotChallengeMessage(message);
+    if (challenge) return store.settings.flareSolverrEnabled ? $_("detail.errors.checkFlareSolverrRetry") : $_("detail.errors.sourceNeedsFlareSolverr");
     if (/http|network|fetch/i.test(message)) return $_("detail.errors.couldNotReachSuwayomi");
     return $_("detail.errors.checkSourceRetry");
   }
@@ -630,7 +630,7 @@
       .then(() => addToast({ kind: "success", title: translate("ui_chaptersRefreshed") }))
       .catch((error) => {
         const message = sourceAccessErrorMessage(error);
-        const challenge = isSourceChallengeMessage(message);
+        const challenge = isConfirmedAntibotChallengeMessage(message);
         addToast({
           kind: "error",
           title: translate("ui_refreshFailed"),

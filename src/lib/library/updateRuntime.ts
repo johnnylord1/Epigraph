@@ -7,7 +7,7 @@ import { ensureServerAwakeFor, type ServerWakeReason } from "../serverLifecycle"
 import { setLibraryMangaSnapshot, setLibraryUpdateProgress, store } from "../../store/state.svelte";
 import type { Category, Chapter, Manga } from "../types";
 import type { LibraryUpdateIssueErrorType, LibraryUpdateIssueKind } from "../../store/state.svelte";
-import { classifySourceAccessError, sourceAccessErrorMessage } from "../sourceAccess";
+import { classifySourceAccessError, isConfirmedAntibotChallengeMessage, sourceAccessErrorMessage, type SourceAccessClassification } from "../sourceAccess";
 import { mergeMangaCountsFromChapters } from "./chapterCounts";
 import { translate } from "../i18n/runtime";
 import { withSuwayomiOperationLease } from "../suwayomiUpdateLock.svelte";
@@ -160,8 +160,15 @@ function sourceCircuitBreakerLimit(reason: SharedLibraryUpdateRunOptions["reason
   return reason === "auto-library-update" ? 3 : 5;
 }
 
+function classifyMangaUpdateError(error: unknown): SourceAccessClassification {
+  const classification = classifySourceAccessError(error);
+  if (classification.errorType !== "source-challenge") return classification;
+  if (isConfirmedAntibotChallengeMessage(sourceAccessErrorMessage(error))) return classification;
+  return { errorType: "source-error", sourceWide: false, recoveryHint: null };
+}
+
 function classifyUpdateError(error: unknown): LibraryUpdateIssueErrorType {
-  return classifySourceAccessError(error).errorType;
+  return classifyMangaUpdateError(error).errorType;
 }
 
 function errorMessage(error: unknown) {
@@ -169,7 +176,7 @@ function errorMessage(error: unknown) {
 }
 
 function isSourceWideUpdateError(error: unknown) {
-  return classifySourceAccessError(error).sourceWide;
+  return classifyMangaUpdateError(error).sourceWide;
 }
 
 function sourceKeyForManga(manga: Manga) {
@@ -371,7 +378,7 @@ async function runComicsSourceQueueUpdate(
         } catch (error) {
           consecutiveFailures += 1;
           const message = errorMessage(error);
-          const classification = classifySourceAccessError(error);
+          const classification = classifyMangaUpdateError(error);
           const sourceWideError = isSourceWideUpdateError(error);
           if (sourceWideError) {
             const affectedTitles = group.mangas.length - index;

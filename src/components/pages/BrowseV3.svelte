@@ -28,7 +28,7 @@
   import { createNovelLibraryId, type ActiveNovelDetailState, type InstalledNovelSourceDescriptor, type NovelDetailRecord, type NovelSourceSearchResult } from "../../lib/novels/domain";
   import { isNovelInLibrary, loadNovelLibraryState, peekNovelLibraryState } from "../../lib/novels/libraryState";
   import { NOVEL_TITLE_ALIAS_VERSION, canonicalNovelTitleCandidates } from "../../lib/novels/titleAliases";
-  import { classifySourceAccessError, isSourceChallengeMessage, sourceAccessErrorMessage } from "../../lib/sourceAccess";
+  import { classifySourceAccessError, isConfirmedAntibotChallengeMessage, isSourceChallengeMessage, sourceAccessErrorMessage } from "../../lib/sourceAccess";
   import {
     getHardcoverUserBooks,
     getHardcoverRateLimitRemainingMs,
@@ -196,8 +196,12 @@
   }
 
   function logSearchRecommendationSourceIssue(context: string, sourceName: string, error: unknown) {
-    const classification = classifySourceAccessError(error);
     const message = sourceAccessErrorMessage(error);
+    const rawClassification = classifySourceAccessError(error);
+    const classification = rawClassification.errorType === "source-challenge"
+      && !isConfirmedAntibotChallengeMessage(message)
+      ? { ...rawClassification, errorType: "source-error" as const, sourceWide: false, recoveryHint: null }
+      : rawClassification;
     const key = `${context}:${sourceName}:${classification.errorType}:${message}`;
     if (loggedSearchRecommendationSourceIssues.has(key)) return;
     loggedSearchRecommendationSourceIssues.add(key);
@@ -1438,7 +1442,7 @@
       } catch (error: any) {
         if (ctrl.signal.aborted || error?.name === "AbortError") return;
         kw_novelResults = kw_novelResults.map((result) =>
-          result.source.pluginId === source.pluginId ? { ...result, loading: false, error: sourceBrowseErrorBody(error) } : result,
+          result.source.pluginId === source.pluginId ? { ...result, loading: false, error: sourceBrowseErrorBody(error, "novels") } : result,
         );
       }
     }, ctrl.signal);
@@ -3262,9 +3266,12 @@
     })),
   );
 
-  function sourceBrowseErrorBody(error: unknown) {
+  function sourceBrowseErrorBody(error: unknown, contentKind: "manga" | "novels") {
     const message = sourceAccessErrorMessage(error);
-    if (!isSourceChallengeMessage(message)) return message;
+    const challenge = contentKind === "manga"
+      ? isConfirmedAntibotChallengeMessage(message)
+      : isSourceChallengeMessage(message);
+    if (!challenge) return message;
     return store.settings.flareSolverrEnabled
       ? "This source is still blocked by site protection. Check FlareSolverr and retry."
       : "This source needs FlareSolverr for Cloudflare or anti-bot protection.";
@@ -5061,7 +5068,7 @@
     } catch (e: any) {
       if (e?.name !== "AbortError") {
         console.error(e);
-        src_browseError = sourceBrowseErrorBody(e);
+        src_browseError = sourceBrowseErrorBody(e, "manga");
       }
     } finally {
       if (!ctrl.signal.aborted) src_loadingBrowse = false;
@@ -5106,7 +5113,7 @@
     } catch (e: unknown) {
       if ((e as { name?: string })?.name !== "AbortError") {
         console.error(e);
-        src_browseError = sourceBrowseErrorBody(e);
+        src_browseError = sourceBrowseErrorBody(e, "novels");
       }
     } finally {
       await shutdownInstalledNovelSourcesRuntime().catch(() => {});
@@ -5170,7 +5177,7 @@
         inLibrary: novelLibraryState ? isNovelInLibrary(novelLibraryState, createNovelLibraryId(result.sourceId, result.path)) : false,
       });
     } catch (error) {
-      const message = sourceBrowseErrorBody(error);
+      const message = sourceBrowseErrorBody(error, "novels");
       addToast({
         kind: "error",
         title: translate("novelSources_errors_openDetailTitle"),

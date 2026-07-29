@@ -70,8 +70,8 @@ try {
     Test-SourceRuntimeWhitespace
   }
   Invoke-SourceRuntimeStep "Certification contracts" { & pnpm test:suwayomi-certification }
-  Invoke-SourceRuntimeStep "Adapter and extension health contracts" {
-    & pnpm exec vitest run --project unit src/lib/manga/runtime --maxWorkers=1 --minWorkers=1
+  Invoke-SourceRuntimeStep "Adapter, extension health, and anti-bot contracts" {
+    & pnpm exec vitest run --project unit src/lib/manga/runtime src/lib/flaresolverr.test.ts src/lib/sourceAccess.test.ts src/lib/library/updateRuntime.test.ts --maxWorkers=1 --minWorkers=1
   }
 
   if (-not $ContractOnly) {

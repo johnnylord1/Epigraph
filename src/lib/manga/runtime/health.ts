@@ -11,6 +11,7 @@ import type {
   SourceRuntime,
   SourceSearchMode,
 } from "./types";
+import { isConfirmedAntibotChallengeMessage } from "../../sourceAccess";
 
 export type ExtensionHealthStatus =
   | "healthy"
@@ -227,25 +228,25 @@ export function classifyExtensionFailure(error: unknown): SourceRuntimeError {
       { cause: error, details: { failureClass: "obsolete-or-removed" } },
     );
   }
-  if (/parser|selector|parse(?:d|r|ing)?\s+(?:html|document|response)|unexpected\s+(?:html|document)|no element found/i.test(text)) {
+  if (/unauthori[sz]ed|login required|authentication required|invalid cookie|expired cookie|status\s*401|http\s*401/i.test(text)) {
     return new SourceRuntimeError(
-      "SOURCE_PARSER_FAILURE",
-      "The source could not parse the current website response.",
-      { cause: error, details: { failureClass: "parser-or-site" } },
+      "AUTHENTICATION_REQUIRED",
+      "The source requires authentication.",
+      { cause: error },
     );
   }
-  if (/cloudflare|captcha|challenge|cf-chl|just a moment|status\s*403|http\s*403/i.test(text)) {
+  if (isConfirmedAntibotChallengeMessage(text)) {
     return new SourceRuntimeError(
       "ANTIBOT_CHALLENGE",
       "The source is currently protected by an anti-bot challenge.",
       { retryable: true, cause: error },
     );
   }
-  if (/unauthori[sz]ed|login required|authentication required|invalid cookie|expired cookie|status\s*401|http\s*401/i.test(text)) {
+  if (/parser|selector|parse(?:d|r|ing)?\s+(?:html|document|response)|unexpected\s+(?:html|document)|no element found/i.test(text)) {
     return new SourceRuntimeError(
-      "AUTHENTICATION_REQUIRED",
-      "The source requires authentication.",
-      { cause: error },
+      "SOURCE_PARSER_FAILURE",
+      "The source could not parse the current website response.",
+      { cause: error, details: { failureClass: "parser-or-site" } },
     );
   }
   if (/rate.?limit|too many requests|status\s*429|http\s*429/i.test(text)) {

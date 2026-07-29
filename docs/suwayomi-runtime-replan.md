@@ -408,3 +408,52 @@ checks explicitos, sem alterar a compatibilidade estrutural do runtime.
 - Testes focados cobrem conversao dos DTOs, ordenacao de paginas, fronteira
   estatica, canonicalizacao, classifications, Browse, migration e Library
   Update. Nenhum website real e necessario para o gate do SR12.
+
+### SR13 - Anti-bot delegado e gate final
+
+- O Aethon gerencia somente instalacao, configuracao, disponibilidade e
+  lifecycle do FlareSolverr. No dominio manga/Suwayomi, o unico request direto
+  do Aethon ao servico e o health check local `sessions.list`; websites,
+  cookies, sessoes e parsing continuam exclusivamente sob Suwayomi e suas
+  extensoes.
+- FlareSolverr so e elegivel quando a classificacao normalizada for
+  `ANTIBOT_CHALLENGE`. ABI/classloader, serialization, source obsoleta, parser,
+  autenticacao, 404 e falha de rede comum nao habilitam nem sugerem o servico.
+- A espera de startup deixou de usar pausa fixa e passou a polling limitado:
+  uma instancia, tentativas sequenciais, timeout por probe e ativacao da
+  configuracao somente depois de `sessions.list` saudavel.
+- O fluxo comum de Settings usa o mesmo coordenador de start, readiness,
+  ownership, persistencia e cleanup. Nao existe mais sleep fixo nem ativacao
+  depois de um health check ignorado.
+- O executavel local agora possui manifesto atomico de ownership com PID,
+  creation time e caminho exato. A arvore e atribuida imediatamente a um
+  Windows Job Object com `KILL_ON_JOB_CLOSE`; o processo nasce suspenso, entra
+  no Job e so depois e retomado. Uma segunda instancia preserva a lease da
+  instancia criadora. Processos sem lease podem ser detectados, mas nunca
+  adotados ou encerrados; nao existe kill por nome.
+- O container usa a imagem `v3.4.6` fixada pelo digest
+  `sha256:7962759d99d7e125e108e0f5e7f3cdbcd36161776d058d1d9b7153b92ef1af9e`,
+  lease aleatorio por instalacao e validacao integral da policy antes de start
+  ou status. Ownership e policy sao verificacoes separadas, permitindo cleanup
+  seguro de um container leased que ficou obsoleto sem reutiliza-lo. O bind e
+  exclusivo em `127.0.0.1:8191`, nao reinicia automaticamente e fica limitado
+  a 1 CPU, 1 GiB e 256 processos. Nome ou label publico isolado nao prova
+  ownership.
+- Starts concorrentes do mesmo backend sao coalescidos e o lifecycle nativo e
+  serializado por mutex e lock de arquivo cross-process em start, status e
+  stop. Readiness, ownership do endpoint e persistencia precisam passar nessa
+  ordem. Em falha, somente uma instancia criada pela tentativa atual e
+  encerrada; uma instancia preexistente nunca e removida como cleanup. Falha de
+  cleanup local ou Docker e propagada, nao convertida silenciosamente em
+  sucesso.
+- O runtime separado de novels/LNReader nao foi alterado. Sua integracao
+  existente com FlareSolverr, repositories e Syncd continua independente da
+  fronteira manga/Suwayomi.
+- O gate deterministico valida classificacao, delegacao, readiness, cleanup,
+  ownership de processo/endpoint, policy Docker, imagem por digest e ausencia
+  de scraping no controller. Ele nao inicia Chromium, nao usa websites live e
+  permanece serial para limitar CPU e memoria. O workflow V23 controlado passou
+  em repeticao isolada com restart, 27 source IDs estaveis, fluxo completo de
+  Local Source, `websiteRequests=0` e `maxSourcesInParallel=1`. A readiness do
+  Extension Manager admite ate 45 segundos apos restart por polling, sem
+  aumentar workers, JVMs ou sources concorrentes.

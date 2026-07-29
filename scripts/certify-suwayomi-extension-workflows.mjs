@@ -50,6 +50,7 @@ export const DIRECT_INSTALL_CANARY = Object.freeze({
 });
 
 const STRUCTURAL_ERROR_PATTERN = /(?:LinkageError|AbstractMethodError|NoSuchMethodError|NoSuchFieldError|IncompatibleClassChangeError|NoClassDefFoundError|ClassNotFoundException|VerifyError|UnsupportedClassVersionError|does not implement[^\n]*kotlin\.jvm\.functions|cannot be cast to okhttp3\.|ClassCastException[^\n]*(?:kotlin|okhttp))/i;
+const EXTENSION_REGISTRATION_ATTEMPTS = 90;
 const PNG_1X1 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zr0sAAAAASUVORK5CYII=",
   "base64",
@@ -229,12 +230,14 @@ async function collectInstalledExtensionIdentityOnce(endpoint, descriptor) {
 
 async function collectInstalledExtensionIdentity(endpoint, descriptor) {
   let lastError = null;
-  for (let attempt = 0; attempt < 30; attempt += 1) {
+  for (let attempt = 0; attempt < EXTENSION_REGISTRATION_ATTEMPTS; attempt += 1) {
     try {
       return await collectInstalledExtensionIdentityOnce(endpoint, descriptor);
     } catch (error) {
       lastError = error;
-      if (attempt < 29) await new Promise((resolve) => setTimeout(resolve, 500));
+      if (attempt + 1 < EXTENSION_REGISTRATION_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
     }
   }
   throw lastError ?? new Error("The exact V23 extension identity did not become ready.");

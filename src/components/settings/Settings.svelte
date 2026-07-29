@@ -106,6 +106,10 @@
     type AethonUpdateStatus,
   } from "../../lib/aethonUpdater";
   import { normalizeSocksProxyInput } from "../../lib/proxySettings";
+  import {
+    startDockerFlareSolverrAndEnable,
+    startLocalFlareSolverrAndEnable,
+  } from "../../lib/flaresolverr";
   interface Props {
     onOpenThemeEditor?: (id?: string | null) => void;
     backupAuditPlan?: AethonRestorePlan | null;
@@ -2904,12 +2908,19 @@
   async function startFlareLocal() {
     flareLocalBusy = true;
     try {
-      flareLocalStatus = await invoke<LocalFlareSolverrStatus>("start_flaresolverr_local");
+      await startLocalFlareSolverrAndEnable({
+        timeout: flareTimeout,
+        sessionName: flareSession,
+        sessionTtl: flareTtl,
+        fallback: flareFallback,
+      });
       flareUrl = "http://localhost:8191";
-      await new Promise((resolve) => window.setTimeout(resolve, 2500));
-      await testFlareSolverr({ saveOnReady: true });
+      flareEnabled = true;
+      flareTestState = "ready";
+      await refreshFlareLocalStatus();
     } catch {
       flareTestState = "not-reachable";
+      await refreshFlareLocalStatus();
     } finally {
       flareLocalBusy = false;
     }
@@ -2959,11 +2970,19 @@
   async function startFlareDocker() {
     flareDockerBusy = true;
     try {
-      flareDockerStatus = await invoke<DockerFlareSolverrStatus>("start_flaresolverr_docker");
+      await startDockerFlareSolverrAndEnable({
+        timeout: flareTimeout,
+        sessionName: flareSession,
+        sessionTtl: flareTtl,
+        fallback: flareFallback,
+      });
       flareUrl = "http://localhost:8191";
-      await testFlareSolverr({ saveOnReady: true });
+      flareEnabled = true;
+      flareTestState = "ready";
+      await refreshFlareDockerStatus();
     } catch {
       flareTestState = "not-reachable";
+      await refreshFlareDockerStatus();
     } finally {
       flareDockerBusy = false;
     }

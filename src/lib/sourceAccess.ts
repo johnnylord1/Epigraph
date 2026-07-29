@@ -24,6 +24,13 @@ export function isSourceChallengeMessage(message: string): boolean {
   return /cloudflare|captcha|challenge|anti.?bot|flaresolverr|bypass|checking your browser|just a moment|attention required|access denied|ddos.?guard/i.test(message);
 }
 
+export function isConfirmedAntibotChallengeMessage(message: string): boolean {
+  if (/LinkageError|AbstractMethodError|NoSuchMethodError|NoSuchFieldError|IncompatibleClassChangeError|NoClassDefFoundError|ClassNotFoundException|VerifyError|UnsupportedClassVersionError|SerializationException|JsonDecodingException|MissingFieldException|source (?:is )?(?:obsolete|removed|retired)|not implemented|UnsupportedOperationException|HTTP\s*404|status\s*404|unauthori[sz]ed|login required|authentication required|invalid cookie|expired cookie|status\s*401|http\s*401/i.test(message)) {
+    return false;
+  }
+  return /cloudflare|captcha|cf-chl|just a moment|checking your browser|attention required|ddos.?guard|anti.?bot(?:\s+challenge)?/i.test(message);
+}
+
 export function classifySourceAccessError(error: unknown): SourceAccessClassification {
   const message = sourceAccessErrorMessage(error);
   if (/timeout|timed out|abort/i.test(message)) {

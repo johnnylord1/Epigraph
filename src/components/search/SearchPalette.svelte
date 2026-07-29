@@ -7,7 +7,7 @@
   import { resolveMangaCoverUrl, type MangaCoverContext } from "../../lib/manga/coverResolver";
   import { BookAssetResolver } from "../../lib/books/assets";
   import { shouldHideNsfw, shouldHideSource } from "../../lib/util";
-  import { isSourceChallengeMessage, sourceAccessErrorMessage } from "../../lib/sourceAccess";
+  import { isConfirmedAntibotChallengeMessage, isSourceChallengeMessage, sourceAccessErrorMessage } from "../../lib/sourceAccess";
   import {
     loadTrustedInstalledNovelSources,
     readInstalledNovelDetails,
@@ -166,9 +166,12 @@
     };
   }
 
-  function browseErrorMessage(cause: unknown) {
+  function browseErrorMessage(cause: unknown, contentKind: "manga" | "novels") {
     const message = sourceAccessErrorMessage(cause);
-    if (!isSourceChallengeMessage(message)) return message;
+    const challenge = contentKind === "manga"
+      ? isConfirmedAntibotChallengeMessage(message)
+      : isSourceChallengeMessage(message);
+    if (!challenge) return message;
     return store.settings.flareSolverrEnabled
       ? translate("novelSources.errors.blockedFlareEnabled")
       : translate("novelSources.errors.blockedFlareDisabled");
@@ -269,7 +272,7 @@
         if (controller.signal.aborted || (cause as { name?: string })?.name === "AbortError") return;
         updateBrowseGroup(source.id, {
           loading: false,
-          error: browseErrorMessage(cause),
+          error: browseErrorMessage(cause, "manga"),
         }, requestId);
       }
     });
@@ -315,7 +318,7 @@
         if (controller.signal.aborted || (cause as { name?: string })?.name === "AbortError") return;
         updateBrowseGroup(source.pluginId, {
           loading: false,
-          error: browseErrorMessage(cause),
+          error: browseErrorMessage(cause, "novels"),
         }, requestId);
       }
     });
@@ -549,7 +552,7 @@
       }
     } catch (cause) {
       if (controller.signal.aborted || requestId !== browseRequestId) return;
-      browseLoadError = browseErrorMessage(cause);
+      browseLoadError = browseErrorMessage(cause, browseContentType);
     } finally {
       if (requestId === browseRequestId) browseLoadingSources = false;
     }
