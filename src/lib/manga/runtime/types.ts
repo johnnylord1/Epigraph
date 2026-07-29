@@ -25,6 +25,15 @@ export interface RuntimeInfo {
   compatible: boolean;
 }
 
+export interface RuntimeFingerprint {
+  serverVersion: string;
+  canonicalSchemaHash: string;
+  capabilitiesHash: string;
+  endpointIdentity: string;
+  instanceNonce: string | null;
+  localRuntimeGeneration: string | null;
+}
+
 export interface RuntimeContract {
   requiredQueries: readonly string[];
   requiredMutations: readonly string[];
@@ -179,6 +188,7 @@ export interface ExtensionUpdateInput {
 
 export interface SourceRuntime {
   getRuntimeInfo(): Promise<RuntimeInfo>;
+  getRuntimeFingerprint(): Promise<RuntimeFingerprint>;
   getCapabilities(): Promise<RuntimeCapabilities>;
   listStores(signal?: AbortSignal): Promise<readonly ExtensionStore[]>;
   addStore(input: ExtensionStoreInput): Promise<ExtensionStore>;

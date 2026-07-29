@@ -12,6 +12,7 @@ import {
 } from "./schema";
 import type { SourceRuntime } from "./types";
 import type { GraphQLTransport } from "./transport";
+import type { SuwayomiAdapterContext } from "./adapter";
 
 interface CompatibilityDetection {
   profile: CompatibilityProfile;
@@ -47,7 +48,8 @@ export async function detectCompatibilityProfile(
 
 export async function createSuwayomiSourceRuntime(
   transport: GraphQLTransport,
+  context: SuwayomiAdapterContext = {},
 ): Promise<SourceRuntime> {
   const { profile, schema } = await inspectCompatibility(transport);
-  return new SuwayomiAdapter(transport, profile, schema);
+  return new SuwayomiAdapter(transport, profile, schema, context);
 }

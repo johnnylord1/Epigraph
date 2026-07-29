@@ -10,7 +10,9 @@ function runtime(id: string): SourceRuntime {
 describe("ManagedSourceRuntimeCache", () => {
   test("reuses an adapter only while its endpoint generation is fresh", async () => {
     let now = 1_000;
-    const createRuntime = vi.fn(async (endpoint: string) => runtime(endpoint));
+    const createRuntime = vi.fn(async (endpoint: string, generation: number) => (
+      runtime(`${endpoint}:${generation}`)
+    ));
     const cache = new ManagedSourceRuntimeCache(createRuntime, () => now, 30_000);
 
     const first = cache.get("http://127.0.0.1:4567/api/graphql");
@@ -20,6 +22,11 @@ describe("ManagedSourceRuntimeCache", () => {
     const refreshed = cache.get("http://127.0.0.1:4567/api/graphql");
     expect(refreshed).not.toBe(first);
     expect(createRuntime).toHaveBeenCalledTimes(2);
+    expect(createRuntime).toHaveBeenNthCalledWith(
+      1,
+      "http://127.0.0.1:4567/api/graphql",
+      0,
+    );
   });
 
   test("invalidates rejected adapters and explicit lifecycle resets", async () => {
@@ -37,5 +44,9 @@ describe("ManagedSourceRuntimeCache", () => {
     cache.reset();
     cache.get("http://127.0.0.1:4567/api/graphql");
     expect(createRuntime).toHaveBeenCalledTimes(3);
+    expect(createRuntime).toHaveBeenLastCalledWith(
+      "http://127.0.0.1:4567/api/graphql",
+      1,
+    );
   });
 });

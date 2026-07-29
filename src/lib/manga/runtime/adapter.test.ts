@@ -96,6 +96,10 @@ class FixtureTransport implements GraphQLTransport {
 
   constructor(private readonly fixtures: Readonly<Record<string, unknown>>) {}
 
+  getEndpointIdentity(): string {
+    return "http://127.0.0.1:4567/api/graphql";
+  }
+
   async execute<TVariables, TResult>(
     operation: GraphQLOperation<TVariables, TResult>,
     _variables: TVariables,
@@ -135,6 +139,37 @@ describe("SuwayomiAdapter", () => {
     expect(info.schemaHash).toMatch(/^[a-f0-9]{64}$/);
     expect(capabilities.sourcePreferences).toBe(true);
     expect(transport.calls.filter((name) => name === "AethonRuntimeContract")).toHaveLength(1);
+  });
+
+  test("builds a stable runtime fingerprint without using process identity", async () => {
+    const transport = new FixtureTransport({
+      AethonRuntimeContract: compatibleSchema(),
+      AethonRuntimeInfo: {
+        aboutServer: {
+          name: "Suwayomi",
+          version: "v2.1.1867",
+          revision: "1867",
+          buildType: "Stable",
+          buildTime: 1,
+        },
+      },
+    });
+    const adapter = new SuwayomiAdapter(
+      transport,
+      new CompatibilityProfileV21(),
+      undefined,
+      { localRuntimeGeneration: "4" },
+    );
+
+    await expect(adapter.getRuntimeFingerprint()).resolves.toMatchObject({
+      serverVersion: "v2.1.1867",
+      canonicalSchemaHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      capabilitiesHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      endpointIdentity: "http://127.0.0.1:4567/api/graphql",
+      instanceNonce: null,
+      localRuntimeGeneration: "4",
+    });
+    expect(transport.calls).not.toContain(expect.stringContaining("pid"));
   });
 
   test("blocks domain operations when the semantic contract is incomplete", async () => {

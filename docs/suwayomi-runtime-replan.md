@@ -533,3 +533,37 @@ Entregas concluidas:
 - Na verificacao de 28/07/2026, `main` estava 155 commits a frente de
   `origin/main`. Isso nao representa codigo sem commit, mas a sequencia ainda
   precisa ser enviada ao remoto quando a publicacao for autorizada.
+
+## Marcos 72 - compatibilidade observada e recuperacao
+
+### 72A - Fingerprint e observabilidade
+
+Implementado em 29/07/2026:
+
+- O adapter passou a expor `RuntimeFingerprint` composto por versao do
+  servidor, hash do schema canonico, hash das capabilities, identidade
+  canonica do endpoint, nonce quando disponivel e geracao do runtime local.
+- PID nao participa do fingerprint. Ele continua restrito ao ownership de
+  processos locais no supervisor nativo.
+- A geracao local e incrementada quando o lifecycle explicito invalida o
+  adapter. Endpoints remotos ou compartilhados nao recebem essa geracao e
+  continuam usando apenas a renovacao limitada por TTL; o Aethon nao controla
+  restart, shutdown ou quantidade de JVMs nesses endpoints.
+- O transporte possui tracing estritamente opt-in com request ID, attempt,
+  stage, duracao, status HTTP, tamanho da resposta e erros GraphQL
+  estruturados. Sem observer configurado nao ha sanitizacao adicional no
+  caminho normal da request.
+- Headers, cookies e credenciais nunca entram no evento. Queries pessoais,
+  tokens e paths de usuario sao redigidos; strings, arrays, objetos,
+  profundidade e stack traces possuem limites antes de chegar ao observer.
+- Falhas do observer sao isoladas e nunca alteram retry, decode ou resultado
+  da operacao. O runtime nao persiste traces automaticamente; persistencia
+  continua dependendo de diagnostico tecnico solicitado explicitamente.
+- O GraphQL oficial nao expoe redirects internos, cookies, cache ou etapas do
+  parser da extension. Esses dados permanecerao `NOT_OBSERVED` nos relatorios
+  futuros, sem proxy ou scraper paralelo no Aethon.
+
+Evidencia do lote:
+
+- 23/23 testes focados de diagnostics, transport, schema, adapter e cache.
+- 67 testes do runtime aprovados e 1 contrato live opt-in ignorado.

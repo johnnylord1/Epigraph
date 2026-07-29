@@ -1,3 +1,5 @@
+import type { DiagnosticValue } from "./diagnostics";
+
 export type SourceRuntimeErrorCode =
   | "RUNTIME_UNAVAILABLE"
   | "RUNTIME_INCOMPATIBLE"
@@ -15,13 +17,22 @@ export type SourceRuntimeErrorCode =
 export interface SourceRuntimeErrorOptions {
   retryable?: boolean;
   details?: Readonly<Record<string, string | number | boolean | null>>;
+  graphqlErrors?: readonly SourceRuntimeGraphQLError[];
   cause?: unknown;
+}
+
+export interface SourceRuntimeGraphQLError {
+  message: string;
+  path: readonly (string | number)[];
+  locations: readonly Readonly<{ line: number; column: number }>[];
+  extensions: DiagnosticValue;
 }
 
 export class SourceRuntimeError extends Error {
   readonly code: SourceRuntimeErrorCode;
   readonly retryable: boolean;
   readonly details: Readonly<Record<string, string | number | boolean | null>>;
+  readonly graphqlErrors: readonly SourceRuntimeGraphQLError[];
 
   constructor(
     code: SourceRuntimeErrorCode,
@@ -33,6 +44,7 @@ export class SourceRuntimeError extends Error {
     this.code = code;
     this.retryable = options.retryable ?? false;
     this.details = Object.freeze({ ...(options.details ?? {}) });
+    this.graphqlErrors = Object.freeze([...(options.graphqlErrors ?? [])]);
   }
 }
 

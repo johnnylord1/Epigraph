@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { SourceRuntimeError } from "./errors";
-import { SuwayomiTransport, type GraphQLOperation } from "./transport";
+import {
+  SuwayomiTransport,
+  type GraphQLOperation,
+  type GraphQLTraceEvent,
+} from "./transport";
 
 interface ExampleResult {
   ok: boolean;
@@ -175,6 +179,122 @@ describe("SuwayomiTransport", () => {
 
     await expect(invalidTransport.execute(EXAMPLE_QUERY, { id: "source-1" })).rejects.toMatchObject({
       code: "RUNTIME_INCOMPATIBLE",
+    });
+  });
+
+  test("keeps structured GraphQL evidence while redacting sensitive extensions", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({
+        data: null,
+        errors: [{
+          message: "Failed at C:\\Users\\private-user\\profile",
+          path: ["source", 2],
+          locations: [{ line: 3, column: 7 }],
+          extensions: {
+            code: "SOURCE_FAILURE",
+            token: "secret-value",
+          },
+        }],
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const transport = new SuwayomiTransport({
+      endpoint: "http://127.0.0.1:4567/api/graphql",
+      fetch: fetchMock,
+      retries: 0,
+    });
+
+    const failure = await transport.execute(EXAMPLE_QUERY, { id: "source-1" })
+      .catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({
+      code: "UNKNOWN",
+      graphqlErrors: [{
+        message: "Failed at [PRIVATE_PATH]\\profile",
+        path: ["source", 2],
+        locations: [{ line: 3, column: 7 }],
+        extensions: {
+          code: "SOURCE_FAILURE",
+          token: "[REDACTED]",
+        },
+      }],
+    });
+  });
+
+  test("emits bounded optional traces without exposing query or credentials", async () => {
+    const events: GraphQLTraceEvent[] = [];
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: { example: { ok: true } } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    let now = 0;
+    const transport = new SuwayomiTransport({
+      endpoint: "http://user:password@LOCALHOST:80/api/graphql?token=secret",
+      fetch: fetchMock,
+      headers: () => ({
+        Authorization: "Bearer secret",
+        Cookie: "session=secret",
+      }),
+      retries: 1,
+      retryDelayMs: 0,
+      requestIdFactory: () => "request-1",
+      now: () => {
+        now += 5;
+        return now;
+      },
+      traceObserver: (event) => events.push(event),
+    });
+
+    await expect(transport.execute(EXAMPLE_QUERY, {
+      id: "source-1",
+      query: "private title",
+      token: "private token",
+    } as { id: string })).resolves.toEqual({ ok: true });
+
+    expect(transport.getEndpointIdentity()).toBe("http://localhost/api/graphql");
+    expect(events.map((event) => event.stage)).toEqual([
+      "request",
+      "retry",
+      "request",
+      "response",
+      "decode",
+      "complete",
+    ]);
+    expect(events[0]).toMatchObject({
+      requestId: "request-1",
+      variables: {
+        id: "source-1",
+        query: "[REDACTED]",
+        token: "[REDACTED]",
+      },
+    });
+    expect(JSON.stringify(events)).not.toContain("Bearer secret");
+    expect(JSON.stringify(events)).not.toContain("session=secret");
+    expect(JSON.stringify(events)).not.toContain("private title");
+  });
+
+  test("isolates trace observer failures from source requests", async () => {
+    const transport = new SuwayomiTransport({
+      endpoint: "http://127.0.0.1:4567/api/graphql",
+      fetch: vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(JSON.stringify({ data: { example: { ok: true } } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+      traceObserver: () => {
+        throw new Error("observer failed");
+      },
+    });
+
+    await expect(transport.execute(EXAMPLE_QUERY, { id: "source-1" })).resolves.toEqual({
+      ok: true,
     });
   });
 });

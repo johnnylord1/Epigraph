@@ -264,6 +264,22 @@ export async function canonicalSchemaSha256(schema: CanonicalGraphQLSchema): Pro
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+export function canonicalRuntimeCapabilitiesJson(capabilities: RuntimeCapabilities): string {
+  return JSON.stringify({
+    directJarInstall: capabilities.directJarInstall,
+    extensionApi16: capabilities.extensionApi16,
+    extensionStoresV2: capabilities.extensionStoresV2,
+    sourcePreferences: capabilities.sourcePreferences,
+    supported: [...capabilities.supported].sort((left, right) => left.localeCompare(right)),
+  });
+}
+
+export async function runtimeCapabilitiesSha256(capabilities: RuntimeCapabilities): Promise<string> {
+  const bytes = new TextEncoder().encode(canonicalRuntimeCapabilitiesJson(capabilities));
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 function evaluateRequirements(
   schema: CanonicalGraphQLSchema,
   requirements: Pick<RuntimeContract, "requiredQueries" | "requiredMutations" | "requiredFields">,

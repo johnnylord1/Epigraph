@@ -4,7 +4,9 @@ import {
   INTROSPECTION_OPERATION,
   canonicalSchemaJson,
   canonicalSchemaSha256,
+  canonicalRuntimeCapabilitiesJson,
   evaluateRuntimeContract,
+  runtimeCapabilitiesSha256,
 } from "./schema";
 import type { RuntimeContract } from "./types";
 
@@ -84,6 +86,22 @@ describe("GraphQL runtime contract", () => {
     expect(report.capabilities.sourcePreferences).toBe(true);
     expect(report.capabilities.extensionStoresV2).toBe(false);
     expect(report.capabilities.supported).toEqual(["sourcePreferences"]);
+  });
+
+  test("hashes capabilities independently from schema ordering", async () => {
+    const schema = INTROSPECTION_OPERATION.decode(introspectionData());
+    const capabilities = evaluateRuntimeContract(schema, contract).capabilities;
+
+    expect(canonicalRuntimeCapabilitiesJson(capabilities)).toBe(JSON.stringify({
+      directJarInstall: false,
+      extensionApi16: false,
+      extensionStoresV2: false,
+      sourcePreferences: true,
+      supported: ["sourcePreferences"],
+    }));
+    await expect(runtimeCapabilitiesSha256(capabilities)).resolves.toMatch(
+      /^[a-f0-9]{64}$/,
+    );
   });
 
   test("reports missing operations and fields without relying on the schema hash", () => {

@@ -15,6 +15,9 @@ This roadmap records known development priorities without committing to dates or
 
 ## Short Term
 
+- Continue the verified 72A-72H sequence: deterministic source contracts,
+  observed compatibility reports, official preferences, recoverable
+  migrations, Reader ownership, and measured Library optimization.
 - Re-run `pnpm release:verify` on the current HEAD after the SR9-SR13 source
   runtime sequence.
 - Exercise the real Docker FlareSolverr lifecycle when Docker is available;

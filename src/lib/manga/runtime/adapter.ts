@@ -3,6 +3,7 @@ import {
   INTROSPECTION_OPERATION,
   canonicalSchemaSha256,
   evaluateRuntimeContract,
+  runtimeCapabilitiesSha256,
   type CanonicalGraphQLSchema,
 } from "./schema";
 import type { CompatibilityProfile } from "./compatibility";
@@ -14,6 +15,7 @@ import type {
   RuntimeCapabilities,
   RuntimeContractReport,
   RuntimeInfo,
+  RuntimeFingerprint,
   SourceChapter,
   SourceChapterRef,
   SourceItemDetails,
@@ -29,6 +31,13 @@ import { canonicalizeExtensionStoreUrl } from "./storeUrl";
 interface ContractInspection {
   report: RuntimeContractReport;
   schemaHash: string;
+  capabilitiesHash: string;
+}
+
+export interface SuwayomiAdapterContext {
+  endpointIdentity?: string;
+  instanceNonce?: string | null;
+  localRuntimeGeneration?: string | null;
 }
 
 export class SuwayomiAdapter implements SourceRuntime {
@@ -38,8 +47,26 @@ export class SuwayomiAdapter implements SourceRuntime {
     private readonly transport: GraphQLTransport,
     private readonly profile: CompatibilityProfile,
     schema?: CanonicalGraphQLSchema,
+    private readonly context: SuwayomiAdapterContext = {},
   ) {
     if (schema) this.inspection = this.inspectSchema(schema);
+  }
+
+  async getRuntimeFingerprint(): Promise<RuntimeFingerprint> {
+    const [payload, inspection] = await Promise.all([
+      this.transport.execute(this.profile.operations.runtimeInfo, {}),
+      this.inspectContract(),
+    ]);
+    return {
+      serverVersion: payload.version,
+      canonicalSchemaHash: inspection.schemaHash,
+      capabilitiesHash: inspection.capabilitiesHash,
+      endpointIdentity: this.context.endpointIdentity
+        ?? this.transport.getEndpointIdentity?.()
+        ?? "unknown-endpoint",
+      instanceNonce: this.context.instanceNonce ?? null,
+      localRuntimeGeneration: this.context.localRuntimeGeneration ?? null,
+    };
   }
 
   async getRuntimeInfo(): Promise<RuntimeInfo> {
@@ -211,11 +238,12 @@ export class SuwayomiAdapter implements SourceRuntime {
   }
 
   private async inspectSchema(schema: CanonicalGraphQLSchema): Promise<ContractInspection> {
-    const [report, schemaHash] = await Promise.all([
-      Promise.resolve(evaluateRuntimeContract(schema, this.profile.contract)),
+    const report = evaluateRuntimeContract(schema, this.profile.contract);
+    const [schemaHash, capabilitiesHash] = await Promise.all([
       canonicalSchemaSha256(schema),
+      runtimeCapabilitiesSha256(report.capabilities),
     ]);
-    return { report, schemaHash };
+    return { report, schemaHash, capabilitiesHash };
   }
 
   private async requireCompatible(): Promise<void> {

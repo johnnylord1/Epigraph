@@ -90,8 +90,16 @@ export {
   canonicalSchemaSha256,
   canonicalizeSchema,
   evaluateRuntimeContract,
+  canonicalRuntimeCapabilitiesJson,
+  runtimeCapabilitiesSha256,
 } from "./schema";
 export type { CanonicalGraphQLSchema } from "./schema";
+export {
+  canonicalEndpointIdentity,
+  redactDiagnosticText,
+  redactDiagnosticValue,
+} from "./diagnostics";
+export type { DiagnosticValue } from "./diagnostics";
 export { SuwayomiTransport } from "./transport";
 export type {
   GraphQLExecuteOptions,
@@ -99,5 +107,8 @@ export type {
   GraphQLTransport,
   GraphQLVariables,
   SuwayomiTransportOptions,
+  GraphQLTraceEvent,
+  GraphQLTraceObserver,
+  GraphQLTraceStage,
 } from "./transport";
 export type * from "./types";
