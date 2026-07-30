@@ -34,13 +34,17 @@ This roadmap records known development priorities without committing to dates or
   Library lifecycle change was needed; the final native pass is green.
 - EPUB/PDF local-data round trips, backup/restore, integration contracts,
   accessibility focus isolation, bundle budgets, and aggregate release gates.
+- The 72H structural gate now pins browser providers to an isolated IPv4
+  loopback port, runs native evidence on DISPLAY3, executes the deterministic
+  Suwayomi workflow, and distinguishes app-owned navigation work from
+  environment-sensitive WebView2 frame scheduling.
+- The constituent 72H gates are green; the aggregate `pnpm release:verify`
+  still needs one uninterrupted run before the milestone is formally closed.
 
 ## Short Term
 
-- Complete the verified 72A-72H sequence with the consolidated 72H structural
-  gate and current-head release verification.
-- Re-run `pnpm release:verify` on the current HEAD after the SR9-SR13 source
-  runtime sequence.
+- Re-run `pnpm release:verify` uninterrupted on the current HEAD and close the
+  72H milestone only after its final summary and cleanup pass.
 - Exercise the real Docker FlareSolverr lifecycle when Docker is available;
   deterministic ownership and resource-policy tests remain the blocking gate.
 - Validate manga/fullscreen with an accessible catalog and complete a manual

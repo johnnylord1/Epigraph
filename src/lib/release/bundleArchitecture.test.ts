@@ -38,7 +38,8 @@ describe("release bundle architecture", () => {
     expect(layout).toContain("Home preload did not complete; navigation will retry it.");
     expect(layout).toContain("activityOverlayError");
     expect(navigationGate).toContain('activePanel?.querySelector(".grid-skeleton")');
-    expect(navigationGate).toContain("requestAnimationFrame(() => requestAnimationFrame(done))");
+    expect(navigationGate).toContain("firstStableFrameAt = performance.now()");
+    expect(navigationGate).toContain("requestAnimationFrame(finish)");
     expect(navigationGate).toContain("sha256: await sha256File(appPath)");
     expect(nativeRunner).toContain("Automation build is older than");
     expect(nativeRunner).toContain("if ($completed)");

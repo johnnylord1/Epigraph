@@ -57,6 +57,20 @@ function median(values) {
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
+async function removeDirectoryWithRetry(directory, attempts = 12) {
+  let lastError = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      await fs.rm(directory, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 100 * (attempt + 1)));
+    }
+  }
+  throw lastError ?? new Error(`Could not remove disposable profile: ${directory}`);
+}
+
 async function createFakeCore() {
   let requestCount = 0;
   const server = http.createServer((request, response) => {
@@ -390,6 +404,10 @@ async function switchLibrarySection(driver, index, expected, options = {}) {
   const coreRequestsBefore = options.getCoreRequestCount?.() ?? null;
   const sample = await driver.executeAsyncScript(function measureSectionSwitch(targetIndex, section, done) {
     const startedAt = performance.now();
+    const presentationContextAtStart = {
+      hasFocus: document.hasFocus(),
+      visibilityState: document.visibilityState,
+    };
     const tabs = document.querySelector(".section-tabs");
     const buttons = [...document.querySelectorAll(".section-tabs .section-tab")];
     const target = buttons[targetIndex];
@@ -406,6 +424,7 @@ async function switchLibrarySection(driver, index, expected, options = {}) {
     const layoutShifts = [];
     const observers = [];
     let commitAt = null;
+    let firstStableFrameAt = null;
     let settled = false;
 
     if (typeof PerformanceObserver !== "undefined") {
@@ -452,7 +471,20 @@ async function switchLibrarySection(driver, index, expected, options = {}) {
           inputToHandlerReturnMs: handlerReturnedAt - startedAt,
           inputToStateUpdateMs: stateUpdatedAt === null ? null : stateUpdatedAt - startedAt,
           stateUpdateToCommitMs: stateUpdatedAt === null || commitAt === null ? null : commitAt - stateUpdatedAt,
+          commitToFirstStableFrameMs: commitAt === null || firstStableFrameAt === null
+            ? null
+            : firstStableFrameAt - commitAt,
+          firstToSecondStableFrameMs: firstStableFrameAt === null
+            ? null
+            : stableFrameAt - firstStableFrameAt,
           commitToStableFrameMs: commitAt === null ? null : stableFrameAt - commitAt,
+        },
+        presentationContext: {
+          atStart: presentationContextAtStart,
+          atFinish: {
+            hasFocus: document.hasFocus(),
+            visibilityState: document.visibilityState,
+          },
         },
         longTasks: {
           count: longTasks.length,
@@ -494,7 +526,10 @@ async function switchLibrarySection(driver, index, expected, options = {}) {
         return;
       }
       commitAt ??= performance.now();
-      requestAnimationFrame(() => requestAnimationFrame(finish));
+      requestAnimationFrame(() => {
+        firstStableFrameAt = performance.now();
+        requestAnimationFrame(finish);
+      });
     };
     requestAnimationFrame(waitForStablePanel);
     setTimeout(() => {
@@ -880,7 +915,7 @@ async function main() {
         viewportAfter = await collectViewportEvidence(driver);
       } finally {
         await driver?.quit().catch(() => {});
-        await fs.rm(profileRoot, { recursive: true, force: true }).catch(() => {});
+        await removeDirectoryWithRetry(profileRoot);
       }
     }
   } finally {
@@ -966,11 +1001,16 @@ async function main() {
   for (const direction of ["comics-to-books", "books-to-comics"]) {
     const summary = directionalLibrarySummary[direction];
     for (const thermalState of ["warm", "cached"]) {
-      const totalP50Ms = summary[thermalState].p50Ms;
-      libraryGateChecks[`${direction}.${thermalState}.totalP50Ms`] = {
-        actualMs: totalP50Ms,
-        maxMs: budgets.library.warmCachedTotalP50MaxMs,
-        passed: totalP50Ms !== null && totalP50Ms <= budgets.library.warmCachedTotalP50MaxMs,
+      const interactiveReadyP50Ms = summary[thermalState].focusedInteractiveReadyP50Ms;
+      const focusedSampleCount = summary[thermalState].focusedCount;
+      libraryGateChecks[`${direction}.${thermalState}.interactiveReadyP50Ms`] = {
+        actualMs: interactiveReadyP50Ms,
+        sampleCount: focusedSampleCount,
+        minimumSamples: budgets.library.minimumFocusedSamples,
+        maxMs: budgets.library.warmCachedInteractiveReadyP50MaxMs,
+        passed: focusedSampleCount >= budgets.library.minimumFocusedSamples
+          && interactiveReadyP50Ms !== null
+          && interactiveReadyP50Ms <= budgets.library.warmCachedInteractiveReadyP50MaxMs,
       };
       const appOwnedP95Ms = summary[thermalState].appOwnedP95Ms;
       libraryGateChecks[`${direction}.${thermalState}.appOwnedP95Ms`] = {

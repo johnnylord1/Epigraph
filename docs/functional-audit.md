@@ -360,3 +360,53 @@ As evidencias finais em
 `docs/screenshots/marco72g2-library-performance/` mostram Comics, Books, Search
 com a barra acima do dim e toast com barra de vida ativa. O relatorio
 `report.json` registra todos os samples, phases, budgets e zero falha.
+
+## Marco 72H - gate estrutural consolidado
+
+Em 29/07/2026, os gates do HEAD atual foram reexecutados de forma serial, com
+um worker Vitest, um job Cargo e perfis descartáveis. `svelte-check` permaneceu
+em 0 erros/0 warnings; os testes unit/jsdom passaram em 189 arquivos com 1.118
+testes e um canário live explicitamente ignorado; os 10 arquivos browser
+passaram 48/48. O workflow determinístico Suwayomi V21/V23 concluiu instalação
+oficial, restart, 27 source IDs estáveis, Local Source, shutdown e cleanup sem
+usar websites como fonte de verdade.
+
+A suíte Rust passou integralmente após uma falha intermitente inicial do
+binário Syncd: a repetição isolada passou 176/176 e a repetição completa também
+ficou verde. Não houve alteração de código Rust nem redução de cobertura. Build
+frontend e Tauri de automação passaram; o gate de dados preservou EPUB/PDF,
+dois progressos e dois bookmarks e rejeitou restore corrompido. O smoke nativo
+passou 6/6 em 1280x800 e 800x600.
+
+O provider browser deixou de depender da porta fixa 63315: o sistema aloca uma
+porta livre em `127.0.0.1` para cada servidor. Os smokes
+nativos usam DISPLAY3 (`x=1980`, `y=80`) e não abrem console auxiliar visível.
+
+Na medição final da Library, a mediana agregada foi 10,65 ms; os p95 app-owned
+warm/cached ficaram entre 3,35 ms e 4,92 ms. O primeiro frame estável ficou
+abaixo do teto direcional de 92 ms; o segundo frame foi mantido como métrica
+observacional do compositor. Não houve long task, RAF pendente
+ou crescimento monotônico de listeners/observers; o heap retido cresceu
+998.490 bytes (8,33%). O wall-clock warm Comics -> Books chegou a 104,8 ms por
+adiamento de `requestAnimationFrame` no compositor, enquanto commit, layout,
+script e task já estavam concluídos. A mediana global, app-owned p95, long
+tasks, heap e lifecycle continuam bloqueantes.
+
+Search completou vinte ciclos com mediana de estado de 2,65 ms, sem dim
+residual, e o toast manteve `toastLife` em execução. Evidências finais úteis
+foram preservadas em `docs/screenshots/marco72h-final/`; relatórios temporários,
+perfis e logs não são artefatos de release.
+
+As capturas `home-1280x800.png` e `home-800x600.png` representam o perfil
+descartável vazio usado pelo smoke: os cards de Continue Reading ficam em
+placeholder por falta de dados, e não indicam uma tela de Home carregando
+indefinidamente. A limitação é registrada porque o gate não cria dados de
+usuário artificialmente.
+
+Continuam condicionais, e não foram apresentados como certificados: instalação
+assinada real, serviços externos live, Docker FlareSolverr real, manga/fullscreen
+dependente de catálogo e auditoria manual com leitor de tela. A execução única
+de `pnpm release:verify` foi interrompida durante a certificação de dados antes
+do resumo final; os gates constituintes foram concluídos em execuções
+controladas e o orquestrador mantém o contrato de worktree/diff para uma nova
+execução agregada. O Marco 72H permanece aberto até essa execução terminar.

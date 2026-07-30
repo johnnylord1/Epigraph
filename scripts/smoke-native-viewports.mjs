@@ -132,6 +132,8 @@ async function main() {
   try {
     await fs.mkdir(outputDirectory, { recursive: true });
     driver = await new Builder().usingServer(args["driver-url"]).withCapabilities(capabilities).build();
+    const windowX = Number(process.env.AETHON_WEBDRIVER_WINDOW_X);
+    const windowY = Number(process.env.AETHON_WEBDRIVER_WINDOW_Y);
     await driver.manage().setTimeouts({ implicit: 0, pageLoad: 120_000, script: 120_000 });
     await waitForAuditBridge(driver);
     await callAudit(driver, "bypassStartupSplash");
@@ -143,7 +145,12 @@ async function main() {
     ];
     const report = [];
     for (const viewport of viewports) {
-      await driver.manage().window().setRect({ width: viewport.width, height: viewport.height, x: 0, y: 0 });
+      await driver.manage().window().setRect({
+        width: viewport.width,
+        height: viewport.height,
+        x: Number.isFinite(windowX) ? windowX : 0,
+        y: Number.isFinite(windowY) ? windowY : 0,
+      });
       for (const surface of surfaces) {
         await surface.open();
         await waitForSurface(driver, surface.selector, surface.name, surface.blockedSelector);

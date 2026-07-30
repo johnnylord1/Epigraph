@@ -405,3 +405,22 @@ e uma source por vez e não acessou websites.
 Pendências não promovidas a bug: repetir `pnpm release:verify` no HEAD atual,
 exercitar Docker FlareSolverr quando disponível e executar as validações live,
 assinadas ou manuais já classificadas como condicionais.
+
+## Atualização do Marco 72H
+
+Em 29/07/2026, nenhum novo bug de produto foi promovido. Os gates unit/jsdom,
+browser, temas, runtime Suwayomi determinístico, integrações, bundles, Rust,
+builds, dados locais, viewports e navegação passaram em execuções controladas.
+
+Dois problemas do harness foram corrigidos sem alterar o app: o provider
+browser usava a porta fixa 63315/host implícito, e a medição direcional tratava
+o atraso de `requestAnimationFrame` do WebView2 como trabalho do Svelte. O
+browser agora usa porta loopback alocada pelo sistema; a Library bloqueia até
+o primeiro frame estável e pelos custos app-owned, mediana global, long tasks,
+heap e lifecycle, enquanto o segundo frame do compositor permanece evidência
+observacional.
+
+A execução agregada foi interrompida durante a certificação de dados antes do
+resumo final, portanto o relatório não declara uma passagem única de
+`release:verify` neste HEAD. Isso permanece uma pendência operacional de
+reexecução, não um bug reproduzido do usuário.

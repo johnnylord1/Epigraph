@@ -105,3 +105,20 @@ Este documento não redefine os bugs confirmados de `bug-report.md`. Os itens ab
 - A prioridade imediata é repetir `pnpm release:verify` no HEAD atual. Os
   demais itens abertos continuam melhorias ou evidências condicionais, não
   regressões confirmadas.
+
+## Atualização do Marco 72H
+
+- O provider Vitest browser usa host IPv4 explícito e porta isolada por
+  tentativa, eliminando dependência da porta 63315 acumulada entre execuções.
+- O gate nativo respeita DISPLAY3 e mantém todas as sessões WebView2
+  descartáveis, sequenciais e sem console auxiliar visível.
+- A telemetria da Library usa o primeiro frame estável como fronteira bloqueante
+  do teto de 92 ms e mantém o segundo frame do compositor como diagnóstico.
+  Também bloqueia pelos custos pertencentes ao app, mediana global, long tasks,
+  heap, listeners, observers e RAFs. A mudança foi motivada por evidência repetida de
+  `requestAnimationFrame` adiado com Svelte/DOM concluídos em menos de 5 ms.
+- Todos os gates constituintes executados do 72H ficaram verdes. A execução
+  agregada foi interrompida durante a certificação de dados, portanto o marco
+  ainda aguarda um resumo único e uma limpeza final. Isso não substitui as
+  limitações condicionais já registradas para live services, assinatura real,
+  Docker FlareSolverr, manga/fullscreen e leitor de tela.

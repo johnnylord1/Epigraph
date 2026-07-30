@@ -18,7 +18,8 @@ describe("library navigation performance gate", () => {
     const budgets = JSON.parse(read("config/release-navigation-budgets.json"));
     const gate = read("scripts/check-navigation-performance.mjs");
 
-    expect(budgets.library.warmCachedTotalP50MaxMs).toBe(92);
+    expect(budgets.library.warmCachedInteractiveReadyP50MaxMs).toBe(92);
+    expect(budgets.library.minimumFocusedSamples).toBe(5);
     expect(budgets.library.warmCachedAppOwnedP95MaxMs).toBe(120);
     expect(budgets.library.maxLongTaskDurationMs).toBe(100);
     expect(budgets.library.maxLongTaskTotalDurationMs).toBe(200);
@@ -32,6 +33,10 @@ describe("library navigation performance gate", () => {
     expect(gate).toContain('for (const direction of ["comics-to-books", "books-to-comics"])');
     expect(gate).toContain('for (const thermalState of ["warm", "cached"])');
     expect(gate).toContain("appOwnedP95Ms");
+    expect(gate).toContain("focusedSampleCount >= budgets.library.minimumFocusedSamples");
+    expect(gate).toContain("focusedInteractiveReadyP50Ms");
+    expect(gate).toContain("warmCachedInteractiveReadyP50MaxMs");
+    expect(gate).toContain("removeDirectoryWithRetry(profileRoot)");
     expect(gate).toContain("blocking: false");
     expect(gate).toContain('setParameter("cmd", "HeapProfiler.collectGarbage")');
     expect(gate).toContain("summary.cold.count >= 5");

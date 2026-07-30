@@ -15,6 +15,11 @@ type ThermalSummary = {
   appOwnedP95Ms: number | null;
   presentationP50Ms: number | null;
   presentationP95Ms: number | null;
+  focusedCount: number;
+  focusedP50Ms: number | null;
+  focusedP95Ms: number | null;
+  focusedInteractiveReadyP50Ms: number | null;
+  focusedInteractiveReadyP95Ms: number | null;
   samplesMs: number[];
 };
 
@@ -50,20 +55,34 @@ describe("library navigation telemetry aggregation", () => {
     const phases = {
       inputToStateUpdateMs: 2,
       stateUpdateToCommitMs: 8,
+      commitToFirstStableFrameMs: 5,
       commitToStableFrameMs: 10,
     };
+    const focused = {
+      atStart: { hasFocus: true, visibilityState: "visible" },
+      atFinish: { hasFocus: true, visibilityState: "visible" },
+    };
+    const unfocused = {
+      atStart: { hasFocus: false, visibilityState: "visible" },
+      atFinish: { hasFocus: false, visibilityState: "visible" },
+    };
     const summary = summarizeDirectionalTransitions([
-      { direction: "comics-to-books", thermalState: "cold", durationMs: 100, phases },
-      { direction: "comics-to-books", thermalState: "warm", durationMs: 60, phases },
-      { direction: "comics-to-books", thermalState: "cached", durationMs: 40, phases },
-      { direction: "books-to-comics", thermalState: "cold", durationMs: 90, phases },
-      { direction: "books-to-comics", thermalState: "cached", durationMs: 30, phases },
+      { direction: "comics-to-books", thermalState: "cold", durationMs: 100, phases, presentationContext: focused },
+      { direction: "comics-to-books", thermalState: "warm", durationMs: 60, phases, presentationContext: unfocused },
+      { direction: "comics-to-books", thermalState: "cached", durationMs: 40, phases, presentationContext: focused },
+      { direction: "books-to-comics", thermalState: "cold", durationMs: 90, phases, presentationContext: focused },
+      { direction: "books-to-comics", thermalState: "cached", durationMs: 30, phases, presentationContext: focused },
     ]) as DirectionalSummary;
 
     expect(summary["comics-to-books"].cold.samplesMs).toEqual([100]);
     expect(summary["comics-to-books"].all.p50Ms).toBe(60);
     expect(summary["comics-to-books"].cached.appOwnedP95Ms).toBe(10);
     expect(summary["comics-to-books"].cached.presentationP95Ms).toBe(10);
+    expect(summary["comics-to-books"].warm.focusedCount).toBe(0);
+    expect(summary["comics-to-books"].warm.focusedP50Ms).toBeNull();
+    expect(summary["comics-to-books"].warm.focusedInteractiveReadyP50Ms).toBeNull();
+    expect(summary["comics-to-books"].cached.focusedP50Ms).toBe(40);
+    expect(summary["comics-to-books"].cached.focusedInteractiveReadyP50Ms).toBe(15);
     expect(summary["books-to-comics"].warm.count).toBe(0);
     expect(summary["books-to-comics"].cached.samplesMs).toEqual([30]);
   });

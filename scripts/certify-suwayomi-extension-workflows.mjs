@@ -1,7 +1,17 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
-import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -18,6 +28,8 @@ import {
   stopRuntime,
   waitForHealth,
 } from "./certify-suwayomi-release.mjs";
+
+const ARTIFACT_CACHE_PREFIX = "aethon-suwayomi-artifact-";
 
 export const WORKFLOW_CANDIDATE = Object.freeze({
   version: "v2.3.2243",
@@ -172,16 +184,66 @@ async function downloadPinnedFile(url, destination, expectedSha256) {
   throw new Error(`Pinned artifact download failed: ${errorChain(lastError)}`, { cause: lastError });
 }
 
-async function ensurePinnedFile(explicitPath, root, descriptor) {
+async function isValidPinnedFile(filePath, expectedSha256) {
+  try {
+    return sha256(await readFile(filePath)) === expectedSha256;
+  } catch {
+    return false;
+  }
+}
+
+async function pruneArtifactCache(cacheRoot, maxFiles = 8) {
+  const entries = await readdir(cacheRoot, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const filePath = path.join(cacheRoot, entry.name);
+    if (!entry.isFile()) continue;
+    if (!entry.name.startsWith(ARTIFACT_CACHE_PREFIX)) continue;
+    const details = await stat(filePath);
+    if (entry.name.endsWith(".tmp")) {
+      if (Date.now() - details.mtimeMs > 86_400_000) await rm(filePath, { force: true });
+      continue;
+    }
+    files.push({ filePath, mtimeMs: details.mtimeMs });
+  }
+  files.sort((left, right) => right.mtimeMs - left.mtimeMs);
+  await Promise.all(files.slice(maxFiles).map(({ filePath }) => rm(filePath, { force: true })));
+}
+
+export async function ensurePinnedFile(explicitPath, _root, descriptor) {
   if (explicitPath) {
     const resolved = path.resolve(explicitPath);
-    const bytes = await readFile(resolved);
-    if (sha256(bytes) !== descriptor.sha256) throw new Error("Explicit artifact SHA-256 does not match the certification policy.");
+    if (!await isValidPinnedFile(resolved, descriptor.sha256)) {
+      throw new Error("Explicit artifact SHA-256 does not match the certification policy.");
+    }
     return resolved;
   }
-  const destination = path.join(root, descriptor.fileName ?? path.basename(new URL(descriptor.url).pathname));
-  await downloadPinnedFile(descriptor.url, destination, descriptor.sha256);
-  return destination;
+  const cacheRoot = path.resolve(
+    process.env.AETHON_SUWAYOMI_ARTIFACT_CACHE
+      || path.join(tmpdir(), "aethon-suwayomi-artifact-cache-v1"),
+  );
+  await mkdir(cacheRoot, { recursive: true });
+  const extension = path.extname(descriptor.fileName ?? new URL(descriptor.url).pathname);
+  const destination = path.join(cacheRoot, `${ARTIFACT_CACHE_PREFIX}${descriptor.sha256}${extension}`);
+  if (await isValidPinnedFile(destination, descriptor.sha256)) {
+    await pruneArtifactCache(cacheRoot);
+    return destination;
+  }
+  await rm(destination, { force: true });
+  const temporary = `${destination}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await downloadPinnedFile(descriptor.url, temporary, descriptor.sha256);
+    try {
+      await rename(temporary, destination);
+    } catch (error) {
+      if (!await isValidPinnedFile(destination, descriptor.sha256)) throw error;
+      await rm(temporary, { force: true });
+    }
+    await pruneArtifactCache(cacheRoot);
+    return destination;
+  } finally {
+    await rm(temporary, { force: true });
+  }
 }
 
 async function graphqlOperation(endpoint, query, variables = {}, timeoutMs = 20_000) {
@@ -340,14 +402,22 @@ export async function startFixtureStoreServer(artifactPath, descriptor) {
 async function collectInstalledExtensionIdentityOnce(endpoint, descriptor) {
   const inventory = await graphqlOperation(endpoint, INVENTORY_QUERY);
   const extension = inventory.extensions?.nodes?.find(
-    (item) => item.pkgName === descriptor.packageName && item.isInstalled === true,
+    (item) => item.pkgName === descriptor.packageName,
   );
   const sourceIds = inventory.sources?.nodes
     ?.filter((source) => source.extension?.pkgName === descriptor.packageName)
     .map((source) => String(source.id))
     .sort() ?? [];
-  if (!extension || String(extension.versionCodeLong) !== descriptor.versionCode || sourceIds.length === 0) {
-    throw new Error("The exact V23 extension artifact did not register its expected sources.");
+  if (
+    !extension
+    || extension.isInstalled !== true
+    || String(extension.versionCodeLong) !== descriptor.versionCode
+    || sourceIds.length === 0
+  ) {
+    const observed = extension
+      ? `installed=${String(extension.isInstalled)}, versionCode=${String(extension.versionCodeLong)}, sources=${sourceIds.join(",") || "<none>"}`
+      : "extension=<missing>";
+    throw new Error(`The exact V23 extension artifact did not register its expected sources (${observed}).`);
   }
   return {
     packageName: extension.pkgName,
@@ -372,13 +442,31 @@ async function collectInstalledExtensionIdentity(endpoint, descriptor) {
   throw lastError ?? new Error("The exact V23 extension identity did not become ready.");
 }
 
-async function findGeneratedCanaryJar(root) {
+async function waitForPinnedExtensionJar(root, expectedSha256, timeoutMs = 15_000) {
+  const extensionsDir = path.join(root, "extensions");
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const entries = await readdir(extensionsDir, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".jar")) continue;
+      const filePath = path.join(extensionsDir, entry.name);
+      if (sha256(await readFile(filePath)) === expectedSha256) {
+        return { fileName: entry.name, sha256: expectedSha256 };
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error("The exact V23 extension JAR was not durably materialized before restart.");
+}
+
+export async function findGeneratedCanaryJar(root) {
   const extensionsDir = path.join(root, "extensions");
   const candidates = (await readdir(extensionsDir, { withFileTypes: true }))
     .filter((entry) => entry.isFile() && entry.name.endsWith(".jar"))
     .map((entry) => path.join(extensionsDir, entry.name));
-  if (candidates.length !== 1 || !path.basename(candidates[0]).includes(".akuma-")) {
-    throw new Error("The baseline Suwayomi did not produce exactly one Akuma extension JAR.");
+  if (candidates.length !== 1) {
+    const names = candidates.map((candidate) => path.basename(candidate)).join(", ") || "<none>";
+    throw new Error(`The clean baseline profile produced ${candidates.length} extension JARs: ${names}.`);
   }
   return {
     path: candidates[0],
@@ -590,12 +678,27 @@ async function main() {
           directEndpoint,
           DIRECT_INSTALL_CANARY,
         );
+        let persistedArtifact = null;
+        if (name === "exact-v23-jar-install") {
+          persistedArtifact = await waitForPinnedExtensionJar(
+            directRoot,
+            DIRECT_INSTALL_CANARY.sha256,
+          );
+          await new Promise((resolve) => setTimeout(resolve, 1_500));
+          const stableIdentity = await collectInstalledExtensionIdentity(
+            directEndpoint,
+            DIRECT_INSTALL_CANARY,
+          );
+          if (JSON.stringify(identity) !== JSON.stringify(stableIdentity)) {
+            throw new Error("Exact V23 extension identity changed before the restart boundary.");
+          }
+        }
         if (directIdentity && JSON.stringify(directIdentity) !== JSON.stringify(identity)) {
           throw new Error("Exact V23 JAR extension identity changed after restart.");
         }
         directIdentity = identity;
         assertNoStructuralRuntimeErrors(runtime.output);
-        report.phases.push({ name, passed: true, identity });
+        report.phases.push({ name, passed: true, identity, persistedArtifact });
       } catch (error) {
         const tail = runtime.output.slice(-40).join("\n").replaceAll(tempRoot, "<temp-root>");
         throw new Error(`${name} phase failed: ${errorChain(error)}\n${tail}`, { cause: error });

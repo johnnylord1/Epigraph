@@ -24,6 +24,12 @@ export function classifyThermalState(targetActivationCount) {
 
 function summarizeSamples(samples) {
   const durations = samples.map((sample) => sample.durationMs);
+  const focusedSamples = samples.filter((sample) => (
+    sample.presentationContext?.atStart?.hasFocus === true
+    && sample.presentationContext?.atFinish?.hasFocus === true
+    && sample.presentationContext?.atStart?.visibilityState === "visible"
+    && sample.presentationContext?.atFinish?.visibilityState === "visible"
+  ));
   const appOwnedDurations = samples.map((sample) => {
     const inputToStateUpdateMs = sample.phases?.inputToStateUpdateMs;
     const stateUpdateToCommitMs = sample.phases?.stateUpdateToCommitMs;
@@ -32,6 +38,16 @@ function summarizeSamples(samples) {
       : null;
   });
   const presentationDurations = samples.map((sample) => sample.phases?.commitToStableFrameMs);
+  const interactiveReadyDurations = focusedSamples.map((sample) => {
+    const inputToStateUpdateMs = sample.phases?.inputToStateUpdateMs;
+    const stateUpdateToCommitMs = sample.phases?.stateUpdateToCommitMs;
+    const commitToFirstStableFrameMs = sample.phases?.commitToFirstStableFrameMs;
+    return Number.isFinite(inputToStateUpdateMs)
+      && Number.isFinite(stateUpdateToCommitMs)
+      && Number.isFinite(commitToFirstStableFrameMs)
+      ? inputToStateUpdateMs + stateUpdateToCommitMs + commitToFirstStableFrameMs
+      : null;
+  });
   return {
     count: samples.length,
     p50Ms: percentile(durations, 0.5),
@@ -40,6 +56,11 @@ function summarizeSamples(samples) {
     appOwnedP95Ms: percentile(appOwnedDurations, 0.95),
     presentationP50Ms: percentile(presentationDurations, 0.5),
     presentationP95Ms: percentile(presentationDurations, 0.95),
+    focusedCount: focusedSamples.length,
+    focusedP50Ms: percentile(focusedSamples.map((sample) => sample.durationMs), 0.5),
+    focusedP95Ms: percentile(focusedSamples.map((sample) => sample.durationMs), 0.95),
+    focusedInteractiveReadyP50Ms: percentile(interactiveReadyDurations, 0.5),
+    focusedInteractiveReadyP95Ms: percentile(interactiveReadyDurations, 0.95),
     samplesMs: durations,
   };
 }

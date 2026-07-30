@@ -10,6 +10,11 @@ const BROWSER_TRANSIENT_SCREENSHOT_DIR = path.resolve(
     || path.join(tmpdir(), "aethon-vitest-browser", String(process.pid))
 );
 const BROWSER_UPDATE_SCREENSHOTS = process.env.AETHON_UPDATE_SCREENSHOTS === "1";
+const browserApiPort = Number.parseInt(process.env.AETHON_VITEST_BROWSER_PORT || "0", 10);
+
+if (!Number.isInteger(browserApiPort) || browserApiPort < 0 || browserApiPort > 65535) {
+  throw new Error("AETHON_VITEST_BROWSER_PORT must be zero or a valid TCP port");
+}
 
 export default defineWorkspace([
   {
@@ -111,6 +116,11 @@ export default defineWorkspace([
         name: "chromium",
         provider: "playwright",
         headless: true,
+        api: {
+          host: "127.0.0.1",
+          port: browserApiPort,
+          strictPort: browserApiPort !== 0,
+        },
         viewport: {
           width: 1280,
           height: 800,

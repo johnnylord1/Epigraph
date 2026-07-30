@@ -1,9 +1,14 @@
 param(
-  [switch]$ContractOnly
+  [switch]$ContractOnly,
+  [switch]$SkipProjectGates
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+if ($ContractOnly -and $SkipProjectGates) {
+  throw "ContractOnly and SkipProjectGates cannot be combined."
+}
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Split-Path -Parent $scriptDir
@@ -64,6 +69,8 @@ try {
   $env:CI = "true"
   $env:CARGO_BUILD_JOBS = "1"
   $env:NODE_OPTIONS = if ($env:NODE_OPTIONS) { $env:NODE_OPTIONS } else { "--max-old-space-size=3072" }
+  Remove-Item Env:AETHON_SUWAYOMI_LIVE_ENDPOINT -ErrorAction SilentlyContinue
+  Remove-Item Env:AETHON_SUWAYOMI_LIVE_PROFILE -ErrorAction SilentlyContinue
 
   Invoke-SourceRuntimeStep "Initial cleanup and whitespace" {
     Test-NoResidualCandidates
@@ -78,11 +85,13 @@ try {
     Invoke-SourceRuntimeStep "Deterministic extension and Local Source workflow" {
       & node scripts/certify-suwayomi-extension-workflows.mjs
     }
-    Invoke-SourceRuntimeStep "Svelte diagnostics" { & pnpm exec svelte-check --tsconfig ./tsconfig.json }
-    Invoke-SourceRuntimeStep "Rust runtime, updater, Core, and Syncd contracts" {
-      & cargo test --locked --manifest-path src-tauri/Cargo.toml --jobs 1 -- --test-threads=1
+    if (-not $SkipProjectGates) {
+      Invoke-SourceRuntimeStep "Svelte diagnostics" { & pnpm exec svelte-check --tsconfig ./tsconfig.json }
+      Invoke-SourceRuntimeStep "Rust runtime, updater, Core, and Syncd contracts" {
+        & cargo test --locked --manifest-path src-tauri/Cargo.toml --jobs 1 -- --test-threads=1
+      }
+      Invoke-SourceRuntimeStep "Frontend production build" { & pnpm build }
     }
-    Invoke-SourceRuntimeStep "Frontend production build" { & pnpm build }
   }
 
   Invoke-SourceRuntimeStep "Final cleanup and whitespace" {

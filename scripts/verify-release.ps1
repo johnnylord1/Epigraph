@@ -64,15 +64,26 @@ try {
   $env:AETHON_NATIVE_SMOKE_OUTPUT_DIR = Join-Path $tempRoot "native-viewports"
   $env:AETHON_NAVIGATION_OUTPUT_DIR = Join-Path $tempRoot "navigation"
   $env:AETHON_BROWSER_SCREENSHOT_DIR = Join-Path $tempRoot "browser-provider"
+  $env:AETHON_WEBDRIVER_WINDOW_X = "1980"
+  $env:AETHON_WEBDRIVER_WINDOW_Y = "80"
+  $env:AETHON_WEBDRIVER_WINDOW_WIDTH = "1280"
+  $env:AETHON_WEBDRIVER_WINDOW_HEIGHT = "800"
+  Remove-Item Env:AETHON_SUWAYOMI_LIVE_ENDPOINT -ErrorAction SilentlyContinue
+  Remove-Item Env:AETHON_SUWAYOMI_LIVE_PROFILE -ErrorAction SilentlyContinue
+  Remove-Item Env:AETHON_RELEASE_SMOKE_LIVE -ErrorAction SilentlyContinue
+  Remove-Item Env:AETHON_LIVE_SUWAYOMI_URL -ErrorAction SilentlyContinue
+  Remove-Item Env:AETHON_LIVE_FLARESOLVERR_URL -ErrorAction SilentlyContinue
 
   Invoke-ReleaseStep "Initial whitespace check" { Test-GitWhitespace }
   Invoke-ReleaseStep "Svelte diagnostics" { & pnpm exec svelte-check --tsconfig ./tsconfig.json }
   Invoke-ReleaseStep "Unit and jsdom tests" { & pnpm exec vitest run --project unit --project shell-jsdom --maxWorkers=1 --minWorkers=1 }
-  Invoke-ReleaseStep "Browser component tests" { & pnpm exec vitest run --project browser-components --maxWorkers=1 --minWorkers=1 }
+  Invoke-ReleaseStep "Browser component tests" {
+    & pnpm exec vitest run --project browser-components --maxWorkers=1 --minWorkers=1
+  }
   Invoke-ReleaseStep "Builtin theme generation check" { & pnpm theme:check-builtins }
   Invoke-ReleaseStep "Theme runtime contract" { & pnpm theme:test-runtime-audit }
   Invoke-ReleaseStep "Source runtime compatibility" {
-    & powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-source-runtime.ps1 -ContractOnly
+    & powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-source-runtime.ps1 -SkipProjectGates
   }
   Invoke-ReleaseStep "External integration contracts" {
     $env:AETHON_SKIP_SUWAYOMI_CERTIFICATION = "1"

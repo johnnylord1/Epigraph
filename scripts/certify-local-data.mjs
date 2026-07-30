@@ -164,6 +164,18 @@ async function launchDesktop({ appPath, driverUrl, profileRoot, serverUrl, name 
     },
   });
   const driver = await new Builder().usingServer(driverUrl).withCapabilities(capabilities).build();
+  const windowX = Number(process.env.AETHON_WEBDRIVER_WINDOW_X);
+  const windowY = Number(process.env.AETHON_WEBDRIVER_WINDOW_Y);
+  const windowWidth = Number(process.env.AETHON_WEBDRIVER_WINDOW_WIDTH || 1280);
+  const windowHeight = Number(process.env.AETHON_WEBDRIVER_WINDOW_HEIGHT || 800);
+  if ([windowX, windowY, windowWidth, windowHeight].every(Number.isFinite)) {
+    await driver.manage().window().setRect({
+      x: windowX,
+      y: windowY,
+      width: windowWidth,
+      height: windowHeight,
+    });
+  }
   await driver.manage().setTimeouts({ implicit: 0, pageLoad: DEFAULT_TIMEOUT_MS, script: DEFAULT_TIMEOUT_MS });
   await waitFor(
     () => driver.executeScript("return Boolean(window.__aethonAudit)"),

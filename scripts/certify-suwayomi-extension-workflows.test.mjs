@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -10,6 +12,8 @@ import {
   WORKFLOW_CANDIDATE,
   assertNoStructuralRuntimeErrors,
   createLocalSourceFixture,
+  ensurePinnedFile,
+  findGeneratedCanaryJar,
   startFixtureStoreServer,
   summarizeDeterministicWorkflow,
 } from "./certify-suwayomi-extension-workflows.mjs";
@@ -89,6 +93,65 @@ test("serves a deterministic V23 store and exact JAR from loopback", async () =>
     assert.ok(store.indexUrl.startsWith("http://127.0.0.1:"));
   } finally {
     await store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("reuses only checksum-valid artifacts from a bounded harness cache", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "aethon-artifact-cache-test-"));
+  const cacheRoot = path.join(root, "cache");
+  const artifact = Buffer.from("checksum-pinned fixture");
+  const descriptor = {
+    fileName: "fixture.jar",
+    sha256: createHash("sha256").update(artifact).digest("hex"),
+  };
+  let requests = 0;
+  const server = createServer((_request, response) => {
+    requests += 1;
+    response.writeHead(200, { "content-type": "application/java-archive" });
+    response.end(artifact);
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  descriptor.url = `http://127.0.0.1:${address.port}/fixture.jar`;
+  const previousCache = process.env.AETHON_SUWAYOMI_ARTIFACT_CACHE;
+  process.env.AETHON_SUWAYOMI_ARTIFACT_CACHE = cacheRoot;
+  try {
+    await mkdir(cacheRoot, { recursive: true });
+    for (let index = 0; index < 10; index += 1) {
+      await writeFile(path.join(cacheRoot, `shared-file-${index}.bin`), `external-${index}`);
+    }
+    const first = await ensurePinnedFile(null, root, descriptor);
+    const second = await ensurePinnedFile(null, root, descriptor);
+    assert.equal(first, second);
+    assert.equal(requests, 1);
+    assert.deepEqual(await readFile(second), artifact);
+
+    await writeFile(second, "corrupt");
+    const repaired = await ensurePinnedFile(null, root, descriptor);
+    assert.equal(requests, 2);
+    assert.deepEqual(await readFile(repaired), artifact);
+    const remaining = await readdir(cacheRoot);
+    assert.equal(remaining.filter((name) => name.startsWith("shared-file-")).length, 10);
+  } finally {
+    if (previousCache === undefined) delete process.env.AETHON_SUWAYOMI_ARTIFACT_CACHE;
+    else process.env.AETHON_SUWAYOMI_ARTIFACT_CACHE = previousCache;
+    await new Promise((resolve) => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("accepts Suwayomi-generated JAR names after GraphQL identity was verified", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "aethon-generated-jar-test-"));
+  const extensions = path.join(root, "extensions");
+  const bytes = Buffer.from("generated extension");
+  try {
+    await mkdir(extensions, { recursive: true });
+    await writeFile(path.join(extensions, "generated-extension.jar"), bytes);
+    const result = await findGeneratedCanaryJar(root);
+    assert.equal(path.basename(result.path), "generated-extension.jar");
+    assert.equal(result.sha256, createHash("sha256").update(bytes).digest("hex"));
+  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });

@@ -1,7 +1,7 @@
 {
   "version": 2,
   "maxMedianRegressionPercent": 15,
-  "baselineMethod": "Marco 70 wall-clock medians remain diagnostic; Marco 72G blocks app-owned shell activation and directional Library phases. Cold references use four balanced post-GC calibration runs; compositor-only p95 remains observational because WebView2 scheduling is environment-sensitive.",
+  "baselineMethod": "Marco 70 wall-clock medians remain diagnostic; Marco 72G blocks app-owned shell activation and directional Library phases. Cold references use four balanced post-GC calibration runs; compositor wall-clock remains observational because WebView2 can defer requestAnimationFrame after the committed surface is already stable.",
   "baseline": {
     "startupMedianMs": 3816,
     "librarySectionMedianMs": 80,
@@ -15,7 +15,8 @@
     "stateCycleMaxMs": 100
   },
   "library": {
-    "warmCachedTotalP50MaxMs": 92,
+    "warmCachedInteractiveReadyP50MaxMs": 92,
+    "minimumFocusedSamples": 5,
     "warmCachedAppOwnedP95MaxMs": 120,
     "coldMaxRegressionPercent": 15,
     "coldAppOwnedP50BaselineMs": {
