@@ -42,9 +42,9 @@ describe("release bundle architecture", () => {
     expect(navigationGate).toContain("requestAnimationFrame(finish)");
     expect(navigationGate).toContain("sha256: await sha256File(appPath)");
     expect(nativeRunner).toContain("Automation build is older than");
-    expect(nativeRunner).toContain("if ($completed)");
+    expect(nativeRunner).toContain("CreateNoWindow = $true");
+    expect(nativeRunner).toContain("UseShellExecute = $false");
     expect(nativeRunner).toContain("WaitForExit(5000)");
-    expect(nativeRunner).toContain('AddDays(-3)');
   });
 
   test("keeps book parsers out of synchronous store persistence", () => {
