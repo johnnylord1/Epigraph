@@ -68,6 +68,7 @@ try {
   $env:AETHON_WEBDRIVER_WINDOW_Y = "80"
   $env:AETHON_WEBDRIVER_WINDOW_WIDTH = "1280"
   $env:AETHON_WEBDRIVER_WINDOW_HEIGHT = "800"
+  Remove-Item Env:AETHON_WEBDRIVER_SHOW_WINDOW -ErrorAction SilentlyContinue
   Remove-Item Env:AETHON_SUWAYOMI_LIVE_ENDPOINT -ErrorAction SilentlyContinue
   Remove-Item Env:AETHON_SUWAYOMI_LIVE_PROFILE -ErrorAction SilentlyContinue
   Remove-Item Env:AETHON_RELEASE_SMOKE_LIVE -ErrorAction SilentlyContinue

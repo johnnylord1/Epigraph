@@ -1,5 +1,23 @@
 {
   "build": {
     "beforeBuildCommand": ""
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Aethon",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": false,
+        "backgroundColor": "#090d0b",
+        "center": false,
+        "visible": false
+      }
+    ]
   }
 }

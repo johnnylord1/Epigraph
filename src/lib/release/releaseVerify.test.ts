@@ -52,8 +52,13 @@ describe("release verification orchestration", () => {
     expect(script).toContain("AETHON_NATIVE_SMOKE_OUTPUT_DIR");
     expect(script).toContain("AETHON_NAVIGATION_OUTPUT_DIR");
     expect(script).toContain("AETHON_BROWSER_SCREENSHOT_DIR");
+    expect(read("scripts/run-native-viewport-smoke.ps1")).toContain("[switch]$ShowWindow");
+    expect(read("scripts/run-native-viewport-smoke.ps1")).toContain('$env:AETHON_WEBDRIVER_WINDOW_X = "1980"');
+    expect(read("scripts/run-native-viewport-smoke.ps1")).toContain("CreateNoWindow = $true");
+    expect(read("scripts/run-native-viewport-smoke.ps1")).toContain("UseShellExecute = $false");
     expect(script).toContain('$env:AETHON_WEBDRIVER_WINDOW_X = "1980"');
     expect(script).toContain('$env:AETHON_WEBDRIVER_WINDOW_Y = "80"');
+    expect(script).toContain("Remove-Item Env:AETHON_WEBDRIVER_SHOW_WINDOW");
     expect(script).not.toContain("Get-FreeLoopbackPort");
     expect(script).toContain('Invoke-ReleaseStep "Browser component tests"');
     expect(script).not.toContain("MaxAttempts");
@@ -76,5 +81,18 @@ describe("release verification orchestration", () => {
     expect(workspace).toContain("AETHON_VITEST_BROWSER_PORT");
     expect(workspace).toContain('AETHON_VITEST_BROWSER_PORT || "0"');
     expect(workspace).toContain("strictPort: browserApiPort !== 0");
+  });
+
+  test("keeps native automation hidden until it is explicitly shown after positioning", () => {
+    const automationConfig = JSON.parse(read("src-tauri/tauri.automation.conf.json"));
+    const rust = read("src-tauri/src/lib.rs");
+    const mainWindow = automationConfig.app.windows.find((window: { label?: string }) => window.label === "main");
+
+    expect(mainWindow?.visible).toBe(false);
+    expect(mainWindow?.center).toBe(false);
+    expect(rust).toContain("configure_webdriver_window(app.handle());");
+    expect(rust).toContain("AETHON_WEBDRIVER_WINDOW_X");
+    expect(rust).toContain("AETHON_WEBDRIVER_SHOW_WINDOW");
+    expect(rust.indexOf("set_position")).toBeLessThan(rust.indexOf("window.show()"));
   });
 });

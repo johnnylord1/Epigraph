@@ -1,7 +1,8 @@
 param(
   [string]$App,
   [string]$NativeDriver,
-  [string]$NodeScript = "smoke-native-viewports.mjs"
+  [string]$NodeScript = "smoke-native-viewports.mjs",
+  [switch]$ShowWindow
 )
 
 $ErrorActionPreference = "Stop"
@@ -57,29 +58,30 @@ $edgeDriver = Resolve-EdgeDriver
 $driverPort = Get-FreePort
 $nativePort = Get-FreePort
 $driverUrl = "http://127.0.0.1:$driverPort"
-$logRoot = Join-Path ([System.IO.Path]::GetTempPath()) "aethon-release-driver"
-New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
-$stdout = Join-Path $logRoot "tauri-driver-$driverPort.stdout.log"
-$stderr = Join-Path $logRoot "tauri-driver-$driverPort.stderr.log"
 $driverProcess = $null
 $completed = $false
 
-function Remove-DriverLog([string]$Path) {
-  for ($attempt = 0; $attempt -lt 10; $attempt++) {
-    try {
-      [System.IO.File]::Delete($Path)
-      return
-    } catch [System.IO.IOException] {
-      Start-Sleep -Milliseconds 100
-    }
-  }
-  Write-Warning "Could not remove released driver log: $Path"
-}
-
 try {
-  $driverProcess = Start-Process -FilePath $tauriDriver `
-    -ArgumentList @("--port", "$driverPort", "--native-port", "$nativePort", "--native-driver", $edgeDriver) `
-    -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru -WindowStyle Hidden
+  if ($ShowWindow) {
+    $env:AETHON_WEBDRIVER_SHOW_WINDOW = "1"
+    if (-not $env:AETHON_WEBDRIVER_WINDOW_X) { $env:AETHON_WEBDRIVER_WINDOW_X = "1980" }
+    if (-not $env:AETHON_WEBDRIVER_WINDOW_Y) { $env:AETHON_WEBDRIVER_WINDOW_Y = "80" }
+    if (-not $env:AETHON_WEBDRIVER_WINDOW_WIDTH) { $env:AETHON_WEBDRIVER_WINDOW_WIDTH = "1280" }
+    if (-not $env:AETHON_WEBDRIVER_WINDOW_HEIGHT) { $env:AETHON_WEBDRIVER_WINDOW_HEIGHT = "800" }
+  } else {
+    Remove-Item Env:AETHON_WEBDRIVER_SHOW_WINDOW -ErrorAction SilentlyContinue
+  }
+  $driverStartInfo = [System.Diagnostics.ProcessStartInfo]::new()
+  $driverStartInfo.FileName = $tauriDriver
+  $driverArgumentList = @(
+    "--port", "$driverPort", "--native-port", "$nativePort", "--native-driver", $edgeDriver
+  ) | ForEach-Object { '"' + $_.Replace('"', '\"') + '"' }
+  $driverStartInfo.Arguments = $driverArgumentList -join " "
+  $driverStartInfo.UseShellExecute = $false
+  $driverStartInfo.CreateNoWindow = $true
+  $driverProcess = [System.Diagnostics.Process]::new()
+  $driverProcess.StartInfo = $driverStartInfo
+  if (-not $driverProcess.Start()) { throw "tauri-driver could not be started" }
 
   $deadline = [DateTime]::UtcNow.AddSeconds(30)
   do {
@@ -102,14 +104,7 @@ try {
   $completed = $true
 } finally {
   if ($driverProcess -and -not $driverProcess.HasExited) {
-    Stop-Process -Id $driverProcess.Id -Force -ErrorAction SilentlyContinue
+    $driverProcess.Kill()
     [void]$driverProcess.WaitForExit(5000)
   }
-  if ($completed) {
-    Remove-DriverLog $stdout
-    Remove-DriverLog $stderr
-  }
-  Get-ChildItem -Path $logRoot -File -Filter "tauri-driver-*.log" -ErrorAction SilentlyContinue |
-    Where-Object { $_.LastWriteTimeUtc -lt [DateTime]::UtcNow.AddDays(-3) } |
-    Remove-Item -Force -ErrorAction SilentlyContinue
 }

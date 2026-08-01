@@ -6319,6 +6319,46 @@ fn is_webdriver_automation() -> bool {
         .unwrap_or(false)
 }
 
+fn configure_webdriver_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if !is_webdriver_automation() {
+        return;
+    }
+
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+
+    let parse_dimension = |name: &str, fallback: f64| {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|value| value.is_finite())
+            .unwrap_or(fallback)
+    };
+
+    let x = parse_dimension("AETHON_WEBDRIVER_WINDOW_X", 0.0);
+    let y = parse_dimension("AETHON_WEBDRIVER_WINDOW_Y", 0.0);
+    let width = parse_dimension("AETHON_WEBDRIVER_WINDOW_WIDTH", 1280.0).max(800.0);
+    let height = parse_dimension("AETHON_WEBDRIVER_WINDOW_HEIGHT", 800.0).max(600.0);
+
+    // Automation windows are hidden by configuration. Position them before the
+    // optional show so a visible capture never flashes on the primary monitor.
+    let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+    let _ = window.set_size(tauri::PhysicalSize::new(width, height));
+
+    let show_window = std::env::var("AETHON_WEBDRIVER_SHOW_WINDOW")
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false);
+    if show_window {
+        let _ = window.show();
+    }
+}
+
 #[tauri::command]
 fn begin_suwayomi_runtime_operation(scope: String) -> Result<String, String> {
     suwayomi_maintenance::begin_operation(&suwayomi_maintenance::default_runtime_root(), &scope)
@@ -6476,6 +6516,7 @@ pub fn run() {
             relaunch_with_args,
         ])
         .setup(|app| {
+            configure_webdriver_window(app.handle());
             maybe_start_phase_gate_temporary_lan_session();
             sanitize_suwayomi_lan_state();
             schedule_suwayomi_lan_session_watchers(app.handle());
