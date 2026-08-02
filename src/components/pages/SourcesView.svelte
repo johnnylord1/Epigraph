@@ -246,7 +246,7 @@
   }
 
   function extensionErrorMessage(error: unknown) {
-    return error instanceof Error ? error.message : String(error || "Extension operation failed");
+    return error instanceof Error ? error.message : String(error || translate("ui_extensionActionFailed"));
   }
 
   function preferenceKey(sourceId: string, position: number): string {
@@ -335,7 +335,7 @@
     try {
       if (extension.kind === "novels") {
         if (!extension.novelPluginId) {
-          throw new Error("The installed LNReader source has no stable plugin identity.");
+          throw new Error(translate("sources_runtime_novelIdentityMissing"));
         }
         const summary = await readInstalledNovelSourceRuntimeSummary({}, extension.novelPluginId);
         if (run !== preferenceLoadRun || controller.signal.aborted) return;
@@ -415,13 +415,17 @@
       return await runTransactionalExtensionUpdates(candidates);
     } catch {
       throw new Error(
-        "Aethon could not verify this extension update safely. The previous version was preserved; check the Suwayomi update in Settings and try again.",
+        translate("sources_runtime_updateVerificationFailed"),
       );
     }
   }
 
   function extensionOperationLabel(operation: ExtensionOperation) {
-    return operation === "install" ? "Install" : operation === "update" ? "Update" : "Remove";
+    return operation === "install"
+      ? translate("sources_actions_install")
+      : operation === "update"
+        ? translate("sources_actions_update")
+        : translate("sources_actions_remove");
   }
 
   function startExtensionOperation(pkgName: string, operation: ExtensionOperation) {
@@ -474,7 +478,7 @@
 
     const woke = await ensureMangaServerAwake();
     if (!woke) {
-      throw new Error("Suwayomi could not be restarted. Restart Aethon and try installing the extension again.");
+      throw new Error(translate("sources_runtime_restartFailed"));
     }
 
     await loadExtensions();
@@ -573,14 +577,14 @@
 
   function compatibilityStatusLabel(report: ObservedCompatibilityReport): string {
     return report.aggregateStatus === "PASS"
-      ? "Compatibility passed"
+      ? translate("extensionSettings_passed")
       : report.aggregateStatus === "DEGRADED"
-        ? "Compatibility degraded"
+        ? translate("extensionSettings_degraded")
         : report.aggregateStatus === "FAIL"
-          ? "Compatibility failed"
+          ? translate("extensionSettings_failed")
           : report.aggregateStatus === "CANCELLED"
-            ? "Compatibility cancelled"
-            : "Compatibility inconclusive";
+            ? translate("extensionSettings_cancelled")
+            : translate("extensionSettings_inconclusive");
   }
 
   async function compatibilityRuntimeScope(): Promise<"LOCAL_OWNED" | "REMOTE_SHARED"> {
@@ -625,14 +629,14 @@
         kind: report.aggregateStatus === "FAIL" ? "error" : "info",
         title: compatibilityStatusLabel(report),
         body: report.aggregateStatus === "PASS"
-          ? `${extension.name} responded to the observed source probe.`
-          : `${extension.name} kept its current state; review compatibility details for the observed run.`,
+          ? translate("sources_runtime_compatibilityProbePassed", { name: extension.name })
+          : translate("sources_runtime_compatibilityProbePreserved", { name: extension.name }),
         duration: 5000,
       });
     } catch (error) {
       addToast({
         kind: "error",
-        title: "Compatibility check did not complete",
+        title: translate("sources_runtime_compatibilityCheckIncomplete"),
         body: extensionErrorMessage(error),
         duration: 6000,
       });
@@ -669,7 +673,7 @@
       }
       if (!(await ensureMangaServerAwake())) return;
       if (!(await waitForSuwayomiGraphqlReady("extensions", { attempts: 8, delayMs: 800, timeoutMs: 5000 }))) {
-        throw new Error("Suwayomi is still starting. Try refreshing extensions again in a moment.");
+        throw new Error(translate("sources_runtime_suwayomiStarting"));
       }
       const runtime = await getManagedSourceRuntime();
       const refreshedExtensions = await runtime.refreshExtensions();
@@ -727,7 +731,7 @@
       repos = (await runtime.listStores()).map((store) => store.indexUrl);
       bumpContentSetupVersion();
     } catch (error) {
-      repoError = error instanceof Error ? error.message : "Failed to save";
+      repoError = error instanceof Error ? error.message : translate("ui_couldNotSaveRepository");
     } finally {
       savingRepos = false;
       await refreshSetupState();
@@ -747,7 +751,7 @@
     const trimmed = url.trim();
     if (!trimmed) return;
     if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
-      repoError = "URL must start with http:// or https://";
+      repoError = translate("sources_runtime_invalidRepositoryUrl");
       return;
     }
 
@@ -767,7 +771,7 @@
         body: translate("ui_theRepositoryIsNowAvailableInSources"),
       });
     } catch (error) {
-      repoError = error instanceof Error ? error.message : "Failed to add novel repository";
+      repoError = error instanceof Error ? error.message : translate("ui_couldNotSaveRepository");
     } finally {
       savingRepos = false;
     }
@@ -782,14 +786,14 @@
       await saveNovelState(result.state);
       addToast({
         kind: result.status === "error" ? "error" : "success",
-        title: result.status === translate("ui_notModified") ? translate("ui_repositoryAlreadyCurrent") : translate("ui_novelRepositoryRefreshed"),
+        title: result.status === "not-modified" ? translate("ui_repositoryAlreadyCurrent") : translate("ui_novelRepositoryRefreshed"),
         body:
-          result.status === translate("ui_error")
+          result.status === "error"
             ? (result.repository.lastError ?? translate("ui_refreshFailed_0a5e2c85"))
             : `${result.catalogCount} source plugins cached.`,
       });
     } catch (error) {
-      repoError = error instanceof Error ? error.message : "Failed to refresh novel repository";
+      repoError = error instanceof Error ? error.message : translate("ui_refreshFailed");
     } finally {
       refreshingNovelRepositoryId = null;
     }
@@ -801,7 +805,7 @@
     try {
       await saveNovelState(setNovelRepositoryEnabled(novelRepositoryState, repository.id, !repository.enabled));
     } catch (error) {
-      repoError = error instanceof Error ? error.message : "Failed to update novel repository";
+      repoError = error instanceof Error ? error.message : translate("ui_couldNotSaveRepository");
     } finally {
       savingRepos = false;
     }
@@ -813,7 +817,7 @@
     try {
       await saveNovelState(removeNovelRepositoryFromState(novelRepositoryState, repository.id));
     } catch (error) {
-      repoError = error instanceof Error ? error.message : "Failed to remove novel repository";
+      repoError = error instanceof Error ? error.message : translate("ui_couldNotSaveRepository");
     } finally {
       savingRepos = false;
     }
@@ -825,8 +829,8 @@
       const result = await ensureExtensionRepo(RECOMMENDED_EXTENSION_REPO);
       addToast({
         kind: result.status === "added" ? "success" : "info",
-        title: result.status === translate("ui_added") ? translate("ui_recommendedRepoAdded") : translate("ui_recommendedRepoAlreadyAdded"),
-        body: `${result.repo.name} is ready for extension management.`,
+        title: result.status === "added" ? translate("ui_recommendedRepoAdded") : translate("ui_recommendedRepoAlreadyAdded"),
+        body: translate("sources_runtime_repositoryReady", { name: result.repo.name }),
       });
       filter = "available";
       utilityPanel = null;
@@ -852,11 +856,11 @@
     const url = newRepoUrl.trim();
     if (!url) return;
     if (!url.startsWith("http://") && !url.startsWith("https://")) {
-      repoError = "URL must start with http:// or https://";
+      repoError = translate("sources_runtime_invalidRepositoryUrl");
       return;
     }
     if (repos.includes(url)) {
-      repoError = "Repo already added";
+      repoError = translate("sources_runtime_repoAlreadyAdded");
       return;
     }
     repoError = null;
@@ -876,7 +880,7 @@
   ) {
     startExtensionOperation(pkgName, operation);
     if (!(await ensureMangaServerAwake())) {
-      const message = "Suwayomi is not available right now.";
+      const message = translate("sources_runtime_suwayomiUnavailable");
       setExtensionOperationError(pkgName, message);
       addToast({
         kind: "error",
@@ -889,7 +893,7 @@
       return false;
     }
     if (!(await waitForSuwayomiGraphqlReady("extensions", { attempts: 8, delayMs: 800, timeoutMs: 5000 }))) {
-      const message = "Suwayomi is still starting. Try the extension action again in a moment.";
+      const message = translate("sources_runtime_suwayomiStarting");
       setExtensionOperationError(pkgName, message);
       addToast({
         kind: "error",
@@ -910,7 +914,8 @@
       ok = false;
       console.error(error);
       const message = extensionErrorMessage(error);
-      const extensionName = extensions.find((extension) => extension.pkgName === pkgName)?.name ?? "extension";
+      const extensionName = extensions.find((extension) => extension.pkgName === pkgName)?.name
+        ?? translate("sources_runtime_extensionFallback");
       setExtensionOperationError(pkgName, message);
       addToast({
         kind: "error",
@@ -927,7 +932,7 @@
   async function installExtension(extension: ManagedExtension) {
     if (extension.kind === "novels") {
       if (!novelRepositoryState || !extension.novelPluginId || !extension.novelRepositoryId) {
-        const message = "Novel repository metadata is not loaded yet. Refresh novel sources and try again.";
+        const message = translate("sources_runtime_novelMetadataNotLoaded");
         setExtensionOperationError(extension.pkgName, message);
         addToast({ kind: "error", title: translate("ui_couldNotInstallNovelSource"), body: message });
         return;
@@ -937,7 +942,7 @@
         && item.repositoryId === extension.novelRepositoryId
       ));
       if (!entry) {
-        const message = "This novel source is no longer present in the cached repository catalog.";
+        const message = translate("sources_runtime_novelCatalogMissing");
         setExtensionOperationError(extension.pkgName, message);
         addToast({ kind: "error", title: translate("ui_couldNotInstallNovelSource"), body: message });
         return;
@@ -962,7 +967,7 @@
         });
       } catch (error) {
         console.error(error);
-        const message = error instanceof Error ? error.message : "Aethon could not install this novel plugin.";
+        const message = error instanceof Error ? error.message : translate("sources_runtime_novelPluginFailed");
         setExtensionOperationError(extension.pkgName, message);
         addToast({
           kind: "error",
@@ -979,10 +984,10 @@
     let installedExtension: ManagedExtension | null = null;
     try {
       if (!(await ensureMangaServerAwake())) {
-        throw new Error("Suwayomi is not available right now.");
+        throw new Error(translate("sources_runtime_suwayomiUnavailable"));
       }
       if (!(await waitForSuwayomiGraphqlReady("extensions", { attempts: 8, delayMs: 800, timeoutMs: 5000 }))) {
-        throw new Error("Suwayomi is still starting. Try installing the extension again in a moment.");
+        throw new Error(translate("sources_runtime_suwayomiStarting"));
       }
       const runtime = await getManagedSourceRuntime();
       await runtime.installExtension({ packageName: extension.pkgName });
@@ -1030,7 +1035,7 @@
     addToast({
       kind: "success",
       title: translate("ui_extensionInstalled"),
-      body: `${extension.name} is ready to use.`,
+      body: translate("sources_runtime_extensionReady", { name: extension.name }),
     });
 
     if (firstInstallFlow) {
@@ -1038,7 +1043,7 @@
       addToast({
         kind: "success",
         title: translate("ui_firstExtensionInstalled"),
-        body: `${extension.name} is installed. Sources is now ready for management.`,
+        body: translate("sources_runtime_firstExtensionReady", { name: extension.name }),
       });
     }
   }
@@ -1046,11 +1051,11 @@
   async function installExternal() {
     const file = externalFile;
     if (!file) {
-      installError = "Choose an .apk extension file first.";
+      installError = translate("sources_runtime_chooseApk");
       return;
     }
     if (!file.name.toLowerCase().endsWith(".apk")) {
-      installError = "File must be an .apk extension package.";
+      installError = translate("sources_runtime_invalidApk");
       return;
     }
 
@@ -1059,11 +1064,11 @@
     installSuccess = false;
     try {
       if (!(await ensureMangaServerAwake())) {
-        installError = "Suwayomi is not available right now.";
+        installError = translate("sources_runtime_suwayomiUnavailable");
         return;
       }
       if (!(await waitForSuwayomiGraphqlReady("extensions", { attempts: 8, delayMs: 800, timeoutMs: 5000 }))) {
-        installError = "Suwayomi is still starting. Try installing the APK again in a moment.";
+        installError = translate("sources_runtime_suwayomiStarting");
         return;
       }
       await gqlUpload(
@@ -1080,7 +1085,7 @@
         installSuccess = false;
       }, 1400);
     } catch (error) {
-      installError = error instanceof Error ? error.message : "Install failed";
+      installError = error instanceof Error ? error.message : translate("sources_runtime_installFailed");
     } finally {
       installingExternal = false;
     }
@@ -1143,13 +1148,13 @@
         addToast({
           kind: "success",
           title: translate("ui_novelSourceRemoved"),
-          body: `${extension.name} was removed.`,
+          body: translate("sources_runtime_extensionRemoved", { name: extension.name }),
         });
       } catch (error) {
         console.error(error);
         setExtensionOperationError(
           extension.pkgName,
-          error instanceof Error ? error.message : "Aethon could not remove this novel plugin.",
+          error instanceof Error ? error.message : translate("sources_runtime_novelPluginFailed"),
         );
         addToast({
           kind: "error",
@@ -1183,7 +1188,7 @@
       addToast({
         kind: "success",
         title: translate("ui_extensionRemoved"),
-        body: `${extension.name} was removed. Suwayomi will unload the running source after its next restart.`,
+        body: translate("sources_runtime_extensionRemoved", { name: extension.name }),
       });
     }
   }
@@ -1200,11 +1205,11 @@
         await runtime.refreshExtensions();
         const candidate = (await runtime.listExtensions())
           .find((item) => item.packageName === extension.pkgName);
-        if (!candidate) throw new Error("The extension update is no longer available.");
+        if (!candidate) throw new Error(translate("sources_runtime_updateUnavailable"));
         const batchResult = await certifyMangaExtensionUpdates([candidate]);
         const rejection = batchResult.rejected.find((item) => item.packageName === extension.pkgName);
         if (rejection) {
-          throw new Error("The update was preserved for review because compatibility checks failed.");
+          throw new Error(translate("sources_runtime_updateCompatibilityFailed"));
         }
       },
       extension.pkgName,
@@ -1229,7 +1234,7 @@
     addToast({
       kind: "success",
       title: translate("ui_extensionUpdated"),
-      body: `${extension.name} passed compatibility checks and is ready.`,
+      body: translate("sources_runtime_compatibilityProbePassed", { name: extension.name }),
     });
   }
 
@@ -1251,14 +1256,14 @@
         for (const extension of candidates) {
           try {
             if (!extension.novelPluginId || !extension.novelRepositoryId) {
-              throw new Error("Novel source metadata is incomplete.");
+              throw new Error(translate("sources_runtime_novelMetadataIncomplete"));
             }
             const entry = nextState.catalogEntries.find((item) => (
               item.pluginId === extension.novelPluginId
               && item.repositoryId === extension.novelRepositoryId
             ));
             if (!entry) {
-              throw new Error("Novel source is no longer present in the cached repository catalog.");
+              throw new Error(translate("sources_runtime_novelSourceMissing"));
             }
             nextState = await installNovelCatalogPlugin({
               state: nextState,
@@ -1274,17 +1279,17 @@
             console.error(error);
             setExtensionOperationError(
               extension.pkgName,
-              error instanceof Error ? error.message : "Aethon could not update this novel plugin.",
+              error instanceof Error ? error.message : translate("sources_runtime_novelPluginFailed"),
             );
           }
         }
         if (hasNovelChanges) await saveNovelState(nextState);
       } else {
         if (!(await ensureMangaServerAwake())) {
-          throw new Error("Suwayomi is not available right now.");
+          throw new Error(translate("sources_runtime_suwayomiUnavailable"));
         }
         if (!(await waitForSuwayomiGraphqlReady("extensions", { attempts: 8, delayMs: 800, timeoutMs: 5000 }))) {
-          throw new Error("Suwayomi is still starting. Try updating extensions again in a moment.");
+          throw new Error(translate("sources_runtime_suwayomiStarting"));
         }
         const runtime = await getManagedSourceRuntime();
         await runtime.refreshExtensions();
@@ -1303,12 +1308,12 @@
           } else if (rejectedPkgNames.has(extension.pkgName)) {
             setExtensionOperationError(
               extension.pkgName,
-              "The update was preserved for review because compatibility checks failed.",
+              translate("sources_runtime_updateCompatibilityFailed"),
             );
           } else {
             setExtensionOperationError(
               extension.pkgName,
-              "This update does not provide the artifact provenance required for automatic activation.",
+              translate("sources_runtime_updateProvenanceMissing"),
             );
           }
         }
@@ -1327,8 +1332,8 @@
         title: failedUpdateCount > 0 ? translate("ui_someExtensionsCouldNotUpdate") : translate("ui_extensionsUpdated"),
         body:
           failedUpdateCount > 0
-            ? `${succeededCount}/${candidates.length} extension${candidates.length === 1 ? "" : "s"} updated. Check the highlighted source errors.`
-            : `${candidates.length} extension${candidates.length === 1 ? "" : "s"} passed compatibility checks and are ready.`,
+            ? translate("sources_runtime_batchPartial", { succeeded: succeededCount, total: candidates.length })
+            : translate("sources_runtime_batchReady", { count: candidates.length }),
       });
     } catch (error) {
       console.error(error);
@@ -1692,8 +1697,8 @@
           tone="warning"
           icon="retry"
           eyebrow="Suwayomi"
-          title="Suwayomi is still reconnecting"
-          body={extensionLoadError ?? "Aethon could not read sources yet. Your last installed extensions were kept."}
+          title={$_("sources_runtime_sourcesReconnecting")}
+          body={extensionLoadError ?? $_("sources_runtime_sourcesReadFailed")}
           actions={[{
             label: $_("sources.actions.refresh"),
             kind: "primary",

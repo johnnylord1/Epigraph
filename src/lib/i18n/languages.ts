@@ -17,11 +17,29 @@ export const APP_LANGUAGE_OPTIONS: AppLanguageOption[] = [
 ];
 
 const APP_LANGUAGE_CODES = new Set(APP_LANGUAGE_OPTIONS.map((option) => option.code));
+const APP_LANGUAGE_BY_CANONICAL = new Map(
+  APP_LANGUAGE_OPTIONS
+    .filter((option) => option.code !== APP_LANGUAGE_SYSTEM)
+    .map((option) => [option.code.toLowerCase(), option.code]),
+);
+
+function canonicalizeLocale(value: string): string {
+  const candidate = value.trim().replaceAll("_", "-");
+  if (!candidate) return "";
+  try {
+    return new Intl.Locale(candidate).toString();
+  } catch {
+    return candidate;
+  }
+}
 
 export function normalizeAppLanguage(value: unknown): AppLanguageCode {
   if (typeof value !== "string") return APP_LANGUAGE_SYSTEM;
   const trimmed = value.trim();
-  return APP_LANGUAGE_CODES.has(trimmed) ? trimmed : APP_LANGUAGE_SYSTEM;
+  if (trimmed === APP_LANGUAGE_SYSTEM) return APP_LANGUAGE_SYSTEM;
+  const canonical = canonicalizeLocale(trimmed);
+  if (APP_LANGUAGE_CODES.has(canonical)) return canonical;
+  return APP_LANGUAGE_BY_CANONICAL.get(canonical.toLowerCase()) ?? APP_LANGUAGE_SYSTEM;
 }
 
 export function resolveAppLocale(value: unknown): string {
@@ -33,7 +51,7 @@ export function resolveAppLocale(value: unknown): string {
       : typeof navigator !== "undefined"
         ? navigator.language
         : "";
-  return browserLocale || "en";
+  return canonicalizeLocale(browserLocale) || "en";
 }
 
 export function appLanguageLabel(code: AppLanguageCode, currentLocale: string, systemLabel: string): string {

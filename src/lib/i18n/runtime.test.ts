@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { applyAppLanguage, resolveMessageLocale, translate } from "./runtime";
-import { APP_LANGUAGE_OPTIONS } from "./languages";
+import { APP_LANGUAGE_OPTIONS, normalizeAppLanguage } from "./languages";
 import en from "../../../messages/en.json";
 import ptBr from "../../../messages/pt-BR.json";
 import es from "../../../messages/es.json";
@@ -24,9 +24,19 @@ describe("resolveMessageLocale", () => {
     expect(resolveMessageLocale("zh-CN")).toBe("zh-CN");
   });
 
-  it("falls back to a translated base language or English", () => {
-    expect(resolveMessageLocale("pt-PT")).toBe("en");
+  it("uses the closest available catalog for regional locales", () => {
+    expect(resolveMessageLocale("pt-PT")).toBe("pt-BR");
+    expect(resolveMessageLocale("pt_pt")).toBe("pt-BR");
+    expect(resolveMessageLocale("zh-TW")).toBe("zh-CN");
+    expect(resolveMessageLocale("es-MX")).toBe("es");
     expect(resolveMessageLocale("ar-SA")).toBe("en");
+  });
+
+  it("normalizes persisted language codes without changing the available options", () => {
+    expect(normalizeAppLanguage("pt-br")).toBe("pt-BR");
+    expect(normalizeAppLanguage("zh_cn")).toBe("zh-CN");
+    expect(normalizeAppLanguage("en-US")).toBe("system");
+    expect(normalizeAppLanguage("invalid-locale")).toBe("system");
   });
 
   it("supports the app's direct interpolation argument shape", () => {

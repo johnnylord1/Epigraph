@@ -410,3 +410,17 @@ de `pnpm release:verify` foi interrompida durante a certificação de dados ante
 do resumo final; os gates constituintes foram concluídos em execuções
 controladas e o orquestrador mantém o contrato de worktree/diff para uma nova
 execução agregada. O Marco 72H permanece aberto até essa execução terminar.
+## Internacionalizacao - 01/08/2026
+
+- Os catalogos `en`, `es`, `ja`, `pt-BR` e `zh-CN` permanecem alinhados com
+  2.646 chaves cada.
+- Settings, estados do runtime Suwayomi, updater, Browse e Sources agora usam
+  mensagens catalogadas nos fluxos ativos de `es`, `ja` e `zh-CN`.
+- O fallback de locale normaliza identificadores com `Intl.Locale` e escolhe o
+  catalogo mais proximo antes de cair em English.
+- `src/lib/i18n/catalogContract.test.ts` valida referencias estaticas de
+  producao, paridade de chaves e ausencia de catalogos incompletos. Os testes
+  de runtime tambem validam placeholders.
+- Nomes proprios, URLs, formatos, unidades, nomes de icones e termos tecnicos
+  como `EPUB`, `PDF`, `HUD`, `Nocturne`, `Host` e `Manga` permanecem sem
+  traducao quando essa e a forma correta de apresenta-los.

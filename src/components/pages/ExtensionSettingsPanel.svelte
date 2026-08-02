@@ -54,27 +54,31 @@
   const description = $derived(
     extension.isInstalled
       ? extension.kind === "novels"
-        ? `Review the settings declared by ${extension.name}. LNReader settings remain read-only in Aethon.`
-        : `Manage the source preferences exposed by ${extension.name} through Suwayomi.`
-      : `${extension.name} is available from your configured repositories. Install it before changing extension preferences.`,
+        ? $_("extensionSettings_descriptionNovel", { name: extension.name })
+        : $_("extensionSettings_descriptionManga", { name: extension.name })
+      : $_("extensionSettings_descriptionAvailable", { name: extension.name }),
   );
-  const originLabel = $derived(extension.kind === "novels" ? "LNReader source" : "Suwayomi extension");
+  const originLabel = $derived(
+    extension.kind === "novels"
+      ? $_("extensionSettings_originNovel")
+      : $_("extensionSettings_originManga"),
+  );
   const repositoryLabel = $derived(
     extension.kind === "novels"
-      ? extension.repositoryUrl || "Local novel repository"
-      : extension.apkName || "Extension repository",
+      ? extension.repositoryUrl || $_("sources_repositories_novelRepository")
+      : extension.apkName || $_("sources_repositories_extensionRepository"),
   );
   const artifactLabel = $derived(
     extension.kind === "novels"
-      ? extension.apkName || extension.novelPluginId || "Novel plugin"
-      : extension.apkName || "Repository package",
+      ? extension.apkName || extension.novelPluginId || $_("extensionSettings_novelPlugin")
+      : extension.apkName || $_("extensionSettings_repositoryPackage"),
   );
   const installStateLabel = $derived(
     extension.hasUpdate
-      ? "Update available"
+      ? $_("ui_updateReady")
       : extension.isInstalled
-        ? "Installed"
-        : "Available",
+        ? $_("sources_status_installed")
+        : $_("sources_status_available"),
   );
 
   function preferenceKey(sourceId: string, position: number): string {
@@ -121,14 +125,14 @@
 
   function reportStatusLabel(status: ObservedCompatibilityReport["aggregateStatus"]): string {
     return status === "PASS"
-      ? "Passed"
+      ? $_("extensionSettings_passed")
       : status === "DEGRADED"
-        ? "Degraded"
+        ? $_("extensionSettings_degraded")
         : status === "FAIL"
-          ? "Failed"
+          ? $_("extensionSettings_failed")
           : status === "CANCELLED"
-            ? "Cancelled"
-            : "Inconclusive";
+            ? $_("extensionSettings_cancelled")
+            : $_("extensionSettings_inconclusive");
   }
 </script>
 
@@ -185,7 +189,7 @@
         <strong>v{extension.versionName}</strong>
       </div>
       <div class="detailItem detailItemWide">
-        <span class="fieldLabel">{extension.kind === "novels" ? "Repository" : "Artifact"}</span>
+        <span class="fieldLabel">{extension.kind === "novels" ? $_("sources_table_repository") : $_("ui_apkPackage")}</span>
         <strong>{repositoryLabel}</strong>
       </div>
       <div class="detailItem detailItemWide">
@@ -207,7 +211,7 @@
   {#if compatibilityReport}
     <details class="compatibilitySection">
       <summary>
-        <span>Observed compatibility</span>
+        <span>{$_("extensionSettings_compatibility")}</span>
         <strong
           class:reportFailed={compatibilityReport.aggregateStatus === "FAIL"}
           class:reportDegraded={compatibilityReport.aggregateStatus !== "PASS" && compatibilityReport.aggregateStatus !== "FAIL"}
@@ -216,7 +220,7 @@
       <div class="compatibilityMeta">
         <span>{compatibilityReport.adapterProfile}</span>
         <span>{compatibilityReport.runtimeVersion}</span>
-        <span>{compatibilityReport.runtimeScope === "REMOTE_SHARED" ? "Remote runtime" : "Local runtime"}</span>
+        <span>{compatibilityReport.runtimeScope === "REMOTE_SHARED" ? $_("extensionSettings_remoteRuntime") : $_("extensionSettings_localRuntime")}</span>
       </div>
       <div class="compatibilityStages">
         {#each compatibilityReport.stages as stage}
@@ -232,28 +236,28 @@
           type="button"
           disabled={compatibilityBusy}
           onclick={() => onCheckCompatibility?.(extension)}
-        >{compatibilityBusy ? "Checking..." : "Check again"}</button>
+        >{compatibilityBusy ? $_("extensionSettings_checking") : $_("extensionSettings_checkAgain")}</button>
       {/if}
     </details>
   {:else if extension.kind === "manga" && extension.isInstalled && onCheckCompatibility}
     <section class="compatibilitySection compatibilityEmpty">
       <div>
-        <strong>Observed compatibility</strong>
-        <span>No compatibility execution has been recorded for this extension yet.</span>
+        <strong>{$_("extensionSettings_compatibility")}</strong>
+        <span>{$_("extensionSettings_noCompatibility")}</span>
       </div>
       <button
         class="compatibilityProbeButton"
         type="button"
         disabled={compatibilityBusy}
         onclick={() => onCheckCompatibility?.(extension)}
-      >{compatibilityBusy ? "Checking..." : "Check compatibility"}</button>
+      >{compatibilityBusy ? $_("extensionSettings_checking") : $_("extensionSettings_checkCompatibility")}</button>
     </section>
   {/if}
 
   {#if !extension.isInstalled}
     <section class="availablePanel">
       <button class="primaryCta" type="button" disabled={busy} onclick={() => onInstall(extension)}>
-        {busy ? "Installing..." : $_("ui_installExtension")}
+        {busy ? $_("sources_actions_installing") : $_("ui_installExtension")}
       </button>
     </section>
   {:else}
@@ -261,62 +265,61 @@
       <section class="availablePanel">
         <button class="primaryCta massMigrationCta" type="button" disabled={busy} onclick={() => onMassMigration?.(extension)}>
           <StackSimple size={14} weight="bold" />
-          Mass migration
+          {$_("massMigration_title")}
         </button>
       </section>
     {/if}
 
     <section class="settingsSection">
       <div class="sectionTitle">
-        <span>Source preferences</span>
+        <span>{$_("extensionSettings_sourcePreferences")}</span>
         <small>
           {extension.kind === "novels"
-            ? "LNReader read-only"
+            ? $_("extensionSettings_lnreaderReadOnly")
             : preferenceAccess === "read-write"
-              ? "Suwayomi managed"
+              ? $_("extensionSettings_suwayomiManaged")
               : preferenceAccess === "read-only"
-                ? "Read-only"
-                : "Unavailable"}
+                ? $_("extensionSettings_readOnly")
+                : $_("ui_unavailable")}
         </small>
       </div>
 
       {#if preferenceLoading}
         <div class="preferenceState" aria-live="polite">
           <span class="preferenceSpinner"><CircleNotch size={15} weight="bold" /></span>
-          <span>Loading official source preferences...</span>
+          <span>{$_("extensionSettings_loadingPreferences")}</span>
         </div>
       {:else if preferenceLoadError}
         <div class="preferenceState preferenceStateError" role="alert">
-          <strong>Preferences could not be loaded.</strong>
+          <strong>{$_("extensionSettings_preferencesLoadFailed")}</strong>
           <span>{preferenceLoadError}</span>
         </div>
       {:else if extension.kind === "novels"}
         <div class="preferenceState">
-          <strong>Read-only source settings</strong>
+          <strong>{$_("extensionSettings_readOnlySourceSettings")}</strong>
           <span>
-            Aethon can inspect the settings declared by this LNReader plugin, but it will not
-            write them until a dedicated host mutation is available.
+            {$_("extensionSettings_readOnlySourceSettingsHint")}
           </span>
         </div>
         {#if novelPreferenceKeys.length > 0}
-          <div class="novelPreferenceList" aria-label="LNReader preference keys">
+          <div class="novelPreferenceList" aria-label={$_("extensionSettings_preferenceKeys")}>
             {#each novelPreferenceKeys as key}
               <span>{key}</span>
             {/each}
           </div>
         {:else}
-          <p class="preferenceEmpty">This plugin does not declare configurable preferences.</p>
+          <p class="preferenceEmpty">{$_("extensionSettings_noPreferencesDeclared")}</p>
         {/if}
       {:else if preferenceAccess === "unsupported"}
         <p class="preferenceEmpty">
-          This Suwayomi runtime does not expose the official source preference contract.
+          {$_("extensionSettings_preferencesUnsupported")}
         </p>
       {:else if preferenceGroups.length === 0}
-        <p class="preferenceEmpty">No configurable sources are registered for this extension.</p>
+        <p class="preferenceEmpty">{$_("extensionSettings_noSourcesRegistered")}</p>
       {:else if selectedPreferenceGroup}
         {#if preferenceGroups.length > 1}
           <label class="preferenceSourcePicker">
-            <span>Source</span>
+            <span>{$_("sources_table_source")}</span>
             <select
               value={selectedPreferenceSourceId}
               onchange={(event) => {
@@ -339,21 +342,21 @@
                 <strong>{group.source.displayName || group.source.name}</strong>
                 <small>{group.source.language.toUpperCase()}</small>
               </span>
-              <small>{group.preferences.length} settings</small>
+              <small>{$_("extensionSettings_settingsCount", { count: group.preferences.length })}</small>
             </div>
 
             {#if group.status === "pending" || group.status === "loading"}
               <div class="preferenceState" aria-live="polite">
                 <span class="preferenceSpinner"><CircleNotch size={15} weight="bold" /></span>
-                <span>Loading this source's preferences...</span>
+                <span>{$_("extensionSettings_loadingSourcePreferences")}</span>
               </div>
             {:else if group.error}
               <div class="preferenceState preferenceStateError" role="alert">
-                <strong>This source could not load its preferences.</strong>
+                <strong>{$_("extensionSettings_sourcePreferencesFailed")}</strong>
                 <span>{group.error}</span>
               </div>
             {:else if group.preferences.length === 0}
-              <p class="preferenceEmpty">This source does not expose preferences.</p>
+              <p class="preferenceEmpty">{$_("extensionSettings_sourceNoPreferences")}</p>
             {:else}
               {#each group.preferences as preference, position (`${group.source.id}:${position}:${preference.key}`)}
                 {@const key = preferenceKey(group.source.id, position)}
@@ -427,12 +430,12 @@
                     </select>
                   {:else}
                     <span class="unsupportedPreference">
-                      Unsupported type: {preference.upstreamType}
+                      {$_("ui_unsupported")} {preference.upstreamType}
                     </span>
                   {/if}
 
                   {#if isBusy}
-                    <span class="preferenceFeedback" aria-live="polite">Saving and verifying...</span>
+                    <span class="preferenceFeedback" aria-live="polite">{$_("extensionSettings_savingAndVerifying")}</span>
                   {:else if preferenceErrors[key]}
                     <span class="preferenceFeedback preferenceFeedbackError" role="alert">
                       {preferenceErrors[key]}

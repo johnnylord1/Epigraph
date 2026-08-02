@@ -73,3 +73,6 @@ This roadmap records known development priorities without committing to dates or
   ownership, and cross-platform build automation.
 - Optimizations: preserve startup and navigation budgets while keeping
   downloads, imports, cache, and thumbnails isolated by ownership.
+- Keep the i18n catalog contract green and extend translations by active
+  surface; preserve product names, URLs, formats, units, and protocol terms
+  instead of translating them mechanically.

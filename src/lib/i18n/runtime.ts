@@ -4,6 +4,13 @@ import { resolveAppLocale } from "./languages";
 
 const FALLBACK_LOCALE = "en";
 const MESSAGE_LOCALES = new Set<string>(locales as readonly string[]);
+const MESSAGE_LOCALE_BY_LANGUAGE = new Map<string, string>();
+for (const locale of MESSAGE_LOCALES) {
+  const language = locale.split("-")[0]?.toLowerCase();
+  if (language && !MESSAGE_LOCALE_BY_LANGUAGE.has(language)) {
+    MESSAGE_LOCALE_BY_LANGUAGE.set(language, locale);
+  }
+}
 
 type TranslateValues = Record<string, unknown>;
 type TranslateOptions = { values?: TranslateValues };
@@ -17,9 +24,10 @@ function messageKey(id: string) {
 }
 
 export function resolveMessageLocale(appLocale: string): string {
-  if (MESSAGE_LOCALES.has(appLocale)) return appLocale;
-  const baseLocale = appLocale.split("-")[0] ?? "";
-  return MESSAGE_LOCALES.has(baseLocale) ? baseLocale : FALLBACK_LOCALE;
+  const canonicalLocale = appLocale.trim().replaceAll("_", "-");
+  if (MESSAGE_LOCALES.has(canonicalLocale)) return canonicalLocale;
+  const baseLocale = canonicalLocale.split("-")[0]?.toLowerCase() ?? "";
+  return MESSAGE_LOCALE_BY_LANGUAGE.get(baseLocale) ?? FALLBACK_LOCALE;
 }
 
 export const translate: TranslateFn = (id, options = {}) => {

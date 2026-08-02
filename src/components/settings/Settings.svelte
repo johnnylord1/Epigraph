@@ -4196,7 +4196,7 @@
             </div>
 
             <div class="settings-card settings-card--wide">
-              <p class="settings-card__title">Fit &amp; Zoom</p>
+              <p class="settings-card__title">{$_("ui_fitZoom")}</p>
               <div class="settings-card__stack">
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
@@ -4274,7 +4274,7 @@
             </div>
 
             <div class="settings-card settings-card--wide">
-              <p class="settings-card__title">Prose Reader Defaults (EPUB &amp; Novels)</p>
+              <p class="settings-card__title">{$_("ui_proseReaderDefaultsEpubNovels")}</p>
               <div class="settings-card__stack">
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
@@ -5563,9 +5563,9 @@
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">SOCKS proxy</p>
+                    <p class="settings-mini-row__label">{$_("ui_socksProxy")}</p>
                     <p class="settings-mini-row__hint">
-                      {socksEnabled ? `${socksHost || "Unset host"}:${socksPort || "1080"}` : "Disabled"}
+                      {socksEnabled ? `${socksHost || translate("ui_unsetHost")}:${socksPort || "1080"}` : $_("settings_inline_disabled")}
                     </p>
                   </div>
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (securityDetailPane = securityDetailPane === "socks" ? null : "socks")}>{$_("settings_inline_edit")}</button>
@@ -5573,7 +5573,7 @@
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
                     <p class="settings-mini-row__label">FlareSolverr</p>
-                    <p class="settings-mini-row__hint">{flareEnabled ? (flareStatusLabel() || "Enabled") : "Disabled"}</p>
+                    <p class="settings-mini-row__hint">{flareEnabled ? (flareStatusLabel() || $_("ui_enabled")) : $_("settings_inline_disabled")}</p>
                   </div>
                   <button
                     class="settings-toggle"
@@ -5757,7 +5757,7 @@
             {#if securityDetailPane === "socks"}
               <div class="settings-card settings-card--wide">
                 <div class="settings-card__head">
-                  <p class="settings-card__title">SOCKS proxy</p>
+                  <p class="settings-card__title">{$_("ui_socksProxy")}</p>
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (securityDetailPane = null)}>{$_("common_close")}</button>
                 </div>
                 <div class="settings-card__stack">
@@ -5910,12 +5910,12 @@
                   <div class="settings-row settings-mini-row">
                     <div class="settings-mini-row__body">
                       <p class="settings-mini-row__label">{$_("settings_inline_connection")}</p>
-                      <p class="settings-mini-row__hint">{flareStatusLabel() || "Check the instance status before saving."}</p>
+                      <p class="settings-mini-row__hint">{flareStatusLabel() || $_("ui_checkTheInstanceStatusBeforeSaving")}</p>
                     </div>
                     <div class="settings-section-actions settings-inline-actions">
-                      <span class="sec-status-pill" class:sec-pill-on={flareTestState === "ready"}>{flareStatusLabel() || "Idle"}</span>
+                      <span class="sec-status-pill" class:sec-pill-on={flareTestState === "ready"}>{flareStatusLabel() || $_("downloads_summary_idle")}</span>
                       <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => testFlareSolverr()} disabled={flareTestState === "testing" || secLoading}>
-                        {flareTestState === "testing" ? "Testing..." : "Test"}
+                        {flareTestState === "testing" ? $_("settings_inline_testing") : $_("settings_inline_test")}
                       </button>
                     </div>
                   </div>
@@ -6277,7 +6277,7 @@
                             <div class="release-meta">
                               <span class="release-tag">{release.tag_name}</span>
                               {#if isCurrent}
-                                <span class="release-badge current-badge">installed</span>
+                                <span class="release-badge current-badge">{$_("ui_installed")}</span>
                               {/if}
                               {#if release.published_at}
                                 <span class="release-date">{fmtDate(release.published_at)}</span>

@@ -122,3 +122,11 @@ Este documento não redefine os bugs confirmados de `bug-report.md`. Os itens ab
   ainda aguarda um resumo único e uma limpeza final. Isso não substitui as
   limitações condicionais já registradas para live services, assinatura real,
   Docker FlareSolverr, manga/fullscreen e leitor de tela.
+## Atualizacao de internacionalizacao - 01/08/2026
+
+| IMP-020 | Localizacao | Catalogos de Settings, Sources e updater ainda continham textos ativos em ingles nos idiomas suportados. | Manter cobertura de interface consistente sem alterar logica, APIs ou contratos de runtime. | Concluida | Baixo | Resolvido | `catalogContract.test.ts`, `runtime.test.ts`, `svelte-check` | - |
+
+A cobertura foi consolidada em `es`, `ja` e `zh-CN`, com fallback de locale e
+paridade de placeholders. Termos tecnicos, nomes proprios, URLs e formatos
+continuam preservados. O contrato de catalogos impede novas referencias
+estaticas sem traducao registrada.

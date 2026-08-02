@@ -703,8 +703,8 @@
       const result = await ensureExtensionRepo(RECOMMENDED_EXTENSION_REPO);
       addToast({
         kind: result.status === "added" ? "success" : "info",
-        title: result.status === translate("ui_added") ? translate("ui_recommendedRepoAdded") : translate("ui_recommendedRepoAlreadyAdded"),
-        body: result.status === translate("ui_added")
+        title: result.status === "added" ? translate("ui_recommendedRepoAdded") : translate("ui_recommendedRepoAlreadyAdded"),
+        body: result.status === "added"
           ? `${result.repo.name} is ready. Next, install your first extension.`
           : `${result.repo.name} is already configured. Next, install your first extension.`,
       });
