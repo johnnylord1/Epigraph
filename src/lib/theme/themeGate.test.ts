@@ -319,12 +319,12 @@ describe("final derived theme gate", () => {
       neutral: neutral.length,
     }).toEqual({
       componentColors: 1484,
-      editable: 1469,
-      absolute: 294,
+      editable: 1470,
+      absolute: 295,
       absoluteOnly: 0,
-      mixedEditableAbsolute: 294,
+      mixedEditableAbsolute: 295,
       runtime: 9,
-      neutral: 15,
+      neutral: 14,
     });
     expect(unresolved).toEqual([]);
   });

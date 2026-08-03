@@ -29,7 +29,7 @@
   --shadow-toast: 0 12px 30px color-mix(in srgb, var(--color-shadow-source) 32%, transparent);
   --gradient-toast-life: var(--color-accent-interactive);
   --gradient-toast-progress: color-mix(in srgb, var(--color-accent-interactive) 88%, var(--color-toast-progress-end) 12%);
-  --shadow-toast-progress: none;
+  --shadow-toast-progress: 0 0 0 color-mix(in srgb, var(--color-shadow-source) 0%, transparent);
   --color-state-neutral-accent: var(--accent-fg);
   --color-shell-scrim-source: var(--color-deep-scrim-source);
   --color-search-field-surface-source: var(--color-deep-neutral-surface-source);
@@ -190,7 +190,7 @@
   --component-toast-download-fg: var(--color-text-accent-emphasis);
   --component-toast-progress-track: color-mix(in srgb, var(--color-accent-interactive) 12%, transparent);
   --component-toast-progress-fill: var(--gradient-toast-progress);
-  --component-toast-progress-shadow: none;
+  --component-toast-progress-shadow: var(--shadow-toast-progress);
   --component-toast-action-bg: color-mix(in srgb, var(--component-toast-bg-hover) 72%, transparent);
   --component-toast-action-bg-hover: color-mix(in srgb, var(--component-toast-action-fg) 9%, transparent);
   --component-toast-action-fg: var(--color-text-accent-emphasis);
