@@ -63,4 +63,11 @@ describe("Sources theme token contract", () => {
     expect(setupStatusStart).toBeGreaterThan(emptyStateStart);
     expect(setupStyles).not.toMatch(/position\s*:\s*(?:fixed|absolute)/);
   });
+
+  it("closes every Sources utility panel with Escape", () => {
+    const source = read("src/components/pages/SourcesView.svelte");
+
+    expect(source).toMatch(/function handleUtilityPanelKeydown\(event: KeyboardEvent\)/);
+    expect(source).toMatch(/<svelte:window onkeydown=\{handleUtilityPanelKeydown\}\s*\/>/);
+  });
 });

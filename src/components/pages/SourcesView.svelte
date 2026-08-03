@@ -231,7 +231,13 @@
   );
 
   async function refreshSetupState() {
-    setupState = await detectSetupState(store.settings);
+    const nextState = await detectSetupState(store.settings);
+    setupState = nextState;
+    return nextState;
+  }
+
+  function isServerUnavailableState(state: SetupState | null | undefined) {
+    return state?.kind === "server_offline" || state?.kind === "server_initializing";
   }
 
   async function ensureMangaServerAwake() {
@@ -634,12 +640,17 @@
         duration: 5000,
       });
     } catch (error) {
-      addToast({
-        kind: "error",
-        title: translate("sources_runtime_compatibilityCheckIncomplete"),
-        body: extensionErrorMessage(error),
-        duration: 6000,
-      });
+      const nextState = await refreshSetupState();
+      if (isServerUnavailableState(nextState)) {
+        setExtensionOperationError(extension.pkgName, extensionErrorMessage(error));
+      } else {
+        addToast({
+          kind: "error",
+          title: translate("sources_runtime_compatibilityCheckIncomplete"),
+          body: extensionErrorMessage(error),
+          duration: 6000,
+        });
+      }
     } finally {
       checkingCompatibilityPkg = null;
     }
@@ -837,11 +848,14 @@
       await loadRepos();
       await fetchFromRepo();
     } catch (error) {
-      addToast({
-        kind: "error",
-        title: translate("ui_couldNotAddTheRecommendedRepo"),
-        body: error instanceof Error ? error.message : translate("ui_aethonCouldnTSaveTheRecommendedRepo"),
-      });
+      const nextState = await refreshSetupState();
+      if (!isServerUnavailableState(nextState)) {
+        addToast({
+          kind: "error",
+          title: translate("ui_couldNotAddTheRecommendedRepo"),
+          body: error instanceof Error ? error.message : translate("ui_aethonCouldnTSaveTheRecommendedRepo"),
+        });
+      }
     } finally {
       setupActionBusy = false;
     }
@@ -882,12 +896,6 @@
     if (!(await ensureMangaServerAwake())) {
       const message = translate("sources_runtime_suwayomiUnavailable");
       setExtensionOperationError(pkgName, message);
-      addToast({
-        kind: "error",
-        title: translate("ui_extensionActionUnavailable"),
-        body: message,
-        duration: 6000,
-      });
       finishExtensionOperation(pkgName);
       await refreshSetupState();
       return false;
@@ -895,12 +903,6 @@
     if (!(await waitForSuwayomiGraphqlReady("extensions", { attempts: 8, delayMs: 800, timeoutMs: 5000 }))) {
       const message = translate("sources_runtime_suwayomiStarting");
       setExtensionOperationError(pkgName, message);
-      addToast({
-        kind: "error",
-        title: translate("ui_extensionActionUnavailable"),
-        body: message,
-        duration: 6000,
-      });
       finishExtensionOperation(pkgName);
       await refreshSetupState();
       return false;
@@ -917,12 +919,15 @@
       const extensionName = extensions.find((extension) => extension.pkgName === pkgName)?.name
         ?? translate("sources_runtime_extensionFallback");
       setExtensionOperationError(pkgName, message);
-      addToast({
-        kind: "error",
-        title: `${extensionOperationLabel(operation)} ${extensionName} failed`,
-        body: message,
-        duration: 6000,
-      });
+      const nextState = await refreshSetupState();
+      if (!isServerUnavailableState(nextState)) {
+        addToast({
+          kind: "error",
+          title: `${extensionOperationLabel(operation)} ${extensionName} failed`,
+          body: message,
+          duration: 6000,
+        });
+      }
     } finally {
       finishExtensionOperation(pkgName);
     }
@@ -982,11 +987,14 @@
     const firstInstallFlow = setupState?.kind === "no_installed_extensions";
     startExtensionOperation(extension.pkgName, extension.hasUpdate ? "update" : "install");
     let installedExtension: ManagedExtension | null = null;
+    let blockedByRuntime = false;
     try {
       if (!(await ensureMangaServerAwake())) {
+        blockedByRuntime = true;
         throw new Error(translate("sources_runtime_suwayomiUnavailable"));
       }
       if (!(await waitForSuwayomiGraphqlReady("extensions", { attempts: 8, delayMs: 800, timeoutMs: 5000 }))) {
+        blockedByRuntime = true;
         throw new Error(translate("sources_runtime_suwayomiStarting"));
       }
       const runtime = await getManagedSourceRuntime();
@@ -1017,12 +1025,17 @@
       } else {
         console.error(error);
         setExtensionOperationError(extension.pkgName, extensionErrorMessage(error));
-        addToast({
-          kind: "error",
-          title: translate("ui_couldNotInstallExtension"),
-          body: extensionErrorMessage(error),
-          duration: 7000,
-        });
+        const nextState = blockedByRuntime ? null : await refreshSetupState();
+        if (blockedByRuntime || isServerUnavailableState(nextState)) {
+          if (blockedByRuntime) await refreshSetupState();
+        } else {
+          addToast({
+            kind: "error",
+            title: translate("ui_couldNotInstallExtension"),
+            body: extensionErrorMessage(error),
+            duration: 7000,
+          });
+        }
       }
     } finally {
       finishExtensionOperation(extension.pkgName);
@@ -1099,6 +1112,13 @@
     repoError = null;
     newRepoUrl = "";
     if (next === "repos") void loadRepos();
+  }
+
+  function handleUtilityPanelKeydown(event: KeyboardEvent) {
+    if (event.key !== "Escape" || utilityPanel === null) return;
+    event.preventDefault();
+    event.stopPropagation();
+    utilityPanel = null;
   }
 
   function selectExternalFile(event: Event) {
@@ -1245,6 +1265,7 @@
 
     updatingAll = true;
     let failedUpdateCount = 0;
+    let blockedByRuntime = false;
     for (const extension of candidates) {
       startExtensionOperation(extension.pkgName, "update");
     }
@@ -1286,9 +1307,11 @@
         if (hasNovelChanges) await saveNovelState(nextState);
       } else {
         if (!(await ensureMangaServerAwake())) {
+          blockedByRuntime = true;
           throw new Error(translate("sources_runtime_suwayomiUnavailable"));
         }
         if (!(await waitForSuwayomiGraphqlReady("extensions", { attempts: 8, delayMs: 800, timeoutMs: 5000 }))) {
+          blockedByRuntime = true;
           throw new Error(translate("sources_runtime_suwayomiStarting"));
         }
         const runtime = await getManagedSourceRuntime();
@@ -1337,11 +1360,18 @@
       });
     } catch (error) {
       console.error(error);
-      addToast({
-        kind: "error",
-        title: translate("ui_couldNotUpdateAllExtensions"),
-        body: error instanceof Error ? error.message : translate("ui_aethonCouldNotFinishTheUpdateQueue"),
-      });
+      const message = error instanceof Error ? error.message : translate("ui_aethonCouldNotFinishTheUpdateQueue");
+      const nextState = blockedByRuntime ? null : await refreshSetupState();
+      if (blockedByRuntime || isServerUnavailableState(nextState)) {
+        for (const extension of candidates) setExtensionOperationError(extension.pkgName, message);
+        if (blockedByRuntime) await refreshSetupState();
+      } else {
+        addToast({
+          kind: "error",
+          title: translate("ui_couldNotUpdateAllExtensions"),
+          body: message,
+        });
+      }
     } finally {
       for (const extension of candidates) {
         finishExtensionOperation(extension.pkgName);
@@ -1459,6 +1489,8 @@
     }
   });
 </script>
+
+<svelte:window onkeydown={handleUtilityPanelKeydown} />
 
 <div class="sourcesRoot" class:hasSettingsPanel={!!selectedExtension}>
   <section class="sourcesMain">

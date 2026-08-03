@@ -693,8 +693,10 @@
 
   async function refreshSetupState() {
     setupLoading = true;
-    setupState = await detectSetupState(store.settings);
+    const nextState = await detectSetupState(store.settings);
+    setupState = nextState;
     setupLoading = false;
+    return nextState;
   }
 
   async function addRecommendedRepo() {
@@ -711,11 +713,14 @@
       await refreshSetupState();
       activeBrowseTab = "source";
     } catch (error) {
-      addToast({
-        kind: "error",
-        title: translate("ui_couldNotAddTheRecommendedRepo"),
-        body: error instanceof Error ? error.message : translate("ui_aethonCouldnTSaveTheRecommendedRepo"),
-      });
+      const nextState = await refreshSetupState();
+      if (nextState.kind !== "server_offline" && nextState.kind !== "server_initializing") {
+        addToast({
+          kind: "error",
+          title: translate("ui_couldNotAddTheRecommendedRepo"),
+          body: error instanceof Error ? error.message : translate("ui_aethonCouldnTSaveTheRecommendedRepo"),
+        });
+      }
     } finally {
       setupActionBusy = false;
     }
@@ -5178,11 +5183,16 @@
       });
     } catch (error) {
       const message = sourceBrowseErrorBody(error, "novels");
-      addToast({
-        kind: "error",
-        title: translate("novelSources_errors_openDetailTitle"),
-        body: message || translate("ui_aethonCouldnTOpenThisNovel"),
-      });
+      const nextState = await refreshSetupState();
+      if (nextState.kind === "server_offline" || nextState.kind === "server_initializing") {
+        src_browseError = message || translate("ui_aethonCouldnTOpenThisNovel");
+      } else {
+        addToast({
+          kind: "error",
+          title: translate("novelSources_errors_openDetailTitle"),
+          body: message || translate("ui_aethonCouldnTOpenThisNovel"),
+        });
+      }
     } finally {
       src_openingNovelPath = null;
     }
