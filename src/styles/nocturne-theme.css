@@ -22,26 +22,14 @@
   --color-popover-text-strong: color-mix(in srgb, var(--color-popover-text-strong-source) 92%, transparent);
   --color-popover-meta: color-mix(in srgb, var(--color-popover-meta-source) 64%, transparent);
   --color-popover-item-hover: color-mix(in srgb, var(--color-popover-item-hover-source) 6%, transparent);
-  --color-toast-surface:
-    radial-gradient(circle at 0% 0%, color-mix(in srgb, var(--color-toast-surface-accent) 8%, transparent), transparent 46%),
-    color-mix(in srgb, var(--color-toast-surface-base) 96%, transparent);
-  --color-toast-surface-hover: color-mix(in srgb, var(--color-toast-surface-hover-source) 98%, transparent);
-  --color-toast-border: color-mix(in srgb, var(--color-toast-border-source) 42%, transparent);
+  --color-toast-surface: var(--color-toast-surface-base);
+  --color-toast-surface-hover: var(--color-toast-surface-hover-source);
+  --color-toast-border: color-mix(in srgb, var(--color-toast-border-source) 34%, transparent);
   --color-toast-border-hover: color-mix(in srgb, var(--color-toast-surface-accent) 24%, transparent);
-  --shadow-toast:
-    inset 0 1px 0 color-mix(in srgb, var(--color-highlight-source) 3.5%, transparent),
-    0 16px 44px color-mix(in srgb, var(--color-shadow-source) 48%, transparent);
-  --gradient-toast-life: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--color-toast-surface-accent) 75%, transparent),
-    color-mix(in srgb, var(--color-accent-interactive-strong) 70%, transparent)
-  );
-  --gradient-toast-progress: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--color-toast-surface-accent) 92%, transparent),
-    color-mix(in srgb, var(--color-toast-progress-end) 80%, transparent)
-  );
-  --shadow-toast-progress: 0 0 14px color-mix(in srgb, var(--color-toast-surface-accent) 28%, transparent);
+  --shadow-toast: 0 12px 30px color-mix(in srgb, var(--color-shadow-source) 32%, transparent);
+  --gradient-toast-life: var(--color-accent-interactive);
+  --gradient-toast-progress: color-mix(in srgb, var(--color-accent-interactive) 88%, var(--color-toast-progress-end) 12%);
+  --shadow-toast-progress: none;
   --color-state-neutral-accent: var(--accent-fg);
   --color-shell-scrim-source: var(--color-deep-scrim-source);
   --color-search-field-surface-source: var(--color-deep-neutral-surface-source);
@@ -114,32 +102,104 @@
   --component-input-placeholder: var(--color-control-placeholder);
   --component-toast-bg: var(--color-toast-surface);
   --component-toast-bg-hover: var(--color-toast-surface-hover);
-  --component-toast-border: var(--color-toast-border);
+  --component-toast-border: color-mix(in srgb, var(--color-toast-border) 96%, var(--color-accent-interactive) 4%);
   --component-toast-border-hover: var(--color-toast-border-hover);
   --component-toast-shadow: var(--shadow-toast);
-  --component-toast-radius: var(--hud-toast-radius);
+  --component-toast-radius: var(--radius-lg);
+  --component-toast-font: var(--font-sans);
+  --component-toast-title-font-size: var(--text-sm);
+  --component-toast-title-font-weight: var(--weight-semibold);
+  --component-toast-title-line-height: var(--leading-tight);
+  --component-toast-body-font-size: var(--text-xs);
+  --component-toast-body-line-height: var(--leading-snug);
+  --component-toast-action-font-size: var(--text-xs);
+  --component-toast-action-font-weight: var(--weight-semibold);
+  --component-toast-action-letter-spacing: var(--tracking-normal);
+  --component-toast-icon-bg: color-mix(in srgb, currentColor 10%, transparent);
+  --component-toast-icon-border: 1px solid color-mix(in srgb, currentColor 28%, transparent);
   --component-toast-offset: 20px;
-  --component-toast-blur: blur(18px) saturate(118%);
+  --component-toast-width: min(360px, calc(100vw - 32px));
+  --component-toast-stack-gap: 8px;
+  --component-toast-padding: var(--space-sm) var(--space-md);
+  --component-toast-gap: var(--space-sm);
+  --component-toast-icon-size: 18px;
+  --component-toast-accent-inset: 0;
+  --component-toast-border-width: 1px;
+  --component-toast-accent-width: 1px;
+  --component-toast-accent-radius: var(--radius-lg);
+  --component-toast-progress-height: 2px;
+  --component-toast-close-size: 22px;
+  --component-toast-icon-stroke-width: 1.8;
+  --component-toast-close-icon-stroke-width: 2;
+  --component-toast-blur: none;
+  --component-toast-texture: radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--color-highlight-source) 3.5%, transparent) 0 0.55px, transparent 0.8px) 0 0 / 4px 4px, radial-gradient(circle at 2px 3px, color-mix(in srgb, var(--color-shadow-source) 11%, transparent) 0 0.5px, transparent 0.75px) 1px 1px / 5px 5px;
+  --component-toast-mask-bg: color-mix(in srgb, var(--component-toast-bg) 96%, var(--color-background-void) 4%);
+  --component-toast-mask-bg-hover: color-mix(in srgb, var(--component-toast-bg-hover) 96%, var(--color-background-void) 4%);
+  --component-toast-success-glow: conic-gradient(
+    from 0deg,
+    transparent 0%,
+    transparent 40%,
+    color-mix(in srgb, var(--color-success) 82%, var(--component-toast-success-fg)) 46%,
+    color-mix(in srgb, var(--color-success) 100%, var(--component-toast-success-fg)) 50%,
+    color-mix(in srgb, var(--color-success) 82%, var(--component-toast-success-fg)) 54%,
+    transparent 60%,
+    transparent 100%
+  );
+  --component-toast-error-glow: conic-gradient(
+    from 0deg,
+    transparent 0%,
+    transparent 40%,
+    color-mix(in srgb, var(--color-danger) 82%, var(--component-toast-error-fg)) 46%,
+    color-mix(in srgb, var(--color-danger) 100%, var(--component-toast-error-fg)) 50%,
+    color-mix(in srgb, var(--color-danger) 82%, var(--component-toast-error-fg)) 54%,
+    transparent 60%,
+    transparent 100%
+  );
+  --component-toast-info-glow: conic-gradient(
+    from 0deg,
+    transparent 0%,
+    transparent 40%,
+    color-mix(in srgb, var(--accent-bright) 82%, var(--component-toast-info-fg)) 46%,
+    color-mix(in srgb, var(--accent-bright) 100%, var(--component-toast-info-fg)) 50%,
+    color-mix(in srgb, var(--accent-bright) 82%, var(--component-toast-info-fg)) 54%,
+    transparent 60%,
+    transparent 100%
+  );
+  --component-toast-download-glow: conic-gradient(
+    from 0deg,
+    transparent 0%,
+    transparent 40%,
+    color-mix(in srgb, var(--accent-bright) 82%, var(--component-toast-download-fg)) 46%,
+    color-mix(in srgb, var(--accent-bright) 100%, var(--component-toast-download-fg)) 50%,
+    color-mix(in srgb, var(--accent-bright) 82%, var(--component-toast-download-fg)) 54%,
+    transparent 60%,
+    transparent 100%
+  );
+  --component-toast-glow-rotate-duration: 6s;
+  --component-toast-glow-pulse-duration: 4s;
+  --component-toast-glow-min-opacity: 0.14;
+  --component-toast-state-shadow: 0 0 0 1px color-mix(in srgb, currentColor 24%, transparent), 0 0 14px color-mix(in srgb, currentColor 9%, transparent), 0 10px 28px color-mix(in srgb, var(--color-shadow-source) 40%, transparent), inset 0 1px 0 color-mix(in srgb, var(--color-highlight-source) 2.5%, transparent);
   --component-toast-focus-ring: color-mix(in srgb, var(--color-accent-interactive) 45%, transparent);
   --component-toast-life-bg: var(--gradient-toast-life);
   --component-toast-title-fg: var(--color-text-emphasis);
-  --component-toast-body-fg: var(--text-tertiary);
+  --component-toast-body-fg: color-mix(in srgb, var(--color-popover-label-source) 84%, transparent);
   --component-toast-success-fg: var(--color-status-success-emphasis);
   --component-toast-error-fg: var(--color-status-error-emphasis);
-  --component-toast-info-fg: color-mix(in srgb, var(--text-secondary) 72%, transparent);
+  --component-toast-info-fg: var(--color-text-accent-emphasis);
   --component-toast-download-fg: var(--color-text-accent-emphasis);
   --component-toast-progress-track: color-mix(in srgb, var(--color-accent-interactive) 12%, transparent);
   --component-toast-progress-fill: var(--gradient-toast-progress);
   --component-toast-progress-shadow: var(--shadow-toast-progress);
-  --component-toast-action-bg: color-mix(in srgb, var(--color-accent-interactive) 12%, transparent);
-  --component-toast-action-bg-hover: color-mix(in srgb, var(--color-accent-interactive) 18%, transparent);
+  --component-toast-action-bg: color-mix(in srgb, var(--component-toast-bg-hover) 72%, transparent);
+  --component-toast-action-bg-hover: color-mix(in srgb, var(--component-toast-action-fg) 9%, transparent);
   --component-toast-action-fg: var(--color-text-accent-emphasis);
-  --component-toast-action-border: color-mix(in srgb, var(--color-accent-interactive) 28%, transparent);
-  --component-toast-close-bg: color-mix(in srgb, var(--color-highlight-source) 1.8%, transparent);
+  --component-toast-action-border: color-mix(in srgb, var(--component-toast-border) 78%, transparent);
+  --component-toast-action-padding: var(--space-xs) var(--space-sm);
+  --component-toast-close-bg: transparent;
   --component-toast-close-bg-hover: color-mix(in srgb, var(--color-accent-interactive) 8%, transparent);
   --component-toast-close-fg: color-mix(in srgb, var(--text-secondary) 54%, transparent);
   --component-toast-close-fg-hover: var(--color-text-emphasis);
-  --component-toast-close-border: color-mix(in srgb, var(--color-toast-border) 80.9524%, transparent);
+  --component-toast-close-border: transparent;
   --component-toast-close-border-hover: var(--color-toast-border-hover);
   --component-nocturne-state-fg: var(--text-muted);
   --component-nocturne-state-gap: 13px;

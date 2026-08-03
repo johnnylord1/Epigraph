@@ -74,86 +74,105 @@
     info:     "M12 16v-4M12 8h.01M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2z",
     download: "M12 3v13M7 11l5 5 5-5M5 21h14",
   };
+
+  function roleForKind(kind: Toast["kind"]): "alert" | "status" {
+    return kind === "error" ? "alert" : "status";
+  }
 </script>
 
 {#if store.toasts.length || store.libraryUpdateProgress}
-  <div class="toaster" aria-live="polite">
+  <div class="toaster" aria-live="polite" aria-atomic="false">
     {#if store.libraryUpdateProgress}
       {@const p = store.libraryUpdateProgress}
       <div
         class="toast toast-{p.kind} toast-persistent library-update-toast"
-        role="status"
+        class:toast-with-actions={p.active && store.libraryUpdateInFlight}
+        role={roleForKind(p.kind)}
+        aria-atomic="true"
         style="--toast-duration: 0ms"
       >
-        <div class="accent-bar"></div>
-        <span class="icon">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d={icons[p.kind]} />
-          </svg>
-        </span>
-        <div class="body">
-          <p class="title">{p.title}</p>
-          <p class="sub">{p.body}</p>
-          {#if typeof p.percent === "number"}
-            <div class="library-progress-track" aria-hidden="true">
-              <div class="library-progress-fill" style={`width: ${Math.max(0, Math.min(100, p.percent))}%`}></div>
-            </div>
-          {/if}
+        <div class="state-border" aria-hidden="true"></div>
+        <div class="toast-main">
+          <span class="icon" aria-hidden="true">
+            <svg class="toast-icon" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+              <path d={icons[p.kind]} />
+            </svg>
+          </span>
+          <div class="body">
+            <p class="title">{p.title}</p>
+            <p class="sub">{p.body}</p>
+            {#if typeof p.percent === "number"}
+              <div class="library-progress-track" aria-hidden="true">
+                <div class="library-progress-fill" style={`width: ${Math.max(0, Math.min(100, p.percent))}%`}></div>
+              </div>
+            {/if}
+          </div>
+          <button class="toast-close" type="button" aria-label={$_("ui_dismissLibraryUpdateProgress")} onclick={() => setLibraryUpdateProgress(null)}>
+            <svg class="toast-close-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
         </div>
         {#if p.active && store.libraryUpdateInFlight}
-          <button
-            class="toast-action"
-            type="button"
-            onclick={(event) => {
-              event.stopPropagation();
-              void stopLibraryUpdate();
-            }}
-          >
-            {$_("ui_stop")}
-          </button>
+          <div class="toast-actions">
+            <button
+              class="toast-action"
+              type="button"
+              onclick={(event) => {
+                event.stopPropagation();
+                void stopLibraryUpdate();
+              }}
+            >
+              {$_("ui_stop")}
+            </button>
+          </div>
         {/if}
-        <button class="toast-close" aria-label={$_("ui_dismissLibraryUpdateProgress")} onclick={() => setLibraryUpdateProgress(null)}>
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
-            <path d="M18 6 6 18M6 6l12 12" />
-          </svg>
-        </button>
       </div>
     {/if}
     {#each store.toasts as t (t.id)}
       <div
         class="toast toast-{t.kind}"
         class:toast-persistent={t.duration === 0}
-        class:toast-has-actions={Boolean(t.actions?.length)}
-        role="alert"
+        class:toast-with-actions={Boolean(t.action || t.actions?.length)}
+        role={roleForKind(t.kind)}
+        aria-atomic="true"
         style={`--toast-duration: ${t.duration ?? 3500}ms`}
       >
-        <div class="accent-bar"></div>
-        <span class="icon">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d={icons[t.kind]} />
-          </svg>
-        </span>
-        <div class="body">
-          <p class="title">{t.title}</p>
-          {#if t.body}<p class="sub">{t.body}</p>{/if}
-        </div>
-        {#if t.action}
-          <button
-            class="toast-action"
-            onclick={(event) => {
-              event.stopPropagation();
-              t.action?.run();
-              dismissToast(t.id);
-            }}
-          >
-            {t.action.label}
+        <div class="state-border" aria-hidden="true"></div>
+        <div class="toast-main">
+          <span class="icon" aria-hidden="true">
+            <svg class="toast-icon" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+              <path d={icons[t.kind]} />
+            </svg>
+          </span>
+          <div class="body">
+            <p class="title">{t.title}</p>
+            {#if t.body}<p class="sub">{t.body}</p>{/if}
+          </div>
+          <button class="toast-close" type="button" aria-label={$_("ui_dismissNotification")} onclick={() => dismissToast(t.id)}>
+            <svg class="toast-close-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
           </button>
-        {/if}
-        {#if t.actions?.length}
+        </div>
+        {#if t.action || t.actions?.length}
           <div class="toast-actions">
-            {#each t.actions as action}
+            {#if t.action}
+              <button
+                class="toast-action"
+                type="button"
+                onclick={(event) => {
+                  event.stopPropagation();
+                  t.action?.run();
+                  dismissToast(t.id);
+                }}
+              >
+                {t.action.label}
+              </button>
+            {/if}
+            {#each t.actions ?? [] as action}
               <button
                 class="toast-action"
                 type="button"
@@ -168,11 +187,6 @@
             {/each}
           </div>
         {/if}
-        <button class="toast-close" aria-label={$_("ui_dismissNotification")} onclick={() => dismissToast(t.id)}>
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
-            <path d="M18 6 6 18M6 6l12 12" />
-          </svg>
-        </button>
         {#key t.updatedAt}
           <div class="toast-life" aria-hidden="true"></div>
         {/key}
@@ -189,41 +203,49 @@
     z-index: var(--z-toast);
     display: flex;
     flex-direction: column;
-    gap: var(--space-sm);
+    gap: var(--component-toast-stack-gap);
     pointer-events: none;
-    width: min(420px, calc(100vw - (var(--space-md) * 2)));
+    width: var(--component-toast-width);
   }
 
   .toast {
     position: relative;
     display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 11px 12px 12px 0;
+    flex-direction: column;
+    gap: 0;
+    font-family: var(--component-toast-font);
+    padding: var(--component-toast-padding);
     border-radius: var(--component-toast-radius);
-    background: var(--component-toast-bg);
-    border: 1px solid var(--component-toast-border);
-    box-shadow: var(--component-toast-shadow);
+    background: transparent;
+    border: var(--component-toast-border-width) solid transparent;
+    box-shadow: var(--component-toast-shadow), var(--component-toast-state-shadow);
     backdrop-filter: var(--component-toast-blur);
     -webkit-backdrop-filter: var(--component-toast-blur);
     pointer-events: all;
     width: 100%;
     min-width: 0;
     overflow: hidden;
-    animation: slideIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
-    transition: border-color 140ms ease, background 140ms ease, opacity 140ms ease, transform 140ms ease;
+    animation: slideIn var(--duration-normal) var(--easing-emphasized) both;
+    transition: border-color var(--t-base), background var(--t-base), opacity var(--t-base), transform var(--t-base);
   }
 
-  .toast:hover  { border-color: var(--component-toast-border-hover); background: var(--component-toast-bg-hover); transform: translateX(-2px); }
-  .toast:active { transform: translateX(0) scale(0.98); }
-  .toast:focus-visible { outline: 2px solid var(--component-toast-focus-ring); outline-offset: 2px; }
+  .toast:hover  { border-color: transparent; background: transparent; }
+  .toast:active { transform: scale(0.99); }
+
+  .toast-main {
+    display: grid;
+    grid-template-columns: var(--component-toast-icon-size) minmax(0, 1fr) var(--component-toast-close-size);
+    align-items: center;
+    column-gap: var(--component-toast-gap);
+    min-width: 0;
+  }
 
   .toast-life {
     position: absolute;
     right: 0;
     bottom: 0;
     left: 0;
-    height: 2px;
+    height: var(--component-toast-progress-height);
     background: var(--component-toast-life-bg);
     transform-origin: left;
     animation: toastLife var(--toast-duration) linear forwards;
@@ -243,24 +265,87 @@
     to { transform: scaleX(0); }
   }
 
-  .accent-bar {
-    width: 3px;
-    align-self: stretch;
-    flex-shrink: 0;
+  .state-border {
+    position: absolute;
+    inset: var(--component-toast-accent-inset);
+    width: auto;
     border-radius: var(--component-toast-accent-radius);
-    margin-right: 2px;
+    border: var(--component-toast-accent-width) solid currentColor;
+    overflow: hidden;
+    pointer-events: none;
   }
 
-  .toast-success  .accent-bar { background: var(--component-toast-success-fg); }
-  .toast-error    .accent-bar { background: var(--component-toast-error-fg); }
-  .toast-info     .accent-bar { background: var(--component-toast-info-fg); }
-  .toast-download .accent-bar { background: var(--component-toast-download-fg); }
+  .state-border::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 250%;
+    height: 250%;
+    background: var(--component-toast-info-glow);
+    transform: translate(-50%, -50%) rotate(0deg);
+    transform-origin: center;
+    opacity: var(--component-toast-glow-min-opacity);
+    animation:
+      toastGlowRotate var(--component-toast-glow-rotate-duration) linear infinite,
+      toastGlowPulse var(--component-toast-glow-pulse-duration) ease-in-out infinite alternate;
+  }
+
+  .state-border::after {
+    content: "";
+    position: absolute;
+    inset: var(--component-toast-accent-width);
+    border-radius: var(--component-toast-accent-radius);
+    background: var(--component-toast-texture), var(--component-toast-mask-bg);
+    transition: background var(--t-base);
+  }
+
+  .toast-success { color: var(--component-toast-success-fg); }
+  .toast-success  .state-border { color: var(--component-toast-success-fg); }
+  .toast-success  .state-border::before { background: var(--component-toast-success-glow); }
+  .toast-error { color: var(--component-toast-error-fg); }
+  .toast-error    .state-border { color: var(--component-toast-error-fg); }
+  .toast-error    .state-border::before { background: var(--component-toast-error-glow); }
+  .toast-info { color: var(--component-toast-info-fg); }
+  .toast-info     .state-border { color: var(--component-toast-info-fg); }
+  .toast-download { color: var(--component-toast-download-fg); }
+  .toast-download .state-border { color: var(--component-toast-download-fg); }
+  .toast-download .state-border::before { background: var(--component-toast-download-glow); }
+
+  .toast:hover .state-border::after {
+    background: var(--component-toast-texture), var(--component-toast-mask-bg-hover);
+  }
+
+  .toast > :not(.state-border) {
+    position: relative;
+  }
+
+  @keyframes toastGlowRotate {
+    from { transform: translate(-50%, -50%) rotate(0deg); }
+    to { transform: translate(-50%, -50%) rotate(360deg); }
+  }
+
+  @keyframes toastGlowPulse {
+    from { opacity: var(--component-toast-glow-min-opacity); }
+    to { opacity: var(--component-toast-glow-min-opacity); }
+  }
 
   .icon {
-    flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: center;
+    width: var(--component-toast-icon-size);
+    height: var(--component-toast-icon-size);
+    color: var(--component-toast-body-fg);
+    background: var(--component-toast-icon-bg);
+    border: var(--component-toast-icon-border);
+    border-radius: var(--radius-md);
+  }
+
+  .toast-icon {
+    width: var(--text-sm);
+    height: var(--text-sm);
+    stroke-width: var(--component-toast-icon-stroke-width);
   }
 
   .toast-success  .icon { color: var(--component-toast-success-fg); }
@@ -269,45 +354,49 @@
   .toast-download .icon { color: var(--component-toast-download-fg); }
 
   .body {
-    flex: 1;
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 1px;
+    gap: var(--space-xs);
   }
 
   .title {
     margin: 0;
-    font-size: 12px;
-    font-family: "Manrope", var(--font-sans);
+    font-size: var(--component-toast-title-font-size);
+    font-family: inherit;
     color: var(--component-toast-title-fg);
-    font-weight: var(--weight-extrabold);
-    letter-spacing: 0.02em;
-    line-height: 1.3;
+    font-weight: var(--component-toast-title-font-weight);
+    letter-spacing: var(--tracking-normal);
+    line-height: var(--component-toast-title-line-height);
   }
 
   .sub {
     margin: 0;
-    font-family: "Manrope", var(--font-sans);
-    font-size: 10px;
+    font-family: inherit;
+    font-size: var(--component-toast-body-font-size);
     color: var(--component-toast-body-fg);
-    letter-spacing: 0.08em;
-    white-space: nowrap;
+    letter-spacing: var(--tracking-normal);
+    line-height: var(--component-toast-body-line-height);
+    white-space: normal;
     overflow: hidden;
     text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
   }
 
   .library-update-toast .body {
-    gap: 5px;
+    gap: var(--space-xs);
   }
 
   .library-progress-track {
     width: 100%;
-    height: 3px;
+    height: var(--component-toast-progress-height);
     border-radius: var(--component-toast-progress-radius);
     overflow: hidden;
     background: var(--component-toast-progress-track);
-    box-shadow: inset 0 0 0 1px var(--component-toast-border);
+    box-shadow: inset 0 0 0 var(--component-toast-border-width) var(--component-toast-border);
   }
 
   .library-progress-fill {
@@ -315,90 +404,76 @@
     border-radius: inherit;
     background: var(--component-toast-progress-fill);
     box-shadow: var(--component-toast-progress-shadow);
-    transition: width 220ms ease;
+    transition: width var(--duration-slow) var(--easing-standard);
   }
 
   .toast-action {
     flex-shrink: 0;
-    font-family: var(--font-ui);
-    font-size: var(--text-2xs);
-    letter-spacing: var(--tracking-wide);
+    font-family: inherit;
+    font-size: var(--component-toast-action-font-size);
+    font-weight: var(--component-toast-action-font-weight);
+    letter-spacing: var(--component-toast-action-letter-spacing);
     color: var(--component-toast-action-fg);
     background: var(--component-toast-action-bg);
-    border: 1px solid var(--component-toast-action-border);
+    border: var(--component-toast-border-width) solid var(--component-toast-action-border);
     border-radius: var(--component-toast-action-radius);
-    padding: 5px 8px;
+    padding: var(--component-toast-action-padding);
     cursor: pointer;
+    transition: background var(--t-base), color var(--t-base), border-color var(--t-base);
   }
 
   .toast-action:hover {
+    color: var(--component-toast-action-fg);
     background: var(--component-toast-action-bg-hover);
+  }
+
+  .toast-action:first-child {
+    background: var(--component-toast-action-bg);
+    border-color: var(--component-toast-action-border);
+  }
+
+  .toast-action:not(:first-child) {
+    background: transparent;
+    border-color: transparent;
   }
 
   .toast-actions {
     display: flex;
-    flex-shrink: 0;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: var(--component-toast-gap);
     justify-content: flex-start;
-  }
-
-  .toast-has-actions {
-    display: grid;
-    grid-template-columns: 3px 18px minmax(0, 1fr) 24px;
-    grid-template-areas:
-      "accent icon body close"
-      "accent icon actions close";
-    align-items: start;
-    column-gap: 10px;
-    row-gap: 8px;
-    padding: 12px 12px 12px 0;
-  }
-
-  .toast-has-actions .accent-bar {
-    grid-area: accent;
-    margin-right: 0;
-  }
-
-  .toast-has-actions .icon {
-    grid-area: icon;
-    margin-top: 2px;
-  }
-
-  .toast-has-actions .body {
-    grid-area: body;
-    gap: 4px;
-  }
-
-  .toast-has-actions .toast-actions {
-    grid-area: actions;
-  }
-
-  .toast-has-actions .toast-close {
-    grid-area: close;
-  }
-
-  .toast-has-actions .sub {
-    white-space: pre-line;
-    overflow: visible;
-    text-overflow: initial;
-    line-height: 1.45;
-    letter-spacing: 0.04em;
+    margin-top: var(--space-xs);
+    margin-left: calc(var(--component-toast-icon-size) + var(--component-toast-gap));
   }
 
   .toast-close {
-    flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
-    height: 24px;
-    border: 1px solid var(--component-toast-close-border);
+    width: var(--component-toast-close-size);
+    height: var(--component-toast-close-size);
+    border: var(--component-toast-border-width) solid var(--component-toast-close-border);
     border-radius: var(--component-toast-close-radius);
     color: var(--component-toast-close-fg);
     background: var(--component-toast-close-bg);
     cursor: pointer;
-    transition: color 140ms ease, border-color 140ms ease, background 140ms ease, transform 140ms ease;
+    transition: color var(--t-base), border-color var(--t-base), background var(--t-base), transform var(--t-base);
+  }
+
+  .toast-close-icon {
+    width: var(--text-xs);
+    height: var(--text-xs);
+    stroke-width: var(--component-toast-close-icon-stroke-width);
+  }
+
+  .toast-action:focus-visible,
+  .toast-close:focus-visible {
+    outline: none;
+    box-shadow: var(--component-toast-focus-ring);
+  }
+
+  .toast-close:active {
+    transform: scale(0.96);
   }
 
   .toast-close:hover {
@@ -407,7 +482,28 @@
     background: var(--component-toast-close-bg-hover);
   }
 
-  .toast-close:active {
-    transform: scale(0.94);
+  @media (max-width: 480px) {
+    .toaster {
+      right: var(--space-sm);
+      bottom: var(--space-sm);
+      left: var(--space-sm);
+      width: auto;
+    }
+
+    .toast-main { grid-template-columns: var(--component-toast-icon-size) minmax(0, 1fr) var(--component-toast-close-size); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .toast {
+      animation: none;
+      transition: none;
+    }
+
+    .toast-life,
+    .library-progress-fill,
+    .state-border::before {
+      animation: none;
+      transition: none;
+    }
   }
 </style>

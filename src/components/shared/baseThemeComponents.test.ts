@@ -91,6 +91,46 @@ describe("base themed components", () => {
     expect(document.querySelector(".toast-life")).not.toBe(firstLifeBar);
   });
 
+  test("keeps toast actions and announcement roles explicit", async () => {
+    const action = vi.fn();
+    render(Toaster);
+    addToast({
+      id: "action-toast",
+      kind: "info",
+      title: "Update ready",
+      body: "A restart is required.",
+      action: { label: "Review", run: action },
+      duration: 0,
+    });
+    addToast({
+      id: "error-toast",
+      kind: "error",
+      title: "Update failed",
+      duration: 0,
+    });
+
+    expect((await screen.findByRole("status")).textContent).toContain("Update ready");
+    expect((await screen.findByRole("alert")).textContent).toContain("Update failed");
+    expect(document.querySelector(".toast-with-actions .toast-actions")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Review" }).getAttribute("type")).toBe("button");
+  });
+
+  test("keeps toast typography and color hierarchy on component tokens", () => {
+    const source = readFileSync(join(process.cwd(), "src/components/layout/Toaster.svelte"), "utf8");
+
+    expect(source).toContain("--component-toast-font");
+    expect(source).toContain("--component-toast-title-font-size");
+    expect(source).toContain("--component-toast-body-fg");
+    expect(source).toContain("--component-toast-action-bg");
+    expect(source).toContain("--component-toast-icon-border");
+    expect(source).toContain("--component-toast-accent-inset");
+    expect(source).toContain("--component-toast-mask-bg");
+    expect(source).toContain("--component-toast-mask-bg-hover");
+    expect(source).toContain("--component-toast-texture");
+    expect(source).toContain("state-border");
+    expect(source).toContain("--component-toast-action-padding");
+  });
+
   test("renders the tokenized context menu shell", () => {
     const onClose = vi.fn();
     const onOpen = vi.fn();
