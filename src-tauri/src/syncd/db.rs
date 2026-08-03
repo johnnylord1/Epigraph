@@ -546,13 +546,24 @@ pub async fn load_scope_snapshot(
             let entity_id = row.novel_id.clone();
             let server_version = row.record_server_version;
             let lamport = row.record_lamport;
+            // Progress rows use the mutation entity key (`novel.progress::<novel_id>`) as
+            // their primary key internally, while the public record is keyed by the novel
+            // itself.  Snapshot consumers must receive the same canonical id as replay/change
+            // events; leaking the storage prefix makes a fresh mobile replica unable to join the
+            // progress record to its novel entry.
+            let mut record = NovelProgressRecord::from(row);
+            record.novel_id = record
+                .novel_id
+                .strip_prefix("novel.progress::")
+                .unwrap_or(&record.novel_id)
+                .to_string();
             push_snapshot_entity(
                 &mut entities,
                 "novel.progress",
                 entity_id,
                 server_version,
                 lamport,
-                NovelProgressRecord::from(row),
+                record,
             )?;
         }
 

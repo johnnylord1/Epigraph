@@ -1073,6 +1073,9 @@ mod tests {
             ]
         );
         assert_eq!(entities[0]["record"]["title"], "Novel One");
+        // The storage row is keyed by novel.progress::<novel_id>, but snapshots expose the
+        // canonical novel identity used by replay and mobile projection.
+        assert_eq!(entities[2]["record"]["novelId"], "novel-1");
         assert_eq!(entities[5]["record"]["status"], "compatible");
     }
 
