@@ -46,7 +46,12 @@ pub async fn run() -> anyhow::Result<()> {
         .context("failed to prepare syncd discovery descriptor provider")?;
     let discovery_provider_manager = SyncdDiscoveryProviderManager::from_config(&config)
         .context("failed to prepare syncd discovery provider manager")?;
-    let tls = tls::load_or_create(&config).await?;
+    // Resolve the effective advertised endpoints before creating TLS material.  The
+    // certificate must cover every endpoint that discovery can hand to a client;
+    // otherwise a LAN client will correctly reject the self-signed certificate
+    // during hostname verification.
+    let advertised_resolution = advertised_endpoint_resolver.resolve(config.bind_addr);
+    let tls = tls::load_or_create(&config, &advertised_resolution.candidates).await?;
     let pool = db::connect(&config).await?;
     db::upsert_server_identity(&pool, &config, &tls.fingerprint_sha256).await?;
     let granted_comics_scopes = db::grant_comics_scopes_to_existing_tokens(&pool).await?;
@@ -78,8 +83,6 @@ pub async fn run() -> anyhow::Result<()> {
         mutation_gate: Arc::new(Mutex::new(())),
         tls_cert_sha256: tls.fingerprint_sha256.clone(),
     });
-
-    let advertised_resolution = advertised_endpoint_resolver.resolve(config.bind_addr);
 
     for instance in super::suwayomi_process::attach_owned_instances() {
         tracing::info!(

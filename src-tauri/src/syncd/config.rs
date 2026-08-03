@@ -14,7 +14,10 @@ use url::Url;
 const DEFAULT_PORT: u16 = 4777;
 const DEFAULT_DISCOVERY_MDNS_PORT: u16 = 5353;
 const DEFAULT_PROTOCOL_VERSION: u32 = 1;
-const DEFAULT_MIN_CLIENT_VERSION: &str = "0.1.0";
+// Keep the first mobile prerelease accepted by the Core.  A stable 0.1.0
+// client still compares newer than this floor, while development APKs retain
+// their truthful semantic version instead of pretending to be a release.
+const DEFAULT_MIN_CLIENT_VERSION: &str = "0.1.0-alpha.1";
 const DEFAULT_MDNS_SERVICE_NAME: &str = "_aethon-sync._tcp.local.";
 const DEFAULT_ASSET_MAX_UPLOAD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
@@ -463,6 +466,12 @@ mod tests {
         assert_eq!(resolution.policy_name, "auto_bind");
         assert_eq!(resolution.selected.base_url(), "https://127.0.0.1:4777");
         assert_eq!(resolution.candidates.len(), 1);
+    }
+
+    #[test]
+    fn default_minimum_accepts_mobile_prerelease_floor() {
+        let config = SyncdConfig::for_test(PathBuf::from("C:\\temp\\syncd-test"));
+        assert_eq!(config.min_client_version, "0.1.0-alpha.1");
     }
 
     #[test]

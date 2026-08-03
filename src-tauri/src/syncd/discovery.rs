@@ -866,7 +866,7 @@ mod tests {
         ServerIdentityRow {
             server_id: "syncd-server".to_string(),
             server_protocol_version: 1,
-            min_client_version: "0.1.0".to_string(),
+            min_client_version: "0.1.0-alpha.1".to_string(),
             tls_cert_sha256: "fingerprint".to_string(),
             mdns_service_name: "_aethon-sync._tcp.local.".to_string(),
         }

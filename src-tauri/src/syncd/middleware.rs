@@ -318,9 +318,27 @@ mod tests {
     async fn validates_client_headers() {
         let state = build_state().await;
         let mut headers = HeaderMap::new();
-        headers.insert(CLIENT_VERSION_HEADER, HeaderValue::from_static("0.1.0"));
+        headers.insert(
+            CLIENT_VERSION_HEADER,
+            HeaderValue::from_static("0.1.0-alpha.1-d6644"),
+        );
         headers.insert(CLIENT_PROTOCOL_HEADER, HeaderValue::from_static("1"));
         assert!(validate_client_headers(&headers, &state).is_ok());
+
+        headers.insert(CLIENT_VERSION_HEADER, HeaderValue::from_static("0.1.0"));
+        assert!(validate_client_headers(&headers, &state).is_ok());
+    }
+
+    #[tokio::test]
+    async fn validates_semver_floor_and_rejects_older_or_malformed_versions() {
+        let state = build_state().await;
+
+        assert!(validate_client_version_fields("0.1.0-alpha.1", 1, &state).is_ok());
+        assert!(validate_client_version_fields("0.1.0-alpha.1-d6644", 1, &state).is_ok());
+        assert!(validate_client_version_fields("0.1.0", 1, &state).is_ok());
+        assert!(validate_client_version_fields("0.1.0-alpha.0", 1, &state).is_err());
+        assert!(validate_client_version_fields("0.0.9", 1, &state).is_err());
+        assert!(validate_client_version_fields("not-semver", 1, &state).is_err());
     }
 
     #[tokio::test]
