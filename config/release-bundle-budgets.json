@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "baseline": {
     "entryMinifiedBytes": 1399311,
     "minimumReductionPercent": 15
@@ -16,8 +16,8 @@
   },
   "commonChunkMaxBytes": 512000,
   "css": {
-    "baselineBytes": 1032845,
-    "maxBytes": 1053502
+    "baselineBytes": 1063788,
+    "maxBytes": 1085064
   },
   "allowlistedOversize": [
     "pdf.worker",

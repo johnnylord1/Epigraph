@@ -8,6 +8,7 @@ import {
   resolveLibrarySnapshotCategoryState,
   saveLibrarySnapshot,
 } from "./snapshot";
+import { hasLibrarySnapshot } from "./snapshotPresence";
 import type { Category, Manga } from "../types";
 
 const manga: Manga = {
@@ -68,6 +69,23 @@ describe("library snapshot", () => {
       categoryMembers: { "3": [7] },
     });
     expect(loadLibrarySnapshot({ profileId: "test", serverUrl: "http://127.0.0.1:4667" })).toBeNull();
+  });
+
+  it("checks snapshot presence without loading the full snapshot model", () => {
+    expect(hasLibrarySnapshot({ profileId: "main", serverUrl: "http://127.0.0.1:4567" })).toBe(false);
+
+    saveLibrarySnapshot(
+      { profileId: "main", serverUrl: "http://127.0.0.1:4567" },
+      {
+        mangas: [manga],
+        categories: [],
+        categoryMembers: {},
+        trackingSummary: [],
+      },
+    );
+
+    expect(hasLibrarySnapshot({ profileId: "main", serverUrl: "http://127.0.0.1:4567" })).toBe(true);
+    expect(hasLibrarySnapshot({ profileId: "test", serverUrl: "http://127.0.0.1:4667" })).toBe(false);
   });
 
   it("ignores invalid or empty snapshots", () => {

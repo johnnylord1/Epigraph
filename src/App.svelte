@@ -5,7 +5,7 @@
   import { getVersion } from "@tauri-apps/api/app";
   import { getCurrentWindow, type Window as TauriWindow } from "@tauri-apps/api/window";
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-  import { getServerAuthHeader, gql, gqlUpload } from "./lib/client";
+  import { getServerAuthHeader, gql } from "./lib/startupClient";
   import { getServerTargetInfo } from "./lib/serverTarget";
   import {
     shouldAutoStartManagedServer,
@@ -29,7 +29,7 @@
     GET_TRACKERS,
     RESTORE_BACKUP,
     UPDATE_EXTENSION,
-  } from "./lib/queries";
+  } from "./lib/startupQueries";
   import {
     store,
     addToast,
@@ -61,8 +61,8 @@
   import type { RestoreReadinessSummary } from "./lib/reconciliation/types";
   import { cache, CACHE_GROUPS, CACHE_KEYS, DEFAULT_TTL_MS } from "./lib/cache";
   import { normalizeCategories } from "./lib/library/categories";
-  import { reconcileComicsChapterSnapshot } from "./lib/library/comicsChapterSnapshot";
-  import { loadLibrarySnapshot, saveLibrarySnapshot } from "./lib/library/snapshot";
+  import type { PersistedLibrarySnapshot } from "./lib/library/snapshot";
+  import { hasLibrarySnapshot } from "./lib/library/snapshotPresence";
   import { setLibraryMotionEnvironment } from "./lib/library/motionGate";
   import { getLibraryVisibilityRegistryStats } from "./lib/library/visibilityRegistry";
   import { isEditableKeyboardTarget } from "./lib/keybinds";
@@ -523,7 +523,7 @@
   function attachKnownCategoryMembers(
     categories: Category[],
     mangas: Manga[],
-    persistedSnapshot: ReturnType<typeof loadLibrarySnapshot>,
+    persistedSnapshot: PersistedLibrarySnapshot | null,
   ): Category[] {
     const mangaById = new Map(mangas.map((manga) => [manga.id, manga]));
     const currentById = new Map(store.categories.map((category) => [category.id, category]));
@@ -546,8 +546,10 @@
     });
   }
 
-  function preloadLibrarySnapshot(force = false) {
+  async function preloadLibrarySnapshot(force = false) {
     if (!store.runtimeResolvedLocalProfileId || !store.runtimeServerUrl) return null;
+
+    const { loadLibrarySnapshot, saveLibrarySnapshot } = await import("./lib/library/snapshot");
 
     const scopeKey = `${store.runtimeResolvedLocalProfileId}::${store.runtimeServerUrl}`;
     const persistedSnapshot = loadLibrarySnapshot({
@@ -922,6 +924,7 @@
     const current = store.libraryMangaSnapshot;
     if (!current.length) return { changedIds: [] as number[], failedIds: [] as number[], notifications: [] };
 
+    const { reconcileComicsChapterSnapshot } = await import("./lib/library/comicsChapterSnapshot");
     const result = await reconcileComicsChapterSnapshot({
       scope: {
         profileId: store.runtimeResolvedLocalProfileId,
@@ -947,6 +950,7 @@
     if (result.changedIds.length > 0) {
       setLibraryMangaSnapshot(result.mangas);
       cache.set(CACHE_KEYS.LIBRARY, result.mangas, CACHE_GROUPS.LIBRARY);
+      const { saveLibrarySnapshot } = await import("./lib/library/snapshot");
       saveLibrarySnapshot(
         {
           profileId: store.runtimeResolvedLocalProfileId,
@@ -2171,6 +2175,7 @@
         {},
         extractedBackup.name,
       );
+      const { gqlUpload } = await import("./lib/client");
       const restoreResponse = await gqlUpload<{
         restoreBackup: { id: string; status: BackupRestoreProgress | null };
       }>(
@@ -2342,10 +2347,10 @@
       standbyEnabled: store.settings.localServerStandbyEnabled,
       attachOnly: runtimeAttachOnly,
       updateDue: nextLibraryUpdateDue(),
-      hasSnapshot: Boolean(loadLibrarySnapshot({
-      profileId: store.runtimeResolvedLocalProfileId,
-      serverUrl: store.runtimeServerUrl,
-      })),
+      hasSnapshot: hasLibrarySnapshot({
+        profileId: store.runtimeResolvedLocalProfileId,
+        serverUrl: store.runtimeServerUrl,
+      }),
     });
   }
 
@@ -2559,10 +2564,10 @@
           const parsed = new URL(effectiveServerUrl);
           const host = parsed.hostname.toLowerCase();
           const isLoopback = host === "127.0.0.1" || host === "localhost";
-          const hasSnapshot = Boolean(loadLibrarySnapshot({
+          const hasSnapshot = hasLibrarySnapshot({
             profileId: store.runtimeResolvedLocalProfileId,
             serverUrl: effectiveServerUrl,
-          }));
+          });
           shouldAutoStartServer = shouldAutoStartManagedServer({
             attachOnly: runtimeAttachOnly,
             isLoopback,

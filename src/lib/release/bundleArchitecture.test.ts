@@ -20,6 +20,11 @@ describe("release bundle architecture", () => {
     }
 
     expect(app).not.toContain('import("./lib/imageCache")');
+    expect(app).not.toMatch(/import\s+(?!type\b)[^;]+from\s+["']\.\/lib\/client["']/);
+    expect(app).toContain('from "./lib/startupClient"');
+    expect(app).toContain('import("./lib/client")');
+    expect(app).toContain('import("./lib/library/snapshot")');
+    expect(app).toContain('from "./lib/library/snapshotPresence"');
     expect(app).toContain("trimImageCacheIfLoaded(false)");
     expect(app).toContain("scheduleLazyComponentRetry(key)");
     expect(app).toContain("lazyRetryEpoch += 1");

@@ -1,55 +1,12 @@
-import { store } from "../store/state.svelte";
 import { acquireSuwayomiOperationLease } from "./suwayomiUpdateLock.svelte";
+import {
+  getServerAuthHeader,
+  getServerUrl,
+} from "./startupClient";
+import { serverFileUrl, thumbUrl } from "./clientUrls";
 
-const DEFAULT_URL = "http://127.0.0.1:4567";
-const RESERVED_TEST_PORT = 4667;
-
-function isReservedTestPort(port: number): boolean {
-  return port === RESERVED_TEST_PORT;
-}
-
-function getWindowTitleServerUrl(): string | null {
-  if (typeof document === "undefined") return null;
-  const match = document.title.match(/\[[^\]]*:(\d{2,5})\]/);
-  if (!match?.[1]) return null;
-  const port = Number(match[1]);
-  if (!Number.isInteger(port) || port <= 0 || port > 65_535) return null;
-  if (isReservedTestPort(port)) return null;
-  return `http://127.0.0.1:${port}`;
-}
-
-function getSavedSettingsServerUrl(): string | null {
-  const raw = store.settings.serverUrl;
-  if (typeof raw !== "string" || !raw.trim()) return null;
-  const normalized = raw.replace(/\/$/, "");
-  try {
-    const parsed = new URL(normalized);
-    const port = Number(parsed.port || (parsed.protocol === "https:" ? 443 : 80));
-    const host = parsed.hostname.toLowerCase();
-    const loopback = host === "localhost" || host === "127.0.0.1" || host === "::1";
-    if (loopback && isReservedTestPort(port)) return null;
-  } catch {}
-  return normalized;
-}
-
-export function getServerUrl(): string {
-  const url = store.runtimeServerUrl
-    ?? store.runtimeResolvedLocalProfileMeta?.serverUrl
-    ?? getWindowTitleServerUrl()
-    ?? getSavedSettingsServerUrl();
-  return typeof url === "string" && url.trim() ? url.replace(/\/$/, "") : DEFAULT_URL;
-}
-
-function getAuthHeader(): Record<string, string> {
-  const s = store.settings;
-  if (!s.serverAuthEnabled) return {};
-  const user = typeof s.serverAuthUser === "string" ? s.serverAuthUser.trim() : "";
-  const pass = typeof s.serverAuthPass === "string" ? s.serverAuthPass.trim() : "";
-  if (user && pass) return { Authorization: `Basic ${btoa(`${user}:${pass}`)}` };
-  return {};
-}
-
-function gqlUrl(): string { return `${getServerUrl()}/api/graphql`; }
+export { getServerAuthHeader, getServerUrl } from "./startupClient";
+export { serverFileUrl, thumbUrl } from "./clientUrls";
 
 export function isGraphqlMutation(query: string): boolean {
   let index = 0;
@@ -70,20 +27,8 @@ export function isGraphqlMutation(query: string): boolean {
     && !/[A-Za-z0-9_]/.test(query[index + 8] ?? "");
 }
 
-export function getServerAuthHeader(): string | null {
-  return getAuthHeader().Authorization ?? null;
-}
-
-export function serverFileUrl(path: string): string {
-  if (!path) return getServerUrl();
-  if (path.startsWith("http")) return path;
-  return `${getServerUrl()}${path.startsWith("/") ? path : `/${path}`}`;
-}
-
-export function thumbUrl(path: string): string {
-  if (!path) return "";
-  if (path.startsWith("http")) return path;
-  return `${getServerUrl()}${path.startsWith("/") ? path : `/${path}`}`;
+function gqlUrl(): string {
+  return `${getServerUrl()}/api/graphql`;
 }
 
 interface GQLResponse<T> {
@@ -93,7 +38,10 @@ interface GQLResponse<T> {
 
 function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
-    if (signal?.aborted) { reject(new DOMException("Aborted", "AbortError")); return; }
+    if (signal?.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
     const timer = setTimeout(resolve, ms);
     signal?.addEventListener("abort", () => {
       clearTimeout(timer);
@@ -102,7 +50,7 @@ function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-async function fetchWithRetry(
+export async function fetchWithRetry(
   url: string,
   init: RequestInit,
   signal?: AbortSignal,
@@ -113,15 +61,14 @@ async function fetchWithRetry(
 
   for (let i = 0; i < retries; i++) {
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-
     try {
-      const res = await fetch(url, { ...init, signal });
+      const response = await fetch(url, { ...init, signal });
       if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-      return res;
-    } catch (e: any) {
-      const isAbort = e?.name === "AbortError" || signal?.aborted;
+      return response;
+    } catch (error) {
+      const isAbort = error instanceof Error && error.name === "AbortError" || signal?.aborted;
       if (isAbort) throw new DOMException("Aborted", "AbortError");
-      if (i === retries - 1) throw e;
+      if (i === retries - 1) throw error;
       await abortableSleep(delayMs * Math.pow(1.5, i), signal);
     }
   }
@@ -138,7 +85,6 @@ export async function gql<T>(
   const releaseMutationLease = mutation
     ? await acquireSuwayomiOperationLease("mutation")
     : null;
-
   const controller = signal ? null : new AbortController();
   const effectiveSignal = signal ?? controller?.signal;
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -147,24 +93,21 @@ export async function gql<T>(
     if (controller && Number.isFinite(timeoutMs) && timeoutMs > 0) {
       timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     }
-
-    const res = await fetchWithRetry(gqlUrl(), {
+    const authHeader = getServerAuthHeader();
+    const response = await fetchWithRetry(gqlUrl(), {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...getAuthHeader() },
+      headers: { "Content-Type": "application/json", ...(authHeader ? { Authorization: authHeader } : {}) },
       body: JSON.stringify({ query, variables }),
     }, effectiveSignal, mutation ? 1 : 3);
-
     if (effectiveSignal?.aborted) throw new DOMException("Aborted", "AbortError");
-    if (!res.ok) throw new Error(`Suwayomi HTTP ${res.status}`);
+    if (!response.ok) throw new Error(`Suwayomi HTTP ${response.status}`);
 
-    const json: GQLResponse<T> = await res.json();
-
+    const json = await response.json() as GQLResponse<T>;
     if (effectiveSignal?.aborted) throw new DOMException("Aborted", "AbortError");
     if (json.errors?.length) {
       const message = json.errors.map((error) => error.message?.trim()).filter(Boolean).join("; ");
       throw new Error(message || "Suwayomi returned an empty GraphQL error.");
     }
-
     return json.data;
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
@@ -187,7 +130,7 @@ export async function gqlUpload<T>(
   const map: Record<string, string[]> = {};
   let index = 0;
 
-  for (const [variablePath, file] of Object.entries(uploads)) {
+  for (const [variablePath] of Object.entries(uploads)) {
     map[String(index)] = [variablePath];
     index += 1;
   }
@@ -202,23 +145,21 @@ export async function gqlUpload<T>(
   }
 
   try {
-    const res = await fetchWithRetry(gqlUrl(), {
+    const authHeader = getServerAuthHeader();
+    const response = await fetchWithRetry(gqlUrl(), {
       method: "POST",
-      headers: { ...getAuthHeader() },
+      headers: authHeader ? { Authorization: authHeader } : {},
       body: form,
     }, signal, mutation ? 1 : 3);
-
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    if (!res.ok) throw new Error(`Suwayomi HTTP ${res.status}`);
+    if (!response.ok) throw new Error(`Suwayomi HTTP ${response.status}`);
 
-    const json: GQLResponse<T> = await res.json();
-
+    const json = await response.json() as GQLResponse<T>;
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
     if (json.errors?.length) {
       const message = json.errors.map((error) => error.message?.trim()).filter(Boolean).join("; ");
       throw new Error(message || "Suwayomi returned an empty GraphQL error.");
     }
-
     return json.data;
   } finally {
     await releaseMutationLease?.();

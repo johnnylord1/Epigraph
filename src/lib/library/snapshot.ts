@@ -1,13 +1,13 @@
-import { normalizeLocalProfileId, normalizeServerUrl } from "../localProfiles";
 import type { Category, Manga } from "../types";
+import {
+  LIBRARY_SNAPSHOT_KEY,
+  librarySnapshotScopeKey,
+  type LibrarySnapshotScope,
+} from "./snapshotPresence";
 
-const LIBRARY_SNAPSHOT_KEY = "aethon-library-snapshots";
 const LIBRARY_SNAPSHOT_VERSION = 1 as const;
-
-export interface LibrarySnapshotScope {
-  profileId?: string | null;
-  serverUrl?: string | null;
-}
+export { hasLibrarySnapshot, librarySnapshotScopeKey } from "./snapshotPresence";
+export type { LibrarySnapshotScope } from "./snapshotPresence";
 
 export interface PersistedLibrarySnapshot {
   version: typeof LIBRARY_SNAPSHOT_VERSION;
@@ -47,12 +47,6 @@ function storageOrNull(): StorageLike | null {
   } catch {
     return null;
   }
-}
-
-export function librarySnapshotScopeKey(scope: LibrarySnapshotScope = {}) {
-  const profileId = normalizeLocalProfileId(scope.profileId) ?? "default";
-  const serverUrl = normalizeServerUrl(scope.serverUrl) ?? "unknown";
-  return `${profileId}::${serverUrl}`;
 }
 
 function normalizeNumber(value: unknown): number | null {
@@ -194,10 +188,6 @@ function writeSnapshotMap(next: Record<string, PersistedLibrarySnapshot>, storag
 export function loadLibrarySnapshot(scope: LibrarySnapshotScope = {}): PersistedLibrarySnapshot | null {
   const scopeKey = librarySnapshotScopeKey(scope);
   return readSnapshotMap()[scopeKey] ?? null;
-}
-
-export function hasLibrarySnapshot(scope: LibrarySnapshotScope = {}) {
-  return Boolean(loadLibrarySnapshot(scope));
 }
 
 export function saveLibrarySnapshot(
