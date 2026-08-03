@@ -83,6 +83,17 @@ describe("release verification orchestration", () => {
     expect(workspace).toContain("strictPort: browserApiPort !== 0");
   });
 
+  test("keeps WebView2 stable-frame timing diagnostic while app-owned budgets remain blocking", () => {
+    const navigationScript = read("scripts/check-navigation-performance.mjs");
+    const interactiveReadyGate = navigationScript.slice(
+      navigationScript.indexOf("interactiveReadyP50Ms"),
+      navigationScript.indexOf("const appOwnedP95Ms"),
+    );
+
+    expect(interactiveReadyGate).toContain("blocking: false");
+    expect(navigationScript).toContain("warmCachedAppOwnedP95MaxMs");
+  });
+
   test("keeps native automation hidden until it is explicitly shown after positioning", () => {
     const automationConfig = JSON.parse(read("src-tauri/tauri.automation.conf.json"));
     const rust = read("src-tauri/src/lib.rs");
