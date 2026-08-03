@@ -655,8 +655,9 @@
   --component-toast-action-font-size: var(--text-xs);
   --component-toast-action-font-weight: var(--weight-semibold);
   --component-toast-action-letter-spacing: var(--tracking-normal);
-  --component-toast-icon-bg: var(--color-accent-muted);
-  --component-toast-icon-border: var(--component-toast-border-width) solid currentColor;
+  --component-toast-icon-state-fg: var(--component-toast-info-fg);
+  --component-toast-icon-bg: color-mix(in srgb, var(--component-toast-icon-state-fg) 10%, transparent);
+  --component-toast-icon-border: var(--component-toast-border-width) solid color-mix(in srgb, var(--component-toast-icon-state-fg) 28%, transparent);
   --component-toast-border: var(--border-base);
   --component-toast-border-hover: var(--color-outline);
   --component-toast-shadow: var(--shadow-md);

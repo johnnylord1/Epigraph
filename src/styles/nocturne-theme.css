@@ -105,7 +105,7 @@
   --component-toast-border: color-mix(in srgb, var(--color-toast-border) 96%, var(--color-accent-interactive) 4%);
   --component-toast-border-hover: var(--color-toast-border-hover);
   --component-toast-shadow: var(--shadow-toast);
-  --component-toast-radius: var(--radius-lg);
+  --component-toast-radius: var(--hud-toast-radius);
   --component-toast-font: var(--font-sans);
   --component-toast-title-font-size: var(--text-sm);
   --component-toast-title-font-weight: var(--weight-semibold);
@@ -115,8 +115,9 @@
   --component-toast-action-font-size: var(--text-xs);
   --component-toast-action-font-weight: var(--weight-semibold);
   --component-toast-action-letter-spacing: var(--tracking-normal);
-  --component-toast-icon-bg: color-mix(in srgb, currentColor 10%, transparent);
-  --component-toast-icon-border: 1px solid color-mix(in srgb, currentColor 28%, transparent);
+  --component-toast-icon-state-fg: var(--component-toast-info-fg);
+  --component-toast-icon-bg: color-mix(in srgb, var(--component-toast-icon-state-fg) 10%, transparent);
+  --component-toast-icon-border: 1px solid color-mix(in srgb, var(--component-toast-icon-state-fg) 28%, transparent);
   --component-toast-offset: 20px;
   --component-toast-width: min(360px, calc(100vw - 32px));
   --component-toast-stack-gap: 8px;
@@ -189,7 +190,7 @@
   --component-toast-download-fg: var(--color-text-accent-emphasis);
   --component-toast-progress-track: color-mix(in srgb, var(--color-accent-interactive) 12%, transparent);
   --component-toast-progress-fill: var(--gradient-toast-progress);
-  --component-toast-progress-shadow: var(--shadow-toast-progress);
+  --component-toast-progress-shadow: none;
   --component-toast-action-bg: color-mix(in srgb, var(--component-toast-bg-hover) 72%, transparent);
   --component-toast-action-bg-hover: color-mix(in srgb, var(--component-toast-action-fg) 9%, transparent);
   --component-toast-action-fg: var(--color-text-accent-emphasis);

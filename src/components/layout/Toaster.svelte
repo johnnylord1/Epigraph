@@ -300,15 +300,27 @@
     transition: background var(--t-base);
   }
 
-  .toast-success { color: var(--component-toast-success-fg); }
+  .toast-success {
+    color: var(--component-toast-success-fg);
+    --component-toast-icon-state-fg: var(--component-toast-success-fg);
+  }
   .toast-success  .state-border { color: var(--component-toast-success-fg); }
   .toast-success  .state-border::before { background: var(--component-toast-success-glow); }
-  .toast-error { color: var(--component-toast-error-fg); }
+  .toast-error {
+    color: var(--component-toast-error-fg);
+    --component-toast-icon-state-fg: var(--component-toast-error-fg);
+  }
   .toast-error    .state-border { color: var(--component-toast-error-fg); }
   .toast-error    .state-border::before { background: var(--component-toast-error-glow); }
-  .toast-info { color: var(--component-toast-info-fg); }
+  .toast-info {
+    color: var(--component-toast-info-fg);
+    --component-toast-icon-state-fg: var(--component-toast-info-fg);
+  }
   .toast-info     .state-border { color: var(--component-toast-info-fg); }
-  .toast-download { color: var(--component-toast-download-fg); }
+  .toast-download {
+    color: var(--component-toast-download-fg);
+    --component-toast-icon-state-fg: var(--component-toast-download-fg);
+  }
   .toast-download .state-border { color: var(--component-toast-download-fg); }
   .toast-download .state-border::before { background: var(--component-toast-download-glow); }
 
