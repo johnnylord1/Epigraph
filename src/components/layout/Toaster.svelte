@@ -511,7 +511,6 @@
       transition: none;
     }
 
-    .toast-life,
     .library-progress-fill,
     .state-border::before {
       animation: none;

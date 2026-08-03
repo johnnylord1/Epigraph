@@ -131,6 +131,13 @@ describe("base themed components", () => {
     expect(source).toContain("--component-toast-action-padding");
   });
 
+  test("keeps the toast lifetime indicator functional with reduced motion", () => {
+    const source = readFileSync(join(process.cwd(), "src/components/layout/Toaster.svelte"), "utf8");
+    const reducedMotionBlock = source.slice(source.indexOf("@media (prefers-reduced-motion: reduce)"));
+
+    expect(reducedMotionBlock).not.toMatch(/\.toast-life[\s\S]*animation:\s*none/);
+  });
+
   test("renders the tokenized context menu shell", () => {
     const onClose = vi.fn();
     const onOpen = vi.fn();
