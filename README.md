@@ -20,6 +20,10 @@
 
 </div>
 
+[![Epigraph Stable](https://img.shields.io/github/v/release/johnnylord1/Epigraph?maxAge=3600&label=Stable&labelColor=06599d&color=043b69&filter=v*)](https://github.com/johnnylord1/Epigraph/releases)
+[![Epigraph Beta](https://img.shields.io/github/v/release/johnnylord1/Epigraph?maxAge=3600&label=Beta&labelColor=2c2c47&color=1c1c39&filter=v*-b*)](https://github.com/johnnylord1/Epigraph/releases)
+[![Epigraph Nightly](https://img.shields.io/github/v/release/johnnylord1/Epigraph?maxAge=3600&label=Nightly&labelColor=B11A3B&color=1c1c39)](https://github.com/johnnylord1/Epigraph/releases)
+
 Epigraph Mobile is the native Android client of Epigraph. It brings manga,
 novel, EPUB, and PDF reading, library organization, source discovery, and
 offline progress to phones and tablets while the [main branch](https://github.com/johnnylord1/Epigraph/tree/main)
@@ -35,7 +39,7 @@ The two clients share the Epigraph product identity and compatibility
 contracts:
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/johnnylord1/Epigraph/main/docs/assets/epigraph-hero-banner.png" alt="Epigraph desktop reader and recommendations" width="78%" />
+  <img src="https://github.com/johnnylord1/Epigraph/raw/refs/heads/main/docs/assets/epigraph-hero-banner.png" alt="Epigraph desktop reader and recommendations" width="78%" />
 </p>
 
 | Client | Branch | Package or identity |
